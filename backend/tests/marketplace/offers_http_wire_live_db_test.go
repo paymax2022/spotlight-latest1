@@ -20,7 +20,6 @@ import (
 // directly, so they never exercise the JSON tags or the query param. The
 // handler read `listingId`/`priceKobo`; the mobile client snake-cases every
 // outbound body and query, so nothing ever matched.
-//
 // These drive the real gin route over HTTP with the exact bytes the app sends,
 // through the real Service to the real database.
 
@@ -64,7 +63,6 @@ func TestLiveDB_OffersHTTP_ClientWireShape(t *testing.T) {
 		}
 	})
 
-	// ── POST /offers, exactly as mktPost serialises it ────────────────────────
 	buyerAPI := offersRouter(svc, buyer)
 	body := fmt.Sprintf(`{"listing_id":%q,"offer_price_kobo":250000,"message":"is this still available"}`, listingID)
 	rec := httptest.NewRecorder()
@@ -95,7 +93,6 @@ func TestLiveDB_OffersHTTP_ClientWireShape(t *testing.T) {
 	}
 	offerID := created.Data.ID
 
-	// ── GET /offers?listing_id=… — the call that returned 400 ─────────────────
 	sellerAPI := offersRouter(svc, seller)
 	rec = httptest.NewRecorder()
 	sellerAPI.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/offers?listing_id="+listingID, nil))
@@ -116,7 +113,6 @@ func TestLiveDB_OffersHTTP_ClientWireShape(t *testing.T) {
 			len(listed.Data), offerID, rec.Body.String())
 	}
 
-	// ── The original failing spelling still 400s, naming the wire field ───────
 	rec = httptest.NewRecorder()
 	sellerAPI.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/offers", nil))
 	if rec.Code != http.StatusBadRequest {
@@ -126,7 +122,6 @@ func TestLiveDB_OffersHTTP_ClientWireShape(t *testing.T) {
 		t.Errorf("400 body should name listing_id, got %s", rec.Body.String())
 	}
 
-	// ── POST /offers/:id/counter, as the seller ──────────────────────────────
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/offers/"+offerID+"/counter",
 		strings.NewReader(`{"offer_price_kobo":300000}`))

@@ -1,27 +1,21 @@
 package estate
 
-// ---------------------------------------------------------------------------
 // LIVE-DB UAT for the Estate module's PayDues money path (docs/qa/modules/estate.md
 // ESTATE-INT-001/002, ESTATE-VAL-001/002, ESTATE-AUTHZ-004/005, ESTATE-IDEM-001,
 // ESTATE-CONC-001). This is the first time PayDues has been exercised against a
 // live database — every prior estate test either nil-DB-guards the money path
 // (isolation_test.go, modules_test.go) or documents the isolation contract
 // without a live DB (isolation_test.go's TestCrossEstateIsolationContract).
-//
 // Follows the pattern used by internal/restaurant/payout_double_payment_live_db_test.go
 // and internal/property/context_test.go: TEST_DATABASE_URL-gated, pgxpool via
 // t.Cleanup, real ledger wired via ledger.NewService(ledger.NewRepository(pool), nil),
 // wallets funded through the ledger (never a direct balance UPDATE — wallet
 // balances are a ledger projection, never mutated directly, per CLAUDE.md).
-//
 // Package `estate` (not `estate_test`) so the tests can call the unexported
 // helpers (existingReceipt) directly when proving the CONC-001 fix.
-//
 // Run:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/estate/... -run TestLiveDB -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -38,8 +32,6 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/testsupport"
 )
-
-// ── pool / service wiring ─────────────────────────────────────────────────
 
 func estateDuesTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -63,8 +55,6 @@ func newDuesTestService(pool *pgxpool.Pool) (*Service, *ledger.Service) {
 	svc := NewService(pool, nil).WithLedger(led).WithTiers(tiers.NewService(pool))
 	return svc, led
 }
-
-// ── fixture helpers ─────────────────────────────────────────────────────────
 
 // seedDuesUser inserts a throwaway auth.users row + a KYC tier-3 user_profiles
 // row (so EnforceCheckoutDebitLimit's Tier-0 checkout-allowance branch never
@@ -140,7 +130,6 @@ func walletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID
 // standing settlement account: the CREDIT side written by ledger.Debit (repository.go
 // suffixes the pair ":debit"/":credit" on the caller's Idempotency-Key). 0 means the
 // payment never posted.
-//
 // Deliberately NOT a before/after read of the account's BALANCE. settlement is a single
 // global standing account also moved by restaurant payouts, academy, connect, realtor
 // and other suites, and `go test ./...` runs packages concurrently against one database
@@ -208,8 +197,6 @@ func auditCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, estateID,
 	}
 	return n
 }
-
-// ── ESTATE-INT-001 / ESTATE-INT-002 ─────────────────────────────────────────
 
 // TestLiveDB_PayDues_HappyPath_DebitsPayerCreditsSettlement_LiftsRestriction
 // covers ESTATE-INT-001 (balanced DEBIT payer / CREDIT settlement, invoice ->
@@ -288,8 +275,6 @@ func TestLiveDB_PayDues_HappyPath_DebitsPayerCreditsSettlement_LiftsRestriction(
 		t.Error("restriction lifted_at not set")
 	}
 }
-
-// ── ESTATE-VAL-001 ──────────────────────────────────────────────────────────
 
 // TestLiveDB_PayDues_RejectsAmountOverride covers ESTATE-VAL-001: the server
 // re-prices to the invoice's own stored amount and never trusts a client
@@ -375,8 +360,6 @@ func TestLiveDB_PayDues_RejectsAmountOverride(t *testing.T) {
 	})
 }
 
-// ── ESTATE-VAL-002 ──────────────────────────────────────────────────────────
-
 func TestLiveDB_PayDues_RejectsWaivedInvoice(t *testing.T) {
 	pool := estateDuesTestPool(t)
 	ctx := context.Background()
@@ -404,8 +387,6 @@ func TestLiveDB_PayDues_RejectsWaivedInvoice(t *testing.T) {
 		t.Errorf("payment rows = %d after rejected pay, want 0 (no ledger posting)", n)
 	}
 }
-
-// ── ESTATE-AUTHZ-004 (same-estate IDOR) ─────────────────────────────────────
 
 func TestLiveDB_PayDues_RejectsPayingAnotherResidentsInvoice(t *testing.T) {
 	pool := estateDuesTestPool(t)
@@ -439,8 +420,6 @@ func TestLiveDB_PayDues_RejectsPayingAnotherResidentsInvoice(t *testing.T) {
 		t.Errorf("invoice status = %q, want still pending", got)
 	}
 }
-
-// ── ESTATE-AUTHZ-005 (cross-estate IDOR) ────────────────────────────────────
 
 func TestLiveDB_PayDues_RejectsCrossEstateInvoice(t *testing.T) {
 	pool := estateDuesTestPool(t)
@@ -477,8 +456,6 @@ func TestLiveDB_PayDues_RejectsCrossEstateInvoice(t *testing.T) {
 		t.Errorf("estate-B invoice status = %q, want still pending (untouched by the estate-A caller)", got)
 	}
 }
-
-// ── ESTATE-IDEM-001 ──────────────────────────────────────────────────────────
 
 func TestLiveDB_PayDues_IdempotentReplayReturnsCanonicalReceipt(t *testing.T) {
 	pool := estateDuesTestPool(t)
@@ -522,16 +499,12 @@ func TestLiveDB_PayDues_IdempotentReplayReturnsCanonicalReceipt(t *testing.T) {
 	}
 }
 
-// ── ESTATE-CONC-001 ──────────────────────────────────────────────────────────
-
 // TestLiveDB_PayDues_ConcurrentSameKeySettlesExactlyOnce fires two GENUINELY
 // concurrent PayDues calls (real goroutines + sync.WaitGroup, not sequential
 // calls dressed up as concurrent) with the SAME Idempotency-Key against the
 // SAME pending invoice, and proves the settlement posts exactly once.
-//
 // This uncovered a real bug (see the regression-guard proof in the task
 // report): before the fix, a caller that lost the race — its
-// `INSERT INTO estate_payments ... ON CONFLICT (idempotency_key) DO NOTHING`
 // affected 0 rows because the other goroutine's insert had already committed —
 // fell through to update the (already-updated) invoice, lift the (already-
 // lifted) restriction, write a SECOND DUES_PAY audit row, and return a

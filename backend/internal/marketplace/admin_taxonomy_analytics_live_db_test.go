@@ -1,25 +1,20 @@
 package marketplace
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests for the two admin routes closed under MKT-007 (taxonomy CRUD +
 // analytics aggregation): the frontend already had full pages for these
 // (frontend-admin/app/admin/marketplace/{taxonomy,analytics}), but nothing on
 // the backend served them (confirmed live: 404) until this file's routes were
 // added (admin_taxonomy_handler.go, admin_analytics_handler.go,
 // repository_admin_taxonomy.go, repository_admin_analytics.go).
-//
 // Follows the TEST_DATABASE_URL-gated live-DB pattern established by
 // service_boost_live_db_test.go in this same package: real pgxpool via
 // t.Cleanup, real repository queries, genuine seeded rows with KNOWN kobo
 // amounts so the analytics SUM assertions are exact, not approximate.
-//
 // Run:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/marketplace/... -run TestLiveDBAdminTaxonomy -v
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/marketplace/... -run TestLiveDBAdminAnalytics -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -28,8 +23,6 @@ import (
 
 	"github.com/google/uuid"
 )
-
-// ── Taxonomy CRUD ────────────────────────────────────────────────────────────
 
 func TestLiveDBAdminTaxonomyCRUD(t *testing.T) {
 	pool := boostTestPool(t) // reuses service_boost_live_db_test.go's TEST_DATABASE_URL gate + pool
@@ -155,8 +148,6 @@ func TestLiveDBAdminTaxonomyDuplicateSlugConflicts(t *testing.T) {
 	}
 }
 
-// ── Analytics aggregation ────────────────────────────────────────────────────
-
 // TestLiveDBAdminAnalyticsRevenueAndFunnel seeds a category, a listing, TWO
 // boosts with KNOWN kobo amounts (one retained, one rejected — must be
 // EXCLUDED from revenue), one contact reveal, and one "met" thread, then
@@ -200,7 +191,9 @@ func TestLiveDBAdminAnalyticsRevenueAndFunnel(t *testing.T) {
 		listingID, buyerID, sellerID); err != nil {
 		t.Fatalf("seed contact reveal: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_contact_reveals WHERE listing_id=$1`, listingID) })
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM mkt_contact_reveals WHERE listing_id=$1`, listingID)
+	})
 
 	// One thread marked "met" (real funnel.deals signal — mkt_threads.met_at).
 	threadID := uuid.New().String()

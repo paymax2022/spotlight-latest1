@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // AdminHandler serves the admin transport endpoints. Every mutation is audited
@@ -44,7 +46,7 @@ func (h *AdminHandler) DriverDetail(c *gin.Context) {
 
 // SetVerification is the guarded driver-verification transition.
 func (h *AdminHandler) SetVerification(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req VerificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -69,7 +71,7 @@ func (h *AdminHandler) ListVehicles(c *gin.Context) {
 
 // SetVehicleStatus updates a vehicle compliance record.
 func (h *AdminHandler) SetVehicleStatus(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req VehicleStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -104,7 +106,7 @@ func (h *AdminHandler) DispatchLive(c *gin.Context) {
 
 // ManualAssign assigns a driver to a trip.
 func (h *AdminHandler) ManualAssign(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req AssignRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -129,7 +131,7 @@ func (h *AdminHandler) GetPricing(c *gin.Context) {
 
 // PatchPricing updates pricing config (audited).
 func (h *AdminHandler) PatchPricing(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req PricingPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -155,7 +157,7 @@ func (h *AdminHandler) ListCommission(c *gin.Context) {
 
 // PatchCommission updates a commission tier (audited).
 func (h *AdminHandler) PatchCommission(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req CommissionPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -181,7 +183,7 @@ func (h *AdminHandler) ListIncidents(c *gin.Context) {
 
 // PatchIncident updates a safety case (audited).
 func (h *AdminHandler) PatchIncident(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req SafetyIncidentPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

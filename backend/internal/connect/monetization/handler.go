@@ -3,7 +3,9 @@ package connectmonetization
 import (
 	"errors"
 	"net/http"
+	"spotlight/backend/go-common/ginutil"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,11 +14,6 @@ import (
 type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
-
-func userID(c *gin.Context) string { return c.GetString("user_id") }
-
-// idemKey reads the required Idempotency-Key header for money mutations.
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
 
 // mapMoneyError converts service errors to HTTP status codes.
 func mapMoneyError(c *gin.Context, err error) {
@@ -33,25 +30,16 @@ func mapMoneyError(c *gin.Context, err error) {
 		// Insufficient funds / duplicate / tier limit / DB — surface as 402/409/500.
 		msg := err.Error()
 		switch {
-		case contains(msg, "insufficient funds"):
+		case strings.Contains(msg, "insufficient funds"):
 			c.JSON(http.StatusPaymentRequired, gin.H{"error": "insufficient wallet balance"})
-		case contains(msg, "duplicate"):
+		case strings.Contains(msg, "duplicate"):
 			c.JSON(http.StatusConflict, gin.H{"error": "duplicate request"})
-		case contains(msg, "limit"):
+		case strings.Contains(msg, "limit"):
 			c.JSON(http.StatusForbidden, gin.H{"error": "transaction limit exceeded"})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "purchase failed"})
 		}
 	}
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }
 
 // ListPlans — GET /api/v1/connect/plans?kind=  (member). Backend-owned catalogue.
@@ -66,7 +54,7 @@ func (h *Handler) ListPlans(c *gin.Context) {
 
 // purchase is shared by /subscriptions, /boosts, /passes; expectedKind guards each.
 func (h *Handler) purchase(c *gin.Context, kind PlanKind) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -76,7 +64,7 @@ func (h *Handler) purchase(c *gin.Context, kind PlanKind) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	order, ent, err := h.svc.Purchase(c.Request.Context(), uid, idemKey(c), kind, req)
+	order, ent, err := h.svc.Purchase(c.Request.Context(), uid, ginutil.IdempotencyKey(c), kind, req)
 	if err != nil {
 		mapMoneyError(c, err)
 		return
@@ -95,7 +83,7 @@ func (h *Handler) BuyPass(c *gin.Context) { h.purchase(c, KindPass) }
 
 // Entitlements — GET /api/v1/connect/entitlements (member). Server-side truth.
 func (h *Handler) Entitlements(c *gin.Context) {
-	ents, err := h.svc.ActiveEntitlements(c.Request.Context(), userID(c))
+	ents, err := h.svc.ActiveEntitlements(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -110,7 +98,7 @@ func (h *Handler) BookRide(c *gin.Context) { h.book(c, "ride") }
 func (h *Handler) BookTickets(c *gin.Context) { h.book(c, "ticket") }
 
 func (h *Handler) book(c *gin.Context, kind string) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -121,7 +109,7 @@ func (h *Handler) book(c *gin.Context, kind string) {
 		return
 	}
 	req.Kind = kind // endpoint dictates kind; client cannot override.
-	b, err := h.svc.Book(c.Request.Context(), uid, idemKey(c), req)
+	b, err := h.svc.Book(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		mapMoneyError(c, err)
 		return
@@ -132,7 +120,7 @@ func (h *Handler) book(c *gin.Context, kind string) {
 // CancelSubscription — POST /api/v1/connect/subscriptions/cancel (member).
 // Body: {"immediate": bool}. Default end-of-period; immediate refunds unused time.
 func (h *Handler) CancelSubscription(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -153,8 +141,6 @@ func (h *Handler) CancelSubscription(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": res})
 }
 
-// --- Admin ---
-
 // AdminRunRenewals — POST /api/connect/admin/subscriptions/run-renewals
 // (connect.payments.reconcile). Drives the auto-renew batch; a scheduler calls this.
 func (h *Handler) AdminRunRenewals(c *gin.Context) {
@@ -173,7 +159,7 @@ func (h *Handler) AdminUpsertPlan(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	out, err := h.svc.UpsertPlan(c.Request.Context(), userID(c), p)
+	out, err := h.svc.UpsertPlan(c.Request.Context(), ginutil.UserID(c), p)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -188,7 +174,7 @@ func (h *Handler) AdminRefund(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&body) // reason optional
-	o, err := h.svc.Refund(c.Request.Context(), c.Param("id"), userID(c), body.Reason)
+	o, err := h.svc.Refund(c.Request.Context(), c.Param("id"), ginutil.UserID(c), body.Reason)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrOrderNotFound):

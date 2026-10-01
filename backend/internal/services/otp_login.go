@@ -4,9 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
-
 	"github.com/jackc/pgx/v5/pgxpool"
+	"strings"
 )
 
 // ErrAccountUnavailable is returned when the lockout gate refuses a step-up.
@@ -14,7 +13,6 @@ var ErrAccountUnavailable = errors.New("account unavailable")
 
 // SessionMinter issues a session for a user whose second factor has just been
 // proved. It is the login step-up's other half.
-//
 // ⚠️ Whatever holds this interface can log in as anyone whose address it names.
 // The ONLY legitimate caller is the OTP verify path for purpose=login, and that
 // path is reachable only for a code that the PASSWORD-verified login flow issued
@@ -74,7 +72,6 @@ func (b *otpAuthBridge) WithSessions(sessions SessionService, enabled bool) *otp
 }
 
 // gate re-runs the lockout checks and returns the platform user.
-//
 // Re-run rather than trusted from the password step: minutes can pass between
 // the two factors, and an account suspended in between must not complete a
 // login that started before it. The password path is not the authority on
@@ -198,7 +195,6 @@ func (b *otpAuthBridge) SetPassword(ctx context.Context, email, newPassword stri
 // SetOTPOperational tells the auth service that server-issued OTP is not merely
 // flagged on but actually wired, so registration may use the silent admin
 // creation path.
-//
 // A no-op on any other AuthService implementation, and false by default, so the
 // fail-safe direction is /auth/v1/signup — which always sends a confirmation
 // email the user can act on.
@@ -206,4 +202,39 @@ func SetOTPOperational(auth AuthService, operational bool) {
 	if svc, ok := auth.(*authService); ok && svc != nil {
 		svc.otpOperational = operational
 	}
+}
+
+// NormalizePhone reduces a Nigerian phone number to its 10-digit national significant
+// number, so the same subscriber matches however they typed it.
+// Stored numbers are NOT normalised in this database — one row holds "8159491618" with
+// no country code and no leading zero, while apps commonly submit "08159491618" or
+// "+2348159491618". Comparing raw strings would fail to find the account and look, to
+// the user, exactly like a wrong password.
+// Returns "" when the input cannot be a Nigerian mobile number, which callers must
+// treat as "no match" rather than falling back to a looser comparison.
+func NormalizePhone(raw string) string {
+	var digits strings.Builder
+	for _, r := range raw {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	d := digits.String()
+	switch {
+	case strings.HasPrefix(d, "234") && len(d) == 13: // +234 815 949 1618
+		d = d[3:]
+	case strings.HasPrefix(d, "0") && len(d) == 11: // 0815 949 1618
+		d = d[1:]
+	}
+	if len(d) != 10 {
+		return ""
+	}
+	return d
+}
+
+// LooksLikeEmail is a deliberately loose check used only to choose which lookup to run.
+// Authentication itself is unchanged, so a wrong guess here costs a failed match, never
+// a wrong sign-in.
+func LooksLikeEmail(s string) bool {
+	return strings.Contains(s, "@")
 }

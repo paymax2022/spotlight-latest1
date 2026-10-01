@@ -3,8 +3,16 @@ package pharmacy
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	keyError = "error"
 )
 
 type Service struct{ pool *pgxpool.Pool }
@@ -155,4 +163,134 @@ func (s *Service) ClearCart(ctx context.Context, userID string) error {
 		return fmt.Errorf("pharmacy: clear cart: %w", err)
 	}
 	return nil
+}
+
+// Product is a drug or health item listed in the marketplace.
+type Product struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Category     string    `json:"category"`
+	PriceKobo    int64     `json:"price_kobo"`
+	Unit         string    `json:"unit"`
+	IsBestseller bool      `json:"is_bestseller"`
+	IsEssential  bool      `json:"is_essential"`
+	InStock      bool      `json:"in_stock"`
+	ImageURL     *string   `json:"image_url,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// CartItem represents a product in the user's shopping cart.
+type CartItem struct {
+	ID             string    `json:"id"`
+	UserID         string    `json:"user_id"`
+	ProductID      string    `json:"product_id"`
+	Quantity       int       `json:"quantity"`
+	IdempotencyKey *string   `json:"idempotency_key,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	Product        *Product  `json:"product,omitempty"`
+}
+
+// ListProductsQuery holds validated query params for the product list endpoint.
+type ListProductsQuery struct {
+	Category string `form:"category"`
+	Search   string `form:"search"`
+	Limit    int    `form:"limit,default=20"`
+	Offset   int    `form:"offset,default=0"`
+}
+
+// AddToCartRequest is the body for POST /pharmacy/cart.
+type AddToCartRequest struct {
+	ProductID      string `json:"product_id" binding:"required"`
+	Quantity       int    `json:"quantity,omitempty"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+// UpdateCartItemRequest is the body for PATCH /pharmacy/cart/:product_id.
+type UpdateCartItemRequest struct {
+	Quantity int `json:"quantity" binding:"required,min=1"`
+}
+
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// ListProducts GET /pharmacy/products
+func (h *Handler) ListProducts(c *gin.Context) {
+	var q ListProductsQuery
+	q.Category = c.Query("category")
+	q.Search = c.Query("search")
+	q.Limit, q.Offset = ginutil.PageParams(c, 20, 0)
+	products, err := h.svc.ListProducts(c.Request.Context(), q)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": products})
+}
+
+// GetCart GET /pharmacy/cart
+func (h *Handler) GetCart(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	items, err := h.svc.GetCart(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items})
+}
+
+// AddToCart POST /pharmacy/cart
+func (h *Handler) AddToCart(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req AddToCartRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		return
+	}
+	if req.IdempotencyKey == "" {
+		req.IdempotencyKey = ginutil.IdempotencyKey(c)
+	}
+	item, err := h.svc.AddToCart(c.Request.Context(), userID, req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": item})
+}
+
+// UpdateCartItem PATCH /pharmacy/cart/:product_id
+func (h *Handler) UpdateCartItem(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	productID := c.Param("product_id")
+	var req UpdateCartItemRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		return
+	}
+	item, err := h.svc.UpdateCartItem(c.Request.Context(), userID, productID, req.Quantity)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": item})
+}
+
+// RemoveFromCart DELETE /pharmacy/cart/:product_id
+func (h *Handler) RemoveFromCart(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if err := h.svc.RemoveFromCart(c.Request.Context(), userID, c.Param("product_id")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// ClearCart DELETE /pharmacy/cart
+func (h *Handler) ClearCart(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if err := h.svc.ClearCart(c.Request.Context(), userID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

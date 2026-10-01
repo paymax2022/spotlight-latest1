@@ -1,6 +1,4 @@
-// ── Paymax Invest · Onboarding — Mock fixtures + in-memory state ─────────────
 // Deterministic seed data + a tiny in-memory state machine so every onboarding
-// UI state renders in mock mode. Flip EXPO_PUBLIC_ONBOARDING_USE_MOCK=false to
 // hit the real Paymax endpoints (onboarding.api.ts).
 
 import { AGREEMENTS } from '../constants/onboarding.constants';
@@ -35,10 +33,7 @@ export function resetMockState() {
   mockState.acceptedAgreementIds = [];
 }
 
-// ─── Eligibility ──────────────────────────────────────────────────────────────
-
 export function buildEligibility(): EligibilityResult {
-  // Mock: a Nigerian resident in a supported region. Flip `investEnabled` to
   // false (or change `state`) to exercise the product-unavailable path.
   return {
     state: 'eligible',
@@ -49,17 +44,11 @@ export function buildEligibility(): EligibilityResult {
   };
 }
 
-// ─── Agreements ───────────────────────────────────────────────────────────────
-
 export const MOCK_AGREEMENTS: Agreement[] = AGREEMENTS;
-
-// ─── Suitability ──────────────────────────────────────────────────────────────
 
 export function buildSuitability(answers: SuitabilityAnswers): SuitabilityResult {
   return scoreSuitability(answers);
 }
-
-// ─── Aggregate onboarding state ───────────────────────────────────────────────
 
 export function buildOnboardingState(): OnboardingState {
   const requiredIds = MOCK_AGREEMENTS.filter((a) => a.required).map((a) => a.id);

@@ -1,19 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// ---------------------------------------------------------------------------
 // Wallet-to-wallet recipient resolution (frontend-web implementation).
-//
 // This is the resolver the mobile app actually reaches: EXPO_PUBLIC_API_BASE_URL
 // points at frontend-web, and app/api/v1/transfers/paymax/resolve/route.ts calls
 // resolvePaymaxUser() here rather than proxying to the Go service.
-//
 // Stored phones were never normalised — user_profiles holds "8159491618",
 // "08159491618" and "+2348159491618" for different accounts. These tests pin:
 //   1. every spelling of one number resolves to one account (including the BARE
 //      NSN form, which the old variant list never generated),
 //   2. two accounts on one number REFUSE rather than silently picking one, and
 //   3. the caller's raw input is never interpolated into a PostgREST filter.
-// ---------------------------------------------------------------------------
 
 const capture: { filters: Array<Record<string, unknown>> } = { filters: [] };
 let rows: Array<Record<string, unknown>> = [];
@@ -102,8 +98,6 @@ describe('resolvePaymaxUser', () => {
   });
 
   it('never interpolates raw caller input into a PostgREST filter', async () => {
-    // `.or()` took a hand-built string containing the raw identifier, so a comma
-    // let a caller append their own condition (e.g. "phone.not.is.null" matches
     // every profile) and resolve to an arbitrary account.
     rows = [];
     await expect(

@@ -1,4 +1,3 @@
-// ── Paymax Health — Pharmacy React Query hooks (Phase 1) ─────────────────────
 // Declarative data hooks the pharmacy screens use. React Query v5.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -44,7 +43,6 @@ import type { DiscoverPharmaciesOpts } from './api';
 
 const KEY = 'pharmacy';
 
-// ── Catalog ─────────────────────────────────────────────────────────────────
 export function useProducts(opts?: { q?: string; category?: ProductCategory }) {
   return useQuery({
     queryKey: [KEY, 'products', opts ?? {}],
@@ -62,8 +60,6 @@ export function useProduct(id?: string) {
   });
 }
 
-// ── Pharmacies ──────────────────────────────────────────────────────────────
-// opts.lat/lng (from useDeviceCoords) drive proximity sort; omit them to fall
 // back to rating/name (see backend resolveSort, ADR-017).
 export function usePharmacies(opts?: DiscoverPharmaciesOpts) {
   return useQuery({
@@ -82,7 +78,6 @@ export function usePharmacy(id?: string) {
   });
 }
 
-// ── Prescriptions ───────────────────────────────────────────────────────────
 export function usePrescriptions() {
   return useQuery({ queryKey: [KEY, 'prescriptions'], queryFn: getPrescriptions, staleTime: 15_000 });
 }
@@ -104,7 +99,6 @@ export function useUploadPrescription() {
   });
 }
 
-// ── Orders ──────────────────────────────────────────────────────────────────
 export function useOrders() {
   return useQuery({ queryKey: [KEY, 'orders'], queryFn: getOrders, staleTime: 15_000 });
 }
@@ -130,7 +124,6 @@ export function useReorder() {
   return useMutation({ mutationFn: (orderId: string) => reorder(orderId) });
 }
 
-// ── Medications & refills ─────────────────────────────────────────────────────
 export function useMedications() {
   return useQuery({ queryKey: [KEY, 'medications'], queryFn: getMedications, staleTime: 30_000 });
 }
@@ -147,7 +140,6 @@ export function useScheduleRefill() {
   });
 }
 
-// ── Ratings ─────────────────────────────────────────────────────────────────
 export function useReviews(pharmacyId?: string) {
   return useQuery({
     queryKey: [KEY, 'reviews', pharmacyId ?? 'all'],
@@ -164,7 +156,6 @@ export function useSubmitReview() {
   });
 }
 
-// ── Pharmacist consult ────────────────────────────────────────────────────────
 export function useConsultThread() {
   return useQuery({ queryKey: [KEY, 'consult-thread'], queryFn: getConsultThread, staleTime: 5_000 });
 }
@@ -177,7 +168,6 @@ export function useSendConsultMessage() {
   });
 }
 
-// ── Provider: onboarding ──────────────────────────────────────────────────────
 export function useProviderOnboarding() {
   return useQuery({ queryKey: [KEY, 'provider', 'onboarding'], queryFn: getProviderOnboarding, staleTime: 30_000 });
 }
@@ -190,7 +180,6 @@ export function useSubmitProviderOnboarding() {
   });
 }
 
-// ── Provider: catalog / stock ─────────────────────────────────────────────────
 export function useProviderCatalog() {
   return useQuery({ queryKey: [KEY, 'provider', 'catalog'], queryFn: getProviderCatalog, staleTime: 30_000 });
 }
@@ -199,7 +188,6 @@ export function useStockAlerts() {
   return useQuery({ queryKey: [KEY, 'provider', 'stock-alerts'], queryFn: getStockAlerts, staleTime: 30_000 });
 }
 
-// ── Provider: orders / dispense / handoff ─────────────────────────────────────
 export function useProviderOrders() {
   return useQuery({ queryKey: [KEY, 'provider', 'orders'], queryFn: getProviderOrders, staleTime: 15_000 });
 }
@@ -227,7 +215,6 @@ export function useHandoffOrder() {
   });
 }
 
-// ── Provider: Rx verification ─────────────────────────────────────────────────
 export function useProviderRxQueue() {
   return useQuery({ queryKey: [KEY, 'provider', 'rx-queue'], queryFn: getProviderRxQueue, staleTime: 10_000 });
 }
@@ -243,12 +230,10 @@ export function useDecideRx() {
   });
 }
 
-// ── Provider: controlled log ──────────────────────────────────────────────────
 export function useControlledLog() {
   return useQuery({ queryKey: [KEY, 'provider', 'controlled-log'], queryFn: getControlledLog, staleTime: 60_000 });
 }
 
-// ── Provider: earnings & payouts ──────────────────────────────────────────────
 export function useProviderEarnings() {
   return useQuery({ queryKey: [KEY, 'provider', 'earnings'], queryFn: getProviderEarnings, staleTime: 30_000 });
 }

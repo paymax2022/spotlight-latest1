@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/internal/finance/ledger"
 )
 
@@ -33,8 +34,6 @@ var (
 	ErrMoveOutRequired       = errors.New("realtor: move-out inspection has not been submitted for this lease")
 	ErrLedgerNotConfigured   = errors.New("realtor: ledger service not configured")
 )
-
-// ── Overview ──────────────────────────────────────────────────────────────────
 
 // Overview returns the headline counts/aggregates for the admin dashboard.
 // Field names mirror the admin client's RealtorOverview type (camelCase).
@@ -62,8 +61,6 @@ func (r *Repository) Overview(ctx context.Context) (map[string]any, error) {
 	}
 	return out, nil
 }
-
-// ── Listings moderation ───────────────────────────────────────────────────────
 
 // AdminListing mirrors the admin client's AdminListing type.
 type AdminListing struct {
@@ -161,8 +158,6 @@ func (r *Repository) DecideListing(ctx context.Context, id, decision string) (st
 	return newStatus, nil
 }
 
-// ── Verifications ─────────────────────────────────────────────────────────────
-
 // VerificationRequest mirrors the admin client's VerificationRequest type.
 type VerificationRequest struct {
 	ID          string     `json:"id"`
@@ -256,8 +251,6 @@ func (r *Repository) DecideVerification(ctx context.Context, id, status string) 
 	}
 }
 
-// ── Payments ──────────────────────────────────────────────────────────────────
-
 // AdminPayment mirrors the admin client's AdminPayment type.
 type AdminPayment struct {
 	ID             string `json:"id"`
@@ -314,8 +307,6 @@ func mapPaymentStatus(s string) string {
 	}
 }
 
-// ── Escrow ────────────────────────────────────────────────────────────────────
-
 // EscrowAccount mirrors the admin client's EscrowAccount type.
 type EscrowAccount struct {
 	ID             string `json:"id"`
@@ -363,8 +354,6 @@ func (r *Repository) Escrow(ctx context.Context, limit, offset int) ([]EscrowAcc
 	}
 	return out, rows.Err()
 }
-
-// ── Escrow resolution (PROPMGMT-002: inspection-gated release) ─────────────────
 
 // EscrowResolution mirrors the admin client's response shape for a resolved
 // (or disputed) escrow deposit.
@@ -500,7 +489,7 @@ func (r *Repository) ResolveEscrow(ctx context.Context, id, decision, note, admi
 	if decision == "disputed" {
 		res, err := r.db.Exec(ctx,
 			`UPDATE realtor_escrow_deposits SET status='disputed', resolution_note=$2, resolved_by=$3 WHERE id=$1`,
-			id, nullStr(note), adminID)
+			id, dbutil.NullStr(note), adminID)
 		if err != nil {
 			return nil, err
 		}
@@ -509,7 +498,7 @@ func (r *Repository) ResolveEscrow(ctx context.Context, id, decision, note, admi
 		newStatus = "released"
 		res, err := r.db.Exec(ctx,
 			`UPDATE realtor_escrow_deposits SET status='released', released_at=NOW(), resolved_to=$2, resolution_note=$3, resolved_by=$4 WHERE id=$1`,
-			id, resolvedTo, nullStr(note), adminID)
+			id, resolvedTo, dbutil.NullStr(note), adminID)
 		if err != nil {
 			return nil, err
 		}
@@ -526,23 +515,12 @@ func (r *Repository) ResolveEscrow(ctx context.Context, id, decision, note, admi
 	return out, nil
 }
 
-// ── Audit log ─────────────────────────────────────────────────────────────────
-
 // InsertAudit appends an immutable admin-audit row (mirrors invest_admin_audit_log).
 func (r *Repository) InsertAudit(ctx context.Context, adminID, action, entityType, entityID, reason string, oldVal, newVal any) error {
 	ob, _ := json.Marshal(oldVal)
 	nb, _ := json.Marshal(newVal)
 	const q = `INSERT INTO realtor_admin_audit_log (admin_id, action, entity_type, entity_id, old_value, new_value, reason)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)`
-	_, err := r.db.Exec(ctx, q, adminID, action, entityType, nullStr(entityID), ob, nb, nullStr(reason))
+	_, err := r.db.Exec(ctx, q, adminID, action, entityType, dbutil.NullStr(entityID), ob, nb, dbutil.NullStr(reason))
 	return err
-}
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }

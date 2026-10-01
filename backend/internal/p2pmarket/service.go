@@ -3,13 +3,12 @@ package p2pmarket
 import (
 	"context"
 	"fmt"
+	"spotlight/backend/internal/escrow"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"spotlight/backend/internal/escrow"
 )
 
 const moduleType = "p2pmarket"
@@ -32,8 +31,6 @@ type Service struct {
 func NewService(db *pgxpool.Pool, esc *escrow.Service, audit Auditor) *Service {
 	return &Service{db: db, escrow: esc, audit: audit}
 }
-
-// ───────────────────────── Listings ─────────────────────────────────────────────
 
 // CreateListing publishes a seller listing (object-level: the caller is the seller).
 func (s *Service) CreateListing(ctx context.Context, sellerID, title, description string, priceKobo int64) (*Listing, error) {
@@ -104,8 +101,6 @@ func (s *Service) Browse(ctx context.Context, limit int) ([]Listing, error) {
 	}
 	return out, rows.Err()
 }
-
-// ───────────────────────── Orders (escrow-backed) ───────────────────────────────
 
 // Checkout creates an order and HOLDS the buyer's funds in escrow (escrow.Hold,
 // idempotent on idemKey — NL-6/NL-9). The seller is recorded but not paid until the
@@ -235,8 +230,6 @@ func (s *Service) GetOrder(ctx context.Context, orderID string) (*Order, error) 
 	return &o, nil
 }
 
-// ───────────────────────── Seller ratings ───────────────────────────────────────
-
 // RateSeller lets the buyer rate the seller after a CONFIRMED order (object-level
 // authZ: only the buyer of that order, only once).
 func (s *Service) RateSeller(ctx context.Context, orderID, buyerID string, stars int, comment string) (*Rating, error) {
@@ -273,8 +266,6 @@ func (s *Service) SellerRating(ctx context.Context, sellerID string) (avg float6
 	return avg, count, err
 }
 
-// --- internals ---
-
 func (s *Service) orderByIdem(ctx context.Context, idemKey string) (*Order, error) {
 	const q = `SELECT id, listing_id, buyer_id, seller_id, amount_kobo, escrow_id, state, created_at, updated_at FROM p2p_orders WHERE idempotency_key=$1`
 	var o Order
@@ -303,3 +294,59 @@ var (
 	ErrNotParty        = fmt.Errorf("p2pmarket: not a party to this order")
 	ErrNotOwnerOrState = fmt.Errorf("p2pmarket: not owner or not in a closable state")
 )
+
+// ListingState is the listing lifecycle.
+type ListingState string
+
+const (
+	ListingActive ListingState = "ACTIVE"
+	ListingSold   ListingState = "SOLD"
+	ListingClosed ListingState = "CLOSED"
+)
+
+// Listing is a seller's offer.
+type Listing struct {
+	ID          string       `json:"id"`
+	SellerID    string       `json:"seller_id"` // FK auth.users(id)
+	Title       string       `json:"title"`
+	Description string       `json:"description"`
+	PriceKobo   int64        `json:"price_kobo"`
+	State       ListingState `json:"state"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
+}
+
+// OrderState is the order lifecycle. It mirrors the escrow hold underneath:
+// CHECKOUT (funds HELD) → CONFIRMED (RELEASED to seller) | DISPUTED → resolved.
+type OrderState string
+
+const (
+	OrderCheckout  OrderState = "CHECKOUT"  // funds held in escrow
+	OrderConfirmed OrderState = "CONFIRMED" // buyer confirmed delivery → released
+	OrderDisputed  OrderState = "DISPUTED"  // contested → arbitration
+	OrderRefunded  OrderState = "REFUNDED"  // refunded to buyer
+)
+
+// Order is a buyer's purchase of a listing, backed by an escrow hold.
+type Order struct {
+	ID         string     `json:"id"`
+	ListingID  string     `json:"listing_id"`
+	BuyerID    string     `json:"buyer_id"`
+	SellerID   string     `json:"seller_id"`
+	AmountKobo int64      `json:"amount_kobo"`
+	EscrowID   string     `json:"escrow_id"` // -> escrow_holds.id
+	State      OrderState `json:"state"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+// Rating is a buyer's rating of a seller after an order (1..5).
+type Rating struct {
+	ID        string    `json:"id"`
+	OrderID   string    `json:"order_id"`
+	SellerID  string    `json:"seller_id"`
+	BuyerID   string    `json:"buyer_id"`
+	Stars     int       `json:"stars"`
+	Comment   string    `json:"comment"`
+	CreatedAt time.Time `json:"created_at"`
+}

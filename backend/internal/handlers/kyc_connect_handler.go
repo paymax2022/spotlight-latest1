@@ -7,6 +7,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/kycverify"
 	"spotlight/backend/internal/finance/tiers"
@@ -26,11 +28,9 @@ type kycVerifyGateway interface {
 }
 
 // KYCConnectHandler handles /api/v1/kyc/* endpoints for tier progression.
-//
 // Tier state lives in user_profiles.kyc_tier — the single source of truth that
 // finance/tiers enforces limits against and that referrals, virtual accounts,
 // marketplace, and academy all read.
-//
 // SubmitTier1 delegates to kycVerify (the real Dojah/Smile ID/Youverify-backed
 // verification gateway) when configured — a real BVN/NIN data-match check runs
 // before the tier is ever elevated, and elevation itself happens automatically
@@ -97,7 +97,7 @@ func kycProfilePayload(p *kyc.Profile) gin.H {
 // GetStatus — GET /api/v1/kyc/status
 // View KYC verification state.
 func (h *KYCConnectHandler) GetStatus(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -129,8 +129,8 @@ func (h *KYCConnectHandler) GetLimits(c *gin.Context) {
 		data = append(data, gin.H{
 			"tier":              t,
 			"label":             tierLabels[t],
-			"dailyLimitKobo":    cfg.DailyDebitLimitKobo, // 0 = unlimited (T3) / disabled (T0)
-			"maxBalanceKobo":    cfg.MaxBalanceKobo,      // 0 = unlimited
+			"dailyLimitKobo":    cfg.DailyDebitLimitKobo,
+			"maxBalanceKobo":    cfg.MaxBalanceKobo,
 			"walletEnabled":     t > 0,
 			"requiredDocuments": requiredDocs[t],
 		})
@@ -142,11 +142,11 @@ func (h *KYCConnectHandler) GetLimits(c *gin.Context) {
 // requireSubmitContext validates the auth + idempotency preconditions shared by
 // every tier submission. Returns false when it has already written a response.
 func requireSubmitContext(c *gin.Context) bool {
-	if c.GetString("user_id") == "" {
+	if ginutil.UserID(c) == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return false
 	}
-	if c.GetHeader("Idempotency-Key") == "" {
+	if ginutil.IdempotencyKey(c) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return false
 	}
@@ -157,7 +157,7 @@ func requireSubmitContext(c *gin.Context) bool {
 // tier differs only in the payload it validates and what it forwards to
 // kyc.Initiate, which does the hashing, the write, and the audit event.
 func (h *KYCConnectHandler) submitTier(c *gin.Context, targetTier int, req kyc.InitiateRequest, message string) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 
 	profile, err := h.kycSvc.Initiate(c.Request.Context(), userID, req)
 	if err != nil {
@@ -170,7 +170,7 @@ func (h *KYCConnectHandler) submitTier(c *gin.Context, targetTier int, req kyc.I
 			userID, nil, map[string]interface{}{
 				"targetTier": targetTier,
 				"status":     string(profile.Status),
-			}, getIPAddress(c), c.Request.UserAgent(), "info")
+			}, ginutil.ClientIP(c), c.Request.UserAgent(), "info")
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
@@ -197,8 +197,8 @@ func (h *KYCConnectHandler) SubmitTier1(c *gin.Context) {
 	if !requireSubmitContext(c) {
 		return
 	}
-	userID := c.GetString("user_id")
-	idempotencyKey := c.GetHeader("Idempotency-Key")
+	userID := ginutil.UserID(c)
+	idempotencyKey := ginutil.IdempotencyKey(c)
 
 	var body struct {
 		Identifier     string `json:"identifier"`
@@ -241,7 +241,7 @@ func (h *KYCConnectHandler) SubmitTier1(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	if _, err := h.kycVerify.RecordConsent(ctx, userID, "kyc-data-processing", body.ConsentVersion, getIPAddress(c)); err != nil {
+	if _, err := h.kycVerify.RecordConsent(ctx, userID, "kyc-data-processing", body.ConsentVersion, ginutil.ClientIP(c)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record consent"})
 		return
 	}
@@ -276,7 +276,7 @@ func (h *KYCConnectHandler) SubmitTier1(c *gin.Context) {
 				"targetTier":  1,
 				"status":      string(profile.Status),
 				"checkStatus": string(check.Status),
-			}, getIPAddress(c), c.Request.UserAgent(), "info")
+			}, ginutil.ClientIP(c), c.Request.UserAgent(), "info")
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
@@ -329,7 +329,6 @@ func writeKycVerifyErr(c *gin.Context, err error) {
 
 // SubmitTier2 — POST /api/v1/kyc/tier2 (Idempotency-Key required)
 // Submit ID + address for Tier 2.
-//
 // STILL writes kyc_status='pending' via kyc.Service.Initiate with NO automated
 // check, same as Tier 1 used to. NOT fixed alongside SubmitTier1: Tier 2 needs
 // a real DOCUMENT and/or LIVENESS/FACIAL check (kycverify.RequiredChecks), both
@@ -376,7 +375,6 @@ func (h *KYCConnectHandler) SubmitTier2(c *gin.Context) {
 
 // SubmitTier3 — POST /api/v1/kyc/tier3 (Idempotency-Key required)
 // Submit liveness + EDD (source of funds + occupation) for Tier 3.
-//
 // Same gap as SubmitTier2, same reason: no real biometric capture yet. See the
 // comment there.
 func (h *KYCConnectHandler) SubmitTier3(c *gin.Context) {
@@ -415,7 +413,7 @@ func (h *KYCConnectHandler) SubmitTier3(c *gin.Context) {
 // GetTierStatus — GET /api/v1/me/tier
 // Get current tier status alongside today's remaining allowance.
 func (h *KYCConnectHandler) GetTierStatus(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -431,19 +429,17 @@ func (h *KYCConnectHandler) GetTierStatus(c *gin.Context) {
 	// gate is derived from — so a client pre-check (e.g. the mobile checkout sheet
 	// refusing to open the card gateway for a spend that would be rejected) agrees
 	// with what the server will actually do.
-	//
 	// walletDisabled and dailyUsedKobo are reported explicitly rather than left to be
 	// inferred: without them a client has to decode the (0, -1) / (0, 0) encoding of
 	// "unlimited" vs "disabled" itself, which is exactly the kind of duplicated money
 	// rule that drifts.
-	//
 	// On a usage error the three fields are OMITTED rather than zeroed — a client
 	// must not read a missing allowance as "you have none". Absence means "unknown";
 	// the server-side gate remains the authority.
 	payload := kycProfilePayload(profile)
 	if usage, err := h.tiersSvc.GetUsage(c.Request.Context(), userID); err == nil {
 		payload["dailyLimitKobo"] = usage.DailyLimitKobo // 0 = unlimited (T3) or disabled (T0)
-		payload["remainingKobo"] = usage.RemainingKobo   // -1 = unlimited
+		payload["remainingKobo"] = usage.RemainingKobo
 		payload["dailyUsedKobo"] = usage.DailyUsedKobo
 		payload["walletDisabled"] = usage.WalletDisabled
 		// Purchases may still be permitted while the wallet is otherwise disabled

@@ -13,20 +13,16 @@ import (
 	"spotlight/backend/internal/middleware"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // handler_test.go — HTTP-boundary tests for the doctor module.
-//
 // Mirrors telemedicine/health_premium_test.go: gin TestMode + httptest, no real
 // DB. The doctor handler resolves the caller via middleware.GetAuthenticatedUser
 // (NOT c.GetString("user_id")), so we inject the user exactly the way the real
 // RequireAuthContext middleware does and the way middleware/authorization_test.go
 // does it: c.Set(middleware.AuthUserContextKey, domain.AuthenticatedUser{ID: ...}).
-//
 // These tests assert the request boundary (auth guard, JSON binding, and the
 // service-error -> HTTP-status mapping in Handler.fail) without reaching the DB.
 // Handlers whose binding fails (400) or whose auth fails (401) return before any
 // service call, so a nil service is safe for those paths.
-// ─────────────────────────────────────────────────────────────────────────────
 
 func newTestGin() *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -40,8 +36,6 @@ func authAs(userID string) gin.HandlerFunc {
 		c.Next()
 	}
 }
-
-// ── Auth guard: every doctor route is user-scoped ───────────────────────────
 
 // TestRequestPayout_NoAuth verifies the money endpoint returns 401 when no
 // authenticated user is present (Handler.userID aborts before the service call).
@@ -89,8 +83,6 @@ func TestReads_NoAuth(t *testing.T) {
 	}
 }
 
-// ── Payout binding + idempotency mapping ────────────────────────────────────
-
 // TestRequestPayout_BadBody verifies the binding contract: amountKobo is required
 // (binding:"required"), so a body missing it returns 400 before the service call.
 func TestRequestPayout_BadBody(t *testing.T) {
@@ -127,8 +119,6 @@ func TestRequestPayout_MalformedJSON(t *testing.T) {
 	}
 }
 
-// ── Other mutation binding contracts ────────────────────────────────────────
-
 // TestUpdateAppointmentStatus_BadBody verifies the required Status field is
 // enforced at the boundary (binding:"required").
 func TestUpdateAppointmentStatus_BadBody(t *testing.T) {
@@ -163,8 +153,6 @@ func TestSubmitVerification_MalformedJSON(t *testing.T) {
 	}
 }
 
-// ── Idempotency-Key header plumbing ─────────────────────────────────────────
-
 // TestIdempotencyKeyHeaderRead verifies the handler reads the money idempotency
 // key from the Idempotency-Key header (not the body), matching the OpenAPI
 // parameter definition (header, required).
@@ -175,8 +163,6 @@ func TestIdempotencyKeyHeaderRead(t *testing.T) {
 		t.Errorf("Idempotency-Key header = %q, want from-header-001", got)
 	}
 }
-
-// ── DTO / contract anchors ──────────────────────────────────────────────────
 
 // TestRequestPayoutResultShape pins the response contract to the OpenAPI
 // RequestPayoutResult schema (payoutId, ref, status).

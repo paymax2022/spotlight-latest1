@@ -1,4 +1,3 @@
-// ── Doctor — appointments & patient profile hooks ────────────────────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {

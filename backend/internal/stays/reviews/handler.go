@@ -6,6 +6,8 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // Handler exposes the member + extranet + admin review surfaces. RBAC is applied at
@@ -16,8 +18,6 @@ type Handler struct {
 
 // NewHandler constructs the reviews handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
-
-func uid(c *gin.Context) string { return c.GetString("user_id") }
 
 func mapErr(c *gin.Context, err error) {
 	switch {
@@ -69,8 +69,6 @@ func (h *Handler) RegisterAdmin(g *gin.RouterGroup, guard func(permission string
 	g.POST("/reviews/:reviewId/moderate", guard("stays.admin.review"), h.Moderate)
 }
 
-// --- member handlers ---
-
 // ListByProperty: GET /reviews?property_id=...
 func (h *Handler) ListByProperty(c *gin.Context) {
 	limit, offset := pageParams(c)
@@ -84,7 +82,7 @@ func (h *Handler) ListByProperty(c *gin.Context) {
 
 // CanReview: GET /reservations/:id/review-eligibility
 func (h *Handler) CanReview(c *gin.Context) {
-	ok, err := h.svc.CanReview(c.Request.Context(), uid(c), c.Param("id"))
+	ok, err := h.svc.CanReview(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		// Distinguish locked vs not-owner but never 500 for the normal "locked" path.
 		switch {
@@ -114,7 +112,7 @@ func (h *Handler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	id, err := h.svc.Create(c.Request.Context(), uid(c), c.Param("id"), b.OverallScore, b.SubScores, b.Title, b.Body)
+	id, err := h.svc.Create(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.OverallScore, b.SubScores, b.Title, b.Body)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -125,7 +123,7 @@ func (h *Handler) Create(c *gin.Context) {
 // ListMine: GET /me/reviews
 func (h *Handler) ListMine(c *gin.Context) {
 	limit, offset := pageParams(c)
-	out, err := h.svc.ListMine(c.Request.Context(), uid(c), limit, offset)
+	out, err := h.svc.ListMine(c.Request.Context(), ginutil.UserID(c), limit, offset)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -143,12 +141,10 @@ func (h *Handler) GetResponse(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": rsp})
 }
 
-// --- extranet handlers ---
-
 // ListForHotelier: GET /properties/:propertyId/reviews (extranet)
 func (h *Handler) ListForHotelier(c *gin.Context) {
 	limit, offset := pageParams(c)
-	out, err := h.svc.ListForHotelier(c.Request.Context(), uid(c), c.Param("propertyId"), limit, offset)
+	out, err := h.svc.ListForHotelier(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), limit, offset)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -165,7 +161,7 @@ func (h *Handler) Respond(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	id, err := h.svc.Respond(c.Request.Context(), uid(c), c.Param("reviewId"), b.Body)
+	id, err := h.svc.Respond(c.Request.Context(), ginutil.UserID(c), c.Param("reviewId"), b.Body)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -179,14 +175,12 @@ func (h *Handler) Flag(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&b)
-	if err := h.svc.FlagAsHotelier(c.Request.Context(), uid(c), c.Param("reviewId"), b.Reason); err != nil {
+	if err := h.svc.FlagAsHotelier(c.Request.Context(), ginutil.UserID(c), c.Param("reviewId"), b.Reason); err != nil {
 		mapErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
 }
-
-// --- admin handlers ---
 
 // ListForAdminProperty: GET /reviews?property_id=... (admin)
 func (h *Handler) ListForAdminProperty(c *gin.Context) {

@@ -15,7 +15,6 @@ export async function getAnalyticsSummary(): Promise<Analytics | null> {
     return payload.analytics as Analytics;
   } catch {
     // Network-level failure (backend down/unreachable, CORS, DNS) or a non-JSON
-    // body. Degrade to "no data" (the function's documented null result) instead
     // of letting the rejected fetch bubble up as an unhandled runtime error that
     // white-screens the whole admin page. Callers already handle null.
     return null;

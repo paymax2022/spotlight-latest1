@@ -5,12 +5,13 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // handler_account.go — Wave 2 (account / provider / admin) Gin handlers.
-//
 // One handler per service_account.go method. Reuses the shared helpers from
-// handler.go (h.userID, h.fail, h.idemKey) and mirrors the MVP style: reads
+// handler.go (h.userID, h.fail) and mirrors the MVP style: reads
 // return 200 with the projection; mutations parse the typed request (or a raw
 // JSON patch via c.GetRawData), require an Idempotency-Key where the service
 // does, and return 200/201. Everything is scoped to the authenticated doctor.
@@ -26,8 +27,6 @@ func (h *Handler) rawBody(c *gin.Context) (json.RawMessage, bool) {
 	}
 	return json.RawMessage(b), true
 }
-
-// ── Onboarding ───────────────────────────────────────────────────────────────
 
 func (h *Handler) ListConsents(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -113,7 +112,7 @@ func (h *Handler) RequestMerchantUpgrade(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.RequestMerchantUpgrade(c.Request.Context(), uid, h.idemKey(c), detail)
+	res, err := h.svc.RequestMerchantUpgrade(c.Request.Context(), uid, ginutil.IdempotencyKey(c), detail)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -131,15 +130,13 @@ func (h *Handler) SetProviderType(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.SetProviderType(c.Request.Context(), uid, h.idemKey(c), req)
+	res, err := h.svc.SetProviderType(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
 }
-
-// ── Profile builder ──────────────────────────────────────────────────────────
 
 func (h *Handler) GetProfileDraft(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -163,7 +160,7 @@ func (h *Handler) SaveProfileDraft(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SaveProfileDraft(c.Request.Context(), uid, h.idemKey(c), patch)
+	res, err := h.svc.SaveProfileDraft(c.Request.Context(), uid, ginutil.IdempotencyKey(c), patch)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -189,7 +186,7 @@ func (h *Handler) PublishProfile(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.PublishProfile(c.Request.Context(), uid, h.idemKey(c))
+	res, err := h.svc.PublishProfile(c.Request.Context(), uid, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -220,15 +217,13 @@ func (h *Handler) RenewLicence(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.RenewLicence(c.Request.Context(), uid, h.idemKey(c), req)
+	res, err := h.svc.RenewLicence(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, res)
 }
-
-// ── Notifications ────────────────────────────────────────────────────────────
 
 func (h *Handler) ListNotificationGroups(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -266,7 +261,7 @@ func (h *Handler) UpdateNotificationPreference(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.UpdateNotificationPreference(c.Request.Context(), uid, h.idemKey(c), req)
+	res, err := h.svc.UpdateNotificationPreference(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -286,8 +281,6 @@ func (h *Handler) MarkAllNotificationsRead(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"updated": n})
 }
-
-// ── Support ──────────────────────────────────────────────────────────────────
 
 func (h *Handler) ListSupportTickets(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -312,7 +305,7 @@ func (h *Handler) CreateSupportTicket(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.CreateSupportTicket(c.Request.Context(), uid, h.idemKey(c), req)
+	res, err := h.svc.CreateSupportTicket(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -356,7 +349,7 @@ func (h *Handler) CreateSupportDispute(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.CreateSupportDispute(c.Request.Context(), uid, h.idemKey(c), req)
+	res, err := h.svc.CreateSupportDispute(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -374,7 +367,7 @@ func (h *Handler) AddDisputeEvidence(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.AddDisputeEvidence(c.Request.Context(), uid, c.Param("id"), h.idemKey(c), req)
+	res, err := h.svc.AddDisputeEvidence(c.Request.Context(), uid, c.Param("id"), ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -405,15 +398,13 @@ func (h *Handler) SendSupportMessage(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.SendSupportMessage(c.Request.Context(), uid, c.Param("threadId"), h.idemKey(c), req)
+	res, err := h.svc.SendSupportMessage(c.Request.Context(), uid, c.Param("threadId"), ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, res)
 }
-
-// ── Compliance ───────────────────────────────────────────────────────────────
 
 func (h *Handler) ListAuditTrail(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -450,7 +441,7 @@ func (h *Handler) CompleteTraining(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.CompleteTraining(c.Request.Context(), uid, c.Param("moduleId"), h.idemKey(c), detail)
+	res, err := h.svc.CompleteTraining(c.Request.Context(), uid, c.Param("moduleId"), ginutil.IdempotencyKey(c), detail)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -481,7 +472,7 @@ func (h *Handler) ReportSafetyIssue(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.ReportSafetyIssue(c.Request.Context(), uid, h.idemKey(c), req)
+	res, err := h.svc.ReportSafetyIssue(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -511,7 +502,7 @@ func (h *Handler) UpdatePrivacySettings(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.UpdatePrivacySettings(c.Request.Context(), uid, h.idemKey(c), patch)
+	res, err := h.svc.UpdatePrivacySettings(c.Request.Context(), uid, ginutil.IdempotencyKey(c), patch)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -539,7 +530,7 @@ func (h *Handler) RevokeDevice(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.RevokeDevice(c.Request.Context(), uid, c.Param("deviceId"), h.idemKey(c)); err != nil {
+	if err := h.svc.RevokeDevice(c.Request.Context(), uid, c.Param("deviceId"), ginutil.IdempotencyKey(c)); err != nil {
 		h.fail(c, err)
 		return
 	}
@@ -572,7 +563,7 @@ func (h *Handler) SetSecurityFlags(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.SetSecurityFlags(c.Request.Context(), uid, h.idemKey(c), req)
+	res, err := h.svc.SetSecurityFlags(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -602,15 +593,13 @@ func (h *Handler) UpdateAppPreferences(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.UpdateAppPreferences(c.Request.Context(), uid, h.idemKey(c), prefs)
+	res, err := h.svc.UpdateAppPreferences(c.Request.Context(), uid, ginutil.IdempotencyKey(c), prefs)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
 }
-
-// ── Reputation / reviews ─────────────────────────────────────────────────────
 
 func (h *Handler) GetQualityScore(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -691,7 +680,7 @@ func (h *Handler) DisputeReview(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.DisputeReview(c.Request.Context(), uid, c.Param("reviewId"), h.idemKey(c), req)
+	res, err := h.svc.DisputeReview(c.Request.Context(), uid, c.Param("reviewId"), ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -711,7 +700,7 @@ func (h *Handler) ReportReview(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.ReportReview(c.Request.Context(), uid, c.Param("reviewId"), h.idemKey(c), req)
+	res, err := h.svc.ReportReview(c.Request.Context(), uid, c.Param("reviewId"), ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return

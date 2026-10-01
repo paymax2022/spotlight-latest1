@@ -1,6 +1,5 @@
 // The wire → domain boundary for the live MyCover integration.
 //   node --experimental-strip-types --test src/features/insurance/__tests__/live-normalize.test.ts
-//
 // The rows below are the shapes the provider and the backend really emit,
 // including MyCover's own `product_table_data` layout (constraints under
 // `validation`, options under `data_source`) — see
@@ -24,7 +23,6 @@ import {
   unwrapList,
 } from '../live/normalize.ts';
 
-// ── Envelope ────────────────────────────────────────────────────────────────
 test('the list unwrapper accepts every envelope the backend uses', () => {
   assert.equal(unwrapList([1, 2]).length, 2);
   assert.equal(unwrapList({ data: [1, 2, 3] }).length, 3);
@@ -35,7 +33,6 @@ test('the list unwrapper accepts every envelope the backend uses', () => {
   assert.deepEqual(unwrapList(null), []);
 });
 
-// ── Money ───────────────────────────────────────────────────────────────────
 test('money coercion truncates and never yields NaN', () => {
   assert.equal(intKobo(600000), 600000);
   assert.equal(intKobo('600000'), 600000);
@@ -44,7 +41,6 @@ test('money coercion truncates and never yields NaN', () => {
   assert.equal(intKobo('not a number'), 0);
 });
 
-// ── Product ─────────────────────────────────────────────────────────────────
 const FLAT_ROW = {
   code: 'goxi-artisan-basic',
   name: 'Artisan Basic',
@@ -116,7 +112,6 @@ test('product lines fold onto the seven real categories', () => {
   assert.equal(toProductLine('something new'), 'package');
 });
 
-// ── Fields ──────────────────────────────────────────────────────────────────
 test('a provider field table maps with its constraints intact', () => {
   // Exactly the shape GET /v2/public-product-details/{id} returns.
   const gender = mapField({
@@ -222,7 +217,6 @@ test('a field name becomes a readable label, with acronyms preserved', () => {
 });
 
 test('the hospital-list object never becomes a screenful of [object Object]', () => {
-  // Utilities return [{label,value}] — except the hospital list, which returns
   // an object. Routing that through the option loader must yield nothing.
   assert.deepEqual(mapFieldOptions({ data: { name: 'Bastion', hospitals: [{}] } }), []);
   assert.deepEqual(
@@ -231,7 +225,6 @@ test('the hospital-list object never becomes a screenful of [object Object]', ()
   );
 });
 
-// ── Policy & claim ──────────────────────────────────────────────────────────
 test('a policy carries the insurer’s hosted claim link', () => {
   const p = mapPolicy({
     id: 'pol-1',
@@ -256,7 +249,6 @@ test('an unapproved claim reports null, not zero', () => {
   assert.equal(mapClaim({ id: 'c2', approved_amount_kobo: 0 }).approvedAmountKobo, 0);
 });
 
-// ── Errors ──────────────────────────────────────────────────────────────────
 test('a provider validation array lands on the fields that caused it', () => {
   // MyCover returns `responseText` as an ARRAY of strings on validation failure.
   const err = toInsuranceError({

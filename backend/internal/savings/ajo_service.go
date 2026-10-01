@@ -17,7 +17,6 @@ import (
 const AjoCycleJobType = "savings.ajo_cycle"
 
 // AjoService implements the Ajo/Esusu rotation engine.
-//
 // NL-7 (peer rotation): every cycle, each ACTIVE member is auto-debited the
 // contribution and the pooled total is paid to the ONE scheduled recipient for
 // that cycle; the rotation order then advances. Paymax is ONLY the ledger +

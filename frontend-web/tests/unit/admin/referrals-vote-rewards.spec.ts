@@ -126,7 +126,6 @@ describe('REF-007: admin/referrals/vote-rewards', () => {
   });
 
   it('computes stats from an unbounded aggregate, not the capped page', async () => {
-    // Page is capped to 1 row; the aggregate (no range/limit) reports 3 rows
     // across 2 distinct referrers. If the route regressed to summing only
     // the page, totalRewardsKobo would be 50000 and distinctReferrersRewarded 1.
     const pageRows = [

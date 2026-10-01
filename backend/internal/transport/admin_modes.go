@@ -8,10 +8,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
-// ─── Admin: multi-modal lists + status patch + per-mode KPIs ─────────────────
-//
 // Generic, audited list/patch helpers for parcel/towing/mover/car-hire rows.
 // Couriers/operators/providers are surfaced via the existing /admin/transport/drivers
 // queue (they are drivers). Bus admin CRUD lives in bus.go / bus_handler.go.
@@ -480,8 +480,6 @@ func (a *AdminService) ModeKPIs(ctx context.Context) map[string]any {
 	}
 }
 
-// ─── Admin mode handlers ─────────────────────────────────────────────────────
-
 func (h *AdminHandler) AdminParcelsList(c *gin.Context) {
 	ps, err := h.svc.ListParcels(c.Request.Context(), c.Query("status"))
 	if err != nil {
@@ -492,7 +490,7 @@ func (h *AdminHandler) AdminParcelsList(c *gin.Context) {
 }
 
 func (h *AdminHandler) AdminParcelStatus(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -515,7 +513,7 @@ func (h *AdminHandler) AdminTowingList(c *gin.Context) {
 }
 
 func (h *AdminHandler) AdminTowingStatus(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -547,7 +545,7 @@ func (h *AdminHandler) AdminMoverDetail(c *gin.Context) {
 }
 
 func (h *AdminHandler) AdminMoverStatus(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -570,7 +568,7 @@ func (h *AdminHandler) AdminCarHireList(c *gin.Context) {
 }
 
 func (h *AdminHandler) AdminCarHireStatus(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

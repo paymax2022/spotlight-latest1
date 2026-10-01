@@ -7,7 +7,6 @@ package platform
 //   - appends an immutable public.academy_commerce_audit row (the SAME append-only trail
 //     SU-11 reads — see feature_flags.go SetFlag), and
 //   - posts NO ledger entry and moves NO money.
-//
 // Competition transition REUSES the existing competition state machine
 // (feescompetition.Service.Transition → feesstatemachine.CompetitionTransition) — it is
 // NOT reimplemented here.
@@ -52,8 +51,6 @@ func actorOf(c *gin.Context) string {
 	return c.GetString("user_id")
 }
 
-// ── SU-04 POST /risk/:id/action — record a decision on a risk case ────────────────
-//
 // The risk surface (GET /risk) is a heuristic PROJECTION over real reversed payments —
 // there is NO risk-case status table in the schema (the row id IS the underlying
 // academy_invoice_payments id). An action therefore cannot flip a stored status column;
@@ -88,8 +85,6 @@ func (h *Handler) ActionRiskCase(c *gin.Context) {
 	}})
 }
 
-// ── SU-06 POST /competitions/:id/transition — advance a competition state ─────────
-//
 // REUSES feescompetition.Service.Transition (the shared competition state machine); no
 // reimplementation. The leaderboard collaborator is nil because the transition path never
 // touches it (only RecordScore does). Records an audit row. Money-free by design (SF-4).

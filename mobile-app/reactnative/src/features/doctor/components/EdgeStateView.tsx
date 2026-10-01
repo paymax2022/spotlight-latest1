@@ -9,9 +9,7 @@ import type { EdgeStateKind, EdgeStateDescriptor } from '@/types/doctor.batch7';
 // (via the pure getEdgeState helper / EDGE_STATES map) and renders it through
 // the shared StateView. Reuse-first — every empty/error edge state in Section AD
 // renders here so screens never author bespoke empty/error views. The descriptor
-// carries an Ionicons-style icon name; StateView's empty variant expects a
 // LucideIcon, so this maps the descriptor icon onto the closest Lucide glyph.
-//
 // NEVER a `ref` prop (React-reserved) — none here.
 
 // Ionicons-style descriptor icon name -> Lucide icon component.

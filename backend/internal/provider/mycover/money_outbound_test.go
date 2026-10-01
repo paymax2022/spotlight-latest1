@@ -7,18 +7,13 @@ import (
 	"testing"
 )
 
-// ════════════════════════════════════════════════════════════════════════════
 // OUTBOUND MONEY BOUNDARY — kobo (Paymax) → naira (provider)
-// ════════════════════════════════════════════════════════════════════════════
-//
 // The inbound crossing (naira → kobo) was always here. The OUTBOUND crossing was
 // not: both sides of the seam assumed the other did it, so every declared value
 // reached MyCover 100x too large. Proven live on the 5%-rated gadget product
 // ffb0711c-1e4a-453b-a26c-2726e0a1a7bb:
-//
 //	body.value = 200000    (naira, correct)   → premium NGN 10,000
 //	body.value = 20000000  (kobo, the bug)    → premium NGN 1,000,000
-//
 // A member insuring a ₦200,000 phone was quoted ₦1,000,000.
 
 func TestKoboToNaira_Table(t *testing.T) {

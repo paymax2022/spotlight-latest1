@@ -1,4 +1,3 @@
-// ── Insurance (live) — component barrel ─────────────────────────────────────
 // Everything the reworked Protection screens draw with. The legacy mock-era
 // components stay in `../index.ts` and are only used by the fixtures-backed
 // agent/partner/embedded surfaces that have no live endpoint yet.

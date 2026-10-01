@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Modal
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Zap, HandCoins, Wallet, CreditCard, Banknote, Check, MapPin, LocateFixed, Pencil, X } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import MobilityMap from '@/features/mobility/components/MobilityMap';
@@ -48,7 +48,6 @@ export default function EstimateScreen() {
   }));
   const [editingDest, setEditingDest] = useState(false);
 
-  // Pickup can be set explicitly on the mobility home ("Current location"); when
   // passed it takes precedence over GPS auto-detect below.
   const pickupFromParams: Place | null = useMemo(
     () =>
@@ -85,7 +84,6 @@ export default function EstimateScreen() {
     setDefaultPaymentApplied(true);
   }, [defaultPaymentApplied, rideSettings.data]);
 
-  // Pickup: explicit "Current location" from the planner if present, else real
   // device location (GPS + reverse geocode) with graceful fallback.
   const [pickup, setPickup] = useState<Place>(pickupFromParams ?? FALLBACK_PICKUP);
   const [pickupResolved, setPickupResolved] = useState(Boolean(pickupFromParams));
@@ -111,7 +109,6 @@ export default function EstimateScreen() {
   const pay = usePurchasePayment<Trip>();
   // Card runs through a genuinely separate, server-initiated Paystack rail
   // (transport/paystackcheckout) — NOT usePurchasePayment's built-in
-  // wallet-top-up-then-spend trick. The server quotes and charges directly;
   // no wallet debit ever occurs, so this works even without KYC. Only
   // instant pricing is supported (see initiateRidePaystack's doc comment).
   const paystackCheckout = useGatewayCheckout();
@@ -237,7 +234,6 @@ export default function EstimateScreen() {
     setPaystackError('');
     // Wallet / card → shared PaymentSheet (PIN + KYC/tier gating live inside it),
     // mirroring the carhire & bus flows. The ride request runs as the charge.
-    //
     // Card on an INSTANT fare routes through onCard (the genuinely separate,
     // no-KYC Paystack rail) instead of the sheet's built-in wallet-top-up
     // card handling — see paystackCheckout above. Offer-mode fares can still

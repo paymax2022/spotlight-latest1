@@ -4,14 +4,11 @@ package utilitybills
 // bind, delegate, map errors — no business logic, no validation that the service
 // does not also enforce (a rule that lives only in a handler can be bypassed by
 // a job or a test that reaches the service another way).
-//
-// ── The one thing here that is not boilerplate: PATCH binding ───────────────
 // A partial update has THREE states per field, not two: absent (leave it),
 // present-with-a-value (set it), and present-and-null (clear it). Go's usual
 // bind-into-a-pointer-struct collapses the last two — both produce a nil
 // pointer — so a PATCH could never distinguish "don't touch max_amount_kobo"
 // from "this product no longer has a maximum".
-//
 // So PATCH bodies are decoded into map[string]json.RawMessage first (`patchBody`
 // below), which preserves key PRESENCE, and each field is pulled out
 // individually into the repository's Patch structs and their Clear* flags.
@@ -25,22 +22,21 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	ptrx "spotlight/backend/go-common/ptr"
 )
 
 // adminActor resolves the acting admin's user id for the audit trail.
-//
 // Reads the SAME context key as requireUser: RequireAuthContext populates
 // "user_id" identically for the member and admin route groups (utilitybills_routes.go
 // mounts authMW then requireUserID on both), so there is no separate admin
 // identity to look up.
-//
 // Unlike requireUser it does NOT write a 401 on a miss — the admin group's
 // middleware chain has already rejected an unauthenticated caller by the time a
 // handler runs, so an empty value here means a middleware wiring bug, which the
 // service logs as an unattributed action rather than failing the operation.
-func adminActor(c *gin.Context) string { return c.GetString("user_id") }
-
-// ── PATCH body binding ───────────────────────────────────────────────────────
+func adminActor(c *gin.Context) string { return ginutil.UserID(c) }
 
 // patchBody is a decoded JSON object that remembers which keys were PRESENT.
 type patchBody map[string]json.RawMessage
@@ -76,10 +72,8 @@ func (p patchBody) str(key string) (*string, error) {
 }
 
 // i64 extracts an integer field, or nil when absent/null.
-//
 // Two money-path rules are enforced here rather than left to encoding/json's
 // defaults, because both defaults are wrong for kobo:
-//
 //   - Decoding goes through json.Number, never float64. A kobo value above 2^53
 //     round-tripped through a float is a silently wrong amount of money.
 //   - A QUOTED number is REJECTED. Unmarshalling into a json.Number accepts
@@ -156,10 +150,8 @@ func (p patchBody) rawJSON(key string) json.RawMessage {
 // The service re-applies the same bounds; this is only so the echoed `meta`
 // reflects what was actually used.
 func adminPage(c *gin.Context) (int, int) {
-	return adminListBounds(intQuery(c, "limit", 50), intQuery(c, "offset", 0))
+	return adminListBounds(ptrx.Deref(ginutil.IntParam(c, "limit"), 50), ptrx.Deref(ginutil.IntParam(c, "offset"), 0))
 }
-
-// ── Providers ────────────────────────────────────────────────────────────────
 
 // AdminListProviders handles GET /api/finance/admin/utilitybills/providers
 func (h *Handler) AdminListProviders(c *gin.Context) {
@@ -226,14 +218,12 @@ func (h *Handler) AdminUpdateProvider(c *gin.Context) {
 
 // AdminRotateProviderCredentials handles
 // PUT /api/finance/admin/utilitybills/providers/:id/credentials
-//
 // Accepts BOTH body shapes: the TS contract's {"credentials": {...}} wrapper
 // (what app/api/admin/utility/providers/[id]/credentials/route.ts sends) and a
 // bare {"api_key": "..."} object. The wrapper wins when present; a bare body is
 // treated as the credential map itself. Accepting both means neither an existing
 // admin client nor a hand-rolled curl can silently rotate nothing — the failure
 // mode here is an admin who believes a secret was replaced when it was not.
-//
 // The request body is NEVER logged, here or anywhere below it — not on the
 // success path, not in an error, not in the audit row.
 func (h *Handler) AdminRotateProviderCredentials(c *gin.Context) {
@@ -275,8 +265,6 @@ func (h *Handler) AdminHealthCheckProvider(c *gin.Context) {
 		"provider": row,
 	})
 }
-
-// ── Billers ──────────────────────────────────────────────────────────────────
 
 // AdminListBillers handles GET /api/finance/admin/utilitybills/billers
 func (h *Handler) AdminListBillers(c *gin.Context) {
@@ -334,8 +322,6 @@ func (h *Handler) AdminUpdateBiller(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"biller": row})
 }
-
-// ── Products ─────────────────────────────────────────────────────────────────
 
 // AdminListProducts handles GET /api/finance/admin/utilitybills/products
 func (h *Handler) AdminListProducts(c *gin.Context) {
@@ -401,7 +387,6 @@ func (h *Handler) AdminUpdateProduct(c *gin.Context) {
 }
 
 // importBody is the product-import request.
-//
 // Accepts BOTH shapes, for the same reason credentialsBody does: the TS route
 // sends {"products": [...]}, while a bare JSON array is the obvious hand-rolled
 // form. An import that silently imported nothing would be the worst failure mode
@@ -434,8 +419,6 @@ func (h *Handler) AdminImportProducts(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, gin.H{"products": rows, "count": len(rows)})
 }
-
-// ── Provider/product mappings ────────────────────────────────────────────────
 
 // AdminListMappings handles GET /api/finance/admin/utilitybills/provider-products
 func (h *Handler) AdminListMappings(c *gin.Context) {
@@ -492,8 +475,6 @@ func (h *Handler) AdminUpdateMapping(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"provider_product": row})
 }
-
-// ── Routing rules ────────────────────────────────────────────────────────────
 
 // AdminListRoutingRules handles GET /api/finance/admin/utilitybills/routing-rules
 func (h *Handler) AdminListRoutingRules(c *gin.Context) {
@@ -556,8 +537,6 @@ func (h *Handler) AdminUpdateRoutingRule(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"routing_rule": row})
 }
 
-// ── Category settings ────────────────────────────────────────────────────────
-
 // AdminListCategorySettings handles GET /api/finance/admin/utilitybills/categories
 func (h *Handler) AdminListCategorySettings(c *gin.Context) {
 	rows, err := h.svc.AdminListCategorySettings(c.Request.Context())
@@ -585,7 +564,6 @@ func (h *Handler) AdminCreateCategorySetting(c *gin.Context) {
 
 // AdminUpdateCategorySetting handles
 // PATCH /api/finance/admin/utilitybills/categories/:category
-//
 // Keyed on the category TEXT column, not a uuid — utility_category_settings's
 // primary key IS the category.
 func (h *Handler) AdminUpdateCategorySetting(c *gin.Context) {
@@ -617,8 +595,6 @@ func (h *Handler) AdminUpdateCategorySetting(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"category": row})
 }
-
-// ── Transactions / disputes / sweep ──────────────────────────────────────────
 
 // AdminListTransactions handles
 // GET /api/finance/admin/utilitybills/transactions?status=&limit=&offset=
@@ -662,12 +638,11 @@ func (h *Handler) AdminResolveDispute(c *gin.Context) {
 
 // AdminRequeryPending handles
 // POST /api/finance/admin/utilitybills/workers/requery-pending?limit=
-//
 // A thin wrapper over the Phase 3 sweep — no sweep logic is reimplemented here.
-// The default of 25 is defaultSweepLimit from jobs.go, and the cap of 100 is
+// The default of 25 is defaultSweepLimit from the scheduled sweep, and the cap of 100 is
 // ListPending's own.
 func (h *Handler) AdminRequeryPending(c *gin.Context) {
-	limit := intQuery(c, "limit", defaultSweepLimit)
+	limit := ptrx.Deref(ginutil.IntParam(c, "limit"), defaultSweepLimit)
 	if limit <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be positive"})
 		return
@@ -684,8 +659,6 @@ func (h *Handler) AdminRequeryPending(c *gin.Context) {
 		"results":   res.Results,
 	})
 }
-
-// ── Reports ──────────────────────────────────────────────────────────────────
 
 // AdminReconciliationReport handles
 // GET /api/finance/admin/utilitybills/reports/reconciliation?format=csv
@@ -704,7 +677,6 @@ func (h *Handler) AdminReconciliationReport(c *gin.Context) {
 
 // AdminProfitabilityReport handles
 // GET /api/finance/admin/utilitybills/reports/profitability?format=csv
-//
 // The report is a SINGLE summary object, not a list — see ProfitabilityReport.
 // The CSV form wraps it in a one-element array, exactly as the TS route does
 // (`toCsv([report])`).
@@ -736,18 +708,14 @@ func (h *Handler) AdminProviderPerformanceReport(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"report": rows})
 }
 
-// ── CSV export ───────────────────────────────────────────────────────────────
-
 func wantsCSV(c *gin.Context) bool { return c.Query("format") == "csv" }
 
 // writeCSV renders any slice of JSON-tagged structs as CSV.
-//
 // The column set and ordering come from the values' own JSON representation, so
 // the CSV columns always match the JSON field names byte-for-byte — which is
 // what makes the two response formats the same report rather than two reports
 // that drift apart. This mirrors the TS toCsv(), which also derived its columns
 // from the object keys.
-//
 // Round-tripping through JSON (rather than reflecting over struct tags) also
 // gets the value formatting right for free: a *int64 nil becomes an empty cell,
 // a time.Time becomes its RFC3339 string, and a large kobo value never touches
@@ -809,7 +777,6 @@ func writeCSV(c *gin.Context, filename string, payload any) {
 // csvColumns collects the union of keys across every record, in first-seen
 // order, porting toCsv()'s Set-based column derivation (JS Sets preserve
 // insertion order).
-//
 // It reads the keys off the raw JSON with a TOKEN scan rather than from a
 // decoded map, because a Go map has no ordering at all — ranging one would emit
 // the CSV columns in a different order on every single request, which is
@@ -908,8 +875,6 @@ func csvCell(value any) string {
 		return string(b)
 	}
 }
-
-// ── small helpers ────────────────────────────────────────────────────────────
 
 // pageMeta echoes the pagination actually applied, matching the TS routes'
 // `meta: { ...meta, count }`.

@@ -2,10 +2,8 @@ package utilitybills
 
 // service.go is the Utility Bills money path: the pay → provider → settle saga,
 // plus validate / quote / requery / reverse / dispute / beneficiaries.
-//
 // It is a port of frontend-web/src/server/utility/service.ts, restructured onto
 // this repo's Go money-path conventions:
-//
 //   - the wallet debit goes through wallet.Service.Debit (NOT ledger.Service.Debit)
 //     so the tier/daily-limit check keeps firing exactly as it does everywhere else;
 //   - the debit credits the PASS-THROUGH clearing account (ledger.AccountProviderClearing),
@@ -18,12 +16,9 @@ package utilitybills
 //     (timeout, transport error) does NOT — it lands in provider_pending for
 //     reconciliation, because reversing a purchase that actually went through
 //     would give the member both the electricity and the money back.
-//
 // The saga's shape is copied from backend/internal/insurance/policy/service.go's
 // BindFromQuote, which solves the identical "debit → call an ambiguous third
 // party → maybe reverse" problem.
-//
-// ── ONE DELIBERATE BEHAVIOUR CHANGE, NOT A PURE PORT ────────────────────────
 // Commission is recorded via commission.Service.RecordExact with a REAL (non-nil)
 // ledger, which posts a balanced revenue-recognition leg
 // (DR provider_clearing → CR commission) per settled transaction. The Next.js
@@ -31,8 +26,6 @@ package utilitybills
 // `ledger_ref: null` and an explicit `TODO(ledger)`. This closes that gap with an
 // already-tested mechanism, but it does change what lands in the ledger going
 // forward. Called out in the PR description, not buried under "port".
-//
-// ── ONE DELIBERATE OMISSION ─────────────────────────────────────────────────
 // KYC tier gating. wallet.Service.Debit's tier/daily-limit check is the ONLY
 // limit this module enforces; no additional "must be Tier 1" gate is added, per a
 // confirmed product decision. (Note Tier 0 still cannot debit at all — that is
@@ -50,13 +43,12 @@ import (
 
 	"github.com/google/uuid"
 
+	ptrx "spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/provider"
 )
-
-// ── Errors (handler.go maps these to HTTP status codes) ──────────────────────
 
 var (
 	// ErrIdempotencyKeyRequired — no Idempotency-Key header on a money mutation.
@@ -66,8 +58,7 @@ var (
 	// ErrInvalidCategory — category is not one of the six.
 	ErrInvalidCategory = errors.New("utilitybills: invalid utility category")
 	// ErrFieldRequired — a required request field was blank.
-	ErrFieldRequired = errors.New("utilitybills: required field missing")
-	// ErrCategoryMismatch — biller/product do not belong to the requested category.
+	ErrFieldRequired    = errors.New("utilitybills: required field missing")
 	ErrCategoryMismatch = errors.New("utilitybills: biller and product do not match the requested category")
 	// ErrCategoryUnavailable — the category is switched off (503).
 	ErrCategoryUnavailable = errors.New("utilitybills: this utility category is currently unavailable")
@@ -85,14 +76,11 @@ var (
 	ErrProviderUnavailable = errors.New("utilitybills: no configured adapter for this provider")
 )
 
-// ── Service ──────────────────────────────────────────────────────────────────
-
 // Auditor is the admin-action audit sink. It mirrors services.AuditService's
 // LogAction method EXACTLY, but is declared locally and satisfied structurally
 // rather than imported: internal/services pulls in enough of the app that
 // depending on it from a domain package creates an import cycle. Same
 // convention, and the same reason, as p2pmarket.Auditor.
-//
 // Deliberately fire-and-forget (no error return): an audit sink that could fail
 // a money mutation would be a worse outcome than a missing audit row, and the
 // real implementation already swallows its own transport errors.
@@ -138,7 +126,7 @@ const (
 	actionTransactionReverse  = "utilitybills.transaction.reverse"
 	actionDisputeResolve      = "utilitybills.dispute.resolve"
 	// actionSweepTrigger is recorded ONLY for the manual admin-triggered sweep.
-	// The scheduled job (jobs.go's StartPendingSweep) stays audit-silent — an
+	// The scheduled job () stays audit-silent — an
 	// audit log is a record of who did something, and "the clock" is not a who.
 	actionSweepTrigger = "utilitybills.sweep.trigger"
 )
@@ -173,7 +161,6 @@ type Deps struct {
 	// derived ONCE at wiring time from UTILITY_PROVIDER_CREDENTIALS_KEY (see
 	// credentials.go's DeriveCredentialsKey, which deliberately takes the raw
 	// material as an argument rather than reading the environment itself).
-	//
 	// Empty is allowed at construction — the module's money path does not need
 	// it — but any attempt to ROTATE credentials without it fails closed with
 	// ErrCredentialsKeyMissing rather than storing a secret in the clear.
@@ -223,8 +210,6 @@ func NewService(d Deps) *Service {
 	}
 }
 
-// ── Pure helpers ─────────────────────────────────────────────────────────────
-
 // ReceiptNumber ports service.ts's receiptNumber(): UTL-YYYYMMDD-<first 8 of the
 // transaction uuid, uppercased>. PURE apart from the clock, which is passed in so
 // it is unit-testable.
@@ -257,13 +242,11 @@ func requireField(value, name string) (string, error) {
 // ProviderAnswered reports whether a provider error is a DEFINITE negative (the
 // provider refused, or the adapter refused pre-flight and never sent anything) as
 // opposed to a transport failure where the outcome is genuinely unknown.
-//
 // Deliberately conservative, mirroring insurance/policy/service.go's
 // providerAnswered: ONLY errors positively identified as refusals count. Anything
 // unrecognised — a timeout, a reset connection, a context deadline — is treated
 // as UNKNOWN, which locks the idempotency key for reconciliation rather than
 // authorising a possible double purchase or an unsafe auto-reverse.
-//
 // PURE. Unit-tested with zero I/O.
 func ProviderAnswered(err error) bool {
 	if err == nil {
@@ -271,8 +254,6 @@ func ProviderAnswered(err error) bool {
 	}
 	return errors.Is(err, provider.ErrProviderRefused)
 }
-
-// ── Catalogue reads ──────────────────────────────────────────────────────────
 
 // CategoryInfo is one row of the member-facing category list.
 type CategoryInfo struct {
@@ -338,8 +319,6 @@ func (s *Service) ListBillers(ctx context.Context, category string) ([]BillerRow
 func (s *Service) ListProducts(ctx context.Context, category, billerID string) ([]ProductRow, error) {
 	return s.repo.ListProducts(ctx, category, billerID)
 }
-
-// ── Validate ─────────────────────────────────────────────────────────────────
 
 // ValidateInput is the customer-verification request.
 type ValidateInput struct {
@@ -416,7 +395,6 @@ func (s *Service) ValidateCustomer(ctx context.Context, in ValidateInput) (*Vali
 		// Sandbox safety net (validateUtilityCustomer L476-498): with no route
 		// seeded, the documented test meters must still validate so this module is
 		// testable in an environment nobody has configured a provider in.
-		//
 		// providerBillerCode is derived from the biller code the same way the TS
 		// source does ('vtpass-eko-electric' → 'eko-electric'); the sandbox stub keys
 		// off the meter number, so this only has to be non-empty.
@@ -483,8 +461,6 @@ func validationParams(billerCode, providerBillerCode, customerReference string, 
 	params["customerReference"] = customerReference
 	return params
 }
-
-// ── Quote ────────────────────────────────────────────────────────────────────
 
 // QuoteInput is the pre-purchase pricing request.
 type QuoteInput struct {
@@ -603,8 +579,6 @@ func (s *Service) QuotePayment(ctx context.Context, in QuoteInput) (*QuoteResult
 	}, nil
 }
 
-// ── Pay (the saga) ───────────────────────────────────────────────────────────
-
 // PayInput is the purchase request.
 type PayInput struct {
 	Category          string
@@ -632,7 +606,6 @@ const (
 )
 
 // PayUtility runs the full pay → provider → settle saga.
-//
 //  1. Idempotency pre-check on utility_transactions.idempotency_key.
 //  2. Resolve biller/product/routes, price, enforce category limits, verify the
 //     customer at the biller (all BEFORE any row is written or money moves).
@@ -783,7 +756,7 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 			s.event(ctx, transactionID, "wallet_debit_failed", debitErr.Error(), nil)
 			return nil, fmt.Errorf("utilitybills: wallet debit failed: %w", debitErr)
 		}
-		if t, uerr := s.repo.UpdateTransaction(ctx, transactionID, TransactionPatch{Status: strPtr(string(StatusWalletDebited))}); uerr == nil {
+		if t, uerr := s.repo.UpdateTransaction(ctx, transactionID, TransactionPatch{Status: ptrx.Of(string(StatusWalletDebited))}); uerr == nil {
 			transaction = t
 		}
 		s.event(ctx, transactionID, "wallet_debited", "Wallet debited for utility payment.", nil)
@@ -812,28 +785,28 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 	// (6) Settle.
 	nextStatus := NextStatusFromProvider(outcome.Outcome)
 	patch := TransactionPatch{
-		Status:           strPtr(string(nextStatus)),
-		ProviderID:       strPtr(fulfilled.Provider.ID),
+		Status:           ptrx.Of(string(nextStatus)),
+		ProviderID:       ptrx.Of(fulfilled.Provider.ID),
 		ProviderResponse: outcome.Raw,
 	}
 	if fulfilled.Mapping.ID != "" {
-		patch.ProviderMappingID = strPtr(fulfilled.Mapping.ID)
+		patch.ProviderMappingID = ptrx.Of(fulfilled.Mapping.ID)
 	}
 	if outcome.ProviderRef != "" {
-		patch.ProviderReference = strPtr(outcome.ProviderRef)
+		patch.ProviderReference = ptrx.Of(outcome.ProviderRef)
 	}
 	// The prepaid-electricity token IS the deliverable. Only ever written, never
 	// cleared — a later requery that returns no token must not erase one already
 	// vended to the customer.
 	if outcome.Token != "" {
-		patch.Token = strPtr(outcome.Token)
+		patch.Token = ptrx.Of(outcome.Token)
 	}
 	if outcome.Outcome == ProviderOutcomeFailed {
 		reason := outcome.Message
 		if reason == "" {
 			reason = "Provider failed transaction."
 		}
-		patch.FailureReason = strPtr(reason)
+		patch.FailureReason = ptrx.Of(reason)
 	}
 	if t, uerr := s.repo.UpdateTransaction(ctx, transactionID, patch); uerr == nil {
 		transaction = t
@@ -845,7 +818,6 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 	})
 
 	// Auto-reverse ONLY on a definite failure of a WALLET-sourced payment.
-	//
 	// The payment_source gate is a faithful port of today's behaviour INCLUDING a
 	// known gap: a Paystack-sourced failure is not auto-refunded here (the money is
 	// at Paystack, not in the ledger, so a ledger reversal would invent funds).
@@ -909,8 +881,6 @@ func (s *Service) enforceCategoryLimits(ctx context.Context, userID string, cate
 	return nil
 }
 
-// ── Provider failover ────────────────────────────────────────────────────────
-
 type purchaseContext struct {
 	TransactionID     string
 	IdempotencyKey    string
@@ -936,7 +906,6 @@ type purchaseOutcome struct {
 // purchase (SUCCESS or PENDING), and returns the outcome plus the route that
 // fulfilled it (the last one tried, when all failed — matching the TS source,
 // which leaves fulfilledRoute pointing at the final candidate).
-//
 // Failing over to the next provider is only safe when the previous one gave a
 // DEFINITE negative. On an ambiguous outcome the walk STOPS: trying provider #2
 // after provider #1 may-or-may-not have sold the customer electricity is exactly
@@ -961,7 +930,6 @@ func (s *Service) purchaseWithFailover(ctx context.Context, pc purchaseContext) 
 			continue
 		}
 
-		// ── OUTBOUND IDEMPOTENCY ────────────────────────────────────────────
 		// Claim BEFORE the call. The claim is an INSERT on a unique key, so a
 		// replay or a concurrent attempt cannot reach the provider at all. Fails
 		// CLOSED: no claim, no call.
@@ -1122,7 +1090,7 @@ func (s *Service) purchaseWithFailover(ctx context.Context, pc purchaseContext) 
 
 // billOutcome folds provider.Bill's uppercase status enum into the domain's
 // ProviderOutcome vocabulary. Anything unrecognised is FAILED, matching
-// statemachine.go's NextStatusFromProvider fall-through.
+// 's NextStatusFromProvider fall-through.
 func billOutcome(bill *provider.Bill) ProviderOutcome {
 	if bill == nil {
 		return ProviderOutcomeFailed
@@ -1159,7 +1127,6 @@ func purchaseParams(pc purchaseContext, route Route, attemptKey string) map[stri
 // autoReverse posts the compensating reversal for a DEFINITE provider failure on
 // a wallet-sourced payment: restore the member's wallet, drain the clearing hold,
 // and move the transaction to 'reversed'.
-//
 // The #1 invariant of this module: a member is never left debited for a bill that
 // definitively did not happen.
 func (s *Service) autoReverse(ctx context.Context, t *TransactionRow, idempotencyKey, clearingAccountID string) *TransactionRow {
@@ -1177,7 +1144,7 @@ func (s *Service) autoReverse(ctx context.Context, t *TransactionRow, idempotenc
 		s.event(ctx, t.ID, "wallet_reversal_failed", revErr.Error(), nil)
 		return nil
 	}
-	updated, uerr := s.repo.UpdateTransaction(ctx, t.ID, TransactionPatch{Status: strPtr(string(StatusReversed))})
+	updated, uerr := s.repo.UpdateTransaction(ctx, t.ID, TransactionPatch{Status: ptrx.Of(string(StatusReversed))})
 	if uerr != nil {
 		log.Printf("[utilitybills] WARN reversal posted but status not persisted for %s: %v", t.ID, uerr)
 		return nil
@@ -1188,7 +1155,6 @@ func (s *Service) autoReverse(ctx context.Context, t *TransactionRow, idempotenc
 
 // recordCommission appends the immutable commission_earnings row for a SETTLED
 // transaction, with the balanced revenue leg RecordExact posts before it.
-//
 // BEST-EFFORT, exactly like the TS source: any failure is logged and swallowed.
 // It must never fail or reverse a payment the customer already received.
 func (s *Service) recordCommission(ctx context.Context, t *TransactionRow, pricing Pricing, calc *commission.CalcResult, service, subtype, idempotencyKey string) {
@@ -1223,8 +1189,6 @@ func (s *Service) recordCommission(ctx context.Context, t *TransactionRow, prici
 	}
 }
 
-// ── Reads ────────────────────────────────────────────────────────────────────
-
 // ListUserTransactions returns a member's transactions, newest first.
 func (s *Service) ListUserTransactions(ctx context.Context, userID string, limit, offset int) ([]TransactionRow, error) {
 	return s.repo.ListUserTransactions(ctx, userID, limit, offset)
@@ -1246,16 +1210,12 @@ func (s *Service) ListAttempts(ctx context.Context, transactionID string) ([]Att
 	return s.repo.ListAttempts(ctx, transactionID)
 }
 
-// ── Requery / reverse / dispute ──────────────────────────────────────────────
-
 // RequeryTransaction asks the provider what actually happened and applies the
 // answer. Ports requeryUtilityTransaction.
-//
 // Callable by a MEMBER (the handler resolves ownership first) and by an ADMIN
 // (RBAC-gated route, no ownership filter) — it deliberately takes a transaction
 // id rather than a user id so there is exactly ONE implementation and never a
 // second writer deciding transitions on the same rows.
-//
 // A transaction in a non-requeryable state is returned unchanged rather than
 // erroring, matching the TS guard (`if (!canRequery) return transaction`).
 func (s *Service) RequeryTransaction(ctx context.Context, transactionID string) (*TransactionRow, error) {
@@ -1305,19 +1265,19 @@ func (s *Service) RequeryTransaction(ctx context.Context, transactionID string) 
 
 	outcome := billOutcome(bill)
 	status := NextStatusFromProvider(outcome)
-	patch := TransactionPatch{Status: strPtr(string(status)), ProviderResponse: bill.Raw}
+	patch := TransactionPatch{Status: ptrx.Of(string(status)), ProviderResponse: bill.Raw}
 	if bill.ProviderRef != "" {
-		patch.ProviderReference = strPtr(bill.ProviderRef)
+		patch.ProviderReference = ptrx.Of(bill.ProviderRef)
 	}
 	if bill.Token != "" {
-		patch.Token = strPtr(bill.Token)
+		patch.Token = ptrx.Of(bill.Token)
 	}
 	if outcome == ProviderOutcomeFailed {
 		reason := bill.Message
 		if reason == "" {
 			reason = "Provider reported the transaction as failed."
 		}
-		patch.FailureReason = strPtr(reason)
+		patch.FailureReason = ptrx.Of(reason)
 	} else {
 		patch.ClearFailureReason = true
 	}
@@ -1329,8 +1289,6 @@ func (s *Service) RequeryTransaction(ctx context.Context, transactionID string) 
 	s.event(ctx, t.ID, "status_requery", bill.Message, map[string]any{"status": string(status)})
 	return updated, nil
 }
-
-// ── Scheduled requery sweep (Phase 3, closes UTIL-002) ──────────────────────
 
 // SweepRowResult is one transaction's outcome within a sweep pass.
 type SweepRowResult struct {
@@ -1386,13 +1344,11 @@ func (s *Service) SweepPending(ctx context.Context, limit int) (*SweepResult, er
 // ReverseTransaction is the ADMIN-initiated reversal (a support refund), porting
 // reverseUtilityTransaction. Same single implementation serves any caller; the
 // route is RBAC-gated.
-//
 // Idempotency is keyed on the TRANSACTION, not on a caller-supplied header:
 // "reverse this transaction" is inherently a once-per-transaction operation, and
 // keying it on the transaction id means two admins clicking refund cannot pay the
 // member twice. (This is a deliberate divergence from the pay path's
 // client-key-derived suffixes — flagged in the PR description.)
-//
 // actorUserID is the acting ADMIN (Phase 4), recorded as the audit actor. It is
 // deliberately a parameter rather than something read off the context: a money
 // reversal with no attributable author is exactly the record an audit trail
@@ -1434,8 +1390,8 @@ func (s *Service) ReverseTransaction(ctx context.Context, actorUserID, transacti
 	}
 
 	updated, err := s.repo.UpdateTransaction(ctx, t.ID, TransactionPatch{
-		Status:        strPtr(string(StatusReversed)),
-		FailureReason: strPtr(reason),
+		Status:        ptrx.Of(string(StatusReversed)),
+		FailureReason: ptrx.Of(reason),
 	})
 	if err != nil {
 		return nil, err
@@ -1473,14 +1429,12 @@ func (s *Service) CreateDispute(ctx context.Context, userID, transactionID, reas
 	if err != nil {
 		return nil, err
 	}
-	if _, uerr := s.repo.UpdateTransaction(ctx, t.ID, TransactionPatch{Status: strPtr(string(StatusDisputed))}); uerr != nil {
+	if _, uerr := s.repo.UpdateTransaction(ctx, t.ID, TransactionPatch{Status: ptrx.Of(string(StatusDisputed))}); uerr != nil {
 		log.Printf("[utilitybills] WARN dispute opened but status not persisted for %s: %v", t.ID, uerr)
 	}
 	s.event(ctx, t.ID, "dispute_opened", reason, nil)
 	return dispute, nil
 }
-
-// ── Beneficiaries ────────────────────────────────────────────────────────────
 
 // ListBeneficiaries returns a member's saved beneficiaries.
 func (s *Service) ListBeneficiaries(ctx context.Context, userID, category string) ([]BeneficiaryRow, error) {
@@ -1527,10 +1481,6 @@ func (s *Service) UnresolvedBindCount(ctx context.Context) (int, error) {
 	return s.binds.UnresolvedCount(ctx)
 }
 
-// ── small helpers ────────────────────────────────────────────────────────────
-
-func strPtr(s string) *string { return &s }
-
 // event appends a transaction event, best-effort. An event trail that fails to
 // write must never fail a payment.
 func (s *Service) event(ctx context.Context, transactionID, eventType, message string, payload any) {
@@ -1540,13 +1490,11 @@ func (s *Service) event(ctx context.Context, transactionID, eventType, message s
 }
 
 // log records one admin mutation in the platform audit trail, best-effort.
-//
 // NIL-SAFE by design: Deps.Auditor is optional, and every caller below fires
 // this unconditionally rather than guarding at the call site, so the one guard
 // lives here. Note the guard covers a nil INTERFACE only — a non-nil interface
 // holding a nil pointer would still panic, which is why RegisterUtilityBills
 // passes the concrete sink only when it is actually built.
-//
 // The event() helper above and this one are deliberately different trails and
 // both are written where both apply: event() is the per-transaction lifecycle
 // log a MEMBER's support case is reconstructed from, this is the who-did-what
@@ -1564,7 +1512,7 @@ func (s *Service) log(actorUserID, action, resourceType, resourceID string, oldV
 // the pre-provider failure paths where there is nothing to reverse.
 func (s *Service) markFailed(ctx context.Context, transactionID, reason string) {
 	if _, err := s.repo.UpdateTransaction(ctx, transactionID, TransactionPatch{
-		Status:        strPtr(string(StatusFailed)),
+		Status:        ptrx.Of(string(StatusFailed)),
 		FailureReason: &reason,
 	}); err != nil {
 		log.Printf("[utilitybills] WARN could not mark %s failed: %v", transactionID, err)
@@ -1605,4 +1553,44 @@ func stringMetadata(metadata map[string]any) map[string]string {
 		}
 	}
 	return out
+}
+
+// Background reconciliation job (Phase 3, closes UTIL-002). Follows the
+// goroutine+ticker pattern from maplerad/jobs.go's StartOrphanSweep: runs on an
+// interval, stops when ctx is cancelled, and never lets one bad tick kill the
+// loop.
+
+// defaultSweepLimit mirrors requeryPendingUtilityTransactions's own default —
+// the TS source's admin worker route falls back to 25 when no ?limit is given.
+const defaultSweepLimit = 25
+
+// StartPendingSweep periodically requeries transactions stuck in a non-terminal
+// state (initiated / wallet_debited / provider_pending) with no resolved
+// webhook or synchronous answer. Before this, NOTHING automatically resolved
+// them — the only path was an admin manually hitting the requery-pending
+// worker endpoint (UTIL-002).
+func StartPendingSweep(ctx context.Context, svc *Service, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				res, err := svc.SweepPending(ctx, defaultSweepLimit)
+				if err != nil {
+					log.Printf("utilitybills: pending sweep job: %v", err)
+					continue
+				}
+				if res.Processed > 0 {
+					log.Printf("utilitybills: pending sweep: processed=%d succeeded=%d failed=%d",
+						res.Processed, res.Succeeded, res.Failed)
+				}
+			}
+		}
+	}()
 }

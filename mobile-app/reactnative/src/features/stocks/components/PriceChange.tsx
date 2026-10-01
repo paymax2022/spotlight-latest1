@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, TextStyle } from 'react-native';
 import { TrendingUp, TrendingDown } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { formatPct } from '../utils/stockFormatters';
 
 interface Props {

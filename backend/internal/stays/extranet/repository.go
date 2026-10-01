@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/strutil"
 )
 
 // Repository is the parameterized data layer for the hotelier extranet. It reads
@@ -18,8 +21,6 @@ type Repository struct {
 
 // NewRepository constructs the extranet repository.
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
-
-// --- property content ---
 
 // Property is the editable content view returned to the extranet.
 type Property struct {
@@ -109,7 +110,7 @@ type PropertyDetailsPatch struct {
 func (r *Repository) UpdatePropertyDetails(ctx context.Context, propertyID string, patch PropertyDetailsPatch) error {
 	var amenitiesJSON []byte
 	if patch.Amenities != nil {
-		amenitiesJSON = encodeAmenities(*patch.Amenities)
+		amenitiesJSON, _ = jsonx.MarshalArray(*patch.Amenities)
 	}
 	ct, err := r.db.Exec(ctx, `
 		UPDATE public.stays_property
@@ -125,7 +126,7 @@ func (r *Repository) UpdatePropertyDetails(ctx context.Context, propertyID strin
 		    contact_email = COALESCE($10, contact_email),
 		    updated_at = now()
 		WHERE id = $1`,
-		propertyID, patch.Lat, patch.Lng, nullableJSON(amenitiesJSON),
+		propertyID, patch.Lat, patch.Lng, jsonx.NullJSON(amenitiesJSON),
 		patch.HouseRules, patch.CancellationPolicy, patch.CheckInFrom, patch.CheckOutUntil,
 		patch.ContactPhone, patch.ContactEmail)
 	if err != nil {
@@ -135,13 +136,6 @@ func (r *Repository) UpdatePropertyDetails(ctx context.Context, propertyID strin
 		return fmt.Errorf("extranet: property not found")
 	}
 	return nil
-}
-
-func nullableJSON(b []byte) any {
-	if b == nil {
-		return nil
-	}
-	return b
 }
 
 // decodeAmenities tolerates a null/malformed amenities column (reads as empty
@@ -156,16 +150,6 @@ func decodeAmenities(raw []byte) []string {
 	}
 	return out
 }
-
-func encodeAmenities(list []string) []byte {
-	if list == nil {
-		list = []string{}
-	}
-	b, _ := json.Marshal(list)
-	return b
-}
-
-// --- room types ---
 
 // RoomType is the room-type view.
 type RoomType struct {
@@ -204,8 +188,6 @@ func (r *Repository) CreateRoomType(ctx context.Context, propertyID, name string
 		VALUES ($1,$2,$3,$4) RETURNING id`, propertyID, name, occupancy, bedding).Scan(&id)
 	return id, err
 }
-
-// --- rate plans ---
 
 // RatePlan is the rate-plan view.
 type RatePlan struct {
@@ -259,11 +241,9 @@ func (r *Repository) CreateRatePlan(ctx context.Context, propertyID, roomTypeID,
 		INSERT INTO public.stays_rate_plan
 			(room_type_id, rate_plan_type, board, refundable, base_sell_rate_kobo, currency)
 		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-		roomTypeID, orStr(planType, "BAR"), orStr(board, "room_only"), refundable, baseKobo, orStr(currency, "NGN")).Scan(&id)
+		roomTypeID, strutil.FirstNonEmpty(planType, "BAR"), strutil.FirstNonEmpty(board, "room_only"), refundable, baseKobo, strutil.FirstNonEmpty(currency, "NGN")).Scan(&id)
 	return id, err
 }
-
-// --- reservations dashboard ---
 
 // ReservationRow is a compact reservation view for the dashboard.
 type ReservationRow struct {
@@ -435,8 +415,6 @@ func (r *Repository) RoomTypeOfReservation(ctx context.Context, reservationID st
 	return rt, ci, co, rooms, err
 }
 
-// --- finance reads (payouts / commission / remittance) ---
-
 // PayoutRow is a hotel payout view.
 type PayoutRow struct {
 	ID         string    `json:"id"`
@@ -504,8 +482,6 @@ func (r *Repository) ListCommission(ctx context.Context, propertyID string, limi
 	return out, rows.Err()
 }
 
-// --- analytics (computed) ---
-
 // Analytics is the computed occupancy/ADR/RevPAR snapshot over a window.
 type Analytics struct {
 	From           string  `json:"from"`
@@ -551,8 +527,6 @@ func (r *Repository) ComputeAnalytics(ctx context.Context, propertyID, from, to 
 	}
 	return a, nil
 }
-
-// --- messaging (guest <-> hotel thread) ---
 
 // Message is one persisted message in a reservation's guest<->hotel thread.
 type Message struct {
@@ -610,8 +584,6 @@ func (r *Repository) ListMessages(ctx context.Context, reservationID string, lim
 	return out, rows.Err()
 }
 
-// --- account / staff ---
-
 // StaffRow is an extranet staff grant view.
 type StaffRow struct {
 	ID     string `json:"id"`
@@ -647,7 +619,7 @@ func (r *Repository) UpsertStaff(ctx context.Context, propertyID, userID, role, 
 		VALUES ($1,$2,$3,$4)
 		ON CONFLICT (user_id, property_id)
 		DO UPDATE SET role = EXCLUDED.role, status = EXCLUDED.status, updated_at = now()`,
-		userID, propertyID, orStr(role, "READ_ONLY"), orStr(status, "ACTIVE"))
+		userID, propertyID, strutil.FirstNonEmpty(role, "READ_ONLY"), strutil.FirstNonEmpty(status, "ACTIVE"))
 	return err
 }
 
@@ -656,7 +628,6 @@ func (r *Repository) UpsertStaff(ctx context.Context, propertyID, userID, role, 
 // together or not at all, since a stays_property with no hotelier_profile grant
 // is unreachable (every other extranet call is object-scoped) and a grant on a
 // nonexistent property is meaningless.
-//
 // source_rail/supplier_code/supplier_property_ref are NOT NULL on stays_property
 // (UNIQUE together) because the table's original design assumes every row is
 // supplier-sourced (a bedbank aggregator or the DIRECT rail's own supplier
@@ -679,7 +650,7 @@ func (r *Repository) CreateProperty(ctx context.Context, ownerUserID, name, prop
 			(source_rail, supplier_code, supplier_property_ref, name, address, city, star_rating, property_type)
 		VALUES ('DIRECT', 'self', gen_random_uuid()::text, $1, $2, $3, $4, $5)
 		RETURNING id`,
-		name, address, city, starRating, orStr(propertyType, "hotel")).Scan(&propertyID)
+		name, address, city, starRating, strutil.FirstNonEmpty(propertyType, "hotel")).Scan(&propertyID)
 	if err != nil {
 		return "", fmt.Errorf("extranet: insert property: %w", err)
 	}
@@ -721,10 +692,3 @@ func (r *Repository) MyProperties(ctx context.Context, userID string) ([]gin2H, 
 
 // gin2H is a tiny map alias so the repo does not import gin.
 type gin2H = map[string]any
-
-func orStr(s, def string) string {
-	if s == "" {
-		return def
-	}
-	return s
-}

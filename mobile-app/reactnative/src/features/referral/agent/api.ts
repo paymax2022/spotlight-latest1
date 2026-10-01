@@ -1,7 +1,5 @@
-// ── Referral Agent / Team Zone API (M-AGT-01..07) ────────────────────────────
 // Mock-first (USE_MOCK). Live path hits `${REFERRAL_API_BASE}/...`. Money is
 // ALWAYS integer kobo.
-//
 // COMPLIANCE (PRD §7, §10): every override here is a CAPPED % of members'
 // VERIFIED ACTIVITY/REVENUE — never a recruitment bounty. The override rate,
 // the verified-activity basis, and the cap travel together in the data.
@@ -27,7 +25,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
   return (res.data?.data ?? res.data) as T;
 }
 
-// ── Backend wire shapes (bare snake_case JSON from Go /api/v1/referral) ───────
 // These mirror the network/override endpoints that actually exist today.
 interface BackendNetwork {
   id: string;

@@ -37,7 +37,6 @@ export async function GET(request: Request) {
 
     if (!row) return NextResponse.json({ found: false, code: null, blacklisted: false });
 
-    // Check blacklist.
     let blacklisted = false;
     const plate = (row as any).vehicle_plate;
     if (plate) {

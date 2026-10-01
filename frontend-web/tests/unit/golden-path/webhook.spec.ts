@@ -11,7 +11,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeWebhookResult } from './_fixtures';
 
-// ── Module mocks ──────────────────────────────────────────────────────────────
 // All seven co-tenant handlers are mocked — this spec tests the ROUTE's dispatch
 // and status contract, not the handlers (the real gateway handler throws when
 // PAYSTACK_SECRET_KEY is unset in the test env, which would poison every case).
@@ -44,8 +43,6 @@ vi.mock('../../../app/api/webhooks/paystack/go-forward', () => ({
   forwardGoOwnedPaystackEvent: vi.fn(),
 }));
 
-// ── Import after mocks ────────────────────────────────────────────────────────
-
 import { POST } from '../../../app/api/webhooks/paystack/route';
 import { handlePaystackWebhook } from '@/src/server/voting/payment/webhook';
 import { handleWalletTopupWebhook } from '@/src/server/wallet/webhook';
@@ -64,8 +61,6 @@ const ALL_HANDLERS = [
   handleGatewayPaystackWebhook,
   forwardGoOwnedPaystackEvent,
 ];
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeWebhookRequest(
   payload: Record<string, unknown>,
@@ -96,12 +91,9 @@ function makeChargeSuccessPayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
 describe('POST /api/webhooks/paystack', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default every co-tenant handler to a fulfilled irrelevant-event skip;
     // each test overrides the handler it exercises.
     for (const h of ALL_HANDLERS) {
       vi.mocked(h).mockResolvedValue({ processed: false, duplicate: false });

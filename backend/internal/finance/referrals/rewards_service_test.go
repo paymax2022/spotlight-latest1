@@ -1,16 +1,13 @@
 package referrals_test
 
 // Live-DB tests for the Direct Referral Rewards ENGINE money path (REF-005).
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset, and it does NOT fall back to
 // DATABASE_URL — same convention as
 // backend/internal/referral/ledger/withdraw_integration_test.go and
 // backend/internal/referral/compliance/consent_append_only_live_db_test.go.
 // Point it at a disposable, migrated Postgres:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/finance/referrals/... -v
-//
 // Each test seeds its own users with fresh UUIDs and registers
 // testsupport.CleanupUser, so runs never observe each other's rows and are
 // safe to run repeatedly without a truncate.
@@ -110,9 +107,7 @@ func countRewardRows(t *testing.T, pool *pgxpool.Pool, transactionID string) int
 	return n
 }
 
-// ============================================================================
 // OnPurchaseSettled — normal crediting + idempotency + rounding.
-// ============================================================================
 
 // TestOnPurchaseSettled_CreditsReward_Integration proves the full happy path:
 // one referral_rewards row, CREDITED, reward_kobo == floor(margin*rate), and
@@ -148,7 +143,7 @@ func TestOnPurchaseSettled_CreditsReward_Integration(t *testing.T) {
 	if rewardKobo != wantReward {
 		t.Fatalf("reward_kobo = %d, want %d (floor(%d*%v))", rewardKobo, wantReward, marginKobo, appliedRate)
 	}
-	if rewardKobo != 10_000 { // floor(100_000 * 0.10)
+	if rewardKobo != 10_000 {
 		t.Fatalf("reward_kobo = %d, want 10000", rewardKobo)
 	}
 	if id == "" {
@@ -327,9 +322,7 @@ func TestOnPurchaseSettled_NonPositiveMargin_NoOp_Integration(t *testing.T) {
 	}
 }
 
-// ============================================================================
 // OnPurchaseRefunded — reversal on CREDITED, no-op otherwise, idempotent.
-// ============================================================================
 
 // TestOnPurchaseRefunded_ReversesCredited_Integration settles then refunds:
 // the reward flips to REVERSED, the ledger reversal is balanced (wallet drained
@@ -452,15 +445,11 @@ func TestOnPurchaseRefunded_UnknownTransaction_NoOp_Integration(t *testing.T) {
 	}
 }
 
-// ============================================================================
 // ComputeReward — pure rounding-rule unit tests (no DB).
-// ============================================================================
 
-// ============================================================================
 // ResolveCodeToReferrer — the REF-002 CodeResolver adapter (attribution engine
 // entry point). resolveCode itself is exercised indirectly through this public
 // method, which is what internal/referral/attribution wires against.
-// ============================================================================
 
 // TestResolveCodeToReferrer_ReferralLinksOnly_Integration: a code that exists
 // ONLY in referral_links (the engine's own canonical table, minted via
@@ -532,11 +521,9 @@ func TestResolveCodeToReferrer_UnknownCode_Errors_Integration(t *testing.T) {
 	}
 }
 
-// ============================================================================
 // REF-004 / REF-008 — shared code format across the two generators writing
 // into finance_referral_codes, and case-insensitive resolution of whatever
 // case a legacy row happens to be stored in.
-// ============================================================================
 
 // referralCodeAlphabet mirrors codeAlphabet in code.go — duplicated here
 // (rather than exported test-only) because the point of this test is to
@@ -651,8 +638,8 @@ func TestComputeReward_FloorsFractionalKobo(t *testing.T) {
 		want       int64
 	}{
 		{"exact division", 100_000, 0.10, 10_000},
-		{"truncates down, never rounds", 333, 0.05, 16},        // 16.65 -> 16
-		{"truncates down at .99 fraction", 199, 0.5, 99},       // 99.5 -> 99
+		{"truncates down, never rounds", 333, 0.05, 16}, // 16.65 -> 16
+		{"truncates down at .99 fraction", 199, 0.5, 99},
 		{"zero margin", 0, 0.10, 0},
 		{"zero rate", 100_000, 0, 0},
 		{"negative margin is zeroed (never pays on a loss)", -100, 0.10, 0},

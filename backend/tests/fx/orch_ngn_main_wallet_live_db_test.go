@@ -1,26 +1,20 @@
 package fx_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB suite for the UNIFIED NGN wallet (ADR-051).
-//
 // Before this, FX kept a private NGN pot in orch_balances. That table has no
 // production writer other than a conversion's own destination leg, so every real
 // user saw ₦0 on /fx while the rest of the app read their true balance out of
 // ledger_entries — and a first conversion could never be started, because the
 // only way to get NGN into the FX pot was to have already converted into it.
-//
 // The rule these tests pin: for NGN there is exactly ONE pot — the platform's
 // main ledger (ledger_accounts/ledger_entries). FX reads it, spends it, and pays
 // into it. orch_balances holds the non-NGN currencies only. Anything that shows
 // a balance the user cannot actually spend, or spends money the balance did not
 // show, is the bug class here.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (reuses liveDBPool/seedUser/
 // seedWallet from convert_live_db_test.go).
-//
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run OrchNGN -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -96,8 +90,6 @@ func cleanupOrch(t *testing.T, pool *pgxpool.Pool, customer string) {
 	})
 }
 
-// ── 1. Reads ────────────────────────────────────────────────────────────────
-
 // The headline defect: /fx showed ₦0 for a user whose wallet held real money.
 func TestLiveDB_OrchNGN_BalancesReportTheMainWallet(t *testing.T) {
 	pool := livePool(t)
@@ -151,8 +143,6 @@ func TestLiveDB_OrchNGN_BalancesIncludeZeroNGNWallet(t *testing.T) {
 		t.Errorf("new user NGN balance: got %d want 0", ngn)
 	}
 }
-
-// ── 2. Opening a wallet ─────────────────────────────────────────────────────
 
 // "Add currency wallet" used to return a fabricated {available:0} and persist
 // nothing, so the wallet vanished on the next refetch.
@@ -209,8 +199,6 @@ func TestLiveDB_OrchNGN_OpenWalletNeverCreatesASecondNGNPot(t *testing.T) {
 		t.Errorf("orch_balances grew an NGN row (%d) — NGN must live only in the main ledger", got)
 	}
 }
-
-// ── 3. Spending ─────────────────────────────────────────────────────────────
 
 func ngnConversion(cust string, sourceMinor, destMinor, spread int64) *orchestration.Conversion {
 	return &orchestration.Conversion{

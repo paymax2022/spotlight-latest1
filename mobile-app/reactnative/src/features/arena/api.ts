@@ -1,7 +1,5 @@
-// ── Arena (Driver Contest) — API wrapper ─────────────────────────────────────
 // Talks to the Go backend at EXPO_PUBLIC_API_BASE_URL → /api/arena via the shared
 // axios `api` client (bearer auth injected by the request interceptor).
-//
 // Iron rules honoured here:
 //  - Money mutations (support) carry a fresh Idempotency-Key header so a retried
 //    tap never double-charges the wallet (see ARENA-PRD NDC-4).
@@ -65,8 +63,6 @@ export function newIdempotencyKey(): string {
 
 const idem = (key?: string) => ({ headers: { 'Idempotency-Key': key ?? newIdempotencyKey() } });
 
-// ─── PUBLIC (no auth required to read) ──────────────────────────────────────
-
 /** GET /competitions — list of competitions for the home rail. */
 export async function listCompetitions(): Promise<Competition[]> {
   if (USE_MOCK) return mockCompetitions();
@@ -118,8 +114,6 @@ export async function verifyCredential(hash: string): Promise<CredentialVerifica
   return unwrap<CredentialVerification>(await api.get(`${BASE}/credentials/${hash}/verify`));
 }
 
-// ─── MEMBER (auth) ──────────────────────────────────────────────────────────
-
 /** POST /competitions/{id}/applications — submit application → state APPLIED. */
 export async function submitApplication(input: {
   competitionId: string;
@@ -162,7 +156,6 @@ export async function support(input: {
   idempotencyKey?: string;
 }): Promise<SupportResult> {
   if (USE_MOCK) {
-    // Dev: the payment gateway (PaymentSheet) handles the actual charge; here we
     // just record the attributed support split (pot vs People's Champion).
     await new Promise((r) => setTimeout(r, 400));
     return {
@@ -234,7 +227,6 @@ export async function submitPredictions(input: {
   return { ok: true };
 }
 
-// ─── Read helpers the backend may serve under a competition (best-effort) ────
 // These reuse existing endpoints where the contract exposes them and degrade to
 // empty data so screens still render "last updated" reads offline.
 

@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { alertAsync } from '@/lib/confirm';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Plus, Sparkles, Search, X, Trash2, ChevronDown, ShieldCheck, FileSignature, Eye } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import SelectField from '@/components/SelectField';
 import { TeleHeader } from '@/features/telemedicine/components';
@@ -35,7 +35,6 @@ import {
 } from '@/features/doctor/constants';
 import type { RxDrugLine, DrugCatalogueEntry, DrugAlternative, RxWarning, RxWarningSeverity } from '@/types/doctor.batch3';
 
-// ── Section K — E-Prescription builder ────────────────────────────────────────
 // EXTENDS the Phase 1 create screen into the full builder: drug search sheet
 // (searchDrugCatalogue), per-line strength/form/route/frequency/duration/quantity
 // /food-timing/special-instruction, multi-med add/remove, generic/brand
@@ -307,7 +306,6 @@ export default function CreatePrescriptionScreen() {
   );
 }
 
-// ── Per-line drug card ───────────────────────────────────────────────────────
 function DrugLineCard({
   line, index, canRemove, onOpenSearch, onOpenAlternatives, onChange, onChangeBase, onRemove,
 }: {
@@ -412,7 +410,6 @@ function DrugLineCard({
   );
 }
 
-// ── Drug search sheet ────────────────────────────────────────────────────────
 function DrugSearchSheet({ visible, onClose, onSelect }: { visible: boolean; onClose: () => void; onSelect: (e: DrugCatalogueEntry) => void }) {
   const [query, setQuery] = useState('');
   const results = useMemo(() => searchDrugCatalogue(query), [query]);

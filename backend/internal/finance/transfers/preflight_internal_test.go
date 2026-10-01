@@ -7,22 +7,17 @@ import (
 	"testing"
 )
 
-// ---------------------------------------------------------------------------
 // Wallet-to-wallet PRE-FLIGHT ORDER.
-//
 // The idempotency replay lookup used to run AFTER recipient resolution and the
 // tier guard. Replaying an already-completed transfer therefore re-ran both,
 // and either could refuse: the daily cap now counts the very transfer being
 // replayed (403), and a recipient whose number has since become ambiguous
 // answers 409. The caller is then told its completed transfer failed.
-//
 // A replay can only ever wrongly REFUSE — the money moved on the first call, and
 // wallet_transfers.idempotency_key is UNIQUE, so nothing here can double-spend.
 // But "your transfer failed" about a transfer that succeeded is the kind of
 // answer that makes a user send it a second time with a fresh key.
-//
 // The order below is the invariant; these tests fail if anyone reorders it.
-// ---------------------------------------------------------------------------
 
 func fixedRequest() WalletTransferRequest {
 	return WalletTransferRequest{

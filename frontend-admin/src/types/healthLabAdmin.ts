@@ -1,21 +1,14 @@
-// ── Types — Paymax Health admin · Laboratory vertical (HEALTH-BUILD Phase 2 ADM) ──
 // Parallel to healthAdmin.ts (Pharmacy P1) — do NOT edit that file; this owns Lab.
 // Money is BIGINT kobo (minor units) throughout — formatNaira() converts kobo → ₦.
 // Surfaces the HEALTH invariants the Lab vertical enforces (HEALTH-BUILD §4 / §7B):
-//  HL-2 credential-gated supply (MLSCN lab + scientist licences; auto-suspend on expiry) ·
-//  HL-6 chain-of-custody integrity (collection→accession; any break → recollect; no result
 //        without an unbroken chain) ·
 //  HL-7 critical-result human escalation (abnormal/critical values → defined human path; never silent) ·
-//  HL-8 health data = sensitive NDPA (consent, masking, access-controlled result release) ·
 //  HL-9 money held→released→refunded (escrow released on result release / fulfilment) ·
 //  HL-10 payout KYC + AML gate · HL-12 immutable audit on every state transition.
-//
 // LabOrder state machine (HEALTH-RECONCILE §4):
 //  CREATED→SCHEDULED→SAMPLE_COLLECTED→IN_TRANSIT→ACCESSIONED→PROCESSING→RESULT_READY→RELEASED→CLOSED
 //  RESULT_READY(critical)→ESCALATED→RELEASED
-// Sample/Custody: COLLECTED→IN_CUSTODY→HANDED_OVER→ACCESSIONED; break→BREACHED→RECOLLECT_REQUIRED.
 
-// ── A · Dashboard ─────────────────────────────────────────────────────────────
 export type LabActivity = {
   id: string;
   kind: string; // mlscn_approved | custody_breach | result_released | critical_escalated | catalog_governed | payout_held ...
@@ -66,7 +59,6 @@ export type LabDashboard = {
   tat_trend: { date: string; tat_hours: number }[];
   activity: LabActivity[];
 
-  // ── Lab admin-portal gap closure: fields actually computed by the real
   // backend (GET /admin/dashboard → healthlab.AdminDashboard). Additive/
   // optional so the mock fixture above (which doesn't set them) still
   // type-checks. See healthLabAdminService.ts getLabDashboard for the
@@ -77,7 +69,6 @@ export type LabDashboard = {
   platform_revenue_kobo_week?: number;
 };
 
-// ── B · MLSCN credential audit queue (HL-2) ────────────────────────────────────
 export type MlscnApplicationStatus =
   | 'draft'
   | 'submitted'
@@ -122,7 +113,6 @@ export type MlscnDecisionResult = {
   message: string;
 };
 
-// ── C · Test catalog governance ────────────────────────────────────────────────
 export type LabCatalogStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 
 export type LabCatalogItem = {
@@ -150,7 +140,6 @@ export type LabCatalogGovernanceResult = {
   message: string;
 };
 
-// ── D · Chain-of-custody oversight (HL-6) ──────────────────────────────────────
 export type CustodyStatus =
   | 'collected'
   | 'in_custody'
@@ -179,7 +168,7 @@ export type CustodySample = {
   lab_masked: string;
   phlebotomist_masked: string;
   status: CustodyStatus;
-  chain_intact: boolean; // HL-6 — false forces recollection; no result without unbroken chain
+  chain_intact: boolean;
   break_reason: string | null;
   collected_at: string;
   updated_at: string;
@@ -198,7 +187,6 @@ export type CustodyBreakResult = {
   message: string;
 };
 
-// ── E · Results audit & release controls (HL-8) ────────────────────────────────
 export type ResultStatus =
   | 'processing'
   | 'result_ready'
@@ -263,7 +251,6 @@ export type EscalationResolveResult = {
   message: string;
 };
 
-// ── G · Phlebotomist management ────────────────────────────────────────────────
 export type PhlebotomistStatus = 'active' | 'pending' | 'suspended' | 'expired';
 
 export type Phlebotomist = {
@@ -282,7 +269,6 @@ export type Phlebotomist = {
   created_at: string;
 };
 
-// ── H · Payouts (KYC-gated — HL-10) ────────────────────────────────────────────
 export type LabPayoutStatus = 'pending' | 'approved' | 'paid' | 'kyc_hold' | 'rejected';
 
 export type LabPayoutRecord = {
@@ -307,7 +293,6 @@ export type LabPayoutDecisionResult = {
   message: string;
 };
 
-// ── I · Reporting ──────────────────────────────────────────────────────────────
 export type LabReportingData = {
   generated_at: string;
   period_label: string;

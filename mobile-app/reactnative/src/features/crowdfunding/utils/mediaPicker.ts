@@ -1,4 +1,3 @@
-// ── Crowdfunding — Media picker helpers ──────────────────────────────────────
 // Thin wrappers around expo-image-picker so screens stay declarative and
 // permission / cancel / error handling lives in one place.
 

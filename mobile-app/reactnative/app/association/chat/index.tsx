@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import ChatThreadRow from '@/features/association/components/ChatThreadRow';
-import { useChatThreads } from '@/features/association/hooks/useChat';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import {ChatThreadRow} from '@/features/association/components';
+import { useChatThreads } from '@/features/association/hooks';
 
 export default function ChatInbox() {
   const threads = useChatThreads();

@@ -58,10 +58,6 @@ describe('AD-015: getAuditLogs — the queryable read-path for the (unwired) aud
   });
 
   it('can be filtered to a single entity (e.g. one contestant) for a scoped audit trail', async () => {
-    // getAuditLogs chains .eq() again AFTER .range() when entityType/entityId
-    // are given (real supabase-js query builders stay chainable post-range;
-    // they're only awaited when the `then`/await happens). The shared
-    // makeSupabaseMock() fixture treats .range() as terminal (it calls
     // listData() and returns a plain Promise) for routes that never chain
     // past it, so this test builds its own minimal thenable builder instead.
     const eq = vi.fn();

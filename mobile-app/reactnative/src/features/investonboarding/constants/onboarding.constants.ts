@@ -1,10 +1,9 @@
-// ── Paymax Invest · Onboarding — Constants ───────────────────────────────────
 // Questionnaire definitions, agreement catalogue, ID-doc metadata, risk-category
 // styling/copy and disclosures. UI-config only — in production the questionnaire
 // + agreements come from the server (GET /suitability/questions, /invest/agreements).
 // Design tokens only: never hard-code colours/spacing/fonts.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   Agreement,
   IdDocType,
@@ -14,8 +13,6 @@ import type {
 /** Feature flag gating the whole onboarding surface. */
 export const ONBOARDING_FEATURE_FLAG = 'invest_onboarding';
 
-// ─── ID document types ────────────────────────────────────────────────────────
-
 export const ID_DOC_TYPES: { value: IdDocType; label: string; hint: string }[] = [
   { value: 'nin',             label: 'National ID (NIN)',  hint: 'Your NIMC slip or card' },
   { value: 'passport',        label: 'Passport',           hint: 'International passport data page' },
@@ -23,8 +20,6 @@ export const ID_DOC_TYPES: { value: IdDocType; label: string; hint: string }[] =
   { value: 'voters_card',     label: "Voter's card",       hint: 'PVC, front and back' },
 ];
 
-// ─── Suitability questionnaire ────────────────────────────────────────────────
-// Each question scores 1–4; higher = more risk-tolerant / experienced. The total
 // maps to a risk category in onboarding.utils.scoreSuitability.
 
 export interface QuestionOption {
@@ -122,8 +117,6 @@ export const SUITABILITY_QUESTIONS: SuitabilityQuestion[] = [
 
 export const SUITABILITY_QUESTION_COUNT = SUITABILITY_QUESTIONS.length;
 
-// ─── Risk category → styling + plain-language copy (design tokens only) ────────
-
 export const RISK_CATEGORY_STYLE: Record<
   RiskCategory,
   { label: string; fg: string; bg: string; tagline: string; description: string; products: string[] }
@@ -165,8 +158,6 @@ export const RISK_CATEGORY_STYLE: Record<
     products: ['All crypto assets', 'High-volatility stocks', 'Leveraged thematic baskets'],
   },
 };
-
-// ─── Agreements catalogue (legal gate) ────────────────────────────────────────
 
 export const AGREEMENTS: Agreement[] = [
   {
@@ -215,8 +206,6 @@ export const AGREEMENTS: Agreement[] = [
       'Receive occasional educational content and product updates. This is optional and you can turn it off at any time in settings.',
   },
 ];
-
-// ─── Education / trust copy (education-first, plain language) ──────────────────
 
 export const ONBOARDING_INTRO_STEPS: { icon: string; title: string; body: string }[] = [
   { icon: 'GraduationCap', title: 'Learn', body: 'Understand the basics before you commit a single naira.' },

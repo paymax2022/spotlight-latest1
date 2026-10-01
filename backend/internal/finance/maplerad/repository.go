@@ -2,13 +2,14 @@ package maplerad
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/jsonx"
 )
 
 // Repository is the pgx (service_role) data layer for the Maplerad domain. It
@@ -29,8 +30,6 @@ type Repository struct {
 func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db, provider: "maplerad"}
 }
-
-// ── provider_customers ───────────────────────────────────────────────────────
 
 // CustomerRow is the persisted user↔provider-customer mapping.
 type CustomerRow struct {
@@ -82,8 +81,6 @@ func (r *Repository) InsertCustomer(ctx context.Context, userID, customerID, sta
 	return &c, nil
 }
 
-// ── provider_reference (money-op idempotency + state) ────────────────────────
-
 // RefRow is the domain view of a provider_reference row.
 type RefRow struct {
 	Ref           string
@@ -98,20 +95,12 @@ type RefRow struct {
 	FailureReason string
 }
 
-// Counterparty for a transfer: bank_code, account_number_last4, account_name.
-func counterpartyJSON(cp map[string]string) ([]byte, error) {
-	if cp == nil {
-		cp = map[string]string{}
-	}
-	return json.Marshal(cp)
-}
-
 // InsertReference persists a money-op reference at status INITIATED BEFORE the
 // provider call. The `ref` column is UNIQUE: on conflict it returns the EXISTING
 // row (and inserted=false) so a retry with the same ref is idempotent and the
 // caller short-circuits to the stored outcome.
 func (r *Repository) InsertReference(ctx context.Context, row RefRow) (stored *RefRow, inserted bool, err error) {
-	cp, err := counterpartyJSON(row.Counterparty)
+	cp, err := jsonx.MarshalObject(row.Counterparty)
 	if err != nil {
 		return nil, false, fmt.Errorf("maplerad repo: marshal counterparty: %w", err)
 	}
@@ -257,8 +246,6 @@ func (r *Repository) scanRef(row pgx.Row) (*RefRow, error) {
 	return &rr, nil
 }
 
-// ── webhook_event (dedupe store) ─────────────────────────────────────────────
-
 // InsertWebhookEvent records a received webhook keyed by (provider, event_id).
 // ON CONFLICT DO NOTHING → inserted=true on first delivery, false on a
 // redelivery. The caller turns this into the pure DedupeDecision.
@@ -292,8 +279,6 @@ func (r *Repository) MarkWebhookProcessed(ctx context.Context, eventID, status s
 	}
 	return nil
 }
-
-// ── reconciliation_drift (quarantine) ────────────────────────────────────────
 
 // InsertDrift records a ledger-vs-custody mismatch immutably for human review.
 // Drift is NEVER auto-corrected — resolution is a separate compensating ledger

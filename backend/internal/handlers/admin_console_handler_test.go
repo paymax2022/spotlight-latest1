@@ -20,14 +20,11 @@ import (
 )
 
 // Test that all admin console endpoints are accessible and return valid responses.
-//
 // ⚠️ GATED ON TEST_DATABASE_URL, DELIBERATELY WITH NO FALLBACK TO DATABASE_URL:
 // the root .env points DATABASE_URL at the PRODUCTION Supabase pooler, and the
 // DB-backed tests below INSERT fixtures. Run against a local database only:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/handlers/ -run TestAdminConsole -v
-//
 // The DB-backed endpoints here are GLOBAL reads (every user, every payout, every
 // audit row) — there is no owner to scope them to. So these tests never assert a
 // global row count: they seed uniquely-identifiable fixtures and assert those
@@ -54,17 +51,14 @@ func adminTestPool(t *testing.T) *pgxpool.Pool {
 }
 
 // seedAdminUser creates a throwaway auth.users row and returns its id.
-//
 // email is required even though the column is nullable: a trigger on auth.users
 // (on_auth_user_created) mirrors the row into user_profiles, whose email column
 // is NOT NULL. .invalid is reserved by RFC 2606, so a fixture address can never
 // be a routable one.
-//
 // created_at is set explicitly rather than left to a default: GoTrue populates it
 // from the application, so real Supabase declares auth.users.created_at with NO
 // default (only the CI compat shim adds one). Leaving it NULL puts the fixture at
 // the very END of ListUsers' created_at DESC NULLS LAST ordering, off page 1.
-//
 // The row is deleted on cleanup — user_profiles cascades from it — so repeated
 // local runs against the same database stay stable.
 func seedAdminUser(t *testing.T, pool *pgxpool.Pool, label string) (id string, email string) {
@@ -103,7 +97,6 @@ func seedAdminProfile(t *testing.T, pool *pgxpool.Pool, userID, fullName string,
 }
 
 // seedPendingKyc puts a user's profile into the state GetKYCQueue selects on.
-//
 // 'pending' — not 'submitted'. The store's predicate is
 // `kyc_status IN ('submitted','pending')`, but user_profiles_kyc_status_check
 // only permits unverified/pending/verified/failed/suspended, so 'submitted' can
@@ -321,7 +314,6 @@ func setupAdminConsoleRouterWithPool(t *testing.T, pool *pgxpool.Pool) *gin.Engi
 // delta. `go test ./...` runs packages concurrently against one database and
 // several other suites seed auth.users and post ledger entries, so an exact
 // count — or a delta across two requests — would be flaky by construction.
-//
 // The bug this guards is a 500: the aggregate query referenced orders.amount_kobo,
 // a column public.orders does not have, so the endpoint failed unconditionally.
 func TestAdminConsole_Dashboard(t *testing.T) {
@@ -546,7 +538,6 @@ func TestAdminConsole_UpdateAsset(t *testing.T) {
 // single trading `orders` table (public.orders is the restaurant module's). Both
 // legs of that union are seeded so a regression to a single-table query fails
 // here rather than 500ing in production.
-//
 // The endpoint caps at LIMIT 100 ordered by created_at DESC. That is safe to
 // assert against under concurrent packages because the fixtures are seeded
 // immediately before the read: only 100+ orders created inside that millisecond

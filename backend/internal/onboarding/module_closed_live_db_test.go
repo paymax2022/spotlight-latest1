@@ -3,7 +3,6 @@ package onboarding_test
 // LIVE-DB test for CreateApplication's module/merchant-type "closed" enforcement.
 // Regression for the gap where an OPEN merchant type under a CLOSED module was
 // still applyable (create checked the type status only, not the module status).
-//
 // Skips unless TEST_DATABASE_URL is set. onb_application.user_id has
 // no hard FK, so a random uuid works as the caller.
 

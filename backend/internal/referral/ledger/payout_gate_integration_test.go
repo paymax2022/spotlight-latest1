@@ -1,7 +1,6 @@
 package ledger
 
 // Live-DB integration test for REF-009's payout-side account-status gate.
-//
 // WithdrawEligible already refused a suspended/locked/deleted account at the
 // withdrawal request (see TestWithdrawEligible_AccountStatusGate_Integration).
 // That left a narrower gap open: Transition(..., StatePaid, ...) — invoked
@@ -11,7 +10,6 @@ package ledger
 // checkAccountEligibleForMoneyMovement gate inside Transition itself, so a
 // payout and a withdrawal are refused on the same terms regardless of which
 // entry point is used.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (see withdraw_integration_test.go
 // for the bring-up recipe).
 

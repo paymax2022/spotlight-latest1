@@ -1,18 +1,13 @@
-// ── Association — Admin content-authoring API wrapper ─────────────────────────
-//
 // Kept OUT of admin.api.ts on purpose: that file is the admin-lite read/approve
-// surface (KPIs, approvals, finance, import, audit). This one is the WRITE side
 // for the content tables — announcements, meetings, documents, events, tasks —
 // plus the dues run that feeds the money path and the device registration that
 // makes the devices screen non-empty.
-//
 // Every admin call is scoped by the organisation id from `getMyAdminAccess()`
 // (`organisationId`). The client never guesses an org id.
-//
 // IRON RULE: `feeKobo` / `totalKobo` are INTEGER minor units end to end.
 
 import { api } from '@/api/client';
-import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
 import type {
   AdminContentRow, AdminListParams, AnnouncementInput, CreatedId, DeviceInput,
   DocumentInput, DuesRunInput, DuesRunResult, EventInput, MeetingInput,
@@ -46,8 +41,6 @@ function listParams(p?: AdminListParams) {
   return { limit: p?.limit ?? 50, offset: p?.offset ?? 0 };
 }
 
-// ─── Announcements ────────────────────────────────────────────────────────────
-
 export async function listAdminAnnouncements(orgId: string, p?: AdminListParams): Promise<AdminContentRow[]> {
   if (USE_MOCK) { await delay(); return mockRows.announcements; }
   const { data } = await api.get(`${BASE}/admin/organisations/${orgId}/announcements`, { params: listParams(p) });
@@ -69,8 +62,6 @@ export async function deleteAnnouncement(id: string): Promise<void> {
   if (USE_MOCK) throw notInFixtureMode('Deleting an announcement');
   await api.delete(`${BASE}/admin/announcements/${id}`);
 }
-
-// ─── Meetings ─────────────────────────────────────────────────────────────────
 
 export async function listAdminMeetings(orgId: string, p?: AdminListParams): Promise<AdminContentRow[]> {
   if (USE_MOCK) { await delay(); return mockRows.meetings; }
@@ -100,8 +91,6 @@ export async function publishMeetingMinutes(id: string, published: boolean): Pro
   await api.post(`${BASE}/admin/meetings/${id}/minutes`, { published });
 }
 
-// ─── Documents ────────────────────────────────────────────────────────────────
-
 export async function listAdminDocuments(orgId: string, p?: AdminListParams): Promise<AdminContentRow[]> {
   if (USE_MOCK) { await delay(); return mockRows.documents; }
   const { data } = await api.get(`${BASE}/admin/organisations/${orgId}/documents`, { params: listParams(p) });
@@ -123,8 +112,6 @@ export async function deleteDocument(id: string): Promise<void> {
   if (USE_MOCK) throw notInFixtureMode('Deleting a document');
   await api.delete(`${BASE}/admin/documents/${id}`);
 }
-
-// ─── Events ───────────────────────────────────────────────────────────────────
 
 export async function listAdminEvents(orgId: string, p?: AdminListParams): Promise<AdminContentRow[]> {
   if (USE_MOCK) { await delay(); return mockRows.events; }
@@ -162,8 +149,6 @@ export async function deleteEvent(id: string): Promise<void> {
   await api.delete(`${BASE}/admin/events/${id}`);
 }
 
-// ─── Tasks ────────────────────────────────────────────────────────────────────
-
 export async function listAdminTasks(orgId: string, p?: AdminListParams): Promise<AdminContentRow[]> {
   if (USE_MOCK) { await delay(); return mockRows.tasks; }
   const { data } = await api.get(`${BASE}/admin/organisations/${orgId}/tasks`, { params: listParams(p) });
@@ -185,8 +170,6 @@ export async function deleteTask(id: string): Promise<void> {
   if (USE_MOCK) throw notInFixtureMode('Deleting a task');
   await api.delete(`${BASE}/admin/tasks/${id}`);
 }
-
-// ─── Dues runs (money path) ───────────────────────────────────────────────────
 
 export async function listAdminDuesRuns(orgId: string, p?: AdminListParams): Promise<AdminContentRow[]> {
   if (USE_MOCK) { await delay(); return mockRows.duesRuns; }
@@ -217,8 +200,6 @@ export async function runDues(orgId: string, input: DuesRunInput, idempotencyKey
   return data;
 }
 
-// ─── Supporting lookups for the authoring forms ───────────────────────────────
-
 /**
  * The organisation's members, scoped by an explicit org.
  *
@@ -248,7 +229,6 @@ export async function getOrgPickerLists(orgId: string): Promise<OrgPickerLists> 
     return { id: orgId, name: 'Demo organisation', chapters: [], committees: [], categories: [] };
   }
   const { data } = await api.get(`${BASE}/admin/organisations/${orgId}`);
-  // Defensive: an older deployment can omit a collection entirely, and a picker
   // that maps over `undefined` takes the whole form down with it.
   return {
     id: data?.id ?? orgId,
@@ -258,8 +238,6 @@ export async function getOrgPickerLists(orgId: string): Promise<OrgPickerLists> 
     categories: data?.categories ?? [],
   };
 }
-
-// ─── Devices (member self-service) ────────────────────────────────────────────
 
 /**
  * Register the current device.
@@ -274,8 +252,6 @@ export async function registerDevice(input: DeviceInput): Promise<CreatedId> {
   return data;
 }
 
-// ── Committee lifecycle (owner only) ─────────────────────────────────────────
-//
 // Server-gated on the manageCommittees capability (association
 // requireCommitteeAdmin). The UI hides these for everyone else, but the gate
 // that matters is the server's — hiding a button is not authorisation.
@@ -303,8 +279,6 @@ export async function deleteCommittee(committeeId: string): Promise<void> {
   if (USE_MOCK) throw notInFixtureMode('Deleting a committee');
   await api.delete(`${BASE}/admin/committees/${committeeId}`);
 }
-
-// ── Committee membership management ──────────────────────────────────────────
 
 /**
  * Add members straight onto a committee, skipping request-and-approve.
@@ -335,8 +309,6 @@ export async function setCommitteeMemberRole(committeeId: string, membershipId: 
   if (USE_MOCK) throw notInFixtureMode('Setting a committee member role');
   await api.patch(`${BASE}/admin/committees/${committeeId}/members/${membershipId}`, { role });
 }
-
-// ── Document vault uploads ───────────────────────────────────────────────────
 
 export interface DocumentPresign {
   uploadUrl: string;

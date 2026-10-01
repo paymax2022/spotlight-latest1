@@ -65,7 +65,6 @@ describe('middleware placement', () => {
   });
 
   it('keeps the implementation reachable from the entry point', () => {
-    // Guards the re-export specifically: an entry point that exists but points
     // at nothing would pass the checks above while still loading no rules.
     const found = entryPoint(liveAppDir()) as string;
     const source = readFileSync(found, 'utf8');

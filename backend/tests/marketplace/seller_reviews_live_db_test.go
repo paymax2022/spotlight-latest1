@@ -1,13 +1,11 @@
 package marketplace_test
 
-// ---------------------------------------------------------------------------
 // GET /sellers/:id/reviews (Service.SellerReviews) used to read the dead,
 // order-keyed mkt_reviews table — no rows written to it since ADR-023 removed
 // escrow orders — while every review since has been written to the
 // thread-keyed mkt_deal_reviews table via SubmitDealReview. A seller's real,
 // current reviews never reached their own storefront. This pins the fix:
 // SellerReviews now reads mkt_deal_reviews (ListRevieweeDealReviews).
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 type Handler struct{ svc *Service }
@@ -12,7 +14,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // Create handles POST /api/finance/ratings
 func (h *Handler) Create(c *gin.Context) {
-	raterID := c.GetString("user_id")
+	raterID := ginutil.UserID(c)
 	var req CreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

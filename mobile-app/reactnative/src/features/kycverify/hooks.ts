@@ -1,4 +1,3 @@
-// ── Multi-provider KYC step-up — data hooks ──────────────────────────────────
 // React Query wrappers over the /api/finance/kyc contract. Check mutations
 // invalidate the session query so the UI re-derives progress after each attempt.
 

@@ -3,8 +3,10 @@ package restaurant
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,13 +17,11 @@ import (
 const dispatchFanOut = 7
 
 // DispatchOrder auto-offers a ready order to the nearest available riders.
-//
 // "Available" = a verified, online rider in the shared transport `drivers`
 // pool (status='online', verification_status='approved'). Riders are ranked by
 // straight-line distance to the restaurant when both have coordinates, so the
 // closest get the offer first. This is what marking an order "ready for pickup"
 // activates: rider sourcing, with no manual assignment by the restaurant.
-//
 // Idempotent: re-dispatching an order simply re-offers to any newly-online
 // riders (UNIQUE(order_id, rider_id) prevents duplicate offers). A delivery
 // code for the customer↔rider handoff is generated here if not already set.
@@ -261,4 +261,251 @@ func generateHandoffCode() (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%04d", n.Int64()), nil
+}
+
+// DeclineDelivery lets an offered rider explicitly decline a delivery (DP-002). Their
+// offer is marked 'declined'; if the order still has no rider and no other open offers
+// remain, it is re-dispatched to source new riders. No money moves (pre-settlement).
+func (s *Service) DeclineDelivery(ctx context.Context, orderID, riderID string) error {
+	tag, err := s.db.Exec(ctx,
+		`UPDATE restaurant_delivery_offers SET status='declined', responded_at=now()
+		 WHERE order_id=$1 AND rider_id=$2 AND status='offered'`, orderID, riderID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("restaurant: you have no open offer for this order")
+	}
+	// Re-dispatch only if nobody has taken it and no other offers are still open.
+	var riderAssigned *string
+	var openOffers int
+	if err := s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&riderAssigned); err != nil {
+		return errors.New("restaurant: order not found")
+	}
+	if riderAssigned != nil {
+		return nil // already claimed by someone else
+	}
+	if err := s.db.QueryRow(ctx,
+		`SELECT count(*) FROM restaurant_delivery_offers WHERE order_id=$1 AND status='offered'`, orderID).Scan(&openOffers); err != nil {
+		return err
+	}
+	if openOffers == 0 {
+		return s.DispatchOrder(ctx, orderID) // re-offer to a fresh set of nearby riders
+	}
+	return nil
+}
+
+// ReassignOrder unassigns an order's rider and re-dispatches it (DP-005 manual path:
+// e.g. the assigned rider went offline or is unresponsive). Only valid BEFORE pickup —
+// once the rider has the food, reassignment goes through the delivery-failed/dispute
+// flow instead. Ops/admin action. No money moves. The prior rider's accepted offer is
+// expired and their assignment cleared.
+func (s *Service) ReassignOrder(ctx context.Context, orderID, reason string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var status string
+	var rider *string
+	if err := tx.QueryRow(ctx, `SELECT status, rider_id FROM orders WHERE id=$1 FOR UPDATE`, orderID).Scan(&status, &rider); err != nil {
+		return errors.New("restaurant: order not found")
+	}
+	if status == string(OrderPickedUp) || status == string(OrderDelivered) {
+		return errors.New("restaurant: cannot reassign an order already picked up or delivered")
+	}
+	if isRefundedClose(OrderStatus(status)) || status == string(OrderDeliveryFailed) {
+		return fmt.Errorf("restaurant: cannot reassign a %s order", status)
+	}
+	// Clear the assignment + return the order to searching; expire the old offers so the
+	// prior rider drops it from their list.
+	if _, err := tx.Exec(ctx, `UPDATE orders SET rider_id=NULL, dispatch_status='searching', assigned_at=NULL WHERE id=$1`, orderID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE restaurant_delivery_offers SET status='expired', responded_at=now()
+		 WHERE order_id=$1 AND status IN ('offered','accepted')`, orderID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if rider != nil {
+		s.notify(ctx, Notification{UserID: *rider, Event: EventOrderCancelled, Title: "Delivery reassigned",
+			Body: "A delivery was reassigned.", Data: map[string]any{"order_id": orderID, "reason": reason}})
+	}
+	s.recordOrderEvent(ctx, orderID, "", OrderStatus(status), OrderReady)
+	return s.DispatchOrder(ctx, orderID)
+}
+
+// SweepOfflineAssigned reassigns orders that are assigned (but not yet picked up) to a
+// rider who has since gone offline (DP-005 auto-path). Returns the count reassigned.
+// Intended for a periodic ops job.
+func (s *Service) SweepOfflineAssigned(ctx context.Context) (int, error) {
+	const q = `
+		SELECT o.id
+		FROM orders o
+		JOIN drivers d ON d.user_id = o.rider_id
+		WHERE o.status = 'ready'
+		  AND COALESCE(o.dispatch_status,'none') = 'assigned'
+		  AND o.rider_id IS NOT NULL
+		  AND d.status = 'offline'`
+	rows, err := s.db.Query(ctx, q)
+	if err != nil {
+		return 0, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, id := range ids {
+		if err := s.ReassignOrder(ctx, id, "rider_offline"); err == nil {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// Dispatch fairness + SLA tuning. These bounds shape rider sourcing so a ready order
+// reaches a nearby rider quickly (SLA) without repeatedly dumping every order on the
+// same one or two riders (fairness).
+const (
+	// baseDispatchFanOut is how many riders a fresh ready order is offered to.
+	baseDispatchFanOut = 7
+	// escalatedDispatchFanOut widens the net on a re-dispatch once the SLA target has
+	// slipped (more riders, and the load cap is relaxed — see dispatchTuning).
+	escalatedDispatchFanOut = 15
+	// baseMaxRiderLoad caps how many in-flight deliveries a rider may hold before they
+	// are skipped for new offers (protects delivery time + spreads work).
+	baseMaxRiderLoad = 3
+	// escalatedMaxRiderLoad relaxes the cap when the order is breaching SLA — getting
+	// it moving beats perfect load-balancing.
+	escalatedMaxRiderLoad = 6
+
+	// dispatchSLATarget is the time-to-assign goal from "ready". Past it an order is
+	// "at risk" and a re-dispatch escalates.
+	dispatchSLATarget = 2 * time.Minute
+	// dispatchSLABreach is when an unassigned order is considered breached (ops-visible).
+	dispatchSLABreach = 5 * time.Minute
+)
+
+// riderCandidate is one sourcing candidate with the fairness signals: proximity to the
+// restaurant, current in-flight load, and when they were last given an order.
+type riderCandidate struct {
+	RiderID      string
+	HasDistance  bool       // false when the restaurant or rider has no pin
+	DistanceSq   float64    // squared straight-line distance (monotonic; only compared, never shown)
+	ActiveLoad   int        // non-terminal orders currently assigned to this rider
+	LastAssigned *time.Time // nil = never assigned (gets fairness priority)
+}
+
+// selectFairRiders ranks and trims sourcing candidates. Riders at/over maxLoad are
+// filtered out entirely (never pile more onto a saturated rider). The rest are ordered
+// so food still reaches the customer fast while work is spread fairly:
+//  1. known-distance riders before unknown (a pinned rider can be routed);
+//  2. nearest first (fresher food);
+//  3. lighter current load first (tiebreak among equally-near riders);
+//  4. longest-waiting first — never-assigned, then oldest last-assignment (round-robin
+//     fairness, and the ONLY signal when neither side has a pin, e.g. no restaurant
+//     coordinates — which turns sourcing into a fair rotation instead of the old
+//     most-recently-online bias).
+//
+// It returns at most fanOut candidates and never mutates its input.
+func selectFairRiders(cands []riderCandidate, fanOut, maxLoad int) []riderCandidate {
+	pool := make([]riderCandidate, 0, len(cands))
+	for _, c := range cands {
+		if c.ActiveLoad < maxLoad {
+			pool = append(pool, c)
+		}
+	}
+	sort.SliceStable(pool, func(i, j int) bool {
+		a, b := pool[i], pool[j]
+		if a.HasDistance != b.HasDistance {
+			return a.HasDistance // known distance ranks ahead of unknown
+		}
+		if a.HasDistance && a.DistanceSq != b.DistanceSq {
+			return a.DistanceSq < b.DistanceSq
+		}
+		if a.ActiveLoad != b.ActiveLoad {
+			return a.ActiveLoad < b.ActiveLoad
+		}
+		return lastAssignedEarlier(a.LastAssigned, b.LastAssigned)
+	})
+	if len(pool) > fanOut && fanOut >= 0 {
+		pool = pool[:fanOut]
+	}
+	return pool
+}
+
+// lastAssignedEarlier orders never-assigned (nil) first, then by oldest assignment —
+// so the rider who has waited longest for work is offered first.
+func lastAssignedEarlier(a, b *time.Time) bool {
+	if a == nil && b == nil {
+		return false
+	}
+	if a == nil {
+		return true // never assigned wins
+	}
+	if b == nil {
+		return false
+	}
+	return a.Before(*b)
+}
+
+// SLAStatus is the dispatch time-to-assign health of an order.
+type SLAStatus string
+
+const (
+	SLAOnTime   SLAStatus = "on_time"
+	SLAAtRisk   SLAStatus = "at_risk"
+	SLABreached SLAStatus = "breached"
+)
+
+// dispatchSLAStatus computes the time-to-assign health of an order. `elapsed` is
+// measured from readyAt to assignedAt when a rider has been assigned (the realized
+// time-to-assign), otherwise from readyAt to now (still ticking). A nil readyAt (the
+// order never reached "ready") is on_time with zero elapsed — there is no SLA clock yet.
+func dispatchSLAStatus(readyAt, assignedAt *time.Time, now time.Time, target, breach time.Duration) (SLAStatus, time.Duration) {
+	if readyAt == nil {
+		return SLAOnTime, 0
+	}
+	end := now
+	if assignedAt != nil {
+		end = *assignedAt
+	}
+	elapsed := max(end.Sub(*readyAt), 0)
+	switch {
+	case elapsed > breach:
+		return SLABreached, elapsed
+	case elapsed > target:
+		return SLAAtRisk, elapsed
+	default:
+		return SLAOnTime, elapsed
+	}
+}
+
+// dispatchTuning picks the fan-out + load cap for a (re-)dispatch. The first attempt on
+// a fresh order uses the base bounds; once the order has been searching past the SLA
+// target (an escalating re-dispatch), it widens the net and relaxes the load cap so a
+// stuck order gets moving.
+func dispatchTuning(readyAt *time.Time, now time.Time, attempt int) (int, int, bool) {
+	elapsed := time.Duration(0)
+	if readyAt != nil {
+		elapsed = now.Sub(*readyAt)
+	}
+	if attempt > 0 && elapsed > dispatchSLATarget {
+		return escalatedDispatchFanOut, escalatedMaxRiderLoad, true
+	}
+	return baseDispatchFanOut, baseMaxRiderLoad, false
 }

@@ -16,7 +16,6 @@ export interface RegistrationErrorContext {
 export function handleRegistrationError(context: RegistrationErrorContext) {
   const { endpoint, applicationId, userId, stepKey, error } = context;
 
-  // Extract error details
   const errorMessage = error instanceof Error ? error.message : 'Unknown error';
   const errorStack = error instanceof Error ? error.stack : undefined;
 
@@ -30,7 +29,6 @@ export function handleRegistrationError(context: RegistrationErrorContext) {
     stack: errorStack,
   });
 
-  // Handle specific error types
   if (errorMessage === 'UNAUTHORIZED') {
     return errorResponse('Authentication required', 401);
   }

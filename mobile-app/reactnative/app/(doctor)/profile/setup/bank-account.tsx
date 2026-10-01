@@ -3,9 +3,9 @@ import { View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView } fr
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { CheckCircle2 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';

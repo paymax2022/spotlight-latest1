@@ -8,16 +8,15 @@ import { useQuery } from '@tanstack/react-query';
 import BalanceCard from '@/components/BalanceCard';
 import RecentActivityCard, { Activity } from '@/components/RecentActivityCard';
 import SectionHeader from '@/components/SectionHeader';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { getWallet } from '@/api/wallet.api';
 import { getWalletLedger, getWalletFlowSummary, type WalletLedgerEntry } from '@/api/walletLedger.api';
 // Shared formatter — this screen's own copy used minimumFractionDigits:0, so a
 // total ending in a round ten of kobo lost its last digit (₦13,645.20 read as
-// "₦13,645.2"). Its comment claimed "one place so every wallet number matches";
 // src/utils/money.ts is that place.
 import { formatNaira } from '@/utils/money';
 
@@ -27,10 +26,8 @@ const TABS = ['All', 'Credit', 'Debit'];
 // mid-digit across two lines. `adjustsFontSizeToFit` is the standard RN fix for
 // "must render on one line, shrink don't wrap/clip" — but react-native-web does
 // not implement it (confirmed against a live Expo-web render: the DOM node's
-// fontSize never changed, and with numberOfLines=1 the text was instead
 // silently clipped with an ellipsis, which is worse than the original wrap for
 // a money amount). Native (iOS/Android) gets the real prop below and shrinks
-// correctly there; on web this hook measures the *actual rendered* DOM node
 // (its own font, not an approximation) and shrinks the font size itself so the
 // full amount stays on one line and fully legible there too.
 const STAT_AMOUNT_BASE_SIZE = 18; // Typography.titleMd.fontSize
@@ -61,7 +58,6 @@ function useWebFitFontSize(text: string, minScale = 0.6) {
   return { fontSize, ref };
 }
 
-// A ledger entry → a display row. Icon/colour reflect the money direction; the
 // title prefers the ledger description, falling back to the reference/type.
 function entryToActivity(e: WalletLedgerEntry): Activity {
   const isCredit = e.direction === 'credit';

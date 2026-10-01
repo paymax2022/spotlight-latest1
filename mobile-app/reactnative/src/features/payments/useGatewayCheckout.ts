@@ -1,4 +1,3 @@
-// ── Server-initialized gateway checkout ─────────────────────────────────────
 // For flows where the SERVER owns the transaction (wallet top-up, bills,
 // registration): the caller's `initialize()` hits the server (which sets the
 // Idempotency-Key and keeps ledger authority) and returns a Paystack
@@ -7,7 +6,6 @@
 // then calls `onResolved` so the caller can navigate to the transaction status
 // screen. It is deliberately distinct from `usePurchasePayment`, which is a
 // wallet/card chooser that CLIENT-initializes its own charge.
-//
 // The in-app SDK is the ONLY checkout path — there is no external-browser
 // fallback. If a valid access code can't be derived from the server's
 // authorization_url (which should never happen for a well-formed Paystack

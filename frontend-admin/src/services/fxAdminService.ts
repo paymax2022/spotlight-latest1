@@ -1,4 +1,3 @@
-// ── Admin — FX Orchestration service ─────────────────────────────────────────
 // Mock-backed. No backend endpoints exist yet for this console's surface —
 // /api/fx/admin/... is not registered anywhere in the Go service (verified by
 // grep). The closest real mount is /api/finance/admin/fx (see
@@ -6,11 +5,9 @@
 // markup-rate console (/markup, /markup/audit) — a narrower, unrelated surface
 // from this file's overview/transactions/routing/providers/etc. adminBase()
 // below points at that real group anyway, because it is the true root this
-// module would be built under; a caller adding a path under it that the
 // backend has not built yet still 404s, same as before, and gets there via a
 // route the backend actually owns instead of one that never existed. Shaped
 // after crowdfundingAdminService / fintechService so that once the admin
-// control-plane is built, flipping NEXT_PUBLIC_FX_ADMIN_USE_MOCK=false is the
 // only change needed — but until then every mutation below refuses honestly
 // rather than reporting a success it did not perform. All money is integer
 // minor units.
@@ -30,7 +27,6 @@ import type {
   FxSettingsCatalogue,
 } from '@/types/fxAdmin';
 
-// Mock by default; flip with NEXT_PUBLIC_FX_ADMIN_USE_MOCK=false once the admin
 // control-plane endpoints are live on the Go backend.
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_FX_ADMIN_USE_MOCK);
 
@@ -47,9 +43,7 @@ const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 // Unlike association/restaurant, there is NO backend for any FX admin write —
 // this console's surface (routing/providers/treasury/spread/recon/customers/
 // compliance/webhooks/cards/settings) does not exist anywhere in the Go
-// service (confirmed by grep; the only related route is
 // /api/finance/admin/fx/markup, a different, narrower surface — see adminBase()
-// above). So there is no "set NEXT_PUBLIC_FX_ADMIN_USE_MOCK=false to reach the
 // real endpoint" escape hatch here — flipping that flag was ALSO dishonest:
 // every "live" branch below called fetch(...) and then returned// `{ ok: true }` unconditionally, discarding the response and its status code,
 // so a 404 (the only possible outcome today) was reported as success too.
@@ -69,8 +63,6 @@ async function writeLive(url: string, init: RequestInit): Promise<{ ok: boolean 
   await reqLive(url, init);
   return { ok: true };
 }
-
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 
 const OVERVIEW: FxOverview = {
   gmvUsdCents: 4_280_500_00,
@@ -216,15 +208,11 @@ const RECON_BREAKS: ReconBreak[] = [
   { id: 'bk3', runId: 'run2', provider: 'maplerad', reference: 'PMX-CV-90044', type: 'timing', expectedMinor: 0, actualMinor: 0, currency: 'USD', status: 'open', createdAt: '2026-06-18T23:20:00Z' },
 ];
 
-// ─── Overview ─────────────────────────────────────────────────────────────────
-
 export async function getOverview(): Promise<FxOverview> {
   if (USE_MOCK) { await delay(); return OVERVIEW; }
   const res = await fetch(`${adminBase()}/overview`, { headers: authHeaders() });
   return res.json();
 }
-
-// ─── Transactions ─────────────────────────────────────────────────────────────
 
 export async function getTransactions(filter?: FxTxFilter): Promise<FxTxSummary[]> {
   if (USE_MOCK) {
@@ -265,8 +253,6 @@ export async function forceReverseTransaction(id: string): Promise<{ ok: boolean
   return writeLive(`${adminBase()}/transactions/${id}/reverse`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:transaction-reverse', id) } });
 }
 
-// ─── Routing ──────────────────────────────────────────────────────────────────
-
 export async function getRoutingWeights(): Promise<RoutingWeights[]> {
   if (USE_MOCK) { await delay(); return WEIGHTS; }
   const res = await fetch(`${adminBase()}/routing`, { headers: authHeaders() });
@@ -283,8 +269,6 @@ export async function simulateRoute(corridor: string, amountUsdCents: number): P
   return reqLive<RouteSimResult>(`${adminBase()}/routing/simulate`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:route-simulate', corridor) }, body: JSON.stringify({ corridor, amountUsdCents }) });
 }
 
-// ─── Providers ────────────────────────────────────────────────────────────────
-
 export async function getProviders(): Promise<ProviderConfig[]> {
   if (USE_MOCK) { await delay(); return PROVIDERS; }
   const res = await fetch(`${adminBase()}/providers`, { headers: authHeaders() });
@@ -300,8 +284,6 @@ export async function setBreaker(provider: Provider, state: ProviderConfig['brea
   if (USE_MOCK) throw new Error(`Setting a provider breaker ${NO_BACKEND_YET}`);
   return writeLive(`${adminBase()}/providers/${provider}/breaker`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:provider-breaker', provider) }, body: JSON.stringify({ state }) });
 }
-
-// ─── Treasury ─────────────────────────────────────────────────────────────────
 
 export async function getFloats(): Promise<FloatBucket[]> {
   if (USE_MOCK) { await delay(); return FLOATS; }
@@ -320,8 +302,6 @@ export async function rebalanceNow(bucket: FloatBucket, path: 'fiat' | 'stableco
   return writeLive(`${adminBase()}/treasury/rebalance`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:treasury-rebalance', bucket.provider, bucket.currency) }, body: JSON.stringify({ provider: bucket.provider, currency: bucket.currency, path }) });
 }
 
-// ─── Spread ───────────────────────────────────────────────────────────────────
-
 export async function getSpreadRules(): Promise<SpreadRule[]> {
   if (USE_MOCK) { await delay(); return SPREADS; }
   const res = await fetch(`${adminBase()}/spread`, { headers: authHeaders() });
@@ -332,8 +312,6 @@ export async function updateSpreadRule(id: string, patch: Partial<SpreadRule>): 
   if (USE_MOCK) throw new Error(`Updating a spread rule ${NO_BACKEND_YET}`);
   return writeLive(`${adminBase()}/spread/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:spread-update', id) }, body: JSON.stringify(patch) });
 }
-
-// ─── Reconciliation ───────────────────────────────────────────────────────────
 
 export async function getReconRuns(): Promise<ReconRun[]> {
   if (USE_MOCK) { await delay(); return RECON_RUNS; }
@@ -351,8 +329,6 @@ export async function resolveReconBreak(id: string, status: ReconBreak['status']
   if (USE_MOCK) throw new Error(`Resolving a reconciliation break ${NO_BACKEND_YET}`);
   return writeLive(`${adminBase()}/recon/breaks/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:recon-break-resolve', id) }, body: JSON.stringify({ status }) });
 }
-
-// ─── G. Customers (KYC/KYB) ───────────────────────────────────────────────────
 
 const CUSTOMERS: CustomerDetail[] = [
   {
@@ -405,8 +381,6 @@ export async function setCustomerVerification(id: string, verification: Customer
   return writeLive(`${adminBase()}/customers/${id}/verification`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:customer-verification', id) }, body: JSON.stringify({ verification }) });
 }
 
-// ─── H. Compliance & Risk ─────────────────────────────────────────────────────
-
 const ALERTS: ScreeningAlert[] = [
   { id: 'al1', customer: 'QuickCoin Traders', kind: 'sanctions', reference: null, detail: 'Name match (82%) against OFAC SDN list.', severity: 'high', status: 'open', createdAt: '2026-06-19T08:00:00Z' },
   { id: 'al2', customer: 'Jane Doe', kind: 'velocity', reference: 'PMX-TR-77810', detail: '5 payouts in 10 minutes exceeds velocity rule.', severity: 'medium', status: 'in_review', createdAt: '2026-06-19T09:10:00Z' },
@@ -424,8 +398,6 @@ export async function setAlertStatus(id: string, status: CaseStatus, reason?: st
   if (USE_MOCK) throw new Error(`Setting an alert status ${NO_BACKEND_YET}`);
   return writeLive(`${adminBase()}/compliance/alerts/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:alert-status', id) }, body: JSON.stringify({ status, reason }) });
 }
-
-// ─── L. Webhooks & Developer ──────────────────────────────────────────────────
 
 const ENDPOINTS: WebhookEndpoint[] = [
   { id: 'wh1', customer: 'Acme Ltd', url: 'https://acme.example/hooks/paymax', events: ['transfer.paid', 'conversion.settled', 'collection.received'], enabled: true, sandbox: false },
@@ -473,8 +445,6 @@ export async function getApiKeys(): Promise<ApiKey[]> {
   return res.json();
 }
 
-// ─── M. Analytics & Reports ───────────────────────────────────────────────────
-
 export async function getAnalytics(): Promise<FxAnalytics> {
   if (USE_MOCK) {
     await delay();
@@ -504,8 +474,6 @@ export async function getAnalytics(): Promise<FxAnalytics> {
   const res = await fetch(`${adminBase()}/analytics`, { headers: authHeaders() });
   return res.json();
 }
-
-// ─── J. Beneficiaries & Collections ───────────────────────────────────────────
 
 const VA_REGISTRY: VirtualAccountReg[] = [
   { id: 'va1', customer: 'Acme Ltd', currency: 'USD', type: 'iban', identifier: 'GB29NWBK60161331926819', provider: 'eversend', status: 'active', createdAt: '2026-05-20T10:00:00Z' },
@@ -541,8 +509,6 @@ export async function getBeneficiaryIssues(): Promise<BeneficiaryValidationIssue
   return res.json();
 }
 
-// ─── K. Cards ─────────────────────────────────────────────────────────────────
-
 const ISSUED_CARDS: IssuedCard[] = [
   { id: 'ic1', customer: 'Acme Ltd', brand: 'visa', currency: 'USD', last4: '4242', status: 'active', provider: 'maplerad', balanceMinor: 420_00, spentMinor: 86_40, createdAt: '2026-04-20T10:00:00Z' },
   { id: 'ic2', customer: 'Acme Ltd', brand: 'mastercard', currency: 'USD', last4: '5588', status: 'frozen', provider: 'maplerad', balanceMinor: 1_250_00, spentMinor: 0, createdAt: '2026-05-30T10:00:00Z' },
@@ -568,8 +534,6 @@ export async function getSuspiciousCardActivity(): Promise<SuspiciousCardActivit
   const res = await fetch(`${adminBase()}/cards/suspicious`, { headers: authHeaders() });
   return res.json();
 }
-
-// ─── N. Settings: catalogues + feature flags ──────────────────────────────────
 
 const CATALOGUE: FxSettingsCatalogue = {
   corridors: [

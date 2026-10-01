@@ -1,8 +1,6 @@
 package association
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"path"
@@ -11,22 +9,21 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
+
+	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/internal/platform/r2"
 )
 
 // presign.go — backend-owned presigned Cloudflare R2 uploads for association logos.
-//
 // WHY THIS EXISTS
-// ---------------
 // The create-organisation wizard has always offered "tap to upload a logo", and
 // the picker handed back a device-local file:// URI which was then stored
 // verbatim in assoc_organisations.logo_url. The logo rendered on the founder's
 // own phone and nowhere else — not for other members, not in the admin console.
 // Making the logo a required field turned that from a cosmetic gap into a trap,
 // because every founder who used the picker got a broken logo.
-//
 // The flow now mirrors estate's (see internal/estate/presign.go):
-//
 //  1. Client calls POST /api/finance/associations/uploads/logo/presign with
 //     {fileName, contentType}.
 //  2. Backend derives a SERVER-CONTROLLED object key
@@ -35,7 +32,6 @@ import (
 //  3. Client PUTs the image straight to R2 — never through this API.
 //  4. Client sends the KEY back as the draft's logoUri, and it is stored in
 //     logo_url in place of a URL.
-//
 // SCOPED TO THE USER, NOT AN ORGANISATION — deliberately. Estate presigns
 // against /:id because the estate already exists and membership can be checked.
 // A logo is chosen while the organisation is still a draft on the founder's
@@ -44,7 +40,6 @@ import (
 // inside their own prefix, and the random component makes keys unguessable, so
 // the worst an authenticated caller can do is upload images into their own
 // namespace.
-//
 // R2 credentials stay server-side. When R2 is unconfigured the endpoint fails
 // closed with 503 rather than fabricating a URL that would 404 later.
 
@@ -121,9 +116,9 @@ type PresignLogoUploadRequest struct {
 
 // PresignLogoUploadResponse is what the client uses to PUT the image to R2.
 type PresignLogoUploadResponse struct {
-	UploadURL   string `json:"uploadUrl"`   // presigned PUT URL (short-lived)
-	ObjectKey   string `json:"objectKey"`   // send this back as the draft's logoUri
-	Bucket      string `json:"bucket"`      //
+	UploadURL   string `json:"uploadUrl"` // presigned PUT URL (short-lived)
+	ObjectKey   string `json:"objectKey"` // send this back as the draft's logoUri
+	Bucket      string `json:"bucket"`
 	ContentType string `json:"contentType"` // the client MUST send this exact header on the PUT
 	ExpiresIn   int    `json:"expiresIn"`   // seconds
 	Method      string `json:"method"`      // always "PUT"
@@ -133,7 +128,7 @@ type PresignLogoUploadResponse struct {
 // scoped to the authenticated caller.
 // POST /api/finance/associations/uploads/logo/presign
 func (h *Handler) PresignLogoUpload(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -160,7 +155,7 @@ func (h *Handler) PresignLogoUpload(c *gin.Context) {
 		return
 	}
 
-	key := fmt.Sprintf("association/logo/%s/%s%s", userID, logoRandToken(), ext)
+	key := fmt.Sprintf("association/logo/%s/%s%s", userID, cryptox.RandHex(16), ext)
 
 	url, err := h.presigner.PresignPut(key, ct, logoPresignTTL)
 	if err != nil {
@@ -184,7 +179,6 @@ func (h *Handler) PresignLogoUpload(c *gin.Context) {
 
 // IsStoredObjectKey reports whether a stored logo value is an R2 object key
 // rather than a URL.
-//
 // logo_url holds both, because organisations created before uploads existed
 // stored a pasted URL and the admin console still writes one. Anything with a
 // scheme is a URL and is passed through untouched; anything else is treated as a
@@ -201,11 +195,9 @@ func IsStoredObjectKey(v string) bool {
 }
 
 // resolveLogo turns a stored logo value into something a client can render.
-//
 // A pasted URL is returned unchanged. An object key becomes a short-lived signed
 // GET URL, because the R2 bucket is not public — there is no base URL that would
 // make a key fetchable, so a key handed to a client verbatim renders nothing.
-//
 // Every failure mode returns the value unchanged rather than an error: no
 // presigner wired, R2 unconfigured, or a signing failure. A logo is decoration,
 // and an organisation that cannot be listed because its logo could not be signed
@@ -224,18 +216,8 @@ func (s *Service) resolveLogo(stored *string) *string {
 	return &url
 }
 
-// logoRandToken returns a 16-byte hex token for unguessable object keys.
-func logoRandToken() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-// ── Document vault uploads ───────────────────────────────────────────────────
-
 // PresignDocumentUpload issues a presigned R2 PUT URL for an organisation's
 // document vault.
-//
 // Unlike the logo endpoint this IS organisation-scoped, and admin-gated: the
 // vault belongs to the organisation rather than to the person uploading, so the
 // key is namespaced by organisation and only somebody who administers it may
@@ -243,14 +225,14 @@ func logoRandToken() string {
 // admin endpoint, with the objectKey returned here.
 // POST /api/finance/associations/admin/organisations/:id/documents/presign
 func (h *Handler) PresignDocumentUpload(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
 	orgID := c.Param("id")
 	if err := h.svc.requireOrgAdmin(c.Request.Context(), userID, orgID); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	if h.presigner == nil || !h.presigner.Configured() {
@@ -274,7 +256,7 @@ func (h *Handler) PresignDocumentUpload(c *gin.Context) {
 		return
 	}
 
-	key := fmt.Sprintf("association/document/%s/%s%s", orgID, logoRandToken(), ext)
+	key := fmt.Sprintf("association/document/%s/%s%s", orgID, cryptox.RandHex(16), ext)
 	url, err := h.presigner.PresignPut(key, ct, logoPresignTTL)
 	if err != nil {
 		if err == r2.ErrNotConfigured {
@@ -296,20 +278,18 @@ func (h *Handler) PresignDocumentUpload(c *gin.Context) {
 
 // DocumentDownloadURL returns a short-lived signed GET for a document the caller
 // may read.
-//
 // The bucket is not public, so a stored object key is not fetchable on its own.
 // Authorisation is the SERVICE's, not this handler's: ResolveDocumentDownload
 // checks the caller is an active member of the document's organisation and, for
 // a restricted document, that they are an admin.
-//
 // A document whose storage_key is empty predates uploads. It has no file to
 // serve, and saying so is better than a signed URL for an object that was never
 // written.
 // GET /api/finance/associations/documents/:id/download-url
 func (h *Handler) DocumentDownloadURL(c *gin.Context) {
-	key, err := h.svc.ResolveDocumentDownload(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+	key, err := h.svc.ResolveDocumentDownload(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	if key == "" {

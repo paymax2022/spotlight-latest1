@@ -3,9 +3,7 @@ import { cookies } from 'next/headers';
 
 // Sets/clears the HttpOnly session cookie the admin middleware reads. The client
 // (features/auth/adminAuth) POSTs its Supabase access token here after sign-in so
-// the session becomes server-readable; middleware.ts verifies it (HS256 when
 // SUPABASE_JWT_SECRET is set). Storing the token in an HttpOnly cookie keeps it
-// out of JS reach; the legacy localStorage copy still powers the service-layer
 // Bearer calls until those migrate to cookie auth (tracked separately).
 
 const SESSION_COOKIE = 'sb-admin-token';

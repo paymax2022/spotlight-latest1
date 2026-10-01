@@ -68,8 +68,6 @@ func newTestClient(srv *httptest.Server) *maplerad.Client {
 	return maplerad.New("sk_test_live", false).WithBaseURL(srv.URL)
 }
 
-// --- Identity ---
-
 func TestCreateCustomer_MapsResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/customers" || r.Method != http.MethodPost {
@@ -124,8 +122,6 @@ func TestGetCustomer_MockWhenOffline(t *testing.T) {
 	}
 }
 
-// --- Collections / Virtual accounts ---
-
 func TestProvisionVirtualAccount_PassThroughNaming(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Caveat: API may return a random name and bank_name "maplerad".
@@ -168,8 +164,6 @@ func TestGetVirtualAccount_MockWhenOffline(t *testing.T) {
 		t.Fatalf("offline GetVirtualAccount must mock with bank=maplerad, got %+v err=%v", va, err)
 	}
 }
-
-// --- Wallets ---
 
 func TestProvisionWallet_ReturnsID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -216,8 +210,6 @@ func TestGetProviderBalance_MockWhenOffline(t *testing.T) {
 		t.Fatalf("offline balance must mock zero, got %+v err=%v", bal, err)
 	}
 }
-
-// --- Transfers ---
 
 func TestInitiatePayout_PendingAndProviderRef(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -270,8 +262,6 @@ func TestGetTransferStatus_MockWhenOffline(t *testing.T) {
 		t.Fatalf("offline status must mock pending, got %+v err=%v", st, err)
 	}
 }
-
-// --- Counterparty / Institutions ---
 
 func TestResolveAccount_MapsResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -334,8 +324,6 @@ func TestCreateTransferRecipient_ReturnsCode(t *testing.T) {
 	}
 }
 
-// --- Bills ---
-
 func TestPurchaseBill_PendingOnAccept(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/bills" || r.Method != http.MethodPost {
@@ -376,8 +364,6 @@ func TestGetBill_MockWhenOffline(t *testing.T) {
 	}
 }
 
-// --- Webhook signature ---
-
 func sign(secret string, payload []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(payload)
@@ -413,8 +399,6 @@ func TestVerifyWebhookSignature_MissingSignatureOrSecret(t *testing.T) {
 		t.Error("missing webhook secret must reject (no more return-true stub)")
 	}
 }
-
-// --- ParseWebhook ---
 
 func TestParseWebhook_EventTypes(t *testing.T) {
 	c := maplerad.New("sk", false)
@@ -468,8 +452,6 @@ func TestParseWebhook_MalformedReturnsError(t *testing.T) {
 	}
 }
 
-// --- Interface satisfaction (compile + runtime sanity) ---
-
 func TestImplementsPorts(t *testing.T) {
 	c := maplerad.New("sk", false)
 	var _ provider.IdentityProvider = c
@@ -479,8 +461,6 @@ func TestImplementsPorts(t *testing.T) {
 	var _ provider.VirtualAccountProvider = c
 	var _ provider.PaymentProvider = c
 }
-
-// --- FX rate board (GET /fx/rates) ---
 
 // fxRatesPayload mirrors the real sandbox response: a corridor LIST (the endpoint
 // ignores source/target/amount query params), each entry priced against a fixed
@@ -571,8 +551,6 @@ func TestGetFXQuote_APIError(t *testing.T) {
 		t.Fatalf("want the provider message surfaced, got %v", err)
 	}
 }
-
-// --- FX quote booking + exchange (POST /fx/quote, POST /fx) ---
 
 // TestCreateFXQuote_ReturnsReference pins the firm-quote contract: the reference
 // is what POST /fx consumes, so it must survive as QuoteID. The rate board

@@ -38,8 +38,8 @@ func (t Table[S]) Can(from, to S) bool {
 // Legal lists the states reachable from s — for "what next" admin UI hints
 // and for tests asserting the transition surface.
 func (t Table[S]) Legal(from S) []S {
-	m, ok := t[from]
-	if !ok {
+	m := t[from]
+	if len(m) == 0 {
 		return nil
 	}
 	out := make([]S, 0, len(m))

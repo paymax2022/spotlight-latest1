@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { createAdminAccount, fetchAdminSignupOptions, type AdminSignupOptions } from '@/features/auth/adminSignup';
+import { createAdminAccount, fetchAdminSignupOptions, type AdminSignupOptions } from '@/features/auth/adminSignupShared';
 
 /**
  * The create-an-admin form, rendered from both /admin/login (collapsible, below

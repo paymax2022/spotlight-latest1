@@ -1,9 +1,7 @@
 package telemedicine_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression coverage for three defects found live during the
 // Telemedicine (Module 14) UAT pass:
-//
 //   - BookAppointment's idempotent replay was unreachable: assertSlotFree ran
 //     BEFORE the Idempotency-Key check, so a legitimate retry that reused the
 //     doctor's now-occupied slot was rejected with "slot no longer available"
@@ -18,9 +16,7 @@ package telemedicine_test
 //   - AddReview leaked a raw Postgres unique-violation error (constraint name
 //     and SQLSTATE) to the API response on a duplicate review instead of a
 //     clean domain error.
-//
 // Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

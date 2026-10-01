@@ -6,14 +6,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { bridgedVerifyPaidVote } from '@/server/voting-bridge/bridge';
 import { validateRequest } from '@/lib/auth/request';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient } from '@/lib/supabase/server';
 
 export async function POST(request: NextRequest) {
   try {
-    // Validate authentication (for browser redirect)
     const { user, error: authError } = await validateRequest(request);
 
-    // Parse request body
     const body = await request.json();
     const { transactionId, paymentReference } = body;
 
@@ -27,7 +25,6 @@ export async function POST(request: NextRequest) {
     // Paystack's browser redirect appends only `reference`/`trxref`, so
     // callers that never saw the initiation response (vote-callback page)
     // cannot supply transactionId. Resolve it from the transaction's unique
-    // payment_reference; an unknown reference falls through to the bridge,
     // which answers 404 — the not-found taxonomy stays in one place.
     let resolvedTransactionId: string = transactionId ?? '';
     if (!resolvedTransactionId) {
@@ -40,7 +37,6 @@ export async function POST(request: NextRequest) {
       resolvedTransactionId = tx?.id ?? '';
     }
 
-    // Get request context
     const ipAddress = request.headers.get('x-forwarded-for') ||
                      request.headers.get('x-real-ip') ||
                      'unknown';
@@ -116,7 +112,6 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get request context
     const ipAddress = request.headers.get('x-forwarded-for') ||
                      request.headers.get('x-real-ip') ||
                      'unknown';

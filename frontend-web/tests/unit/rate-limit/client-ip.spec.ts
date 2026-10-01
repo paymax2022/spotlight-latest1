@@ -12,7 +12,6 @@ afterEach(() => {
 
 describe('getRequestIp — anti-spoofing', () => {
   it('takes the rightmost XFF entry, not the client-controlled leftmost', () => {
-    // Attacker sends XFF of their choosing; the trusted edge proxy appends the
     // observed client IP at the end. Trust len-1, not 0.
     expect(getRequestIp(req({ 'x-forwarded-for': '1.2.3.4, 203.0.113.9' }))).toBe('203.0.113.9');
   });
@@ -47,7 +46,6 @@ describe('getRequestIp — anti-spoofing', () => {
 
 describe('checkRateLimit — bucket store is capped', () => {
   it('bounds the bucket map under a key flood', () => {
-    // MAX_BUCKETS is 20_000; flooding well past it must not grow the map past
     // cap + the sweep eviction margin.
     for (let i = 0; i < 20_050; i++) {
       checkRateLimit(`flood:${i}`, 30, 60_000);

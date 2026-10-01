@@ -1,17 +1,14 @@
 package modules_test
 
-// ---------------------------------------------------------------------------
 // Contract test (AUD-OPS-001): every platform_modules.env_flag value must name
 // a flag the backend actually reads. The registry resolves env_flag via a
 // free-form os.Getenv at request time, while route mounts are gated by the
 // getEnvBool names in config.go — when they drift (six rows did: e.g. registry
 // FEATURE_ASSOCIATION_ENABLED vs mount FEATURE_ASSOCIATIONS_ENABLED) ops get a
 // module that is "visible" but 503s, or mounted but unhideable.
-//
 // Migrations are replayed in filename order (timestamped names): INSERT seeds
 // the value, later UPDATEs may correct it. The test asserts on the EFFECTIVE
 // value per module key, so corrective migrations satisfy it.
-// ---------------------------------------------------------------------------
 
 import (
 	"os"

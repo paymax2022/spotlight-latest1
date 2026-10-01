@@ -155,7 +155,6 @@ export async function login(payload: { identifier: string; password: string }): 
   const identifier = payload.identifier.trim();
   let res;
   try {
-    // skipAuthRedirect: a 401 on the sign-in request itself means bad
     // credentials, not an expired session — the global interceptor's
     // sign-out + redirect-to-login would remount this screen and wipe the
     // error message before it renders.

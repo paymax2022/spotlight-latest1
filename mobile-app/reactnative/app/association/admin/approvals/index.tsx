@@ -3,17 +3,17 @@ import { View, Text, FlatList, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SegmentedControl from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';
-import { useApprovalQueue } from '@/features/association/hooks/useAdmin';
-import { relativeTime } from '@/features/association/utils/associationFormatters';
-import type { ApplicationJurisdiction, AdminApplicationSummary } from '@/features/association/types/admin.types';
+import { useApprovalQueue } from '@/features/association/hooks';
+import { relativeTime } from '@/features/association/utils';
+import type { ApplicationJurisdiction, AdminApplicationSummary } from '@/features/association/types';
 
 const SEGMENTS = [
   { value: 'ALL', label: 'All' },

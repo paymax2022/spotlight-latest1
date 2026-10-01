@@ -37,14 +37,12 @@ export async function PATCH(request: Request, { params }: { params: { roleId: st
       facilitiesBookingsCancel: 'estate.admin.facilities.bookings.cancel',
     };
 
-    // Get permission IDs
     const { data: permsData, error: permsError } = await supabase
       .from('permissions')
       .select('id, slug');
 
     if (permsError) throw permsError;
 
-    // Get current role permissions
     const { data: currentPerms, error: currentError } = await supabase
       .from('role_permissions')
       .select('id, permission_id, permissions(slug)')
@@ -52,7 +50,6 @@ export async function PATCH(request: Request, { params }: { params: { roleId: st
 
     if (currentError) throw currentError;
 
-    // Build the set of permissions to keep
     const permissionsToKeep = new Set<string>();
     const permissionKey = body as { [key: string]: boolean };
 

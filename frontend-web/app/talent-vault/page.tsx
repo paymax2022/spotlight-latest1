@@ -18,7 +18,6 @@ type Contest = {
 // connect_contests), fetched here through the Go backend's public mirror of
 // that route (backend/internal/connect/voting/handlers.go RegisterPublic)
 // since this page renders for logged-out visitors. A client-side consumer
-// would go through app/api/public/connect-contests/route.ts instead; a
 // server component can call the Go backend directly and skip that hop.
 async function getContests(): Promise<Contest[]> {
   try {

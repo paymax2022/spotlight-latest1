@@ -14,8 +14,6 @@ import (
 
 func approx(a, b, tol float64) bool { return math.Abs(a-b) <= tol }
 
-// ── Status machine: legal + illegal transitions (v2 3-state + STALE) ──────────
-
 func TestCanTransition_Legal(t *testing.T) {
 	legal := [][2]Status{
 		{StatusAIEstimate, StatusRestaurantConfirmed}, // approve / edit
@@ -50,8 +48,6 @@ func TestCanTransition_Illegal(t *testing.T) {
 		}
 	}
 }
-
-// ── Grounding supersede order (no auto-downgrade of confirmed/exact) ──────────
 
 func TestSupersedes(t *testing.T) {
 	// Higher precedence (lower rank) supersedes a lower one on an estimate.
@@ -91,8 +87,6 @@ func TestStatusForGrounding_AutoPublish(t *testing.T) {
 	}
 }
 
-// ── Portion rescale factors ───────────────────────────────────────────────────
-
 func TestPortionFactors(t *testing.T) {
 	cases := []struct {
 		label string
@@ -126,8 +120,6 @@ func TestPortionRescale_RatioFromRegularToLarge(t *testing.T) {
 		t.Errorf("regular→large carb = %.2f, want 112", scaled[NutCarb].Value)
 	}
 }
-
-// ── Recipe sum / scale / yield math (unchanged in v2) ─────────────────────────
 
 func TestSumRecipe_BasicSum(t *testing.T) {
 	rice := Composition{FoodCode: "R", EnergyKcal: 130, ProteinG: 2.7, CarbG: 28, FatG: 0.3, Version: 1}
@@ -195,8 +187,6 @@ func TestSumRecipe_IncompleteWhenLookupMisses(t *testing.T) {
 	}
 }
 
-// ── Library fuzzy match (unchanged in v2) ─────────────────────────────────────
-
 func TestBestLibraryMatch(t *testing.T) {
 	entries := []LibraryEntry{
 		{Slug: "jollof-rice", Name: "Jollof Rice", Aliases: []string{"party rice", "jollof"}, StandardPortionG: 350},
@@ -225,8 +215,6 @@ func TestLibraryMatch_CaseInsensitive(t *testing.T) {
 		t.Error("case-insensitive exact match should score 1.0")
 	}
 }
-
-// ── AI mock range ─────────────────────────────────────────────────────────────
 
 func TestMockEstimate_DeterministicAndWideBand(t *testing.T) {
 	a := mockEstimate("Jollof Rice", 350)
@@ -270,8 +258,6 @@ func TestParseAIEstimate_RequiresEnergy(t *testing.T) {
 	}
 }
 
-// ── Allergen rule enforcement (unchanged in v2) ───────────────────────────────
-
 func TestValidateAllergen_AICannotContainsOrFreeFrom(t *testing.T) {
 	if err := validateAllergen("peanut", DeclContains, AllergenSourceAI, false, false); err == nil {
 		t.Error("AI must NOT be allowed to set CONTAINS")
@@ -307,8 +293,6 @@ func TestValidateAllergen_UnknownVocab(t *testing.T) {
 		t.Error("unknown allergen must be rejected")
 	}
 }
-
-// ── Display: band + traffic lights + precision strings + v2 labels ────────────
 
 func TestBandFor(t *testing.T) {
 	cases := []struct {
@@ -414,8 +398,6 @@ func TestBuildDisplay_NeverBareNumber(t *testing.T) {
 	}
 }
 
-// ── Cart range propagation ────────────────────────────────────────────────────
-
 func TestAggregateCart_RangePropagation(t *testing.T) {
 	lines := []CartLine{
 		{PerServing: PerServing{NutEnergyKcal: Range{Value: 500, Low: 450, High: 560}, NutSodium: Range{Value: 700, Low: 600, High: 800}}},
@@ -445,8 +427,6 @@ func TestWorstConfidence(t *testing.T) {
 		t.Error("worst of {EXACT,MEDIUM} should be MEDIUM")
 	}
 }
-
-// ── Sanity-bound rejection (drives edit + recipe rejection) ───────────────────
 
 func TestCheckSanity_RejectsImplausible(t *testing.T) {
 	bad := PerServing{NutEnergyKcal: exact(5000), NutCarb: exact(1)}

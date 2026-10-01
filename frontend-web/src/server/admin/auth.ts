@@ -16,7 +16,6 @@ export async function assertAdminPermission(
   request: Request,
   permission: AdminPermission,
 ): Promise<AdminIdentity> {
-  // --- path (b): server-to-server API key ---
   const apiKey = request.headers.get('x-admin-key');
   const expectedKey = process.env.SPOTLIGHT_ADMIN_API_KEY;
   if (expectedKey && apiKey === expectedKey) {
@@ -44,7 +43,6 @@ export async function assertAdminPermission(
     return { role, actorId: 'api-key' };
   }
 
-  // --- path (a): JWT-based auth ---
   const authHeader = request.headers.get('authorization') || request.headers.get('Authorization') || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
   if (!token) throw new ApiError('Unauthorized', 401);
@@ -54,12 +52,10 @@ export async function assertAdminPermission(
   if (error || !data.user) throw new ApiError('Unauthorized', 401);
 
   // Role from DB is the source of truth; user_metadata is only a fallback.
-  //
   // MUST use the service-role client here, not the cookie/RLS-scoped one above.
   // This route is called with `Authorization: Bearer <token>` from a
   // cross-origin admin console (frontend-admin, a different port), never with
   // this app's own session cookies — so `createClient()`'s RLS-scoped query
-  // runs unauthenticated (auth.uid() is null) and user_profiles' own-row-only
   // SELECT policy silently returns zero rows. The role check then fell through
   // to the JWT's user_metadata.role — whatever was set at signup and never
   // updated after — making every user_profiles.role change (grant OR revoke)

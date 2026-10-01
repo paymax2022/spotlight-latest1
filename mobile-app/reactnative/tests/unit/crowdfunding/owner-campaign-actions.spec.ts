@@ -1,10 +1,8 @@
 // Proves the owner management screen never offers an action the server is
 // certain to refuse, and never hides one it would accept.
-//
 // The two refusals the API states outright are the ones worth pinning: a
 // campaign that has ever received funds cannot be deleted (409), and a feature
 // request needs an ACTIVE campaign.
-//
 // The third thing pinned here is the orthogonality of `paused` and `status`.
 // Pausing is a boolean beside the moderator's review status, NOT a value in it,
 // so a campaign can be ACTIVE and paused at once — and a campaign frozen while

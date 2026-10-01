@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/dbutil"
 )
 
 // Store is the data-access contract the service depends on. Defining it as an in-package
@@ -67,8 +68,8 @@ func (r *Repository) Insert(ctx context.Context, s School) (*School, error) {
 	const q = `INSERT INTO academy_schools
 	    (id, name, code, level, virtual_account_ref, contact, owner_user_id, verification_tier, status, created_at)
 	    VALUES ($1,$2,$3,$4,$5,$6,$7,'unverified','active',$8)`
-	if _, err := r.db.Exec(ctx, q, id, s.Name, nullStr(deref(s.Code)), nullStr(deref(s.Level)),
-		nullStr(deref(s.VirtualAccountRef)), nullStr(deref(s.Contact)), nullStr(deref(s.OwnerUserID)), now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, s.Name, dbutil.NullStr(deref(s.Code)), dbutil.NullStr(deref(s.Level)),
+		dbutil.NullStr(deref(s.VirtualAccountRef)), dbutil.NullStr(deref(s.Contact)), dbutil.NullStr(deref(s.OwnerUserID)), now); err != nil {
 		return nil, err
 	}
 	return r.Get(ctx, id)
@@ -119,8 +120,8 @@ func (r *Repository) Update(ctx context.Context, id string, req UpdateSchoolRequ
 	    virtual_account_ref = COALESCE($5, virtual_account_ref),
 	    contact = COALESCE($6, contact)
 	    WHERE id = $1`
-	tag, err := r.db.Exec(ctx, q, id, nullStr(req.Name), nullStr(req.Code), nullStr(req.Level),
-		nullStr(req.VirtualAccountRef), nullStr(req.Contact))
+	tag, err := r.db.Exec(ctx, q, id, dbutil.NullStr(req.Name), dbutil.NullStr(req.Code), dbutil.NullStr(req.Level),
+		dbutil.NullStr(req.VirtualAccountRef), dbutil.NullStr(req.Contact))
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +216,7 @@ func writeAudit(ctx context.Context, q querier, actorID, action, entityID, from,
 	const ins = `INSERT INTO public.academy_commerce_audit
 	             (actor_id, action, entity_type, entity_id, from_state, to_state, detail)
 	             VALUES ($1,$2,'academy_school',$3,$4,$5,$6)`
-	_, err := q.Exec(ctx, ins, nullStr(actorID), action, nullUUID(entityID), nullStr(from), nullStr(to), toJSON(detail))
+	_, err := q.Exec(ctx, ins, dbutil.NullStr(actorID), action, dbutil.NullUUID(entityID), dbutil.NullStr(from), dbutil.NullStr(to), toJSON(detail))
 	return err
 }
 

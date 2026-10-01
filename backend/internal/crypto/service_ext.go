@@ -13,8 +13,6 @@ import (
 // money mutation, balanced double-entry cash legs on the finance ledger (never
 // mint), audit on every mutation, and fail-closed object-level authorization.
 
-// ── Swap ────────────────────────────────────────────────────────────────────
-
 // SwapQuote returns a pre-trade estimate for swapping fromUnits of asset A into
 // asset B at the current quotes, net of the default spread (retained as fee).
 // Display-only: the server re-prices at execution time.
@@ -180,8 +178,6 @@ func (s *Service) SwapOrders(ctx context.Context, userID string, limit, offset i
 	return s.repo.SwapOrdersForUser(ctx, userID, limit, offset)
 }
 
-// ── Address allow-list ──────────────────────────────────────────────────────
-
 // AddAddress whitelists a destination address for the caller. The address is
 // validated (non-trivial length) and screened via the provider seam before it can
 // be used as a withdrawal target.
@@ -223,8 +219,6 @@ func (s *Service) DeleteAddress(ctx context.Context, userID, id string) error {
 	_ = s.audit.log(ctx, userID, "crypto.address.delete", "crypto_address", id, "", nil, nil)
 	return nil
 }
-
-// ── Deposit address ─────────────────────────────────────────────────────────
 
 // DepositAddress returns (issuing + persisting on first request) the caller's
 // deposit address for an asset. Generated deterministically via the provider seam
@@ -322,8 +316,6 @@ func (s *Service) QuoteWithdrawal(ctx context.Context, userID, assetID, network 
 		RequiresReview: true,
 	}, nil
 }
-
-// ── Withdrawal state machine ────────────────────────────────────────────────
 
 // networkFeeUnits estimates the in-asset miner fee (0.05% of the amount, floored at
 // one minor unit). Integer arithmetic only.
@@ -443,7 +435,6 @@ func (s *Service) Withdraw(ctx context.Context, userID, assetID, addressID strin
 // destination from the persisted row so the broadcast targets the right whitelisted
 // address. Idempotent: the guarded approved→broadcast transition (and the provider's
 // own idempotency on the withdrawal id) make a re-run safe.
-//
 // TODO(crypto-worker): for production this should be enqueued to an asynq worker so
 // the admin approve HTTP call returns immediately and provider latency/retries are
 // handled off the request path. Today it runs inline on approve so the state machine

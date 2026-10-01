@@ -48,7 +48,6 @@ func (s *Service) priceRide(ctx context.Context, req RequestRideRequest) (*rideP
 // can collect payment; requestRide (called after payment is verified, via
 // RequestRidePaystackFunded) independently recomputes and cross-checks this
 // same fare, so this quote is advisory to that caller only.
-//
 // Offer-mode has no single quote (the rider proposes their own price against
 // a floor/ceiling band) — which is exactly why the Paystack-funded rail only
 // accepts instant pricing (see RequestRidePaystackFunded).
@@ -185,7 +184,6 @@ func (s *Service) requestRide(ctx context.Context, riderID string, req RequestRi
 	// completed trips). Mirrors this same package's own established pattern
 	// for the identical shape (see BookEventTransport's
 	// event_booking_insert_failed refund).
-	//
 	// NEVER calls settlement.Refund for an externally-funded escrow: Refund's
 	// only mechanism is a LEDGER CREDIT to the payer's WALLET (reversing a
 	// wallet debit that, for an EscrowExternal escrow, never happened) — doing
@@ -264,7 +262,6 @@ func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRi
 // gate applies, because no wallet debit occurs (see settlement.EscrowExternal
 // and requestRide's tier-gate skip). Only instant pricing, non-cash rides are
 // accepted (see requestRide's up-front guard).
-//
 // The caller MUST have already verified, server-side, that a completed
 // Paystack charge exists for reference and that it collected exactly
 // verifiedAmountKobo — this function trusts that verification unconditionally
@@ -274,7 +271,6 @@ func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRi
 // caller's claim about what the ride should cost, only about what was
 // actually collected. On a CodeAmountMismatch error, no escrow and no trip
 // row were written; the caller must reverse the external charge.
-//
 // Must only ever be invoked from a server-initiated flow (a Paystack
 // initiate/verify/webhook handler) that itself carries no client-settable
 // "skip KYC" switch — never from a handler that lets request input choose
@@ -371,7 +367,6 @@ func (s *Service) AcceptCounter(ctx context.Context, tripID, riderID string) (*F
 // No-op for cash trips: negotiation still moves fare_kobo (the agreed price the
 // rider will hand the driver), but nothing is ever escrowed from a cash rider's
 // wallet — see RequestRide.
-//
 // Refused outright for a Paystack-funded trip if the negotiation would RAISE
 // the held amount: that trip has no wallet debit backing it and no open card
 // session left to charge more from, so there is nothing this function could

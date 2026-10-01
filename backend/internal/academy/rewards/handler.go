@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -22,10 +23,9 @@ type Handler struct {
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated learner (mirrors the assessment package).
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -35,7 +35,6 @@ func uid(c *gin.Context) string {
 // RegisterAcademyRewards wires the rewards routes. Mirrors the project Register
 // pattern (see RegisterAcademyAssessment): it builds its own service from the pool
 // and gates admin routes with middleware.RequirePermission(rbac, "academy.rewards").
-//
 // walletCredit is the seam onto finance/ledger.Service (the ONLY value movement).
 // fraud is the anti-fraud gate (nil → approve-all DefaultFraudCheck).
 //
@@ -59,14 +58,12 @@ func RegisterAcademyRewards(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 	svc := NewService(repo, walletCredit, fraud, "")
 	h := NewHandler(svc)
 
-	// ── Member ──
 	mg := member.Group("/rewards")
 	mg.GET("/balance", h.GetBalance)
 	mg.GET("/history", h.GetHistory)
 	mg.GET("/catalog", h.GetCatalog)
 	mg.POST("/redeem", h.Redeem)
 
-	// ── Admin (academy.rewards) ──
 	guard := func(p string) gin.HandlerFunc { return middleware.RequirePermission(rbac, p) }
 	ag := admin.Group("/rewards")
 	ag.GET("/pools", guard("academy.rewards"), h.AdminListPools)
@@ -78,10 +75,8 @@ func RegisterAcademyRewards(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 	ag.POST("/catalog", guard("academy.rewards"), h.AdminUpsertCatalog)
 }
 
-// ── Member handlers ──────────────────────────────────────────────────────────────
-
 func (h *Handler) GetBalance(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -95,7 +90,7 @@ func (h *Handler) GetBalance(c *gin.Context) {
 }
 
 func (h *Handler) GetHistory(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -124,7 +119,7 @@ type redeemRequest struct {
 }
 
 func (h *Handler) Redeem(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -145,8 +140,6 @@ func (h *Handler) Redeem(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
-
-// ── Admin handlers ───────────────────────────────────────────────────────────────
 
 func (h *Handler) AdminListPools(c *gin.Context) {
 	out, err := h.svc.ListPools(c.Request.Context())
@@ -177,7 +170,7 @@ func (h *Handler) AdminFundPool(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.FundPool(c.Request.Context(), uid(c), c.Param("id"), req)
+	out, err := h.svc.FundPool(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)
 	if err != nil {
 		if reason, ok := AsRejection(err); ok {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "rejected", "reason": reason})

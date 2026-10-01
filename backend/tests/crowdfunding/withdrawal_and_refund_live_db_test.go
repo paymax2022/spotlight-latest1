@@ -1,9 +1,7 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regressions for two UAT-found defects in the crowdfunding money path
 // (Crowdfunding module, UAT queue position 5).
-//
 // 1. GetWallet's AvailableKobo used to be derived from the FULL gross raised
 //    total (released − withdrawn − pending), with no accounting for the 10%
 //    platform fee Contribute() already deducts via settlement.Settle before
@@ -13,7 +11,6 @@ package crowdfunding_test
 //    the full displayed amount passed this function's own check and then hit
 //    an unexplained "insufficient funds" from SubmitWithdrawal's ledger.Debit,
 //    which checks the SAME account this now reads directly.
-//
 // 2. RefundAll returned a bare {"ok": true} regardless of how many
 //    contributions it actually refunded. Since Contribute() settles nearly
 //    every contribution to 'released' immediately (see that function's own
@@ -21,15 +18,12 @@ package crowdfunding_test
 //    old response gave no way to tell "everyone got their money back" apart
 //    from "nobody did, it had already been paid out". The campaign was also
 //    silently marked 'failed' either way.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL. See
 // campaign_analytics_live_db_test.go in this package for the pattern this
 // file follows.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Withdraw -v
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Refund -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

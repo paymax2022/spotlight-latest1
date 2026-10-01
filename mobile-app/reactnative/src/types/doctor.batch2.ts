@@ -1,15 +1,10 @@
-// ── Doctor (Telemedicine, provider-side) — Batch 2 Domain Types ──────────────
-// Batch 2 = spec sections G, H, I, J. ADDITIVE to `@/types/doctor`,
 // `@/types/doctor.phase2`, `@/types/doctor.profile`, `@/types/doctor.phase3` and
 // `@/types/doctor.batch1` — those shapes are imported/reused, never duplicated.
-// Money amounts are integers in minor units (kobo). Use `import type` for
 // type-only imports.
-//
 // APPROACH IS CONSOLIDATED: action/state variants (typing/receipts, offline,
 // reconnecting, drops, draft/lock, alerts) are modelled as states/data on top
 // of the existing entities, not as separate entities. The Frontend renders all
 // variants from the same shapes.
-//
 // Sections:
 //   G — Patient Profile Review        (extends PatientMedicalProfile → PatientFullProfile).
 //   H — Chat Consultation             (extends ChatMessage; adds presence/transcript).
@@ -33,7 +28,6 @@ import type {
 } from '@/types/doctor';
 import type { SpecialistReferral } from '@/types/doctor.phase2';
 
-// Re-export the primitives Batch 2 screens lean on, so a screen can pull
 // everything it needs from one import site.
 export type {
   PatientSummary,
@@ -52,9 +46,7 @@ export type {
 } from '@/types/doctor';
 export type { SpecialistReferral } from '@/types/doctor.phase2';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION G — PATIENT PROFILE REVIEW (25)
-// ═══════════════════════════════════════════════════════════════════════════
 // Extends Phase 1 `PatientMedicalProfile` ADDITIVELY via a new richer
 // `PatientFullProfile` that COMPOSES the existing type (it is never modified).
 // Clinical alerts (risk warning, drug-allergy, contraindication) are severity-
@@ -134,7 +126,7 @@ export interface PatientDocument {
   kind:       PatientDocumentKind;
   title:      string;
   fileName:   string;
-  uri:        string;              // local URI now; remote URL after Phase C
+  uri:        string;
   uploadedAt: string;             // ISO datetime
   source?:    string;             // "Lagoon Medical Centre"
 }
@@ -142,7 +134,7 @@ export interface PatientDocument {
 // An uploaded image (photo of a rash, wound, etc.).
 export interface PatientImage {
   id:       string;
-  uri:      string;               // local URI now; remote URL after Phase C
+  uri:      string;
   caption?: string;
   takenAt:  string;               // ISO datetime
 }
@@ -175,8 +167,6 @@ export interface DependentProfile {
   patientType: PatientType;       // typically 'child'
   ageMonths?:  number;            // for infants/children
 }
-
-// ─── Clinical alerts (severity-toned) ────────────────────────────────────────
 
 export type ClinicalAlertSeverity = 'info' | 'warning' | 'critical';
 
@@ -238,9 +228,7 @@ export interface PatientFullProfile {
   alerts:               PatientClinicalAlerts;   // risk / drug-allergy / contraindication
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION H — CHAT CONSULTATION (23)
-// ═══════════════════════════════════════════════════════════════════════════
 // Extends Phase 1 `ChatMessage` ADDITIVELY via `ChatMessageRich` (composes the
 // base + kind/attachment/delivery metadata). Typing/receipts, patient-offline,
 // chat-ended, secure-chat notice are STATES the UI renders from presence +
@@ -262,7 +250,7 @@ export type ChatDeliveryStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'fa
 
 // Attachment metadata carried on image/document/voice messages.
 export interface ChatAttachment {
-  url:        string;              // local URI now; remote URL after Phase C
+  url:        string;
   name:       string;
   mimeType?:  string;              // "image/jpeg", "application/pdf"
   sizeBytes?: number;
@@ -332,9 +320,7 @@ export interface ChatTranscript {
   endedAt?:    string;             // ISO datetime
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION I — AUDIO & VIDEO CONSULTATION (28)
-// ═══════════════════════════════════════════════════════════════════════════
 // Extends Phase 1 `CallSession` ADDITIVELY via `CallSessionRich` (composes the
 // base + provider/device/network/participant/control state). Reconnecting,
 // dropped, disconnected, poor-network and provider-failure are all
@@ -439,9 +425,7 @@ export interface CallDispute {
   resolution?:   string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION J — CONSULTATION NOTES & DIAGNOSIS (24)
-// ═══════════════════════════════════════════════════════════════════════════
 // Extends Phase 1 `SoapNote` ADDITIVELY via `ClinicalNote` (composes the base +
 // codes/impression/plan/referral/follow-up/private notes + status). Draft /
 // finalize / locked / edit-before-submission are STATES driven by `status`,
@@ -480,7 +464,6 @@ export interface NoteFollowUp {
 }
 
 // A specialist-referral recommendation embedded in the note. Reuses the Phase 2
-// `SpecialistReferral['urgency']` concept; the full referral is created via the
 // Phase 2 flow — this records the recommendation made from the note.
 export interface NoteReferral {
   recommended: boolean;
@@ -513,13 +496,9 @@ export interface ClinicalNote {
   updatedAt:               string;          // ISO datetime
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // MUTATION INPUTS / RESULTS
-// ═══════════════════════════════════════════════════════════════════════════
 // `idempotencyKey` is required on every state-changing mutation. Hooks generate
 // it; callers pass `Omit<Input, 'idempotencyKey'>`.
-
-// ─── Section H — chat consultation ───────────────────────────────────────────
 
 export interface SendVoiceNoteInput {
   threadId:         string;
@@ -601,8 +580,6 @@ export interface EndChatResult {
   lifecycle: ChatLifecycle;   // → 'ended'
   endedAt:   string;          // ISO datetime
 }
-
-// ─── Section I — audio & video consultation ──────────────────────────────────
 
 export interface RunDeviceCheckInput {
   appointmentId:    string;
@@ -687,8 +664,6 @@ export interface ReportTechnicalIssueResult {
   ticketId: string;
   ref:      string;
 }
-
-// ─── Section J — consultation notes & diagnosis ──────────────────────────────
 
 // Editable payload for a clinical note (the draft body, no server-assigned ids).
 export interface ClinicalNoteDraft {

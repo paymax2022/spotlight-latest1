@@ -7,21 +7,22 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/go-common/ginutil"
 )
 
-// ─── Movers (bidding + escrow) ───────────────────────────────────────────────
-//
 // State machine:
 //   quote_requested → bids_received → bid_accepted(escrow funded)
 //                  → crew_assigned → in_progress → completion_confirmed(escrow released)
-//   (disputed / cancelled)
-//
 // Flow: customer posts a quote (no escrow). Approved providers submit bids.
 // Customer accepts a bid → escrow funds that bid amount → bid_accepted, escrow funded.
 // Provider starts → in_progress. Customer confirms completion → settle provider.
 
-var moverTransitions = map[string]map[string]bool{
+var moverTransitions = fsm.Table[string]{
 	"quote_requested": {"bids_received": true, "bid_accepted": true, "cancelled": true},
 	"bids_received":   {"bid_accepted": true, "cancelled": true},
 	"bid_accepted":    {"crew_assigned": true, "in_progress": true, "cancelled": true, "disputed": true},
@@ -30,17 +31,8 @@ var moverTransitions = map[string]map[string]bool{
 }
 
 func canTransitionMover(from, to string) bool {
-	if from == to {
-		return false
-	}
-	m, ok := moverTransitions[from]
-	if !ok {
-		return false
-	}
-	return m[to]
+	return moverTransitions.Can(from, to)
 }
-
-// ─── Request bodies ──────────────────────────────────────────────────────────
 
 // MoverQuoteRequest is POST /mobility/movers/quote.
 type MoverQuoteRequest struct {
@@ -87,8 +79,6 @@ func (s *Service) loadMover(ctx context.Context, id string, m *moverRow) error {
 	)
 }
 
-// ─── Customer flows ──────────────────────────────────────────────────────────
-
 // RequestMoverQuote creates a mover job in quote_requested (no escrow yet).
 func (s *Service) RequestMoverQuote(ctx context.Context, userID string, req MoverQuoteRequest) (map[string]any, error) {
 	truckSize := req.TruckSize
@@ -111,7 +101,7 @@ func (s *Service) RequestMoverQuote(ctx context.Context, userID string, req Move
 			(id, user_id, pickup_address, dropoff_address, property_type, inventory, truck_size, helpers, fragile, move_at, status, escrow_status)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'quote_requested','none')`
 	if _, err := s.db.Exec(ctx, q,
-		jobID, userID, req.Pickup.Address, req.Dropoff.Address, nullStr(req.PropertyType),
+		jobID, userID, req.Pickup.Address, req.Dropoff.Address, dbutil.NullStr(req.PropertyType),
 		inventory, truckSize, req.Helpers, req.Fragile, moveAt,
 	); err != nil {
 		return nil, fmt.Errorf("transport: insert mover job: %w", err)
@@ -376,8 +366,6 @@ func (s *Service) ListMoverJobs(ctx context.Context, userID string) ([]map[strin
 	return out, rows.Err()
 }
 
-// ─── Provider (driver) flows ─────────────────────────────────────────────────
-
 // OpenMoverJobs returns jobs open for bidding (quote_requested / bids_received).
 func (s *Service) OpenMoverJobs(ctx context.Context, driverUserID string) ([]map[string]any, error) {
 	if _, err := s.driverGate(ctx, driverUserID); err != nil {
@@ -427,7 +415,7 @@ func (s *Service) SubmitMoverBid(ctx context.Context, jobID, driverUserID string
 	bidID := uuid.New().String()
 	if _, err := s.db.Exec(ctx,
 		`INSERT INTO mover_bids (id, job_id, provider_id, amount_kobo, note, status) VALUES ($1,$2,$3,$4,$5,'submitted')`,
-		bidID, jobID, providerID, amount, nullStr(note)); err != nil {
+		bidID, jobID, providerID, amount, dbutil.NullStr(note)); err != nil {
 		return nil, codedErr(http.StatusConflict, "BID_EXISTS", "you have already bid on this job")
 	}
 	// First bid moves the job to bids_received.
@@ -485,4 +473,132 @@ func (s *Service) providerOwnedMover(ctx context.Context, jobID, driverUserID st
 		return nil, codedErr(http.StatusForbidden, CodeForbidden, "not the assigned provider")
 	}
 	return &m, nil
+}
+
+// MoverQuote creates a mover job in quote_requested.
+func (h *Handler) MoverQuote(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req MoverQuoteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	j, err := h.svc.RequestMoverQuote(c.Request.Context(), userID, req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, j)
+}
+
+// MoverList returns the caller's mover jobs (GET /mobility/movers). Sibling to
+// MoverGet (:id) — needs registering in finance_routes.go's `mob` group:
+func (h *Handler) MoverList(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	jobs, err := h.svc.ListMoverJobs(c.Request.Context(), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"jobs": jobs})
+}
+
+// MoverGet returns a job + bids.
+func (h *Handler) MoverGet(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	j, err := h.svc.MoverDetail(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, j)
+}
+
+// MoverAcceptBid funds escrow for a chosen bid.
+func (h *Handler) MoverAcceptBid(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req MoverAcceptBidRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	key := ginutil.IdempotencyKey(c)
+	if key == "" {
+		key = req.IdempotencyKey
+	}
+	j, err := h.svc.AcceptMoverBid(c.Request.Context(), c.Param("id"), userID, req.BidID, key)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, j)
+}
+
+// MoverConfirmCompletion releases escrow → settle provider.
+func (h *Handler) MoverConfirmCompletion(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if err := h.svc.ConfirmMoverCompletion(c.Request.Context(), c.Param("id"), userID); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "completion_confirmed"})
+}
+
+// MoverCancel refunds + cancels a job.
+func (h *Handler) MoverCancel(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req CancelRequest
+	_ = c.ShouldBindJSON(&req)
+	if err := h.svc.CancelMover(c.Request.Context(), c.Param("id"), userID, req.Reason); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "cancelled"})
+}
+
+// MoverOpen returns jobs open for bidding.
+func (h *Handler) MoverOpen(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	jobs, err := h.svc.OpenMoverJobs(c.Request.Context(), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"jobs": jobs})
+}
+
+// MoverBid submits a bid.
+func (h *Handler) MoverBid(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req MoverBidRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	bid, err := h.svc.SubmitMoverBid(c.Request.Context(), c.Param("id"), userID, req.AmountKobo, req.Note)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, bid)
+}
+
+// MoverStart starts the job.
+func (h *Handler) MoverStart(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if err := h.svc.StartMoverJob(c.Request.Context(), c.Param("id"), userID); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "in_progress"})
+}
+
+// MoverComplete signals provider-side completion (awaits customer confirm).
+func (h *Handler) MoverComplete(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if err := h.svc.CompleteMoverJob(c.Request.Context(), c.Param("id"), userID); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "awaiting": "customer_confirmation"})
 }

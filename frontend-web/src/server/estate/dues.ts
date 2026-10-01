@@ -67,7 +67,6 @@ export async function payInvoice(input: PayInvoiceInput) {
   const ctx = await getResidentContext(supabase, userId);
   if (!ctx) throw new ApiError('Not a resident of any estate', 403);
 
-  // Load + authorize the invoice.
   const { data: invoice, error: invErr } = await supabase
     .from('estate_dues_invoices')
     .select(INVOICE_COLS)
@@ -123,7 +122,6 @@ export async function payInvoice(input: PayInvoiceInput) {
       await ensureInvoicePaid(supabase, invoiceId);
       return { alreadyProcessed: true, payment: mapPayment(prior), invoice: { ...mapInvoice(invoice), status: 'paid' } };
     }
-    // else: debit committed but payment-record write was lost previously — fall
     // through and (re)create it idempotently below to reconcile.
   }
 
@@ -132,7 +130,6 @@ export async function payInvoice(input: PayInvoiceInput) {
   // onConflict shorthand only accepts a bare column list and cannot express
   // that predicate, so Postgres can't infer the target and rejects the
   // upsert outright on every call, not just real conflicts (found live via
-  // UAT: the wallet was genuinely debited but this insert failed 100% of the
   // time, leaving residents charged with no receipt and the invoice still
   // pending — same bug class fixed in the Go PayDues path, applied here to
   // the separate Next.js implementation mobile actually calls). Fixed by

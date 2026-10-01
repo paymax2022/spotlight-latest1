@@ -1,4 +1,3 @@
-// ── Paymax Invest · Stocks — Data hooks ──────────────────────────────────────
 // React Query hooks mirroring useCrypto.ts so screens stay declarative and share
 // the same caching / loading / error contracts. Money mutations attach an
 // Idempotency-Key (iron rule) and invalidate portfolio + orders on success.
@@ -9,8 +8,6 @@ import { newIdempotencyKey } from '../utils/stockFormatters';
 import type { ChartRange, OrderDraft, OrderSide } from '../types/stocks.types';
 
 const KEY = 'stocks';
-
-// ─── Assets, chart, news, dividends, corporate actions ────────────────────────
 
 export function useStocks() {
   return useQuery({ queryKey: [KEY, 'list'], queryFn: stocks.getStocks, staleTime: 20_000, refetchInterval: 30_000 });
@@ -61,8 +58,6 @@ export function useCorporateActions(symbol?: string) {
   });
 }
 
-// ─── Portfolio & positions ────────────────────────────────────────────────────
-
 export function useStockPortfolio() {
   return useQuery({ queryKey: [KEY, 'portfolio'], queryFn: stocks.getPortfolio, staleTime: 15_000 });
 }
@@ -70,8 +65,6 @@ export function useStockPortfolio() {
 export function useStockPositions() {
   return useQuery({ queryKey: [KEY, 'positions'], queryFn: stocks.getPositions, staleTime: 15_000 });
 }
-
-// ─── Place order (money mutation → Idempotency-Key) ───────────────────────────
 
 export function usePlaceOrder() {
   const qc = useQueryClient();
@@ -84,8 +77,6 @@ export function usePlaceOrder() {
     },
   });
 }
-
-// ─── Orders ─────────────────────────────────────────────────────────────────--
 
 export function useStockOrders(side?: OrderSide) {
   return useQuery({
@@ -114,8 +105,6 @@ export function useCancelOrder() {
     },
   });
 }
-
-// ─── Public offers ────────────────────────────────────────────────────────────
 
 export function usePublicOffers() {
   return useQuery({ queryKey: [KEY, 'offers'], queryFn: stocks.getPublicOffers, staleTime: 30_000 });

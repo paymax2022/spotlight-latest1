@@ -1,7 +1,5 @@
 // Admin: author the curriculum — programmes, modules, lessons and assignments.
-//
 // The creation logic already existed in src/server/services/academy/lms.ts and in
-// the validation parsers; none of it was reachable, so an admin could grade work
 // but could not publish a single lesson for anyone to do. This is the wiring.
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';

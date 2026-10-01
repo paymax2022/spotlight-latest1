@@ -1,13 +1,11 @@
 package transport
 
 // Go-live money-path + object-level-authz tests for transport.
-//
 // These are DB-free and correct-by-construction: they exercise the pure logic
 // that GUARDS money (idempotency-key derivation, the fail-closed tier gate, the
 // cross-user authz decision, the phase-transition guard, and the
 // completion-failure marker) via small extracted seams, so `go test
 // ./internal/transport/...` proves the invariants without a Postgres instance.
-//
 // Companion pure-logic suites: mobility_engine_test.go, modes_engine_test.go,
 // split_invariant_test.go, model_test.go.
 
@@ -20,7 +18,6 @@ import (
 )
 
 // ─── 1. delta-escrow stable idempotency key (the double-charge bug) ──────────
-//
 // The original bug embedded time.Now().UnixNano() in the delta-escrow key, so a
 // retried RiderOffer/AcceptCounter aiming at the SAME target fare minted a NEW
 // key and double-charged the rider. deltaEscrowKey must be:
@@ -65,8 +62,6 @@ func TestDeltaEscrowKey_DiffersAcrossTrips(t *testing.T) {
 	}
 }
 
-// ─── 2. enforceTierLimit fails closed ────────────────────────────────────────
-//
 // A fake tierLimiter lets us prove the enforceTierLimit DECISION without a DB.
 
 // fakeTierLimiter injects a configurable outcome for the tier gate: err==nil
@@ -167,8 +162,6 @@ func TestEnforceTierLimit_ZeroAmountIsNoop(t *testing.T) {
 	}
 }
 
-// ─── 3. Object-level authz: cross-user actors rejected ───────────────────────
-//
 // tripActorAllowed is the pure decision behind "only the rider or the assigned
 // driver may act on a trip". It catches the class of bug where rider A cancels /
 // rates rider B's trip, or a non-assigned driver advances a trip.
@@ -213,8 +206,6 @@ func TestTripActorAllowed_NoDriverAssignedOnlyRider(t *testing.T) {
 	}
 }
 
-// ─── 4. Phase-transition guard rejects illegal / skipped transitions ─────────
-//
 // canTransition is the money-relevant guard: only a legal move into
 // PhaseCompleted triggers settlement, and only a legal move into PhaseCancelled
 // triggers a refund. Illegal jumps (that would settle/refund out of turn) are
@@ -278,8 +269,6 @@ func TestMoverPhaseGuard_NoConfirmBeforeBidAccepted(t *testing.T) {
 	}
 }
 
-// ─── 5. Completion-failure path records settlement_pending ───────────────────
-//
 // When a trip is marked completed but settlement fails, the code MUST record a
 // durable 'settlement_pending' marker (a queryable status + an audit payload
 // carrying the settlement id) instead of silently succeeding, so a reconciliation

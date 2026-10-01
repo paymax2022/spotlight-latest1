@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -22,10 +23,9 @@ type Handler struct {
 // NewHandler builds the session/class handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -33,7 +33,7 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -98,8 +98,6 @@ func RegisterFeesSession(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	return h
 }
 
-// ── Session handlers ────────────────────────────────────────────────────────────
-
 func (h *Handler) CreateSession(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -153,8 +151,6 @@ func (h *Handler) SetSessionStatus(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
-
-// ── Class handlers ──────────────────────────────────────────────────────────────
 
 func (h *Handler) CreateClass(c *gin.Context) {
 	u, ok := h.requireUser(c)

@@ -9,7 +9,7 @@ export async function register() {
     // comment) so a missing PAYSTACK_SECRET_KEY or similar shows up in the
     // deploy's boot logs immediately instead of only surfacing when a user
     // hits the feature that needs it.
-    const { validateEnv } = await import('./src/lib/config/env');
+    const { validateEnv } = await import('./src/lib/config');
     validateEnv();
   }
   if (process.env.NEXT_RUNTIME === 'edge') {

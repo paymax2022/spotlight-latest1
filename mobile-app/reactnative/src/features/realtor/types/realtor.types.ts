@@ -1,19 +1,12 @@
-// ── Spotlight Realtor — Domain types ─────────────────────────────────────────
 // The typed contract the funnel screens code against (Backend role owns this).
-//
 // Modelled on the "one property graph, many offering modes" thesis:
 //   Portfolio → Property(Building) → Unit → Room
 // A Unit carries one or more pluggable OfferingModes (for_sale / for_lease /
 // long_rent / short_stay). A Listing is the marketplace projection of a Unit in
 // one offering mode. The funnel then connects: Listing → InspectionBooking →
 // RentalApplication.
-//
 // IRON RULES honoured here:
-//  • all money is integer minor units (kobo) — never floats, never strings;
-//  • every status is an explicit union, never a free string;
 //  • every funnel entity links back to a property-graph entity id.
-
-// ─── Money & shared primitives ────────────────────────────────────────────────
 
 /** Integer minor units (kobo). ₦250,000 → 25_000_000. */
 export type Kobo = number;
@@ -70,8 +63,6 @@ export interface GeoPoint {
   lng: number;
 }
 
-// ─── Property graph ───────────────────────────────────────────────────────────
-
 export type UnitStatus =
   | 'vacant'
   | 'listed'
@@ -106,8 +97,6 @@ export interface Property {
   amenities: Amenity[];
   unitCount: number;
 }
-
-// ─── Listing (marketplace projection of a Unit in one offering mode) ──────────
 
 export type ListingStatus =
   | 'draft'
@@ -169,7 +158,7 @@ export interface Listing {
   amenities: Amenity[];
   description: string;
 
-  media: string[];                   // image urls; [0] is cover
+  media: string[];
   agent: AgentRef;
 
   inspectionRequired: boolean;
@@ -204,8 +193,6 @@ export interface ListingCard {
   agentVerified: boolean;
 }
 
-// ─── Search & filters ─────────────────────────────────────────────────────────
-
 export type SortKey = 'newest' | 'price_asc' | 'price_desc' | 'verified_first' | 'popularity';
 
 export interface ListingFilter {
@@ -232,8 +219,6 @@ export interface MarketplaceHome {
   recentlyViewed: ListingCard[];
   popularAreas: { area: string; city: string; listingCount: number }[];
 }
-
-// ─── Inspection booking (Listing → viewing) ──────────────────────────────────
 
 export type ViewingMode = 'physical' | 'virtual';
 
@@ -287,8 +272,6 @@ export interface InspectionBooking {
   canConvertToApplication: boolean;
   createdAt: string;
 }
-
-// ─── Rental application (Inspection → application) ────────────────────────────
 
 export type ApplicationStatus =
   | 'draft'
@@ -362,8 +345,6 @@ export interface RentalApplication {
   createdAt: string;
   agent: AgentRef;
 }
-
-// ─── Result envelope (mirrors money-mutation contract elsewhere) ──────────────
 
 export interface MutationResult {
   ok: boolean;

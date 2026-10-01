@@ -7,6 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
+
 	"spotlight/backend/internal/platform/r2"
 )
 
@@ -30,7 +32,7 @@ type Handler struct {
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 func (h *Handler) CreateEstate(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req CreateEstateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -45,7 +47,7 @@ func (h *Handler) CreateEstate(c *gin.Context) {
 }
 
 func (h *Handler) AddResident(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var body struct {
 		UserID string `json:"user_id" binding:"required"`
 		Unit   string `json:"unit"`
@@ -63,7 +65,7 @@ func (h *Handler) AddResident(c *gin.Context) {
 }
 
 func (h *Handler) IssuePass(c *gin.Context) {
-	issuerID := c.GetString("user_id")
+	issuerID := ginutil.UserID(c)
 	var req IssuePassRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -78,7 +80,7 @@ func (h *Handler) IssuePass(c *gin.Context) {
 }
 
 func (h *Handler) ScanPass(c *gin.Context) {
-	scannerID := c.GetString("user_id")
+	scannerID := ginutil.UserID(c)
 	var body struct {
 		QRCode string `json:"qr_code" binding:"required"`
 	}
@@ -95,7 +97,7 @@ func (h *Handler) ScanPass(c *gin.Context) {
 }
 
 func (h *Handler) CreateElection(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req CreateElectionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -110,7 +112,7 @@ func (h *Handler) CreateElection(c *gin.Context) {
 }
 
 func (h *Handler) CastVote(c *gin.Context) {
-	voterID := c.GetString("user_id")
+	voterID := ginutil.UserID(c)
 	var req CastVoteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -136,7 +138,7 @@ func (h *Handler) GetResults(c *gin.Context) {
 // GetVoterEligibility reports whether the caller may vote in an election.
 // GET /estate/:id/elections/:electionId/eligibility
 func (h *Handler) GetVoterEligibility(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	elig, err := h.svc.CheckVoterEligibility(c.Request.Context(), c.Param("id"), c.Param("electionId"), userID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -148,7 +150,7 @@ func (h *Handler) GetVoterEligibility(c *gin.Context) {
 // SetEligibilityRules configures an election's voter gating (estate admin only).
 // POST /estate/:id/elections/:electionId/eligibility
 func (h *Handler) SetEligibilityRules(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req SetEligibilityRulesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -162,8 +164,7 @@ func (h *Handler) SetEligibilityRules(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": rules})
 }
 
-// ── Block 28: Security gate / guard app ───────────────────────────────────────
-
+// ListGates — Block 28: Security gate / guard app
 func (h *Handler) ListGates(c *gin.Context) {
 	gates, err := h.svc.ListGates(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -195,7 +196,7 @@ func (h *Handler) LookupCode(c *gin.Context) {
 }
 
 func (h *Handler) GuardCheckin(c *gin.Context) {
-	guardID := c.GetString("user_id")
+	guardID := ginutil.UserID(c)
 	var req GuardCheckinRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -205,7 +206,7 @@ func (h *Handler) GuardCheckin(c *gin.Context) {
 	if err != nil {
 		code := http.StatusForbidden
 		if payload != nil && payload.Blacklisted {
-			code = http.StatusConflict // 409 = blacklisted
+			code = http.StatusConflict
 		}
 		c.JSON(code, gin.H{"error": err.Error(), "payload": payload})
 		return
@@ -214,7 +215,7 @@ func (h *Handler) GuardCheckin(c *gin.Context) {
 }
 
 func (h *Handler) GuardCheckout(c *gin.Context) {
-	guardID := c.GetString("user_id")
+	guardID := ginutil.UserID(c)
 	var body struct {
 		CodeID string `json:"code_id" binding:"required"`
 		GateID string `json:"gate_id"`
@@ -231,7 +232,7 @@ func (h *Handler) GuardCheckout(c *gin.Context) {
 }
 
 func (h *Handler) SubmitIncident(c *gin.Context) {
-	guardID := c.GetString("user_id")
+	guardID := ginutil.UserID(c)
 	var req SubmitIncidentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -246,7 +247,7 @@ func (h *Handler) SubmitIncident(c *gin.Context) {
 }
 
 func (h *Handler) HandoverShift(c *gin.Context) {
-	guardID := c.GetString("user_id")
+	guardID := ginutil.UserID(c)
 	var req HandoverRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -261,7 +262,7 @@ func (h *Handler) HandoverShift(c *gin.Context) {
 }
 
 func (h *Handler) SyncOfflineLogs(c *gin.Context) {
-	guardID := c.GetString("user_id")
+	guardID := ginutil.UserID(c)
 	var req SyncRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -276,7 +277,7 @@ func (h *Handler) SyncOfflineLogs(c *gin.Context) {
 }
 
 func (h *Handler) ListIncidents(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	incidents, err := h.svc.ListIncidents(c.Request.Context(), c.Param("id"), adminID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -285,10 +286,8 @@ func (h *Handler) ListIncidents(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": incidents})
 }
 
-// ── Block 27: Extended visitor access codes ───────────────────────────────────
-
 func (h *Handler) CreateAccessCode(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req CreateAccessCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -303,7 +302,7 @@ func (h *Handler) CreateAccessCode(c *gin.Context) {
 }
 
 func (h *Handler) ListAccessCodes(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	codes, err := h.svc.ListAccessCodes(c.Request.Context(), c.Param("id"), userID, c.Query("status"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -313,7 +312,7 @@ func (h *Handler) ListAccessCodes(c *gin.Context) {
 }
 
 func (h *Handler) GetAccessCode(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	code, err := h.svc.GetAccessCode(c.Request.Context(), c.Param("id"), userID, c.Param("cid"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -323,7 +322,7 @@ func (h *Handler) GetAccessCode(c *gin.Context) {
 }
 
 func (h *Handler) RevokeCode(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if err := h.svc.RevokeCode(c.Request.Context(), c.Param("id"), userID, c.Param("cid")); err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -332,7 +331,7 @@ func (h *Handler) RevokeCode(c *gin.Context) {
 }
 
 func (h *Handler) ExtendCode(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req ExtendCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -346,7 +345,7 @@ func (h *Handler) ExtendCode(c *gin.Context) {
 }
 
 func (h *Handler) BlacklistVisitor(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	if err := h.svc.BlacklistVisitor(c.Request.Context(), c.Param("id"), adminID, c.Param("cid")); err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -355,7 +354,7 @@ func (h *Handler) BlacklistVisitor(c *gin.Context) {
 }
 
 func (h *Handler) GetCheckinHistory(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	history, err := h.svc.GetCheckinHistory(c.Request.Context(), c.Param("id"), userID, c.Param("cid"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -364,10 +363,8 @@ func (h *Handler) GetCheckinHistory(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": history})
 }
 
-// ── Block 26: Resident home dashboard ─────────────────────────────────────────
-
 func (h *Handler) GetDashboard(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	dash, err := h.svc.GetDashboard(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -376,10 +373,8 @@ func (h *Handler) GetDashboard(c *gin.Context) {
 	c.JSON(http.StatusOK, dash)
 }
 
-// ── Block 25: Resident profiles ───────────────────────────────────────────────
-
 func (h *Handler) GetProfile(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	p, err := h.svc.GetProfile(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -389,7 +384,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 }
 
 func (h *Handler) UpsertProfile(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req UpsertProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -404,7 +399,7 @@ func (h *Handler) UpsertProfile(c *gin.Context) {
 }
 
 func (h *Handler) ListHouseholdMembers(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	members, err := h.svc.ListHouseholdMembers(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -414,7 +409,7 @@ func (h *Handler) ListHouseholdMembers(c *gin.Context) {
 }
 
 func (h *Handler) AddHouseholdMember(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req AddHouseholdMemberRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -429,7 +424,7 @@ func (h *Handler) AddHouseholdMember(c *gin.Context) {
 }
 
 func (h *Handler) DeleteHouseholdMember(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if err := h.svc.DeleteHouseholdMember(c.Request.Context(), c.Param("id"), userID, c.Param("mid")); err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -438,7 +433,7 @@ func (h *Handler) DeleteHouseholdMember(c *gin.Context) {
 }
 
 func (h *Handler) ListDomesticStaff(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	staff, err := h.svc.ListDomesticStaff(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -448,7 +443,7 @@ func (h *Handler) ListDomesticStaff(c *gin.Context) {
 }
 
 func (h *Handler) AddDomesticStaff(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req AddDomesticStaffRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -463,7 +458,7 @@ func (h *Handler) AddDomesticStaff(c *gin.Context) {
 }
 
 func (h *Handler) UpdateStaffStatus(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var body struct {
 		Status string `json:"status" binding:"required"`
 	}
@@ -479,7 +474,7 @@ func (h *Handler) UpdateStaffStatus(c *gin.Context) {
 }
 
 func (h *Handler) ListVehicles(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	vehicles, err := h.svc.ListVehicles(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -489,7 +484,7 @@ func (h *Handler) ListVehicles(c *gin.Context) {
 }
 
 func (h *Handler) AddVehicle(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req AddVehicleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -504,7 +499,7 @@ func (h *Handler) AddVehicle(c *gin.Context) {
 }
 
 func (h *Handler) VerifyVehicle(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	if err := h.svc.VerifyVehicle(c.Request.Context(), c.Param("id"), adminID, c.Param("vid")); err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -513,7 +508,7 @@ func (h *Handler) VerifyVehicle(c *gin.Context) {
 }
 
 func (h *Handler) GetResidentCard(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	card, err := h.svc.GetResidentCard(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -521,8 +516,6 @@ func (h *Handler) GetResidentCard(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, card)
 }
-
-// ── Block 24: Onboarding & property selection ─────────────────────────────────
 
 func (h *Handler) ListEstates(c *gin.Context) {
 	search := c.Query("search")
@@ -535,7 +528,7 @@ func (h *Handler) ListEstates(c *gin.Context) {
 }
 
 func (h *Handler) GenerateInviteCode(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req GenerateInviteCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -550,7 +543,7 @@ func (h *Handler) GenerateInviteCode(c *gin.Context) {
 }
 
 func (h *Handler) JoinWithInviteCode(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req JoinWithCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -565,7 +558,7 @@ func (h *Handler) JoinWithInviteCode(c *gin.Context) {
 }
 
 func (h *Handler) RequestAccess(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req RequestAccessRequest
 	_ = c.ShouldBindJSON(&req)
 	jr, err := h.svc.RequestAccess(c.Request.Context(), c.Param("id"), userID, req.Message)
@@ -577,7 +570,7 @@ func (h *Handler) RequestAccess(c *gin.Context) {
 }
 
 func (h *Handler) GetMyJoinRequest(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	jr, err := h.svc.GetMyJoinRequest(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -587,7 +580,7 @@ func (h *Handler) GetMyJoinRequest(c *gin.Context) {
 }
 
 func (h *Handler) ListJoinRequests(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	status := c.Query("status")
 	reqs, err := h.svc.ListJoinRequests(c.Request.Context(), c.Param("id"), adminID, status)
 	if err != nil {
@@ -598,7 +591,7 @@ func (h *Handler) ListJoinRequests(c *gin.Context) {
 }
 
 func (h *Handler) ReviewJoinRequest(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var body struct {
 		Decision string `json:"decision" binding:"required"`
 	}
@@ -615,7 +608,7 @@ func (h *Handler) ReviewJoinRequest(c *gin.Context) {
 }
 
 func (h *Handler) AddProperty(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req AddPropertyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -630,7 +623,7 @@ func (h *Handler) AddProperty(c *gin.Context) {
 }
 
 func (h *Handler) ListProperties(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	props, err := h.svc.ListProperties(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -640,7 +633,7 @@ func (h *Handler) ListProperties(c *gin.Context) {
 }
 
 func (h *Handler) ClaimOwnership(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req ClaimOwnershipRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -655,7 +648,7 @@ func (h *Handler) ClaimOwnership(c *gin.Context) {
 }
 
 func (h *Handler) ReviewOwnershipClaim(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var body struct {
 		Decision     string `json:"decision" binding:"required"`
 		RejectReason string `json:"reject_reason"`
@@ -673,7 +666,7 @@ func (h *Handler) ReviewOwnershipClaim(c *gin.Context) {
 }
 
 func (h *Handler) CreateTenancyRequest(c *gin.Context) {
-	tenantID := c.GetString("user_id")
+	tenantID := ginutil.UserID(c)
 	var req TenancyRequestBody
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -688,7 +681,7 @@ func (h *Handler) CreateTenancyRequest(c *gin.Context) {
 }
 
 func (h *Handler) ReviewTenancyRequest(c *gin.Context) {
-	landlordID := c.GetString("user_id")
+	landlordID := ginutil.UserID(c)
 	var body struct {
 		Decision string `json:"decision" binding:"required"`
 	}
@@ -704,10 +697,8 @@ func (h *Handler) ReviewTenancyRequest(c *gin.Context) {
 	c.JSON(http.StatusOK, tr)
 }
 
-// ── Block 29: Property management ─────────────────────────────────────────────
-
 func (h *Handler) GetProperty(c *gin.Context) {
-	p, err := h.svc.GetProperty(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("pid"))
+	p, err := h.svc.GetProperty(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -721,7 +712,7 @@ func (h *Handler) UpdateProperty(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	p, err := h.svc.UpdateProperty(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("pid"), req)
+	p, err := h.svc.UpdateProperty(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid"), req)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -737,7 +728,7 @@ func (h *Handler) AssignLandlord(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	p, err := h.svc.AssignLandlord(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("pid"), body.UserID)
+	p, err := h.svc.AssignLandlord(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid"), body.UserID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -753,7 +744,7 @@ func (h *Handler) AssignTenant(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	p, err := h.svc.AssignTenant(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("pid"), body.UserID)
+	p, err := h.svc.AssignTenant(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid"), body.UserID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -769,7 +760,7 @@ func (h *Handler) SetOccupancyStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	p, err := h.svc.SetOccupancyStatus(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("pid"), body.Status)
+	p, err := h.svc.SetOccupancyStatus(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid"), body.Status)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -778,7 +769,7 @@ func (h *Handler) SetOccupancyStatus(c *gin.Context) {
 }
 
 func (h *Handler) ArchiveProperty(c *gin.Context) {
-	if err := h.svc.ArchiveProperty(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("pid")); err != nil {
+	if err := h.svc.ArchiveProperty(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid")); err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
@@ -791,7 +782,7 @@ func (h *Handler) RequestPropertyTransfer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	r, err := h.svc.RequestPropertyTransfer(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("pid"), body)
+	r, err := h.svc.RequestPropertyTransfer(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid"), body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -800,7 +791,7 @@ func (h *Handler) RequestPropertyTransfer(c *gin.Context) {
 }
 
 func (h *Handler) ListTransferRequests(c *gin.Context) {
-	rs, err := h.svc.ListTransferRequests(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Query("status"))
+	rs, err := h.svc.ListTransferRequests(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Query("status"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -816,7 +807,7 @@ func (h *Handler) ReviewPropertyTransfer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	r, err := h.svc.ReviewPropertyTransfer(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("reqId"), body.Decision)
+	r, err := h.svc.ReviewPropertyTransfer(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("reqId"), body.Decision)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -825,7 +816,7 @@ func (h *Handler) ReviewPropertyTransfer(c *gin.Context) {
 }
 
 func (h *Handler) GetPropertyAnalytics(c *gin.Context) {
-	a, err := h.svc.GetPropertyAnalytics(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("pid"))
+	a, err := h.svc.GetPropertyAnalytics(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("pid"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -833,15 +824,13 @@ func (h *Handler) GetPropertyAnalytics(c *gin.Context) {
 	c.JSON(http.StatusOK, a)
 }
 
-// ── Block 32: Meeting management ──────────────────────────────────────────────
-
 func (h *Handler) CreateMeeting(c *gin.Context) {
 	var req CreateMeetingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	m, err := h.svc.CreateMeeting(c.Request.Context(), c.Param("id"), c.GetString("user_id"), req)
+	m, err := h.svc.CreateMeeting(c.Request.Context(), c.Param("id"), ginutil.UserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -850,7 +839,7 @@ func (h *Handler) CreateMeeting(c *gin.Context) {
 }
 
 func (h *Handler) ListMeetings(c *gin.Context) {
-	ms, err := h.svc.ListMeetings(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Query("filter"))
+	ms, err := h.svc.ListMeetings(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Query("filter"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -859,7 +848,7 @@ func (h *Handler) ListMeetings(c *gin.Context) {
 }
 
 func (h *Handler) GetMeeting(c *gin.Context) {
-	m, err := h.svc.GetMeeting(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("mid"))
+	m, err := h.svc.GetMeeting(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("mid"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -875,7 +864,7 @@ func (h *Handler) RSVPMeeting(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.RSVP(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("mid"), body.Response); err != nil {
+	if err := h.svc.RSVP(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("mid"), body.Response); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -890,7 +879,7 @@ func (h *Handler) CheckInMeeting(c *gin.Context) {
 	if body.Method == "" {
 		body.Method = "manual"
 	}
-	if err := h.svc.CheckInAttendee(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("mid"), body.Method); err != nil {
+	if err := h.svc.CheckInAttendee(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("mid"), body.Method); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -898,7 +887,7 @@ func (h *Handler) CheckInMeeting(c *gin.Context) {
 }
 
 func (h *Handler) StartMeeting(c *gin.Context) {
-	if err := h.svc.StartMeeting(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("mid")); err != nil {
+	if err := h.svc.StartMeeting(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("mid")); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -906,7 +895,7 @@ func (h *Handler) StartMeeting(c *gin.Context) {
 }
 
 func (h *Handler) EndMeeting(c *gin.Context) {
-	if err := h.svc.EndMeeting(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("mid")); err != nil {
+	if err := h.svc.EndMeeting(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("mid")); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -914,7 +903,7 @@ func (h *Handler) EndMeeting(c *gin.Context) {
 }
 
 func (h *Handler) CancelMeeting(c *gin.Context) {
-	if err := h.svc.CancelMeeting(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("mid")); err != nil {
+	if err := h.svc.CancelMeeting(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("mid")); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -927,7 +916,7 @@ func (h *Handler) RescheduleMeeting(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	m, err := h.svc.RescheduleMeeting(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("mid"), req)
+	m, err := h.svc.RescheduleMeeting(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("mid"), req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -941,7 +930,7 @@ func (h *Handler) UploadMinutes(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	mm, err := h.svc.UploadMinutes(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("mid"), req)
+	mm, err := h.svc.UploadMinutes(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("mid"), req)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -950,7 +939,7 @@ func (h *Handler) UploadMinutes(c *gin.Context) {
 }
 
 func (h *Handler) GetMinutes(c *gin.Context) {
-	mm, err := h.svc.GetMinutes(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("mid"))
+	mm, err := h.svc.GetMinutes(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("mid"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -959,7 +948,7 @@ func (h *Handler) GetMinutes(c *gin.Context) {
 }
 
 func (h *Handler) ApproveMinutes(c *gin.Context) {
-	if err := h.svc.ApproveMinutes(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("mid")); err != nil {
+	if err := h.svc.ApproveMinutes(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("mid")); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -972,7 +961,7 @@ func (h *Handler) AddMeetingDocument(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	d, err := h.svc.AddMeetingDocument(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("mid"), req)
+	d, err := h.svc.AddMeetingDocument(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("mid"), req)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -981,7 +970,7 @@ func (h *Handler) AddMeetingDocument(c *gin.Context) {
 }
 
 func (h *Handler) ListMeetingDocuments(c *gin.Context) {
-	ds, err := h.svc.ListMeetingDocuments(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("mid"))
+	ds, err := h.svc.ListMeetingDocuments(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("mid"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -989,10 +978,8 @@ func (h *Handler) ListMeetingDocuments(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": ds})
 }
 
-// ── Block 44: Reports & analytics ─────────────────────────────────────────────
-
 func (h *Handler) GetAnalytics(c *gin.Context) {
-	a, err := h.svc.GetAnalytics(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("type"), c.Query("from"), c.Query("to"))
+	a, err := h.svc.GetAnalytics(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("type"), c.Query("from"), c.Query("to"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1000,10 +987,8 @@ func (h *Handler) GetAnalytics(c *gin.Context) {
 	c.JSON(http.StatusOK, a)
 }
 
-// ── Block 45: Settings & account ──────────────────────────────────────────────
-
 func (h *Handler) GetMemberSettings(c *gin.Context) {
-	s, err := h.svc.GetMemberSettings(c.Request.Context(), c.Param("id"), c.GetString("user_id"))
+	s, err := h.svc.GetMemberSettings(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -1017,7 +1002,7 @@ func (h *Handler) UpdateMemberSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	s, err := h.svc.UpdateMemberSettings(c.Request.Context(), c.Param("id"), c.GetString("user_id"), req)
+	s, err := h.svc.UpdateMemberSettings(c.Request.Context(), c.Param("id"), ginutil.UserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -1026,14 +1011,12 @@ func (h *Handler) UpdateMemberSettings(c *gin.Context) {
 }
 
 func (h *Handler) DeleteAccount(c *gin.Context) {
-	if err := h.svc.SoftDeleteAccount(c.Request.Context(), c.Param("id"), c.GetString("user_id")); err != nil {
+	if err := h.svc.SoftDeleteAccount(c.Request.Context(), c.Param("id"), ginutil.UserID(c)); err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
-
-// ── Block 42: Vendor / contractor app ─────────────────────────────────────────
 
 func (h *Handler) OnboardVendor(c *gin.Context) {
 	var req OnboardVendorRequest
@@ -1041,7 +1024,7 @@ func (h *Handler) OnboardVendor(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	v, err := h.svc.OnboardVendor(c.Request.Context(), c.Param("id"), c.GetString("user_id"), req)
+	v, err := h.svc.OnboardVendor(c.Request.Context(), c.Param("id"), ginutil.UserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1050,7 +1033,7 @@ func (h *Handler) OnboardVendor(c *gin.Context) {
 }
 
 func (h *Handler) GetVendorProfile(c *gin.Context) {
-	v, err := h.svc.GetVendorProfile(c.Request.Context(), c.Param("id"), c.GetString("user_id"))
+	v, err := h.svc.GetVendorProfile(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -1059,7 +1042,7 @@ func (h *Handler) GetVendorProfile(c *gin.Context) {
 }
 
 func (h *Handler) GetVendorEarnings(c *gin.Context) {
-	e, err := h.svc.GetVendorEarnings(c.Request.Context(), c.Param("id"), c.GetString("user_id"))
+	e, err := h.svc.GetVendorEarnings(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -1068,7 +1051,7 @@ func (h *Handler) GetVendorEarnings(c *gin.Context) {
 }
 
 func (h *Handler) ListVendorJobs(c *gin.Context) {
-	js, err := h.svc.GetAssignedJobs(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Query("status"))
+	js, err := h.svc.GetAssignedJobs(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Query("status"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -1082,7 +1065,7 @@ func (h *Handler) AssignVendorJob(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	j, err := h.svc.AssignJob(c.Request.Context(), c.Param("id"), c.GetString("user_id"), req)
+	j, err := h.svc.AssignJob(c.Request.Context(), c.Param("id"), ginutil.UserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -1092,7 +1075,7 @@ func (h *Handler) AssignVendorJob(c *gin.Context) {
 
 // vendorJobAction wraps the simple lifecycle transitions.
 func (h *Handler) vendorJobAction(c *gin.Context, fn func(ctx context.Context, e, u, j string) (*VendorJob, error)) {
-	j, err := fn(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("jid"))
+	j, err := fn(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("jid"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1114,7 +1097,7 @@ func (h *Handler) SubmitVendorQuote(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	j, err := h.svc.SubmitQuote(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("jid"), body.AmountKobo)
+	j, err := h.svc.SubmitQuote(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("jid"), body.AmountKobo)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1130,7 +1113,7 @@ func (h *Handler) SubmitVendorInvoice(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	j, err := h.svc.SubmitInvoice(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("jid"), body.URL)
+	j, err := h.svc.SubmitInvoice(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("jid"), body.URL)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1146,7 +1129,7 @@ func (h *Handler) SubmitVendorEvidence(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	j, err := h.svc.UploadCompletionEvidence(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("jid"), body.URL)
+	j, err := h.svc.UploadCompletionEvidence(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("jid"), body.URL)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1155,8 +1138,8 @@ func (h *Handler) SubmitVendorEvidence(c *gin.Context) {
 }
 
 func (h *Handler) RequestVendorPayout(c *gin.Context) {
-	idem := c.GetHeader("Idempotency-Key")
-	j, err := h.svc.RequestPayout(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("jid"), idem)
+	idem := ginutil.IdempotencyKey(c)
+	j, err := h.svc.RequestPayout(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("jid"), idem)
 	if err != nil {
 		switch err {
 		case ErrIdempotencyRequired:
@@ -1171,10 +1154,8 @@ func (h *Handler) RequestVendorPayout(c *gin.Context) {
 	c.JSON(http.StatusOK, j)
 }
 
-// ── Block 41: Admin panel & configuration ─────────────────────────────────────
-
 func (h *Handler) GetAdminDashboard(c *gin.Context) {
-	d, err := h.svc.GetAdminDashboard(c.Request.Context(), c.Param("id"), c.GetString("user_id"))
+	d, err := h.svc.GetAdminDashboard(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -1183,7 +1164,7 @@ func (h *Handler) GetAdminDashboard(c *gin.Context) {
 }
 
 func (h *Handler) AdminListResidents(c *gin.Context) {
-	rs, err := h.svc.ListResidents(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Query("role"))
+	rs, err := h.svc.ListResidents(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Query("role"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -1196,7 +1177,7 @@ func (h *Handler) BanResident(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	if err := h.svc.BanResident(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("uid"), body.Reason); err != nil {
+	if err := h.svc.BanResident(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("uid"), body.Reason); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -1204,7 +1185,7 @@ func (h *Handler) BanResident(c *gin.Context) {
 }
 
 func (h *Handler) RestoreResident(c *gin.Context) {
-	if err := h.svc.RestoreResident(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("uid")); err != nil {
+	if err := h.svc.RestoreResident(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("uid")); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -1212,7 +1193,7 @@ func (h *Handler) RestoreResident(c *gin.Context) {
 }
 
 func (h *Handler) GetEstateConfig(c *gin.Context) {
-	cfg, err := h.svc.GetEstateConfig(c.Request.Context(), c.Param("id"), c.GetString("user_id"))
+	cfg, err := h.svc.GetEstateConfig(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -1222,7 +1203,7 @@ func (h *Handler) GetEstateConfig(c *gin.Context) {
 
 func (h *Handler) SetEstateRules(c *gin.Context) {
 	body, _ := c.GetRawData()
-	cfg, err := h.svc.SetEstateRules(c.Request.Context(), c.Param("id"), c.GetString("user_id"), body)
+	cfg, err := h.svc.SetEstateRules(c.Request.Context(), c.Param("id"), ginutil.UserID(c), body)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -1232,7 +1213,7 @@ func (h *Handler) SetEstateRules(c *gin.Context) {
 
 func (h *Handler) ConfigureSubscriptionPlan(c *gin.Context) {
 	body, _ := c.GetRawData()
-	cfg, err := h.svc.ConfigureSubscriptionPlan(c.Request.Context(), c.Param("id"), c.GetString("user_id"), body)
+	cfg, err := h.svc.ConfigureSubscriptionPlan(c.Request.Context(), c.Param("id"), ginutil.UserID(c), body)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -1243,7 +1224,7 @@ func (h *Handler) ConfigureSubscriptionPlan(c *gin.Context) {
 func (h *Handler) GetAuditLog(c *gin.Context) {
 	limit := atoiDefault(c.Query("limit"), 50)
 	offset := atoiDefault(c.Query("offset"), 0)
-	entries, err := h.svc.GetAuditLog(c.Request.Context(), c.Param("id"), c.GetString("user_id"), limit, offset)
+	entries, err := h.svc.GetAuditLog(c.Request.Context(), c.Param("id"), ginutil.UserID(c), limit, offset)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -1251,8 +1232,7 @@ func (h *Handler) GetAuditLog(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": entries})
 }
 
-// ── Block 33: AI note-taking ──────────────────────────────────────────────────
-
+// GenerateAINotes — Block 33: AI note-taking
 func (h *Handler) GenerateAINotes(c *gin.Context) {
 	var req GenerateAINotesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1263,7 +1243,7 @@ func (h *Handler) GenerateAINotes(c *gin.Context) {
 	if req.MeetingID == "" {
 		req.MeetingID = c.Param("mid")
 	}
-	n, err := h.svc.GenerateAINotes(c.Request.Context(), c.Param("id"), c.GetString("user_id"), req)
+	n, err := h.svc.GenerateAINotes(c.Request.Context(), c.Param("id"), ginutil.UserID(c), req)
 	if err != nil {
 		code := http.StatusBadRequest
 		if err.Error() == "estate: AI note-taking is not configured" {
@@ -1276,7 +1256,7 @@ func (h *Handler) GenerateAINotes(c *gin.Context) {
 }
 
 func (h *Handler) ListAINotes(c *gin.Context) {
-	ns, err := h.svc.ListAINotes(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Query("meeting_id"))
+	ns, err := h.svc.ListAINotes(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Query("meeting_id"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -1285,7 +1265,7 @@ func (h *Handler) ListAINotes(c *gin.Context) {
 }
 
 func (h *Handler) GetAINote(c *gin.Context) {
-	n, err := h.svc.GetAINote(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("sid"))
+	n, err := h.svc.GetAINote(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("sid"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -1294,17 +1274,15 @@ func (h *Handler) GetAINote(c *gin.Context) {
 }
 
 func (h *Handler) ApproveAINote(c *gin.Context) {
-	if err := h.svc.ApproveAINote(c.Request.Context(), c.Param("id"), c.GetString("user_id"), c.Param("sid")); err != nil {
+	if err := h.svc.ApproveAINote(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("sid")); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"approved": true})
 }
 
-// ── Block 47: Maintenance (admin-triggered) ───────────────────────────────────
-
 func (h *Handler) RunMaintenance(c *gin.Context) {
-	res, err := h.svc.RunEstateMaintenance(c.Request.Context(), c.Param("id"), c.GetString("user_id"))
+	res, err := h.svc.RunEstateMaintenance(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return

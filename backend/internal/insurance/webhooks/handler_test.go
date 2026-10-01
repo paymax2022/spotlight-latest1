@@ -75,7 +75,6 @@ func postWebhook(t *testing.T, h *Handler, provider, body string, headers map[st
 
 // TestIngest_ReadsTheAdapterDeclaredHeader is the regression for a bug that made
 // EVERY genuine MyCover delivery fail with a 401.
-//
 // The handler used to derive the header from the URL slug: mounted at
 // /internal/webhooks/mycover, it probed "X-mycover-Signature". MyCover signs
 // with "x-mycoverai-signature" — mycover != mycoverai — so the signature always

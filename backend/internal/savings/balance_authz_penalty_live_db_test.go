@@ -2,21 +2,17 @@ package savings
 
 // Live-DB tests for two money-path defects found by the ledger-auditor review
 // of PR #102:
-//
 //  1. Balance IDOR — VaultBalance/TargetBalance were reachable by ANY
 //     authenticated caller because the service methods took only the entity id
 //     and had no owner parameter to check against. RLS does not cover this: the
 //     Go backend connects through the pgx pool as owner/service role, so the
 //     savings_vault_ledger_own policy is bypassed.
-//
 //  2. Early-break penalty rate — penalty_bps arrived in the REQUEST BODY, so a
 //     member breaking a LOCK vault could send 0 and pay nothing. The rate is now
 //     server-side; the parameter is gone from the signature entirely so a
 //     caller cannot supply one even by mistake.
-//
 // ⚠️ GATED ON TEST_DATABASE_URL WITH NO FALLBACK TO DATABASE_URL — the root
 // .env DATABASE_URL is the PRODUCTION pooler and these tests move money. Run:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/savings/ -run 'TestLiveDB_(Balance|Penalty)' -v
 
@@ -50,8 +46,6 @@ func seedLockVault(t *testing.T, pool *pgxpool.Pool, ownerID string, creditKobo 
 	}
 	return id
 }
-
-// ── Defect 1: balance reads must be owner-scoped ────────────────────────────
 
 func TestLiveDB_BalanceForOwner_RejectsNonOwner(t *testing.T) {
 	pool := newTestPool(t)
@@ -133,8 +127,6 @@ func TestLiveDB_TargetBalanceForMember_RejectsNonMember(t *testing.T) {
 	}
 }
 
-// ── Defect 2: the early-break penalty rate is server-side ───────────────────
-
 // The rate must come from service config, NOT from the caller. The signature no
 // longer accepts a bps argument, so this test pins the resulting arithmetic.
 func TestLiveDB_PenaltyRate_IsServerSideNotCallerSupplied(t *testing.T) {
@@ -196,8 +188,8 @@ func TestLiveDB_PenaltyRate_HonoursConfiguredRate(t *testing.T) {
 
 	for _, c := range []struct{ bps, want int64 }{
 		{0, 0},
-		{250, 25_000},    // 2.5%
-		{1000, 100_000},  // 10% (default)
+		{250, 25_000},      // 2.5%
+		{1000, 100_000},    // 10% (default)
 		{10000, 1_000_000}, // 100% — the clamp boundary
 	} {
 		svc := &VaultService{db: pool, earlyBreakPenaltyBps: c.bps}

@@ -22,7 +22,6 @@ import (
 // rate/availability tables owned by SB1). It surfaces the hotel SELL rate; the
 // Paymax COMMISSION is deducted at settlement (above the adapter), not added on
 // top. Money is in Naira (kobo), so no FX is involved on this rail.
-//
 // Allotment is decremented transactionally + row-locked at BOOK time — the
 // oversell-impossible invariant (PRD §9). Every stay night is locked with
 // SELECT ... FOR UPDATE on public.stays_availability_day(room_type_id,date) in
@@ -86,8 +85,6 @@ func NewDirect(db *pgxpool.Pool) *DirectInventoryAdapter {
 
 // Name returns the stable adapter id used by the Router registry.
 func (a *DirectInventoryAdapter) Name() string { return "direct" }
-
-// --- gateway.SupplyGateway ---
 
 // Search reads ACTIVE direct properties (geo/city filtered) joined to their room
 // types + rate plans. The price is the hotel sell rate; SB1's per-date rate table
@@ -218,7 +215,6 @@ func decodeAmenityList(raw []byte) []string {
 // Prebook re-checks live price + availability against the rate plan and the SB1
 // per-date availability table and mints a short-lived book_token. SoldOut is set
 // when any night of the stay is closed/stop-sell or has (allotment - sold) < rooms.
-//
 // This is a HOLD-only check (no decrement) — matching the existing saga, which
 // escrows funds first and only then calls Book to commit the allotment. The
 // availability context (room_type_id + nights + rooms) needed by the decrement is
@@ -423,8 +419,6 @@ func (a *DirectInventoryAdapter) applyARI(ctx context.Context, ev gateway.ARIEve
 	}
 }
 
-// --- availability engine (row-locked, oversell-impossible) ---
-
 // checkAvailability row-locks every stay night for the room type and reports
 // whether EVERY night has (allotment - sold) >= rooms and is not stop-sell. It does
 // NOT decrement (hold-only prebook check). A missing availability row for any night
@@ -597,8 +591,6 @@ func (a *DirectInventoryAdapter) releaseDecrement(ctx context.Context, supplierR
 	return tx.Commit(ctx)
 }
 
-// --- book-token codec + small helpers ---
-
 // encodeBookToken packs the availability context into the opaque book_token so Book
 // (whose BookRequest carries no dates/room ref) can commit the decrement.
 func encodeBookToken(roomTypeID string, checkIn, checkOut time.Time, rooms int) string {
@@ -660,8 +652,6 @@ func nightsBetween(checkIn, checkOut time.Time) []string {
 func hasHeadroom(sold, rooms, total int) bool {
 	return rooms > 0 && sold >= 0 && sold+rooms <= total
 }
-
-// --- payload helpers (ARI) ---
 
 func orMap(m map[string]any) map[string]any {
 	if m == nil {

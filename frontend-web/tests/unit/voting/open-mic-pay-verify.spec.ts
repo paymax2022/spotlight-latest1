@@ -26,9 +26,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeRequest } from '../golden-path/_fixtures';
 
-// ---------------------------------------------------------------------------
 // (A) MODEL: idempotent verify — cached success, single credit
-// ---------------------------------------------------------------------------
 describe('open-mic paid verify is idempotent (model)', () => {
   function makeVerifier() {
     // reference → cached successful result
@@ -38,7 +36,6 @@ describe('open-mic paid verify is idempotent (model)', () => {
     let castVoteCalls = 0;
 
     async function verify(input: { reference: string; votes: number }) {
-      // Idempotency guard FIRST: if we already credited this reference, return
       // the cached success without verifying Paystack or casting again.
       const cached = credited.get(input.reference);
       if (cached) return { ...cached, cached: true };
@@ -96,9 +93,7 @@ describe('open-mic paid verify is idempotent (model)', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // (B) ROUTE: real handler — behavior it already guarantees
-// ---------------------------------------------------------------------------
 
 vi.mock('@/src/lib/auth/request', () => ({
   requireRequestUser: vi.fn(),
@@ -178,7 +173,6 @@ describe('POST /api/open-mic/votes/pay/verify (route)', () => {
 
   // CRITICAL INVARIANT: when the reference has already been used, the vote must
   // NOT be cast again (no double-credit). The current handler enforces this by
-  // rejecting the duplicate (HTTP 409); the intended contract returns a cached
   // 200. Either way, castVote must not be called a second time. We assert the
   // invariant that matters (no re-cast) without coupling to the exact status,
   // since the route owner may switch 409 → cached-200 per the contract.

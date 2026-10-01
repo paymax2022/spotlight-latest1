@@ -14,7 +14,6 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({ message: 'Logged out successfully' });
   } catch {
-    // Always return success — mobile clears local tokens regardless
     return NextResponse.json({ message: 'Logged out' });
   }
 }

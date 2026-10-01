@@ -1,6 +1,5 @@
 // Crowdfunding domain types for the CUSTOMER-facing module (discovery, campaign
 // detail, donate, create-campaign wizard, my donations).
-//
 // These mirror the Go backend's wire shapes verbatim, verified directly against
 // backend/internal/crowdfunding/{dto.go,model.go,service_discovery.go,
 // engage/comments.go,creator/model.go} — not inferred from the mobile client.
@@ -181,8 +180,6 @@ export interface CampaignComment {
   replies: CommentReply[];
 }
 
-// ── Donate (POST /campaigns/:id/contribute — snake_case, bare response) ────
-//
 // This is the ONLY payload the live endpoint accepts. anonymous/message/
 // rewardTierId exist in other contexts (the creator-package Contribution read
 // model) but are NOT persisted by this endpoint today — don't build a donate
@@ -205,8 +202,6 @@ export interface RawContribution {
   settlement_id: string;
   created_at: string;
 }
-
-// ── My donations (GET /contributions, /contributions/:id — camelCase) ──────
 
 export type ContributionStatus =
   | 'PROCESSING'
@@ -244,8 +239,6 @@ export function mapRawStatus(status: RawContributionStatus): ContributionStatus 
   if (status === 'refunded') return 'REFUNDED';
   return 'PROCESSING';
 }
-
-// ── Create-campaign wizard (POST /campaigns — camelCase) ────────────────────
 
 export interface SubmitBudgetItem {
   label: string;

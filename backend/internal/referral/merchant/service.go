@@ -2,11 +2,10 @@ package merchant
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"time"
 
+	"spotlight/backend/go-common/cryptox"
 	financeledger "spotlight/backend/internal/finance/ledger"
 )
 
@@ -28,8 +27,6 @@ type Service struct {
 func NewService(repo *Repository, finance *financeledger.Service, settlement SettlementHook) *Service {
 	return &Service{repo: repo, finance: finance, settlement: settlement}
 }
-
-// --- merchants / campaigns ---
 
 func (s *Service) CreateMerchant(ctx context.Context, in CreateMerchantInput) (*Merchant, error) {
 	if in.Name == "" || in.Slug == "" {
@@ -125,8 +122,6 @@ func (s *Service) Settle(ctx context.Context, mcID string, amountKobo int64, ide
 	return s.repo.AddSettlement(ctx, mcID, amountKobo)
 }
 
-// --- partner keys ---
-
 // IssueKey mints a partner API key: a random secret is generated, only its
 // sha256 hash + a non-secret prefix are stored, and the plaintext is returned
 // once for the caller to copy.
@@ -137,13 +132,9 @@ func (s *Service) IssueKey(ctx context.Context, in IssueKeyInput) (*IssuedKey, e
 	if _, err := s.repo.GetMerchant(ctx, in.MerchantID); err != nil {
 		return nil, fmt.Errorf("merchant: merchant not found")
 	}
-	secret, prefix, err := generateKey()
-	if err != nil {
-		return nil, err
-	}
+	secret, prefix := generateKey()
 	plain := prefix + "." + secret
-	sum := sha256.Sum256([]byte(plain))
-	hash := hex.EncodeToString(sum[:])
+	hash := cryptox.SHA256Hex(plain)
 
 	id, err := s.repo.InsertPartnerKey(ctx, in.MerchantID, prefix, hash, in.Scopes)
 	if err != nil {
@@ -183,24 +174,96 @@ func (s *Service) AuthenticateKey(ctx context.Context, presented string) (mercha
 	if err != nil || mid == "" {
 		return "", nil, false, err
 	}
-	sum := sha256.Sum256([]byte(presented))
-	if hex.EncodeToString(sum[:]) != hash {
+	if !cryptox.ConstantTimeEqual(cryptox.SHA256Hex(presented), hash) {
 		return "", nil, false, nil
 	}
 	return mid, sc, true, nil
 }
 
 // generateKey returns a random 32-byte secret (hex) plus an 8-char prefix.
-func generateKey() (secret, prefix string, err error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", "", fmt.Errorf("merchant: generate key: %w", err)
-	}
-	secret = hex.EncodeToString(buf)
-	pbuf := make([]byte, 4)
-	if _, err := rand.Read(pbuf); err != nil {
-		return "", "", fmt.Errorf("merchant: generate prefix: %w", err)
-	}
-	prefix = "pk_" + hex.EncodeToString(pbuf)
-	return secret, prefix, nil
+func generateKey() (string, string) {
+	return cryptox.RandHex(32), "pk_" + cryptox.RandHex(4)
+}
+
+// Merchant statuses.
+const (
+	StatusActive    = "active"
+	StatusSuspended = "suspended"
+)
+
+// Merchant campaign statuses.
+const (
+	MCDraft   = "draft"
+	MCFunded  = "funded"
+	MCActive  = "active"
+	MCSettled = "settled"
+	MCEnded   = "ended"
+)
+
+// Merchant is a brand/partner funding referral campaigns.
+type Merchant struct {
+	ID                  string    `json:"id"`
+	OwnerUserID         string    `json:"owner_user_id,omitempty"`
+	Name                string    `json:"name"`
+	Slug                string    `json:"slug"`
+	Status              string    `json:"status"`
+	FundingWalletUserID string    `json:"funding_wallet_user_id,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
+}
+
+// MerchantCampaign is a merchant-funded campaign envelope.
+type MerchantCampaign struct {
+	ID          string    `json:"id"`
+	MerchantID  string    `json:"merchant_id"`
+	CampaignID  string    `json:"campaign_id,omitempty"`
+	Name        string    `json:"name"`
+	FundedKobo  int64     `json:"funded_kobo"`
+	SettledKobo int64     `json:"settled_kobo"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// PartnerKey is an issued (hashed) partner API key record.
+type PartnerKey struct {
+	ID         string     `json:"id"`
+	MerchantID string     `json:"merchant_id"`
+	KeyPrefix  string     `json:"key_prefix"`
+	Scopes     []string   `json:"scopes"`
+	Status     string     `json:"status"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// CreateMerchantInput is the admin merchant-create payload.
+type CreateMerchantInput struct {
+	Name                string `json:"name"`
+	Slug                string `json:"slug"`
+	OwnerUserID         string `json:"owner_user_id"`
+	FundingWalletUserID string `json:"funding_wallet_user_id"`
+}
+
+// CreateMCInput creates a merchant-funded campaign envelope.
+type CreateMCInput struct {
+	MerchantID string `json:"merchant_id"`
+	CampaignID string `json:"campaign_id"`
+	Name       string `json:"name"`
+}
+
+// FundInput funds a merchant campaign from the merchant's wallet (kobo).
+type FundInput struct {
+	AmountKobo int64 `json:"amount_kobo"`
+}
+
+// IssueKeyInput requests a new scoped partner API key.
+type IssueKeyInput struct {
+	MerchantID string   `json:"merchant_id"`
+	Scopes     []string `json:"scopes"`
+}
+
+// IssuedKey is the one-time response carrying the plaintext key.
+type IssuedKey struct {
+	ID        string   `json:"id"`
+	KeyPrefix string   `json:"key_prefix"`
+	PlainKey  string   `json:"plain_key"` // shown ONCE; never stored in plaintext
+	Scopes    []string `json:"scopes"`
 }

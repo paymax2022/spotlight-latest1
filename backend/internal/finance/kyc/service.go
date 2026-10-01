@@ -6,9 +6,14 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"net/http"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/argon2"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // VAProvisioner provisions a user's virtual account on tier upgrade. Kept as a
@@ -59,7 +64,6 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (*Profile, erro
 
 // Initiate moves the user to status=pending for the requested tier.
 // Idempotent: submitting again while already in 'pending' is a no-op.
-//
 // The status written here MUST be a value user_profiles_kyc_status_check
 // actually permits (unverified/pending/verified/failed/suspended — see
 // 20260613000000_kyc_fields.sql). It used to write 'submitted', which the
@@ -252,4 +256,96 @@ func hashIfPresent(v *string) *string {
 	key := argon2.IDKey([]byte(*v), salt[:], 1, 64*1024, 4, 32)
 	hashed := "argon2id:" + hex.EncodeToString(key)
 	return &hashed
+}
+
+// Handler exposes KYC endpoints.
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// GetMe handles GET /finance/kyc/me
+func (h *Handler) GetMe(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	profile, err := h.svc.GetProfile(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, profile)
+}
+
+// Initiate, Approve, Reject, and ListPending used to be exposed here as
+// POST /finance/kyc/initiate and the /finance/admin/kyc/* admin trio. All four
+// let a caller move kyc_tier/kyc_status with NO automated identity check —
+// Initiate just hashed and stored whatever BVN/NIN the client sent, and
+// Approve/Reject took an admin's word for it with no provider evidence.
+// Removed along with their routes (see internal/app/finance_routes.go) in
+// favor of the KYC verification gateway (internal/finance/kycverify), which
+// runs real Dojah/Smile ID/Youverify checks before a case ever reaches admin
+// review. The underlying Service methods (Initiate/Approve/Fail/ListPending)
+// remain — Approve is still the tier-write sink kycverify's own case-approval
+// flow calls into (see kycTierElevator in finance_routes.go), and Initiate is
+// still called directly by the mobile tier-submission handlers
+// (internal/handlers/kyc_connect_handler.go) pending a separate rewrite to
+// route those through kycverify's session/check flow instead.
+
+// Status mirrors the kyc_status check constraint in the Supabase migration.
+type Status string
+
+const (
+	StatusNone      Status = "none"
+	StatusPending   Status = "pending"
+	StatusSubmitted Status = "submitted"
+	StatusVerified  Status = "verified"
+	StatusFailed    Status = "failed"
+)
+
+// Tier is the verified access level (0–3).
+type Tier int
+
+// Profile is the KYC state for a user.
+type Profile struct {
+	UserID        string     `json:"user_id"`
+	Tier          Tier       `json:"kyc_tier"`
+	Status        Status     `json:"kyc_status"`
+	SubmittedAt   *time.Time `json:"kyc_submitted_at,omitempty"`
+	VerifiedAt    *time.Time `json:"kyc_verified_at,omitempty"`
+	PhoneVerified bool       `json:"phone_verified"`
+	DocumentType  *string    `json:"document_type,omitempty"`
+	RequestedTier *int       `json:"requested_tier,omitempty"`
+}
+
+// InitiateRequest is the body for POST /finance/kyc/initiate.
+type InitiateRequest struct {
+	// Tier the user is requesting (1, 2, or 3).
+	RequestedTier int     `json:"requested_tier" binding:"required,min=1,max=3"`
+	DocumentType  *string `json:"document_type,omitempty"`
+	DocumentRef   *string `json:"document_ref,omitempty"`
+	BVN           *string `json:"bvn,omitempty"`
+	NIN           *string `json:"nin,omitempty"`
+}
+
+// AuditEvent is written to kyc_events on every state transition. Field names
+// mirror the actual table (20260613010000_kyc_events.sql) — old_status/
+// new_status/old_tier/new_tier/document_type/actor_id/note — not an
+// event_type column, which the table has never had.
+type AuditEvent struct {
+	ID           string    `json:"id"`
+	UserID       string    `json:"user_id"`
+	OldStatus    *string   `json:"old_status,omitempty"`
+	NewStatus    Status    `json:"new_status"`
+	OldTier      *Tier     `json:"old_tier,omitempty"`
+	NewTier      Tier      `json:"new_tier"`
+	DocumentType *string   `json:"document_type,omitempty"`
+	ActorID      *string   `json:"actor_id,omitempty"`
+	Note         *string   `json:"note,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }

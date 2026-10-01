@@ -82,7 +82,6 @@ export async function GET(request: Request) {
     if (error) return errorResponse('Failed to load settings', 500);
 
     // Every contest is listed, not only those that already have a settings row.
-    //
     // Listing only configured contests was a chicken-and-egg: voting_settings is
     // written BY the settings page, which is reachable only from this list — so a
     // contest with no row could never be configured, and with the table empty the

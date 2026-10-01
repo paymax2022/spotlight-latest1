@@ -2,12 +2,19 @@ package business
 
 import (
 	"errors"
-	"net/http"
-	"strconv"
-
 	"github.com/gin-gonic/gin"
-
+	"github.com/jackc/pgx/v5/pgxpool"
+	"log"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/go-common/ptr"
+	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/provider"
+	"spotlight/backend/internal/provider/cac"
+	"spotlight/backend/internal/services"
 )
 
 // Handler exposes the business-registry API over Gin.
@@ -15,13 +22,15 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-// userID resolves the authenticated user id (set by RequireAuthContext before Next).
-func userID(c *gin.Context) string {
+// authUserID resolves the authenticated user id (set by RequireAuthContext before Next).
+func authUserID(c *gin.Context) string {
 	if au, ok := middleware.GetAuthenticatedUser(c); ok {
 		return au.ID
 	}
-	return c.GetString("user_id")
+	return ""
 }
+
+func userID(c *gin.Context) string { return ginutil.UserID(c, authUserID) }
 
 func userEmail(c *gin.Context) string {
 	if au, ok := middleware.GetAuthenticatedUser(c); ok {
@@ -30,32 +39,33 @@ func userEmail(c *gin.Context) string {
 	return ""
 }
 
+var errMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusNotFound, ErrNotFound, ErrCertNotReady),
+	httperr.R(http.StatusForbidden, ErrForbidden),
+	httperr.R(http.StatusConflict, ErrDuplicate, ErrConflict, ErrFeeNotPaid),
+	httperr.R(http.StatusBadRequest, ErrMissingIdemKey),
+	httperr.R(http.StatusUnprocessableEntity, ErrValidation),
+	httperr.R(http.StatusPaymentRequired, ErrInsufficientFunds),
+	httperr.R(http.StatusBadGateway, ErrProvider),
+)
+
 func (h *Handler) fail(c *gin.Context, err error) {
+	code := errMap.Code(err)
+	body := gin.H{"error": err.Error()}
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		body["error"] = "not found"
 	case errors.Is(err, ErrCertNotReady):
-		c.JSON(http.StatusNotFound, gin.H{"error": "certificate not available yet"})
+		body["error"] = "certificate not available yet"
 	case errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		body["error"] = "forbidden"
 	case errors.Is(err, ErrDuplicate):
-		c.JSON(http.StatusConflict, gin.H{"error": "a business with this registration number already exists"})
-	case errors.Is(err, ErrConflict), errors.Is(err, ErrFeeNotPaid):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-	case errors.Is(err, ErrMissingIdemKey):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-	case errors.Is(err, ErrValidation):
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
-	case errors.Is(err, ErrInsufficientFunds):
-		c.JSON(http.StatusPaymentRequired, gin.H{"error": err.Error()})
+		body["error"] = "a business with this registration number already exists"
 	case errors.Is(err, ErrProvider):
-		c.JSON(http.StatusBadGateway, gin.H{"error": "business registry provider error"})
-	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		body["error"] = "business registry provider error"
 	}
+	c.JSON(code, body)
 }
-
-// ── Member endpoints ──────────────────────────────────────────────────────────
 
 func (h *Handler) CheckName(c *gin.Context) {
 	var req NameCheckRequest
@@ -114,7 +124,7 @@ func (h *Handler) RegisterNew(c *gin.Context) {
 }
 
 func (h *Handler) PayFee(c *gin.Context) {
-	idemKey := c.GetHeader("Idempotency-Key")
+	idemKey := ginutil.IdempotencyKey(c)
 	prof, err := h.svc.PayRegistrationFee(c.Request.Context(), userID(c), c.Param("id"), idemKey)
 	if err != nil {
 		h.fail(c, err)
@@ -162,7 +172,7 @@ func (h *Handler) PayFeePaystackVerify(c *gin.Context) {
 }
 
 func (h *Handler) Submit(c *gin.Context) {
-	idemKey := c.GetHeader("Idempotency-Key")
+	idemKey := ginutil.IdempotencyKey(c)
 	prof, err := h.svc.SubmitRegistration(c.Request.Context(), userID(c), c.Param("id"), idemKey)
 	if err != nil {
 		h.fail(c, err)
@@ -209,10 +219,8 @@ func (h *Handler) GetOne(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": prof})
 }
 
-// ── Admin endpoints ───────────────────────────────────────────────────────────
-
 func (h *Handler) AdminList(c *gin.Context) {
-	limit, _ := strconv.Atoi(c.Query("limit"))
+	limit := ptr.DerefZero(ginutil.IntParam(c, "limit"))
 	list, err := h.svc.AdminList(c.Request.Context(), c.Query("status"), c.Query("mode"), limit)
 	if err != nil {
 		h.fail(c, err)
@@ -251,4 +259,61 @@ func (h *Handler) AdminReject(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": prof})
+}
+
+// ReviewPermission is the RBAC slug gating the admin review/override endpoints.
+const ReviewPermission = "business.registry.review"
+
+// RouteDeps carries the collaborators to wire the business-registry routes.
+type RouteDeps struct {
+	Pool     *pgxpool.Pool
+	Ledger   *ledger.Service
+	Wallet   *wallet.Service
+	Provider cac.BusinessRegistryProvider
+	Payment  provider.PaymentProvider // Paystack gateway for the fee (optional)
+	RBAC     services.RBACService
+	FeeKobo  int64
+}
+
+// Register mounts the business-registry routes. `member` is an already-authenticated
+// route group (e.g. the finance group: RequireAuthContext + requireUserID). `admin`
+// is an authenticated group on which per-route RBAC (business.registry.review) is
+// applied here. Returns the Service so the caller can wire the merchant-upgrade gate
+// (HasVerifiedBusiness) into the onboarding grant path.
+func Register(member, admin *gin.RouterGroup, d RouteDeps) *Service {
+	svc := NewService(Deps{
+		Repo:     NewRepository(d.Pool),
+		Ledger:   d.Ledger,
+		Wallet:   d.Wallet,
+		Provider: d.Provider,
+		Payment:  d.Payment,
+		FeeKobo:  d.FeeKobo,
+	})
+	h := NewHandler(svc)
+
+	b := member.Group("/business")
+	b.POST("/name/check", h.CheckName)
+	b.POST("/name/reserve", h.ReserveName)
+	b.POST("/verify", h.VerifyExisting)
+	b.POST("/register", h.RegisterNew)
+	b.POST("/:id/pay-fee", h.PayFee)                               // wallet money path — Idempotency-Key required
+	b.POST("/:id/pay-fee/paystack", h.PayFeePaystackInit)          // gateway: start Paystack checkout
+	b.POST("/:id/pay-fee/paystack/verify", h.PayFeePaystackVerify) // gateway: confirm + mark paid
+	b.POST("/:id/submit", h.Submit)                                // Idempotency-Key required
+	b.GET("/:id/status", h.Status)
+	b.GET("/:id/certificate", h.Certificate)
+	b.GET("/me", h.Me)
+	b.GET("/:id", h.GetOne)
+
+	if admin != nil {
+		review := admin.Group("")
+		review.Use(middleware.RequirePermission(d.RBAC, ReviewPermission))
+		review.GET("", h.AdminList)
+		review.GET("/:id", h.AdminGet)
+		review.POST("/:id/approve", h.AdminApprove)
+		review.POST("/:id/reject", h.AdminReject)
+	}
+
+	log.Printf("[business] routes registered (provider=%s, feeKobo=%d, platformFeeKobo=%d) · pay-fee=wallet|paystack(init+verify) [build:platform-fee]", d.Provider.Name(), svc.feeKobo, svc.platformFeeKobo)
+	return svc
 }

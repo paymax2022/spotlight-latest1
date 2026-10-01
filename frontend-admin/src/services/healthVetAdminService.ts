@@ -1,12 +1,7 @@
-// ── Admin — Paymax Health · Veterinary (HEALTH-BUILD Phase 3 ADM) ──────────────
 // Mock by default (mirrors healthPharmacyAdminService P1 / healthLabAdminService P2).
-// Flip with NEXT_PUBLIC_HEALTH_USE_MOCK=false to hit the live Go backend at
 // /api/health/vet/admin/*. RBAC: health.vet.* gates wired on the sidebar.
 // Money is BIGINT kobo (minor units) throughout — formatNaira() converts kobo → ₦.
 // Surfaces HEALTH invariants the Vet vertical enforces:
-//  HL-1 marketplace, not provider · HL-2 credential-gated supply (VCN licences; VCN surfaced;
-//  auto-suspend on expiry) · HL-3 e-Rx discipline (issued by licensed vet; dispense-once; POM gating)
-//  · HL-8 health data sensitive NDPA (masked; consent gates) · HL-9 money held→released→refunded
 //  (escrow released on consult completion) · HL-10 payout KYC+AML gate · HL-11 emergency safety
 //  (tele ≠ emergency; SOS → in-person) · HL-12 immutable audit on every state transition.
 
@@ -38,7 +33,6 @@ export const USE_MOCK_ENV = 'NEXT_PUBLIC_HEALTH_USE_MOCK';
 
 // Verified against backend/internal/app/finance_routes.go:
 //   RegisterHealthVet(finance, adminGroupTop5(r, "/api/health/vet/admin"), ...)
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/vet/admin')`,
 // which stopped matching the moment apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
 // the same regression. Every request 404'd against <proxy>/dashboard instead of
@@ -68,7 +62,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -78,13 +71,10 @@ const NO_BACKEND_YET =
   'has no backend yet (see the comment on the live-mode call below). ' +
   'This console cannot perform this action until that endpoint is built.';
 
-const auditId = () => `aud_${Math.random().toString(36).slice(2, 10)}`;
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Dashboard
-// ════════════════════════════════════════════════════════════════════════════
 const DASHBOARD: VetDashboard = {
   generated_at: iso(0.1),
   appointments_today: 414,
@@ -184,9 +174,7 @@ export async function getVetDashboard(): Promise<VetDashboard> {
   };
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // B · VCN credential audit queue (HL-2)
-// ════════════════════════════════════════════════════════════════════════════
 const VCN_APPS: VcnApplication[] = [
   { id: 'vcn_5501', vet_name_masked: 'Dr A. Bello•••', clinic_name: 'PetCare Vet Clinic Lekki', vcn_licence_no: 'VCN/2015/04120', vcn_register_year: 2015, cac_rc_no: 'RC-2210984', specialties: ['small-animal', 'surgery'], state: 'Lagos', lga: 'Eti-Osa', status: 'submitted', vcn_verified: true, licence_expires_at: dateStr(-300), docs: [{ kind: 'VCN_licence', reference: 'VCN/2015/04120', expires_at: dateStr(-300), verified: true }, { kind: 'vet_degree', reference: 'DVM-UI-2013', verified: true }, { kind: 'CAC', reference: 'RC-2210984', verified: true }], submitted_at: iso(5), created_at: iso(50) },
   { id: 'vcn_5502', vet_name_masked: 'Dr C. Okonkwo•••', clinic_name: 'Garki Animal Hospital', vcn_licence_no: 'VCN/2012/02810', vcn_register_year: 2012, cac_rc_no: 'RC-1880221', specialties: ['large-animal', 'small-animal'], state: 'FCT', lga: 'Abuja Municipal', status: 'under_review', vcn_verified: true, licence_expires_at: dateStr(-120), docs: [{ kind: 'VCN_licence', reference: 'VCN/2012/02810', expires_at: dateStr(-120), verified: true }, { kind: 'clinic_premises_photo', reference: 'photo-set-3', verified: true }, { kind: 'indemnity_cover', reference: 'IND-2026-441', verified: true }], submitted_at: iso(28), created_at: iso(110) },
@@ -220,9 +208,7 @@ export async function decideVcn(id: string, decision: VcnDecision, note?: string
   return sendJson<VcnDecisionResult>('POST', `/vcn/applications/${id}/decision`, { decision, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Service / fee governance
-// ════════════════════════════════════════════════════════════════════════════
 const SERVICES: VetService[] = [
   { id: 'vsvc_4401', service_name: 'Tele-consult (general)', mode: 'tele', category: 'consult', vet_masked: 'Dr A. Bello•••', clinic_masked: 'PetCare Lekki•••', duration_minutes: 20, fee_kobo: 8_000_00, platform_fee_pct: 0.1, status: 'approved', flagged_reason: null, created_at: dateStr(30) },
   { id: 'vsvc_4410', service_name: 'Home vaccination visit', mode: 'home', category: 'vaccination', vet_masked: 'Dr C. Okonkwo•••', clinic_masked: 'Garki Animal Hospital•••', duration_minutes: 45, fee_kobo: 18_000_00, platform_fee_pct: 0.1, status: 'pending', flagged_reason: null, created_at: dateStr(2) },
@@ -256,15 +242,13 @@ export async function governService(id: string, action: VetServiceGovernanceActi
   if (USE_MOCK) {
     if (action !== 'suspend') throw new Error(`Governance action "${action}" ${NO_BACKEND_YET}`);
     await delay();
-    return { id, status: 'suspended', audit_id: auditId(), message: `Fixture — nothing was saved. Service ${id}: suspend applied.` };
+    return { id, status: 'suspended', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Service ${id}: suspend applied.` };
   }
   if (action !== 'suspend') throw new Error(`Governance action "${action}" ${NO_BACKEND_YET}`);
   return sendJson<VetServiceGovernanceResult>('POST', `/services/${id}/deactivate`, {});
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // D · Appointment oversight
-// ════════════════════════════════════════════════════════════════════════════
 const APPOINTMENTS: VetAppointment[] = [
   { id: 'apt_7720', pet_name: 'Bingo', pet_species: 'dog', owner_masked: 'pt Chioma•••', vet_masked: 'Dr A. Bello•••', clinic_masked: 'PetCare Lekki•••', mode: 'tele', service_summary: 'Tele-consult (general) · 20m', status: 'completed', payment_state: 'released', fee_kobo: 8_000_00, is_emergency: false, scheduled_at: iso(3), created_at: iso(28), updated_at: iso(2) },
   { id: 'apt_7740', pet_name: 'Milo', pet_species: 'cat', owner_masked: 'pt Aisha•••', vet_masked: 'Dr C. Okonkwo•••', clinic_masked: 'Garki Animal Hospital•••', mode: 'home', service_summary: 'Home vaccination visit · 45m', status: 'confirmed', payment_state: 'held', fee_kobo: 18_000_00, is_emergency: false, scheduled_at: iso(-26), created_at: iso(10), updated_at: iso(6) },
@@ -321,9 +305,7 @@ export async function getAppointment(id: string): Promise<VetAppointmentDetail> 
   return getJson<VetAppointmentDetail>(`/appointments/${id}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // E · E-prescription audit (HL-3)
-// ════════════════════════════════════════════════════════════════════════════
 const EPRESCRIPTIONS: EprescriptionAuditItem[] = [
   { id: 'erx_8810', appointment_ref: 'apt_7720', pet_name: 'Bingo', pet_species: 'dog', owner_masked: 'pt Chioma•••', vet_masked: 'Dr A. Bello•••', vcn_licence_no: 'VCN/2015/04120', drug_summary: 'Amoxicillin 250mg ×14 (POM)', is_pom: true, is_controlled: false, status: 'verified', dispense_once_ok: true, flagged: false, flag_reason: null, issued_at: iso(2), dispensed_at: null },
   { id: 'erx_8820', appointment_ref: 'apt_7740', pet_name: 'Milo', pet_species: 'cat', owner_masked: 'pt Aisha•••', vet_masked: 'Dr C. Okonkwo•••', vcn_licence_no: 'VCN/2012/02810', drug_summary: 'Feline tri-vaccine (vaccination record)', is_pom: false, is_controlled: false, status: 'fulfilled', dispense_once_ok: true, flagged: false, flag_reason: null, issued_at: iso(26), dispensed_at: iso(24) },
@@ -353,9 +335,7 @@ export async function listEprescriptionAudit(opts?: { status?: string; pom?: str
   return getJson<EprescriptionAuditItem[]>(`/eprescriptions${qs.toString() ? `?${qs}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // F · Payouts (KYC-gated — HL-10)
-// ════════════════════════════════════════════════════════════════════════════
 const PAYOUTS: VetPayoutRecord[] = [
   { id: 'vpay_9901', vet_masked: 'Dr A. Bello•••', clinic_masked: 'PetCare Lekki•••', kyc_tier: 'tier3', kyc_verified: true, released_kobo: 8_400_000_00, fees_kobo: 840_000_00, net_payable_kobo: 7_560_000_00, payout_status: 'approved', aml_flag: false, created_at: dateStr(2) },
   { id: 'vpay_9910', vet_masked: 'Dr (unverified)•••', clinic_masked: 'QuickVet Express•••', kyc_tier: 'tier0', kyc_verified: false, released_kobo: 2_100_000_00, fees_kobo: 210_000_00, net_payable_kobo: 1_890_000_00, payout_status: 'kyc_hold', aml_flag: false, created_at: dateStr(1) },
@@ -379,16 +359,13 @@ export async function listPayouts(opts?: { payout_status?: string; q?: string })
   return getJson<VetPayoutRecord[]>(`/payouts${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decidePayout(id: string, decision: VetPayoutDecision, note?: string): Promise<VetPayoutDecisionResult> {
-  // No payout-decision route exists; payout is fully automatic on consult
   // completion in backend/internal/health/vet — there is no
   // admin-reviewable pending state to approve/reject.
   if (USE_MOCK) throw new Error(`Deciding a payout ${NO_BACKEND_YET}`);
   return sendJson<VetPayoutDecisionResult>('POST', `/payouts/${id}/decision`, { decision, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // G · Content / credential moderation
-// ════════════════════════════════════════════════════════════════════════════
 const MODERATION: ModerationItem[] = [
   { id: 'mod_3310', kind: 'credential_mismatch', subject_masked: 'Dr E. Adeyemi•••', summary: 'Profile lists VCN/2018/06602 but VCN register lookup returns a different name — credential claim under review (HL-2).', severity: 'high', status: 'open', vcn_licence_no: 'VCN/2018/06602', reporter_masked: 'system', created_at: iso(4) },
   { id: 'mod_3320', kind: 'unlicensed_advice', subject_masked: 'Reviewer J•••', summary: 'Public review thread contains unlicensed dosing advice — Paymax never provides clinical advice (HL-1); content flagged.', severity: 'medium', status: 'investigating', vcn_licence_no: null, reporter_masked: 'pt Aisha•••', created_at: iso(12) },
@@ -420,9 +397,7 @@ export async function moderate(id: string, action: ModerationAction, note?: stri
   return sendJson<ModerationResult>('POST', `/moderation/${id}/action`, { action, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // H · Reporting
-// ════════════════════════════════════════════════════════════════════════════
 const REPORTING: VetReportingData = {
   generated_at: iso(0.2),
   period_label: 'Last 30 days',

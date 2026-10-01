@@ -1,12 +1,12 @@
 import React from 'react';
 import { FlatList, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useWatchlist, useToggleWatch } from '@/features/fractionalre/hooks';
-import OpportunityCard from '@/features/fractionalre/components/OpportunityCard';
+import { OpportunityCard } from '@/features/fractionalre/components';
 import type { OfferingSummary } from '@/features/fractionalre/types';
 
 export default function WatchlistScreen() {

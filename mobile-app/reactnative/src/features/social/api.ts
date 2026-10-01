@@ -25,7 +25,6 @@ function idempotencyKey(): string {
 
 const minsAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
-// ── Mock fixtures ─────────────────────────────────────────────────────────────
 const MOCK_ME: MyCashtag = {
   handle: '@you',
   displayName: 'You',
@@ -96,8 +95,6 @@ const MOCK_POOLS: GroupPool[] = [
   },
 ];
 
-// ── Reads ────────────────────────────────────────────────────────────────────
-// Backend: GET /handle/me → { success, handle: Cashtag|null }. There is no
 // dedicated "my cashtag summary" endpoint (limits/avatar) yet — we merge the
 // handle response into the display shape and fall back to safe defaults for
 // the fields the backend doesn't return (MISSING: GET /me profile summary).
@@ -195,7 +192,6 @@ export async function getPool(id: string): Promise<GroupPool> {
   return { ...cached, raisedKobo };
 }
 
-// ── Response mapping helpers ─────────────────────────────────────────────────
 interface SplitShareServer {
   id: string;
   name?: string;
@@ -227,7 +223,6 @@ function mapSplit(bill?: Record<string, unknown>, shares?: SplitShareServer[]): 
   };
 }
 
-// ── Mutations (each carries an Idempotency-Key) ──────────────────────────────
 // Backend: POST /send expects { handle, amount_kobo, note } → { success, payment }.
 export async function sendMoney(input: SendInput): Promise<PayResult> {
   if (USE_MOCK) { await delay(); return { id: `pay_${Date.now()}`, ok: true, status: 'completed' }; }
@@ -290,7 +285,6 @@ export async function createSplit(input: CreateSplitInput): Promise<SplitBill> {
   return mapSplit(body.bill, body.shares);
 }
 
-// Backend: POST /splits/:id/shares/:shareId/pay carries Idempotency-Key; body is
 // empty (amount is fixed by the share) → { success }. amountKobo is accepted
 // here for the mock path only.
 export async function paySplitShare(splitId: string, shareId: string, amountKobo: number): Promise<PayResult> {
@@ -331,7 +325,6 @@ export async function createPool(input: CreatePoolInput): Promise<GroupPool> {
   };
 }
 
-// Backend: POST /pools/:id/contribute expects { amount_kobo } (Idempotency-Key
 // header) → { success, balance_kobo }.
 export async function contributeToPool(poolId: string, amountKobo: number): Promise<ContributeResult> {
   if (USE_MOCK) {

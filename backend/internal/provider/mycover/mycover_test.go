@@ -17,9 +17,7 @@ import (
 	"spotlight/backend/internal/insurance/gateway"
 )
 
-// ════════════════════════════════════════════════════════════════════════════
 // ENVELOPE
-// ════════════════════════════════════════════════════════════════════════════
 
 // TestEnvelope_ResponseTextBothShapes is the regression that matters most:
 // MyCover returns responseText as a STRING on success and as an ARRAY OF
@@ -134,9 +132,7 @@ func TestDo_NoAPIKeyFailsClosed(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // PER-PRODUCT ROUTING
-// ════════════════════════════════════════════════════════════════════════════
 
 // TestBindPolicy_PostsToTheSingleV2Endpoint proves the v2 model: ONE purchase
 // endpoint for every product, with the product selected by product_id in a flat
@@ -262,9 +258,7 @@ func TestCancelPolicy_IsHonestlyUnsupported(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // QUOTING — the money path
-// ════════════════════════════════════════════════════════════════════════════
 
 // TestGetQuote_UsesProviderComputePrice is the v2 correctness win: the premium
 // is the PROVIDER's own figure from POST /products/compute-price, not something
@@ -388,9 +382,7 @@ func TestGetQuote_RefusesWithoutProductID(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // CATALOG NORMALISATION
-// ════════════════════════════════════════════════════════════════════════════
 
 // TestListProducts_NormalisesLiveShape feeds the adapter the verbatim v2 shapes
 // — a LIGHT list plus a full record per id — and checks every value that crosses
@@ -579,14 +571,11 @@ func TestJSONNumberOrString_NeverGoesThroughFloat(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // WEBHOOKS — must fail CLOSED
-// ════════════════════════════════════════════════════════════════════════════
 
 // TestVerifyWebhook_FailsClosedWithoutAnyKey is the security invariant. An
 // adapter that treated "no key" as "no verification needed" would let anyone who
 // can reach the endpoint activate policies and approve claims.
-//
 // MyCover issues no separate webhook secret — the signature is keyed on the
 // secret API key — so "no key" means BOTH are empty.
 func TestVerifyWebhook_FailsClosedWithoutAnyKey(t *testing.T) {
@@ -692,9 +681,7 @@ func hmacHexForTest(secret string, payload []byte) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // FAMILY ENDPOINTS — product_id selects the product, the path selects the family
-// ════════════════════════════════════════════════════════════════════════════
 
 // TestBindPolicy_InjectsProductID pins the family model: one path serves many
 // products and the product is chosen by a `product_id` UUID in the BODY.

@@ -6,7 +6,6 @@ import (
 )
 
 // Spotlight Academy — offline-sync ingest DTOs.
-//
 // Wire contract mirrors the mobile offline queue's flush path:
 // mobile-app/reactnative/src/features/academy/offlineQueue.ts → pushEvent(), which
 // POSTs ONE event per request as a FLAT body (not wrapped) plus an Idempotency-Key

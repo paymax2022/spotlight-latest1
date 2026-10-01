@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 )
 
@@ -14,7 +15,6 @@ import (
 // route here — it is driven by the EXISTING academy webhook pipeline (see the integration note
 // in RegisterFeesPayment). Router registration into RegisterAcademy is owned by the integration
 // task, behind FEATURE_ACADEMY_FEES_ENABLED.
-//
 // The member group already carries RequireAuthContext (REUSE-MAP §1), so c.GetString("user_id")
 // is populated. The Idempotency-Key header is REQUIRED on every intent route (money path).
 type Handler struct {
@@ -24,10 +24,9 @@ type Handler struct {
 // NewHandler builds the payment handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -35,15 +34,13 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
 	}
 	return u, true
 }
-
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
 
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
@@ -95,8 +92,6 @@ func RegisterFeesPayment(member *gin.RouterGroup, svc *Service) *Handler {
 	return h
 }
 
-// ── Handlers ────────────────────────────────────────────────────────────────────
-
 func (h *Handler) CreateIntent(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -107,7 +102,7 @@ func (h *Handler) CreateIntent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.CreatePaymentIntent(c.Request.Context(), u, req, idemKey(c))
+	out, err := h.svc.CreatePaymentIntent(c.Request.Context(), u, req, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -125,7 +120,7 @@ func (h *Handler) PayInstallment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.PayInstallment(c.Request.Context(), u, req, idemKey(c))
+	out, err := h.svc.PayInstallment(c.Request.Context(), u, req, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return

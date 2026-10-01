@@ -1,8 +1,6 @@
-// ── Paymax AI Symptom Checker — vernacular copy (EN + Pidgin) ─────────────────
 // Phase 1 ships English + Pidgin (pcm). pcm strings are stubbed (mostly EN) and
 // can be tuned by a localisation pass without touching screens. A simple language
 // toggle picks the active pack; every screen pulls copy through `t(lang)`.
-//
 // SAFETY copy lives here so SC-1 / SC-8 / SC-9 wording is reviewed in one place.
 
 import type { Language } from './types';

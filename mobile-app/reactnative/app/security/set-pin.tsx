@@ -5,10 +5,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, X } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import TripPinInput from '@/features/mobility/components/TripPinInput';
 import { getPinStatus, createPin, verifyPin } from '@/features/transfers/api';
@@ -58,13 +58,11 @@ export default function SetTransactionPinScreen() {
   }, [statusQuery.isLoading, hasPin, mode]);
 
   const finish = () => {
-    // Update the cache synchronously so the app-wide gate sees hasPin=true
     // immediately (no race that would bounce the user back to this screen),
     // then refresh from source.
     qc.setQueryData(PIN_STATUS_KEY, { hasPin: true });
     qc.invalidateQueries({ queryKey: PIN_STATUS_KEY });
     if (mode === 'manage') goBack('/');
-    // Required-mode gate: return the user to wherever they were blocked and let
     // them continue; fall back to home when there's nothing to resume.
     else resumeOrFallback('/(tabs)/home');
   };
@@ -101,7 +99,6 @@ export default function SetTransactionPinScreen() {
       return;
     }
     // Last line of defence. `hasPin ? current : undefined` is not enough on its
-    // own: if the status query resolves to true only AFTER this screen reached
     // the confirm phase, `current` is still empty and the request goes out bare
     // — which the server scores as a wrong guess and counts toward the lockout.
     // Refuse to send it at all; bounce back and ask for the current PIN.

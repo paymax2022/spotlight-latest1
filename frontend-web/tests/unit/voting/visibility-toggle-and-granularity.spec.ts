@@ -138,7 +138,6 @@ describe('getEffectiveVisibility — per-audience granularity is NOT modeled (VV
 
     expect(forPublicSurface).toEqual(forContestantSelfView);
     expect(forPublicSurface.showVoteCount).toBe(false);
-    // Pin: a contestant CANNOT be shown their own count while it stays hidden
     // from the public with today's schema — that split does not exist yet.
   });
 });

@@ -1,23 +1,18 @@
 package restaurant
 
 // LIVE-DB tests for legacy owner linking (foodhub §5.4).
-//
 // Every restaurant on the platform predates the merchant-onboarding engine:
 // 1651 restaurants, 1539 distinct owners, and ZERO merchant profiles. The
 // consequence is not cosmetic — capabilities are read from onb_merchant_profile,
 // so today every one of those owners:
-//
 //   • has no capability card in the merchant hub, and
 //   • resolves to "you don't manage a restaurant yet" at /merchant/restaurant,
-//
 // while their tooling works perfectly if they happen to know the direct URL.
 // Linking creates the profile that makes them visible to the hub, WITHOUT
 // requiring 1539 people to re-apply for a business they already run.
-//
 // A legacy profile is distinguishable by application_id IS NULL — it was never
 // applied for. That is deliberate: an operator asking "who was reviewed?" must
 // not get an answer polluted by people who were grandfathered in.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (
@@ -195,10 +190,8 @@ func TestLiveDB_LegacyProfilesAreDistinguishableFromReviewedOnes(t *testing.T) {
 	// Deterministic by construction, for exactly the reason the first test in this
 	// file spells out. The previous version asserted the GLOBAL condition "some
 	// legacy profile exists somewhere":
-	//
 	//	SELECT count(*) FROM onb_merchant_profile
 	//	 WHERE merchant_type_id='mt-restaurant' AND application_id IS NULL   -- > 0
-	//
 	// which CANNOT hold on a fresh database. Grandfathering comes from
 	// 20261213000000_foodhub_legacy_owner_linking.sql, which backfills
 	// INSERT … SELECT FROM public.restaurants; nothing seeds that table, so a
@@ -206,10 +199,8 @@ func TestLiveDB_LegacyProfilesAreDistinguishableFromReviewedOnes(t *testing.T) {
 	// assertion was measuring whether the environment happened to carry history,
 	// not whether the code keeps grandfathered owners distinguishable — and it
 	// failed the integration-verify lane on main for precisely that reason.
-	//
 	// So seed BOTH kinds and assert the distinction itself.
 
-	// ── 1. Grandfathered: a restaurant predating onboarding, linked by the same
 	//       service call the migration's backfill mirrors. No application exists.
 	legacyOwner := uuid.New().String()
 	shop := uuid.New().String()
@@ -234,7 +225,6 @@ func TestLiveDB_LegacyProfilesAreDistinguishableFromReviewedOnes(t *testing.T) {
 		t.Fatalf("LinkLegacyOwners: %v", err)
 	}
 
-	// ── 2. Reviewed: applied, was approved, and carries the application that
 	//       records the review.
 	reviewedOwner := uuid.New().String()
 	appID := uuid.New().String()
@@ -262,7 +252,6 @@ func TestLiveDB_LegacyProfilesAreDistinguishableFromReviewedOnes(t *testing.T) {
 		pool.Exec(bg, `DELETE FROM onb_application WHERE id=$1`, appID)
 	})
 
-	// ── The distinction itself: application_id IS NULL is what separates
 	//       "grandfathered in" from "we vetted this one". If grandfathering ever
 	//       invented an application, the operator question "who did we actually
 	//       review?" becomes unanswerable — and it answers wrong silently.
@@ -340,7 +329,6 @@ func TestLiveDB_UnclaimedRestaurantsAreDetectable(t *testing.T) {
 	// database forbids it. The reachable shape is an owner with no active merchant
 	// profile, which is what every restaurant looked like before the linking
 	// migration and what a newly imported shop would look like again.
-	//
 	// Asserting the current zero would pass even if the query were nonsense, so
 	// this creates the state and checks it surfaces.
 	orphanOwner := uuid.New().String()

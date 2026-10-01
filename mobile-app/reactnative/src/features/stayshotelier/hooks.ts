@@ -1,4 +1,3 @@
-// ── Stays hotelier — data hooks ──────────────────────────────────────────────
 // React Query hooks over the hotelier api. Mutations invalidate the affected
 // query so the screen re-renders with server truth after each change.
 
@@ -89,7 +88,6 @@ export function useUpdatePropertyDetails(propertyId: string) {
   });
 }
 
-// ── Photos ─────────────────────────────────────────────────────────────────
 export function usePropertyPhotos(propertyId?: string) {
   return useQuery({
     queryKey: [KEY, 'photos', propertyId],
@@ -131,7 +129,6 @@ export function useUpdatePhotoCaption(propertyId: string) {
   });
 }
 
-// ── Go-live verification ──────────────────────────────────────────────────
 export function useVerificationStatus(propertyId?: string) {
   return useQuery({
     queryKey: [KEY, 'verification', propertyId],

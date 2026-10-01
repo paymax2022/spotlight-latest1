@@ -1,15 +1,23 @@
+// Package loyalty wires the points earn-rules to live modules (payments, savings,
+// tickets, referral §7A), runs the membership tier engine, and exposes the rewards
+// catalog + redemption. It owns NO money primitive and NO points ledger of its own:
+// awards go through points.Earn, redemptions through points.Redeem, and reward
+// fulfilment is delegated to bill-pay / airtime / ticket-discount (NL-4: never cash).
+
 package loyalty
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"time"
-
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/points"
+	"time"
 )
 
 // Auditor mirrors services.AuditService (NL-12); nil-safe.
@@ -251,8 +259,6 @@ func (s *Service) ListCatalog(ctx context.Context, userID string) ([]CatalogItem
 	return out, rows.Err()
 }
 
-// --- internals ---
-
 func (s *Service) bindingRuleKey(ctx context.Context, module, trigger string) (string, bool, error) {
 	const q = `SELECT rule_key FROM loyalty_earn_rules WHERE module=$1 AND trigger=$2 AND active=true LIMIT 1`
 	var rk string
@@ -289,3 +295,174 @@ func (s *Service) log(actor, action, id string, meta map[string]any) {
 
 // Sentinel errors.
 var ErrTierTooLow = fmt.Errorf("loyalty: membership tier too low for this reward")
+
+// Handler exposes loyalty member endpoints (membership, rewards, redeem). Awards are
+// never a public endpoint — they fire only as side effects of live-module actions
+// via AwardFor — so a client can never self-promote a tier or mint points.
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// GuardFunc returns a permission-checking middleware.
+type GuardFunc func(permission string) gin.HandlerFunc
+
+// Register mounts member + admin routes. The caller passes groups already
+// scoped to their base paths (finance.Group("/loyalty") and
+// adminGroupTop5(r, "/api/loyalty/admin")) — routes registered here must NOT
+// re-add the "/loyalty" segment, or Gin will double it
+// (e.g. /api/finance/loyalty/loyalty/me instead of /api/finance/loyalty/me).
+//
+//	member: /api/finance/loyalty/*
+//	admin : /api/loyalty/admin/*  (RBAC loyalty.*)
+func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
+	member.GET("/me", h.Me)
+	member.GET("/tiers", h.Tiers)
+	member.GET("/rewards", h.Rewards)
+	member.POST("/redeem", h.Redeem)
+
+	// Admin reward/tier config is RBAC-gated; CRUD lands directly on the config
+	// tables (loyalty_tiers / loyalty_earn_rules / loyalty_catalog) which are seeded
+	// by migration — these endpoints are the guarded management surface.
+	admin.GET("/memberships/:userId", guard("loyalty.read"), h.AdminMembership)
+}
+
+func (h *Handler) Me(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	m, err := h.svc.GetMembership(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "membership": m})
+}
+
+// Tiers GET /loyalty/tiers — active tier config (thresholds + benefits).
+func (h *Handler) Tiers(c *gin.Context) {
+	tiers, err := h.svc.ListTiers(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "tiers": tiers})
+}
+
+func (h *Handler) Rewards(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	items, err := h.svc.ListCatalog(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "rewards": items})
+}
+
+type redeemRequest struct {
+	SKU string `json:"sku" binding:"required"`
+}
+
+func (h *Handler) Redeem(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	var req redeemRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	red, err := h.svc.Redeem(c.Request.Context(), userID, req.SKU)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, ErrTierTooLow) {
+			status = http.StatusForbidden
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "redemption": red})
+}
+
+func (h *Handler) AdminMembership(c *gin.Context) {
+	m, err := h.svc.GetMembership(c.Request.Context(), c.Param("userId"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "membership": m})
+}
+
+// Tier is the membership level. BLACK is reserved for Phase-3.
+type Tier string
+
+const (
+	Tier1 Tier = "TIER1"
+	Tier2 Tier = "TIER2"
+	Tier3 Tier = "TIER3"
+	// TierBlack Tier = "BLACK" // P3
+)
+
+// Membership is a user's loyalty standing. Lifetime points drive tier; the tier is
+// re-evaluated on every earn (monotonic up within P1 — no auto-downgrade mid-period).
+type Membership struct {
+	UserID         string    `json:"user_id"`
+	Tier           Tier      `json:"tier"`
+	LifetimePoints int64     `json:"lifetime_points"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// TierDef is the versioned threshold + benefits config for a tier.
+type TierDef struct {
+	Tier            Tier           `json:"tier"`
+	ThresholdPoints int64          `json:"threshold_points"`
+	Benefits        map[string]any `json:"benefits"`
+	Active          bool           `json:"active"`
+}
+
+// EarnRuleBinding maps a live-module action to a points rule key (config-driven so a
+// new module event can be wired without code). Mirrors the points earn-rule but at
+// the loyalty layer it records WHICH module trigger fires WHICH rule.
+type EarnRuleBinding struct {
+	ID        string    `json:"id"`
+	Module    string    `json:"module"`   // payments | savings | tickets | referral
+	Trigger   string    `json:"trigger"`  // e.g. bill_paid, vault_deposit, ticket_purchased, referral_converted
+	RuleKey   string    `json:"rule_key"` // -> points_earn_rules.rule_key
+	Active    bool      `json:"active"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// CatalogItem is a loyalty reward surfaced to members (a view over points catalog
+// SKUs that are loyalty-eligible). Kind constrains fulfilment to non-cash rails.
+type CatalogItem struct {
+	ID         string `json:"id"`
+	SKU        string `json:"sku"` // -> points_catalog.sku
+	Title      string `json:"title"`
+	Kind       string `json:"kind"` // airtime | bill | ticket_discount | perk
+	CostPoints int64  `json:"cost_points"`
+	MinTier    Tier   `json:"min_tier"` // gate a reward behind a tier
+	Active     bool   `json:"active"`
+}
+
+// Redemption is the loyalty-side record of a reward claim (points already debited
+// by points.Redeem). Fulfilment status tracks the non-cash dispatch.
+type Redemption struct {
+	ID           string    `json:"id"`
+	UserID       string    `json:"user_id"`
+	SKU          string    `json:"sku"`
+	Kind         string    `json:"kind"`
+	CostPoints   int64     `json:"cost_points"`
+	FulfilStatus string    `json:"fulfil_status"` // PENDING | FULFILLED | FAILED
+	CreatedAt    time.Time `json:"created_at"`
+}

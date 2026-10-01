@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/dbutil"
 )
 
 // Repository is the pgx data-access layer for the academy tutor marketplace. Every query
@@ -36,8 +37,6 @@ type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// ── helpers ────────────────────────────────────────────────────────────────────
-
 func toJSONB(v any) []byte {
 	if v == nil {
 		return []byte("{}")
@@ -47,13 +46,6 @@ func toJSONB(v any) []byte {
 		return []byte("{}")
 	}
 	return b
-}
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 // insertAuditTx appends an immutable row to public.audit_logs inside a tx. module is
@@ -70,7 +62,7 @@ func insertAuditTx(ctx context.Context, tx pgx.Tx, actor, action, resourceType, 
 		INSERT INTO public.audit_logs
 			(actor_user_id, action, module, resource_type, resource_id, new_values, severity)
 		VALUES ($1,$2,'academy.tutor',$3,$4,$5,$6)`
-	_, err := tx.Exec(ctx, q, actorArg, action, resourceType, nullStr(resourceID), toJSONB(newValues), severity)
+	_, err := tx.Exec(ctx, q, actorArg, action, resourceType, dbutil.NullStr(resourceID), toJSONB(newValues), severity)
 	return err
 }
 
@@ -87,7 +79,7 @@ func (r *Repository) insertAudit(ctx context.Context, actor, action, resourceTyp
 		INSERT INTO public.audit_logs
 			(actor_user_id, action, module, resource_type, resource_id, new_values, severity)
 		VALUES ($1,$2,'academy.tutor',$3,$4,$5,$6)`
-	_, err := r.db.Exec(ctx, q, actorArg, action, resourceType, nullStr(resourceID), toJSONB(newValues), severity)
+	_, err := r.db.Exec(ctx, q, actorArg, action, resourceType, dbutil.NullStr(resourceID), toJSONB(newValues), severity)
 	return err
 }
 
@@ -102,8 +94,6 @@ func (r *Repository) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error
 	}
 	return tx.Commit(ctx)
 }
-
-// ── Tutor CRUD ────────────────────────────────────────────────────────────────────
 
 const tutorCols = `id, user_id, bio, subjects, rating, review_count, status, kyc_state, payout_account_ref, created_at`
 
@@ -141,7 +131,7 @@ func (r *Repository) InsertTutor(ctx context.Context, userID, bio string, subjec
 			bio      = COALESCE(EXCLUDED.bio, public.academy_tutors.bio),
 			subjects = EXCLUDED.subjects
 		RETURNING ` + tutorCols
-	t, err := scanTutor(r.db.QueryRow(ctx, q, id, userID, nullStr(bio), subjects))
+	t, err := scanTutor(r.db.QueryRow(ctx, q, id, userID, dbutil.NullStr(bio), subjects))
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +203,7 @@ func (r *Repository) SetTutorStatus(ctx context.Context, actor, tutorID string, 
 		const upd = `
 			UPDATE public.academy_tutors
 			SET status = $2, kyc_state = COALESCE($3, kyc_state) WHERE id = $1`
-		tag, err := tx.Exec(ctx, upd, tutorID, string(to), nullStr(kycState))
+		tag, err := tx.Exec(ctx, upd, tutorID, string(to), dbutil.NullStr(kycState))
 		if err != nil {
 			return err
 		}
@@ -237,8 +227,6 @@ func (r *Repository) SetTutorStatus(ctx context.Context, actor, tutorID string, 
 	})
 	return out, err
 }
-
-// ── Assignments CRUD ─────────────────────────────────────────────────────────────
 
 const assignmentCols = `id, tutor_id, class_group_id, learner_id, kind, content_ref, title, due_at, created_at`
 
@@ -322,8 +310,6 @@ func (r *Repository) ListCohortsByTutor(ctx context.Context, tutorID string) ([]
 	return out, rows.Err()
 }
 
-// ── Grades (insert + grade) ──────────────────────────────────────────────────────
-
 const gradeCols = `id, assignment_id, learner_id, score, feedback, state, created_at, graded_at`
 
 func scanGrade(row rowScanner) (*Grade, error) {
@@ -385,7 +371,7 @@ func (r *Repository) GradeAssignment(ctx context.Context, actor, assignmentID, l
 			INSERT INTO public.academy_tutor_grades
 				(id, assignment_id, learner_id, score, feedback, state, created_at, graded_at)
 			VALUES ($1,$2,$3,$4,$5,'graded',$6,$6)`
-		if _, err := tx.Exec(ctx, ins, id, assignmentID, learnerID, score, nullStr(feedback), now); err != nil {
+		if _, err := tx.Exec(ctx, ins, id, assignmentID, learnerID, score, dbutil.NullStr(feedback), now); err != nil {
 			return err
 		}
 		if err := insertAuditTx(ctx, tx, actor, "tutor.graded", "academy_tutor_grade", id,
@@ -411,8 +397,6 @@ func (r *Repository) GradeAssignment(ctx context.Context, actor, assignmentID, l
 	return grade, earn, err
 }
 
-// ── Earnings (append-only; balance DERIVED via SUM(pending)) ─────────────────────
-
 const earningCols = `id, tutor_id, source, ref_id, amount_minor, state, ledger_ref, created_at`
 
 func scanEarning(row rowScanner) (*Earning, error) {
@@ -436,7 +420,7 @@ func appendEarningTx(ctx context.Context, tx pgx.Tx, actor, tutorID, source, ref
 		INSERT INTO public.academy_tutor_earnings
 			(id, tutor_id, source, ref_id, amount_minor, state, created_at)
 		VALUES ($1,$2,$3,$4,$5,'pending', now())`
-	if _, err := tx.Exec(ctx, ins, id, tutorID, source, nullStr(refID), amountMinor); err != nil {
+	if _, err := tx.Exec(ctx, ins, id, tutorID, source, dbutil.NullStr(refID), amountMinor); err != nil {
 		return nil, err
 	}
 	if err := insertAuditTx(ctx, tx, actor, "tutor.earning_accrued", "academy_tutor_earning", id,
@@ -496,8 +480,6 @@ func (r *Repository) ListEarnings(ctx context.Context, tutorID string) ([]Earnin
 	return out, rows.Err()
 }
 
-// ── Payouts (insert + guarded state update + idempotency) ────────────────────────
-
 const payoutCols = `id, tutor_id, amount_minor, state, payout_ref, idempotency_key, created_at, decided_at`
 
 func scanPayout(row rowScanner) (*Payout, error) {
@@ -544,7 +526,7 @@ func (r *Repository) InsertPayoutRequested(ctx context.Context, actor, tutorID, 
 				(id, tutor_id, amount_minor, state, idempotency_key, created_at)
 			VALUES ($1,$2,$3,'requested',$4, now())
 			ON CONFLICT (idempotency_key) DO NOTHING`
-		tag, err := tx.Exec(ctx, ins, id, tutorID, amountMinor, nullStr(idemKey))
+		tag, err := tx.Exec(ctx, ins, id, tutorID, amountMinor, dbutil.NullStr(idemKey))
 		if err != nil {
 			return err
 		}
@@ -597,7 +579,7 @@ func (r *Repository) SettlePayout(ctx context.Context, actor, payoutID string, t
 			UPDATE public.academy_tutor_payouts
 			SET state = $2, payout_ref = COALESCE($3, payout_ref), decided_at = now()
 			WHERE id = $1 AND state = 'requested'`
-		tag, err := tx.Exec(ctx, upd, payoutID, string(to), nullStr(payoutRef))
+		tag, err := tx.Exec(ctx, upd, payoutID, string(to), dbutil.NullStr(payoutRef))
 		if err != nil {
 			return err
 		}

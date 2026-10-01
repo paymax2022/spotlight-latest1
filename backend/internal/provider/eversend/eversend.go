@@ -1,7 +1,6 @@
 // Package eversend is a thin client for the Eversend API (FX provider 2).
 // Auth is a two-step flow: exchange clientId/clientSecret for a short-lived
 // bearer token (cached), then call the resource endpoints with it.
-//
 // NOTE: Endpoint shapes follow Eversend's documented API; verify against the
 // live sandbox before production (this client was authored without network
 // access). The orchestration adapter degrades to deterministic pricing on any
@@ -128,8 +127,6 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	}
 	return lastErr
 }
-
-// --- FX ---
 
 // Quotation is an Eversend exchange quotation (amounts in major units).
 type Quotation struct {

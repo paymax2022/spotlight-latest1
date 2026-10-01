@@ -13,7 +13,6 @@ function supabase(): SupabaseClient {
 }
 
 // GET contestant votes
-// Next 15 made route params async: the second argument is a Promise and must
 // be awaited. The sync `{ params: { id: string } }` shape is a build-time type
 // error, not just a deprecation warning.
 export async function GET(

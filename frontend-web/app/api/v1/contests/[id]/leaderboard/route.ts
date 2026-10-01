@@ -83,7 +83,6 @@ export async function GET(
     const result = entries.map((e, i) => {
       const currentRank = i + 1; // position in the live sorted result (ordered by total_confirmed_votes desc)
 
-      // Prefer snapshot data; fall back to the stored rank column as "previous rank"
       // (the stored rank was set by the last recomputeRanks call, so it trails live vote order).
       const snapshotPreviousRank = previousRankMap.get(e.contestantId) ?? null;
       const storedRank = e.rank != null ? e.rank : null;

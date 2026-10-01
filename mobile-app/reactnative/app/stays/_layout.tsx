@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 /**
  * Paymax Stays (Hotel Booking) — traveller stack. Mirrors app/realtor/_layout

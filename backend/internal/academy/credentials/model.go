@@ -1,7 +1,6 @@
 // Package credentials is the Spotlight Academy Phase-3 credentials + earning-bridge
 // sub-package: the learn-to-earn moat (trade/academic credential → verification
 // registry → Paymax earning roles).
-//
 // GOLDEN RULES enforced here (docs/prd/edtech state-machines.md §6, paymax-rails.md
 // "Earning bridge", conventions.md):
 //   - Guarded credential state machine: pending → issued → revoked. Illegal
@@ -20,8 +19,6 @@
 package credentials
 
 import "time"
-
-// ── Credential lifecycle ────────────────────────────────────────────────────────
 
 // CredState mirrors academy_credentials.state CHECK ('pending','issued','revoked').
 type CredState string
@@ -72,8 +69,6 @@ type PublicVerification struct {
 	IssuedAt       *time.Time `json:"issued_at,omitempty"`
 }
 
-// ── Earning bridge ───────────────────────────────────────────────────────────────
-
 // EligibilityRules mirrors the academy_earning_opportunities.eligibility_rules jsonb
 // shape, e.g. {"trade_track":"solar","min_credentials":1}. Kept as data so a future
 // opportunity can change rules without code changes (conventions.md "rules are data").
@@ -117,8 +112,6 @@ type EarningApplication struct {
 	CreatedAt      time.Time  `json:"created_at"`
 	DecidedAt      *time.Time `json:"decided_at,omitempty"`
 }
-
-// ── Request DTOs ─────────────────────────────────────────────────────────────────
 
 // RevokeRequest — admin POST /credentials/:id/revoke.
 type RevokeRequest struct {

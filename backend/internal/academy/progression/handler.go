@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -21,10 +22,9 @@ type Handler struct {
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated learner (mirrors the assessment package).
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -61,24 +61,20 @@ func RegisterAcademyProgression(member, admin *gin.RouterGroup, pool *pgxpool.Po
 	svc := NewService(pool)
 	h := NewHandler(svc)
 
-	// ── Member (learner) ──
 	member.GET("/progression/paths/:subjectId", h.GetPath)
 	member.POST("/progression/paths", h.BuildPath)
 	member.POST("/progression/steps/:objectiveId/advance", h.AdvanceStep)
 	member.POST("/progression/practice/adaptive", h.AdaptivePractice)
 	member.GET("/progression/recommendations", h.GetRecommendations)
 
-	// ── Admin (adaptive config) ──
 	guard := func(p string) gin.HandlerFunc { return middleware.RequirePermission(rbac, p) }
 	ac := admin.Group("/progression")
 	ac.GET("/adaptive-config", guard("academy.assessment"), h.AdminGetAdaptiveConfig)
 	ac.PUT("/adaptive-config", guard("academy.curriculum"), h.AdminUpsertAdaptiveConfig)
 }
 
-// ── Member handlers ─────────────────────────────────────────────────────────────
-
 func (h *Handler) GetPath(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -92,7 +88,7 @@ func (h *Handler) GetPath(c *gin.Context) {
 }
 
 func (h *Handler) BuildPath(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -111,7 +107,7 @@ func (h *Handler) BuildPath(c *gin.Context) {
 }
 
 func (h *Handler) AdvanceStep(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -125,7 +121,7 @@ func (h *Handler) AdvanceStep(c *gin.Context) {
 }
 
 func (h *Handler) AdaptivePractice(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -144,7 +140,7 @@ func (h *Handler) AdaptivePractice(c *gin.Context) {
 }
 
 func (h *Handler) GetRecommendations(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -156,8 +152,6 @@ func (h *Handler) GetRecommendations(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
-
-// ── Admin handlers ──────────────────────────────────────────────────────────────
 
 func (h *Handler) AdminGetAdaptiveConfig(c *gin.Context) {
 	if key := c.Query("key"); key != "" {
@@ -183,7 +177,7 @@ func (h *Handler) AdminUpsertAdaptiveConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.UpsertAdaptiveConfig(c.Request.Context(), uid(c), req.Key, req.Value)
+	out, err := h.svc.UpsertAdaptiveConfig(c.Request.Context(), ginutil.UserID(c, authUserID), req.Key, req.Value)
 	if err != nil {
 		h.fail(c, err)
 		return

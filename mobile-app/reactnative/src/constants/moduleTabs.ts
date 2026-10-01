@@ -1,5 +1,3 @@
-// ── Canonical bottom-nav destinations per module ─────────────────────────────
-//
 // One list per module, kept away from the layouts so the destinations are
 // reviewable in one place. Every `href` MUST be a real screen file — the bar
 // only draws when the current path matches one of these exactly, so a typo

@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Lease / payment / move-in hooks (V2) ─────────────────
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as lease from '../api/realtorLease.api';
 import type { SignLeaseDraft, PayInvoiceDraft } from '../types/realtor.lease.types';

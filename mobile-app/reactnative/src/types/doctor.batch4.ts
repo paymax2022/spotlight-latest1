@@ -1,14 +1,8 @@
-// ── Doctor (Telemedicine, provider-side) — Batch 4 Domain Types ──────────────
-// Batch 4 = spec sections O (HMO/Insurance), P (Referral & Specialist
 // Collaboration), Q (Follow-Up Care), R (Emergency & Escalation).
-//
 // CONSOLIDATED + HEAVY REUSE: these sections overlap Phase 1/Phase 2 HMO claims,
-// specialist referrals and follow-up plans. We import/re-export those shapes and
 // add ONLY the missing, richer variants. Granular variants (statuses,
 // approve/reject, escalation steps) are modelled as states/data, NOT separate
-// entities. Money amounts are integers in minor units (kobo). Use `import type`
 // for type-only imports.
-//
 // ADDITIVE to `@/types/doctor`, `@/types/doctor.phase2` and `@/types/doctor.batch2`
 // — earlier shapes are imported/reused, never duplicated.
 
@@ -39,8 +33,6 @@ import type {
 
 import type { RedFlagWarning, RedFlagSeverity } from '@/types/doctor.batch2';
 
-// Re-export the reused shapes so a Batch 4 screen can pull everything it needs
-// from one import site.
 export type {
   PatientSummary,
   ChatAuthor,
@@ -68,14 +60,9 @@ export type {
 
 export type { RedFlagWarning, RedFlagSeverity } from '@/types/doctor.batch2';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Section O — HMO / Insurance (19 entries)
-// REUSE: HmoEligibility, EligibilityStatus, HmoClaim, ClaimStatus,
 // ClaimLineItem, ClaimEvent, submitClaim, disputeClaim. ADD plan coverage,
 // pre-authorisation, covered-service status, HMO support chat, fraud warning.
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ─── O.1 Plan coverage summary (benefits / limits / co-pay) ──────────────────
 
 export interface HmoBenefitLine {
   id:        string;
@@ -93,7 +80,7 @@ export interface HmoPlanCoverage {
   memberId:      string;        // patient enrollee number (masked)
   patient:       PatientSummary;
   status:        EligibilityStatus; // reuse Phase 2 eligibility status
-  coPayKobo:     number;        // flat co-payment due from patient (0 = none)
+  coPayKobo:     number;
   coPayPct?:     number;        // percentage co-pay, when applicable (0–100)
   annualLimitKobo: number;      // overall annual cover cap
   annualUsedKobo:  number;      // amount consumed against the annual cap
@@ -102,7 +89,6 @@ export interface HmoPlanCoverage {
   benefits:      HmoBenefitLine[];
 }
 
-// ─── O.2 Pre-authorisation request ───────────────────────────────────────────
 // Approval pending / approved / rejected and coverage-limit-exceeded are STATES
 // modelled here, not separate entities.
 
@@ -129,7 +115,6 @@ export interface PreAuthRequest {
   note?:            string;     // clinical justification
 }
 
-// ─── O.3 Covered service status (rx / lab coverage) ──────────────────────────
 // One shape for "covered prescription status" and "covered lab-order status".
 
 export type CoveredServiceKind = 'prescription' | 'lab' | 'consultation';
@@ -153,7 +138,6 @@ export interface CoveredService {
   note?:        string;         // "Generic substitution required"
 }
 
-// ─── O.4 HMO support chat ────────────────────────────────────────────────────
 // Lightweight thread (NOT the rich consult ChatMessageRich). Reuses ChatAuthor
 // for sender symmetry but adds an 'hmo' agent author.
 
@@ -190,14 +174,10 @@ export interface HmoFraudWarning {
   acknowledged: boolean;        // doctor has read + acknowledged the warning
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Section P — Referral & Specialist Collaboration (16 entries)
-// REUSE: Specialist, SpecialistReferral, ReferralStatus, ReferralAttachment,
 // createReferral, useReferrals, useSpecialists. ADD incoming referrals,
 // opinion requests, care-team chat, shared case summary.
-// ═══════════════════════════════════════════════════════════════════════════
 
-// ─── P.1 Incoming referral (referrals TO this doctor) ────────────────────────
 // "Refer to specialist / select / reason / attach / sent / accepted / rejected"
 // are covered by the existing OUTGOING SpecialistReferral. This is the inbound
 // counterpart so a specialist doctor can accept/reject.
@@ -224,8 +204,6 @@ export interface IncomingReferral {
   rejectionReason?: string;
 }
 
-// ─── P.2 Opinion request (specialist opinion / second opinion) ───────────────
-
 export type OpinionKind = 'specialist' | 'second';
 
 export type OpinionStatus = 'requested' | 'responded' | 'declined';
@@ -244,7 +222,6 @@ export interface OpinionRequest {
   respondedAt?: string;         // ISO datetime
 }
 
-// ─── P.3 Care-team chat ──────────────────────────────────────────────────────
 // Lightweight multi-clinician thread (NOT the patient-facing consult chat).
 
 export interface CareTeamMessage {
@@ -265,8 +242,6 @@ export interface CareTeamThread {
   messages:    CareTeamMessage[];
 }
 
-// ─── P.4 Shared case summary (composed from notes / labs / rx) ───────────────
-
 export interface SharedCaseSummary {
   caseRef:       string;
   patient:       PatientSummary;
@@ -279,15 +254,10 @@ export interface SharedCaseSummary {
   updatedAt:     string;        // ISO datetime
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Section Q — Follow-Up Care (15 entries)
-// REUSE: FollowUpPlan, FollowUpKind, FollowUpStatus, createFollowUp,
 // reviewFollowUpRequest, useFollowUps. ADD eligibility, long-term care plan,
 // chronic monitoring, medication adherence. completed/missed are STATES on
 // FollowUpStatus (we extend the demo data; the union already has 'completed').
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ─── Q.1 Follow-up eligibility (free vs paid, window) ────────────────────────
 
 export interface FollowUpEligibility {
   patientId:        string;
@@ -299,8 +269,6 @@ export interface FollowUpEligibility {
   paidFeeKobo:      number;      // fee charged when paid
   reason:           string;      // why free / why paid
 }
-
-// ─── Q.2 Long-term care plan + milestones ────────────────────────────────────
 
 export type CarePlanMilestoneStatus = 'upcoming' | 'due' | 'completed' | 'missed';
 
@@ -325,8 +293,6 @@ export interface LongTermCarePlan {
   active:       boolean;
 }
 
-// ─── Q.3 Chronic condition monitoring entry ──────────────────────────────────
-
 export type ChronicTrend = 'improving' | 'stable' | 'worsening';
 
 export interface ChronicMonitoringEntry {
@@ -340,8 +306,6 @@ export interface ChronicMonitoringEntry {
   withinTarget: boolean;
   note?:       string;
 }
-
-// ─── Q.4 Medication adherence check ──────────────────────────────────────────
 
 export type AdherenceLevel = 'good' | 'partial' | 'poor';
 
@@ -357,14 +321,10 @@ export interface MedicationAdherenceCheck {
   note?:        string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Section R — Emergency & Escalation (10 entries)
 // DEMO + clearly non-actionable (no real dialing). REUSE the RedFlagWarning
 // concept from Batch 2 for red-flag alerts. ADD facilities, escalation,
 // emergency case record + disclaimer constant.
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ─── R.1 Emergency facility (hospital / ambulance) ───────────────────────────
 
 export type EmergencyFacilityKind = 'hospital' | 'ambulance' | 'emergency_service';
 
@@ -379,15 +339,12 @@ export interface EmergencyFacility {
   open24h:     boolean;
 }
 
-// ─── R.2 Red-flag alert ──────────────────────────────────────────────────────
-// Reuse the Batch 2 RedFlagWarning shape as the alert payload; add a list type
 // alias for clarity at the call site.
 
 export interface RedFlagAlert extends RedFlagWarning {
   detectedAt: string;           // ISO datetime the symptom was flagged
 }
 
-// ─── R.3 Emergency escalation ────────────────────────────────────────────────
 // Granular targets (hospital / ambulance / emergency contact) are KINDS on one
 // escalation entity; lifecycle steps are STATES.
 
@@ -413,8 +370,6 @@ export interface EmergencyEscalation {
   note?:       string;
 }
 
-// ─── R.4 Emergency case record (documentation) ───────────────────────────────
-
 export interface EmergencyCaseRecord {
   id:           string;
   ref:          string;         // e.g. "EMR-5A8E07"
@@ -429,13 +384,9 @@ export interface EmergencyCaseRecord {
   disclaimerAcknowledged: boolean;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Mutation inputs / results
 // `idempotencyKey` is required on every state-changing / money mutation. Hooks
 // generate it; callers pass `Omit<Input, 'idempotencyKey'>`.
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ─── Section O mutations ──────────────────────────────────────────────────────
 
 export interface RequestPreAuthInput {
   appointmentId?: string;
@@ -472,8 +423,6 @@ export interface AcknowledgeFraudWarningResult {
   warningId:    string;
   acknowledged: boolean;
 }
-
-// ─── Section P mutations ──────────────────────────────────────────────────────
 
 export interface AcceptReferralInput {
   referralId:     string;
@@ -521,8 +470,6 @@ export interface SendCareTeamMessageInput {
 export interface SendCareTeamMessageResult {
   message: CareTeamMessage;
 }
-
-// ─── Section Q mutations ──────────────────────────────────────────────────────
 
 export interface SetFollowUpReminderInput {
   followUpId:     string;
@@ -576,8 +523,6 @@ export interface SaveCarePlanResult {
   ref:        string;
   active:     boolean;
 }
-
-// ─── Section R mutations (DEMO — non-actionable) ─────────────────────────────
 
 export interface EscalateInput {
   patientId:      string;

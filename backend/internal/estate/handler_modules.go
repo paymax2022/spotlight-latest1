@@ -1,16 +1,17 @@
 package estate
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+
+	"spotlight/backend/go-common/httperr"
 )
 
-// ── Block 29: Dues / Rent money path ─────────────────────────────────────────
-
 func (h *Handler) CreateInvoice(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req CreateInvoiceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -25,7 +26,7 @@ func (h *Handler) CreateInvoice(c *gin.Context) {
 }
 
 func (h *Handler) ListInvoices(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	invs, err := h.svc.ListInvoices(c.Request.Context(), c.Param("id"), userID, c.Query("status"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -36,7 +37,7 @@ func (h *Handler) ListInvoices(c *gin.Context) {
 
 // PayDues settles a dues invoice. Requires the Idempotency-Key header (money rule).
 func (h *Handler) PayDues(c *gin.Context) {
-	payerID := c.GetString("user_id")
+	payerID := ginutil.UserID(c)
 	var body struct {
 		Method     string `json:"method"`
 		AmountKobo int64  `json:"amount_kobo"`
@@ -44,31 +45,25 @@ func (h *Handler) PayDues(c *gin.Context) {
 	_ = c.ShouldBindJSON(&body)
 	req := PayDuesRequest{
 		InvoiceID:      c.Param("invoiceId"),
-		IdempotencyKey: c.GetHeader("Idempotency-Key"),
+		IdempotencyKey: ginutil.IdempotencyKey(c),
 		Method:         body.Method,
 		AmountKobo:     body.AmountKobo,
 	}
 	pay, err := h.svc.PayDues(c.Request.Context(), c.Param("id"), payerID, req)
 	if err != nil {
-		c.JSON(payDuesStatus(err), gin.H{"error": err.Error()})
+		duesErrMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, pay)
 }
 
-func payDuesStatus(err error) int {
-	switch {
-	case errors.Is(err, ErrIdempotencyRequired):
-		return http.StatusBadRequest
-	case errors.Is(err, ErrLedgerUnavailable):
-		return http.StatusServiceUnavailable
-	default:
-		return http.StatusConflict
-	}
-}
+var duesErrMap = httperr.New(http.StatusConflict,
+	httperr.R(http.StatusBadRequest, ErrIdempotencyRequired),
+	httperr.R(http.StatusServiceUnavailable, ErrLedgerUnavailable),
+)
 
 func (h *Handler) ApplyRestriction(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req ApplyRestrictionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -83,7 +78,7 @@ func (h *Handler) ApplyRestriction(c *gin.Context) {
 }
 
 func (h *Handler) LiftRestriction(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	if err := h.svc.LiftRestriction(c.Request.Context(), c.Param("id"), adminID, c.Param("residentId")); err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -91,10 +86,8 @@ func (h *Handler) LiftRestriction(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"lifted": true})
 }
 
-// ── Block 31: Tasks ──────────────────────────────────────────────────────────
-
 func (h *Handler) CreateTask(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req CreateTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -109,7 +102,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 }
 
 func (h *Handler) ListTasks(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	tasks, err := h.svc.ListTasks(c.Request.Context(), c.Param("id"), userID, c.Query("status"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -119,7 +112,7 @@ func (h *Handler) ListTasks(c *gin.Context) {
 }
 
 func (h *Handler) UpdateTaskStatus(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req UpdateTaskStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -132,10 +125,8 @@ func (h *Handler) UpdateTaskStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": req.Status})
 }
 
-// ── Block 32: Maintenance / Repairs ──────────────────────────────────────────
-
 func (h *Handler) CreateRepair(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req CreateRepairRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -150,7 +141,7 @@ func (h *Handler) CreateRepair(c *gin.Context) {
 }
 
 func (h *Handler) ListRepairs(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	repairs, err := h.svc.ListRepairs(c.Request.Context(), c.Param("id"), userID, c.Query("status"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -160,7 +151,7 @@ func (h *Handler) ListRepairs(c *gin.Context) {
 }
 
 func (h *Handler) AddRepairUpdate(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req AddRepairUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -175,7 +166,7 @@ func (h *Handler) AddRepairUpdate(c *gin.Context) {
 }
 
 func (h *Handler) ListRepairUpdates(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	ups, err := h.svc.ListRepairUpdates(c.Request.Context(), c.Param("id"), userID, c.Param("repairId"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -184,10 +175,8 @@ func (h *Handler) ListRepairUpdates(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": ups})
 }
 
-// ── Block 33: Facilities / Amenities ─────────────────────────────────────────
-
 func (h *Handler) CreateFacility(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req CreateFacilityRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -202,7 +191,7 @@ func (h *Handler) CreateFacility(c *gin.Context) {
 }
 
 func (h *Handler) ListFacilities(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	fs, err := h.svc.ListFacilities(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -212,7 +201,7 @@ func (h *Handler) ListFacilities(c *gin.Context) {
 }
 
 func (h *Handler) BookFacility(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req BookFacilityRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -227,7 +216,7 @@ func (h *Handler) BookFacility(c *gin.Context) {
 }
 
 func (h *Handler) ListMyBookings(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	bs, err := h.svc.ListMyBookings(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -236,10 +225,8 @@ func (h *Handler) ListMyBookings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": bs})
 }
 
-// ── Block 34: Announcements ──────────────────────────────────────────────────
-
 func (h *Handler) CreateAnnouncement(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req CreateAnnouncementRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -254,7 +241,7 @@ func (h *Handler) CreateAnnouncement(c *gin.Context) {
 }
 
 func (h *Handler) ListAnnouncements(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	as, err := h.svc.ListAnnouncements(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -264,7 +251,7 @@ func (h *Handler) ListAnnouncements(c *gin.Context) {
 }
 
 func (h *Handler) MarkAnnouncementRead(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if err := h.svc.MarkAnnouncementRead(c.Request.Context(), c.Param("id"), userID, c.Param("annId")); err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -272,10 +259,8 @@ func (h *Handler) MarkAnnouncementRead(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"read": true})
 }
 
-// ── Block 35: Emergencies ────────────────────────────────────────────────────
-
 func (h *Handler) RaiseEmergency(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req RaiseEmergencyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -290,7 +275,7 @@ func (h *Handler) RaiseEmergency(c *gin.Context) {
 }
 
 func (h *Handler) ListEmergencies(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	as, err := h.svc.ListEmergencies(c.Request.Context(), c.Param("id"), userID, c.Query("status"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -300,7 +285,7 @@ func (h *Handler) ListEmergencies(c *gin.Context) {
 }
 
 func (h *Handler) UpdateEmergencyStatus(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req UpdateEmergencyStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -313,10 +298,8 @@ func (h *Handler) UpdateEmergencyStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": req.Status})
 }
 
-// ── Block 36: Documents ──────────────────────────────────────────────────────
-
 func (h *Handler) CreateDocument(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req CreateDocumentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -331,7 +314,7 @@ func (h *Handler) CreateDocument(c *gin.Context) {
 }
 
 func (h *Handler) ListDocuments(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	ds, err := h.svc.ListDocuments(c.Request.Context(), c.Param("id"), userID, c.Query("category"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -340,10 +323,8 @@ func (h *Handler) ListDocuments(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": ds})
 }
 
-// ── Block 37: Vendors ────────────────────────────────────────────────────────
-
 func (h *Handler) CreateVendor(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req CreateVendorRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -358,7 +339,7 @@ func (h *Handler) CreateVendor(c *gin.Context) {
 }
 
 func (h *Handler) ListVendors(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	vs, err := h.svc.ListVendors(c.Request.Context(), c.Param("id"), userID, c.Query("status"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -368,7 +349,7 @@ func (h *Handler) ListVendors(c *gin.Context) {
 }
 
 func (h *Handler) VerifyVendor(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var body struct {
 		Status string `json:"status" binding:"required"`
 	}
@@ -383,10 +364,8 @@ func (h *Handler) VerifyVendor(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": body.Status})
 }
 
-// ── Block 40/43/44: aggregates ───────────────────────────────────────────────
-
 func (h *Handler) FinanceDashboard(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	d, err := h.svc.FinanceDashboard(c.Request.Context(), c.Param("id"), adminID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -396,7 +375,7 @@ func (h *Handler) FinanceDashboard(c *gin.Context) {
 }
 
 func (h *Handler) Notifications(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	ns, err := h.svc.Notifications(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -406,7 +385,7 @@ func (h *Handler) Notifications(c *gin.Context) {
 }
 
 func (h *Handler) Report(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	r, err := h.svc.Report(c.Request.Context(), c.Param("id"), adminID)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})

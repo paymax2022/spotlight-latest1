@@ -1,8 +1,5 @@
-// ── Admin — Restaurant & Delivery service ───────────────────────────────────
-// Read-only monitoring console. Talks to the Go backend (Gin) under
 // /api/finance/restaurant. Mock-flagged for dev: flip with
 // NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK=false to hit the live endpoints.
-//
 // NOTE: the two reads an operator lives in — the restaurant register and the
 // order feed — are NOT on this member root. Both are admin surfaces under
 // /api/restaurant/admin (RBAC restaurant.manage); see storeBase()/adminBase().
@@ -47,17 +44,14 @@ import type {
 } from '@/types/restaurantAdmin';
 
 // LIVE by default. Set NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK=true for fixtures.
-//
 // It defaulted the other way, and the failure mode was the same silent one the
 // merchant-onboarding console had: decideApplication in mock mode mutates an
 // in-memory array and returns {ok:true}. A reviewer approved a restaurant's KYB,
 // saw success, and kyb_status never moved — while payout runs select
-// `kyb_status = 'approved'`, so the shop stayed unpayable with nothing to
 // indicate why. 709 outlets are currently in exactly that state.
 const USE_MOCK = (process.env.NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK ?? 'false').toLowerCase() === 'true';
 
 // apiBaseUrl is the same-origin admin-proxy path (<origin>/api/admin-proxy),
-// not a plain API root — the old `env.apiBaseUrl.replace(/\/api\/v1\/?$/, ...)`
 // here matched nothing once the proxy migration landed (apiBaseUrl stopped
 // ending in /api/v1), silently forwarding every "live" call to
 // <proxy>/api/finance/restaurant/... which never 404'd cleanly the same way but
@@ -87,10 +81,7 @@ const NOT_IN_FIXTURE_MODE =
   'Set NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK=false to make this change against the live backend.';
 
 // (There was a base()-relative `req` helper here. Its only caller was the old
-// owner-scoped listOrders; everything else goes through reqAt with an explicit
 // root, because the member and admin roots are different hosts of truth.)
-
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 
 const MOCK_RESTAURANTS: Restaurant[] = [
   { id: 'r1', owner_id: 'u-7001', name: 'Mama Put Express', cuisine: 'Nigerian', address: '12 Awolowo Rd, Ikoyi', phone: '+2348010000001', is_open: true, rating: 4.6, rating_count: 318, created_at: new Date(Date.now() - 86400000 * 40).toISOString() },
@@ -173,8 +164,6 @@ function mockOrderPage(params: AdminOrderQuery, limit: number, offset: number): 
     grossDeliveredKobo,
   };
 }
-
-// ─── API ──────────────────────────────────────────────────────────────────────
 
 /**
  * One page of the operator's restaurant REGISTER.
@@ -306,38 +295,31 @@ export async function listOrders(params: AdminOrderQuery = {}): Promise<AdminOrd
   };
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
 // OPS-CONSOLE EXTENSIONS
-//
 // Backend reality (see backend/internal/app/finance_routes.go §"Restaurant &
 // Delivery routes"): the restaurant module mounts member/rider/owner routes on
 // `/api/finance/restaurant/*` and a single admin surface `/api/restaurant/admin/
 // delivery-config` (RBAC restaurant.admin.pricing). There is NOT yet a
 // dedicated admin dispatch/onboarding/payouts/refunds surface. The functions
 // below are MOCK-FIRST: they render the ops UI today and, when
-// NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK=false, call the CONSUMED live routes
 // that already exist (rider lifecycle, dispute resolve) and the TARGET admin
 // routes an orchestrator should land. Each live path is annotated below.
-//
 // Consumed today (already live):
 //   POST /api/finance/restaurant/orders/:orderId/assign    (manual rider offer)
 //   POST /api/finance/restaurant/orders/:orderId/dispatch  (re-run auto-dispatch)
 //   GET  /api/finance/restaurant/rider/active              (rider active order)
 //   POST /api/finance/admin/disputes/:id/resolve           (adminNote + resolution)
 //   GET  /api/finance/disputes                             (dispute list)
-// Target admin routes (to add server-side; slugs proposed in the report):
 //   GET  /api/restaurant/admin/riders           restaurant.admin.dispatch
 //   GET  /api/restaurant/admin/dispatch/queue   restaurant.admin.dispatch
 //   GET  /api/restaurant/admin/onboarding       restaurant.admin.onboarding
 //   POST /api/restaurant/admin/onboarding/:id/approve|reject  restaurant.admin.onboarding
 //   GET  /api/restaurant/admin/payouts          restaurant.admin.payouts
 //   POST /api/restaurant/admin/payouts/:id/process  restaurant.admin.payouts
-// ═════════════════════════════════════════════════════════════════════════════
 
 // The restaurant module root is /api/finance/restaurant (used for the CONSUMED
 // live rider-lifecycle + dispute routes). The proposed admin surface hangs off
 // /api/restaurant/admin (same root as the live delivery-config console).
-// Both used the same `env.apiBaseUrl.replace(/\/api\/v1\/?$/, ...)` pattern as
 // base() above, with the same silent-no-op regression — see that comment.
 function adminBase(): string {
   return `${apiRoot()}/api/restaurant/admin`;
@@ -353,8 +335,6 @@ async function reqAt<T>(url: string, init?: RequestInit): Promise<T> {
   return (body?.data ?? body) as T;
 }
 
-// ── Store & menu management (restaurant.manage) ──────────────────────────────
-//
 // Backed by /api/restaurant/admin/restaurants/* — operator-scoped mirrors of the
 // owner-only member routes. The member routes enforce ownership
 // (Service.assertOwner) with no operator exemption, so the console MUST use these
@@ -450,8 +430,6 @@ export async function deleteMenuItem(restaurantId: string, itemId: string): Prom
     { method: 'DELETE' },
   );
 }
-
-// ── Rider dispatch board ─────────────────────────────────────────────────────
 
 const MOCK_RIDERS: Rider[] = [
   { id: 'rd-8', name: 'Chidi O.', phone: '+2348030000008', vehicle: 'bike', status: 'on_delivery', active_order_id: 'o3', zone: 'Ikoyi', rating: 4.7, deliveries_today: 6, last_seen_at: new Date(Date.now() - 60_000).toISOString(), lat: 6.452, lng: 3.436 },
@@ -611,7 +589,6 @@ export async function listDispatchQueue(params: AdminDispatchQuery = {}): Promis
 // which returns {ok:true}.
 export async function assignRider(orderId: string, riderId: string): Promise<{ ok: true }> {
   if (USE_MOCK) throw new Error(`Assigning a rider ${NOT_IN_FIXTURE_MODE}`);
-  // TARGET: POST /api/restaurant/admin/orders/:id/assign (restaurant.admin.dispatch)
   return reqAt<{ ok: true }>(`${adminBase()}/orders/${orderId}/assign`, {
     method: 'POST',
     body: JSON.stringify({ rider_id: riderId }),
@@ -630,8 +607,6 @@ export async function redispatchOrder(orderId: string): Promise<{ ok: true }> {
   return reqAt<{ ok: true }>(`${adminBase()}/orders/${orderId}/dispatch`, { method: 'POST' });
 }
 
-// ── Restaurant onboarding / KYC review queue ─────────────────────────────────
-
 const MOCK_APPLICATIONS: RestaurantApplication[] = [
   { id: 'app-1', restaurant_name: 'Ofada Republic', owner_id: 'u-9001', owner_name: 'Adaeze N.', email: 'adaeze@ofada.ng', phone: '+2348040000001', cuisine: 'Nigerian', address: '4 Isaac John, Ikeja GRA', cac_number: 'RC-1849221', bank_account_name: 'Ofada Republic Ltd', bank_account_number: '0123456789', bank_name: 'GTBank', documents: [{ kind: 'cac', label: 'CAC certificate', url: '#', verified: true }, { kind: 'food_permit', label: 'NAFDAC food permit', url: '#' }, { kind: 'id', label: "Owner's NIN", url: '#', verified: true }, { kind: 'bank_proof', label: 'Bank statement', url: '#' }], status: 'pending', submitted_at: new Date(Date.now() - 86_400_000 * 2).toISOString() },
   { id: 'app-2', restaurant_name: 'Shawarma King', owner_id: 'u-9002', owner_name: 'Yusuf B.', email: 'yusuf@shawarmaking.ng', phone: '+2348040000002', cuisine: 'Middle Eastern', address: '11 Allen Ave, Ikeja', cac_number: 'RC-2201933', bank_account_name: 'Shawarma King Ent', bank_account_number: '2233445566', bank_name: 'Access', documents: [{ kind: 'cac', label: 'CAC certificate', url: '#' }, { kind: 'menu', label: 'Menu & pricing', url: '#' }], status: 'in_review', submitted_at: new Date(Date.now() - 86_400_000 * 5).toISOString(), reviewer_id: 'admin-77' },
@@ -645,7 +620,6 @@ export async function listApplications(status?: OnboardingStatus | ''): Promise<
     return status ? MOCK_APPLICATIONS.filter((a) => a.status === status) : MOCK_APPLICATIONS;
   }
   const qs = status ? `?status=${status}` : '';
-  // TARGET: GET /api/restaurant/admin/onboarding (restaurant.admin.onboarding)
   return reqAt<RestaurantApplication[]>(`${adminBase()}/onboarding${qs}`);
 }
 
@@ -703,14 +677,11 @@ export async function decideApplication(
 ): Promise<{ ok: true }> {
   if (decision === 'reject' && !note.trim()) throw new Error('A reviewer note is required to reject.');
   if (USE_MOCK) throw new Error(`Deciding an application ${NOT_IN_FIXTURE_MODE}`);
-  // TARGET: POST /api/restaurant/admin/onboarding/:id/{approve|reject}
   return reqAt<{ ok: true }>(`${adminBase()}/onboarding/${id}/${decision}`, {
     method: 'POST',
     body: JSON.stringify({ note }),
   });
 }
-
-// ── Payout runs (restaurant + rider) ─────────────────────────────────────────
 
 const MOCK_PAYOUT_RUNS: PayoutRun[] = [
   { id: 'pr-r-2026w27', payee_type: 'restaurant', period_start: '2026-06-29', period_end: '2026-07-05', status: 'paid', lines_count: 3, total_net_kobo: 4_820_000, created_at: new Date(Date.now() - 86_400_000 * 4).toISOString(), processed_at: new Date(Date.now() - 86_400_000 * 3).toISOString(), ledger_settled_kobo: 4_820_000, reconciled: true },
@@ -732,11 +703,9 @@ const MOCK_PAYOUT_LINES: Record<string, PayoutLine[]> = {
   ],
 };
 
-// ── Backend payout DTOs ──────────────────────────────────────────────────────
 // The Go module (backend/internal/restaurant/payout.go) models a run as ONE
 // PROVIDER for ONE PERIOD, with append-only lines that are SETTLEMENTS. The
 // admin types above were written against a different, imagined shape: a run
-// spanning many payees, with one line PER PAYEE. The adapters below translate;
 // fields the backend genuinely does not carry are left undefined rather than
 // invented, so the UI can render "unknown" instead of a confident wrong number.
 type ApiPayoutRun = {
@@ -766,7 +735,6 @@ type ApiPayoutRunDetail = ApiPayoutRun & { lines: ApiPayoutLine[] };
 function toPayoutRun(r: ApiPayoutRun, lines?: ApiPayoutLine[]): PayoutRun {
   // A run only has a ledger reference once ProcessRun has posted its balanced
   // transfer. So: draft/processing → reconciliation is not yet meaningful
-  // (undefined, which leaves the Process button enabled); paid WITHOUT a
   // reference → a real anomaly worth flagging red.
   const settled = r.ledger_reference ? r.net_minor : undefined;
   const reconciled =
@@ -776,7 +744,6 @@ function toPayoutRun(r: ApiPayoutRun, lines?: ApiPayoutLine[]): PayoutRun {
     id: r.id,
     payee_type: r.provider_type,
     // The backend stores an opaque period_key (e.g. "2026-W28"), not a date
-    // range. Surfacing the key in both slots is honest; parsing it into
     // fabricated dates would not be.
     period_start: r.period_key,
     period_end: r.period_key,
@@ -849,18 +816,15 @@ export async function buildPayoutRun(input: {
 // Process a pending payout run. Money path: requires Idempotency-Key server-side.
 export async function processPayoutRun(runId: string): Promise<{ ok: true }> {
   if (USE_MOCK) throw new Error(`Processing a payout run ${NOT_IN_FIXTURE_MODE}`);
-  // TARGET: POST /api/restaurant/admin/payouts/:id/process (restaurant.admin.payouts)
   return reqAt<{ ok: true }>(`${adminBase()}/payouts/${runId}/process`, {
     method: 'POST',
     headers: { ...authHeaders(), 'Idempotency-Key': `payout-run-${runId}` },
   });
 }
 
-// ── Merchant/rider WITHDRAWALS (money path; FOOD-005) ────────────────────────
 // Backed by GET/POST /api/restaurant/admin/withdrawals* (RBAC
 // restaurant.admin.withdrawals). Distinct from the payout runs above: a payout
 // run pays a provider FROM the platform's settlement account INTO their
-// wallet; a withdrawal is the provider's own subsequent request to move money
 // OUT of that wallet to their bank account.
 
 export async function listWithdrawals(status?: WithdrawalStatus | ''): Promise<Withdrawal[]> {
@@ -898,8 +862,6 @@ const MOCK_WITHDRAWALS: Withdrawal[] = [
   { id: 'wd-3', user_id: 'u-7003', bank_account_id: 'ba-3', amount_kobo: 40_000, currency: 'NGN', status: 'reversed', failure_reason: 'Invalid account number', idempotency_key: 'mock-wd-3', created_at: new Date(Date.now() - 172_800_000).toISOString(), updated_at: new Date(Date.now() - 170_000_000).toISOString() },
 ];
 
-// ── Refunds & disputes queue (money path) ────────────────────────────────────
-
 const MOCK_DISPUTES: OrderDispute[] = [
   { id: 'dp-1', order_id: 'o4', restaurant_id: 'r3', restaurant_name: 'Pasta & Co', customer_id: 'u-4412', reference: 'o4', module_type: 'food', type: 'non_delivery', description: 'Order was cancelled by restaurant after 40 minutes; I was still charged for delivery and service fees.', evidence_urls: ['#'], order_total_kobo: 717_500, refundable_kobo: 717_500, status: 'open', created_at: new Date(Date.now() - 9_000_000).toISOString() },
   { id: 'dp-2', order_id: 'o1', restaurant_id: 'r1', restaurant_name: 'Mama Put Express', customer_id: 'u-1842', reference: 'o1', module_type: 'food', type: 'wrong_item', description: 'Received grilled fish instead of chicken. Rider confirmed the mix-up at handoff and asked me to report it.', evidence_urls: ['#', '#'], order_total_kobo: 855_000, refundable_kobo: 350_000, status: 'in_review', created_at: new Date(Date.now() - 6_000_000).toISOString(), updated_at: new Date(Date.now() - 3_000_000).toISOString() },
@@ -912,7 +874,6 @@ export async function listDisputes(status?: DisputeStatus | ''): Promise<OrderDi
     return status ? MOCK_DISPUTES.filter((d) => d.status === status) : MOCK_DISPUTES;
   }
   // Food-specific admin queue: GET /api/restaurant/admin/disputes (restaurant.admin.disputes).
-  // Previously this narrowed the GENERIC finance dispute feed by module_type=food,
   // which carries none of the food context (order parties, refundable ceiling).
   // That route now exists — disputes_handler.go shipped unregistered until this
   // change. Envelope is {"disputes": [...]}; reqAt only peels a `data` key.
@@ -923,7 +884,6 @@ export async function listDisputes(status?: DisputeStatus | ''): Promise<OrderDi
 }
 
 // Backend FoodDispute (disputes_service.go). Narrower than the console's
-// OrderDispute: it has no restaurant/customer denormalisation and no order total,
 // so the fields the UI wants but the server does not send are left empty rather
 // than invented. refundable_kobo falls back to refund_kobo (already-refunded) —
 // the server enforces the real ceiling on resolve regardless.
@@ -992,12 +952,9 @@ export async function resolveDispute(id: string, req: ResolveDisputeRequest): Pr
     headers: { ...authHeaders(), 'Idempotency-Key': `dispute-resolve-${id}` },
     body: JSON.stringify({ resolution: req.resolution, note: req.admin_note, refund_kobo: req.refund_kobo }),
   });
-  // The handler answers {"dispute": {...}}; callers only need success/failure —
   // reqAt already throws on a non-2xx.
   return { ok: true };
 }
-
-// ── Scheduled orders (restaurant.admin.dispatch) ─────────────────────────────
 
 /**
  * Releases scheduled orders whose window has arrived into the normal pipeline.
@@ -1013,11 +970,8 @@ export async function activateScheduledOrders(): Promise<{ activated: number }> 
   return { activated: res?.activated ?? res?.count ?? 0 };
 }
 
-// ── Merchant withdrawals (restaurant.admin.payouts — MONEY PATH) ─────────────
-//
 // Gated server-side by FEATURE_RESTAURANT_WITHDRAWALS_ENABLED (default OFF): with
 // the flag off these routes are not registered and calls 404.
-//
 // IMPORTANT LIMIT: the backend exposes NO admin list of withdrawals. It has a
 // merchant-scoped list (GET /restaurant/withdrawals, the caller's own) and the two
 // admin actions below, keyed by id. So the console can act on a withdrawal but

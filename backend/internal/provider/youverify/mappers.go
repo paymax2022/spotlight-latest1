@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/provider"
 )
 
@@ -70,7 +71,7 @@ func mapIDNumber(raw []byte, clientRef string) provider.KycCheckResult {
 	res.ProviderRef = pickRef(env.Data, clientRef)
 	if !env.Success || len(env.Data) == 0 || string(env.Data) == "null" {
 		res.Status = provider.KycFailed
-		res.Reason = "youverify: " + firstNonEmpty(env.Message, "no matching record")
+		res.Reason = "youverify: " + strutil.FirstNonEmpty(env.Message, "no matching record")
 		return res
 	}
 	res.ExtractedFields = flatten(env.Data)
@@ -112,7 +113,7 @@ func mapFacial(raw []byte, clientRef string, threshold int) provider.KycCheckRes
 	res.Match = env.Success && res.Confidence >= float64(threshold)
 	if !env.Success {
 		res.Status = provider.KycFailed
-		res.Reason = "youverify: " + firstNonEmpty(env.Message, "facial check failed")
+		res.Reason = "youverify: " + strutil.FirstNonEmpty(env.Message, "facial check failed")
 		return res
 	}
 	if res.Match {
@@ -201,7 +202,7 @@ func mapDocument(raw []byte, clientRef string) provider.KycCheckResult {
 		res.Status = provider.KycPassed
 	} else {
 		res.Status = provider.KycReview
-		res.Reason = "youverify: " + firstNonEmpty(env.Message, "document not verified")
+		res.Reason = "youverify: " + strutil.FirstNonEmpty(env.Message, "document not verified")
 	}
 	return res
 }
@@ -301,8 +302,6 @@ func mapWebhookStatus(s string) provider.KycCheckStatus {
 	}
 }
 
-// --- small helpers ---
-
 func pickRef(data json.RawMessage, fallback string) string {
 	var d struct {
 		ID string `json:"id"`
@@ -350,13 +349,4 @@ func hasContent(v json.RawMessage) bool {
 	default:
 		return true
 	}
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }

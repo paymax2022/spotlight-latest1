@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	feesschool "spotlight/backend/internal/academy/fees/school"
 	feessession "spotlight/backend/internal/academy/fees/session"
 	"spotlight/backend/internal/middleware"
@@ -28,15 +29,18 @@ type Handler struct {
 // NewHandler builds the admin oversight handler.
 func NewHandler(repo *Repository) *Handler { return &Handler{repo: repo} }
 
-// actorID resolves the authenticated admin (RequireAuthContext sets user_id).
-func actorID(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
 	return ""
+}
+
+// actorID resolves the authenticated admin (RequireAuthContext sets user_id).
+func actorID(c *gin.Context) string {
+	return ginutil.UserID(c, authUserID)
 }
 
 func (h *Handler) fail(c *gin.Context, err error) {
@@ -96,8 +100,6 @@ func RegisterFeesAdminAPI(admin *gin.RouterGroup, pool *pgxpool.Pool, rbac servi
 
 	return h
 }
-
-// ── Handlers ────────────────────────────────────────────────────────────────────
 
 func (h *Handler) ListSchools(c *gin.Context) {
 	out, err := h.repo.ListSchools(c.Request.Context())

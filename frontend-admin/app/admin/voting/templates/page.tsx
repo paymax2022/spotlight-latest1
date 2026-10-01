@@ -2,13 +2,10 @@
 
 // Contest templates — admin UI to configure what the image-compositing
 // pipeline actually composites onto.
-//
 // WHY THIS EXISTS
 // The pipeline (template image + contestant cutout -> final image) exists and
-// is tested server-side, but nothing let an operator upload a template or
 // define where a contestant's photo lands on it. Without this screen the
 // pipeline has no template to run against and is unreachable in practice.
-//
 // Slot placement here is numeric fields, not a drag-and-drop canvas — a
 // static preview of the template image with a proportionally-scaled overlay
 // box gives a rough visual sense of placement per slot.

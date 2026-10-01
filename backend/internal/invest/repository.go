@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"spotlight/backend/go-common/dbutil"
 	"strings"
 	"time"
 
@@ -19,8 +20,6 @@ type Repository struct {
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 var ErrNotFound = errors.New("invest: not found")
-
-// ── Profile ──────────────────────────────────────────────────────────────────
 
 func (r *Repository) GetProfile(ctx context.Context, userID string) (*Profile, error) {
 	const q = `SELECT id, user_id, kyc_tier, suitability_profile_id, risk_category, country,
@@ -78,8 +77,6 @@ func (r *Repository) UpdateProfileFields(ctx context.Context, userID string, fie
 	return err
 }
 
-// ── Investment account ───────────────────────────────────────────────────────
-
 func (r *Repository) GetOrCreateAccount(ctx context.Context, userID string) (*Account, error) {
 	const sel = `SELECT id, user_id, account_number, broker_provider_id, broker_account_id,
 		cscs_number, clearing_house_number, base_currency, status, created_at
@@ -105,8 +102,6 @@ func (r *Repository) GetOrCreateAccount(ctx context.Context, userID string) (*Ac
 	return &a, nil
 }
 
-// ── Suitability ──────────────────────────────────────────────────────────────
-
 func (r *Repository) InsertSuitability(ctx context.Context, userID string, answersJSON []byte, score int, cat RiskCategory) (string, error) {
 	const q = `INSERT INTO invest_suitability_profiles (user_id, answers, score, risk_category, status, expires_at)
 		VALUES ($1,$2,$3,$4,'active', now() + interval '365 days') RETURNING id`
@@ -127,8 +122,6 @@ func (r *Repository) LatestSuitability(ctx context.Context, userID string) (id s
 	}
 	return id, score, cat, true, nil
 }
-
-// ── Agreements ───────────────────────────────────────────────────────────────
 
 func (r *Repository) ActiveAgreements(ctx context.Context, userID string) ([]Agreement, error) {
 	const q = `SELECT a.key, a.title, a.version, COALESCE(a.body_url,''),
@@ -173,8 +166,6 @@ func (r *Repository) AllActiveAgreementsAccepted(ctx context.Context, userID str
 	}
 	return missing == 0, nil
 }
-
-// ── Stocks ───────────────────────────────────────────────────────────────────
 
 const stockCols = `id, symbol, name, exchange, COALESCE(sector,''), COALESCE(board,''),
 	COALESCE(isin,''), asset_class, status, buy_enabled, sell_enabled, risk_rating,
@@ -244,8 +235,6 @@ func (r *Repository) GetStockByID(ctx context.Context, id string) (*StockAsset, 
 	}
 	return &s, nil
 }
-
-// ── Watchlists ───────────────────────────────────────────────────────────────
 
 func (r *Repository) EnsureDefaultWatchlist(ctx context.Context, userID string) (string, error) {
 	var id string
@@ -360,8 +349,6 @@ func (r *Repository) RemoveWatchlistItem(ctx context.Context, userID, watchlistI
 	return err
 }
 
-// ── Price alerts ─────────────────────────────────────────────────────────────
-
 func (r *Repository) ListAlerts(ctx context.Context, userID string) ([]PriceAlert, error) {
 	rows, err := r.db.Query(ctx, `SELECT id, user_id, stock_asset_id, symbol, condition, target_price_kobo, status, triggered_at, created_at
 		FROM invest_price_alerts WHERE user_id=$1 ORDER BY created_at DESC`, userID)
@@ -410,8 +397,6 @@ func (r *Repository) DeleteAlert(ctx context.Context, userID, id string) error {
 	}
 	return nil
 }
-
-// ── Orders ───────────────────────────────────────────────────────────────────
 
 const orderCols = `id, user_id, stock_asset_id, symbol, side, order_type, amount_kobo, quantity,
 	limit_price_kobo, estimated_price_kobo, executed_price_kobo, filled_quantity, fees_kobo,
@@ -468,7 +453,7 @@ func (r *Repository) UpdateOrder(ctx context.Context, o *Order, fromStatus Order
 		provider_reference=$8, failure_reason=$9, settlement_due_at=$10, submitted_at=$11,
 		filled_at=$12, settled_at=$13, updated_at=now() WHERE id=$14`
 	_, err = tx.Exec(ctx, q, o.Status, o.ExecutedPriceKobo, o.FilledQuantity, o.FeesKobo, o.TotalAmountKobo,
-		o.LockedCashKobo, o.LockedQuantity, nullStr(o.ProviderReference), nullStr(o.FailureReason),
+		o.LockedCashKobo, o.LockedQuantity, dbutil.NullStr(o.ProviderReference), dbutil.NullStr(o.FailureReason),
 		o.SettlementDueAt, o.SubmittedAt, o.FilledAt, o.SettledAt, o.ID)
 	if err != nil {
 		return err
@@ -542,8 +527,6 @@ func (r *Repository) DueSettlements(ctx context.Context, limit int) ([]Order, er
 	}
 	return out, rows.Err()
 }
-
-// ── Positions ────────────────────────────────────────────────────────────────
 
 func (r *Repository) ListPositions(ctx context.Context, userID string) ([]Position, error) {
 	rows, err := r.db.Query(ctx, `SELECT id, user_id, stock_asset_id, symbol, quantity, locked_quantity,
@@ -643,8 +626,6 @@ func (r *Repository) ReducePosition(ctx context.Context, userID, assetID string,
 	return tx.Commit(ctx)
 }
 
-// ── Dividends & corporate actions (read) ─────────────────────────────────────
-
 func (r *Repository) DividendsForSymbol(ctx context.Context, symbol string) ([]Dividend, error) {
 	rows, err := r.db.Query(ctx, `SELECT id, stock_asset_id, symbol, amount_per_share_kobo, currency,
 		ex_date::text, record_date::text, payment_date::text, status, COALESCE(source,'')
@@ -684,8 +665,6 @@ func (r *Repository) CorporateActionsForSymbol(ctx context.Context, symbol strin
 	}
 	return out, rows.Err()
 }
-
-// ── Public offers ────────────────────────────────────────────────────────────
 
 func (r *Repository) ListPublicOffers(ctx context.Context) ([]PublicOffer, error) {
 	rows, err := r.db.Query(ctx, `SELECT id, issuer_name, COALESCE(symbol,''), offer_price_kobo,
@@ -750,8 +729,6 @@ func (r *Repository) ListPublicOfferApplications(ctx context.Context, userID str
 	return out, rows.Err()
 }
 
-// ── Rights issues ────────────────────────────────────────────────────────────
-
 func (r *Repository) ListRightsIssues(ctx context.Context) ([]RightsIssue, error) {
 	rows, err := r.db.Query(ctx, `SELECT id, issuer_name, COALESCE(symbol,''), COALESCE(ratio,''), offer_price_kobo,
 		qualification_date::text, opening_date::text, closing_date::text, status
@@ -813,15 +790,6 @@ func (r *Repository) ListRightsApplications(ctx context.Context, userID string) 
 		out = append(out, a)
 	}
 	return out, rows.Err()
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 var ErrInsufficientShares = errors.New("invest: insufficient available shares")

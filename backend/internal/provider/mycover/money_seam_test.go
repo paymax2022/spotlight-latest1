@@ -15,20 +15,14 @@ import (
 	"spotlight/backend/internal/insurance/gateway"
 )
 
-// ════════════════════════════════════════════════════════════════════════════
 // THE SEAM: what the client submits vs what the provider is sent
-// ════════════════════════════════════════════════════════════════════════════
-//
 // MyCover's form inputs are denominated in NAIRA. The internal contract — and
 // the mobile app — carry every money value as INTEGER KOBO. Nothing converted
 // between them, so a declared value reached the insurer 100x too large.
-//
 // Verified live against product ffb0711c-1e4a-453b-a26c-2726e0a1a7bb (gadget
 // cover, rated at 5% of the declared value):
-//
 //	body.value = 200000    → {"data":{"price":10000}}
 //	body.value = 20000000  → {"data":{"price":1000000}}
-//
 // percentageRatedProvider replays exactly that arithmetic so the assertion below
 // is the same one the live API answers.
 
@@ -278,10 +272,7 @@ func TestGetQuote_RefusesAnUnconvertibleMoneyAnswer(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // THE SEAM PIN
-// ════════════════════════════════════════════════════════════════════════════
-//
 // This bug existed because each side of the boundary assumed the other did the
 // conversion, and nothing in either tree said which unit crossed it. Both sides
 // now DECLARE the wire unit, and this test fails if they ever stop agreeing.

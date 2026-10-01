@@ -1,9 +1,7 @@
-// ── HomeMenu — global "back to the module grid" affordance ───────────────────
 // A 20+ module app buries the user: from a rate-plan editor four screens deep
 // inside Stays, getting home means tapping Back until it stops moving. This puts
 // one hamburger at the top-right of every screen that opens a sheet whose primary
 // action returns to the post-login landing screen.
-//
 // Coverage without touching 1,589 route files:
 //   • ScreenHeader (1,007 screens) renders <HomeMenuButton /> in its header row,
 //     beside whatever rightSlot the screen already passes — so it never covers a
@@ -11,7 +9,6 @@
 //   • HomeMenuHost renders a floating fallback button for the ~590 screens with
 //     bespoke headers, but ONLY when no header-hosted button is mounted. That is
 //     what `registerHeaderButton` tracks; without it the two would double up.
-//
 // Any bespoke header can opt out of the floating button simply by rendering
 // <HomeMenuButton /> itself, which is the preferred fix when the floating one
 // lands on top of that screen's own controls.
@@ -21,11 +18,11 @@ import { View, Text, Modal, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Menu, House, X } from 'lucide-react-native';
 import { router, usePathname } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { shadow3 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { shadow3 } from '@/constants/tokens';
 
 /**
  * The first screen after login. `(tabs)` is a route group so it does not appear
@@ -72,7 +69,6 @@ function useSuppressed(): boolean {
   return !ENABLED || SUPPRESSED.has(pathname);
 }
 
-// ── store ────────────────────────────────────────────────────────────────────
 // A module-level store rather than context, mirroring lib/confirm and ToastHost:
 // ScreenHeader can then render the button anywhere in the tree without every
 // module layout having to add a provider.
@@ -123,8 +119,6 @@ export function goHome() {
   }
 }
 
-// ── the hamburger ────────────────────────────────────────────────────────────
-
 /**
  * The top-right hamburger. Rendered by ScreenHeader for the screens that use it,
  * and by HomeMenuHost as a floating control for those that do not.
@@ -154,8 +148,6 @@ export function HomeMenuButton({ floating = false }: { floating?: boolean }) {
   );
 }
 
-// ── the host ─────────────────────────────────────────────────────────────────
-
 /**
  * Mounted once at the app root, beside ToastHost/ConfirmHost. Owns the sheet and
  * the floating fallback button.
@@ -166,7 +158,6 @@ export default function HomeMenuHost() {
   const isOpen = useSyncExternalStore(subscribe, getOpen, getOpen);
   const inHeader = useSyncExternalStore(subscribe, getHeaderButtons, getHeaderButtons) > 0;
 
-  // A route change can unmount the screen holding the sheet's trigger; close so
   // the sheet never outlives the screen it was opened from.
   const pathname = usePathname();
   useEffect(() => { closeHomeMenu(); }, [pathname]);

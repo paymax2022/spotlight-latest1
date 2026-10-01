@@ -1,4 +1,3 @@
-// ── Restaurant & Delivery — Order realtime hook ──────────────────────────────
 // Layers live order updates on top of the polled order: subscribes to the
 // per-order WebSocket (GET /api/finance/restaurant/orders/:id/ws) and surfaces
 // the latest status, rider location, and incoming chat messages. Polling stays
@@ -154,7 +153,6 @@ export function useOrderRealtime(
         const usingTicket = wsUrl !== orderWsUrl(orderId);
         const ws = openWebSocket(
           wsUrl,
-          // The signed URL already authenticates via its ?ticket= query, so the
           // header is only needed on the legacy fallback path (native only —
           // see nativeWebSocket.ts for why web can't use it at all).
           !usingTicket && token ? { Authorization: `Bearer ${token}` } : {},

@@ -9,11 +9,10 @@ export type TierName = 'STARTER' | 'GROWTH' | 'PRO' | 'ELITE';
 export type FraudFlagStatus = 'OPEN' | 'CLEARED' | 'VOIDED' | 'SUSPENDED';
 export type FraudAction = 'CLEARED' | 'VOIDED' | 'SUSPENDED';
 
-// ── A1 Program config ─────────────────────────────────────────────────────────
 export interface TierRow {
   tier: TierName;
   min_count: number;
-  max_count: number | null; // null = open-ended (Elite)
+  max_count: number | null;
   rate: number; // fraction of margin, e.g. 0.05
 }
 export interface MilestoneRow {
@@ -30,14 +29,13 @@ export interface ProgramConfig {
 export interface ConfigPublishInput {
   tier_table: TierRow[];
   milestone_table: MilestoneRow[];
-  effective_from?: string; // ISO; defaults server-side to now
+  effective_from?: string;
 }
 export interface ConfigPublishResult {
   config: ProgramConfig;
   warning: string; // future-only advisory surfaced by the backend
 }
 
-// ── A2 Analytics dashboard ────────────────────────────────────────────────────
 export interface ModuleRewardStat {
   module: string;
   reward_kobo: number;
@@ -58,7 +56,6 @@ export interface ReferralAnalytics {
   by_tier: TierReferrerStat[];
 }
 
-// ── A3 Fraud & anti-abuse queue ───────────────────────────────────────────────
 export interface FraudFlag {
   flag_id: string;
   referrer_id: string;
@@ -74,7 +71,6 @@ export interface FraudActionInput {
   note: string; // required
 }
 
-// ── A4 Ledger & reconciliation ────────────────────────────────────────────────
 export interface Reward {
   id: string;
   referrer_id: string;
@@ -96,7 +92,6 @@ export interface LedgerFilters {
   offset?: number;
 }
 
-// ── A5 Referrer case view ─────────────────────────────────────────────────────
 export interface TierStatus {
   referrer_id: string;
   active_referral_count: number;
@@ -121,16 +116,14 @@ export interface ReferrerCase {
   milestones: Milestone[];
 }
 export interface CaseAdjustmentInput {
-  adjust_kobo: number; // signed; positive = credit, negative = debit
+  adjust_kobo: number;
   reason: string; // required — logged to the audit trail
 }
 
-// ── A6 Milestone payout log ───────────────────────────────────────────────────
 export interface MilestonePayout extends Milestone {
   // referrer identity for the chronological log view
 }
 
-// ── A7 Module integration status ──────────────────────────────────────────────
 export interface ModuleStatus {
   module: string;
   reward_kobo: number;

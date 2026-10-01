@@ -3,15 +3,13 @@ import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardAvoidingView, Platform } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import AddressAutocompleteInput, { type SelectedAddress } from '@/components/AddressAutocompleteInput';
 
 // Shared address capture for both trip fields. Uses the Google-powered address
-// autocomplete (no map); picking a suggestion resolves its coordinate and returns. `target` selects which field is being set: 'pickup' (Current location)
-// or 'destination' (Where to). On confirm we return to the mobility home with the
 // merged trip params so BOTH fields stay visible/editable there.
 export default function DestinationScreen() {
   const params = useLocalSearchParams<{

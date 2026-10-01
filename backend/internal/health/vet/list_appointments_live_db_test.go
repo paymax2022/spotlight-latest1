@@ -4,10 +4,8 @@ package healthvet
 // module calls (getAppointments()) but which had no backend route at all
 // until now:
 //   GET /health/vet/appointments  (patient's own appointment history, ListAppointmentsForPatient)
-//
 // Previously 404ed unconditionally — this pins that the service method behind
 // the new route actually returns real rows, correctly scoped.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (

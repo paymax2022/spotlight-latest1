@@ -1,6 +1,4 @@
-// ── Referral Gamification API (M-GAM-01..07) ─────────────────────────────────
 // Mock-first (USE_MOCK). Live path hits `${REFERRAL_API_BASE}/...`. Points are
-// NON-CASH and are returned as plain numbers (never kobo); cash fields are
 // integer kobo and only ever accrue on a friend's verified activity (§7).
 
 import { api } from '@/api/client';
@@ -22,7 +20,6 @@ import type {
   RankUpEvent,
 } from './types';
 
-// ── Backend (bare gin.H) shapes ──────────────────────────────────────────────
 /**
  * GET /gamification/missions returns { missions: [{ mission, progress, status }] }
  * — the mission fields are NESTED, and each row already carries this user's
@@ -111,7 +108,6 @@ interface BackendContest {
 // Map backend mission (+ optional progress) → frontend MissionSummary.
 function mapMissionSummary(
   m: BackendMission,
-  // Only progress+status are read; the row form carries no id/user_id and we
   // should not invent them.
   prog?: Pick<BackendMissionProgress, 'progress' | 'status'>,
 ): MissionSummary {
@@ -159,7 +155,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
 const daysFromNow = (d: number) => new Date(Date.now() + d * 86400_000).toISOString();
 const daysAgo = (d: number) => new Date(Date.now() - d * 86400_000).toISOString();
 
-// ── Missions / quests ─────────────────────────────────────────────────────────
 const MOCK_MISSIONS: MissionSummary[] = [
   {
     id: 'm1',
@@ -241,7 +236,6 @@ const MISSION_STEPS: Record<string, MissionDetail['steps']> = {
   ],
 };
 
-// ── Streaks ────────────────────────────────────────────────────────────────────
 const MOCK_STREAK: StreakState = {
   current: 4,
   longest: 9,
@@ -255,7 +249,6 @@ const MOCK_STREAK: StreakState = {
   ],
 };
 
-// ── Ranks / badges ─────────────────────────────────────────────────────────────
 const MOCK_RANKS: RanksBadgesState = {
   pointsBalance: 1250,
   currentTier: 'Silver',
@@ -275,7 +268,6 @@ const MOCK_RANKS: RanksBadgesState = {
   ],
 };
 
-// ── Leaderboards ───────────────────────────────────────────────────────────────
 function mockLeaderboard(scope: LeaderboardScope): Leaderboard {
   const base: Record<LeaderboardScope, Leaderboard['rows']> = {
     friends: [
@@ -310,7 +302,6 @@ function mockLeaderboard(scope: LeaderboardScope): Leaderboard {
   };
 }
 
-// ── Contests ───────────────────────────────────────────────────────────────────
 const MOCK_CONTESTS: Contest[] = [
   {
     id: 'c1',
@@ -353,7 +344,6 @@ const MOCK_CONTESTS: Contest[] = [
   },
 ];
 
-// ── Rank-up event ──────────────────────────────────────────────────────────────
 const MOCK_RANK_UP: RankUpEvent = {
   newTier: 'Gold',
   bonusPoints: 500,
@@ -362,7 +352,6 @@ const MOCK_RANK_UP: RankUpEvent = {
   shareHook: 'I just hit Gold on Paymax Earn! Real rewards for real activity.',
 };
 
-// ── Calls ─────────────────────────────────────────────────────────────────────
 export async function getMissions(): Promise<MissionSummary[]> {
   if (USE_MOCK) {
     await delay();
@@ -435,7 +424,6 @@ export async function getMissionDetail(id: string): Promise<MissionDetail> {
   };
 }
 
-// Claim a completed mission's reward. Points are NON-CASH; any cash reward is
 // paid via RB0's ledger.Accrue server-side (idempotent) — never fabricated here.
 export interface ClaimMissionResult {
   missionId: string;
@@ -457,7 +445,6 @@ export async function claimMission(id: string): Promise<ClaimMissionResult> {
       status: 'claimed',
     };
   }
-  // Live: POST /gamification/missions/:id/claim — money/state mutation, requires
   // Idempotency-Key (backend rejects with 400 if missing).
   const res = await api.post(
     `${REFERRAL_API_BASE}/gamification/missions/${id}/claim`,
@@ -494,7 +481,6 @@ export async function getStreak(): Promise<StreakState> {
     await delay(220);
     return { ...MOCK_STREAK, milestones: MOCK_STREAK.milestones.map((m) => ({ ...m })) };
   }
-  // Live: GET the caller's streak (NON-CASH status data). Backend returns a
   // zeroed default when the user has no row yet.
   const res = await api.get(`${REFERRAL_API_BASE}/gamification/streak`);
   const s = unwrap<BackendStreak>(res);

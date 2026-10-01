@@ -1,10 +1,8 @@
-// ── Schedule your logistics movement — API wrapper ───────────────────────────
 // Typed data layer for advance-booking across ride hailing, ride sharing, parcel
 // (intra + inter-state), airport pickup and advance bus seat booking. Mirrors
 // parcel.api.ts / bus.api.ts: mock-flagged, camelCase types, {code,message}
 // MobilityError normalisation, Idempotency-Key on create + cancel (persisted so
 // an app-kill mid-request retries with the SAME key instead of double-booking).
-//
 // Backend contract (SWARM_INTEGRATION_CONTRACT.md): base
 // /api/finance/mobility/scheduled. Money is charged/escrowed at DISPATCH time
 // (not at booking) — this screen only ever shows an estimate, never a payment
@@ -22,7 +20,6 @@ const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
 
-// ─── Types (camelCase; mirrors ScheduledBooking from the OpenAPI contract) ─────
 export type ScheduledMode =
   | 'ride_hail'
   | 'ride_share'
@@ -157,7 +154,6 @@ export interface EstimateScheduledResult {
   durationS?: number;
 }
 
-// ─── Idempotency-Key persistence ────────────────────────────────────────────
 // Persisted via the app's existing secure storage (expo-secure-store, web
 // localStorage fallback — see src/lib/secureStorage.ts) so an app-kill mid
 // create/cancel request retries with the SAME key instead of risking a
@@ -193,7 +189,6 @@ export async function clearIdempotencyKey(scope: string): Promise<void> {
   await deleteSecureItem(`${IDEM_PREFIX}${scope}`);
 }
 
-// ─── Mock store (deterministic; walkable without the Go backend) ───────────
 let mockSeq = 0;
 const mockBookings = new Map<string, ScheduledBooking>();
 
@@ -287,7 +282,6 @@ function seedMockHistoryOnce() {
   failed.lastDispatchError = 'No courier accepted the inter-state parcel within the fallback window.';
 }
 
-// ─── Estimate ────────────────────────────────────────────────────────────────
 export async function estimateScheduled(req: EstimateScheduledRequest): Promise<EstimateScheduledResult> {
   if (USE_MOCK) {
     await delay(360);
@@ -304,7 +298,6 @@ export async function estimateScheduled(req: EstimateScheduledRequest): Promise<
   );
 }
 
-// ─── Create (money-adjacent → escrow happens at dispatch, but the endpoint
 // still requires an Idempotency-Key so a retried submit never double-books) ──
 export async function createScheduled(
   req: CreateScheduledRequest,
@@ -340,7 +333,6 @@ export async function createScheduled(
   return { booking, estimatedFareKobo: raw.estimated_fare_kobo ?? booking.estimatedFareKobo ?? 0 };
 }
 
-// ─── List ────────────────────────────────────────────────────────────────────
 export async function listScheduled(params?: ListScheduledParams): Promise<ListScheduledResult> {
   if (USE_MOCK) {
     await delay(300);
@@ -363,7 +355,6 @@ export async function listScheduled(params?: ListScheduledParams): Promise<ListS
   return { items: raw.items ?? [], nextCursor: raw.next_cursor ?? null };
 }
 
-// ─── Detail ──────────────────────────────────────────────────────────────────
 export async function getScheduled(id: string): Promise<ScheduledBooking> {
   if (USE_MOCK) {
     await delay(220);
@@ -375,7 +366,6 @@ export async function getScheduled(id: string): Promise<ScheduledBooking> {
   return unwrap<ScheduledBooking>(await api.get(`${BASE}/${id}`));
 }
 
-// ─── Reschedule / edit (only while status === 'scheduled') ─────────────────
 export async function rescheduleScheduled(id: string, req: RescheduleRequest): Promise<ScheduledBooking> {
   if (USE_MOCK) {
     await delay(450);
@@ -406,7 +396,6 @@ export async function rescheduleScheduled(id: string, req: RescheduleRequest): P
   );
 }
 
-// ─── Cancel (Idempotency-Key; refunds via settlement if already escrowed) ──
 export async function cancelScheduled(
   id: string,
   idempotencyKey: string,

@@ -21,9 +21,7 @@ const MIN_TOPUP_KOBO = 10_000; // ₦100 minimum
 // catch them here and return an actionable error instead of an opaque 502.
 const NON_ROUTABLE_TLDS = ['internal', 'local', 'localhost', 'test', 'invalid', 'example'];
 
-// ---------------------------------------------------------------------------
 // Account management
-// ---------------------------------------------------------------------------
 
 /**
  * Find or create the wallet ledger_account for a user.
@@ -53,7 +51,6 @@ export async function getOrCreateAccount(userId: string): Promise<string> {
     .insert({ id: newId, user_id: userId, type: WALLET_ACCOUNT_TYPE, currency: 'NGN' });
 
   if (error) {
-    // Race: another concurrent request inserted first — re-fetch
     const { data: raced } = await supabase
       .from('ledger_accounts')
       .select('id')
@@ -107,9 +104,7 @@ async function migrateLegacyMobileBalanceIfNeeded(userId: string, accountId: str
   );
 }
 
-// ---------------------------------------------------------------------------
 // Balance
-// ---------------------------------------------------------------------------
 
 export interface WalletBalance {
   available_kobo: number;
@@ -174,9 +169,7 @@ export async function getBalance(userId: string): Promise<WalletBalance> {
   };
 }
 
-// ---------------------------------------------------------------------------
 // Mutations
-// ---------------------------------------------------------------------------
 
 export interface WalletMutationInput {
   amountKobo: number;
@@ -343,9 +336,7 @@ export async function reverseWalletDebit(
   return { alreadyProcessed: duplicate, amountKobo: input.amountKobo };
 }
 
-// ---------------------------------------------------------------------------
 // Transaction history
-// ---------------------------------------------------------------------------
 
 export async function listTransactions(
   userId: string,
@@ -369,9 +360,7 @@ export async function listTransactions(
   return (data ?? []) as LedgerEntryRow[];
 }
 
-// ---------------------------------------------------------------------------
 // Topup intent
-// ---------------------------------------------------------------------------
 
 export interface TopupInput {
   amountKobo: number;
@@ -539,9 +528,7 @@ export async function createTopupIntent(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Paystack initialization (wallet-owned, independent of voting module)
-// ---------------------------------------------------------------------------
 
 /**
  * Drive Paystack initialize for an intent row that already exists, persisting
@@ -586,7 +573,6 @@ async function initializeTopupWithPaystack(input: {
     // Prefer the internal-only detail (the raw provider reason) over the
     // generic public ApiError message for this DB column — error_message is
     // never returned to a client (grepped every route/response that reads
-    // wallet_topup_intents; none surface this column), so it stays useful for
     // ops/debugging without reintroducing the WC-007/WAL-012 leak.
     const message =
       (err as { internalDetail?: string })?.internalDetail ??
@@ -662,11 +648,9 @@ async function readPaystackError(res: Response): Promise<string> {
   return res.statusText || `HTTP ${res.status}`;
 }
 
-// ---------------------------------------------------------------------------
 // Topup status — polled by the app after the user returns from Paystack so a
 // module checkout can proceed once the wallet has actually been credited (the
 // webhook flips the intent to 'completed' on charge.success).
-// ---------------------------------------------------------------------------
 
 export interface TopupStatusResult {
   reference: string;

@@ -6,13 +6,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 )
 
 // Handler exposes FeesVault routes over Gin. Router registration into RegisterAcademy is
 // owned by the QA/integration task — see RegisterFeesVault. The member group already
 // carries RequireAuthContext (REUSE-MAP §1), so c.GetString("user_id") is populated.
-//
 // The Idempotency-Key header is REQUIRED on every money-path route (contribute, apply):
 // iron rule "every money mutation MUST require an Idempotency-Key".
 type Handler struct {
@@ -22,10 +22,9 @@ type Handler struct {
 // NewHandler builds the vault handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -33,15 +32,13 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
 	}
 	return u, true
 }
-
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
 
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
@@ -99,8 +96,6 @@ func RegisterFeesVault(member *gin.RouterGroup, svc *Service) *Handler {
 	return h
 }
 
-// ── Handlers ────────────────────────────────────────────────────────────────────
-
 func (h *Handler) Create(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -155,7 +150,7 @@ func (h *Handler) Contribute(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.Contribute(c.Request.Context(), u, c.Param("id"), req.AmountMinor, idemKey(c))
+	out, err := h.svc.Contribute(c.Request.Context(), u, c.Param("id"), req.AmountMinor, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -173,7 +168,7 @@ func (h *Handler) ApplyToInvoice(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.ApplyToInvoice(c.Request.Context(), u, c.Param("id"), req.InvoiceID, idemKey(c))
+	out, err := h.svc.ApplyToInvoice(c.Request.Context(), u, c.Param("id"), req.InvoiceID, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return

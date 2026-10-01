@@ -1,7 +1,6 @@
 package healthpharmacy_test
 
 // LIVE-DB tests for the pharmacy owner's own catalogue.
-//
 // The gap: UpsertProduct lets an owner WRITE products, but the only read was
 // ListProducts — the CUSTOMER catalogue, filtered to
 // `active = true AND nafdac_status = 'REGISTERED'`. So a pharmacist could not see
@@ -9,10 +8,8 @@ package healthpharmacy_test
 // They could edit inventory but never read it back: a product taken off sale
 // vanished from their own view, with no way to price it, restock it or put it
 // back.
-//
 // Managing stock requires seeing ALL of it, including what is not currently
 // sellable — that is exactly the part a merchant needs to act on.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (

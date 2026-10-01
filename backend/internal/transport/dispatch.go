@@ -61,7 +61,6 @@ func (s *Service) NearbyDrivers(ctx context.Context, lat, lng float64, radiusM f
 }
 
 // OpenRequests returns open ride requests visible to a driver (dispatch feed).
-//
 // Cash requests are filtered out when the driver's own wallet balance can't
 // cover the platform's commission on that trip's current fare — the platform
 // fee normally comes out of escrow at settlement, but a cash trip has no

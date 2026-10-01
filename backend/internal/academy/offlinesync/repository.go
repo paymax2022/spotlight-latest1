@@ -2,11 +2,12 @@ package offlinesync
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/jsonx"
 )
 
 // scopeSync namespaces the idempotency keys this endpoint records so a sync key can
@@ -24,7 +25,6 @@ type Repository struct {
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 // Ingest records a single client event idempotently, in ONE transaction:
-//
 //  1. Short-circuit: a prior academy_idempotency_keys row for (key, 'sync', user) ⇒
 //     the event was already reconciled → "duplicate" (no re-insert). Retries are safe.
 //  2. Otherwise append to academy_sync_events. The (user_id, client_event_id) UNIQUE
@@ -60,7 +60,7 @@ func (r *Repository) Ingest(ctx context.Context, userID, idemKey, kind, resoluti
 		 VALUES ($1,$2,$3,$4,$5,$6)
 		 ON CONFLICT (user_id, client_event_id) DO NOTHING
 		 RETURNING id`,
-		userID, ev.ClientEventID, kind, rawOrEmptyObject(ev.Payload), ev.ClientTS, resolution,
+		userID, ev.ClientEventID, kind, jsonx.RawOrEmptyObject(ev.Payload), ev.ClientTS, resolution,
 	).Scan(&eventID)
 	dup := errors.Is(err, pgx.ErrNoRows)
 	if err != nil && !dup {
@@ -73,7 +73,7 @@ func (r *Repository) Ingest(ctx context.Context, userID, idemKey, kind, resoluti
 		   (idempotency_key, scope, user_id, result_ref)
 		 VALUES ($1,$2,$3,$4)
 		 ON CONFLICT (idempotency_key, scope) DO NOTHING`,
-		idemKey, scopeSync, userID, nullStr(eventID)); err != nil {
+		idemKey, scopeSync, userID, dbutil.NullStr(eventID)); err != nil {
 		return "", err
 	}
 
@@ -84,20 +84,4 @@ func (r *Repository) Ingest(ctx context.Context, userID, idemKey, kind, resoluti
 		return "duplicate", nil
 	}
 	return "acked", nil
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────────
-
-func rawOrEmptyObject(b []byte) json.RawMessage {
-	if len(b) == 0 {
-		return json.RawMessage("{}")
-	}
-	return json.RawMessage(b)
-}
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }

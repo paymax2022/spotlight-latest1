@@ -7,19 +7,21 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/go-common/ginutil"
 )
 
-// ─── Towing / roadside ───────────────────────────────────────────────────────
-//
 // State machine:
 //   requested → operator_accepted → operator_en_route → pin_verified
 //            → in_progress → completed   (cancelled)
-//
 // Escrow: book → Escrow(user, "towing:<id>", idemKey, "transport", fare).
 // Settle operator split on complete. Cancel → Refund.
 
-var towingTransitions = map[string]map[string]bool{
+var towingTransitions = fsm.Table[string]{
 	"requested":         {"operator_accepted": true, "cancelled": true},
 	"operator_accepted": {"operator_en_route": true, "cancelled": true},
 	"operator_en_route": {"pin_verified": true, "cancelled": true},
@@ -28,17 +30,8 @@ var towingTransitions = map[string]map[string]bool{
 }
 
 func canTransitionTowing(from, to string) bool {
-	if from == to {
-		return false
-	}
-	m, ok := towingTransitions[from]
-	if !ok {
-		return false
-	}
-	return m[to]
+	return towingTransitions.Can(from, to)
 }
-
-// ─── Request bodies ──────────────────────────────────────────────────────────
 
 // TowingEstimateRequest is POST /mobility/towing/estimate.
 type TowingEstimateRequest struct {
@@ -166,7 +159,7 @@ func (s *Service) BookTowing(ctx context.Context, userID string, req TowingBookR
 			 dest_address, fare_kobo, status, pin, settlement_id, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'requested',$11,$12,$13)`
 	if _, err := s.db.Exec(ctx, q,
-		jobID, userID, serviceType, nullStr(req.VehicleType), nullStr(req.IssueType),
+		jobID, userID, serviceType, dbutil.NullStr(req.VehicleType), dbutil.NullStr(req.IssueType),
 		req.Pickup.Address, req.Pickup.Lat, req.Pickup.Lng, destAddr,
 		fare, pin, sett.ID, idempotencyKey,
 	); err != nil {
@@ -283,8 +276,6 @@ func (s *Service) towingSetStatus(ctx context.Context, id, from, to string) erro
 	}
 	return nil
 }
-
-// ─── Operator (driver) flows ─────────────────────────────────────────────────
 
 // OpenTowingRequests returns unassigned, requested jobs for operators.
 func (s *Service) OpenTowingRequests(ctx context.Context, driverUserID string) ([]map[string]any, error) {
@@ -427,4 +418,136 @@ func (s *Service) operatorOwnedTowing(ctx context.Context, id, driverUserID stri
 		return nil, codedErr(http.StatusForbidden, CodeForbidden, "not the assigned operator")
 	}
 	return &t, nil
+}
+
+// TowingEstimate returns callout + distance fare.
+func (h *Handler) TowingEstimate(c *gin.Context) {
+	var req TowingEstimateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	est, err := h.svc.EstimateTowing(c.Request.Context(), req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, est)
+}
+
+// TowingBook books + escrows a towing job.
+func (h *Handler) TowingBook(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req TowingBookRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	j, err := h.svc.BookTowing(c.Request.Context(), userID, req, ginutil.IdempotencyKey(c))
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, j)
+}
+
+// TowingGet returns a job detail.
+func (h *Handler) TowingGet(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	j, err := h.svc.TowingDetail(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, j)
+}
+
+// TowingList returns the user's jobs.
+func (h *Handler) TowingList(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	js, err := h.svc.ListTowing(c.Request.Context(), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"jobs": js})
+}
+
+// TowingCancel refunds + cancels a job.
+func (h *Handler) TowingCancel(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req CancelRequest
+	_ = c.ShouldBindJSON(&req)
+	if err := h.svc.CancelTowing(c.Request.Context(), c.Param("id"), userID, req.Reason); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "cancelled"})
+}
+
+// TowingRequests returns open operator requests.
+func (h *Handler) TowingRequests(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	reqs, err := h.svc.OpenTowingRequests(c.Request.Context(), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"requests": reqs})
+}
+
+// TowingAccept assigns the operator.
+func (h *Handler) TowingAccept(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	j, err := h.svc.AcceptTowing(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, j)
+}
+
+// TowingEnRoute marks the operator en route.
+func (h *Handler) TowingEnRoute(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if err := h.svc.TowingEnRoute(c.Request.Context(), c.Param("id"), userID); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "operator_en_route"})
+}
+
+// TowingVerifyPin verifies the operator PIN.
+func (h *Handler) TowingVerifyPin(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req VerifyPinRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.VerifyTowingPin(c.Request.Context(), c.Param("id"), userID, req.Pin); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "pin_verified"})
+}
+
+// TowingStart starts the job.
+func (h *Handler) TowingStart(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if err := h.svc.StartTowing(c.Request.Context(), c.Param("id"), userID); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "in_progress"})
+}
+
+// TowingComplete completes + settles the job.
+func (h *Handler) TowingComplete(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if err := h.svc.CompleteTowing(c.Request.Context(), c.Param("id"), userID); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "completed"})
 }

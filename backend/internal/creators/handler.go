@@ -5,6 +5,8 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // Handler exposes creator member + admin endpoints. The authenticated caller is the
@@ -57,17 +59,10 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	admin.POST("/creators/payouts/:payoutId/paid", guard("creators.payout"), h.AdminPayoutPaid)
 }
 
-func actor(c *gin.Context) (string, bool) {
-	uid := c.GetString("user_id")
-	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
-		return "", false
-	}
-	return uid, true
-}
+func actor(c *gin.Context) (string, bool) { return ginutil.RequireUser(c) }
 
 func idem(c *gin.Context) (string, bool) {
-	k := c.GetHeader("Idempotency-Key")
+	k := ginutil.IdempotencyKey(c)
 	if k == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return "", false
@@ -330,10 +325,8 @@ func (h *Handler) RequestPayout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "payout": p})
 }
 
-// --- admin ---
-
 func (h *Handler) AdminApprove(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if err := h.svc.Approve(c.Request.Context(), c.Param("creatorId"), uid); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -342,7 +335,7 @@ func (h *Handler) AdminApprove(c *gin.Context) {
 }
 
 func (h *Handler) AdminSuspend(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if err := h.svc.Suspend(c.Request.Context(), c.Param("creatorId"), uid); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -356,7 +349,7 @@ type moderateRequest struct {
 }
 
 func (h *Handler) AdminModerate(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	var req moderateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -370,7 +363,7 @@ func (h *Handler) AdminModerate(c *gin.Context) {
 }
 
 func (h *Handler) AdminPayoutPaid(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if err := h.svc.MarkPayoutPaid(c.Request.Context(), c.Param("payoutId"), uid); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

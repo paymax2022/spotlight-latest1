@@ -1,8 +1,5 @@
-// ── Spotlight Academy — Shared API layer (Phase 0 + Phase 1) ─────────────────
-// Typed mock-first data layer the screens code against. With USE_MOCK=true the
 // whole app runs with no backend. Flip the flag to hit the live member routes on
 // the frontend-web proxy → Go /api/finance/academy/*.
-//
 // IRON RULES honoured here:
 //  • Money amounts are integers in minor units (kobo). Reward points are plain ints.
 //  • Reward earns/redeems and exam attempts are designed to queue offline and
@@ -126,28 +123,20 @@ import * as P4 from './api/academy.phase4.mock';
 const B = ACADEMY_API_BASE;
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
-// ── LIVE-WIRING STATUS (docs/prd/edtech/MOBILE-LIVE-WIRING-CHECKLIST.md) ──────────
 // The Go backend response conventions are NOT uniform across the academy sub-packages:
-//   • identity / curriculum / exam / progression / commerce / edupay return the
 //     model BARE (c.JSON(200, model)), no {data} envelope.
 //   • rewards / gamification wrap in a {data: …} envelope (some double-nested, e.g.
 //     rewards balance → {data:{balance_minor}}).
 //   • Half the packages emit snake_case JSON (identity/curriculum/exam/gamification/
-//     rewards); commerce/edupay emit camelCase but with DIFFERENT field names than the
 //     screen types (PriceMinor↔priceKobo, AmountMinor↔amountKobo, State↔status, RefID↔
 //     bundleId/planId). All money is integer minor units == kobo (1:1, no conversion).
 // Because of this, the LIVE branch is NOT uniformly safe to flip module-wide yet. The
-// checklist marks, per function: path OK?, shape mappable?, or blocked (no backend route
 // / divergent aggregate). `unwrap` below tolerates both envelope styles so callers that
 // ARE shape-compatible work; the rest are annotated inline and keep the mock as default.
 function unwrap<T>(res: { data?: { data?: T } & T }): T {
   return (res.data?.data ?? res.data) as T;
 }
 
-// ── LIVE shape mappers (backend row → screen type) ───────────────────────────────
-// Each mapper is the SINGLE shape contract shared by a resource's list function and
-// its by-id sibling (the backend by-id routes return {data:<item>} mirroring the list
-// item). Backend rows carry only the persisted columns; screen-only presentation
 // fields (icons/colors/progress/copy) are DEFAULTED here (never fabricated with fake
 // data) and flagged with TODO(shape) so the runtime check + a future server projection
 // can fill them. Money stays integer kobo: backend *Minor == kobo, 1:1 rename to *Kobo.
@@ -340,7 +329,6 @@ function mapMeToProfile(me: any): AcademyProfile {
 
 // exam.Result (subjects[]{subject,raw,total,scaled,grade}, overall, readiness, late) →
 // screen ExamResult. TODO(shape): unanswered/timeSpentSec/pointsEarned not in the score
-// projection; readinessDelta is filled with the absolute readiness (not a delta); overall
 // is on the exam's native scale (e.g. UTME 400), not a 0–100 percentage.
 function mapExamResult(attemptId: string, r: any): ExamResult {
   const subjects: any[] = Array.isArray(r?.subjects) ? r.subjects : [];
@@ -409,7 +397,6 @@ let tutorEarnings: TutorEarnings = { ...P4.MOCK_TUTOR_EARNINGS, ledger: P4.MOCK_
 const managedSchools: ManagedSchool[] = P4.MOCK_MANAGED_SCHOOLS.map((s) => ({ ...s }));
 const ecceHome: EcceHome = { ...P4.MOCK_ECCE_HOME, activities: P4.MOCK_ECCE_HOME.activities.map((a) => ({ ...a, rounds: a.rounds.map((r) => ({ ...r, options: r.options.map((o) => ({ ...o })) })) })) };
 
-// ── Identity ──────────────────────────────────────────────────────────────────
 export async function getMe(): Promise<AcademyProfile> {
   if (USE_MOCK) { await delay(); return profile; }
   // GET /academy/me returns the identity aggregate `Me` {user_id, roles[], profiles[],
@@ -461,7 +448,6 @@ export async function updateProfile(input: ProfileUpdate): Promise<AcademyProfil
     return profile;
   }
   // PUT /academy/profile expects UpsertProfileRequest {role, class_id, display_name,
-  // trade_track, stream, ...}. Map the mobile field names → backend; role is REQUIRED so
   // default to the caller's current role. Response is a snake_case Profile row → mapProfile.
   // class_id is a UUID server-side (academy_profiles.class_id uuid) but every caller
   // (e.g. the onboarding class-select screen) holds a class CODE like "SSS2" — sending
@@ -520,7 +506,6 @@ export async function recordConsent(minorId: string, granted: boolean): Promise<
     return profile;
   }
   // POST /academy/guardians/:minorId/consent expects {scope} (an object whose keys gate
-  // capabilities). The mobile screen passes a boolean `granted`; expand it to the standard
   // scope keys. Response is {consent_id, status:'active'} (not a profile). TODO(product):
   // surface the authoritative consent state from getMe after this call.
   const scope = { purchases: granted, community: granted, data_sharing: granted };
@@ -530,7 +515,6 @@ export async function recordConsent(minorId: string, granted: boolean): Promise<
   return { ...mapProfile({ role: profile.role }), guardianConsent: state };
 }
 
-// ── Curriculum ────────────────────────────────────────────────────────────────
 export async function getCurriculumVersions(): Promise<CurriculumVersion[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_CURRICULUM_VERSIONS; }
   const { data } = await api.get<CurriculumVersion[]>(`${B}/curriculum/versions`);
@@ -625,7 +609,6 @@ export async function getLesson(id: string): Promise<Lesson> {
   return data;
 }
 
-// ── Assessment ────────────────────────────────────────────────────────────────
 export async function getPractice(objectiveId?: string): Promise<Question[]> {
   if (USE_MOCK) {
     await delay();
@@ -682,10 +665,8 @@ export async function submitPractice(sub: PracticeSubmission): Promise<PracticeR
   return data;
 }
 
-// ── Onboarding placement quiz ─────────────────────────────────────────────────
 // Curriculum-grounded diagnostic. Live: GET/POST ${B}/placement (the Go engine
 // assembles per-subject questions from the NERDC question bank and scores them).
-// Mock: a compact curriculum-flavoured bank mirroring the backend seed so the
 // onboarding flow is demoable offline (USE_MOCK default true).
 
 type MockPQ = {
@@ -817,7 +798,6 @@ export async function getMastery(): Promise<MasterySnapshot[]> {
   return data;
 }
 
-// ── Exam (the Crown) ─────────────────────────────────────────────────────────
 export async function getArenas(): Promise<ExamArena[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_ARENAS; }
   const { data } = await api.get<ExamArena[]>(`${B}/exam/arenas`);
@@ -1009,14 +989,12 @@ export async function getExamResult(id: string): Promise<ExamResult> {
     return r;
   }
   // GET /exam/attempts/:id/result → {data: Result} (snake_case: subjects[]{subject,raw,
-  // total,scaled,grade}, overall, readiness, late). Mapped via mapExamResult (owner-only;
   // 404 until scored). TODO(shape): overall is exam-native scale (e.g. UTME 400) not 0–100;
   // unanswered/timeSpentSec/pointsEarned + readinessDelta are not in the score projection.
   const res = await api.get(`${B}/exam/attempts/${id}/result`);
   return mapExamResult(id, unwrap<any>(res));
 }
 
-// ── Gamification ─────────────────────────────────────────────────────────────
 export async function getGamificationProfile(): Promise<GamificationProfile> {
   if (USE_MOCK) { await delay(); return M.MOCK_GAMIFICATION; }
   // GET /academy/gamification/profile → {data: UserState} (snake_case). UserState =
@@ -1052,7 +1030,6 @@ export async function getBadges(): Promise<Badge[]> {
 export async function getChallenges(): Promise<Challenge[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_CHALLENGES; }
   // GET /academy/gamification/challenges → {data: Challenge[]} (snake_case). The backend
-  // Challenge {code, name, kind, criteria, ...} has no per-user progress/target/completed;
   // those default to 0/false. TODO(shape): server progress projection before flipping.
   const res = await api.get(`${B}/gamification/challenges`);
   const rows = unwrap<{ id: string; name: string; kind?: string; criteria?: { description?: string; target?: number }; reward_points?: number }[]>(res) ?? [];
@@ -1095,11 +1072,9 @@ export async function getClassLeaderboard(): Promise<ClassLeaderboard> {
   return adaptClassLeaderboard(unwrap<GoClassLeaderboard>(res) ?? {});
 }
 
-// ── Rewards ──────────────────────────────────────────────────────────────────
 export async function getRewardBalance(): Promise<RewardBalance> {
   if (USE_MOCK) { await delay(); return rewardBalance; }
   // GET /academy/rewards/balance → {data:{balance_minor}} (DOUBLE-nested). NOTE: the
-  // backend reward ledger tracks a single running balance; it does NOT expose the
   // pending/lifetime split the screen shows. We surface balance as `points` and zero the
   // rest. TODO(shape): server projection for pendingPoints/lifetimeEarned before flip.
   const res = await api.get(`${B}/rewards/balance`);
@@ -1174,7 +1149,6 @@ export async function redeemReward(itemId: string): Promise<RewardLedgerEntry> {
   return (out.entry ?? out) as RewardLedgerEntry;
 }
 
-// ── Commerce ─────────────────────────────────────────────────────────────────
 export async function getPlans(): Promise<Plan[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_PLANS; }
   const { data } = await api.get<Plan[]>(`${B}/commerce/plans`);
@@ -1186,7 +1160,6 @@ export async function getBundles(examSlug?: Bundle['examSlug']): Promise<Bundle[
     await delay();
     return examSlug ? M.MOCK_BUNDLES.filter((b) => b.examSlug === examSlug) : M.MOCK_BUNDLES;
   }
-  // GET /commerce/bundles → {data: ExamBundle[]} (camelCase; priceMinor==kobo). Shared
   // mapBundle contract with getBundle. NOTE the backend filters by ?arena=<arenaId>, not
   // an exam slug — the examSlug param is passed through but won't match server-side.
   const res = await api.get(`${B}/commerce/bundles`, { params: { arena: examSlug } });
@@ -1270,7 +1243,6 @@ export async function bnplOrder(orderId: string, amountKobo: number, instalments
     return { id: orderId, bundleId, amountKobo, status: 'bnpl', createdAt: new Date().toISOString(), bnplInstalments: instalments };
   }
   // POST /commerce/orders/:id/bnpl — money path: send a stable Idempotency-Key. The
-  // backend StartBNPL takes no body (instalment plan is server-driven); the mobile
   // `instalments` arg stays for local/mock UX only. Response Order → mapOrder.
   const res = await api.post(`${B}/commerce/orders/${orderId}/bnpl`, {}, {
     headers: { 'Idempotency-Key': `bnpl_${orderId}` },
@@ -1314,7 +1286,6 @@ export async function activateAccessCard(cardCode: string): Promise<AccessCardRe
   return { cardCode: serial, unlocked: ent?.refId ? [{ kind: 'bundle', label: ent.refId }] : [], valueKobo: 0 };
 }
 
-// ── Wallet ───────────────────────────────────────────────────────────────────
 export async function getWallet(): Promise<AcademyWallet> {
   if (USE_MOCK) { await delay(); return wallet; }
   // ⚠ NO BACKEND ROUTE: there is no academy `wallet` package. The academy wallet is the
@@ -1325,9 +1296,7 @@ export async function getWallet(): Promise<AcademyWallet> {
   return data;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 2 — Progression
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getPath(subjectId: string): Promise<LearningPath> {
   if (USE_MOCK) {
     await delay();
@@ -1422,9 +1391,7 @@ export async function getRecommendations(): Promise<Recommendation[]> {
   return data;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 2 — Parent / Guardian (child-safety: linked-child gating, fail-closed)
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getChildren(): Promise<ChildSummary[]> {
   if (USE_MOCK) { await delay(); return children; }
   const { data } = await api.get<ChildSummary[]>(`${B}/parent/children`);
@@ -1532,9 +1499,7 @@ export async function decideApproval(id: string, approve: boolean): Promise<Purc
   return data;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 2 — EduPay (school fees + save-for-school pots). Money in kobo.
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getSchools(query?: string): Promise<School[]> {
   if (USE_MOCK) {
     await delay();
@@ -1673,9 +1638,7 @@ export async function payFromPot(potId: string, feeScheduleId: string): Promise<
   return data;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 2 — Scholarships, billing, parent notifications
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getScholarships(): Promise<Scholarship[]> {
   if (USE_MOCK) { await delay(); return scholarships; }
   const { data } = await api.get<Scholarship[]>(`${B}/edupay/scholarships`);
@@ -1714,9 +1677,7 @@ export async function getParentNotifications(): Promise<P2.ParentNotification[]>
   return data;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 2 — Learner: daily goal, search, bookmarks, notes, downloads
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getDailyGoal(): Promise<DailyGoal> {
   if (USE_MOCK) { await delay(); return P2.MOCK_DAILY_GOAL; }
   const { data } = await api.get<DailyGoal>(`${B}/learner/daily-goal`);
@@ -1823,9 +1784,7 @@ export async function syncDownload(bundleId: string): Promise<DownloadedBundle[]
   return data;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 3 — Trade & Skills (the Moat)
-// ═══════════════════════════════════════════════════════════════════════════════
 
 /** S1 — Trade track hub: the chosen track + its modules + project portfolio. */
 export async function getTradeHub(): Promise<TradeHub> {
@@ -1925,7 +1884,6 @@ export async function getAssessment(id: string): Promise<SkillAssessment> {
     if (!a) throw new Error('Assessment not found');
     return a;
   }
-  // GET /trade/assessments/:id → {data: SkillAssessment} (snake_case; mirrors the
   // GET /trade/assessments list item). Mapped via the shared mapAssessment contract.
   const res = await api.get(`${B}/trade/assessments/${id}`);
   return mapAssessment(unwrap<any>(res));
@@ -2001,9 +1959,7 @@ export async function requestMentor(mentorId: string): Promise<Mentor> {
   return data;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 3 — Credentials & earning bridge (G10/G11 + S6/S7)
-// ═══════════════════════════════════════════════════════════════════════════════
 
 /** G10 — My credentials (academic + trade). */
 export async function getCredentials(): Promise<Credential[]> {
@@ -2054,7 +2010,6 @@ export async function verifyCredential(verificationId: string): Promise<Credenti
 /** S6 — Earning opportunities feed (Paymax roles unlocked by credentials). */
 export async function getOpportunities(): Promise<EarningOpportunity[]> {
   if (USE_MOCK) { await delay(); return opportunities; }
-  // GET /earning/opportunities → {data: EarningOpportunity[]} (snake_case;
   // role='service_provider'→'service'). Shared mapOpportunity contract with getOpportunity.
   const res = await api.get(`${B}/earning/opportunities`);
   return (unwrap<any[]>(res) ?? []).map(mapOpportunity);
@@ -2068,7 +2023,6 @@ export async function getOpportunity(id: string): Promise<EarningOpportunity> {
     track('opportunity_viewed', { opportunity: id, role: o.role });
     return o;
   }
-  // GET /earning/opportunities/:id → {data: EarningOpportunity} (eligibility-gated; same
   // shape as the list item). Reuses the mapOpportunity contract shared with getOpportunities.
   const res = await api.get(`${B}/earning/opportunities/${id}`);
   return mapOpportunity(unwrap<any>(res));
@@ -2104,15 +2058,12 @@ export async function applyOpportunity(opportunityId: string): Promise<EarningAp
   return data;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 3 — Live, Community & Notifications (C1–C7)
 // Child-safety: community is group/Q&A only — no 1:1 DMs for minors.
-// ═══════════════════════════════════════════════════════════════════════════════
 
 /** C1 — Live classes schedule (upcoming/live/replay). */
 export async function getLiveSessions(): Promise<LiveSession[]> {
   if (USE_MOCK) { await delay(); return liveSessions; }
-  // GET /live/sessions → {data: LiveSession[]} (snake_case; state→status). Shared
   // mapLiveSession contract with getLiveSession; durationMin/viewers defaulted (see TODO).
   const res = await api.get(`${B}/live/sessions`);
   return (unwrap<any[]>(res) ?? []).map(mapLiveSession);
@@ -2269,13 +2220,9 @@ export async function getAnnouncements(): Promise<Announcement[]> {
   return data;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 4 — Tutor & School (T1–T8) + ECCE (E1–E3)
-// Mock-first like every earlier phase. Tutor verify reuses the KYC affordance;
 // tutor payouts reuse the payout-rail concept (settle T+1). Money in kobo.
-// ═══════════════════════════════════════════════════════════════════════════════
 
-// ── Tutor identity (T1, T2) ────────────────────────────────────────────────────
 export async function getTutorMe(): Promise<TutorProfile> {
   if (USE_MOCK) { await delay(); return tutorProfile; }
   const { data } = await api.get<TutorProfile>(`${B}/tutor/me`);
@@ -2337,7 +2284,6 @@ export async function getTutors(subject?: string): Promise<TutorListing[]> {
   return data;
 }
 
-// ── Cohorts & roster (T3) ──────────────────────────────────────────────────────
 export async function getCohorts(): Promise<Cohort[]> {
   if (USE_MOCK) { await delay(); return cohorts; }
   // TODO(no backend route): NO GET /tutor/cohorts route in the tutor package. BLOCKED —
@@ -2346,7 +2292,6 @@ export async function getCohorts(): Promise<Cohort[]> {
   return data;
 }
 
-// ── Assignments (T4) ───────────────────────────────────────────────────────────
 export async function getAssignments(cohortId?: string): Promise<Assignment[]> {
   if (USE_MOCK) {
     await delay();
@@ -2383,7 +2328,6 @@ export async function createAssignment(input: CreateAssignmentInput): Promise<As
   return data;
 }
 
-// ── Review & grade (T5) ────────────────────────────────────────────────────────
 export async function getSubmissions(assignmentId?: string): Promise<Submission[]> {
   if (USE_MOCK) {
     await delay();
@@ -2421,7 +2365,6 @@ export async function gradeSubmission(input: GradeInput): Promise<Submission> {
   return data;
 }
 
-// ── Earnings & payouts (T7) ────────────────────────────────────────────────────
 export async function getTutorEarnings(): Promise<TutorEarnings> {
   if (USE_MOCK) { await delay(); return tutorEarnings; }
   const { data } = await api.get<TutorEarnings>(`${B}/tutor/earnings`);
@@ -2471,7 +2414,6 @@ export async function requestPayout(amountKobo: number, methodId?: string): Prom
   return data;
 }
 
-// ── School admin (lite) (T8) ───────────────────────────────────────────────────
 export async function getMySchools(): Promise<ManagedSchool[]> {
   if (USE_MOCK) { await delay(); return managedSchools; }
   const { data } = await api.get<ManagedSchool[]>(`${B}/schools/mine`);
@@ -2489,14 +2431,12 @@ export async function getSchoolOverview(schoolId: string): Promise<SchoolOvervie
   return data;
 }
 
-// ── ECCE / Little Learners (E1, E2) ────────────────────────────────────────────
 /** ECCE home is mock-only (no backend endpoint required for the play surface). */
 export async function getEcceHome(): Promise<EcceHome> {
   await delay();
   return ecceHome;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
 function setsEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
   const bs = new Set(b);

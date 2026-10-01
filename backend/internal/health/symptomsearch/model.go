@@ -1,6 +1,5 @@
 // Package symptomsearch implements the Pharmacy Symptom-Based Medication Search
 // addon (docs/health/Pharmacy_Symptom_Search_Addon_PRD.md).
-//
 // It is symptom-guided product DISCOVERY with pharmacist-in-the-loop gating —
 // NOT diagnosis and NOT prescribing. Resolution pipeline:
 //
@@ -23,8 +22,6 @@
 package symptomsearch
 
 import "time"
-
-// ─── Triage tiers ────────────────────────────────────────────────────────────
 
 // Tier is the triage tier every resolution lands in (exactly one).
 // T1 self-care · T2 pharmacist-guided · T3 consult required · T4 emergency.
@@ -59,8 +56,6 @@ func maxTier(a, b Tier) Tier {
 	return a
 }
 
-// ─── Refiners ────────────────────────────────────────────────────────────────
-
 // Cohort refiners. who: rules only fire when the cohort is EXPLICITLY selected.
 const (
 	CohortAdult        = "ADULT"
@@ -88,8 +83,6 @@ var durationDaysByBucket = map[string]int{
 // ValidDurations is the closed duration refiner vocabulary.
 var ValidDurations = map[string]bool{"TODAY": true, "D2_3": true, "GT_3D": true}
 
-// ─── Taxonomy statuses / enums (TEXT+CHECK in the schema) ────────────────────
-
 const (
 	StatusAISuggested = "AI_SUGGESTED"
 	StatusApproved    = "APPROVED"
@@ -115,8 +108,6 @@ const (
 
 // validLanguages mirrors the symptom_terms language CHECK.
 var validLanguages = map[string]bool{"en": true, "pcm": true, "ha": true, "yo": true, "ig": true}
-
-// ─── Taxonomy rows (mirror the migration tables) ─────────────────────────────
 
 // Concept is a canonical clinical concept (symptom_concepts).
 type Concept struct {
@@ -209,8 +200,6 @@ type Sku struct {
 	MaxQtyPerWindow    *int
 }
 
-// ─── API DTOs (contracts/openapi.yaml shapes) ────────────────────────────────
-
 // SymptomSearchResult is the POST /pharmacy/symptom-search response body
 // (components/schemas/SymptomSearchResult).
 type SymptomSearchResult struct {
@@ -283,8 +272,6 @@ type PharmacySkuOption struct {
 	MaxQtyPerWindow    *int   `json:"max_qty_per_window"`
 }
 
-// ─── Review-case state machine (pharmacy_review_cases) ───────────────────────
-
 // ReviewState is the gated review state machine (PRD §6):
 //
 //	SUBMITTED → AUTO_CLEARED (T1) | PHARMACIST_REVIEW (T2/POM)
@@ -342,8 +329,6 @@ type PharmacyReviewCase struct {
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
-
-// ─── NDPR-sensitive search event (symptom_search_events) ─────────────────────
 
 // SearchEvent is one aggregate-safe query-log row. It carries the normalised
 // terms + refiners (sensitive health data — service_role-only table, excluded

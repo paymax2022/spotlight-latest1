@@ -43,9 +43,7 @@ beforeEach(() => {
   vi.mocked(incrementVoteTotals).mockResolvedValue(undefined as any);
 });
 
-// ---------------------------------------------------------------------------
 // executeVoteReversal
-// ---------------------------------------------------------------------------
 
 describe('executeVoteReversal', () => {
   it('throws a 404 ApiError when the vote does not exist', async () => {
@@ -143,9 +141,7 @@ describe('executeVoteReversal', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // executeVoteAdjustment
-// ---------------------------------------------------------------------------
 
 describe('executeVoteAdjustment', () => {
   it('add: increments totals by exactly voteQuantity and reports the real before/after totals', async () => {
@@ -184,9 +180,7 @@ describe('executeVoteAdjustment', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // executeResultsPublish
-// ---------------------------------------------------------------------------
 
 function makePublishSupabase(opts: {
   round?: any;

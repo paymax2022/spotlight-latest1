@@ -24,7 +24,6 @@ const OCCUPANCY_OPTIONS: OccupancyStatus[] = ['vacant', 'occupied', 'reserved'];
 // elsewhere). listResidents()'s live payload is `{id, user_id, unit, role,
 // banned, deleted, created_at}` — AdminResident.id is the estate_residents ROW
 // id, not the user id — so an option keyed on r.id would assign the wrong
-// value. Read the real user id defensively; the mock fixture has no separate
 // user_id field and uses its own `id` consistently as the user reference, so
 // falling back to r.id there is correct.
 function residentUserId(r: AdminResident): string {

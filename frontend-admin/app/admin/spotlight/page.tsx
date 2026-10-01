@@ -49,7 +49,6 @@ export default function SpotlightAdminPage() {
   }
   useEffect(() => { load(); }, []);
 
-  // ── Videos ────────────────────────────────────────────────────────────────
   function editVideo(v: FinanceVideo) {
     setEditingVideoId(v.id);
     setVideoForm({ id: v.id, title: v.title, creator: v.creator, thumbnailColor: v.thumbnailColor, durationMins: v.durationMins, topic: v.topic, sortOrder: 0, published: true });
@@ -85,7 +84,6 @@ export default function SpotlightAdminPage() {
     finally { setBusy(false); }
   }
 
-  // ── Challenges ────────────────────────────────────────────────────────────
   // Reward is authored in ₦ in the form and converted to whole kobo (integer
   // minor units) at submit time — never floats, never strings for math
   // (Iron Rule: money handling). Server DTO field is rewardKobo (int64).
@@ -129,7 +127,6 @@ export default function SpotlightAdminPage() {
     finally { setBusy(false); }
   }
 
-  // ── Campaigns ─────────────────────────────────────────────────────────────
   function editCampaign(c: Campaign) {
     setEditingCampaignId(c.id);
     setCampaignForm({ id: c.id, title: c.title, description: c.description, iconColor: c.iconColor, cta: c.cta, sortOrder: 0, published: true });

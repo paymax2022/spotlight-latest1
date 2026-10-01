@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // Sentinel errors map to HTTP statuses in the handler.
@@ -47,8 +49,6 @@ func NewService(db *pgxpool.Pool) *Service {
 // can submit or be approved for that merchant role. Passing nil leaves it disabled.
 func (s *Service) SetBusinessGate(g BusinessGate) { s.businessGate = g }
 
-// ─── Catalogue reads ─────────────────────────────────────────────────────────
-
 func (s *Service) ListOpenModules(ctx context.Context) ([]Module, error) {
 	return s.repo.ListOpenModules(ctx)
 }
@@ -64,8 +64,6 @@ func (s *Service) GetMerchantType(ctx context.Context, id string) (*MerchantType
 func (s *Service) GetFormSchema(ctx context.Context, id string) (*FormSchema, error) {
 	return s.repo.GetFormSchema(ctx, id)
 }
-
-// ─── Application lifecycle ───────────────────────────────────────────────────
 
 // CreateApplication starts a DRAFT, blocking a duplicate active app/profile for the
 // same merchant type. The merchant type must be open.
@@ -217,8 +215,6 @@ func (s *Service) GetApplication(ctx context.Context, userID, id string, isRevie
 	return app, nil
 }
 
-// ─── Capabilities ────────────────────────────────────────────────────────────
-
 func (s *Service) Capabilities(ctx context.Context, userID, displayName string, kycTier int) (*Capabilities, error) {
 	merchants, err := s.repo.ListMerchantProfiles(ctx, userID)
 	if err != nil {
@@ -243,8 +239,6 @@ func (s *Service) Capabilities(ctx context.Context, userID, displayName string, 
 		ActiveApplications: apps,
 	}, nil
 }
-
-// ─── Admin review ────────────────────────────────────────────────────────────
 
 func (s *Service) ReviewQueue(ctx context.Context, moduleID, typeID, status string, maxAgeHours int) ([]Application, error) {
 	apps, err := s.repo.ReviewQueue(ctx, moduleID, typeID, status, maxAgeHours)
@@ -361,8 +355,6 @@ func (s *Service) Escalate(ctx context.Context, reviewerID, id, note string) (*A
 	return app, nil
 }
 
-// ─── Admin config ────────────────────────────────────────────────────────────
-
 func (s *Service) CreateModule(ctx context.Context, req CreateModuleRequest) error {
 	return s.repo.InsertModule(ctx, req)
 }
@@ -411,5 +403,10 @@ func notifyApproved(userID, merchantTypeName string) {
 }
 
 func isUniqueViolation(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "SQLSTATE 23505")
+	if err == nil {
+		return false
+	}
+	return dbutil.IsUniqueViolation(err) || strings.Contains(err.Error(), "23505")
 }
+
+func nullUUID(s string) any { return dbutil.NullUUID(s) }

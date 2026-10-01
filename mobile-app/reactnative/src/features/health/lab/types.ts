@@ -1,7 +1,5 @@
-// ── Paymax Health — Laboratory types (Phase 2) ───────────────────────────────
 // Self-contained domain types for the Lab vertical. Mirrors the pharmacy feature
 // lib structure and reuses shared health primitives where it makes sense.
-//
 // IRON RULES (HEALTH-BUILD):
 //   · kobo only — every monetary amount is an integer in minor units.
 //   · HL-2 credential-gated — labs/scientists discoverable only when verified (MLSCN).
@@ -13,7 +11,6 @@
 
 import type { ProviderCredential } from '../types';
 
-// ── Catalog: tests & packages ────────────────────────────────────────────────
 export type SampleType = 'blood' | 'urine' | 'stool' | 'swab' | 'saliva';
 export type TestCategory =
   | 'haematology'
@@ -62,7 +59,6 @@ export interface CatalogQuery {
   category?: TestCategory;
 }
 
-// ── Labs & phlebotomists (HL-2 credential-gated) ─────────────────────────────
 export interface Lab {
   id: string;
   name: string;
@@ -93,7 +89,6 @@ export interface Phlebotomist {
   vehicle: string;
 }
 
-// ── Lab order state machine ──────────────────────────────────────────────────
 // CREATED → SCHEDULED → SAMPLE_COLLECTED → IN_TRANSIT → ACCESSIONED →
 // RESULT_READY → (critical) ESCALATED → RELEASED.  (CANCELLED is terminal.)
 export type LabOrderStatus =
@@ -199,7 +194,6 @@ export interface ResultConsent {
   acknowledgedAt?: string;
 }
 
-// ── Reviews ──────────────────────────────────────────────────────────────────
 export interface LabReview {
   id: string;
   author: string;
@@ -215,7 +209,6 @@ export interface SubmitReviewInput {
   body: string;
 }
 
-// ── Inputs ───────────────────────────────────────────────────────────────────
 export interface CreateOrderInput {
   labId: string;
   collectionMode: CollectionMode;
@@ -231,7 +224,6 @@ export interface ShareResultInput {
   scopeNote?: string;
 }
 
-// ── Provider / lab-side ──────────────────────────────────────────────────────
 export type ProviderOnboardingStatus =
   | 'draft'
   | 'submitted'
@@ -325,7 +317,6 @@ export interface ProviderEarnings {
   payouts: { id: string; amountKobo: number; at: string; status: 'paid' | 'processing' }[];
 }
 
-// ── Phlebotomist-side ────────────────────────────────────────────────────────
 export interface CollectionAssignment {
   orderId: string;
   patientName: string;

@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -51,10 +52,8 @@ func uid(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
-	return c.GetString("user_id")
+	return ginutil.UserID(c)
 }
-
-// --- member ---
 
 func (h *Handler) ActiveDisclosure(c *gin.Context) {
 	d, err := h.svc.ActiveDisclosure(c.Request.Context(), c.Param("slug"))
@@ -102,8 +101,6 @@ func (h *Handler) RecordConsent(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"consent": cons})
 }
 
-// --- admin: disclosures ---
-
 func (h *Handler) ListDisclosures(c *gin.Context) {
 	list, err := h.svc.ListDisclosures(c.Request.Context(), c.Query("slug"))
 	if err != nil {
@@ -126,8 +123,6 @@ func (h *Handler) PublishDisclosure(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, gin.H{"disclosure": d})
 }
-
-// --- admin: AML ---
 
 func (h *Handler) ListAML(c *gin.Context) {
 	list, err := h.svc.ListAML(c.Request.Context(), c.Query("status"))
@@ -168,8 +163,6 @@ func (h *Handler) SetAMLStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// --- admin: consent / data management ---
-
 func (h *Handler) UserConsents(c *gin.Context) {
 	list, err := h.svc.UserConsents(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -178,8 +171,6 @@ func (h *Handler) UserConsents(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"consents": list})
 }
-
-// --- admin: policy ---
 
 func (h *Handler) GetPolicy(c *gin.Context) {
 	p, err := h.svc.GetPolicy(c.Request.Context())
@@ -204,8 +195,6 @@ func (h *Handler) UpdatePolicy(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"policy": p})
 }
 
-// --- admin: earnings-claim review ---
-
 func (h *Handler) ClaimReview(c *gin.Context) {
 	list, err := h.svc.ClaimReview(c.Request.Context(), c.Query("status"))
 	if err != nil {
@@ -214,8 +203,6 @@ func (h *Handler) ClaimReview(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"claims": list})
 }
-
-// --- admin: regulatory export ---
 
 func (h *Handler) RegulatoryExport(c *gin.Context) {
 	rows, err := h.svc.RegulatoryExport(c.Request.Context(), c.Query("since"), c.Query("until"))

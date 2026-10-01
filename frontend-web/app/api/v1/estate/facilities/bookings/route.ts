@@ -35,7 +35,6 @@ export async function GET(request: Request) {
 
 // POST /api/v1/estate/facilities/bookings — reserve a facility.
 // Money note: this records a *reservation* with the fee captured in kobo. No
-// balance is moved here; settlement runs through the dues/payments money-path
 // (double-entry ledger + audit). Idempotency-Key dedupes accidental re-submits.
 export async function POST(request: Request) {
   try {

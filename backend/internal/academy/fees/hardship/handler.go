@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -28,10 +29,9 @@ type Handler struct {
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated user (RequireAuthContext sets c.Set("user_id", …)).
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -39,7 +39,7 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -113,8 +113,6 @@ func RegisterFeesHardship(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rb
 	return h
 }
 
-// ── Member handler (guardian submission — SF-9: only ever creates `pending`) ──────
-
 func (h *Handler) Submit(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -141,8 +139,6 @@ func (h *Handler) Get(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
-
-// ── Admin handlers (RBAC academy.fees.hardship.review — HUMAN review, SF-9) ───────
 
 func (h *Handler) Approve(c *gin.Context) {
 	u, ok := h.requireUser(c)

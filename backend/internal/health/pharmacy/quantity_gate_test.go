@@ -91,8 +91,6 @@ func TestCheckQuantityCaps_InfraErrorFailsClosed(t *testing.T) {
 	}
 }
 
-// ─── HTTP 422 shape (httptest + gin over the CreateOrder error mapping) ──────
-
 // The route body exercises the exact production path from the gate seam to the
 // wire: Service.checkQuantityCaps → failCreateOrder — the same pair the
 // CreateOrder handler drives (the full handler needs a live pool for the

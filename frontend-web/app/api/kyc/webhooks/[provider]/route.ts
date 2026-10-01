@@ -3,10 +3,8 @@ import { handleApiError } from '@/src/lib/api/responses';
 const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 
 // Proxy: /api/kyc/webhooks/<provider> → Go /api/kyc/webhooks/<provider>.
-// KYC provider async callbacks (dojah|smileid|youverify). These carry NO user
 // session — they are authenticated by a per-provider request signature that the
 // Go backend re-verifies. Do NOT call requireRequestUser here.
-//
 // We forward directly (not via proxyToGoBackend) because signature verification
 // must see BOTH the exact raw body AND the provider signature headers:
 //   dojah    → X-Dojah-Signature

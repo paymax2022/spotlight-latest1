@@ -2,14 +2,18 @@ package spotlightwealth
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/finance/ledger"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"spotlight/backend/internal/finance/ledger"
 )
 
 // Auditor is the immutable-audit sink (nil-safe), matching the finance modules.
@@ -22,7 +26,6 @@ type Auditor interface {
 // server-driven config seeded by migration. The reward wallet is a per-user
 // append-only ledger of learning credits (spotlight_reward_ledger): its balance
 // is SUM(entries), never a mutated column (NL-8).
-//
 // A challenge-completion reward is a real money move: it is REDISTRIBUTED from
 // the paymax_revenue standing account into the member's main wallet via the
 // finance double-entry ledger under an Idempotency-Key (never minted; NL-1/NL-9)
@@ -36,8 +39,6 @@ type Service struct {
 func NewService(db *pgxpool.Pool, led *ledger.Service, audit Auditor) *Service {
 	return &Service{db: db, led: led, audit: audit}
 }
-
-// ───────────────────────── Videos ─────────────────────────
 
 // ListVideos returns creator-education videos, optionally filtered by topic.
 func (s *Service) ListVideos(ctx context.Context, topic string) ([]FinanceVideo, error) {
@@ -66,8 +67,6 @@ func (s *Service) ListVideos(ctx context.Context, topic string) ([]FinanceVideo,
 	}
 	return vids, rows.Err()
 }
-
-// ───────────────────────── Challenges ─────────────────────────
 
 // ListChallenges returns active challenges with the caller's joined state.
 func (s *Service) ListChallenges(ctx context.Context, userID string) ([]Challenge, error) {
@@ -200,8 +199,6 @@ func (s *Service) CompleteChallenge(ctx context.Context, userID, id, idemKey str
 	return s.RewardWallet(ctx, userID)
 }
 
-// ───────────────────────── Leaderboard ─────────────────────────
-
 // Leaderboard returns the top learners ranked by LEARNING points (never profit).
 // Points are aggregated from spotlight_learning_points; the caller's own row is
 // always included and labelled 'You'.
@@ -230,8 +227,6 @@ func (s *Service) Leaderboard(ctx context.Context, userID string) ([]Leaderboard
 	}
 	return out, rows.Err()
 }
-
-// ───────────────────────── Reward wallet ─────────────────────────
 
 // RewardWallet returns the caller's learning-reward credit balance (derived,
 // NL-8) plus the newest-first history of credits/redemptions.
@@ -270,8 +265,6 @@ func (s *Service) RewardWallet(ctx context.Context, userID string) (*RewardWalle
 	return &RewardWallet{Balance: koboToMoney(bal, DefaultCurrency), History: hist}, nil
 }
 
-// ───────────────────────── Campaigns ─────────────────────────
-
 // ListCampaigns returns published education/referral programmes.
 func (s *Service) ListCampaigns(ctx context.Context) ([]Campaign, error) {
 	rows, err := s.db.Query(ctx, `SELECT id, title, description, icon_color, cta
@@ -304,8 +297,6 @@ func (s *Service) GetCampaign(ctx context.Context, id string) (*Campaign, error)
 	}
 	return &c, nil
 }
-
-// ───────────────────────── helpers ─────────────────────────
 
 func scanChallenge(rows pgx.Rows) (Challenge, error) {
 	var c Challenge
@@ -340,4 +331,261 @@ func (s *Service) log(actor, action, resType, resID string, oldV, newV map[strin
 		return
 	}
 	s.audit.LogAction(actor, "", action, "spotlightwealth", resType, resID, oldV, newV, "", "", "info")
+}
+
+// RegisterSpotlightwealth mounts the Spotlight Wealth member routes on the
+// provided group. The caller passes a group already scoped to /spotlight and
+// already carrying the auth middleware (user_id mirrored onto the gin context),
+// matching the mobile base path /api/v1/spotlight/*.
+//
+//	GET  /videos?topic=              — creator-education videos
+//	GET  /challenges                 — learn-and-earn challenges (+ joined state)
+//	GET  /challenges/:id             — one challenge
+//	POST /challenges/:id/join        — join a challenge
+//	POST /challenges/:id/complete    — complete a challenge → wallet credit (Idempotency-Key)
+//	GET  /leaderboard                — LEARNING-points leaderboard (never profit)
+//	GET  /reward-wallet              — reward credit balance + history
+//	GET  /campaigns                  — education/referral programmes
+//	GET  /campaigns/:id              — one campaign
+func RegisterSpotlightwealth(g *gin.RouterGroup, h *Handler) {
+	g.GET("/videos", h.GetVideos)
+	g.GET("/challenges", h.GetChallenges)
+	g.GET("/challenges/:id", h.GetChallenge)
+	g.POST("/challenges/:id/join", h.JoinChallenge)
+	g.POST("/challenges/:id/complete", h.CompleteChallenge)
+	g.GET("/leaderboard", h.GetLeaderboard)
+	g.GET("/reward-wallet", h.GetRewardWallet)
+	g.GET("/campaigns", h.GetCampaigns)
+	g.GET("/campaigns/:id", h.GetCampaign)
+}
+
+// Spotlight Wealth — the education-first Spotlight ⇄ Invest growth surface.
+// Server counterpart of mobile features/spotlightwealth/types/spotlight.types.ts.
+// STRICT RULES (docs/crypto/product.md → Spotlight Integration), enforced here:
+//   • Leaderboards rank LEARNING points (lessons/quizzes) — never profit/gains.
+//   • Challenge rewards are WALLET CREDIT — never a guaranteed investment return.
+//   • Nothing recommends a security or surfaces a celebrity buy-signal.
+// MONEY: internally every reward amount is BIGINT kobo (int64) and moves through
+// the finance double-entry ledger — a completion credit is redistributed from
+// the paymax_revenue standing account into the member's wallet, never minted.
+// The client-facing Money struct is a { amount(major units), currency } display
+// pair (matching the mobile type), converted at the handler boundary only.
+
+// Money is the client-facing display pair. amount is MAJOR units (e.g. Naira),
+// matching the mobile type. Server-side math always uses kobo int64.
+type Money struct {
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
+}
+
+// koboToMoney converts an internal kobo amount to the display Money pair.
+func koboToMoney(kobo int64, currency string) Money {
+	return Money{Amount: float64(kobo) / 100.0, Currency: currency}
+}
+
+// SpotlightTopic tags a video / challenge (drives chip styling client-side).
+type SpotlightTopic string
+
+// ChallengeKind — all education-first (never a trade).
+type ChallengeKind string
+
+// FinanceVideo is a creator-led financial-literacy video (education only).
+type FinanceVideo struct {
+	ID             string         `json:"id"`
+	Title          string         `json:"title"`
+	Creator        string         `json:"creator"`
+	ThumbnailColor string         `json:"thumbnailColor"`
+	DurationMins   int            `json:"durationMins"`
+	Topic          SpotlightTopic `json:"topic"`
+}
+
+// Challenge is a learn-and-earn challenge. reward is credited to the member's
+// WALLET on completion — never a guaranteed return, never framed as profit.
+// `joined` is per-caller (derived from spotlight_challenge_members).
+type Challenge struct {
+	ID          string        `json:"id"`
+	Title       string        `json:"title"`
+	Description string        `json:"description"`
+	Reward      Money         `json:"reward"`
+	EndsAt      string        `json:"endsAt"`
+	Joined      bool          `json:"joined"`
+	Kind        ChallengeKind `json:"kind"`
+}
+
+// LeaderboardEntry — points are LEARNING points, explicitly NOT profit.
+type LeaderboardEntry struct {
+	Rank        int    `json:"rank"`
+	DisplayName string `json:"displayName"`
+	Points      int    `json:"points"`
+}
+
+// RewardWalletEntry is one credit/spend movement in the reward wallet history.
+type RewardWalletEntry struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Amount Money  `json:"amount"` // positive = credit earned, negative = redeemed
+	At     string `json:"at"`
+}
+
+// RewardWallet is the member's learning-reward credit balance + history.
+type RewardWallet struct {
+	Balance Money               `json:"balance"`
+	History []RewardWalletEntry `json:"history"`
+}
+
+// Campaign is a creator/event-led education or referral programme.
+type Campaign struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	IconColor   string `json:"iconColor"`
+	CTA         string `json:"cta"`
+}
+
+// DefaultCurrency for reward credit (matches the mobile DEFAULT_CURRENCY).
+const DefaultCurrency = "NGN"
+
+// Sentinel errors — mapped to HTTP status in the handler.
+var (
+	ErrNotFound       = errors.New("spotlight: not found")
+	ErrForbidden      = errors.New("spotlight: forbidden")
+	ErrBadInput       = errors.New("spotlight: invalid input")
+	ErrAlreadyJoined  = errors.New("spotlight: already joined")
+	ErrChallengeEnded = errors.New("spotlight: challenge has ended")
+)
+
+// Handler exposes the Spotlight Wealth member API. user_id is set on the gin
+// context by the auth middleware (c.GetString("user_id")). Responses are the raw
+// payload (no envelope) to match the mobile api wrapper's
+// unwrap(res.data?.data ?? res.data), mirroring the invest module.
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+var errMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusNotFound, ErrNotFound),
+	httperr.R(http.StatusForbidden, ErrForbidden),
+	httperr.R(http.StatusBadRequest, ErrBadInput),
+	httperr.R(http.StatusConflict, ErrChallengeEnded, ErrAlreadyJoined),
+)
+
+// httpErr writes the mapped status; unknown errors get a generic 500 body so
+// internals never leak to the client.
+func httpErr(c *gin.Context, err error) {
+	if code := errMap.Code(err); code != http.StatusInternalServerError {
+		c.JSON(code, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "something went wrong"})
+}
+
+// GetVideos — GET /videos?topic=
+func (h *Handler) GetVideos(c *gin.Context) {
+	vids, err := h.svc.ListVideos(c.Request.Context(), c.Query("topic"))
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, vids)
+}
+
+// GetChallenges — GET /challenges
+func (h *Handler) GetChallenges(c *gin.Context) {
+	out, err := h.svc.ListChallenges(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// GetChallenge — GET /challenges/:id
+func (h *Handler) GetChallenge(c *gin.Context) {
+	ch, err := h.svc.GetChallenge(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, ch)
+}
+
+// JoinChallenge — POST /challenges/:id/join
+func (h *Handler) JoinChallenge(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	ch, err := h.svc.JoinChallenge(c.Request.Context(), uid, c.Param("id"))
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, ch)
+}
+
+// CompleteChallenge — POST /challenges/:id/complete (money mutation; needs Idempotency-Key)
+func (h *Handler) CompleteChallenge(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	key, ok := ginutil.RequireIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	wallet, err := h.svc.CompleteChallenge(c.Request.Context(), uid, c.Param("id"), key)
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, wallet)
+}
+
+// GetLeaderboard — GET /leaderboard?metric=learning_points
+func (h *Handler) GetLeaderboard(c *gin.Context) {
+	out, err := h.svc.Leaderboard(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// GetRewardWallet — GET /reward-wallet
+func (h *Handler) GetRewardWallet(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	w, err := h.svc.RewardWallet(c.Request.Context(), uid)
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, w)
+}
+
+// GetCampaigns — GET /campaigns
+func (h *Handler) GetCampaigns(c *gin.Context) {
+	out, err := h.svc.ListCampaigns(c.Request.Context())
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// GetCampaign — GET /campaigns/:id
+func (h *Handler) GetCampaign(c *gin.Context) {
+	ch, err := h.svc.GetCampaign(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, ch)
 }

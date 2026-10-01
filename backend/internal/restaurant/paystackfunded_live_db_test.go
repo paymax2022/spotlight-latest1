@@ -1,15 +1,12 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for PlaceOrderPaystackFunded / QuoteOrder
 // (backend/internal/restaurant/service.go), the externally-funded checkout
 // path built for the "pay with Paystack, no KYC needed" feature. Package
 // restaurant (not restaurant_test) to reuse tierlimit_live_db_test.go's
 // fixtures (tierPool, tierGateFixture, seedKYCTier, escrowLegs, escrowLegsPosted,
 // assertNothingWritten).
-//
 // What these tests pin:
-//
 //  1. A Tier-0 (wallet-disabled) customer — refused outright by the WALLET path
 //     (ErrWalletDisabled) — can place an order through the Paystack-funded path.
 //     The tier gate is not merely lenient here, it never runs at all: a customer
@@ -26,7 +23,6 @@ package restaurant
 //  5. The ORIGINAL wallet-funded PlaceOrder path is completely unaffected by this
 //     feature's existence: the same Tier-0 customer, same cart, still refused by
 //     PlaceOrder exactly as before.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

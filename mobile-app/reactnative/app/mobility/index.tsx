@@ -6,11 +6,11 @@ import { goBack } from '@/lib/navigation';
 import { useQuery } from '@tanstack/react-query';
 import * as Icons from 'lucide-react-native';
 import { ArrowLeft, Wallet, ShieldCheck, ChevronRight, Clock, Star, LocateFixed, MapPin, ArrowRight, Plus } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import SectionHeader from '@/components/SectionHeader';
 import BalanceCard from '@/components/BalanceCard';
@@ -28,7 +28,6 @@ import { HomeMenuButton } from '@/components/HomeMenu';
 export default function MobilityHomeScreen() {
   const home = useMobilityHome();
   // Wallet balance is NOT part of the mobility home payload — read it from the
-  // shared wallet feature. Wallet.balance is naira (major units); convert to kobo
   // for formatNaira. undefined-safe so we never render "₦0" from a missing field.
   const wallet = useQuery({ queryKey: ['wallet', 'balance'], queryFn: getWallet, staleTime: 15_000 });
 

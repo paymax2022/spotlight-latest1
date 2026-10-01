@@ -2,16 +2,16 @@ import React, { useState } from 'react';
 import { View, Text, FlatList, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Icons from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SegmentedControl from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';
-import { useAuditLog } from '@/features/association/hooks/useAdmin';
-import { relativeTime } from '@/features/association/utils/associationFormatters';
-import type { AuditAction } from '@/features/association/types/admin.types';
+import { useAuditLog } from '@/features/association/hooks';
+import { relativeTime } from '@/features/association/utils';
+import type { AuditAction } from '@/features/association/types';
 
 const SEGMENTS = [
   { value: 'all', label: 'All' },

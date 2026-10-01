@@ -23,7 +23,6 @@ export async function GET(
     // development, where api.paystack.co cannot reach localhost) never arrive at
     // all. The customer has paid regardless, and the checkout waiting on this
     // endpoint would otherwise poll until it times out.
-    //
     // So a still-pending intent is resolved against Paystack, which is the
     // authority. verifyAndSettleTopup enforces ownership, credits only on a
     // confirmed success for the exact amount, and shares its settlement — and

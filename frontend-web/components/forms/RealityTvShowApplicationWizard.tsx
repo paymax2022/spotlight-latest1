@@ -5,9 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/src/lib/supabase/client';
 import { authFetch, isUnauthorized, redirectToLogin } from '@/src/lib/auth/flow';
 import { NIGERIA_STATES, NIGERIA_CITIES_BY_STATE } from '@/src/features/registration/config';
-import { loadPaystackClient } from '@/src/lib/payments/paystack-client';
-
-// ─── Constants ─────────────────────────────────────────────────────────────
+import { loadPaystackClient } from '@/src/lib/payments';
 
 const TALENT_OPTIONS = ['Singing', 'Acting', 'Dance', 'Comedy', 'Content Creation', 'Public Speaking', 'Rapping', 'Presenting'];
 const EXPERIENCE_LEVELS = ['Beginner', 'Emerging', 'Intermediate', 'Advanced', 'Professional'];
@@ -23,8 +21,6 @@ const STEPS = [
 ];
 
 const REGISTRATION_FEE = 5000;
-
-// ─── Types ──────────────────────────────────────────────────────────────────
 
 interface FormData {
   // Step 1 — About You
@@ -105,8 +101,6 @@ const INITIAL: FormData = {
   compliance_codeOfConductAgreement: false, review_confirmSubmit: false,
 };
 
-// ─── Styles ─────────────────────────────────────────────────────────────────
-
 const c = {
   pageBg: '#F4F6FB',
   white: '#FFFFFF',
@@ -151,8 +145,6 @@ const lbl: React.CSSProperties = {
 const fieldWrap: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 0 };
 const hint: React.CSSProperties = { fontSize: 12.5, color: '#6B7280', marginTop: 5 };
 const errTxt: React.CSSProperties = { fontSize: 12.5, color: c.danger, marginTop: 5, fontWeight: 600 };
-
-// ─── Sub-components ──────────────────────────────────────────────────────────
 
 function Field({ label, required, children, help, error }: {
   label: string; required?: boolean; children: React.ReactNode; help?: string; error?: string;
@@ -301,8 +293,6 @@ function StepProgress({ current }: { current: number }) {
   );
 }
 
-// ─── Validation ──────────────────────────────────────────────────────────────
-
 function validateStep(step: number, f: FormData): Record<string, string> {
   const e: Record<string, string> = {};
   if (step === 1) {
@@ -347,8 +337,6 @@ function validateStep(step: number, f: FormData): Record<string, string> {
   return e;
 }
 
-// ─── Main Component ──────────────────────────────────────────────────────────
-
 export default function RealityTvShowApplicationWizard() {
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
@@ -369,8 +357,6 @@ export default function RealityTvShowApplicationWizard() {
 
   const cities = NIGERIA_CITIES_BY_STATE[form.personal_stateOfResidence] || [];
 
-  // ── Bootstrap ──────────────────────────────────────────────────────────────
-
   useEffect(() => {
     let cancelled = false;
 
@@ -388,7 +374,6 @@ export default function RealityTvShowApplicationWizard() {
         setUserEmail(session.user.email || '');
       }
 
-      // Create or resume draft
       const createRes = await authFetch('/api/registration/applications', {
         method: 'POST',
         body: JSON.stringify({ contestSlug: 'reality-tv-show' }),
@@ -429,8 +414,6 @@ export default function RealityTvShowApplicationWizard() {
     void bootstrap();
     return () => { cancelled = true; };
   }, []);
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
 
   function flatToForm(saved: Record<string, unknown>): Partial<FormData> {
     const get = (k: string) => saved[k];
@@ -533,8 +516,6 @@ export default function RealityTvShowApplicationWizard() {
     }
   }
 
-  // ── Navigation ─────────────────────────────────────────────────────────────
-
   async function next() {
     const errs = validateStep(step, form);
     if (Object.keys(errs).length > 0) {
@@ -553,8 +534,6 @@ export default function RealityTvShowApplicationWizard() {
     setStep((s) => Math.max(s - 1, 1));
     topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
-
-  // ── Submit with Paystack ───────────────────────────────────────────────────
 
   async function handleSubmit() {
     const errs = validateStep(5, form);
@@ -625,8 +604,6 @@ export default function RealityTvShowApplicationWizard() {
       setSubmitting(false);
     }
   }
-
-  // ─── Render ────────────────────────────────────────────────────────────────
 
   const card: React.CSSProperties = {
     background: c.white, borderRadius: 16, padding: '28px 32px',

@@ -1,4 +1,3 @@
-// ── Property Management — React Query hooks ──────────────────────────────────
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
 import { moduleQueryOptions } from '@/lib/moduleAvailability';
@@ -37,7 +36,6 @@ export function useContext() {
     ...moduleQueryOptions(),
   });
 }
-
 
 export function useSwitchContext() {
   const qc = useQueryClient();

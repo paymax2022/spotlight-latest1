@@ -1,13 +1,9 @@
-// ── Crowdfunding — owner self-management gates ───────────────────────────────
-//
 // The owner management screen must never offer an action the server is certain
 // to refuse: a tap that can only ever come back as a 409 is a worse experience
 // than a disabled control that says why. These predicates encode the refusals
 // the API contract states outright (delete needs a campaign that never received
-// funds; a feature request needs an ACTIVE campaign) plus the ones that are
 // structurally impossible (resume a campaign that is not paused, an owner
 // lifting a Trust & Safety freeze).
-//
 // They are deliberately pure and campaign-shaped so the screen and any test can
 // share one definition, and so the reason string that gates a control is the
 // same string the UI renders. Gating is NOT a substitute for handling a server

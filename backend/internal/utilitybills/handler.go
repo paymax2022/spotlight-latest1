@@ -10,9 +10,11 @@ package utilitybills
 import (
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	ptrx "spotlight/backend/go-common/ptr"
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
@@ -28,18 +30,7 @@ type Handler struct {
 // NewHandler builds the utility bills handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-// idemKey reads the Idempotency-Key header. It does NOT reject a missing value —
-// that is the service's job (see the file comment). Accepts the canonical header
-// and the lowercase spelling some HTTP clients emit.
-func idemKey(c *gin.Context) string {
-	if v := c.GetHeader("Idempotency-Key"); v != "" {
-		return v
-	}
-	return c.GetHeader("idempotency-key")
-}
-
 // writeErr maps domain errors onto HTTP status codes.
-//
 // Ordering matters: the most specific sentinels come first, and the catch-all
 // 500 is last. A money-path error that falls through to 500 is a bug in this
 // mapping, not a valid outcome — every sentinel this package defines is listed.
@@ -106,31 +97,6 @@ func writeErr(c *gin.Context, err error) {
 	}
 }
 
-// requireUser resolves the authenticated caller, writing a 401 and returning ""
-// when the auth context is missing.
-func requireUser(c *gin.Context) string {
-	userID := c.GetString("user_id")
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
-		return ""
-	}
-	return userID
-}
-
-func intQuery(c *gin.Context, name string, def int) int {
-	raw := c.Query(name)
-	if raw == "" {
-		return def
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil {
-		return def
-	}
-	return v
-}
-
-// ── Catalogue ────────────────────────────────────────────────────────────────
-
 // ListCategories handles GET /api/finance/utilitybills/categories
 func (h *Handler) ListCategories(c *gin.Context) {
 	cats, err := h.svc.ListCategories(c.Request.Context())
@@ -161,8 +127,6 @@ func (h *Handler) ListProducts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"products": products})
 }
 
-// ── Validate / quote ─────────────────────────────────────────────────────────
-
 type validateBody struct {
 	Category          string            `json:"category"`
 	BillerID          string            `json:"biller_id"`
@@ -173,7 +137,7 @@ type validateBody struct {
 
 // Validate handles POST /api/finance/utilitybills/validate
 func (h *Handler) Validate(c *gin.Context) {
-	if requireUser(c) == "" {
+	if _, ok := ginutil.RequireUser(c); !ok {
 		return
 	}
 	var body validateBody
@@ -203,13 +167,12 @@ type quoteBody struct {
 }
 
 // Quote handles POST /api/finance/utilitybills/quote.
-//
 // The response deliberately omits provider_cost_kobo / gross_profit_kobo /
 // gross_margin_bps. Those are Paymax's margin on the transaction; a member-facing
 // quote has no business disclosing what we pay the provider, and the QuoteResult
 // struct tags them `json:"-"` for the same reason.
 func (h *Handler) Quote(c *gin.Context) {
-	if requireUser(c) == "" {
+	if _, ok := ginutil.RequireUser(c); !ok {
 		return
 	}
 	var body quoteBody
@@ -230,8 +193,6 @@ func (h *Handler) Quote(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"quote": quote})
 }
 
-// ── Pay ──────────────────────────────────────────────────────────────────────
-
 type payBody struct {
 	Category          string         `json:"category"`
 	BillerID          string         `json:"biller_id"`
@@ -243,13 +204,12 @@ type payBody struct {
 }
 
 // Pay handles POST /api/finance/utilitybills/pay.
-//
 // REQUIRES an Idempotency-Key header (rejected by the service). A replay of the
 // same key returns the ORIGINAL transaction with already_processed=true and 200 —
 // never a second debit and never a second provider call.
 func (h *Handler) Pay(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	var body payBody
@@ -265,7 +225,7 @@ func (h *Handler) Pay(c *gin.Context) {
 		AmountKobo:        body.AmountKobo,
 		PaymentSource:     body.PaymentSource,
 		Metadata:          body.Metadata,
-	}, idemKey(c))
+	}, ginutil.IdempotencyKey(c))
 	if err != nil {
 		writeErr(c, err)
 		return
@@ -276,16 +236,14 @@ func (h *Handler) Pay(c *gin.Context) {
 	})
 }
 
-// ── Member reads ─────────────────────────────────────────────────────────────
-
 // ListTransactions handles GET /api/finance/utilitybills/transactions
 func (h *Handler) ListTransactions(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
-	limit := intQuery(c, "limit", 20)
-	offset := intQuery(c, "offset", 0)
+	limit := ptrx.Deref(ginutil.IntParam(c, "limit"), 20)
+	offset := ptrx.Deref(ginutil.IntParam(c, "offset"), 0)
 	txns, err := h.svc.ListUserTransactions(c.Request.Context(), userID, limit, offset)
 	if err != nil {
 		writeErr(c, err)
@@ -296,8 +254,8 @@ func (h *Handler) ListTransactions(c *gin.Context) {
 
 // GetTransaction handles GET /api/finance/utilitybills/transactions/:id
 func (h *Handler) GetTransaction(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	t, err := h.svc.GetUserTransaction(c.Request.Context(), userID, c.Param("id"))
@@ -310,8 +268,8 @@ func (h *Handler) GetTransaction(c *gin.Context) {
 
 // ListTransactionAttempts handles GET /api/finance/utilitybills/transactions/:id/attempts
 func (h *Handler) ListTransactionAttempts(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	// Ownership first: resolving through the user-scoped read means a member
@@ -332,8 +290,8 @@ func (h *Handler) ListTransactionAttempts(c *gin.Context) {
 // the MEMBER-facing "check again" for a pending purchase. Ownership is resolved
 // first; the service method itself is shared with the admin route.
 func (h *Handler) Requery(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	if _, err := h.svc.GetUserTransaction(c.Request.Context(), userID, c.Param("id")); err != nil {
@@ -354,8 +312,8 @@ type disputeBody struct {
 
 // CreateDispute handles POST /api/finance/utilitybills/transactions/:id/dispute
 func (h *Handler) CreateDispute(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	var body disputeBody
@@ -371,12 +329,10 @@ func (h *Handler) CreateDispute(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"dispute": dispute})
 }
 
-// ── Beneficiaries ────────────────────────────────────────────────────────────
-
 // ListBeneficiaries handles GET /api/finance/utilitybills/beneficiaries?category=
 func (h *Handler) ListBeneficiaries(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	list, err := h.svc.ListBeneficiaries(c.Request.Context(), userID, c.Query("category"))
@@ -397,8 +353,8 @@ type beneficiaryBody struct {
 
 // SaveBeneficiary handles POST /api/finance/utilitybills/beneficiaries
 func (h *Handler) SaveBeneficiary(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	var body beneficiaryBody
@@ -417,8 +373,8 @@ func (h *Handler) SaveBeneficiary(c *gin.Context) {
 
 // DeleteBeneficiary handles DELETE /api/finance/utilitybills/beneficiaries/:id
 func (h *Handler) DeleteBeneficiary(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	if err := h.svc.DeleteBeneficiary(c.Request.Context(), userID, c.Param("id")); err != nil {
@@ -428,8 +384,6 @@ func (h *Handler) DeleteBeneficiary(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// ── Admin (RBAC-gated at the route: finance.admin.utilitybills) ──────────────
-//
 // Phase 1 mounts ONLY the money-affecting admin actions. The full 24-route admin
 // surface is Phase 4. These exist now so the Next.js admin routes have something
 // to proxy to in Phase 2, rather than running a second, independent writer

@@ -1,9 +1,7 @@
 // lucide-react-native dropped every brand/social glyph (Facebook, Twitter,
 // Linkedin, Instagram) a while back — trademark logos don't belong in a
 // generic icon set. The exports simply stopped existing, which is why
-// `import { Facebook, Twitter, Linkedin, Instagram } from 'lucide-react-native'`
 // started failing typecheck with no code change on our side.
-//
 // These are the same stroke-style outline glyphs lucide (and Feather Icons,
 // which lucide forked from) used to ship, kept locally so the share sheets
 // don't need a pixel-exact brand logo — just a recognizable outline that

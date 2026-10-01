@@ -115,7 +115,12 @@ func (l triageEmergencyLocator) NearestER(ctx context.Context, lat, lng float64)
 		return "Nearest hospital / ER", "", 0, nil // care still returns ambulance + first-aid
 	}
 	p := places[0]
-	return p.Name, p.Address, haversineMeters(lat, lng, p.Lat, p.Lng), nil
+	const earthR = 6371000.0
+	rad := func(d float64) float64 { return d * math.Pi / 180 }
+	dLat, dLng := rad(p.Lat-lat), rad(p.Lng-lng)
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(rad(lat))*math.Cos(rad(p.Lat))*math.Sin(dLng/2)*math.Sin(dLng/2)
+	dist := earthR * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+	return p.Name, p.Address, dist, nil
 }
 
 // triageNotifier delivers escalation/follow-up notices via the platform queue.
@@ -205,7 +210,6 @@ func formatWAReply(v *core.SessionView) (string, bool, error) {
 }
 
 // resolveUserIDByPhone looks up the Paymax account behind a WhatsApp number.
-//
 // user_profiles.phone is the only place a registered user's real phone number
 // lives: RegisterUser (services/auth_service.go) PATCHes it there after signup.
 // auth.users.phone (GoTrue's own column) and its platform_users mirror are
@@ -223,12 +227,4 @@ func resolveUserIDByPhone(ctx context.Context, pool *pgxpool.Pool, externalID st
 		`SELECT id::text FROM public.user_profiles
 		 WHERE right(regexp_replace(COALESCE(phone,''), '\D', '', 'g'), 10) = $1 LIMIT 1`, nsn).Scan(&userID)
 	return userID
-}
-
-func haversineMeters(lat1, lng1, lat2, lng2 float64) float64 {
-	const R = 6371000.0
-	rad := func(d float64) float64 { return d * math.Pi / 180 }
-	dLat, dLng := rad(lat2-lat1), rad(lng2-lng1)
-	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(rad(lat1))*math.Cos(rad(lat2))*math.Sin(dLng/2)*math.Sin(dLng/2)
-	return R * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 }

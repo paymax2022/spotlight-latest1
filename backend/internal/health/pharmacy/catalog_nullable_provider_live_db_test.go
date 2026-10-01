@@ -1,18 +1,14 @@
 package healthpharmacy_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression: a catalog product with no owning pharmacy must not take
 // the whole catalog down.
-//
 // pharmacy_products.pharmacy_provider_id is a NULLABLE uuid while
 // Product.PharmacyProviderID is a plain string, so pgx failed the scan with
 // "cannot scan NULL into *string" — and because the failure happens per-row
 // inside the loop, ONE unowned product returned 500 for the entire list rather
 // than omitting itself. All six products in the local database were unowned, so
 // the pharmacy catalog was completely unreachable.
-//
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

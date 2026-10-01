@@ -1,11 +1,8 @@
-// ── Admin — Learn Center content management ──────────────────────────────────
 // Wires to the real Go backend: content-authoring mutations live under
 // /api/v1/learn/admin (backend/internal/learn/admin.go, RBAC-gated on
-// "learn.admin.manage"); read-mostly list endpoints (paths / lessons via path
 // detail / glossary) live on the module root /api/v1/learn (backend/internal/
 // learn/handler.go) since admin.go does not duplicate GET /paths list — it
 // only exposes ListPathsAdmin under /admin/paths (includes unpublished).
-//
 // Money: none in this module (Learn Center has no money path).
 
 import { apiV1 } from '@/config/env';
@@ -44,7 +41,6 @@ async function del(path: string): Promise<{ ok: boolean }> {
   return (j?.data ?? j) as { ok: boolean };
 }
 
-// ── Types (mirror backend/internal/learn/model.go + admin.go DTOs exactly) ───
 export type LearnLevel = 'beginner' | 'stock' | 'crypto' | 'wealth';
 export type LessonKind = 'article' | 'video';
 
@@ -133,7 +129,6 @@ export interface AdminGlossaryInput {
   definition: string;
 }
 
-// ── Paths ─────────────────────────────────────────────────────────────────────
 // GET /admin/paths — list every path (incl. unpublished); admin-only listing.
 export async function listPathsAdmin(): Promise<LearnPath[]> {
   return getJson<LearnPath[]>('/paths', 'admin');
@@ -148,7 +143,6 @@ export async function deletePath(id: string): Promise<{ ok: boolean }> {
   return del(`/paths/${id}`);
 }
 
-// ── Lessons ───────────────────────────────────────────────────────────────────
 export async function createLesson(input: AdminLessonInput): Promise<Lesson> {
   return sendJson<Lesson>('POST', '/lessons', input);
 }
@@ -168,7 +162,6 @@ export async function getPathDetail(id: string): Promise<LearnPath> {
   return getJson<LearnPath>(`/paths/${id}`, 'module');
 }
 
-// ── Quizzes (+ questions/options) ────────────────────────────────────────────
 // GET /admin/quizzes/:id returns the quiz WITH the answer key (admin-only view).
 export async function getQuizAdmin(id: string): Promise<Quiz> {
   return getJson<Quiz>(`/quizzes/${id}`, 'admin');
@@ -183,7 +176,6 @@ export async function deleteQuiz(id: string): Promise<{ ok: boolean }> {
   return del(`/quizzes/${id}`);
 }
 
-// ── Glossary ──────────────────────────────────────────────────────────────────
 // POST /admin/glossary — create/update (upsert) a glossary term.
 export async function upsertGlossary(input: AdminGlossaryInput): Promise<GlossaryTerm> {
   return sendJson<GlossaryTerm>('POST', '/glossary', input);

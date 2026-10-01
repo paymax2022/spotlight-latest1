@@ -1,15 +1,14 @@
-// ── Association — Group chat API wrapper (I) ──────────────────────────────────
 // Mock-flagged. Mirrors association.api.ts conventions.
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
 import type {
   ChatThread,
   ChatThreadSummary,
   ChatMessage,
-} from '../types/chat.types';
-import { MOCK_THREADS } from './chat.mock';
+} from '../types';
+import { MOCK_THREADS } from './mocks';
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 

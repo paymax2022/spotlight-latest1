@@ -1,4 +1,3 @@
-// ── Admin — Paymax Creators (Storefront, Tips, Subs, Gated content) control-plane ─
 // Mock by default (mirrors events / savings admin services). Flip with
 // NEXT_PUBLIC_CREATORS_USE_MOCK=false to hit the live Go backend at /api/creators/admin/*.
 // RBAC: creators.admin.* gates wired on the sidebar.
@@ -31,7 +30,6 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CREATORS_USE_MOCK
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_CREATORS_USE_MOCK';
 
-// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/creators/admin')`,
 // which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
 // proxy origin instead), so the regex became a silent no-op and every live call
 // 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
@@ -53,7 +51,6 @@ const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 // re-adds a "/creators" segment on top of that (admin.POST("/creators/:creatorId/
 // approve", ...) etc.) — so real paths are /api/creators/admin/creators/...,
 // not /api/creators/admin/... directly. Functions with a real route throw
-// NOT_IN_FIXTURE_MODE; functions with no reachable route throw NO_BACKEND_YET
 // instead, since flipping the mock flag would not reach a working call either
 // way. See docs/audit/ADMIN_SIMULATED_WRITES.md.
 const NOT_IN_FIXTURE_MODE =
@@ -76,7 +73,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -91,9 +87,7 @@ const isoAhead = (hours: number) => new Date(Date.now() + hours * 3_600_000).toI
 // a screenshot, it should be self-evidently not an audit trail.
 const aud = () => 'fixture-no-audit-record';
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Dashboard
-// ════════════════════════════════════════════════════════════════════════════
 const DASHBOARD: CreatorsDashboard = {
   creators_total: 12_840,
   creators_verified: 8_210,
@@ -139,9 +133,7 @@ export async function getCreatorsDashboard(): Promise<CreatorsDashboard> {
   return getJson<CreatorsDashboard>('/dashboard');
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // B · Verification queue
-// ════════════════════════════════════════════════════════════════════════════
 const VERIFICATIONS: CreatorVerificationItem[] = [
   { id: 'cr_9001', handle_masked: '@NaijaChef•••', legal_name_masked: 'Adaeze O•••', category: 'Food', city: 'Lagos', status: 'submitted', kyc_tier: 'tier2', kyc_verified: true, followers: 24_800, storefront_complete: true, id_docs_present: true, flagged_terms: false, submitted_at: iso(6), created_at: iso(48) },
   { id: 'cr_9002', handle_masked: '@BeatPlug•••', legal_name_masked: 'Tunde A•••', category: 'Music', city: 'Ibadan', status: 'submitted', kyc_tier: 'tier1', kyc_verified: true, followers: 9_200, storefront_complete: false, id_docs_present: true, flagged_terms: false, submitted_at: iso(20), created_at: iso(72) },
@@ -167,7 +159,6 @@ export async function listCreatorVerifications(opts?: { status?: string; q?: str
 }
 export async function decideCreator(id: string, decision: CreatorDecision, note?: string): Promise<CreatorDecisionResult> {
   if (USE_MOCK) throw new Error(`Deciding a creator verification ${NOT_IN_FIXTURE_MODE}`);
-  // backend: only two verbs exist — POST /creators/:creatorId/approve (AdminApprove)
   // and POST /creators/:creatorId/suspend (AdminSuspend), both with NO body (uid
   // comes from auth context). "reject" and "request_changes" have no backend
   // equivalent — Service has no Reject method at all.
@@ -178,9 +169,7 @@ export async function decideCreator(id: string, decision: CreatorDecision, note?
   return sendJson<CreatorDecisionResult>('POST', `/creators/${id}/${verb}`, {});
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Content moderation + age controls (NL-11)
-// ════════════════════════════════════════════════════════════════════════════
 const CONTENT: ContentModItem[] = [
   { id: 'cnt_5521', creator_handle_masked: '@SkitMasterNG•••', kind: 'gated_post', title: 'Behind the scenes (18+)', is_paid: true, price_kobo: 2_000_00, age_rating: 'mature_18', status: 'flagged', auto_flags: ['minor_audience_risk', 'suggestive_thumbnail'], reports_count: 4, submitted_at: iso(1), created_at: iso(2) },
   { id: 'cnt_5530', creator_handle_masked: '@NaijaChef•••', kind: 'video', title: 'Jollof rice masterclass', is_paid: false, price_kobo: 0, age_rating: 'all', status: 'pending', auto_flags: [], reports_count: 0, submitted_at: iso(5), created_at: iso(6) },
@@ -208,11 +197,9 @@ export async function listContentModeration(opts?: { status?: string; age_rating
 }
 export async function moderateContent(id: string, action: ContentModAction, age_rating?: AgeRating, note?: string): Promise<ContentModResult> {
   if (USE_MOCK) throw new Error(`Moderating content ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /creators/content/:contentId/moderate (AdminModerate), body
   // {decision: "APPROVED"|"REJECTED", reason} — the OLD /content/:id/moderate
   // path, {action, age_rating, note} fields, and lowercase action values all
   // matched nothing. "flag" has no backend equivalent (ModerationState is only
-  // PENDING/APPROVED/REJECTED); age_rating is not accepted by this endpoint at
   // all — it is never persisted server-side regardless of what's sent.
   if (action === 'flag') throw new Error(`Flagging content ${NO_BACKEND_YET}`);
   return sendJson<ContentModResult>('POST', `/creators/content/${id}/moderate`, {
@@ -221,9 +208,7 @@ export async function moderateContent(id: string, action: ContentModAction, age_
   });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // D · Subscription billing + failed-renewal
-// ════════════════════════════════════════════════════════════════════════════
 const BILLING: CreatorBillingItem[] = [
   { id: 'sub_2207', subscriber_masked: 'Emeka•••', creator_handle_masked: '@TiwaVibes•••', tier_name: 'Gold', amount_kobo: 3_000_00, cycle: 'monthly', status: 'failed', retries: 2, max_retries: 4, next_attempt_at: isoAhead(24), last_failure_reason: 'card_declined: insufficient funds', started_at: dateStr(120), created_at: iso(3) },
   { id: 'sub_2210', subscriber_masked: 'Funke•••', creator_handle_masked: '@LagosFoodie•••', tier_name: 'Silver', amount_kobo: 1_500_00, cycle: 'monthly', status: 'past_due', retries: 1, max_retries: 4, next_attempt_at: isoAhead(6), last_failure_reason: 'card_declined: do_not_honour', started_at: dateStr(90), created_at: iso(12) },
@@ -247,9 +232,7 @@ export async function listCreatorBilling(opts?: { status?: string; q?: string })
   return getJson<CreatorBillingItem[]>(`/billing${qs.toString() ? `?${qs}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // E · Payout queue (KYC-gated, NL-10)
-// ════════════════════════════════════════════════════════════════════════════
 const PAYOUTS: CreatorPayoutItem[] = [
   { id: 'po_3301', creator_handle_masked: '@TiwaVibes•••', kyc_tier: 'tier2', kyc_verified: true, gross_earnings_kobo: 18_420_000_00, fees_kobo: 1_842_000_00, net_payable_kobo: 16_578_000_00, status: 'pending', bank_masked: 'GTB ••• 4821', requested_at: iso(4), created_at: iso(4) },
   { id: 'po_3310', creator_handle_masked: '@QuickCashKing•••', kyc_tier: 'tier0', kyc_verified: false, gross_earnings_kobo: 2_400_000_00, fees_kobo: 240_000_00, net_payable_kobo: 2_160_000_00, status: 'kyc_hold', bank_masked: 'OPay ••• 0091', requested_at: iso(8), created_at: iso(8) },
@@ -283,9 +266,7 @@ export async function decidePayout(id: string, decision: PayoutDecision, note?: 
   return sendJson<CreatorPayoutResult>('POST', `/payouts/${id}/decide`, { decision, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // F · Fee config
-// ════════════════════════════════════════════════════════════════════════════
 const FEE_CONFIG: CreatorFeeConfig = {
   generated_at: iso(0.2),
   tip_fee_bps: 100,
@@ -309,9 +290,7 @@ export async function updateFeeConfig(patch: Partial<CreatorFeeConfig>, note?: s
   return sendJson<CreatorFeeConfigResult>('PATCH', '/fees', { ...patch, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // G · Abuse / self-tip fraud
-// ════════════════════════════════════════════════════════════════════════════
 const FRAUD: CreatorFraudSignal[] = [
   { id: 'fr_2188', creator_handle_masked: '@SkitMasterNG•••', kind: 'self_tip', subject_masked: 'wlt linked•••', detail: 'Creator tipping own jar from a freshly funded linked wallet — 18 tips in 4 minutes', severity: 'high', amount_kobo: 1_800_000_00, status: 'open', created_at: iso(2) },
   { id: 'fr_2190', creator_handle_masked: '@QuickCashKing•••', kind: 'chargeback_ring', subject_masked: '6 subscribers•••', detail: 'Cluster of subs paid then charged back within 48h — likely card-testing ring', severity: 'critical', amount_kobo: 3_000_000_00, status: 'open', created_at: iso(5) },

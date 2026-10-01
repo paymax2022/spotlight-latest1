@@ -2,13 +2,13 @@ package business
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/timeutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/provider"
@@ -84,8 +84,6 @@ func NewService(d Deps) *Service {
 // totalFeeKobo is the full amount charged to the user: CAC registration fee (a
 // pass-through to the registry) plus the Paymax platform processing fee.
 func (s *Service) totalFeeKobo() int64 { return s.feeKobo + s.platformFeeKobo }
-
-// ── Register-new flow ─────────────────────────────────────────────────────────
 
 // StartRegisterNew opens a new register_new draft with the supplied details +
 // proprietors. Proprietor raw BVN/NIN are NEVER persisted — only a masked tail.
@@ -316,7 +314,7 @@ func (s *Service) InitiateRegistrationFeePaystack(ctx context.Context, userID, b
 	if prof.Status != StatusNameReserved {
 		return nil, ErrConflict
 	}
-	ref := "cacfee_" + prof.ID + "_" + randToken()
+	ref := "cacfee_" + prof.ID + "_" + cryptox.RandHex(6)
 	resp, err := s.payment.InitializePayment(ctx, provider.InitializePaymentRequest{
 		Email:          email,
 		AmountKobo:     s.totalFeeKobo(), // CAC fee + platform fee
@@ -396,6 +394,7 @@ func (s *Service) VerifyRegistrationFeePaystack(ctx context.Context, userID, ref
 // registration fee. Two legs, both DR the settlement (gateway-held funds) account:
 //   - platform fee → CR paymax_revenue (income recognised)
 //   - CAC fee      → CR provider_clearing (a pass-through payable to the registry)
+//
 // Best-effort and idempotent (unique per-leg idempotency keys); errors are logged via
 // the ledger's own duplicate-tolerant path and never surfaced to the caller.
 func (s *Service) recordPaystackFeeLedger(ctx context.Context, reference string) {
@@ -424,15 +423,6 @@ func (s *Service) recordPaystackFeeLedger(ctx context.Context, reference string)
 		DebitAccountID: settle.ID, CreditAccountID: clearing.ID,
 		Description: "CAC registration fee pass-through (Paystack)",
 	})
-}
-
-// randToken returns a short random hex token for uniqueifying a payment reference.
-func randToken() string {
-	b := make([]byte, 6)
-	if _, err := rand.Read(b); err != nil {
-		return hex.EncodeToString([]byte(time.Now().Format("150405.000")))
-	}
-	return hex.EncodeToString(b)
 }
 
 // SubmitRegistration submits the reserved name + details to CAC (name_reserved →
@@ -537,8 +527,6 @@ func (s *Service) RefreshStatus(ctx context.Context, userID, businessID string) 
 	return s.repo.GetProfile(ctx, prof.ID)
 }
 
-// ── Verify-existing flow ──────────────────────────────────────────────────────
-
 // StartVerifyExisting looks up + verifies an EXISTING registered business by its
 // RC/BN number (draft → submitted → verified | rejected).
 func (s *Service) StartVerifyExisting(ctx context.Context, userID string, req VerifyExistingRequest) (*BusinessProfile, error) {
@@ -574,7 +562,7 @@ func (s *Service) StartVerifyExisting(ctx context.Context, userID string, req Ve
 	if ver.Type != "" {
 		setters["entity_type"] = normalizeEntityType(ver.Type)
 	}
-	if regAt := parseDate(ver.RegisteredAt); regAt != nil {
+	if regAt := timeutil.ParseTimePtr(ver.RegisteredAt); regAt != nil {
 		setters["registered_at"] = *regAt
 	}
 	if err := s.repo.transition(ctx, id, StatusVerified, []Status{StatusSubmitted}, userID, "verify.verified",
@@ -587,8 +575,6 @@ func (s *Service) StartVerifyExisting(ctx context.Context, userID string, req Ve
 	}
 	return s.repo.GetProfile(ctx, id)
 }
-
-// ── Reads ─────────────────────────────────────────────────────────────────────
 
 func (s *Service) GetMyBusiness(ctx context.Context, userID, id string) (*BusinessProfile, error) {
 	return s.ownedProfile(ctx, userID, id)
@@ -642,8 +628,6 @@ func (s *Service) HasVerifiedBusiness(ctx context.Context, userID string) bool {
 	}
 	return ok
 }
-
-// ── Admin ─────────────────────────────────────────────────────────────────────
 
 func (s *Service) AdminList(ctx context.Context, status, mode string, limit int) ([]BusinessProfile, error) {
 	list, err := s.repo.AdminList(ctx, status, mode, limit)
@@ -699,8 +683,6 @@ func (s *Service) AdminReject(ctx context.Context, adminID, id, reason string) (
 	return s.repo.GetProfile(ctx, id)
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
 func (s *Service) ownedProfile(ctx context.Context, userID, id string) (*BusinessProfile, error) {
 	prof, err := s.repo.GetProfile(ctx, id)
 	if err != nil {
@@ -743,18 +725,6 @@ func normalizeEntityType(t string) string {
 	}
 }
 
-func parseDate(s string) *time.Time {
-	if strings.TrimSpace(s) == "" {
-		return nil
-	}
-	for _, layout := range []string{"2006-01-02", time.RFC3339} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return &t
-		}
-	}
-	return nil
-}
-
 func metaString(m map[string]any, key string) string {
 	if m == nil {
 		return ""
@@ -779,9 +749,5 @@ func mergeMetaJSON(existing map[string]any, key string, val any) map[string]any 
 // mustJSON marshals v to []byte for a jsonb column. On error it returns an empty
 // JSON object so a metadata encode failure never aborts a transition.
 func mustJSON(v any) []byte {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return []byte("{}")
-	}
-	return b
+	return jsonx.MarshalOr(v, []byte("{}"))
 }

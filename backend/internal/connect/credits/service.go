@@ -1,6 +1,5 @@
 // Package connectcredits implements consumable Connect credits (super-likes,
 // InMail, boost counts) with money-grade integrity — test-plan row PAY-008.
-//
 // Invariants:
 //   - Balance is never negative (DB CHECK + guarded decrement).
 //   - No double-spend: a consume is applied AT MOST ONCE per idempotency key, and
@@ -15,7 +14,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -144,4 +146,26 @@ func (s *Service) Consume(ctx context.Context, userID, creditType, idempotencyKe
 		return ErrInsufficientCredits
 	}
 	return tx.Commit(ctx)
+}
+
+// Handler exposes the member-facing credit balance read. Consumption is invoked
+// server-side by the features that spend credits, never by the client directly.
+type Handler struct{ svc *Service }
+
+// NewHandler wires the credits handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Balances — GET /api/v1/connect/credits (member). Returns the caller's balances.
+func (h *Handler) Balances(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	bals, err := h.svc.Balances(c.Request.Context(), uid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not read credits"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": bals})
 }

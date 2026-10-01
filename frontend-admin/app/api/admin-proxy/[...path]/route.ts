@@ -88,13 +88,10 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
   if (contentType) headers['Content-Type'] = contentType;
 
   // Idempotency-Key MUST survive the hop.
-  //
   // This proxy builds its outbound headers from an allowlist, and this one was
   // not on it — so every idempotent admin write was arriving at the backend
   // with no key at all, no matter how carefully the calling service generated
   // one. Handlers that merely *prefer* a key (offline-payment decision,
-  // application decision) silently lost their replay protection; handlers that
-  // *require* one (the association dues-tier create/update, which return
   // ErrIdempotencyRequired) rejected every request with a 400 that looked like
   // a client bug. Nothing in the browser could fix it: the header was dropped
   // here, one hop later.
@@ -102,7 +99,6 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
   if (idem) headers['Idempotency-Key'] = idem;
 
   // AUTH-020: x-stem-role MUST survive the hop.
-  //
   // Same class of bug as Idempotency-Key above: this proxy's outbound headers
   // are an allowlist, and x-stem-role was missing from it. The STEM admin
   // console UI sends it on every /admin/stem*, /admin/schools*, /admin/stem-*

@@ -1,9 +1,5 @@
-// ── Marketplace — Discovery mock fixtures + mock responders ──────────────────
-//
-// Powers MKT_USE_MOCK=true so the entire Discover group (screens 1–9) runs fully
 // offline, with no backend, in camelCase (fixtures are authored in the same
 // camelCase shape the client's deepCamel() would produce, so mock and live paths
-// return identical types to the screens). Also used as the offline-cache seed and
 // as the graceful fallback when GET /search returns 501 SEARCH_NOT_WIRED.
 
 import type {
@@ -200,8 +196,6 @@ export function toSummary(l: Listing, boosted = false): ListingSummary {
 }
 
 const TRENDING = ['iPhone 13', 'PlayStation 5', 'Toyota Corolla', '2 bedroom flat Lekki', 'MacBook'];
-
-// ── Mock responders (mirror the live API surface) ────────────────────────────
 
 export async function mockSearch(params: SearchParams): Promise<SearchResponse> {
   await mockDelay();

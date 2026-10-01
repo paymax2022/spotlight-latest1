@@ -8,8 +8,6 @@ import (
 	triage "spotlight/backend/internal/health/triage"
 )
 
-// ─── fakes (no DB) ───────────────────────────────────────────────────────────
-
 type fakeRepo struct {
 	referrals   map[string]*CareReferral
 	escalations map[string]*Escalation
@@ -153,8 +151,6 @@ func (b *fakeBooker) Book(_ context.Context, userID, route, ref string) (string,
 	return "booking-" + route, b.amount, nil
 }
 
-// ─── route mapping by level ──────────────────────────────────────────────────
-
 func TestRouteMappingByLevel(t *testing.T) {
 	cases := map[int]string{
 		triage.LevelEmergencyAmbulance: "emergency",
@@ -169,8 +165,6 @@ func TestRouteMappingByLevel(t *testing.T) {
 		}
 	}
 }
-
-// ─── referral SM: allowed + illegal ──────────────────────────────────────────
 
 func TestReferralStateMachine(t *testing.T) {
 	// Legal happy path.
@@ -200,8 +194,6 @@ func TestReferralStateMachine(t *testing.T) {
 	}
 }
 
-// ─── escalation SM ───────────────────────────────────────────────────────────
-
 func TestEscalationStateMachine(t *testing.T) {
 	legal := [][2]triage.EscalationState{
 		{triage.EscRaised, triage.EscNotified},
@@ -224,8 +216,6 @@ func TestEscalationStateMachine(t *testing.T) {
 		}
 	}
 }
-
-// ─── emergency path: raises escalation + no charge ───────────────────────────
 
 func TestReferEmergencyRaisesEscalationNoCharge(t *testing.T) {
 	repo := newFakeRepo()
@@ -267,8 +257,6 @@ func TestReferEmergencyRaisesEscalationNoCharge(t *testing.T) {
 	}
 }
 
-// ─── PayReferral idempotency (double = one charge) ───────────────────────────
-
 func TestPayReferralIdempotency(t *testing.T) {
 	repo := newFakeRepo()
 	pay := newFakePayment()
@@ -307,8 +295,6 @@ func TestPayReferralIdempotency(t *testing.T) {
 	}
 }
 
-// ─── self_care: routed, no charge ────────────────────────────────────────────
-
 func TestReferSelfCareNoCharge(t *testing.T) {
 	repo := newFakeRepo()
 	pay := newFakePayment()
@@ -329,8 +315,6 @@ func TestReferSelfCareNoCharge(t *testing.T) {
 		t.Fatalf("self_care must not charge, got %d", pay.calls)
 	}
 }
-
-// ─── escalation lifecycle through the service (raise→notify→ack→resolve) ──────
 
 func TestEscalationLifecycle(t *testing.T) {
 	repo := newFakeRepo()
@@ -369,8 +353,6 @@ func TestEscalationLifecycle(t *testing.T) {
 	}
 }
 
-// ─── illegal: acknowledging a freshly-raised (not notified) case ─────────────
-
 func TestAcknowledgeBeforeNotifyIllegal(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewCareService(repo, nil, nil, nil, nil, nil)
@@ -380,8 +362,6 @@ func TestAcknowledgeBeforeNotifyIllegal(t *testing.T) {
 		t.Fatalf("expected illegal transition acknowledging a raised (not notified) case")
 	}
 }
-
-// ─── nearest emergency is always available (SC-8) even with nil locator ───────
 
 func TestNearestEmergencyAlwaysAvailable(t *testing.T) {
 	svc := NewCareService(newFakeRepo(), nil, nil, nil, nil, nil) // nil locator

@@ -1,8 +1,6 @@
 package fx_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for the FX Convert money path (RISK-FX-1/2/3).
-//
 // fx.NewService(db, ledger, provider, redis).Convert drives, in ONE call:
 //   - LEG 1 (RISK-FX-1): a balanced ledger DEBIT of the user's NGN wallet
 //     (source + fee), crediting the fx_spread_income standing account, keyed
@@ -13,17 +11,14 @@ package fx_test
 //     (DR settlement → CR fx_spread_income), keyed "<idem>:credit".
 //   - a currency_wallets MIRROR credit of the target amount, committed in the
 //     SAME tx as the fx_conversions row (guarded by UNIQUE(idempotency_key)).
-//
 // This test proves BOTH ledger legs post, currency_wallets is credited as a
 // mirror, and a REPLAY with the same idempotency_key does NOT double-credit
 // (exactly one fx_conversions row, one currency_wallets credit, no extra ledger
 // legs) — directly regression-guarding the P0 idempotency fix
 // (20260920000300_fx_convert_idempotency.sql + service.go ON CONFLICT DO NOTHING).
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (same env-gate +
 // seedUser pattern as backend/tests/crypto + backend/tests/association), so
 // `go test ./...` without a DB stays green.
-//
 // ── Bring-up note ──────────────────────────────────────────────────────────
 // Apply the FX + ledger migrations (supabase db reset):
 //   20260616200000_fx_currency_wallets.sql
@@ -36,7 +31,6 @@ package fx_test
 //   cd backend && go test ./tests/fx/... -run LiveDB -v
 // The fx_spread_income + settlement standing accounts are auto-created on first
 // GetOrCreateStandingAccount — no seed rows needed.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -116,11 +110,8 @@ func seedWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 // contract, as probed against the sandbox: the fx.Service books a firm quote with
 // POST /fx/quote and exchanges it with POST /fx. Both nest source/target objects
 // and carry NO fee, transaction id, or status field.
-//
 // Deterministic NGN→USD pricing: 500,000 kobo → 32,500 (¢325.00) at rate 0.00065.
-//
 // Two things this stub deliberately asserts by NOT handling them:
-//
 //   - GET /fx/rates — the rate board issues no quote reference, so the convert
 //     path must never price off it. A request here trips the default arm.
 //   - POST /fx/convert — does not exist in the real API (404); the old stub
@@ -167,9 +158,7 @@ func mapleradTestServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// ---------------------------------------------------------------------------
 // Convert: both ledger legs post, currency_wallets mirror credited, idempotent.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_FXConvert_BothLegsPosted_MirrorCredited_ReplayNoDoubleCredit drives
 // a real NGN→USD conversion through the live DB (with an httptest provider) and
@@ -202,7 +191,6 @@ func TestLiveDB_FXConvert_BothLegsPosted_MirrorCredited_ReplayNoDoubleCredit(t *
 	// Fund the NGN wallet with ample headroom for the source+fee debit.
 	seedWallet(t, ctx, led, userID, 5_000_000)
 
-	// ── Quote (persists an fx_quotes row) ───────────────────────────────────
 	quote, err := svc.GetQuote(ctx, userID, fx.QuoteRequest{
 		SourceCurrency: "NGN", TargetCurrency: "USD", AmountKobo: 500_000,
 	})
@@ -222,7 +210,6 @@ func TestLiveDB_FXConvert_BothLegsPosted_MirrorCredited_ReplayNoDoubleCredit(t *
 		t.Fatalf("GetBalance before convert: %v", err)
 	}
 
-	// ── Convert ─────────────────────────────────────────────────────────────
 	idemKey := "fxconv-" + uuid.New().String()
 	conv, err := svc.Convert(ctx, userID, fx.ConvertRequest{QuoteID: quote.ID, IdempotencyKey: idemKey})
 	if err != nil {
@@ -264,7 +251,6 @@ func TestLiveDB_FXConvert_BothLegsPosted_MirrorCredited_ReplayNoDoubleCredit(t *
 		t.Errorf("fx_conversions rows for key = %d, want exactly 1", n)
 	}
 
-	// ── REPLAY: same idempotency_key must NOT double-credit (RISK-FX-2) ─────
 	convReplay, err := svc.Convert(ctx, userID, fx.ConvertRequest{QuoteID: quote.ID, IdempotencyKey: idemKey})
 	if err != nil {
 		t.Fatalf("Convert (replay): %v", err)
@@ -294,8 +280,6 @@ func TestLiveDB_FXConvert_BothLegsPosted_MirrorCredited_ReplayNoDoubleCredit(t *
 		t.Errorf("target-leg entries after replay = %d, want still 2", n)
 	}
 }
-
-// ── DB helpers ─────────────────────────────────────────────────────────────
 
 // ledgerLegsForKey counts the balanced pair a Debit/PostJournal wrote for baseKey.
 // The ledger suffixes each leg's idempotency_key with ":debit"/":credit" (see

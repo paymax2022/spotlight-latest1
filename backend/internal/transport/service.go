@@ -3,8 +3,11 @@ package transport
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"math"
 	"math/big"
 	"net/http"
 	"time"
@@ -12,6 +15,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/timeutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/finance/tiers"
@@ -53,7 +60,6 @@ type Service struct {
 // composition root only when its feature flag is on) resolves the Paystack
 // reference for the settlement, calls the gateway's real refund, and then
 // settlement.Service.RefundExternal to reverse the internal ledger entry.
-//
 // Modeled as a local interface (mirrors CommissionRecorder / InsuranceBinder)
 // so transport never imports paystackcheckout or any provider package.
 type ExternalRefunder interface {
@@ -75,7 +81,6 @@ func (s *Service) SetExternalRefunder(r ExternalRefunder) { s.externalRefunder =
 
 // NewService wires the transport service. A MockMaps adapter is used when none
 // is supplied, so business logic always has a deterministic geo backend.
-//
 // The tier-limit gate is constructed from the same pool (tiers.NewService needs
 // only the DB), so no extra wiring is required at the call site. If a future
 // refactor centralises the tiers service, inject it here and drop this line.
@@ -87,7 +92,6 @@ func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
 // above invited. Routes pass the shared, flag-configured service so a rider fare
 // honours the Tier-0 checkout allowance (ADR-043) rather than the strict default
 // this service builds for itself.
-//
 // Optional and fail-safe: without it the self-built gate applies, which refuses
 // Tier 0 exactly as before. An unwired call site is stricter, never looser.
 func (s *Service) WithTiers(t tierLimiter) *Service {
@@ -141,7 +145,6 @@ func (s *Service) WithMaps(m MapsAdapter) *Service {
 // transport never imports the commission package at compile time (mirrors the
 // tierLimiter / MapsAdapter seams) — the adapter, which lives in app-wiring, discards
 // the returned earning row and surfaces only the error.
-//
 // This records realized profit ONLY; it never moves money. Transport's own money
 // movements (the settlement split into the provider/platform wallets) are unchanged,
 // and the injected recorder is deliberately constructed WITHOUT a ledger so RecordFor
@@ -173,8 +176,6 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 		log.Printf("[transport] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
 	}
 }
-
-// ─── Legacy driver/trip methods (kept for back-compat) ───────────────────────
 
 // RegisterDriver creates a driver profile.
 func (s *Service) RegisterDriver(ctx context.Context, userID string, req RegisterDriverRequest) (*Driver, error) {
@@ -266,7 +267,6 @@ func (s *Service) AcceptTrip(ctx context.Context, tripID, driverUserID string) e
 }
 
 // UpdateTripStatus advances the coarse trip status (legacy, DEPRECATED).
-//
 // SECURITY: this method is no longer routed — its HTTP route was removed because
 // it had no object-level authz or phase-transition guard. It is retained only for
 // back-compat with the legacy RequestTrip/AcceptTrip flow and any internal caller.
@@ -339,8 +339,6 @@ func (s *Service) UpdateTripStatus(ctx context.Context, tripID, actorUserID stri
 	}
 	return nil
 }
-
-// ─── tripRow: full internal projection of a trip ─────────────────────────────
 
 type tripRow struct {
 	ID             string
@@ -466,7 +464,6 @@ func (s *Service) settleTrip(ctx context.Context, t *tripRow) error {
 // log at ERROR so operators/alerting see stranded escrow, and it leaves a
 // trip_events row + a settlement_status flag for the reconciliation job to pick
 // up. Money never leaves escrow here — this only flags that Settle must be retried.
-//
 // RECONCILIATION REQUIREMENT: a background worker must periodically re-drive
 // settleTrip for trips whose settlement_status='pending'; settleTrip is
 // idempotent (each Settle no-ops once its settlement row is 'settled').
@@ -506,8 +503,6 @@ func (s *Service) markSettlementPending(ctx context.Context, t *tripRow, cause e
 	s.db.Exec(ctx, `UPDATE trips SET settlement_status=$2, updated_at=NOW() WHERE id=$1`, t.ID, settlementPendingStatus)
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 // generatePin returns a deterministic-length random 4-digit trip PIN.
 func generatePin() string {
 	n, _ := rand.Int(rand.Reader, big.NewInt(10000))
@@ -537,4 +532,497 @@ func (s *Service) resolveDriverID(ctx context.Context, userID string) (string, e
 		return "", codedErr(http.StatusForbidden, CodeForbidden, "not a registered driver")
 	}
 	return id, nil
+}
+
+// recordEvent inserts an immutable trip_events row outside a transaction.
+func (s *Service) recordEvent(ctx context.Context, tripID, eventType, actorID string, from, to TripPhase, meta map[string]any) {
+	var metaJSON []byte
+	if meta != nil {
+		metaJSON = jsonx.Marshal(meta)
+	}
+	const q = `
+		INSERT INTO trip_events (trip_id, event_type, actor_id, from_phase, to_phase, metadata)
+		VALUES ($1,$2,$3,$4,$5,$6)`
+	s.db.Exec(ctx, q, tripID, eventType, dbutil.NullStr(actorID), nullPhase(from), nullPhase(to), metaJSON)
+}
+
+// recordEventTx inserts a trip_events row inside a transaction (atomic with the transition).
+func (s *Service) recordEventTx(ctx context.Context, tx pgx.Tx, tripID, eventType, actorID string, from, to TripPhase, meta map[string]any) error {
+	var metaJSON []byte
+	if meta != nil {
+		metaJSON = jsonx.Marshal(meta)
+	}
+	const q = `
+		INSERT INTO trip_events (trip_id, event_type, actor_id, from_phase, to_phase, metadata)
+		VALUES ($1,$2,$3,$4,$5,$6)`
+	_, err := tx.Exec(ctx, q, tripID, eventType, dbutil.NullStr(actorID), nullPhase(from), nullPhase(to), metaJSON)
+	return err
+}
+
+func nullPhase(p TripPhase) any {
+	if p == "" {
+		return nil
+	}
+	return string(p)
+}
+
+// writeAudit inserts a row into transport_audit_log. Every admin mutation must
+// call this. old/new are JSON-serialised; nil values are stored as SQL NULL.
+func writeAudit(ctx context.Context, db *pgxpool.Pool, adminID, action, entityType, entityID string, oldVal, newVal any, reason string) error {
+	var oldJSON, newJSON []byte
+	if oldVal != nil {
+		oldJSON = jsonx.Marshal(oldVal)
+	}
+	if newVal != nil {
+		newJSON = jsonx.Marshal(newVal)
+	}
+	const q = `
+		INSERT INTO transport_audit_log (admin_id, action, entity_type, entity_id, old_value, new_value, reason)
+		VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''))`
+	_, err := db.Exec(ctx, q, adminID, action, entityType, dbutil.NullStr(entityID), oldJSON, newJSON, reason)
+	return err
+}
+
+// stuckTripSelect is the authoritative crash-recovery predicate for ride-hailing
+// settlement. CompleteTrip commits the trip as phase='completed' FIRST and only
+// THEN drives settleTrip (which opens the settlement engine's own tx on a separate
+// connection). A crash — or a settleTrip error — between the completion commit and
+// the escrow release leaves a completed trip with escrow still held. The
+// settlements table is the money source of truth: a completed trip that still has
+// ANY linked settlement in status='escrowed' is stranded, regardless of whether
+// the best-effort trips.settlement_status mirror was written (that mirror UPDATE is
+// intentionally non-fatal). We therefore select on the settlements table directly
+// so the sweep is correct even when the flag mirror was skipped.
+// The grace window ($1, a Postgres interval literal) excludes trips completed too
+// recently to have finished settling, so the sweep never races an in-flight
+// CompleteTrip that is mid-settle. DISTINCT because settleTrip settles base + delta
+// escrows for one trip, which can produce multiple escrowed rows per trip.
+const stuckTripSelect = `
+	SELECT DISTINCT t.id
+	FROM trips t
+	JOIN settlements s ON s.reference LIKE 'trip:' || t.id || '%'
+	WHERE t.phase = 'completed'
+	  AND s.status = 'escrowed'
+	  AND s.module_type = 'transport'
+	  AND t.updated_at < NOW() - $1::interval
+	ORDER BY t.id
+	LIMIT 200`
+
+// ReconcileStuckSettlements is the reconciliation worker documented in
+// service.go / dispatch.go: it re-drives settleTrip for completed trips whose
+// escrow never released after a crash. It reuses the SAME settleTrip path as the
+// live CompleteTrip flow, so it is idempotent — settleTrip re-queries only the
+// still-'escrowed' rows and calls settlement.Settle, which is guarded WHERE the
+// row is 'escrowed' (already-settled rows no-op) and posts every ledger leg with
+// ON CONFLICT (idempotency_key) DO NOTHING. Overlapping sweeps (or a sweep racing
+// a client retry) converge to exactly one payout via the FOR UPDATE lock inside
+// Settle. On success it flips the trips.settlement_status mirror back to 'settled'.
+// Returns the count of trips fully reconciled.
+func (s *Service) ReconcileStuckSettlements(ctx context.Context, graceInterval time.Duration) (int, error) {
+	grace := timeutil.IntervalSeconds(graceInterval)
+	rows, err := s.db.Query(ctx, stuckTripSelect, grace)
+	if err != nil {
+		return 0, err
+	}
+	var tripIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		tripIDs = append(tripIDs, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	reconciled := 0
+	for _, id := range tripIDs {
+		var t tripRow
+		if err := s.loadTrip(ctx, id, &t); err != nil {
+			log.Printf("[transport] reconcile load trip=%s failed: %v", id, err)
+			continue
+		}
+		if err := s.settleTrip(ctx, &t); err != nil {
+			// One stuck trip must not abort the whole sweep — log and move on.
+			log.Printf("[transport] reconcile settle trip=%s failed: %v", id, err)
+			continue
+		}
+		reconciled++
+		// Clear the crash-safety mirror now that escrow is released. Best-effort:
+		// the settlements table already reflects the truth. A legal CHECK value.
+		s.db.Exec(ctx, `UPDATE trips SET settlement_status='settled', updated_at=NOW() WHERE id=$1`, id)
+		log.Printf("[transport] reconcile settled stranded escrow trip=%s", id)
+	}
+	return reconciled, nil
+}
+
+// formatInterval renders a duration as a whole-second Postgres interval literal
+// (e.g. "300 seconds"). Extracted as a pure function so the grace-window predicate
+// is unit-testable without a database. Non-positive clamps to 0 (all completed
+// trips with escrow are eligible).
+func formatInterval(d time.Duration) string {
+	return timeutil.IntervalSeconds(d)
+}
+
+// StartStuckSettlementReconciler runs ReconcileStuckSettlements on a ticker until
+// ctx is cancelled. Mirrors top5events.StartPendingOrderReconciler /
+// restaurant.StartStuckSettlementReconciler. interval is the tick cadence; grace
+// is how long a completed trip may hold escrow before it is swept (kept longer
+// than a live settleTrip takes so the sweep never races an in-flight completion).
+// Wired from RegisterFinance under the transport feature flag.
+func StartStuckSettlementReconciler(ctx context.Context, svc *Service, interval, grace time.Duration) {
+	if svc == nil || svc.db == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	if grace <= 0 {
+		grace = 10 * time.Minute
+	}
+	run := func() {
+		cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		n, err := svc.ReconcileStuckSettlements(cctx, grace)
+		if err != nil {
+			log.Printf("[transport] stuck-settlement sweep error: %v", err)
+			return
+		}
+		if n > 0 {
+			log.Printf("[transport] stuck-settlement sweep: reconciled=%d", n)
+		}
+	}
+	go func() {
+		run()
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				run()
+			}
+		}
+	}()
+	log.Printf("[transport] stuck-settlement reconciler started (interval %s, grace %s)", interval, grace)
+}
+
+// ShareLink is the openable live-share response for a trip.
+type ShareLink struct {
+	ShareToken string    `json:"shareToken"`
+	URL        string    `json:"url"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+}
+
+// shareLinkTTL is how long a live-share link stays resolvable.
+const shareLinkTTL = 2 * time.Hour
+
+// shareBaseURL is the public base for a share link. TODO(config): move to
+// PricingConfig/app config once a public web base URL is threaded through.
+const shareBaseURL = "https://spotlight.app/track"
+
+// CreateIncident records a safety case. SOS-type incidents from a rider/driver
+// also flag the trip's safety_status and move it to safety_hold when active.
+func (s *Service) CreateIncident(ctx context.Context, userID string, incType string, tripID *string, lat, lng *float64, description, severity string) (*SafetyIncident, error) {
+	if severity == "" {
+		severity = "high"
+	}
+	inc := &SafetyIncident{
+		ID:       uuid.New().String(),
+		UserID:   userID,
+		TripID:   tripID,
+		Type:     incType,
+		Severity: severity,
+		Lat:      lat,
+		Lng:      lng,
+		Status:   "open",
+	}
+	const q = `
+		INSERT INTO safety_incidents (id, user_id, trip_id, type, severity, lat, lng, description, status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),'open')
+		RETURNING created_at`
+	if err := s.db.QueryRow(ctx, q, inc.ID, userID, tripID, incType, severity, lat, lng, description).Scan(&inc.CreatedAt); err != nil {
+		return nil, err
+	}
+	if description != "" {
+		inc.Description = &description
+	}
+
+	// For an active trip, raise the trip's safety_status and hold it.
+	if tripID != nil && incType == "sos" {
+		var t tripRow
+		if err := s.loadTrip(ctx, *tripID, &t); err == nil {
+			s.db.Exec(ctx, `UPDATE trips SET safety_status='sos' WHERE id=$1`, *tripID)
+			if canTransition(t.Phase, PhaseSafetyHold) {
+				s.db.Exec(ctx, `UPDATE trips SET phase='safety_hold', updated_at=NOW() WHERE id=$1`, *tripID)
+				s.recordEvent(ctx, *tripID, "safety_hold", userID, t.Phase, PhaseSafetyHold, map[string]any{"incident_id": inc.ID})
+			}
+		}
+	}
+	return inc, nil
+}
+
+// ShareToken issues a live-share link for a trip (object-authz: rider only) and
+// PERSISTS it so the link is actually openable later via ResolveShare.
+// Persistence: we store the token in a trip_events row (event_type='share_link'),
+// which is an existing durable table — no new column/table is required. The token
+// + its expiry live in the row's metadata JSONB. ResolveShare looks the token up
+// there. NOTE for the migrations agent: a dedicated trip_shares table
+// (token PK, trip_id, expires_at, revoked_at) would be cleaner and allow
+// revocation + indexed lookups; if/when added, switch ShareToken/ResolveShare to
+// it. For now the trip_events approach is additive-only and works.
+func (s *Service) ShareToken(ctx context.Context, tripID, riderID string) (*ShareLink, error) {
+	var owner string
+	if err := s.db.QueryRow(ctx, `SELECT rider_id FROM trips WHERE id=$1`, tripID).Scan(&owner); err != nil {
+		return nil, codedErr(http.StatusNotFound, CodeNotFound, "trip not found")
+	}
+	if owner != riderID {
+		return nil, codedErr(http.StatusForbidden, CodeForbidden, "not your trip")
+	}
+	token := "share_" + uuid.New().String()
+	expiresAt := time.Now().Add(shareLinkTTL)
+	// Durable, immutable audit row that doubles as the token store.
+	s.recordEvent(ctx, tripID, "share_link", riderID, "", "", map[string]any{
+		"share_token": token,
+		"expires_at":  expiresAt.Format(time.RFC3339),
+	})
+	return &ShareLink{
+		ShareToken: token,
+		URL:        shareBaseURL + "/" + token,
+		ExpiresAt:  expiresAt,
+	}, nil
+}
+
+// ResolveShare resolves a live-share token to the trip it tracks, enforcing the
+// TTL. It is intentionally unauthenticated (a share link must be openable by
+// someone without an account) but returns only non-sensitive tracking fields —
+// never the trip PIN. Returns the trip id + a minimal public view.
+func (s *Service) ResolveShare(ctx context.Context, token string) (map[string]any, error) {
+	// Find the most recent share_link event carrying this token.
+	const q = `
+		SELECT trip_id, metadata
+		FROM trip_events
+		WHERE event_type='share_link' AND metadata->>'share_token' = $1
+		ORDER BY created_at DESC LIMIT 1`
+	var tripID string
+	var metaRaw []byte
+	if err := s.db.QueryRow(ctx, q, token).Scan(&tripID, &metaRaw); err != nil {
+		return nil, codedErr(http.StatusNotFound, CodeNotFound, "share link not found")
+	}
+	var meta map[string]any
+	_ = json.Unmarshal(metaRaw, &meta)
+	if exp, ok := meta["expires_at"].(string); ok {
+		if t, err := time.Parse(time.RFC3339, exp); err == nil && time.Now().After(t) {
+			return nil, codedErr(http.StatusGone, CodeInvalidState, "share link expired")
+		}
+	}
+	// Minimal public tracking view (no PIN, no phone/PII).
+	const tq = `
+		SELECT id, phase, status, pickup_address, dest_address,
+		       pickup_lat, pickup_lng, dest_lat, dest_lng, route_polyline, safety_status
+		FROM trips WHERE id=$1`
+	var (
+		id, phase, status, pickup, dest, safety string
+		polyline                                *string
+		plat, plng, dlat, dlng                  *float64
+	)
+	if err := s.db.QueryRow(ctx, tq, tripID).Scan(
+		&id, &phase, &status, &pickup, &dest, &plat, &plng, &dlat, &dlng, &polyline, &safety,
+	); err != nil {
+		return nil, codedErr(http.StatusNotFound, CodeNotFound, "trip not found")
+	}
+	return map[string]any{
+		"tripId":        id,
+		"phase":         phase,
+		"status":        status,
+		"pickupAddress": pickup,
+		"destAddress":   dest,
+		"pickup":        map[string]any{"lat": plat, "lng": plng},
+		"dest":          map[string]any{"lat": dlat, "lng": dlng},
+		"routePolyline": polyline,
+		"safetyStatus":  safety,
+	}, nil
+}
+
+func (s *Service) ListTrustedContacts(ctx context.Context, userID string) ([]TrustedContact, error) {
+	rows, err := s.db.Query(ctx, `SELECT id, user_id, name, phone, created_at FROM trusted_contacts WHERE user_id=$1 ORDER BY created_at`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TrustedContact
+	for rows.Next() {
+		var c TrustedContact
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Name, &c.Phone, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+func (s *Service) AddTrustedContact(ctx context.Context, userID, name, phone string) (*TrustedContact, error) {
+	c := &TrustedContact{ID: uuid.New().String(), UserID: userID, Name: name, Phone: phone}
+	if err := s.db.QueryRow(ctx,
+		`INSERT INTO trusted_contacts (id, user_id, name, phone) VALUES ($1,$2,$3,$4) RETURNING created_at`,
+		c.ID, userID, name, phone).Scan(&c.CreatedAt); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (s *Service) DeleteTrustedContact(ctx context.Context, userID, id string) error {
+	tag, err := s.db.Exec(ctx, `DELETE FROM trusted_contacts WHERE id=$1 AND user_id=$2`, id, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return codedErr(http.StatusNotFound, CodeNotFound, "contact not found")
+	}
+	return nil
+}
+
+// isCashPayment reports whether a trip's payment_method is the cash rail —
+// the rider pays the driver directly, out of band, so no fare is ever
+// escrowed through the app. Instead the platform collects its commission by
+// debiting the driver's own wallet once the trip completes (settleCashTrip),
+// and a driver who can't cover that fee never sees or can accept the ride
+// (see driverCanCoverCashFee).
+func isCashPayment(paymentMethod string) bool {
+	return paymentMethod == "cash"
+}
+
+// paymentMethodPaystackExternal marks a trip as funded by the Paystack-checkout
+// rail (RequestRidePaystackFunded / settlement.EscrowExternal) — never client-
+// settable (see RequestRideRequest's binding tag, which does not include it;
+// this value is only ever set internally by transport/paystackcheckout).
+// Distinct from the legacy "card" value, which today behaves identically to
+// "wallet" (a real wallet escrow) — repurposing it here would have silently
+// changed behavior for any existing "card" trip.
+// isPaystackFunded gates adjustEscrow: a trip funded this way has no wallet
+// debit and no open card session to charge more from, so a later fare RAISE
+// (RiderOffer/AcceptCounter) cannot be honoured by escrowing more — see
+// adjustEscrow.
+const paymentMethodPaystackExternal = "paystack"
+
+func isPaystackFunded(paymentMethod string) bool {
+	return paymentMethod == paymentMethodPaystackExternal
+}
+
+// platformFeeKobo computes the platform's commission on a cash trip's fare
+// using the SAME commission split (commissionForTier) instant/wallet trips
+// settle with, so a cash rider and a wallet rider on the same driver tier
+// cost the platform — and thus the driver — an identical percentage.
+func (s *Service) platformFeeKobo(ctx context.Context, driverTier string, fareKobo int64) (int64, error) {
+	comm, err := s.commissionForTier(ctx, driverTier)
+	if err != nil {
+		return 0, err
+	}
+	return int64(math.Round(float64(fareKobo) * comm.PlatformPct)), nil
+}
+
+// driverCanCoverCashFee reports whether driverUserID's own wallet balance
+// covers the platform fee a cash trip at fareKobo would owe at THEIR
+// commission tier. Fails closed: any lookup error is treated as "cannot
+// afford" so a driver is never let onto (or kept on) a cash ride they can't
+// pay the platform's cut for. This is the gate applied to the open-requests
+// feed (OpenRequests) and re-checked at accept time (DriverAccept).
+func (s *Service) driverCanCoverCashFee(ctx context.Context, driverUserID string, fareKobo int64) (bool, error) {
+	if s.ledger == nil {
+		return false, errors.New("transport: ledger not wired")
+	}
+	var tier string
+	if err := s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE user_id=$1`, driverUserID).Scan(&tier); err != nil {
+		return false, fmt.Errorf("transport: resolve driver tier: %w", err)
+	}
+	fee, err := s.platformFeeKobo(ctx, tier, fareKobo)
+	if err != nil {
+		return false, err
+	}
+	if fee <= 0 {
+		return true, nil
+	}
+	balance, err := s.ledger.GetBalance(ctx, driverUserID)
+	if err != nil {
+		return false, fmt.Errorf("transport: driver balance: %w", err)
+	}
+	return balance >= fee, nil
+}
+
+// CompletionSummary returns what a driver's app needs to show after
+// CompleteTrip: the fare, payment method, and — for cash trips only — the
+// platform fee that was just debited from the driver's own wallet (so the UI
+// can say "you collected ₦X in cash, ₦Y was deducted as the platform fee"
+// instead of the wallet/card-trip "your share has been added to your
+// wallet" copy, which is wrong for cash).
+func (s *Service) CompletionSummary(ctx context.Context, tripID string) (map[string]any, error) {
+	var driverID *string
+	var paymentMethod string
+	var fareKobo int64
+	var finalFare *int64
+	if err := s.db.QueryRow(ctx, `SELECT driver_id, payment_method, fare_kobo, final_fare_kobo FROM trips WHERE id=$1`, tripID).
+		Scan(&driverID, &paymentMethod, &fareKobo, &finalFare); err != nil {
+		return nil, fmt.Errorf("transport: load trip for summary: %w", err)
+	}
+	if finalFare != nil {
+		fareKobo = *finalFare
+	}
+	out := map[string]any{"paymentMethod": paymentMethod, "fareKobo": fareKobo}
+	if isCashPayment(paymentMethod) && driverID != nil {
+		var tier string
+		s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, *driverID).Scan(&tier)
+		if fee, err := s.platformFeeKobo(ctx, tier, fareKobo); err == nil {
+			out["platformFeeKobo"] = fee
+		}
+	}
+	return out, nil
+}
+
+// settleCashTrip collects the platform's commission on a cash-paid, completed
+// trip by debiting the driver's own wallet directly and crediting the
+// standing platform-revenue account — there is no escrow to split, since the
+// rider paid the driver in cash, out of band. Idempotent (keyed on the trip
+// id, safe to re-drive). A failure here (e.g. the driver's balance dropped
+// between accept and completion, despite the accept-time gate) is treated by
+// the caller (settleTrip / CompleteTrip) exactly like an escrow-settlement
+// failure: the trip stays completed and the debt is flagged for
+// reconciliation rather than blocking a ride that has already happened.
+func (s *Service) settleCashTrip(ctx context.Context, t *tripRow) error {
+	if s.ledger == nil {
+		return errors.New("transport: ledger not wired")
+	}
+	if t.DriverID == nil {
+		return nil // no driver was ever assigned — nothing owed
+	}
+	var driverUserID, tier string
+	if err := s.db.QueryRow(ctx, `SELECT user_id, commission_tier FROM drivers WHERE id=$1`, *t.DriverID).Scan(&driverUserID, &tier); err != nil {
+		return fmt.Errorf("transport: resolve driver: %w", err)
+	}
+	fare := int64(0)
+	if t.FinalFare != nil {
+		fare = *t.FinalFare
+	} else if t.FareEstimate != nil {
+		fare = *t.FareEstimate
+	}
+	fee, err := s.platformFeeKobo(ctx, tier, fare)
+	if err != nil {
+		return err
+	}
+	if fee <= 0 {
+		return nil
+	}
+	revAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		return fmt.Errorf("transport: resolve platform revenue account: %w", err)
+	}
+	ref := "trip:" + t.ID + ":cash_fee"
+	idem := "cash_fee:" + t.ID
+	if err := s.ledger.Debit(ctx, driverUserID, ref, idem, revAcc.ID, fee); err != nil {
+		return fmt.Errorf("transport: debit driver cash fee: %w", err)
+	}
+	return nil
 }

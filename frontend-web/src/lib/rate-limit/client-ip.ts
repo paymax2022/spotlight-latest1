@@ -2,13 +2,11 @@
 // takes Request) can share it — NextRequest extends Request, so both work.
 
 // Client-IP derivation for rate-limit keys.
-//
 // The old pattern — `x-forwarded-for` split(',')[0] — trusts the LEFTMOST XFF
 // entry, which is the one a client can claim arbitrarily: `curl -H
 // "X-Forwarded-For: 1.2.3.4"` mints a fresh bucket key per request, defeating
 // every IP-keyed limit (and, for free votes, the daily IP-scoped allowance and
 // duplicate_ip fraud scoring).
-//
 // XFF is appended to by proxies, not prepended: the client-controllable part is
 // at the FRONT. In a chain of N trusted proxies the real client IP sits at
 // index len-N — everything after it was appended by proxies we control.
@@ -46,7 +44,6 @@ export function getRequestIp(request: Request): string {
     return '0.0.0.0';
   }
 
-  // No XFF: x-real-ip is only meaningful when the edge proxy sets it; a
   // direct client can forge it identically, so this is best-effort, not
   // authoritative — same exposure as before, now through one shared path.
   return sanitized(request.headers.get('x-real-ip')) ?? '0.0.0.0';

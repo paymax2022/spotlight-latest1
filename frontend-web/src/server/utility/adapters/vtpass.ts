@@ -47,10 +47,8 @@ interface VtpassResponse {
   [key: string]: unknown;
 }
 
-// ── Sandbox simulation (inline with VTPass docs) ────────────────────────────
 // VTPass publishes fixed sandbox meter numbers that deterministically simulate
 // outcomes (https://vtpass.com/documentation/eko-electricity-ekedc-payment-api/).
-// When VTPASS_ENVIRONMENT=sandbox we honour these locally so meter validation +
 // purchase work for testing WITHOUT live credentials or a network round-trip.
 // Live mode is unchanged (always calls the real VTPass API).
 const SANDBOX_METERS = {
@@ -67,7 +65,6 @@ function isSandboxEnv(): boolean {
   return process.env.VTPASS_ENVIRONMENT === 'sandbox';
 }
 
-// Doc-accurate merchant-verify response for the two valid sandbox meters; null
 // for any other meter (which VTPass sandbox treats as a failed validation).
 function sandboxVerify(billersCode: string): VtpassResponse | null {
   if (billersCode === SANDBOX_METERS.PREPAID || billersCode === SANDBOX_METERS.POSTPAID) {
@@ -95,7 +92,6 @@ function sandboxPurchase(request: UtilityPurchaseRequest, requestId: string): Ut
 
   // The meter-number simulation table below is documented by VTPass ONLY for
   // electricity (EKEDC) — see the link above. Airtime/data/cable_tv/internet/
-  // education have no such matrix in VTPass's sandbox; it simply processes
   // them. Applying the electricity table to a phone number or smart-card
   // customerReference meant those categories never matched any meter constant
   // and always fell through to the final "meter not recognised" branch —
@@ -348,7 +344,6 @@ export const vtpassUtilityAdapter: UtilityProviderAdapter = {
       return { valid: true, raw: { skipped: true, reason: 'VTPass does not require merchant verification for this category.' } };
     }
 
-    // Sandbox: validate against VTPass's documented test meter numbers locally so
     // testing works without live credentials. This matrix is documented ONLY for
     // electricity (EKEDC) — cable_tv and internet also have requires_validation
     // but VTPass's sandbox has no equivalent test-number matrix for them, so
@@ -396,7 +391,6 @@ export const vtpassUtilityAdapter: UtilityProviderAdapter = {
   async purchase(request: UtilityPurchaseRequest) {
     const requestId = vtpassRequestId(request.idempotencyKey);
 
-    // Sandbox: simulate the documented EKEDC purchase outcomes by meter number so
     // end-to-end testing (debit → token) works without live credentials.
     if (isSandboxEnv()) {
       return sandboxPurchase(request, requestId);

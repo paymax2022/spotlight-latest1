@@ -1,4 +1,3 @@
-// ── Screen 19 — Deal Room (+ 20 Make Offer, + 27 Meetup entry) ───────────────
 // The single most important scam-prevention surface. Structured OFFER BUBBLES
 // (non-binding price proposals, not chat text), a counter-offer / make-offer
 // sheet, an "Arrange meetup" CTA pinned to the TOP (always visible), a
@@ -11,10 +10,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Send, HandCoins, Handshake, CheckCircle2, Star } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import type { Offer } from '@/features/marketplace';
@@ -51,7 +50,6 @@ export default function DealRoom() {
   const listingId = thread?.listingId ?? '';
 
   // Own-vs-counterparty bubble rendering: compare senderId/buyerId to the REAL
-  // current user id in live mode; fall back to MOCK_ME when signed-out (mock/
   // offline), where the mock data authors own messages/offers as MOCK_ME.
   const currentUserId = useCurrentUserId();
   const meId = currentUserId ?? MOCK_ME;
@@ -133,7 +131,6 @@ export default function DealRoom() {
   const acceptedOffer = (offersQ.data ?? []).find((o) => o.status === 'accepted') ?? null;
   const listRef = useRef<FlatList<Item>>(null);
 
-  // Deep-linked "Make Offer" (offer=1 from Listing Detail): auto-open the offer
   // composer once the thread is ready. Guarded so it fires only on first load.
   const autoOffered = useRef(false);
   useEffect(() => {

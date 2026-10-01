@@ -8,8 +8,6 @@ import (
 	"spotlight/backend/internal/arena/quiz"
 )
 
-// ── Fakes (no DB, no real quiz engine) ───────────────────────────────────────
-
 type fakeRepo struct {
 	assessments map[string]Assessment
 	badges      map[string]Badge // key: user|assessment|version
@@ -99,8 +97,6 @@ func seed(repo *fakeRepo, id, version string, threshold int) {
 	}
 }
 
-// ── PN-5: a badge is issued ONLY on a passed attempt ─────────────────────────
-
 func TestPN5_BadgeIssuedOnlyOnPass(t *testing.T) {
 	ctx := context.Background()
 
@@ -153,8 +149,6 @@ func TestPN5_BadgeIssuedOnlyOnPass(t *testing.T) {
 	})
 }
 
-// ── PN-12: badge records the exact version; a new version never retro-changes it ─
-
 func TestPN12_BadgeRecordsExactVersion(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeRepo()
@@ -191,8 +185,6 @@ func TestPN12_BadgeRecordsExactVersion(t *testing.T) {
 	}
 }
 
-// ── Loyalty emitted once per (user, assessment, version), not per attempt ────
-
 func TestLoyalty_OncePerUserAssessmentVersion(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeRepo()
@@ -215,8 +207,6 @@ func TestLoyalty_OncePerUserAssessmentVersion(t *testing.T) {
 		t.Fatalf("expected 1 badge (append-only, once per version), got %d", len(repo.badges))
 	}
 }
-
-// ── SA-04: a recent FAILED attempt blocks Start with a cooldown ──────────────
 
 func TestSA04_CooldownBlocksStart(t *testing.T) {
 	ctx := context.Background()

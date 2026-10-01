@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/arena"
 	"spotlight/backend/internal/arena/quiz"
 	"spotlight/backend/internal/arena/service"
@@ -44,8 +45,6 @@ type Handler struct{ s Services }
 // New builds the Arena handler.
 func New(s Services) *Handler { return &Handler{s: s} }
 
-func ctxUserID(c *gin.Context) string { return c.GetString("user_id") }
-
 // mapErr maps Arena sentinel errors to HTTP status codes.
 func mapErr(c *gin.Context, err error) {
 	switch {
@@ -73,11 +72,6 @@ func mapErr(c *gin.Context, err error) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
 }
-
-// idemKey extracts the required Idempotency-Key header (empty → handler errors).
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
-
-// ── PUBLIC ───────────────────────────────────────────────────────────────────
 
 // ListCompetitions: GET /api/arena/competitions
 func (h *Handler) ListCompetitions(c *gin.Context) {
@@ -144,15 +138,13 @@ func (h *Handler) VerifyCredential(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"valid": cred.Status == "ACTIVE", "credential": cred})
 }
 
-// ── MEMBER ───────────────────────────────────────────────────────────────────
-
 // Apply: POST /api/arena/competitions/:id/applications
 func (h *Handler) Apply(c *gin.Context) {
 	var body struct {
 		HomeState string `json:"home_state"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	ct, err := h.s.Contestant.Apply(c.Request.Context(), ctxUserID(c), c.Param("id"), body.HomeState)
+	ct, err := h.s.Contestant.Apply(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.HomeState)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -162,7 +154,7 @@ func (h *Handler) Apply(c *gin.Context) {
 
 // Me: GET /api/arena/competitions/:id/me
 func (h *Handler) Me(c *gin.Context) {
-	ct, err := h.s.Contestant.Me(c.Request.Context(), c.Param("id"), ctxUserID(c))
+	ct, err := h.s.Contestant.Me(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -172,7 +164,7 @@ func (h *Handler) Me(c *gin.Context) {
 
 // MyMerit: GET /api/arena/competitions/:id/me/merit
 func (h *Handler) MyMerit(c *gin.Context) {
-	ct, err := h.s.Contestant.Me(c.Request.Context(), c.Param("id"), ctxUserID(c))
+	ct, err := h.s.Contestant.Me(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -187,7 +179,7 @@ func (h *Handler) MyMerit(c *gin.Context) {
 
 // Support: POST /api/arena/competitions/:id/support (Idempotency-Key required)
 func (h *Handler) Support(c *gin.Context) {
-	if idemKey(c) == "" {
+	if ginutil.IdempotencyKey(c) == "" {
 		mapErr(c, service.ErrMissingIdem)
 		return
 	}
@@ -199,7 +191,7 @@ func (h *Handler) Support(c *gin.Context) {
 		mapErr(c, service.ErrInvalidInput)
 		return
 	}
-	err := h.s.Support.Contribute(c.Request.Context(), ctxUserID(c), idemKey(c),
+	err := h.s.Support.Contribute(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c),
 		c.Param("id"), body.ContestantID, body.AmountKobo)
 	if err != nil {
 		mapErr(c, err)
@@ -230,7 +222,7 @@ func (h *Handler) PlayAlongQuestions(c *gin.Context) {
 // score/total/passed + the per-question teaching reveal + credential/cashback
 // merged from the engagement rail (NDC-1 — never merit).
 func (h *Handler) PlayAlongAttempt(c *gin.Context) {
-	if idemKey(c) == "" {
+	if ginutil.IdempotencyKey(c) == "" {
 		mapErr(c, service.ErrMissingIdem)
 		return
 	}
@@ -247,7 +239,7 @@ func (h *Handler) PlayAlongAttempt(c *gin.Context) {
 		return
 	}
 	res, err := h.s.Quiz.ScorePlayAlong(c.Request.Context(), c.Param("id"),
-		quiz.DefaultBankKey, quiz.DefaultRubricVersion, ctxUserID(c), body.Stage, body.Answers, idemKey(c))
+		quiz.DefaultBankKey, quiz.DefaultRubricVersion, ginutil.UserID(c), body.Stage, body.Answers, ginutil.IdempotencyKey(c))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -259,7 +251,7 @@ func (h *Handler) PlayAlongAttempt(c *gin.Context) {
 // Gated to the caller's contestant state THEORY_ASSIGNED. Returns the assigned
 // batch + contestant-safe stage questions; 409 (ErrConflict) if not assigned.
 func (h *Handler) MyExam(c *gin.Context) {
-	sv, batch, err := h.s.Quiz.ExamStage(c.Request.Context(), c.Param("id"), ctxUserID(c),
+	sv, batch, err := h.s.Quiz.ExamStage(c.Request.Context(), c.Param("id"), ginutil.UserID(c),
 		quiz.DefaultBankKey, quiz.DefaultRubricVersion)
 	if err != nil {
 		mapErr(c, err)
@@ -278,7 +270,7 @@ func (h *Handler) MyExam(c *gin.Context) {
 // exam attempt and performs the guarded THEORY_ASSIGNED → THEORY_TAKEN transition.
 // Mints NO merit (NDC-2). Single attempt per (contestant, batch) — idempotent.
 func (h *Handler) SubmitExam(c *gin.Context) {
-	if idemKey(c) == "" {
+	if ginutil.IdempotencyKey(c) == "" {
 		mapErr(c, service.ErrMissingIdem)
 		return
 	}
@@ -290,8 +282,8 @@ func (h *Handler) SubmitExam(c *gin.Context) {
 		mapErr(c, service.ErrInvalidInput)
 		return
 	}
-	res, err := h.s.Quiz.SubmitExam(c.Request.Context(), c.Param("id"), ctxUserID(c),
-		quiz.DefaultBankKey, quiz.DefaultRubricVersion, body.Answers, body.ResponseTimeMs, idemKey(c))
+	res, err := h.s.Quiz.SubmitExam(c.Request.Context(), c.Param("id"), ginutil.UserID(c),
+		quiz.DefaultBankKey, quiz.DefaultRubricVersion, body.Answers, body.ResponseTimeMs, ginutil.IdempotencyKey(c))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -301,7 +293,7 @@ func (h *Handler) SubmitExam(c *gin.Context) {
 
 // Prediction: POST /api/arena/competitions/:id/predictions (Idempotency-Key required)
 func (h *Handler) Prediction(c *gin.Context) {
-	if idemKey(c) == "" {
+	if ginutil.IdempotencyKey(c) == "" {
 		mapErr(c, service.ErrMissingIdem)
 		return
 	}
@@ -310,15 +302,13 @@ func (h *Handler) Prediction(c *gin.Context) {
 		mapErr(c, service.ErrInvalidInput)
 		return
 	}
-	total, dup, err := h.s.Prediction.Submit(c.Request.Context(), ctxUserID(c), idemKey(c), c.Param("id"), body)
+	total, dup, err := h.s.Prediction.Submit(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), c.Param("id"), body)
 	if err != nil {
 		mapErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"total_points": total, "duplicate": dup})
 }
-
-// ── ADMIN ────────────────────────────────────────────────────────────────────
 
 // CreateCompetition: POST /api/arena/admin/competitions
 func (h *Handler) CreateCompetition(c *gin.Context) {
@@ -331,7 +321,7 @@ func (h *Handler) CreateCompetition(c *gin.Context) {
 		mapErr(c, service.ErrInvalidInput)
 		return
 	}
-	comp, err := h.s.Competition.Create(c.Request.Context(), ctxUserID(c), body.Slug, body.Name, body.Timezone)
+	comp, err := h.s.Competition.Create(c.Request.Context(), ginutil.UserID(c), body.Slug, body.Name, body.Timezone)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -347,7 +337,7 @@ func (h *Handler) PublishConfig(c *gin.Context) {
 		return
 	}
 	cfg.CompetitionID = c.Param("id")
-	version, err := h.s.Competition.PublishConfig(c.Request.Context(), ctxUserID(c), c.Param("id"), cfg)
+	version, err := h.s.Competition.PublishConfig(c.Request.Context(), ginutil.UserID(c), c.Param("id"), cfg)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -375,7 +365,7 @@ func (h *Handler) ScreeningDecide(c *gin.Context) {
 		mapErr(c, service.ErrInvalidInput)
 		return
 	}
-	err := h.s.Screening.Decide(c.Request.Context(), ctxUserID(c), c.Param("id"), c.Param("cid"), body.Approve, body.Reason)
+	err := h.s.Screening.Decide(c.Request.Context(), ginutil.UserID(c), c.Param("id"), c.Param("cid"), body.Approve, body.Reason)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -386,7 +376,6 @@ func (h *Handler) ScreeningDecide(c *gin.Context) {
 // ProctorAttest: POST /api/arena/admin/competitions/:id/proctor/attest
 // Routes a signed theory/screening score through ScoringService (the ONLY merit
 // write path). The proctor's attestation is folded into the signed payload.
-//
 // NDC-2 correctness: the raw score is sourced from the contestant's STORED
 // arena_quiz_attempt (score/total) for the attested (contestant, stage) whenever
 // the request omits an explicit raw["score"]. The proctor remains the signing
@@ -427,7 +416,7 @@ func (h *Handler) ProctorAttest(c *gin.Context) {
 			raw["max"] = float64(att.Total)
 		}
 	}
-	entry, err := h.s.Scoring.Submit(c.Request.Context(), ctxUserID(c), service.ScoreInput{
+	entry, err := h.s.Scoring.Submit(c.Request.Context(), ginutil.UserID(c), service.ScoreInput{
 		CompetitionID: c.Param("id"),
 		ContestantID:  body.ContestantID,
 		Stage:         arena.Stage(body.Stage),
@@ -478,7 +467,7 @@ func (h *Handler) submitScore(c *gin.Context) {
 		mapErr(c, service.ErrInvalidInput)
 		return
 	}
-	entry, err := h.s.Scoring.Submit(c.Request.Context(), ctxUserID(c), service.ScoreInput{
+	entry, err := h.s.Scoring.Submit(c.Request.Context(), ginutil.UserID(c), service.ScoreInput{
 		CompetitionID: c.Param("id"),
 		ContestantID:  body.ContestantID,
 		Stage:         arena.Stage(body.Stage),
@@ -504,7 +493,7 @@ func (h *Handler) Transition(c *gin.Context) {
 		mapErr(c, service.ErrInvalidInput)
 		return
 	}
-	err := h.s.Contestant.Transition(c.Request.Context(), ctxUserID(c), c.Param("id"), c.Param("cid"),
+	err := h.s.Contestant.Transition(c.Request.Context(), ginutil.UserID(c), c.Param("id"), c.Param("cid"),
 		arena.ContestantState(body.To), body.Reason)
 	if err != nil {
 		mapErr(c, err)
@@ -535,7 +524,7 @@ func (h *Handler) FinalizeAward(c *gin.Context) {
 		mapErr(c, service.ErrInvalidInput)
 		return
 	}
-	err := h.s.Contestant.Transition(c.Request.Context(), ctxUserID(c), c.Param("id"), body.ContestantID,
+	err := h.s.Contestant.Transition(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.ContestantID,
 		arena.StCrowned, body.Reason)
 	if err != nil {
 		mapErr(c, err)
@@ -546,7 +535,7 @@ func (h *Handler) FinalizeAward(c *gin.Context) {
 
 // PotDisburse: POST /api/arena/admin/competitions/:id/pot/disburse (Idempotency-Key required)
 func (h *Handler) PotDisburse(c *gin.Context) {
-	if idemKey(c) == "" {
+	if ginutil.IdempotencyKey(c) == "" {
 		mapErr(c, service.ErrMissingIdem)
 		return
 	}
@@ -561,12 +550,12 @@ func (h *Handler) PotDisburse(c *gin.Context) {
 	ctx := c.Request.Context()
 	// An approve flag records this admin's distinct approval first (NDC-4).
 	if body.Approve {
-		if _, err := h.s.Pot.Approve(ctx, ctxUserID(c), c.Param("id")); err != nil {
+		if _, err := h.s.Pot.Approve(ctx, ginutil.UserID(c), c.Param("id")); err != nil {
 			mapErr(c, err)
 			return
 		}
 	}
-	if err := h.s.Pot.Disburse(ctx, ctxUserID(c), idemKey(c), c.Param("id"), body.WinnerUserID); err != nil {
+	if err := h.s.Pot.Disburse(ctx, ginutil.UserID(c), ginutil.IdempotencyKey(c), c.Param("id"), body.WinnerUserID); err != nil {
 		mapErr(c, err)
 		return
 	}
@@ -584,7 +573,7 @@ func (h *Handler) IssueCredential(c *gin.Context) {
 		mapErr(c, service.ErrInvalidInput)
 		return
 	}
-	hash, err := h.s.Credential.Issue(c.Request.Context(), ctxUserID(c), body.UserID, c.Param("id"), body.Type, body.MeritRef)
+	hash, err := h.s.Credential.Issue(c.Request.Context(), ginutil.UserID(c), body.UserID, c.Param("id"), body.Type, body.MeritRef)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -599,15 +588,13 @@ func (h *Handler) RevokeCredential(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	err := h.s.Credential.Revoke(c.Request.Context(), ctxUserID(c), c.Param("cid"), body.Reason)
+	err := h.s.Credential.Revoke(c.Request.Context(), ginutil.UserID(c), c.Param("cid"), body.Reason)
 	if err != nil {
 		mapErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
-
-// ── ADMIN: QUIZ BANK (perm arena.admin.questions) ─────────────────────────────
 
 // ImportQuestions: POST /api/arena/admin/competitions/:id/questions/import
 // Binds/loads the quiz bank to the competition (idempotent). body {bankKey?,

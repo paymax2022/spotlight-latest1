@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, type PropsWithChildren } from 'react';
-import { startAdminSessionSync, syncAdminSession } from '@/features/auth/adminSession';
+import { startAdminSessionSync, syncAdminSession } from '@/features/auth/adminAuth';
 
 /**
  * Keeps the hotelier extranet's Bearer token fresh.
@@ -33,7 +33,6 @@ export default function ExtranetLayout({ children }: PropsWithChildren) {
   useEffect(() => {
     let cancelled = false;
     // Resolve the session BEFORE first render. Rendering children while the
-    // refresh is still in flight would let their on-mount fetches go out under
     // the stale token — reproducing the very 401 this prevents.
     void syncAdminSession().finally(() => {
       if (!cancelled) setChecked(true);

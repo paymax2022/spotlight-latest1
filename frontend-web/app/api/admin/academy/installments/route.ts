@@ -1,7 +1,7 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
-import { summariseCompliance } from '@/src/server/services/academy/compliance';
+import { summariseCompliance } from '@/src/server/services/academy';
 
 /** What academy_installment_plans.frequency actually accepts. */
 const PLAN_CADENCES = ['weekly', 'biweekly', 'monthly'];

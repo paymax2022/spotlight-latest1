@@ -17,7 +17,6 @@ import (
 // RewardService is the Direct Referral Rewards ENGINE. It is distinct from the
 // legacy *Service (per-referral flat reward) in service.go — this one is purchase-
 // triggered, single-level, tiered + milestone-driven, and config-versioned.
-//
 // Money path REUSES the finance ledger: an ongoing-share reward CREDITs the
 // referrer wallet with a balanced double-entry (counterpart = the referral reward
 // expense standing account), keyed idempotently on the reward id. A refund posts a
@@ -53,9 +52,7 @@ func (s *RewardService) emit(ctx context.Context, event string, fields map[strin
 	_ = s.audit.Emit(ctx, event, fields)
 }
 
-// ============================================================================
 // EMIT HOOKS — the in-process contract for the integration agent.
-// ============================================================================
 
 // OnPurchaseSettled processes a settled purchase into an ongoing-share reward.
 // Contract (§2.1, §4.1):
@@ -208,9 +205,7 @@ func (s *RewardService) OnPurchaseRefunded(ctx context.Context, in PurchaseRefun
 	return nil
 }
 
-// ============================================================================
 // Attribution + config helpers.
-// ============================================================================
 
 // attributedReferrer returns the referrer_id attributed to a payer, or "" if the
 // payer has no (human) attribution. Reuses the existing referral_attributions
@@ -315,10 +310,8 @@ func (s *RewardService) insertOrGetReward(ctx context.Context, referrerID string
 	return id, status, nil
 }
 
-// ============================================================================
 // USER API — link / attribute / dashboard / referrals / earnings / milestones.
 // All read paths are scoped to the caller (object-level authZ in the handler).
-// ============================================================================
 
 // GetOrCreateLink returns the caller's referral code from referral_links,
 // generating one if absent. Idempotent (referrer_id UNIQUE).
@@ -410,15 +403,13 @@ func (s *RewardService) Attribute(ctx context.Context, referredUserID, code stri
 // resolveCode maps a code to a referrer, checking the engine's referral_links
 // first, then falling back to the legacy finance_referral_codes seed so codes
 // issued by the old module still attribute.
-//
 // referral_links is looked up by exact case: GetOrCreateLink/GenerateCode
 // only ever issue uppercase codes there, so an exact match is correct and
 // this path is left untouched (REF-008 does not affect it).
-//
 // The legacy finance_referral_codes fallback is looked up case-INSENSITIVELY
 // (REF-008): its rows may be stored in whatever case they were generated in
 // before the two generators writing into that table were unified (see
-// internal/finance/referrals/code.go and frontend-web's referrals/service.ts),
+// internal/finance/referrals/service.go and frontend-web's referrals/service.ts),
 // so a case-sensitive match would leave already-issued codes unresolvable.
 func (s *RewardService) resolveCode(ctx context.Context, code string) (string, error) {
 	code = strings.TrimSpace(code)
@@ -629,9 +620,7 @@ func (s *RewardService) scanRewards(ctx context.Context, q string, args ...any) 
 	return out, rows.Err()
 }
 
-// ============================================================================
 // NIGHTLY RECALC — active-count → tier/rate; milestone crossings → idempotent payout.
-// ============================================================================
 
 // RecalculateTiers recomputes every referrer's rolling active_referral_count
 // (referred users with >= 1 CREDITED reward in the trailing 30 days), sets
@@ -759,9 +748,7 @@ func (s *RewardService) awardMilestone(ctx context.Context, referrerID string, b
 	return nil
 }
 
-// ============================================================================
 // ADMIN — config / analytics / fraud / ledger / case / milestones / module.
-// ============================================================================
 
 // GetActiveConfig returns the currently-active config (A1 read).
 func (s *RewardService) GetActiveConfig(ctx context.Context) (*ProgramConfig, error) {
@@ -1106,12 +1093,9 @@ func (s *RewardService) ModuleStatus(ctx context.Context) ([]ModuleRollup, error
 	return out, rows.Err()
 }
 
-// ============================================================================
 // small helpers.
-// ============================================================================
 
-// generateRewardCode issues a code in the shared 5-character shape (see code.go).
-//
+// generateRewardCode issues a code in the shared 5-character shape (see service.go).
 // It previously returned "R" + hex(5 bytes) = 11 characters, far too long to
 // read aloud or type — the complaint that prompted this change. Nothing depended
 // on the "R" prefix; it was never parsed anywhere.
@@ -1137,4 +1121,192 @@ func maskContact(contact string) string {
 		return "***"
 	}
 	return "***" + contact[len(contact)-4:]
+}
+
+// Direct Referral Rewards ENGINE — types.
+// Single-level, purchase-triggered revenue share (no network depth). This
+// section carries the NEW engine's models; the legacy Code/Event/Summary types
+// in service.go are left intact (brownfield additive rule). Money is always
+// integer minor units (kobo): the PRD writes ₦, everything here is ×100.
+
+// Reward status state machine (§4.1).
+const (
+	RewardStatusPending  = "PENDING"
+	RewardStatusCredited = "CREDITED"
+	RewardStatusReversed = "REVERSED"
+)
+
+// Tier names (§2.2).
+const (
+	TierStarter = "STARTER"
+	TierGrowth  = "GROWTH"
+	TierPro     = "PRO"
+	TierElite   = "ELITE"
+)
+
+// Milestone status state machine (§4.2).
+const (
+	MilestoneStatusAchieved = "ACHIEVED"
+	MilestoneStatusPaid     = "PAID"
+	MilestoneStatusVoided   = "VOIDED"
+)
+
+// ActiveWindowDays is the trailing window used to classify a referred user as
+// "active" (§2.2: at least one qualifying purchase in the last 30 days).
+const ActiveWindowDays = 30
+
+// EMIT HOOK CONTRACT — the integration agent builds against these two structs.
+// Every revenue-bearing module emits PurchaseSettled on a settled purchase and
+// PurchaseRefunded on a refund/chargeback (§7.1).
+
+// PurchaseSettled is the common event every revenue-bearing module emits into
+// the engine when a referred user completes a settled purchase. MarginKobo is
+// the platform margin on that purchase in kobo (integer minor units).
+type PurchaseSettled struct {
+	Module        string    `json:"module"`         // e.g. "bills", "marketplace", "insurance"
+	TransactionID string    `json:"transaction_id"` // idempotency anchor — one reward per txn, ever
+	PayerUserID   string    `json:"payer_user_id"`  // the referred user who paid
+	MarginKobo    int64     `json:"margin_kobo"`    // platform margin in kobo (integer minor units)
+	Currency      string    `json:"currency"`       // ISO code, e.g. "NGN"
+	SettledAt     time.Time `json:"settled_at"`
+}
+
+// PurchaseRefunded reverses the reward generated by a previously-settled
+// purchase (§2.4). TransactionID must match a prior PurchaseSettled.
+type PurchaseRefunded struct {
+	TransactionID string    `json:"transaction_id"`
+	RefundedAt    time.Time `json:"refunded_at"`
+}
+
+// Persisted rows.
+
+// Link is a referrer's canonical referral code (referral_links).
+type Link struct {
+	ID         string    `json:"id"`
+	ReferrerID string    `json:"referrer_id"`
+	Code       string    `json:"code"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// Reward is one per-purchase ongoing-share accrual (referral_rewards).
+type Reward struct {
+	ID                  string     `json:"id"`
+	ReferrerID          string     `json:"referrer_id"`
+	ReferredUserID      string     `json:"referred_user_id"`
+	SourceTransactionID string     `json:"source_transaction_id"`
+	Module              string     `json:"module"`
+	MarginKobo          int64      `json:"margin_kobo"`
+	AppliedRate         float64    `json:"applied_rate"`
+	RewardKobo          int64      `json:"reward_kobo"`
+	Status              string     `json:"status"`
+	ConfigVersion       int        `json:"config_version"`
+	CreatedAt           time.Time  `json:"created_at"`
+	CreditedAt          *time.Time `json:"credited_at,omitempty"`
+	ReversedAt          *time.Time `json:"reversed_at,omitempty"`
+}
+
+// TierStatus is a referrer's rolling tier snapshot (referral_tier_status).
+type TierStatus struct {
+	ReferrerID          string    `json:"referrer_id"`
+	ActiveReferralCount int       `json:"active_referral_count"`
+	CurrentTier         string    `json:"current_tier"`
+	CurrentRate         float64   `json:"current_rate"`
+	LastRecalculatedAt  time.Time `json:"last_recalculated_at"`
+}
+
+// Milestone is a one-time count-threshold bonus (referral_milestones).
+type Milestone struct {
+	ID         string     `json:"id"`
+	ReferrerID string     `json:"referrer_id"`
+	Threshold  int        `json:"threshold"`
+	BonusKobo  int64      `json:"bonus_kobo"`
+	Status     string     `json:"status"`
+	AchievedAt time.Time  `json:"achieved_at"`
+	PaidAt     *time.Time `json:"paid_at,omitempty"`
+	VoidedAt   *time.Time `json:"voided_at,omitempty"`
+}
+
+// Program config (referral_program_config).
+
+// TierBand is one row of the versioned tier table. MaxCount == nil means
+// open-ended (the top tier). Rate is a fraction (0.05 = 5%).
+type TierBand struct {
+	Tier     string  `json:"tier"`
+	MinCount int     `json:"min_count"`
+	MaxCount *int    `json:"max_count"`
+	Rate     float64 `json:"rate"`
+}
+
+// MilestoneBand is one row of the versioned milestone table.
+type MilestoneBand struct {
+	Threshold int   `json:"threshold"`
+	BonusKobo int64 `json:"bonus_kobo"`
+}
+
+// ProgramConfig is one versioned config row. The engine reads the active version
+// whose EffectiveFrom <= now(); new versions apply from EffectiveFrom forward and
+// never retroactively recompute past rewards (§3 invariant).
+type ProgramConfig struct {
+	ID             string          `json:"id"`
+	Version        int             `json:"version"`
+	TierTable      []TierBand      `json:"tier_table"`
+	MilestoneTable []MilestoneBand `json:"milestone_table"`
+	IsActive       bool            `json:"is_active"`
+	EffectiveFrom  time.Time       `json:"effective_from"`
+	CreatedAt      time.Time       `json:"created_at"`
+}
+
+// TierForCount returns the tier band whose [min,max] range contains count.
+// Returns (band, true) on a match; (zero, false) when count is below the lowest
+// band (i.e. 0 active referrals → no tier / rate 0).
+func (c ProgramConfig) TierForCount(count int) (TierBand, bool) {
+	for _, b := range c.TierTable {
+		if count < b.MinCount {
+			continue
+		}
+		if b.MaxCount == nil || count <= *b.MaxCount {
+			return b, true
+		}
+	}
+	return TierBand{}, false
+}
+
+// ComputeReward returns floor(marginKobo * rate) in kobo. Integer math on the
+// kobo amount — no floats in the persisted value. rate is a fraction (0.05).
+func ComputeReward(marginKobo int64, rate float64) int64 {
+	if marginKobo <= 0 || rate <= 0 {
+		return 0
+	}
+	// marginKobo is an exact integer; multiplying by a fractional rate and
+	// flooring yields the reward in kobo. We never store a float amount.
+	return int64(float64(marginKobo) * rate)
+}
+
+// API response shapes (snake_case to match the existing referrals handler).
+
+// Dashboard is the response for GET /v1/referrals/me/dashboard.
+type Dashboard struct {
+	Code                string         `json:"code"`
+	CurrentTier         string         `json:"current_tier"`
+	CurrentRate         float64        `json:"current_rate"`
+	ActiveReferralCount int            `json:"active_referral_count"`
+	ThisMonthEarnedKobo int64          `json:"this_month_earned_kobo"`
+	LifetimeEarnedKobo  int64          `json:"lifetime_earned_kobo"`
+	NextMilestone       *NextMilestone `json:"next_milestone,omitempty"`
+}
+
+// NextMilestone previews the upcoming count-threshold bonus.
+type NextMilestone struct {
+	Threshold int   `json:"threshold"`
+	BonusKobo int64 `json:"bonus_kobo"`
+	Remaining int   `json:"remaining"`
+}
+
+// ReferredUser is a row in GET /v1/referrals/me/referrals. Contact is masked.
+type ReferredUser struct {
+	ReferredUserID     string    `json:"referred_user_id"`
+	MaskedContact      string    `json:"masked_contact"`
+	JoinedAt           time.Time `json:"joined_at"`
+	Active             bool      `json:"active"` // qualifying purchase in trailing 30d
+	LifetimeEarnedKobo int64     `json:"lifetime_earned_kobo"`
 }

@@ -1,8 +1,6 @@
-// ── Multi-provider KYC step-up — draft (save-as-you-go state) ────────────────
 // A module singleton the step-up wizard reads/writes as the user progresses.
 // Follows the fx/kyc `kycDraft` pattern: transient client-only form + the live
 // server session id, kept out of React Query because it's in-flight UI state.
-//
 // The session id is persisted here so K14 (Resume) can pick the flow back up at
 // the next incomplete step even if the user leaves and returns, and the passed
 // captures (idNumber, captured selfie, etc.) survive back-navigation.

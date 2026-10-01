@@ -3,7 +3,6 @@ import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 import { mapPrizeRow, UNIQUE_VIOLATION } from './_shared';
 
-// GET /api/admin/voting/contest-prizes?connectContestId=<uuid>
 // Lists structured per-position prizes for a contest (CS-010), ordered by position.
 export async function GET(request: Request) {
   try {

@@ -1,10 +1,8 @@
-// ── Admin — Property Management Suite service ───────────────────────────────
 // Calls the Go backend's Property Management suite directly (it is NOT an
 // /admin-prefixed control plane like realtor/estate — the module owns no admin
 // group, only the 4 caller/RBAC-scoped routes registered in
 // backend/internal/app/finance_routes.go behind FEATURE_PROPERTY_SUITE_ENABLED).
 // Mirrors realtorAdminService's mock/live split and resolveUseMock convention.
-// Flip with NEXT_PUBLIC_PROPERTY_ADMIN_USE_MOCK=false to force live (default is
 // already live in production per resolveUseMock — this module has a real,
 // already-built backend, so it is NOT on scripts/check-mock-flags.mjs's
 // MOCK_ALLOWLIST).
@@ -17,7 +15,6 @@ import type { PropertyContextResponse, RentPassport } from '@/types/propertyAdmi
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_PROPERTY_ADMIN_USE_MOCK);
 
 // Confirmed against backend/internal/app/finance_routes.go: propGroup :=
-// finance.Group("/property") mounted under the finance router at
 // /api/finance/property.
 function base(): string {
   return `${apiRoot()}/api/finance/property`;
@@ -40,7 +37,6 @@ async function getJson<T>(path: string): Promise<T> {
   return (j?.data ?? j) as T;
 }
 
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 const MOCK_CONTEXT: PropertyContextResponse = {
   activeContext: { type: 'estate', id: 'estate_demo_1' },
   contexts: [
@@ -64,8 +60,6 @@ function mockPassport(userId: string): RentPassport {
     ],
   };
 }
-
-// ─── API ──────────────────────────────────────────────────────────────────────
 
 /** GET /api/finance/property/context — the logged-in admin's own role context. */
 export async function getOwnContext(): Promise<PropertyContextResponse> {

@@ -1,5 +1,3 @@
-// ── Movers — mock seed data + bidding engine ─────────────────────────────────
-// All money is integer kobo. Bids arrive from providers; the client never sets
 // the price — it displays bid amounts and the escrow fare from the SERVER.
 
 import type {

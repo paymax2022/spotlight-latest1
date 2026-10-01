@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Radio } from 'lucide-react-native';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { VotingColors } from '../constants/voting.constants';
 import type { ContestStatus } from '../types/voting.types';
 

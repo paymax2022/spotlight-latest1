@@ -3,7 +3,7 @@
  * Queues referral credits, analytics, notifications without blocking the vote
  */
 
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient } from '@/lib/supabase/server';
 import { processReferralReward } from '@/src/server/referrals/service';
 
 export type OutboxEventType =
@@ -71,7 +71,6 @@ export async function processPendingOutboxEvents() {
   const supabase = createAdminClient();
 
   try {
-    // Fetch pending events ordered by creation time
     const { data: events, error } = await supabase
       .from('bridge_outbox')
       .select('*')
@@ -105,7 +104,6 @@ export async function processPendingOutboxEvents() {
             .eq('id', event.id);
           processed++;
         } else {
-          // Increment attempts and mark as pending for retry
           const attempts = (event.attempts || 0) + 1;
           if (attempts >= 3) {
             // Max retries reached — mark as failed
@@ -225,7 +223,6 @@ async function handleReferralTriggered(payload: Record<string, any>): Promise<bo
     return true;
   } catch (error) {
     console.error('[Outbox] handleReferralTriggered error:', error);
-    // Transient failure (e.g. DB hiccup) — return false so the caller retries
     // (up to 3 attempts) instead of silently marking this row done.
     return false;
   }

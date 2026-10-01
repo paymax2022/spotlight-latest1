@@ -2,14 +2,22 @@ package healthscheduling
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/internal/scheduler"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
 
-	"spotlight/backend/internal/scheduler"
+const (
+	keyAppointment = "appointment"
 )
 
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
@@ -34,23 +42,19 @@ const (
 	StateRescheduled State = "RESCHEDULED"
 )
 
-var allowedTransitions = map[State]map[State]bool{
-	StateRequested:   {StateAccepted: true, StateCancelled: true},
-	StateAccepted:    {StateConfirmed: true, StateCancelled: true},
-	StateConfirmed:   {StateInProgress: true, StateRescheduled: true, StateCancelled: true, StateNoShow: true},
-	StateInProgress:  {StateCompleted: true, StateCancelled: true},
-	StateRescheduled: {StateConfirmed: true, StateCancelled: true},
-	StateCompleted:   {},
-	StateCancelled:   {},
-	StateNoShow:      {},
+var allowedTransitions = fsm.Table[State]{
+	StateRequested:   fsm.Set(StateAccepted, StateCancelled),
+	StateAccepted:    fsm.Set(StateConfirmed, StateCancelled),
+	StateConfirmed:   fsm.Set(StateInProgress, StateRescheduled, StateCancelled, StateNoShow),
+	StateInProgress:  fsm.Set(StateCompleted, StateCancelled),
+	StateRescheduled: fsm.Set(StateConfirmed, StateCancelled),
+	StateCompleted:   fsm.Set[State](),
+	StateCancelled:   fsm.Set[State](),
+	StateNoShow:      fsm.Set[State](),
 }
 
 func canTransition(from, to State) bool {
-	next, ok := allowedTransitions[from]
-	if !ok {
-		return false
-	}
-	return next[to]
+	return allowedTransitions.Can(from, to)
 }
 
 type Appointment struct {
@@ -236,8 +240,6 @@ func (s *Service) ListForPatient(ctx context.Context, patientID string) ([]Appoi
 	return out, nil
 }
 
-// --- internals ---
-
 func lockAppointment(ctx context.Context, tx pgx.Tx, id string) (*Appointment, string, error) {
 	var a Appointment
 	var state, providerOwner string
@@ -269,4 +271,120 @@ func validVisit(v string) bool {
 		return true
 	}
 	return false
+}
+
+// ErrSlotTaken is returned when a booking would collide with an existing active
+// appointment for the same provider slot (AP-002).
+var ErrSlotTaken = errors.New("scheduling: slot already booked")
+
+// blockingStates are the appointment states that occupy a provider's slot — a new
+// booking must not overlap an appointment in any of these. CANCELLED, NO_SHOW,
+// COMPLETED, and RESCHEDULED free the slot for re-booking.
+var blockingStates = map[State]bool{
+	StateRequested:  true,
+	StateAccepted:   true,
+	StateConfirmed:  true,
+	StateInProgress: true,
+}
+
+// isBlockingState reports whether an appointment in `s` occupies its slot.
+func isBlockingState(s State) bool { return blockingStates[s] }
+
+// blockingStateList returns the blocking states as strings for SQL IN (...).
+func blockingStateList() []string {
+	return []string{string(StateRequested), string(StateAccepted), string(StateConfirmed), string(StateInProgress)}
+}
+
+// slotsOverlap reports whether two half-open time intervals [aStart,aEnd) and
+// [bStart,bEnd) intersect. Two appointments conflict iff their slots overlap for
+// the same provider. Half-open so back-to-back slots (aEnd == bStart) do NOT
+// conflict. This mirrors the SQL guard `a.slot_start < b.slot_end AND a.slot_end >
+// b.slot_start` used in Request.
+func slotsOverlap(aStart, aEnd, bStart, bEnd time.Time) bool {
+	return aStart.Before(bEnd) && bStart.Before(aEnd)
+}
+
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Request — POST /appointments
+func (h *Handler) Request(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		ProviderID  string    `json:"provider_id"`
+		SubjectType string    `json:"subject_type"`
+		VisitType   string    `json:"visit_type"`
+		SlotStart   time.Time `json:"slot_start"`
+		SlotEnd     time.Time `json:"slot_end"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	a, err := h.svc.Request(c.Request.Context(), id, req.ProviderID, req.SubjectType, req.VisitType, req.SlotStart, req.SlotEnd)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"success": true, keyAppointment: a})
+}
+
+// List — GET /appointments
+func (h *Handler) List(c *gin.Context) {
+	out, err := h.svc.ListForPatient(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "appointments": out})
+}
+
+// Transition — POST /appointments/:id/transition  { state }
+func (h *Handler) Transition(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		State string `json:"state"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	a, err := h.svc.Transition(c.Request.Context(), id, c.Param("id"), State(req.State))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, keyAppointment: a})
+}
+
+// Reschedule — POST /appointments/:id/reschedule  { slot_start, slot_end }
+func (h *Handler) Reschedule(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		SlotStart time.Time `json:"slot_start"`
+		SlotEnd   time.Time `json:"slot_end"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	a, err := h.svc.Reschedule(c.Request.Context(), id, c.Param("id"), req.SlotStart, req.SlotEnd)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, keyAppointment: a})
 }

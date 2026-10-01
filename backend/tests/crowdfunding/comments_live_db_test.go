@@ -1,8 +1,6 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests for campaign comments and Q&A.
-//
 // The mobile screen and its API client called four endpoints that were never
 // built: no table, no routes, no proxy. These pin the behaviour the screen
 // depends on, and the two rules that cannot be expressed as column constraints
@@ -11,15 +9,11 @@ package crowdfunding_test
 //     so anyone being able to reply would put a stranger's words behind the
 //     campaign owner's identity;
 //   · a reply may not be replied to — the feed nests exactly one level.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL, which .env points at the
 // production pooler and these tests INSERT (scripts/ci/check-live-db-gate.sh).
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Comment -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -228,8 +222,6 @@ func TestLiveDB_CommentRejectsEmptyAndUnknown(t *testing.T) {
 		t.Errorf("report unknown comment err = %v, want ErrCommentNotFound", err)
 	}
 }
-
-// ─── Campaign updates ────────────────────────────────────────────────────────
 
 // TestLiveDB_UpdatePublishIsCreatorOnly: an update is the campaign speaking to
 // the people who funded it, and the timeline shows no author name — so anyone

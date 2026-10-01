@@ -5,9 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/stays/ari"
 )
 
@@ -73,8 +78,6 @@ func (s *Service) CreateProperty(ctx context.Context, userID, name, propertyType
 	}
 	return s.repo.CreateProperty(ctx, userID, name, propertyType, address, city, starRating)
 }
-
-// --- content ---
 
 // GetProperty returns the property content (object-scoped).
 func (s *Service) GetProperty(ctx context.Context, userID, propertyID string) (Property, error) {
@@ -176,8 +179,6 @@ func (s *Service) CreateRatePlan(ctx context.Context, userID, propertyID, roomTy
 	return s.repo.CreateRatePlan(ctx, propertyID, roomTypeID, planType, board, refundable, baseKobo, currency)
 }
 
-// --- reservations dashboard ---
-
 func (s *Service) ListReservations(ctx context.Context, userID, propertyID, state string, limit, offset int) ([]ReservationRow, error) {
 	if err := s.guard(ctx, userID, propertyID); err != nil {
 		return nil, err
@@ -256,8 +257,6 @@ func (s *Service) releaseAllotment(ctx context.Context, reservationID string) {
 	_ = s.allot.AllotmentRelease(ctx, rt, ari.DateRange{CheckIn: in, CheckOut: out}, rooms)
 }
 
-// --- messaging (guest <-> hotel thread) ---
-
 // PostMessage persists a HOST message on a reservation's thread. Object-scoped: the
 // caller must hold an ACTIVE grant on the property AND the reservation must belong to
 // that property. Returns the persisted row (not a stub).
@@ -293,8 +292,6 @@ func (s *Service) ListMessages(ctx context.Context, userID, propertyID, reservat
 	return s.repo.ListMessages(ctx, reservationID, 200)
 }
 
-// --- finance reads ---
-
 func (s *Service) Payouts(ctx context.Context, userID, propertyID string) ([]PayoutRow, error) {
 	if err := s.guard(ctx, userID, propertyID); err != nil {
 		return nil, err
@@ -309,16 +306,12 @@ func (s *Service) Commission(ctx context.Context, userID, propertyID string) ([]
 	return s.repo.ListCommission(ctx, propertyID, 100)
 }
 
-// --- analytics ---
-
 func (s *Service) Analytics(ctx context.Context, userID, propertyID, from, to string) (Analytics, error) {
 	if err := s.guard(ctx, userID, propertyID); err != nil {
 		return Analytics{}, err
 	}
 	return s.repo.ComputeAnalytics(ctx, propertyID, from, to)
 }
-
-// --- account / staff ---
 
 func (s *Service) ListStaff(ctx context.Context, userID, propertyID string) ([]StaffRow, error) {
 	// Staff management is OWNER/MANAGER only (object-scoped role check).
@@ -340,4 +333,55 @@ func orDate(d string) string {
 		return time.Now().Format("2006-01-02")
 	}
 	return d
+}
+
+// AuthZ resolves object-level hotelier authorization: does a user hold an ACTIVE
+// grant on a property (optionally with a sufficient role)? Object-level checks live
+// IN the service layer (PRD §21) and complement the stays.hotelier.* RBAC route guard.
+type AuthZ struct {
+	db *pgxpool.Pool
+}
+
+// NewAuthZ constructs the authorizer.
+func NewAuthZ(db *pgxpool.Pool) *AuthZ { return &AuthZ{db: db} }
+
+// HasProperty reports whether the user has an ACTIVE hotelier grant on the property.
+func (a *AuthZ) HasProperty(ctx context.Context, userID, propertyID string) bool {
+	if a.db == nil || userID == "" || propertyID == "" {
+		return false
+	}
+	var ok bool
+	err := a.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM public.stays_hotelier_profile
+			WHERE user_id = $1 AND property_id = $2 AND status = 'ACTIVE'
+		)`, userID, propertyID).Scan(&ok)
+	return err == nil && ok
+}
+
+// HasPropertyRole reports an ACTIVE grant whose role is in the allowed set. An empty
+// allowed set means "any role".
+func (a *AuthZ) HasPropertyRole(ctx context.Context, userID, propertyID string, allowed ...string) bool {
+	if a.db == nil || userID == "" || propertyID == "" {
+		return false
+	}
+	var role string
+	err := a.db.QueryRow(ctx, `
+		SELECT role FROM public.stays_hotelier_profile
+		WHERE user_id = $1 AND property_id = $2 AND status = 'ACTIVE'`, userID, propertyID).Scan(&role)
+	if err != nil {
+		return false
+	}
+	if len(allowed) == 0 {
+		return true
+	}
+	return slices.Contains(allowed, role)
+}
+
+// GinChecker adapts HasProperty to the gin-based PropertyAuthorizer signature that
+// the ARI + reviews handlers consume (reads user_id from the request context).
+func (a *AuthZ) GinChecker() func(c *gin.Context, propertyID string) bool {
+	return func(c *gin.Context, propertyID string) bool {
+		return a.HasProperty(c.Request.Context(), ginutil.UserID(c), propertyID)
+	}
 }

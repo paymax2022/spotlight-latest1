@@ -1,6 +1,5 @@
 // Maps the Go backend's Connect voting shapes (/api/v1/connect/contests/*) onto
 // the mobile voting types.
-//
 // The two models differ in one important way: the backend's immutable vote log
 // keys a vote by `option_ref`, a plain string. For roster contests that string
 // IS the contestant id, which is what lets the roster and the tally join

@@ -76,9 +76,7 @@ func NewService(d Deps) *Service {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Member: create / quote / list / get
-// ─────────────────────────────────────────────────────────────────────────────
 
 // CreateInput is the draft-creation input.
 type CreateInput struct {
@@ -179,9 +177,7 @@ func (s *Service) Analytics(ctx context.Context, merchantID, campaignID string) 
 	return s.repo.CampaignAnalytics(ctx, campaignID)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Member: submit / cancel / pause / resume / pay-retry
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Submit moves DRAFT/NEEDS_MORE_INFO → SUBMITTED → UNDER_REVIEW (re-checks eligibility
 // FIRST: cap/cooldown/creative + external merchant/subject). Idempotency-Key required
@@ -338,9 +334,7 @@ func (s *Service) Pay(ctx context.Context, merchantID, campaignID string) (*Camp
 	return s.repo.GetCampaign(ctx, c.ID)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Admin: review queue / approve / reject / request-info / suspend
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ReviewQueue returns the admin review pipeline (optionally filtered by state).
 func (s *Service) ReviewQueue(ctx context.Context, state string, limit, offset int) ([]Campaign, error) {
@@ -463,9 +457,7 @@ func (s *Service) Suspend(ctx context.Context, adminID, campaignID, reason strin
 	return s.repo.GetCampaign(ctx, c.ID)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Money legs (all reuse the ledger; idempotency keys are exact per spec)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // holdEscrow performs the tier-checked merchant-wallet debit into PLACEMENT_ESCROW.
 // idempotency key `placement:<id>:hold`, reference `placement:<id>`. Maps insufficient
@@ -585,9 +577,7 @@ func (s *Service) recognizeAndRefundProRata(ctx context.Context, c *Campaign, ac
 	return nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Reservation + scheduling helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 // reserveExclusive inserts the durable no-overlap reservation for an EXCLUSIVE zone.
 // POOLED zones reserve nothing (capacity is checked at activation). Returns ErrSlotTaken
@@ -619,9 +609,7 @@ func (s *Service) reserveAndSchedule(ctx context.Context, c *Campaign, actorID s
 	return nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Eligibility (re-checked at submit AND activation)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // checkEligibility runs the full eligibility gate: self-owned (cap, cooldown,
 // creative) + external (merchant, subject). Returns an error wrapping ErrIneligible.
@@ -667,9 +655,7 @@ func (s *Service) checkEligibility(ctx context.Context, c *Campaign) error {
 	return nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // internals
-// ─────────────────────────────────────────────────────────────────────────────
 
 // transition applies a guarded optimistic-locked state change, writes audit, and
 // refreshes the in-memory campaign version/state.

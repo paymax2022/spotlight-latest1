@@ -2,21 +2,16 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { GO_BACKEND_URL } from '@/src/lib/go-backend';
 import { handleApiError } from '@/src/lib/api/responses';
 
-// ── Dedicated SSE streaming proxy: /api/v1/realtime/* → Go /api/v1/realtime/* ──
-//
 // The catch-all at app/api/v1/[...path]/route.ts forwards via proxyToGoBackend,
 // which BUFFERS the upstream body (upstream.text()) before responding — fatal for
 // Server-Sent Events, which must flush frame-by-frame and never close. This more
 // specific segment ([...path] under /realtime) takes precedence over the catch-all
 // for /api/v1/realtime/*, so those requests stream through here instead.
-//
 // We pipe the Go backend's ReadableStream straight through the Response body — no
 // buffering — and set the SSE headers (plus X-Accel-Buffering: no to stop nginx/
 // Passenger from buffering the event stream). force-dynamic + nodejs runtime keep
 // it out of static optimization / edge caching.
-//
 // Only GET is needed: the EventSource client opens a long-lived GET. Auth mirrors
-// the sibling proxies (requireRequestUser); the Authorization Bearer is forwarded
 // so the Go side re-validates the Supabase JWT and scopes the stream to the user.
 
 export const dynamic = 'force-dynamic';

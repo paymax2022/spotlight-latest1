@@ -27,10 +27,10 @@ export type PayPhase =
   | 'checking'        // resolving the caller's KYC spend allowance
   | 'blocked'         // the KYC tier will not permit this spend — no rail can succeed
   | 'pin'             // collecting the wallet transaction PIN
-  | 'initializing'    // card: server is opening the top-up transaction
+  | 'initializing'
   | 'charging'        // verifying PIN / running the module's wallet charge
   | 'awaiting'        // user is on the Paystack gateway
-  | 'confirming'      // card: waiting for the webhook to credit the wallet
+  | 'confirming'
   | 'done'
   | 'error';
 
@@ -173,7 +173,6 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
   // Resolves the caller's KYC spend allowance and decides whether this purchase can
   // proceed. Reads through the same query cache the sheet warms on open, so the
   // common path is a cache hit; a cold or stale cache fetches once.
-  //
   // An allowance that cannot be read is treated as "unknown" and ALLOWED — the
   // server gate still refuses the debit, so failing closed here would block checkout
   // on a network hiccup while protecting nothing.
@@ -223,7 +222,6 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
         return;
       }
 
-      // ── KYC spend pre-check — MUST stay ahead of both remaining rails ────────
       // The card rail tops the wallet up first and only then runs the module's
       // wallet charge, so without this a Tier 0 customer would pay real money into
       // a wallet the tier gate forbids them from spending: the funds are recorded
@@ -242,10 +240,8 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
       setPhase('idle');
 
       if (method === 'card') {
-        // Card = top up the wallet for the exact amount, wait for the webhook to
         // credit it, then run the module's ordinary wallet charge. Net wallet
         // change is zero and the money moves on ONE ledger.
-        //
         // Previously this opened a client-initialized charge for req.amountKobo
         // and then ran the module's charge anyway — which debits the wallet. The
         // customer paid twice, and if the wallet was short the debit failed after
@@ -315,7 +311,6 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
         return;
       }
 
-      // Wallet: gate on the 4-digit transaction PIN (uniform across all modules),
       // then charge. The sheet renders the PIN entry during the 'pin' phase and
       // calls submitPin(); the kill-switch flag skips straight to the charge.
       if (requiresPin('wallet', WALLET_PIN_REQUIRED)) {

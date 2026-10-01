@@ -3,6 +3,7 @@ package crypto
 import (
 	"context"
 	"fmt"
+	"spotlight/backend/go-common/dbutil"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,8 +15,6 @@ import (
 // RBAC crypto.admin upstream. All reads are thin SELECTs; the two writers reuse
 // the existing guarded state machines (WHERE status=from) so the transition rules
 // are honoured even under concurrency.
-
-// ── Withdrawals (admin) ──────────────────────────────────────────────────────
 
 // AdminListWithdrawals returns withdrawals across all users (newest first),
 // optionally filtered by status, enriched with the fiat value the console shows.
@@ -117,7 +116,7 @@ func (r *Repository) AdminTransitionWithdrawal(
 
 	const evt = `INSERT INTO crypto_withdrawal_events (withdrawal_id, from_status, to_status, actor_id, detail)
 	             VALUES ($1,$2,$3,$4,$5)`
-	if _, err := tx.Exec(ctx, evt, id, from, to, nullStr(actorID), nullStr(detail)); err != nil {
+	if _, err := tx.Exec(ctx, evt, id, from, to, dbutil.NullStr(actorID), dbutil.NullStr(detail)); err != nil {
 		return nil, err
 	}
 
@@ -157,7 +156,7 @@ func (r *Repository) AdminTransitionWithdrawalProvider(
 
 	const evt = `INSERT INTO crypto_withdrawal_events (withdrawal_id, from_status, to_status, actor_id, detail)
 	             VALUES ($1,$2,$3,$4,$5)`
-	if _, err := tx.Exec(ctx, evt, id, from, to, nullStr(actorID), nullStr(detail)); err != nil {
+	if _, err := tx.Exec(ctx, evt, id, from, to, dbutil.NullStr(actorID), dbutil.NullStr(detail)); err != nil {
 		return nil, err
 	}
 
@@ -222,8 +221,6 @@ func deriveAmlSignals(valueKobo int64, status string) ([]string, int) {
 	return flags, score
 }
 
-// ── Swaps (admin) ────────────────────────────────────────────────────────────
-
 // AdminListSwaps returns swaps across all users (newest first).
 func (r *Repository) AdminListSwaps(ctx context.Context, limit, offset int) ([]SwapOrder, error) {
 	const q = `SELECT s.id, s.user_id, s.from_asset_id, fa.symbol, s.to_asset_id, ta.symbol,
@@ -254,8 +251,6 @@ func (r *Repository) AdminListSwaps(ctx context.Context, limit, offset int) ([]S
 	}
 	return out, rows.Err()
 }
-
-// ── Addresses (admin) ────────────────────────────────────────────────────────
 
 // AdminListAddresses returns allow-list entries across all users (newest first).
 // It includes inactive rows (pending/rejected) so the review queue is complete.
@@ -330,8 +325,6 @@ func (r *Repository) AdminDecideAddress(ctx context.Context, id string, approve 
 	}
 	return r.AdminGetAddress(ctx, id)
 }
-
-// ── Reconciliation (admin) ───────────────────────────────────────────────────
 
 // AdminHeldUnitsByAsset returns, per asset, the total units the platform owes on
 // custody: the sum of all holding projections PLUS units parked in non-terminal

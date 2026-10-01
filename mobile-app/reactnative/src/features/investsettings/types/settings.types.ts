@@ -2,11 +2,7 @@
 // Source of truth the invest-settings screens code against (Backend role owns
 // this file). Mirrors the crypto module's typing conventions: a small set of
 // plain interfaces the API layer and hooks share, with no UI concerns leaking in.
-//
-// This module is read-mostly: profile/KYC/risk are server-owned; banks, devices,
 // PIN and support tickets are the only mutable surfaces.
-
-// ─── Profile · KYC · Risk ─────────────────────────────────────────────────────
 
 /** KYC verification tiers (mirrors the crypto eligibility `kycTier`). */
 export type KycTier = 0 | 1 | 2 | 3;
@@ -23,8 +19,6 @@ export interface InvestProfile {
   riskCategory: RiskCategory;
 }
 
-// ─── Linked banks ─────────────────────────────────────────────────────────────
-
 /** A funding/withdrawal bank account. `accountMasked` only — full number never stored client-side. */
 export interface LinkedBank {
   id: string;
@@ -39,15 +33,11 @@ export interface NewBankDraft {
   accountNumber: string;
 }
 
-// ─── Fee schedule ─────────────────────────────────────────────────────────────
-
 /** A single line in the transparency fee schedule. */
 export interface FeeScheduleItem {
   label: string;
   value: string;           // pre-formatted display string (e.g. '0.90%', 'Free')
 }
-
-// ─── Statements ───────────────────────────────────────────────────────────────
 
 export type StatementKind = 'monthly' | 'tax' | 'annual';
 
@@ -76,8 +66,6 @@ export interface Device {
   current: boolean;
 }
 
-// ─── Support ──────────────────────────────────────────────────────────────────
-
 export type TicketStatus = 'open' | 'pending' | 'resolved' | 'closed';
 
 /** A single message within a support thread. */
@@ -101,8 +89,6 @@ export interface NewTicketDraft {
   subject: string;
   body: string;
 }
-
-// ─── Support content (help center FAQ) ────────────────────────────────────────
 
 export interface FaqItem {
   id: string;

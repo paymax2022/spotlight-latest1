@@ -1,11 +1,7 @@
-// ── FX Exchange — Type Contract ──────────────────────────────────────────────
 // Source of truth the screens code against (Backend role owns this file).
 // Mirrors the Paymax normalized API (spec §5, §11; Appendix B status machines).
-//
 // IRON RULE: all monetary amounts are integers in MINOR UNITS (kobo/cents).
 // Never floats, never strings for math. A `Money` is always { amount, currency }.
-
-// ─── Money primitive ──────────────────────────────────────────────────────────
 
 /** ISO-4217 currency codes the app supports at V1. */
 export type CurrencyCode =
@@ -22,7 +18,7 @@ export type CurrencyCode =
 
 /** Canonical money object — integer minor units + ISO-4217 currency. */
 export interface Money {
-  amount: number;     // integer, minor units (e.g. 105000 = NGN 1,050.00)
+  amount: number;
   currency: CurrencyCode;
 }
 
@@ -35,15 +31,11 @@ export interface CurrencyMeta {
   kind: 'fiat' | 'stablecoin';
 }
 
-// ─── Balances (spec §5.6 GET /v1/balances) ────────────────────────────────────
-
 export interface WalletBalance {
   currency: CurrencyCode;
   available: number;     // minor units, spendable now
   ledger: number;        // minor units, including pending holds
 }
-
-// ─── Rates (spec §5.6 GET /v1/rates — display/alerts only, not executable) ─────
 
 export interface IndicativeRate {
   pair: string;          // 'USD-NGN'
@@ -62,13 +54,9 @@ export interface RatePoint {
 
 export type RateRange = '1D' | '1W' | '1M' | '3M' | '1Y';
 
-// ─── Rails / corridors (spec §5.4) ────────────────────────────────────────────
-
 export type Rail = 'bank_transfer' | 'mobile_money' | 'iban' | 'wallet' | 'stablecoin';
 
 export type FxIntent = 'conversion' | 'transfer' | 'collection';
-
-// ─── Quotes (spec §5.2 POST /v1/quotes) ───────────────────────────────────────
 
 export type FeeType = 'provider_fee' | 'rail_fee' | 'paymax_spread';
 
@@ -105,7 +93,7 @@ export interface Quote {
   route: QuoteRoute;
   alternatives: QuoteAlternative[];
   locked: boolean;
-  expiresAt: string;             // ISO; lock countdown derives from this
+  expiresAt: string;
   intent: FxIntent;
 }
 
@@ -118,8 +106,6 @@ export interface QuoteRequest {
   destinationRail?: Rail;
   lock?: boolean;
 }
-
-// ─── Conversions (spec §5.3, Appendix B: pending → settled | failed) ──────────
 
 export type ConversionStatus = 'pending' | 'settled' | 'failed';
 
@@ -137,8 +123,6 @@ export interface Conversion {
   createdAt: string;
   failureReason?: string;
 }
-
-// ─── Transfers / payouts (spec §5.4; queued→processing→paid|failed|reversed) ──
 
 export type TransferStatus = 'queued' | 'processing' | 'paid' | 'failed' | 'reversed';
 
@@ -164,8 +148,6 @@ export interface StatusEvent {
   status: string;
   at: string;                    // ISO
 }
-
-// ─── Beneficiaries (spec §5.6, §11) ───────────────────────────────────────────
 
 export type BeneficiaryScheme =
   | 'BANK'
@@ -205,8 +187,6 @@ export interface NewBeneficiaryDraft {
   favorite?: boolean;
 }
 
-// ─── Collections (spec §5.5 POST /v1/collections/virtual-accounts) ────────────
-
 export type VirtualAccountType = 'virtual_account' | 'iban';
 
 export interface VirtualAccount {
@@ -235,8 +215,6 @@ export interface CollectionEvent {
   reference: string | null;
   createdAt: string;
 }
-
-// ─── Transactions (unified ledger view, spec §5.6 GET /v1/transactions) ───────
 
 export type TxType = 'conversion' | 'transfer' | 'collection';
 export type TxStatus =
@@ -276,8 +254,6 @@ export interface TransactionFilter {
   status?: TxStatus;
   search?: string;
 }
-
-// ─── KYC / KYB verification (spec A, §16; Appendix B Customer state machine) ──
 
 export type AccountType = 'individual' | 'business';
 
@@ -324,7 +300,7 @@ export interface DirectorUbo {
 export interface Verification {
   status: VerificationStatus;
   accountType: AccountType;
-  tier: number;                 // 0 = unverified … 3 = full
+  tier: number;
   submittedAt?: string;
   reviewedAt?: string;
   rejectionReason?: string;
@@ -339,15 +315,13 @@ export interface KycSubmission {
   businessDocsUploaded?: boolean;
 }
 
-// ─── Cards (spec F; §5.6 POST /v1/cards) ──────────────────────────────────────
-
 export type CardBrand = 'visa' | 'mastercard' | 'verve';
 export type CardStatus = 'active' | 'frozen' | 'terminated';
 export type CardColor = 'purple' | 'blue' | 'teal' | 'graphite';
 
 export interface SpendingControls {
-  monthlyLimit: number | null;   // minor units; null = no limit
-  perTxLimit: number | null;     // minor units; null = no limit
+  monthlyLimit: number | null;
+  perTxLimit: number | null;
   online: boolean;
   atm: boolean;
   international: boolean;
@@ -402,8 +376,6 @@ export interface CreateCardDraft {
   fundingAmount: number;         // minor units (initial load)
 }
 
-// ─── Rate alerts (spec C: set rate alert / rate alert list) ───────────────────
-
 export type RateAlertDirection = 'above' | 'below';
 
 export interface RateAlert {
@@ -425,8 +397,6 @@ export interface NewRateAlertDraft {
   target: number;
 }
 
-// ─── Drafts the screens build up before hitting a mutation ────────────────────
-
 export interface ConvertDraft {
   from: CurrencyCode;
   to: CurrencyCode;
@@ -442,8 +412,6 @@ export interface SendDraft {
   narration: string | null;
   reference: string | null;
 }
-
-// ─── I. Business / Multi-user ─────────────────────────────────────────────────
 
 export type TeamRole = 'OWNER' | 'ADMIN' | 'APPROVER' | 'INITIATOR' | 'VIEWER';
 export type MemberStatus = 'ACTIVE' | 'INVITED' | 'SUSPENDED';
@@ -475,7 +443,7 @@ export interface ApprovalThreshold {
   id: string;
   label: string;              // e.g. 'Single payout'
   currency: CurrencyCode;
-  amount: number;             // minor units; above this requires approval
+  amount: number;
   approversRequired: number;
 }
 
@@ -504,8 +472,6 @@ export interface WebhookSetting {
   enabled: boolean;
 }
 
-// ─── J. Notifications ──────────────────────────────────────────────────────────
-
 export type NotificationKind =
   | 'rate_alert'
   | 'conversion'
@@ -525,8 +491,6 @@ export interface AppNotification {
   createdAt: string;
   deeplink?: string;
 }
-
-// ─── K. Settings ───────────────────────────────────────────────────────────────
 
 export interface StablecoinAddress {
   id: string;
@@ -567,8 +531,6 @@ export interface TierLimits {
   currency: CurrencyCode;
 }
 
-// ─── Disputes (spec H — dispute a transaction) ────────────────────────────────
-
 export type DisputeReason =
   | 'not_received'
   | 'wrong_amount'
@@ -595,8 +557,6 @@ export interface Dispute {
   status: DisputeStatus;
   createdAt: string;
 }
-
-// ─── Error envelope (spec §5.1) ───────────────────────────────────────────────
 
 export type FxErrorType =
   | 'invalid_request'

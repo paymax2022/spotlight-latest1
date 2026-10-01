@@ -3,10 +3,10 @@ import { View, Text, StyleSheet, ActivityIndicator, Animated, Easing, Pressable 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { Users } from 'lucide-react-native';
 import PrimaryButton from '@/components/PrimaryButton';
 import MobilityMap from '@/features/mobility/components/MobilityMap';

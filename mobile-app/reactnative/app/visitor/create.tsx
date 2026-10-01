@@ -5,10 +5,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Car, User, FileText, Clock, BookUser, Minus, Plus, ArrowLeftRight, LogIn, Users } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import TextInputField from '@/components/TextInputField';
@@ -77,7 +77,6 @@ export default function CreateAccessCodeScreen() {
   const hardBanned = restriction.data?.state === 'hard_ban';
   // Issuing a code requires being a resident of an estate: POST /visitor/codes
   // refuses a non-resident with 403 "Not a resident of any estate". Without this
-  // the screen let someone fill in the visitor, dates and purpose and only then
   // refused, with the reason arriving as a generic form error. Only an explicit
   // `false` counts — a response that predates the field must never lock anyone out.
   const notResident = restriction.data?.isResident === false;
@@ -143,7 +142,6 @@ export default function CreateAccessCodeScreen() {
             return;
           }
           // The restriction pre-check (isResident) should normally catch this before the
-          // form even renders, but a stale/cached query result can let a non-resident
           // reach submit — fall back to the same clear, actionable message rather than
           // a raw server string, so the permission state and required action are obvious
           // no matter which check caught it.

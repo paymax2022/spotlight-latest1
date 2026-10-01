@@ -2,11 +2,11 @@ import React from 'react';
 import { View, Text, Modal, Pressable, StyleSheet, Platform, Share, Linking } from 'react-native';
 import { X, Copy, MessageCircle, Link2 } from 'lucide-react-native';
 import { Instagram, Facebook } from '@/components/icons/socialBrandIcons';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { shadow3 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { shadow3 } from '@/constants/tokens';
 
 interface Props {
   visible: boolean;
@@ -30,7 +30,6 @@ export default function ShareBottomSheet({ visible, onClose, contestantName, sha
   const handleShare = async (id: string) => {
     try {
       if (id === 'copy') {
-        // clipboard — requires expo-clipboard which may not be installed; fallback to Share
         await Share.share({ message: shareUrl ?? text });
       } else if (id === 'whatsapp') {
         const url = `whatsapp://send?text=${encodeURIComponent(text)}`;

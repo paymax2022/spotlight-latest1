@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 /**
  * Spotlight Realtor — module stack. Mirrors app/fx/_layout.tsx conventions

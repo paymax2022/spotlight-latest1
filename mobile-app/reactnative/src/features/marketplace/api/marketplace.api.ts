@@ -17,13 +17,11 @@ import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 
 // NOTE (2026-09-11): the request paths below are `/marketplace/...` while the Go
 // backend mounts marketplace at `/v1/marketplace` (backend/internal/app/
-// marketplace_routes.go: `r.Group("/v1/marketplace")`), so this base is missing a
 // `/v1` segment. That is currently latent — EXPO_PUBLIC_MARKETPLACE_USE_MOCK
 // defaults to true and is not set to false in .env.production, so marketplace
 // runs on mocks and never issues these requests. Fix the prefix before flipping
 // that flag off. (The routes also 404 on staging today, so it could not be
 // verified live.)
-//
 // The old fallback was 'http://localhost:8091/api/v1' — a loopback literal that a
 // device cannot reach. It is derived from the main backend URL now so a release
 // build can never bake a loopback host into the bundle.

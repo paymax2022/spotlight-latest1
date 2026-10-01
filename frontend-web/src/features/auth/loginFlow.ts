@@ -29,7 +29,6 @@ export class AuthRequestError extends Error {
   }
 }
 
-// The login/otp-verify proxies return the session in two shapes depending on
 // which upstream answered (see app/api/auth/login/route.ts) — read either.
 function readTokens(body: unknown): SessionTokens | null {
   const b = body as {
@@ -46,10 +45,8 @@ function readTokens(body: unknown): SessionTokens | null {
 
 export type SignInOutcome =
   | { kind: 'session'; tokens: SessionTokens }
-  // The password was correct; a second factor is required. Same shape Go's
   // FEATURE_OTP_LOGIN_MFA_ENABLED step-up returns via /api/auth/login.
   | { kind: 'mfaRequired'; email: string; message?: string }
-  // The password was correct; only verification is missing. Mirrors the
   // Supabase `email_not_confirmed` code this page already special-cased.
   | { kind: 'emailNotConfirmed'; email: string };
 

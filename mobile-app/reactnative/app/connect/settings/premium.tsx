@@ -3,10 +3,10 @@ import { ScrollView, View, Text, StyleSheet, Pressable } from 'react-native';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Crown, Check } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -18,7 +18,6 @@ import type { PremiumPlan } from '@/features/connect/types/connect.types';
 
 // ST-13 — Premium/subscription. Plans, manage, restore.
 // Premium is a wallet purchase → a money surface, so tier/limit/remaining is shown.
-// The charge runs through the shared checkout (wallet or card, Idempotency-Key);
 // subscribePremium activates the plan only after payment succeeds.
 export default function Premium() {
   const { data: plans, isLoading, error, refetch } = usePremiumPlans();

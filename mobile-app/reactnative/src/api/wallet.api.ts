@@ -57,8 +57,6 @@ export interface TransactionListParams {
 // Delegates to the transactions API so there is a single source of truth.
 export { getTransactions as getWalletTransactions } from '@/api/transactions.api';
 
-// ─── Wallet funding (server-side Paystack operations) ─────────────────────────
-
 export async function initiateFunding(payload: {
   /**
    * Amount in KOBO (integer minor units) — it is sent straight through as
@@ -100,8 +98,6 @@ export async function initiateFunding(payload: {
 // NOTE: manual funding verification was removed — there is no backend route for it.
 // Wallet top-ups are confirmed asynchronously by the Paystack webhook
 // (frontend-web/app/api/webhooks/paystack/route.ts), which credits the ledger.
-
-// ─── Bank transfer (dedicated virtual account) ─────────────────────────────────
 
 export interface VirtualAccount {
   accountNumber: string;

@@ -2,13 +2,18 @@ package transfers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/bcrypt"
+
+	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/provider"
@@ -31,7 +36,6 @@ type Service struct {
 // when the commission feature is off (or no recorder is wired) the field is nil and
 // recording is a silent no-op. Modeled as a LOCAL interface so transfers never
 // imports the commission package at compile time (mirrors transport/service.go).
-//
 // This records realized profit ONLY; it never moves money. The transfer's own money
 // movements (the fee credit into paymax_revenue) are unchanged, and the injected
 // recorder is deliberately constructed WITHOUT a ledger so RecordFor never re-posts
@@ -83,7 +87,6 @@ func NewService(db *pgxpool.Pool, ledgerSvc *ledger.Service, tiersSvc *tiers.Ser
 // ResolvePaymaxUser returns masked identity for a phone number (wallet-to-wallet recipient lookup).
 // Returns ErrRecipientNotFound (→404) when no Paymax user matches the phone, and
 // ErrAmbiguousRecipient (→409) when more than one account carries the number.
-//
 // Matches on the 10-digit NSN, not the raw string. Stored phones were never
 // normalised (a row may hold "8159491618", "08159491618" or "+2348159491618"),
 // so the previous `WHERE phone = $1` missed the recipient unless the sender
@@ -101,7 +104,6 @@ func (s *Service) ResolvePaymaxUser(ctx context.Context, phone string) (*WalletT
 	// EXPLAIN: drop the COALESCE and the index degrades to a filter; drop the
 	// partial predicate and Postgres cannot prove the index applies at all and
 	// falls back to a sequential scan of every profile.
-	//
 	// LIMIT 5, not 1: one row cannot reveal that a second account shares the
 	// number, and silently taking the first would pay whichever row the planner
 	// happened to return.
@@ -159,7 +161,6 @@ type walletPreflight struct {
 
 // run executes the pre-flight and returns EITHER a prior transfer to replay, OR
 // the resolved recipient to proceed with. Exactly one is non-nil on success.
-//
 // The replay lookup runs FIRST, before resolution and before the tier guard.
 // Once a transfer has completed, re-running those gates can only refuse a
 // request that already succeeded: the daily cap now counts the very transfer
@@ -202,7 +203,6 @@ func (p walletPreflight) run(ctx context.Context, senderID string, req WalletTra
 
 // findWalletTransferByKey returns the transfer previously recorded under this
 // idempotency key, or (nil, nil) when the key is new.
-//
 // A lookup failure is deliberately read as "new key" rather than surfaced: it
 // preserves the prior behaviour, and wallet_transfers.idempotency_key is UNIQUE,
 // so a genuine duplicate still cannot insert a second time.
@@ -242,13 +242,11 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 	}
 	defer tx.Rollback(ctx)
 
-	// Advisory lock on sender's account.
 	const lock = `SELECT pg_advisory_xact_lock(hashtext($1))`
 	if _, err := tx.Exec(ctx, lock, "wallet:"+senderID); err != nil {
 		return nil, fmt.Errorf("transfers: advisory lock: %w", err)
 	}
 
-	// Balance check.
 	senderBalance, err := s.ledger.GetBalance(ctx, senderID)
 	if err != nil {
 		return nil, err
@@ -258,7 +256,6 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 		return nil, ledger.ErrInsufficientFunds
 	}
 
-	// Post ledger entries.
 	senderAcc, err := s.ledger.GetOrCreateUserWallet(ctx, senderID)
 	if err != nil {
 		return nil, err
@@ -272,23 +269,19 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 		return nil, err
 	}
 
-	// Debit sender (amount + fee).
 	const insertEntry = `INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key) VALUES ($1, $2, $3, $4, $5)`
 	if _, err := tx.Exec(ctx, insertEntry, senderAcc.ID, "DEBIT", total, reference, req.IdempotencyKey+":debit"); err != nil {
 		return nil, fmt.Errorf("transfers: debit sender: %w", err)
 	}
-	// Credit recipient.
 	if _, err := tx.Exec(ctx, insertEntry, recipientAcc.ID, "CREDIT", req.AmountKobo, reference, req.IdempotencyKey+":credit"); err != nil {
 		return nil, fmt.Errorf("transfers: credit recipient: %w", err)
 	}
-	// Credit fee to revenue.
 	if fee > 0 {
 		if _, err := tx.Exec(ctx, insertEntry, revenueAcc.ID, "CREDIT", fee, reference, req.IdempotencyKey+":fee"); err != nil {
 			return nil, fmt.Errorf("transfers: credit fee: %w", err)
 		}
 	}
 
-	// Insert wallet_transfers row.
 	const insertTx = `
 		INSERT INTO wallet_transfers (sender_id, receiver_id, amount_kobo, fee_kobo, reference, status, idempotency_key)
 		VALUES ($1, $2, $3, $4, $5, 'successful', $6)
@@ -370,7 +363,6 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 	}
 	bankName := s.bankName(ctx, req.BankCode)
 
-	// --- Reserve leg: DR user_wallet (amount+fee) → CR failed_transfer_suspense ---
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("bank_transfer: begin tx: %w", err)
@@ -428,7 +420,7 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 		Status:         BankTransferFundsReserved,
 		IdempotencyKey: req.IdempotencyKey,
 		SourceType:     string(SourceWallet),
-		Provider:       defaultStr(req.Provider, s.registry.Default()),
+		Provider:       strutil.Or(req.Provider, s.registry.Default()),
 	}
 	// paystack_recipient_code is still NOT NULL on the base table — seed with a
 	// placeholder; the real provider recipient code lands on the disburse leg.
@@ -444,7 +436,6 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 	}
 	s.audit(ctx, userID, "transfer.bank.reserve", bt.ID, reference)
 
-	// --- Disburse leg: provider recipient + payout with auto-failover ---
 	// On any provider error we DO NOT roll back the reserve — funds stay parked in
 	// suspense (status funds_reserved) for retry/reconciliation. Never double-spend.
 	s.initiatePayoutLeg(ctx, bt, req.SaveBeneficiary, req.Provider, req.Narration)
@@ -581,7 +572,7 @@ func (s *Service) InitiateBankToBank(ctx context.Context, userID string, req Ban
 		Status:         BankTransferAwaitingFunding,
 		IdempotencyKey: req.IdempotencyKey,
 		SourceType:     string(SourceBank),
-		Provider:       defaultStr(req.Provider, s.registry.Default()),
+		Provider:       strutil.Or(req.Provider, s.registry.Default()),
 	}
 	fr := fundingRef
 	bt.FundingReference = &fr
@@ -844,4 +835,300 @@ func (s *Service) settleTransfer(ctx context.Context, bt *BankTransfer, next Ban
 		s.recordCommissionSafe(ctx, "Money Transfer", bt.AmountKobo, bt.FeeKobo, bt.ID, &bt.UserID)
 	}
 	return nil
+}
+
+// Transaction PIN — bcrypt-hashed second factor for money movement.
+// Backed by user_transaction_pin (migration 20260819000000). bcrypt embeds its
+// own salt, so the table needs only pin_hash (matches the locked schema). The
+// raw PIN is never stored or logged. Lockout: maxPinFailures wrong attempts →
+// locked for pinLockWindow. Every transfer initiate verifies the PIN
+// fail-closed (a missing PIN, lock, or DB error all block the money path).
+
+const (
+	maxPinFailures = 5
+	pinLockWindow  = 15 * time.Minute
+)
+
+// PinAttemptError carries how many tries remain before the lockout bites.
+// Without it every wrong PIN looks identical to the customer, who then guesses
+// their way into a 15-minute lock with no warning that they were one attempt
+// away. errors.Is still matches the wrapped sentinel, so every existing status
+// and code mapping is unaffected.
+type PinAttemptError struct {
+	Err       error
+	Remaining int
+}
+
+func (e *PinAttemptError) Error() string { return e.Err.Error() }
+func (e *PinAttemptError) Unwrap() error { return e.Err }
+
+// pinStore wraps user_transaction_pin access.
+type pinStore struct {
+	db *pgxpool.Pool
+}
+
+func newPinStore(db *pgxpool.Pool) *pinStore { return &pinStore{db: db} }
+
+func validPinFormat(pin string) bool {
+	if len(pin) < 4 || len(pin) > 6 {
+		return false
+	}
+	for _, c := range pin {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+type pinRow struct {
+	Hash           string
+	FailedAttempts int
+	LockedUntil    *time.Time
+}
+
+func (p *pinStore) get(ctx context.Context, userID string) (*pinRow, error) {
+	var r pinRow
+	err := p.db.QueryRow(ctx,
+		`SELECT pin_hash, failed_attempts, locked_until FROM user_transaction_pin WHERE user_id=$1`, userID).
+		Scan(&r.Hash, &r.FailedAttempts, &r.LockedUntil)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrPinNotSet
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// Has reports whether a PIN exists for the user.
+func (p *pinStore) Has(ctx context.Context, userID string) (bool, error) {
+	_, err := p.get(ctx, userID)
+	if errors.Is(err, ErrPinNotSet) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// Set creates or replaces the PIN (bcrypt) and resets lockout state.
+func (p *pinStore) Set(ctx context.Context, userID, pin string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(pin), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	const q = `
+		INSERT INTO user_transaction_pin (user_id, pin_hash, failed_attempts, locked_until)
+		VALUES ($1, $2, 0, NULL)
+		ON CONFLICT (user_id) DO UPDATE
+		SET pin_hash = $2, failed_attempts = 0, locked_until = NULL, updated_at = now()`
+	_, err = p.db.Exec(ctx, q, userID, string(hash))
+	return err
+}
+
+// Verify checks the PIN fail-closed: not set / locked / wrong all return a typed
+// error. A correct PIN resets failed_attempts; a wrong one increments it and
+// locks the account at the threshold.
+func (p *pinStore) Verify(ctx context.Context, userID, pin string) error {
+	row, err := p.get(ctx, userID)
+	if err != nil {
+		return err // ErrPinNotSet or DB error (fail closed)
+	}
+	if row.LockedUntil != nil && row.LockedUntil.After(time.Now()) {
+		return ErrPinLocked
+	}
+	if bcrypt.CompareHashAndPassword([]byte(row.Hash), []byte(pin)) == nil {
+		_, _ = p.db.Exec(ctx,
+			`UPDATE user_transaction_pin SET failed_attempts=0, locked_until=NULL, updated_at=now() WHERE user_id=$1`, userID)
+		return nil
+	}
+	// Wrong PIN — record failure, lock at threshold.
+	if row.FailedAttempts+1 >= maxPinFailures {
+		_, _ = p.db.Exec(ctx,
+			`UPDATE user_transaction_pin SET failed_attempts=$2, locked_until=$3, updated_at=now() WHERE user_id=$1`,
+			userID, row.FailedAttempts+1, time.Now().Add(pinLockWindow))
+		return ErrPinLocked
+	}
+	_, _ = p.db.Exec(ctx,
+		`UPDATE user_transaction_pin SET failed_attempts=$2, updated_at=now() WHERE user_id=$1`, userID, row.FailedAttempts+1)
+	return &PinAttemptError{Err: ErrPinInvalid, Remaining: maxPinFailures - (row.FailedAttempts + 1)}
+}
+
+// WalletTransferStatus tracks the lifecycle of a wallet-to-wallet transfer.
+type WalletTransferStatus string
+
+const (
+	// WalletTransferSuccessful — Status values align with contracts/openapi.yaml WalletTransfer.status
+	// enum: [successful, failed, reversed].
+	WalletTransferSuccessful WalletTransferStatus = "successful"
+	WalletTransferFailed     WalletTransferStatus = "failed"
+	WalletTransferReversed   WalletTransferStatus = "reversed"
+)
+
+// BankTransferStatus tracks the lifecycle of a wallet-to-bank transfer.
+type BankTransferStatus string
+
+const (
+	BankTransferFundsReserved     BankTransferStatus = "funds_reserved"     // wallet→bank: wallet debited, awaiting provider
+	BankTransferAwaitingFunding   BankTransferStatus = "awaiting_funding"   // bank→bank: collection initiated, awaiting pay-in
+	BankTransferFunded            BankTransferStatus = "funded"             // bank→bank: pay-in received into clearing
+	BankTransferProviderInitiated BankTransferStatus = "provider_initiated" // payout accepted by the provider
+	BankTransferSuccessful        BankTransferStatus = "successful"
+	BankTransferFailed            BankTransferStatus = "failed"
+	BankTransferReversed          BankTransferStatus = "reversed"
+)
+
+// SourceType distinguishes wallet→bank from bank→bank pass-through.
+type SourceType string
+
+const (
+	SourceWallet SourceType = "wallet" // debit the user wallet
+	SourceBank   SourceType = "bank"   // collect via provider into provider_clearing, then disburse
+)
+
+// WalletTransfer represents a wallet-to-wallet transfer.
+type WalletTransfer struct {
+	ID             string               `json:"id"`
+	SenderID       string               `json:"sender_id"`
+	RecipientID    string               `json:"recipient_id"`
+	AmountKobo     int64                `json:"amount_kobo"`
+	FeeKobo        int64                `json:"fee_kobo"`
+	Reference      string               `json:"reference"`
+	Status         WalletTransferStatus `json:"status"`
+	IdempotencyKey string               `json:"idempotency_key"`
+	CreatedAt      time.Time            `json:"created_at"`
+	// AlreadyProcessed is true when this result was returned by an idempotent
+	// replay (same Idempotency-Key seen before) rather than a fresh mutation.
+	AlreadyProcessed bool `json:"already_processed,omitempty"`
+}
+
+// WalletTransferRequest is the body for POST /finance/transfers/paymax.
+type WalletTransferRequest struct {
+	RecipientPhone string `json:"recipient_phone" binding:"required"`
+	AmountKobo     int64  `json:"amount_kobo" binding:"required,min=100"`
+	Narration      string `json:"narration"`
+	// Not binding-required: the Idempotency-Key header supplies it for header-only
+	// callers, and the handlers merge the header before validating non-empty.
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+// WalletTransferResolveResponse is the response for GET /finance/transfers/paymax/resolve.
+type WalletTransferResolveResponse struct {
+	UserID      string `json:"user_id"`
+	FullName    string `json:"full_name"`
+	MaskedPhone string `json:"masked_phone"`
+}
+
+// BankTransfer represents a wallet-to-bank or bank-to-bank transfer.
+type BankTransfer struct {
+	ID             string             `json:"id"`
+	UserID         string             `json:"user_id"`
+	AmountKobo     int64              `json:"amount_kobo"`
+	FeeKobo        int64              `json:"fee_kobo"`
+	AccountNumber  string             `json:"account_number"`
+	AccountName    string             `json:"account_name"`
+	BankCode       string             `json:"bank_code"`
+	Reference      string             `json:"reference"`
+	Status         BankTransferStatus `json:"status"`
+	TransferCode   *string            `json:"transfer_code,omitempty"`
+	IdempotencyKey string             `json:"idempotency_key"`
+	CreatedAt      time.Time          `json:"created_at"`
+	// Multi-provider + bank→bank fields (additive; mirror the migration columns).
+	Provider              string  `json:"provider"`
+	SourceType            string  `json:"source_type"`
+	ProviderRecipientCode *string `json:"provider_recipient_code,omitempty"`
+	ProviderTransferRef   *string `json:"provider_transfer_ref,omitempty"`
+	FailoverFrom          *string `json:"failover_from,omitempty"`
+	FundingReference      *string `json:"funding_reference,omitempty"`
+	FundingStatus         *string `json:"funding_status,omitempty"`
+	// AlreadyProcessed is true when returned by an idempotent replay.
+	AlreadyProcessed bool `json:"already_processed,omitempty"`
+}
+
+// BankTransferRequest is the body for POST /finance/transfers/bank (wallet→bank).
+type BankTransferRequest struct {
+	AccountNumber   string `json:"account_number" binding:"required"`
+	BankCode        string `json:"bank_code" binding:"required"`
+	AmountKobo      int64  `json:"amount_kobo" binding:"required,min=100000"` // min ₦1000
+	Narration       string `json:"narration"`
+	SaveBeneficiary bool   `json:"save_beneficiary"`
+	Provider        string `json:"provider"` // optional preferred provider; "" = registry default
+	PIN             string `json:"pin" binding:"required"`
+	IdempotencyKey  string `json:"idempotency_key"`
+}
+
+// BankToBankRequest is the body for POST /finance/transfers/bank-to-bank.
+// The user funds the transfer FROM a bank through the provider (a collection into
+// provider_clearing); once funded it is disbursed to the destination bank.
+type BankToBankRequest struct {
+	AccountNumber   string `json:"account_number" binding:"required"`
+	BankCode        string `json:"bank_code" binding:"required"`
+	AmountKobo      int64  `json:"amount_kobo" binding:"required,min=100000"`
+	Narration       string `json:"narration"`
+	SaveBeneficiary bool   `json:"save_beneficiary"`
+	Provider        string `json:"provider"`
+	PIN             string `json:"pin" binding:"required"`
+	IdempotencyKey  string `json:"idempotency_key"`
+}
+
+// Beneficiary is a saved payout destination (generalized, multi-provider).
+type Beneficiary struct {
+	ID                    string    `json:"id"`
+	UserID                string    `json:"user_id"`
+	Provider              string    `json:"provider"`
+	BankCode              string    `json:"bank_code"`
+	AccountNumber         string    `json:"account_number"`
+	AccountName           string    `json:"account_name"`
+	ProviderRecipientCode *string   `json:"provider_recipient_code,omitempty"`
+	CreatedAt             time.Time `json:"created_at"`
+}
+
+// SaveBeneficiaryRequest is the body for POST /finance/transfers/beneficiaries.
+type SaveBeneficiaryRequest struct {
+	AccountNumber string `json:"account_number" binding:"required"`
+	BankCode      string `json:"bank_code" binding:"required"`
+	Provider      string `json:"provider"`
+}
+
+// ResolveAccountRequest is the body for POST /finance/transfers/resolve-account.
+type ResolveAccountRequest struct {
+	AccountNumber string `json:"account_number" binding:"required"`
+	BankCode      string `json:"bank_code" binding:"required"`
+	Provider      string `json:"provider"`
+}
+
+// SetPinRequest is the body for POST /finance/transfers/pin.
+type SetPinRequest struct {
+	PIN        string `json:"pin" binding:"required"`
+	CurrentPIN string `json:"current_pin"`
+}
+
+// VerifyPinRequest is the body for POST /finance/transfers/pin/verify.
+type VerifyPinRequest struct {
+	PIN string `json:"pin" binding:"required"`
+}
+
+// WalletTransferFee — Fee schedule (kobo).
+func WalletTransferFee(amountKobo int64) int64 {
+	switch {
+	case amountKobo <= 500_000:
+		return 0
+	case amountKobo <= 5_000_000:
+		return 1_000
+	default:
+		return 2_500
+	}
+}
+
+func BankTransferFee(amountKobo int64) int64 {
+	switch {
+	case amountKobo <= 500_000:
+		return 1_000
+	case amountKobo <= 5_000_000:
+		return 2_500
+	default:
+		return 5_000
+	}
 }

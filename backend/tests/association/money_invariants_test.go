@@ -1,8 +1,6 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // Association money-path invariants (go-live gate) — DB-FREE subset.
-//
 // association.Service takes a concrete *pgxpool.Pool (see
 // backend/internal/association/service.go: NewService(db *pgxpool.Pool, ledger
 // *ledger.Service) *Service), so the actual DB-backed code paths (PayInvoice,
@@ -14,11 +12,9 @@ package association_test
 // asserting the money/idempotency/state-machine invariants against them. Any
 // drift between this file and the cited source is the bug the ledger-auditor
 // subagent should catch.
-//
 // Live-DB tests that actually call *association.Service against a migrated
 // Postgres live in live_db_integration_test.go (skip-gated on
 // TEST_DATABASE_URL — see that file's bring-up note).
-// ---------------------------------------------------------------------------
 
 import (
 	"testing"
@@ -26,11 +22,9 @@ import (
 	"spotlight/backend/internal/association"
 )
 
-// ---------------------------------------------------------------------------
 // RevenueSplit — the ONE exported pure function in the module. Exercised
 // directly (no DB needed) since it is part of the public API.
 // Source: backend/internal/association/model.go RevenueSplit().
-// ---------------------------------------------------------------------------
 
 // TestRevenueSplit_SumsExactlyToTotal proves the four legs (National, State,
 // Local, Platform) always sum to EXACTLY the input amountKobo, for a range of
@@ -115,11 +109,8 @@ func TestRevenueSplit_LabelsAreStableAndDistinct(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // PayInvoice — transcribed invariants.
 // Source: backend/internal/association/service.go Service.PayInvoice (L75-150).
-// ---------------------------------------------------------------------------
-//
 // Production logic (cited):
 //   1. req.IdempotencyKey == "" → return ErrIdempotencyRequired (fail-closed).
 //   2. Load invoice; if ownerID != userID → ErrForbidden (object-level check).
@@ -133,7 +124,6 @@ func TestRevenueSplit_LabelsAreStableAndDistinct(t *testing.T) {
 //      assoc_revenue_splits row per RevenueSplit() line, mark the invoice PAID,
 //      and write an assoc_audit_log row with action "DUES_PAY".
 //   5. Returns PayInvoiceResult{ReceiptID: "rcpt_"+invoiceID, Status: "SUCCESS"}.
-//
 // These sub-tests assert the parts of this contract that don't require a live
 // DB: the fail-closed idempotency-key guard, the receipt-id derivation, the
 // already-PAID short-circuit shape, and (via a fake ledger+store) that a
@@ -299,12 +289,9 @@ func TestPayInvoice_DifferentIdempotencyKeySameInvoice_StillOnlyOnePayment(t *te
 	}
 }
 
-// ---------------------------------------------------------------------------
 // DecideOfflinePayment — transcribed invariants.
 // Source: backend/internal/association/service_actions.go
 // Service.DecideOfflinePayment (L210-273).
-// ---------------------------------------------------------------------------
-//
 // Production logic (cited):
 //   - approve==true && idempotencyKey=="" → ErrIdempotencyRequired (fail-closed;
 //     the REJECT path does NOT require a key, since no money moves).
@@ -447,11 +434,9 @@ func TestAssignRole_RequiresBothManageMembersAndManageFinance(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // DecideApplication — transcribed state machine.
 // Source: backend/internal/association/service.go Service.DecideApplication
 // (L196-236).
-// ---------------------------------------------------------------------------
 
 // decideApplicationNextStatus mirrors the exact switch in DecideApplication.
 func decideApplicationNextStatus(decision string) (next string, valid bool) {
@@ -525,12 +510,10 @@ func TestDecideApplication_ApproveActivatesMembership(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Member lifecycle status machine — transcribed from
 // service_actions.go memberStatusAction / SuspendMember / RestoreMember /
 // TransferMember (L277-326), gated against the CHECK constraint in
 // 20260628000000_association_module.sql (assoc_memberships.status).
-// ---------------------------------------------------------------------------
 
 // TestMemberStatus_AllowedValues locks the exact set of member-status values
 // the DB CHECK constraint permits, so SuspendMember/RestoreMember can never
@@ -575,10 +558,8 @@ func TestSuspendMember_And_RestoreMember_RequireManageMembers(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // AI-note status machine — transcribed from handler_actions.go
 // ApproveAiNote/PublishAiNote and service_ext.go SetAiNoteStatus.
-// ---------------------------------------------------------------------------
 
 // TestAiNoteStatus_ApprovePublishTransitions locks the exact (status, action)
 // pairs the two handlers send to SetAiNoteStatus (handler_ext.go L253-267):
@@ -618,7 +599,6 @@ func TestAiNoteStatus_ApprovePublishTransitions(t *testing.T) {
 // c.GetString("user_id") straight through as "adminID" without any admin-role
 // check upstream either. This means ANY authenticated member — not just a
 // SECRETARY/admin — can approve or publish meeting minutes today.
-//
 // This test intentionally FAILS once SetAiNoteStatus (or its callers) gains an
 // authorization check, so it must be UPDATED (not silently deleted) when the
 // gap is fixed — it exists to force that fix to be a deliberate, reviewed

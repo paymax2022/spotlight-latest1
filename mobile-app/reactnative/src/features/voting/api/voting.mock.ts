@@ -8,8 +8,6 @@ import type {
   VotingNotification,
 } from '../types/voting.types';
 
-// ─── Contests ─────────────────────────────────────────────────────────────────
-
 export const MOCK_CONTESTS: Contest[] = [
   {
     id: 'c1',
@@ -120,8 +118,6 @@ export const MOCK_CONTESTS: Contest[] = [
     activePhaseLabel: 'Blind Round',
   },
 ];
-
-// ─── Contestants ──────────────────────────────────────────────────────────────
 
 export const MOCK_CONTESTANTS: Contestant[] = [
   {
@@ -240,8 +236,6 @@ export const MOCK_CONTESTANTS: Contestant[] = [
   },
 ];
 
-// ─── Vote Packages ─────────────────────────────────────────────────────────────
-
 export const MOCK_VOTE_PACKAGES: VotePackage[] = [
   {
     id: 'vp1',
@@ -277,8 +271,6 @@ export const MOCK_VOTE_PACKAGES: VotePackage[] = [
     bonusVotes: 100,
   },
 ];
-
-// ─── Vote Transactions ────────────────────────────────────────────────────────
 
 export const MOCK_VOTE_TRANSACTIONS: VoteTransaction[] = [
   {
@@ -321,16 +313,12 @@ export const MOCK_VOTE_TRANSACTIONS: VoteTransaction[] = [
   },
 ];
 
-// ─── Free Vote Allocation ──────────────────────────────────────────────────────
-
 export const MOCK_FREE_VOTE_ALLOCATION: FreeVoteAllocation = {
   total: 5,
   used: 2,
   remaining: 3,
   resetsAt: '2026-06-15T00:00:00Z',
 };
-
-// ─── Leaderboard ──────────────────────────────────────────────────────────────
 
 export const MOCK_LEADERBOARD: LeaderboardEntry[] = MOCK_CONTESTANTS
   .filter((c) => c.contestId === 'c1')
@@ -340,8 +328,6 @@ export const MOCK_LEADERBOARD: LeaderboardEntry[] = MOCK_CONTESTANTS
     previousRank: c.movement === 'UP' ? c.rank + 1 : c.movement === 'DOWN' ? c.rank - 1 : c.rank,
     movement: c.movement,
   }));
-
-// ─── Notifications ────────────────────────────────────────────────────────────
 
 export const MOCK_VOTING_NOTIFICATIONS: VotingNotification[] = [
   {

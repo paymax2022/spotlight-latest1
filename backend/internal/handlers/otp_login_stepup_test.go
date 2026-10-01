@@ -16,8 +16,6 @@ import (
 	"spotlight/backend/internal/services"
 )
 
-// ── doubles ─────────────────────────────────────────────────────────────────
-
 type fakeMinter struct {
 	mu      sync.Mutex
 	calls   []string
@@ -57,8 +55,6 @@ func (f *fakeSetter) SetPassword(_ context.Context, _, _ string) (bool, error) {
 	}
 	return f.changed, nil
 }
-
-// ── login: the challenge half ───────────────────────────────────────────────
 
 // loginRouter wires a Login surface whose password check always succeeds and
 // whose service reports the resolved account email the way the real one does.
@@ -186,8 +182,6 @@ func TestLoginNeverLeaksInternalHints(t *testing.T) {
 		}
 	}
 }
-
-// ── the redemption half ─────────────────────────────────────────────────────
 
 func stepUpRouter(t *testing.T, sender otp.EmailSender, minter services.SessionMinter) (*gin.Engine, *otp.Service) {
 	t.Helper()
@@ -325,8 +319,6 @@ func TestStepUpCodeIsScopedToLogin(t *testing.T) {
 		t.Error("a session was minted for a non-login purpose")
 	}
 }
-
-// ── password reset ──────────────────────────────────────────────────────────
 
 func resetRouter(t *testing.T, verify OTPVerifier, setter services.PasswordSetter) *gin.Engine {
 	t.Helper()

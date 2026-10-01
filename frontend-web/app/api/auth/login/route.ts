@@ -28,7 +28,6 @@ const TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS ?? 20_000);
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => null);
-    // `identifier` is the new name; `email` stays accepted so existing web
     // callers keep working unchanged.
     const identifier = String(body?.identifier ?? body?.email ?? '').trim();
     const password = body?.password;

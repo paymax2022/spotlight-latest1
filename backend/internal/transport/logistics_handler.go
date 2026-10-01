@@ -4,13 +4,13 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-)
 
-// ─── Business logistics customer (owner) handlers ────────────────────────────
+	"spotlight/backend/go-common/ginutil"
+)
 
 // BusinessAccountCreate registers a business account for the caller.
 func (h *Handler) BusinessAccountCreate(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req BusinessAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -26,7 +26,7 @@ func (h *Handler) BusinessAccountCreate(c *gin.Context) {
 
 // BusinessAccountGet returns the caller's business account.
 func (h *Handler) BusinessAccountGet(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	acct, err := h.svc.BusinessAccountMe(c.Request.Context(), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -37,13 +37,13 @@ func (h *Handler) BusinessAccountGet(c *gin.Context) {
 
 // BusinessDeliveryCreate creates a single delivery.
 func (h *Handler) BusinessDeliveryCreate(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req BusinessDeliveryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	d, err := h.svc.CreateDelivery(c.Request.Context(), userID, req, idemKey(c))
+	d, err := h.svc.CreateDelivery(c.Request.Context(), userID, req, ginutil.IdempotencyKey(c))
 	if err != nil {
 		respondErr(c, err)
 		return
@@ -53,13 +53,13 @@ func (h *Handler) BusinessDeliveryCreate(c *gin.Context) {
 
 // BusinessBatchCreate creates a batch of deliveries.
 func (h *Handler) BusinessBatchCreate(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req BusinessBatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	b, err := h.svc.CreateBatch(c.Request.Context(), userID, req, idemKey(c))
+	b, err := h.svc.CreateBatch(c.Request.Context(), userID, req, ginutil.IdempotencyKey(c))
 	if err != nil {
 		respondErr(c, err)
 		return
@@ -69,7 +69,7 @@ func (h *Handler) BusinessBatchCreate(c *gin.Context) {
 
 // BusinessBatchList lists the owner's batches.
 func (h *Handler) BusinessBatchList(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	bs, err := h.svc.ListBatches(c.Request.Context(), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -80,7 +80,7 @@ func (h *Handler) BusinessBatchList(c *gin.Context) {
 
 // BusinessBatchGet returns a batch with its stops.
 func (h *Handler) BusinessBatchGet(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	b, err := h.svc.BatchDetail(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -91,7 +91,7 @@ func (h *Handler) BusinessBatchGet(c *gin.Context) {
 
 // BusinessDeliveryList lists deliveries (tracking), optionally filtered by status.
 func (h *Handler) BusinessDeliveryList(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	ds, err := h.svc.ListDeliveries(c.Request.Context(), userID, c.Query("status"))
 	if err != nil {
 		respondErr(c, err)
@@ -102,7 +102,7 @@ func (h *Handler) BusinessDeliveryList(c *gin.Context) {
 
 // BusinessDeliveryGet returns a delivery detail.
 func (h *Handler) BusinessDeliveryGet(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	d, err := h.svc.DeliveryDetail(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -113,7 +113,7 @@ func (h *Handler) BusinessDeliveryGet(c *gin.Context) {
 
 // BusinessDeliveryCancel refunds/voids + cancels a delivery.
 func (h *Handler) BusinessDeliveryCancel(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req CancelRequest
 	_ = c.ShouldBindJSON(&req)
 	if err := h.svc.CancelDelivery(c.Request.Context(), c.Param("id"), userID, req.Reason); err != nil {
@@ -125,7 +125,7 @@ func (h *Handler) BusinessDeliveryCancel(c *gin.Context) {
 
 // BusinessInvoiceList lists the owner's invoices.
 func (h *Handler) BusinessInvoiceList(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	inv, err := h.svc.ListInvoices(c.Request.Context(), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -136,7 +136,7 @@ func (h *Handler) BusinessInvoiceList(c *gin.Context) {
 
 // BusinessAnalytics returns the owner's logistics analytics.
 func (h *Handler) BusinessAnalytics(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	a, err := h.svc.BusinessAnalytics(c.Request.Context(), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -145,11 +145,9 @@ func (h *Handler) BusinessAnalytics(c *gin.Context) {
 	c.JSON(http.StatusOK, a)
 }
 
-// ─── Business logistics courier (driver) handlers ────────────────────────────
-
 // BusinessRequests returns open delivery requests for couriers.
 func (h *Handler) BusinessRequests(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	reqs, err := h.svc.OpenDeliveryRequests(c.Request.Context(), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -160,7 +158,7 @@ func (h *Handler) BusinessRequests(c *gin.Context) {
 
 // BusinessAccept assigns the courier to a delivery.
 func (h *Handler) BusinessAccept(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	d, err := h.svc.AcceptDelivery(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -171,7 +169,7 @@ func (h *Handler) BusinessAccept(c *gin.Context) {
 
 // BusinessPickedUp marks the delivery picked up.
 func (h *Handler) BusinessPickedUp(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if err := h.svc.MarkDeliveryPickedUp(c.Request.Context(), c.Param("id"), userID); err != nil {
 		respondErr(c, err)
 		return
@@ -181,7 +179,7 @@ func (h *Handler) BusinessPickedUp(c *gin.Context) {
 
 // BusinessDeliver completes the delivery with proof (and dropoff PIN if set).
 func (h *Handler) BusinessDeliver(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req DeliverRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -196,7 +194,7 @@ func (h *Handler) BusinessDeliver(c *gin.Context) {
 
 // BusinessFail marks the delivery failed with a reason.
 func (h *Handler) BusinessFail(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req FailRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

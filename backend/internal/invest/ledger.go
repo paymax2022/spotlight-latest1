@@ -13,7 +13,6 @@ import (
 // logically separated from the main Paymax wallet. Every money movement is a
 // balanced pair of immutable entries; balances are always projected via SUM —
 // no balance column is ever mutated as a source of truth (iron rule).
-//
 // Account types (invest_ledger_accounts.type):
 //
 //	invest_cash               — user available cash

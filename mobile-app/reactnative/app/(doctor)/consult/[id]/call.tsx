@@ -6,10 +6,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import {
   MessageCircle, NotebookPen, RefreshCw, AlertTriangle, ShieldAlert, Wrench, X, VideoOff,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import SelectField from '@/components/SelectField';
 import { StatusBadge, CallStageView, CallControlBar, StateView } from '@/features/doctor/components';

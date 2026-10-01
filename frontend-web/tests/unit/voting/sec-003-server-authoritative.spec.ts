@@ -41,7 +41,7 @@ import { debitWallet } from '@/src/server/wallet/service';
 import { getVotingSettings, assertVotingOpen } from '@/src/server/voting/free-vote.service';
 import { createAdminClient } from '@/lib/supabase/server';
 
-const REAL_PACKAGE = { id: 'pkg-1', votes: 100, bonus_votes: 10, amount: 500, currency: 'NGN' }; // 500 NGN = 50,000 kobo
+const REAL_PACKAGE = { id: 'pkg-1', votes: 100, bonus_votes: 10, amount: 500, currency: 'NGN' };
 
 function makeReq(body: Record<string, unknown>) {
   return new Request('http://localhost/api/votes/paid/wallet', {

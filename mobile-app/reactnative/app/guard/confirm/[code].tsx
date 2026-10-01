@@ -5,11 +5,11 @@ import { router, useLocalSearchParams } from 'expo-router';
 import {
   Camera, IdCard, Car, Check, X, ShieldAlert, User, MapPin, FileText, Clock, CircleCheck, Ban, Users, Repeat, LogOut,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -94,7 +94,6 @@ export default function GuardConfirmScreen() {
     );
   };
 
-  // ── Session error (no valid gate to log against) ────────────────────────────
   if (session.isError) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -110,7 +109,6 @@ export default function GuardConfirmScreen() {
     );
   }
 
-  // ── Loading ────────────────────────────────────────────────────────────────
   if (phase === 'looking' || session.isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -120,7 +118,6 @@ export default function GuardConfirmScreen() {
     );
   }
 
-  // ── Approved / Denied success screens ───────────────────────────────────────
   if (phase === 'approved') {
     const name = outcome?.kind === 'ok' || outcome?.kind === 'blacklisted' ? outcome.code.visitor.name : 'Visitor';
     return (
@@ -179,7 +176,6 @@ export default function GuardConfirmScreen() {
     );
   }
 
-  // ── Result: failure outcomes ────────────────────────────────────────────────
   if (outcome && outcome.kind !== 'ok' && outcome.kind !== 'blacklisted') {
     const f = FAIL_COPY[outcome.kind];
     return (
@@ -197,7 +193,6 @@ export default function GuardConfirmScreen() {
     );
   }
 
-  // ── Result: blacklisted alert (VM-241) ──────────────────────────────────────
   if (outcome && outcome.kind === 'blacklisted') {
     const code = outcome.code;
     return (
@@ -220,7 +215,6 @@ export default function GuardConfirmScreen() {
     );
   }
 
-  // ── Result: OK — full confirmation + capture + approve/deny ──────────────────
   const code = (outcome as Extract<LookupOutcome, { kind: 'ok' }>).code;
   const meta = codeTypeMeta(code.codeType);
 

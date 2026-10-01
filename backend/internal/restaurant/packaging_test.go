@@ -2,9 +2,7 @@ package restaurant
 
 import "testing"
 
-// ---------------------------------------------------------------------------
 // Takeaway packaging pricing.
-//
 // The cart is built on a "takeaway package" model: the customer adds a pack,
 // then puts food in it, and pays a fee per pack so the restaurant can package
 // the order. The pack COUNT is therefore a customer choice — they may add more
@@ -12,7 +10,6 @@ import "testing"
 // client. That makes it the one packaging input the server cannot derive, and
 // client-supplied numbers never price money unbounded (the same reason TipKobo
 // is clamped before it reaches the escrow debit).
-// ---------------------------------------------------------------------------
 
 const feePerPack = 20000 // ₦200
 

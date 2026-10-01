@@ -1,29 +1,22 @@
-// ── Doctor (Telemedicine, provider-side) — Batch 5 Domain Types ─────────────
-// Batch 5 = spec sections S · T · U · V — the VETERINARY sections. This is
 // CONSOLIDATED and leans HEAVILY on the Phase 3 vet/pet work plus the human-side
 // rich types from Batch 2 / Phase 2 / Batch 4. Earlier shapes are imported and
 // re-exported, NEVER duplicated. Money amounts are integers in minor units
 // (kobo). Use `import type` for type-only imports.
-//
 // Sections:
 //   S — Veterinary Consultation: vet appointment/queue, pet owner request, pet
 //       review, vet chat/audio/video (REUSE Batch 2 rich chat/call), vet SOAP
 //       (REUSE Batch 2 ClinicalNote), pet diagnosis/treatment, pet emergency
 //       warning (REUSE RedFlagWarning), follow-up (REUSE Phase 2 FollowUpPlan),
 //       vet referral, consult summary + history.
-//   T — Pet E-Prescription: REUSE PetDrug / PetDosageCalculation / PetPrescription;
 //       ADD a richer warning union + pure helpers (computePetDosage,
 //       checkPetRxWarnings), issued prescription (send-to-pharmacy + audit) and
 //       pet refill request / approve / reject.
-//   U — Vet Lab & Pet Health: REUSE PetLabTest / PetLabOrder / PetLabResult;
 //       ADD lab catalogue entry, vaccination recommendation + reminder, pet
 //       health record, growth/weight timeseries, chronic monitoring, lab inbox
 //       + interpretation.
-//   V — Pet Store: REUSE PetStoreProduct / PetProductRecommendation; ADD
 //       fulfilment + delivery status timelines and a richer product detail.
 
 import type {
-  // ── REUSE: Phase 3 vet/pet primitives ──
   PetSpecies,
   PetProfile,
   PetOwner,
@@ -45,12 +38,10 @@ import type {
   PetProductCategory,
   PetProductRecommendation,
 } from '@/types/doctor.phase3';
-// ── REUSE: human-side rich types (vet analogues) ──
 import type { ChatMessageRich, ChatThreadState, CallSessionRich, ClinicalNote, RedFlagWarning } from '@/types/doctor.batch2';
 import type { FollowUpPlan, SpecialistReferral } from '@/types/doctor.phase2';
 import type { LabOrderStatus } from '@/types/doctor';
 
-// Re-export the primitives Batch 5 screens lean on, so a screen can pull
 // everything it needs from one import site.
 export type {
   PetSpecies,
@@ -78,15 +69,12 @@ export type { ChatMessageRich, ChatThreadState, CallSessionRich, ClinicalNote, R
 export type { FollowUpPlan, SpecialistReferral } from '@/types/doctor.phase2';
 export type { LabOrderStatus } from '@/types/doctor';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION S — VETERINARY CONSULTATION (22)
-// ═══════════════════════════════════════════════════════════════════════════
 // Consolidated. Chat/audio/video REUSE the Batch 2 ChatMessageRich /
 // ChatThreadState / CallSessionRich shapes via a thin vet-scoped wrapper that
 // adds pet context. Vet SOAP REUSES the Batch 2 ClinicalNote. Pet emergency
 // warning REUSES RedFlagWarning. Follow-up REUSES the Phase 2 FollowUpPlan.
 
-// ─── S.1 Vet appointment / queue ─────────────────────────────────────────────
 export type VetConsultType = 'chat' | 'audio' | 'video' | 'in_person';
 
 export type VetAppointmentStatus =
@@ -108,7 +96,6 @@ export interface VetAppointment {
   isHmo:       boolean;
 }
 
-// ─── S.2 Pet owner request ───────────────────────────────────────────────────
 export type PetOwnerRequestStatus = 'pending' | 'accepted' | 'declined' | 'expired';
 
 export interface PetOwnerRequest {
@@ -127,7 +114,6 @@ export interface PetOwnerRequest {
   declineReason?: string;
 }
 
-// ─── S.3 Vet chat / audio / video (REUSE Batch 2 rich types) ─────────────────
 export interface VetChatThread {
   thread:   ChatThreadState;
   messages: ChatMessageRich[];
@@ -161,7 +147,6 @@ export interface PetEmergencyWarning extends RedFlagWarning {
   detectedAt: string;
 }
 
-// ─── S.6 Vet referral (REUSES the Phase 2 SpecialistReferral concept) ────────
 export type VetReferralStatus = 'draft' | 'sent' | 'accepted' | 'scheduled' | 'completed' | 'declined';
 
 export interface VetSpecialist {
@@ -188,7 +173,6 @@ export interface VetReferral {
   scheduledAt?: string;
 }
 
-// ─── S.7 Vet consultation summary + history ──────────────────────────────────
 export interface VetConsultSummary {
   id:          string;
   ref:         string;
@@ -221,9 +205,7 @@ export interface VetConsultHistoryItem {
   date:        string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION T — PET E-PRESCRIPTION (16)
-// ═══════════════════════════════════════════════════════════════════════════
 // REUSES PetDrug / PetDosageCalculation / PetPrescription / PetPrescriptionItem.
 
 // ─── T.1 Pet Rx warning union (medicine / species / allergy) ─────────────────
@@ -247,7 +229,6 @@ export interface CheckPetRxWarningsInput {
   allergies:  string[];
 }
 
-// ─── T.2 Pet pharmacy ────────────────────────────────────────────────────────
 export interface PetPharmacy {
   id:        string;
   name:      string;
@@ -257,7 +238,6 @@ export interface PetPharmacy {
 
 export type PetRxSendStatus = 'not_sent' | 'sending' | 'sent' | 'received' | 'dispensed' | 'failed';
 
-// ─── T.3 Pet prescription audit trail ────────────────────────────────────────
 export type PetRxAuditAction =
   | 'created'
   | 'issued'
@@ -274,7 +254,6 @@ export interface PetRxAuditEntry {
   note?:  string;
 }
 
-// ─── T.4 Issued pet prescription (COMPOSES PetPrescription) ──────────────────
 export interface IssuedPetPrescription {
   prescription: PetPrescription;
   pharmacy?:    PetPharmacy;
@@ -282,7 +261,6 @@ export interface IssuedPetPrescription {
   audit:        PetRxAuditEntry[];
 }
 
-// ─── T.5 Pet refill request / review ─────────────────────────────────────────
 export type PetRefillStatus = 'requested' | 'approved' | 'rejected';
 
 export interface PetRefillRequest {
@@ -300,12 +278,9 @@ export interface PetRefillRequest {
   rejectReason?: string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION U — VET LAB & PET HEALTH (15)
-// ═══════════════════════════════════════════════════════════════════════════
 // REUSES PetLabTest / PetLabOrder / PetLabResult.
 
-// ─── U.1 Pet lab catalogue entry ─────────────────────────────────────────────
 export interface PetLabCatalogueEntry {
   test:        PetLabTest;
   priceKobo:   number;
@@ -314,7 +289,6 @@ export interface PetLabCatalogueEntry {
   forSpecies:  PetSpecies[];
 }
 
-// ─── U.2 Pet lab result inbox + interpretation ───────────────────────────────
 export interface PetLabResultInboxItem {
   result:      PetLabResult;
   hasAbnormal: boolean;
@@ -330,7 +304,6 @@ export interface PetLabInterpretation {
   interpretedAt: string;
 }
 
-// ─── U.3 Pet vaccination recommendation + reminder ───────────────────────────
 export type PetVaccinationUrgency = 'due_soon' | 'overdue' | 'routine';
 
 export interface PetVaccinationRecommendation {
@@ -352,7 +325,6 @@ export interface PetVaccinationReminder {
   enabled:     boolean;
 }
 
-// ─── U.4 Pet health record (aggregated hub) ──────────────────────────────────
 export interface PetHealthRecord {
   pet:           PetProfile;
   vaccinations:  PetVaccination[];
@@ -362,7 +334,6 @@ export interface PetHealthRecord {
   lastVisitAt?:  string;
 }
 
-// ─── U.5 Pet growth / weight history (timeseries) ────────────────────────────
 export interface PetGrowthPoint {
   date:     string;
   weightKg: number;
@@ -377,7 +348,6 @@ export interface PetGrowthHistory {
   points:   PetGrowthPoint[];
 }
 
-// ─── U.6 Pet chronic condition monitoring ────────────────────────────────────
 export type PetChronicTrend = 'improving' | 'stable' | 'worsening';
 
 export interface PetChronicMonitoringEntry {
@@ -391,12 +361,9 @@ export interface PetChronicMonitoringEntry {
   note?:      string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION V — PET STORE / VET-RECOMMENDED PRODUCTS (12)
-// ═══════════════════════════════════════════════════════════════════════════
 // REUSES PetStoreProduct / PetProductRecommendation / PetProductCategory.
 
-// ─── V.1 Richer product detail (COMPOSES PetStoreProduct) ────────────────────
 export interface PetProductDetail {
   product:      PetStoreProduct;
   ingredients:  string[];
@@ -407,7 +374,6 @@ export interface PetProductDetail {
   relatedProductIds: string[];
 }
 
-// ─── V.2 Pet store fulfilment + delivery status ──────────────────────────────
 export type PetFulfilmentStatus =
   | 'pending'
   | 'ordered'
@@ -447,13 +413,10 @@ export interface PetProductFulfilment {
   createdAt:      string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // MUTATION INPUTS / RESULTS
-// ═══════════════════════════════════════════════════════════════════════════
 // `idempotencyKey` is required on every state-changing mutation. Hooks generate
 // it; callers pass `Omit<Input, 'idempotencyKey'>`.
 
-// ─── Section S ────────────────────────────────────────────────────────────────
 export interface RespondToPetRequestInput {
   requestId:      string;
   accept:         boolean;
@@ -492,7 +455,6 @@ export interface CreateVetReferralResult {
   status:     VetReferralStatus;
 }
 
-// ─── Section T ────────────────────────────────────────────────────────────────
 export interface IssuePetPrescriptionInput {
   prescriptionId: string;
   idempotencyKey: string;
@@ -539,7 +501,6 @@ export interface ReviewPetRefillResult {
   status:   PetRefillStatus;
 }
 
-// ─── Section U ────────────────────────────────────────────────────────────────
 export interface AddPetLabInterpretationInput {
   resultId:            string;
   interpretation:      string;
@@ -595,7 +556,6 @@ export interface SavePetChronicMonitoringResult {
   petId:   string;
 }
 
-// ─── Section V ────────────────────────────────────────────────────────────────
 export interface ShareProductWithOwnerInput {
   recommendationId: string;
   note?:            string;

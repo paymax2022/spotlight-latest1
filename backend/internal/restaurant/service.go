@@ -13,6 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/provider"
@@ -125,7 +127,6 @@ type Service struct {
 // while porting this same Paystack-checkout pattern to ride-hailing — see
 // that error's doc comment for the full account); this seam is what makes
 // the refund actually succeed instead of merely failing safely.
-//
 // Modeled as a local interface (mirrors CommissionRecorder / TierLimiter) so
 // restaurant never imports paystackcheckout or any provider package.
 type ExternalRefunder interface {
@@ -193,7 +194,6 @@ func (s *Service) WithDisbursementProvider(p provider.DisbursementProvider) *Ser
 }
 
 // WithModeration enables the listing-review gate in discovery.
-//
 // Off by default and deliberately so: every existing restaurant is backfilled
 // APPROVED, so turning it on changes nothing for them, but a NEW restaurant
 // starts DRAFT and stays out of discovery until a reviewer approves it. That is
@@ -468,7 +468,6 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		// min/max (or `required`) is violated rejects the order — before any money moves.
 		// That matters both ways round: an unpriced add-on is money the restaurant never
 		// gets, and a required "Size" left unchosen is an order the kitchen cannot make.
-		//
 		// The groups are loaded per line rather than once per menu item because the same
 		// item may legitimately appear twice in a cart with different options; the extra
 		// reads are bounded by the cart size and happen before the escrow.
@@ -540,7 +539,6 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 
 	// Platform pricing knobs, applied to the item subtotal in a fixed order because the
 	// service fee prices what the customer is actually charged for food:
-	//
 	//	surge       inflates the item subtotal (peak dynamic pricing). It is food revenue,
 	//	            so it sits INSIDE the settlement gross and splits 80/10/10 like any
 	//	            other item money — the restaurant shares in it.
@@ -548,7 +546,6 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	//	            a rider tip). It rides on TOP of the percentages, so the restaurant and
 	//	            the rider take no cut of it and it never inflates their shares. It is
 	//	            charged on the surged item subtotal — the price the customer sees.
-	//
 	// applyBp floors, so neither can round UP past its exact basis-point fraction.
 	surgeKobo := applyBp(subtotal, pricingCfg.SurgeBp)
 	itemsKobo := subtotal + surgeKobo
@@ -572,16 +569,13 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	// items + delivery, before any discount, and excluding both the tip and the service
 	// fee, which are fixed legs on top) — the same `gross` settlement.Settle reconstructs
 	// at release time.
-	//
 	// A supplied code is resolved BEFORE anything is escrowed and FAILS the order when it
 	// cannot be applied (ErrPromoInvalid → 422). Silently ignoring a bad code — what this
 	// path did while resolvePromo went uncalled — charges the customer the undiscounted
 	// price they never agreed to, which is the worse failure by far.
-	//
 	// The surge is INSIDE the gross, so a percentage promo discounts the surged price the
 	// customer is actually quoted (and min_subtotal_kobo gates on it too). The service fee
 	// is OUTSIDE it: a discount is never taken off the platform's fixed fee.
-	//
 	// KNOWN SCOPING LIMIT on a multi-restaurant cart: the code is resolved against the
 	// PRIMARY restaurant and discounts the whole cart's subtotal, and the discount lands
 	// on the primary owner's leg. That follows the module's existing single-provider
@@ -613,7 +607,6 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	// packing rules require), so it arrives from the client and PackagingKobo clamps
 	// it to [1, total portions] before it can price anything — a client number never
 	// reaches the escrow debit unbounded.
-	//
 	// Checkout has ALWAYS shown this line and added it to the total it displays, but
 	// nothing server-side ever charged it, so the customer was shown one number and
 	// billed another. Pricing it here closes that gap.
@@ -655,7 +648,6 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 // delivery-config state — the SAME computation placeOrder itself uses to
 // price the order it actually places (see priceOrder) — without moving any
 // money, reserving any promo slot, or writing anything.
-//
 // This exists for a caller that must know the exact amount to charge BEFORE
 // it can collect payment (a Paystack-checkout initiate step: Paystack needs
 // an amount up front). It is advisory to that caller only: placeOrder (run
@@ -678,7 +670,6 @@ func (s *Service) QuoteOrder(ctx context.Context, restaurantID, customerID strin
 // function's doc comment for why, and settlement.EscrowExternal for the
 // ledger side). `external` is NEVER settable by client input on any
 // HTTP-facing request DTO — see the two exported wrappers below.
-//
 // verifiedAmountKobo is ignored when external is false. When external is
 // true it is the amount the caller already verified Paystack collected for
 // this order, and is cross-checked against the total this function computes
@@ -687,10 +678,8 @@ func (s *Service) QuoteOrder(ctx context.Context, restaurantID, customerID strin
 // claim about the total; it only trusts a caller's claim about what was
 // actually collected, and then requires that to match its own math.
 func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest, external bool, verifiedAmountKobo int64) (*Order, error) {
-	// ── Fast idempotent-replay path ───────────────────────────────────────────
 	// A retry of an order this customer already placed under the same
 	// Idempotency-Key returns the canonical order and moves no money.
-	//
 	// This MUST run before the tier gate below. The gate measures today's spend by
 	// summing the customer's wallet DEBIT entries, which on a replay already include
 	// THIS order's own escrow debit — so re-gating a replay counts the request
@@ -699,13 +688,11 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	// rejection for an order that succeeded, and might re-order under a fresh key
 	// and pay twice. Same ordering as RequestWithdrawal, which resolves its
 	// idempotency key before calling EnforceWalletDebitLimit.
-	//
 	// It must equally run before PROMO resolution, for the same shape of reason: the
 	// promo checks are stateful and time-dependent, so replaying an order whose
 	// redemption already committed fails its OWN usage_limit/per_user_limit (the counts
 	// now include the first attempt) and 422s an order that exists and is escrowed. A
 	// promo whose window closed between the two attempts does the same.
-	//
 	// The post-INSERT ON CONFLICT branch below stays as the concurrent-race
 	// backstop for two requests that pass this check simultaneously.
 	if req.IdempotencyKey == "" {
@@ -777,15 +764,12 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	// path, not a slowdown. It reproduces exactly with pool_max_conns=4 and 8 concurrent
 	// orders (goroutines parked in puddle.Pool.acquire inside Escrow), which is why CI on
 	// a 2-core runner hung for its full 10-minute timeout while a 16-core dev box passed.
-	//
 	//	0. tier gate                 (reads only — nothing to unwind)
 	//	1. reserve the promo slot    (short tx: FOR UPDATE + count + redemption insert)
 	//	2. escrow                     (its own connection)
 	//	3. insert the order           (its own tx)
-	//
 	// Anything added here that needs the DB while `tx` is open must go ON `tx`.
 
-	// ── Fail-closed tier / daily-limit gate on the escrow debit ────────────────
 	// The Escrow below DEBITS the customer's wallet, so placing an order is a wallet
 	// debit like any other and owes CLAUDE.md's iron rule #4 a fail-closed tier check:
 	// a Tier 0 customer has no wallet at all, and every capped tier has a daily debit
@@ -793,11 +777,9 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	// rows — tiers sums today's user_wallet DEBIT entries, which is exactly what the
 	// escrow posts — so the cap prices food orders alongside transfers and withdrawals
 	// instead of leaving food as an uncapped side door out of the wallet.
-	//
 	// Enforced on `total` — subtotal + delivery + tip — because that is the whole
 	// amount leaving the customer's wallet. Gating only the food subtotal would let
 	// the delivery fee and tip escape the cap.
-	//
 	// Placement is deliberate:
 	//   - AFTER the free validations (closed restaurant, unknown/unavailable item,
 	//     min-order, tip bound) so each keeps returning its own specific error, and
@@ -808,10 +790,8 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	//     a single-use campaign, which is the customer's allowance spent on an order
 	//     they were never allowed to place. This gate reads only, so it can sit ahead
 	//     of the reservation without weakening its own "nothing to reverse" property.
-	//
 	// A nil gate is refused rather than treated as "unlimited" — see ErrTierGateUnwired.
 	// This stays unconditional: a deployment with no gate must not place orders at all.
-	//
 	// Skipped entirely when external is true: an externally-funded order is paid for
 	// by an ALREADY-VERIFIED Paystack charge that never touches the customer's wallet
 	// (see settlement.EscrowExternal), so there is no wallet debit for this gate to
@@ -832,7 +812,6 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 		// count it against the customer a second time and refuse the very retry that
 		// heals the stranded escrow. settlement.Escrow is idempotent on this key and will
 		// post no second debit, so there is nothing left for the gate to authorise.
-		//
 		// Without this, gating the escrow would have broken settlement.Escrow's documented
 		// crash-recovery property: the money would sit in escrow with no order attached,
 		// invisible to the reconciler (which joins orders) and with no path to a refund.
@@ -863,7 +842,6 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	// rides on top of that split — the percentages price total − tip). If this fails the
 	// reservation above is released, so a declined card does not burn the customer's
 	// promo allowance.
-	//
 	// external routes this to EscrowExternal, which posts DR provider-clearing / CR
 	// escrow instead of debiting the customer's wallet — the money already left the
 	// customer via an already-verified Paystack charge, so there is no wallet leg to
@@ -950,7 +928,6 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 		// we were mid-flight (the escrow debit was deduped on the same key, so no
 		// second debit was posted). Return the canonical existing order instead of
 		// failing on the UNIQUE constraint with a 500.
-		//
 		// This attempt's promo reservation is keyed to ITS orderID, which will never
 		// exist — release it so the losing racer does not burn a second slot off the
 		// campaign.
@@ -1026,7 +1003,6 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 // (Paystack card/bank-transfer) instead of the customer's wallet — no
 // KYC-tier gate applies, because no wallet debit occurs (see
 // settlement.EscrowExternal and placeOrder's tier-gate skip).
-//
 // The caller MUST have already verified, server-side, that a completed
 // Paystack charge exists for reference and that it collected exactly
 // verifiedAmountKobo — this function trusts that verification unconditionally
@@ -1036,7 +1012,6 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 // trusts a caller's claim about what the order should cost, only about what
 // was actually collected. On ErrExternalAmountMismatch, no escrow and no
 // order row were written; the caller must reverse the external charge.
-//
 // Must only ever be invoked from a server-initiated flow (a Paystack
 // initiate/verify/webhook handler) that itself carries no client-settable
 // "skip KYC" switch — never from a handler that lets request input choose
@@ -1059,7 +1034,6 @@ func (s *Service) OrderParties(ctx context.Context, orderID string) (customer, o
 // real error ONLY when the lookup itself failed — a transient pool error must not be
 // mistaken for a miss, or the caller would fall through and re-gate an order that
 // already exists.
-//
 // Scoped to the CALLING customer, not to the stored row's customer: Idempotency-Keys
 // are client-chosen, so resolving one to whichever order happens to hold it would let
 // any caller read a stranger's order by replaying their key. A key that exists but
@@ -1245,28 +1219,22 @@ func (s *Service) transitionInternal(ctx context.Context, orderID string, newSta
 	return nil
 }
 
+// orderTransitions is the order lifecycle's legal-move table. Too late to
+// reject once cooking — cancel (with refund) is the only exit from preparing
+// on. delivered / cancelled / rejected / dispatch_failed / delivery_failed
+// are terminal (no entry = no outgoing moves).
+var orderTransitions = fsm.Table[OrderStatus]{
+	OrderPending:   fsm.Set(OrderConfirmed, OrderCancelled, OrderRejected),
+	OrderConfirmed: fsm.Set(OrderPreparing, OrderCancelled, OrderRejected),
+	OrderPreparing: fsm.Set(OrderReady, OrderCancelled),
+	OrderReady:     fsm.Set(OrderPickedUp, OrderCancelled, OrderDispatchFailed),
+	OrderPickedUp:  fsm.Set(OrderDelivered, OrderDeliveryFailed),
+}
+
 // canTransition guards the order lifecycle. Returns true for legal forward
 // moves (and the cancel terminal). Pure logic — unit-tested.
 func canTransition(from, to OrderStatus) bool {
-	if from == to {
-		return false
-	}
-	switch from {
-	case OrderPending:
-		return to == OrderConfirmed || to == OrderCancelled || to == OrderRejected
-	case OrderConfirmed:
-		return to == OrderPreparing || to == OrderCancelled || to == OrderRejected
-	case OrderPreparing:
-		// Too late to reject once cooking — cancel (with refund) is the only exit.
-		return to == OrderReady || to == OrderCancelled
-	case OrderReady:
-		return to == OrderPickedUp || to == OrderCancelled || to == OrderDispatchFailed
-	case OrderPickedUp:
-		return to == OrderDelivered || to == OrderDeliveryFailed
-	default:
-		// delivered / cancelled / rejected / dispatch_failed / delivery_failed are terminal.
-		return false
-	}
+	return orderTransitions.Can(from, to)
 }
 
 // CommissionRecorder is the nil-safe seam into the central Commission & Profit
@@ -1276,7 +1244,6 @@ func canTransition(from, to OrderStatus) bool {
 // restaurant never imports the commission package at compile time (mirrors the
 // Notifier / AddressGeocoder seams) — the adapter, which lives in app-wiring,
 // discards the returned earning row and surfaces only the error.
-//
 // This records realized profit ONLY; it never moves money. Restaurant's own money
 // movements (the 80/10/10 settlement split into owner/rider/platform wallets) are
 // unchanged, and the injected recorder is deliberately constructed WITHOUT a ledger
@@ -1319,7 +1286,6 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 // escrowed total, so Settle adds it back to recover the pre-discount gross and charges
 // it wholly to the leg that funded it (orders.promo_funder) — the other two parties
 // settle as if the customer had paid full price.
-//
 // IDEMPOTENT: it drives settlement.Settle, which is guarded WHERE the settlement
 // row is 'escrowed' (a duplicate no-ops with a "cannot settle" error) and posts
 // every ledger leg with ON CONFLICT (idempotency_key) DO NOTHING. Re-driving this
@@ -1345,7 +1311,6 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 	// settlement forever once it exceeds the escrow (Settle rejects tip > total); a
 	// discount read against the wrong escrow reconstructs the WRONG gross, over-paying
 	// every percentage leg from money that was never collected.
-	//
 	// Fail safe for both: drop the extra legs and settle the escrow on the bare
 	// percentages. That is always fully releasable (gross == base == the escrowed total,
 	// no leg can go negative) — value is conserved, it is simply apportioned as if the
@@ -1423,14 +1388,11 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 	// idempotent: the order id doubles as source ref + idempotency key, so retries /
 	// reconciliation never double-count. gross is the SAME basis restaurant's own 10%
 	// platform cut is computed on, i.e. exactly the `gross` Settle reconstructs above:
-	//
 	//	gross = total_kobo − TipKobo − ServiceFeeKobo + DiscountKobo
-	//
 	// The tip and the service fee come off because both are fixed legs paid straight
 	// through (to the rider and to the platform respectively) that the percentages never
 	// priced; the promo discount goes back on because the percentages price the
 	// PRE-discount value, so a discounted order still generated that much business.
-	//
 	// KNOWN LIMITATION, deliberately not papered over: RecordFor accepts only a gross and
 	// derives the cut from the central rate card, so two components of the platform's
 	// ACTUAL take cannot be expressed here — the service fee it keeps in full (under-
@@ -1439,7 +1401,6 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 	// exact platform leg, service fee and all. This is an analytics row only. Fixing it
 	// needs a RecordFor variant that takes an explicit realized-fee amount — tracked as
 	// follow-up, not fixable from inside this module.
-	//
 	// A recorder failure is logged and swallowed — it must NEVER fail the settlement above
 	// (restaurant's own settle already posted the platform cut to the ledger; this appends
 	// the earning row only). userID is the paying customer.
@@ -1540,7 +1501,6 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 
 // refundEscrowOnce refunds an order's escrow, treating an escrow that is ALREADY
 // refunded as success.
-//
 // Both closing paths (cancelAndRefund, refundAndClose) refund on the pool and then do
 // more work on their own tx before committing the terminal status. If the process dies
 // in between, the money is back with the customer but the order is still `pending` — and
@@ -1549,12 +1509,10 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 // advanceable: an owner can run it to `delivered`, where Settle rejects the refunded
 // settlement but the status flip has already committed, leaving the customer refunded
 // AND fed with nobody paid and no alert.
-//
 // Refund is non-double-refunding but it is not a no-op, which is what the callers'
 // "idempotent" comments assumed. Making the already-refunded case a success is what
 // actually lets the retry converge. A settlement in any other non-refundable state
 // (notably `settled`) still fails loudly — that is a genuine conflict, not a replay.
-//
 // orderID is needed only for the external-funding branch: a Paystack-funded
 // order's settlement.Refund call now returns settlement.ErrWrongRefundMethod
 // (that function refuses to wallet-credit money that never came from the
@@ -1646,4 +1604,396 @@ func (s *Service) refundAndClose(ctx context.Context, orderID, actorID string, t
 	}
 	s.broadcastStatus(orderID, toStatus)
 	return nil
+}
+
+// Notifier delivers an order/chat notification to a user. The default
+// LogNotifier just logs; inject a real implementation (push/in-app, backed by
+// the notifications queue) via Service.SetNotifier. This seam keeps the
+// restaurant service testable and prevents a hard dependency on asynq — when
+// the queue is unavailable the module still functions (notifications are
+// no-op/logged rather than failing the request).
+type Notifier interface {
+	Notify(ctx context.Context, n Notification) error
+}
+
+// Notification is the message delivered to one recipient.
+type Notification struct {
+	UserID string
+	Event  string
+	Title  string
+	Body   string
+	Data   map[string]any
+}
+
+// LogNotifier is the no-op default — it logs rather than delivering.
+type LogNotifier struct{}
+
+func (LogNotifier) Notify(ctx context.Context, n Notification) error {
+	log.Printf("[restaurant] notify user=%s event=%s: %s", n.UserID, n.Event, n.Title)
+	return nil
+}
+
+// NotifierFunc adapts a function to the Notifier interface.
+type NotifierFunc func(ctx context.Context, n Notification) error
+
+func (f NotifierFunc) Notify(ctx context.Context, n Notification) error { return f(ctx, n) }
+
+// notify is a panic-safe, best-effort wrapper. Notification delivery never
+// fails the surrounding money/order operation.
+func (s *Service) notify(ctx context.Context, n Notification) {
+	if s.notifier == nil {
+		return
+	}
+	if err := s.notifier.Notify(ctx, n); err != nil {
+		log.Printf("[restaurant] notify failed user=%s event=%s: %v", n.UserID, n.Event, err)
+	}
+}
+
+// SetNotifier injects a real notifier (defaults to LogNotifier).
+func (s *Service) SetNotifier(n Notifier) *Service {
+	if n != nil {
+		s.notifier = n
+	}
+	return s
+}
+
+// Event names emitted by the restaurant module.
+const (
+	EventOrderPlaced    = "restaurant.order.placed"
+	EventOrderConfirmed = "restaurant.order.confirmed"
+	EventOrderPreparing = "restaurant.order.preparing"
+	EventOrderReady     = "restaurant.order.ready"
+	EventOrderPickedUp  = "restaurant.order.picked_up"
+	EventOrderDelivered = "restaurant.order.delivered"
+	EventOrderCancelled = "restaurant.order.cancelled"
+	EventOrderAssigned  = "restaurant.order.assigned"
+	EventOrderAccepted  = "restaurant.order.accepted"
+	EventOrderDispatch  = "restaurant.order.dispatch"          // offered to available riders
+	EventOrderNoRiders  = "restaurant.order.no_riders"         // dispatch found no available riders
+	EventOrderHandoff   = "restaurant.order.handoff"           // delivered + handed off (code confirmed)
+	EventPickupCodeErr  = "restaurant.order.pickup_code_error" // failed to generate/persist the pickup code
+	EventNewMessage     = "restaurant.chat.message"
+	// Admin ops-console onboarding decision (approve/reject) delivered to the owner.
+	EventOnboardingDecision = "restaurant.onboarding.decision"
+	// Payout run disbursed to a restaurant owner / rider wallet.
+	EventPayoutDisbursed = "restaurant.payout.disbursed"
+	// Merchant wallet→bank withdrawal lifecycle (money-path audit events).
+	EventWithdrawalRequested = "restaurant.withdrawal.requested" // funds reserved, handed to disburser
+	EventWithdrawalPaid      = "restaurant.withdrawal.paid"      // provider confirmed the payout landed
+	EventWithdrawalReversed  = "restaurant.withdrawal.reversed"  // provider failed → funds returned to wallet
+)
+
+// Object-level authorization for the order lifecycle. These are the ONLY sentinels the
+// handler maps to HTTP 403 (everything else stays 400/404). Kept pure + table-testable:
+// the DB-backed service resolves the order's parties, then defers the allow/deny
+// decision to the functions below.
+var (
+	// ErrForbidden — the caller is not a party to this order (or not the party allowed
+	// to make this specific transition). Object-level authZ failure.
+	ErrForbidden = errors.New("restaurant: forbidden")
+	// ErrDeliveredViaHandoff — `delivered` cannot be set through the generic status
+	// endpoint; the assigned rider must use ConfirmHandoff, which enforces the
+	// delivery-code proof-of-delivery. This closes the POD-bypass hole.
+	ErrDeliveredViaHandoff = errors.New("restaurant: delivered can only be set via rider handoff (proof of delivery)")
+)
+
+type orderActorRole int
+
+const (
+	roleNone orderActorRole = iota
+	roleOwner
+	roleRider
+	roleCustomer
+)
+
+// classifyOrderActor resolves the caller's role for a specific order from that order's
+// resolved parties. Precedence: restaurant owner, then the assigned rider, then the
+// customer. An empty actor, or an actor matching none of the parties, is roleNone.
+func classifyOrderActor(actorID, customer, owner, rider string) orderActorRole {
+	switch {
+	case actorID == "":
+		return roleNone
+	case actorID == owner:
+		return roleOwner
+	case rider != "" && actorID == rider:
+		return roleRider
+	case actorID == customer:
+		return roleCustomer
+	default:
+		return roleNone
+	}
+}
+
+// authorizeStatusChange decides whether actorID may drive the order to `to` via the
+// generic status endpoint, given the order's parties. Only the order's own
+// owner/rider/customer may act (object-level), and only on the transitions their role
+// owns:
+//   - owner:    confirmed, preparing, ready, cancelled
+//   - rider:    picked_up
+//   - customer: cancelled
+//   - delivered: NEVER here — must go through ConfirmHandoff (POD).
+//
+// This does not check the FROM→TO edge validity — that stays the state-machine guard's
+// job (canTransition); this only answers "may THIS caller attempt THIS target".
+func authorizeStatusChange(actorID, customer, owner, rider string, to OrderStatus) error {
+	if to == OrderDelivered {
+		return ErrDeliveredViaHandoff
+	}
+	role := classifyOrderActor(actorID, customer, owner, rider)
+	switch to {
+	case OrderConfirmed, OrderPreparing, OrderReady:
+		if role == roleOwner {
+			return nil
+		}
+	case OrderPickedUp:
+		if role == roleRider {
+			return nil
+		}
+	case OrderCancelled:
+		if role == roleOwner || role == roleCustomer {
+			return nil
+		}
+	}
+	return ErrForbidden
+}
+
+// authorizeCancel decides whether actorID may cancel + refund the order — its customer
+// or the restaurant owner (an admin path, if any, is separate). Riders and strangers
+// may not.
+func authorizeCancel(actorID, customer, owner, rider string) error {
+	switch classifyOrderActor(actorID, customer, owner, rider) {
+	case roleOwner, roleCustomer:
+		return nil
+	default:
+		return ErrForbidden
+	}
+}
+
+// A restaurant is UNCLAIMED when nobody can be identified as its merchant: no
+// owner, or an owner with no active merchant profile. Such a shop can appear in
+// discovery and take orders while no one can manage it and no payout has a
+// destination.
+// There are none today — the linking migration (20261213000000) gave all 1539
+// owners a profile, and every restaurant has an owner_id. This exists so the
+// state is DETECTABLE rather than silent: an admin-seeded or imported row would
+// otherwise sit unmanaged with nothing surfacing it.
+
+// UnclaimedRestaurant is a shop with no identifiable merchant behind it.
+type UnclaimedRestaurant struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Address   string    `json:"address"`
+	IsOpen    bool      `json:"is_open"`
+	CreatedAt time.Time `json:"created_at"`
+	// Reason distinguishes "no owner at all" from "owner has no merchant profile",
+	// because the fix differs: assign an owner, versus link the one who is there.
+	Reason string `json:"reason"`
+}
+
+// UnclaimedRestaurants lists shops with no identifiable merchant.
+// Deliberately DERIVED rather than stored as an `unclaimed` flag: a flag drifts
+// the moment an owner is assigned or a profile is created, and a stale flag on
+// this particular question would either hide a real orphan or accuse a working
+// restaurant.
+func (s *Service) UnclaimedRestaurants(ctx context.Context) ([]UnclaimedRestaurant, error) {
+	const q = `
+		SELECT r.id, r.name, r.address, r.is_open, r.created_at,
+		       CASE WHEN r.owner_id IS NULL THEN 'no owner assigned'
+		            ELSE 'owner has no merchant profile' END AS reason
+		FROM restaurants r
+		WHERE r.owner_id IS NULL
+		   OR NOT EXISTS (
+		     SELECT 1 FROM onb_merchant_profile p
+		     WHERE p.user_id = r.owner_id
+		       AND p.merchant_type_id = 'mt-restaurant'
+		       AND p.status = 'ACTIVE'
+		   )
+		ORDER BY r.created_at DESC
+		LIMIT 200`
+
+	rows, err := s.db.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []UnclaimedRestaurant{}
+	for rows.Next() {
+		var u UnclaimedRestaurant
+		if err := rows.Scan(&u.ID, &u.Name, &u.Address, &u.IsOpen, &u.CreatedAt, &u.Reason); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// LinkLegacyOwners gives every restaurant owner without one an ACTIVE merchant
+// profile, the RBAC role, and a link from their shops to that profile.
+// The same statements the 20261213000000 migration runs, exposed as a callable
+// job because the condition recurs: an imported or admin-created restaurant
+// arrives with an owner who has never been through onboarding, and would
+// otherwise be invisible to the merchant hub while trading normally.
+// Idempotent — every statement is ON CONFLICT DO NOTHING or a no-op UPDATE — so
+// running it twice links nothing twice. Returns how many profiles it created.
+// Legacy profiles keep application_id NULL: nobody applied, and inventing an
+// application would fabricate a review that never happened.
+func (s *Service) LinkLegacyOwners(ctx context.Context) (int, error) {
+	tag, err := s.db.Exec(ctx, `
+		INSERT INTO onb_merchant_profile
+		  (user_id, module_id, merchant_type_id, application_id, role_granted, status, workspace_route, activated_at)
+		SELECT DISTINCT r.owner_id, 'mod-food', 'mt-restaurant', NULL::uuid, 'restaurant_merchant', 'ACTIVE',
+		       '/merchant/restaurant', now()
+		FROM restaurants r
+		WHERE r.owner_id IS NOT NULL
+		  AND EXISTS (SELECT 1 FROM public.platform_users u WHERE u.id = r.owner_id)
+		ON CONFLICT (user_id, merchant_type_id) DO NOTHING`)
+	if err != nil {
+		return 0, err
+	}
+	created := int(tag.RowsAffected())
+
+	// A profile without the role is a half grant: the hub shows the business while
+	// permissioned routes refuse it.
+	if _, err := s.db.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role_id, scope_type, scope_id, is_active)
+		SELECT DISTINCT p.user_id, ro.id, 'global', NULL, true
+		FROM onb_merchant_profile p
+		JOIN roles ro ON ro.slug = 'restaurant_merchant' AND ro.is_active
+		WHERE p.merchant_type_id = 'mt-restaurant' AND p.status = 'ACTIVE'
+		ON CONFLICT (user_id, role_id, scope_type, scope_id) DO UPDATE SET is_active = true, updated_at = NOW()`); err != nil {
+		return created, err
+	}
+
+	// Matched on user_id, so a shop can never be attributed to someone else's
+	// merchant record.
+	if _, err := s.db.Exec(ctx, `
+		UPDATE restaurants r
+		   SET owner_profile_id = p.id
+		  FROM onb_merchant_profile p
+		 WHERE p.user_id = r.owner_id
+		   AND p.merchant_type_id = 'mt-restaurant'
+		   AND p.status = 'ACTIVE'
+		   AND r.owner_profile_id IS DISTINCT FROM p.id`); err != nil {
+		return created, err
+	}
+	return created, nil
+}
+
+// dispatchStaleMinutes is how long an order may sit in dispatch_status='searching'
+// (no rider sourced) before the stalled-dispatch sweeper fails + refunds it (DP-003).
+const dispatchStaleMinutes = 20
+
+// RejectOrder lets the restaurant owner decline an order before it is prepared, with a
+// reason, refunding the customer (RM-003). Only the owner may reject, and only a
+// pending/confirmed order (canTransition enforces the stage). Money moves through the
+// single guarded refundAndClose path.
+func (s *Service) RejectOrder(ctx context.Context, orderID, actorID, reason string) error {
+	customer, owner, rider, err := s.orderParties(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if classifyOrderActor(actorID, customer, owner, rider) != roleOwner {
+		return ErrForbidden
+	}
+	if reason == "" {
+		return errors.New("restaurant: a reason is required to reject an order")
+	}
+	var status string
+	if err := s.db.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1`, orderID).Scan(&status); err != nil {
+		return errors.New("restaurant: order not found")
+	}
+	if !canTransition(OrderStatus(status), OrderRejected) {
+		return fmt.Errorf("restaurant: cannot reject an order that is %s", status)
+	}
+	return s.refundAndClose(ctx, orderID, actorID, OrderRejected, reason)
+}
+
+// MarkDispatchFailed fails + refunds an order for which no rider could be sourced
+// (DP-003). Ops/system path (no per-user authz — mounted behind restaurant.admin.dispatch
+// or called by the sweeper). Only a 'ready' order that was still searching qualifies.
+func (s *Service) MarkDispatchFailed(ctx context.Context, orderID, reason string) error {
+	if reason == "" {
+		reason = "no_rider_available"
+	}
+	var status string
+	if err := s.db.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1`, orderID).Scan(&status); err != nil {
+		return errors.New("restaurant: order not found")
+	}
+	if !canTransition(OrderStatus(status), OrderDispatchFailed) {
+		return fmt.Errorf("restaurant: cannot fail dispatch from %s", status)
+	}
+	return s.refundAndClose(ctx, orderID, "", OrderDispatchFailed, reason)
+}
+
+// MarkDeliveryFailed records that the assigned rider could not complete the drop-off
+// (customer unreachable / wrong address). Only the assigned rider may set it, and only
+// from picked_up. NO auto-refund: the food is already with the rider, so resolution
+// (refund vs re-attempt) goes through the dispute/cancel flow — this just marks the
+// failure + reason for that resolution.
+func (s *Service) MarkDeliveryFailed(ctx context.Context, orderID, riderID, reason string) error {
+	customer, _, rider, err := s.orderParties(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if rider == "" || rider != riderID {
+		return ErrForbidden
+	}
+	if reason == "" {
+		return errors.New("restaurant: a reason is required to report a failed delivery")
+	}
+	var status string
+	if err := s.db.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1`, orderID).Scan(&status); err != nil {
+		return errors.New("restaurant: order not found")
+	}
+	if !canTransition(OrderStatus(status), OrderDeliveryFailed) {
+		return fmt.Errorf("restaurant: cannot report failed delivery from %s", status)
+	}
+	if _, err := s.db.Exec(ctx, `UPDATE orders SET status='delivery_failed', status_reason=$2 WHERE id=$1`, orderID, reason); err != nil {
+		return err
+	}
+	s.recordOrderEvent(ctx, orderID, riderID, OrderStatus(status), OrderDeliveryFailed)
+	if customer != "" {
+		s.notify(ctx, Notification{UserID: customer, Event: EventOrderCancelled, Title: "Delivery problem",
+			Body: "We couldn't complete your delivery — support will reach out.", Data: map[string]any{"order_id": orderID, "reason": reason}})
+	}
+	s.broadcastStatus(orderID, OrderDeliveryFailed)
+	return nil
+}
+
+// SweepStalledDispatch fails + refunds orders that have been searching for a rider
+// longer than dispatchStaleMinutes with none found (DP-003 auto-path). Returns the
+// count swept. Intended for a periodic ops job (mirrors SweepUnacceptedOrders).
+func (s *Service) SweepStalledDispatch(ctx context.Context, now time.Time) (int, error) {
+	const q = `
+		SELECT id FROM orders
+		WHERE status = 'ready'
+		  AND rider_id IS NULL
+		  AND COALESCE(dispatch_status,'none') = 'searching'
+		  AND ready_at IS NOT NULL
+		  AND ready_at < ($1::timestamptz - make_interval(mins => $2))`
+	rows, err := s.db.Query(ctx, q, now, dispatchStaleMinutes)
+	if err != nil {
+		return 0, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	swept := 0
+	for _, id := range ids {
+		if err := s.MarkDispatchFailed(ctx, id, "no_rider_available"); err == nil {
+			swept++
+		}
+	}
+	return swept, nil
 }

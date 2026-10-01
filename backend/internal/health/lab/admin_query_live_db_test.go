@@ -1,6 +1,5 @@
 package healthlab_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression coverage for a SQL type-ambiguity bug found during
 // Laboratory (Module 16) UAT, in the same shape as PHARMACY-006's
 // AdminListOrders fix: AdminListOrders, AdminCustodyAudit, and
@@ -9,9 +8,7 @@ package healthlab_test
 // the lab_provider_id filter is actually supplied ("operator does not exist:
 // uuid = text"). Fixed with nullable per-parameter comparisons, matching the
 // pharmacy fix exactly, before this was ever hit live.
-//
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

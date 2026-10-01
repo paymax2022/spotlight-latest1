@@ -1,4 +1,3 @@
-// ── Multi-provider KYC step-up — public surface ──────────────────────────────
 export * from './types';
 export * from './constants';
 export * from './api';

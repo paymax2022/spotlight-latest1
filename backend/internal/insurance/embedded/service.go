@@ -2,16 +2,21 @@ package embedded
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
-	"strings"
-	"time"
-
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/insurance/gateway"
 	"spotlight/backend/internal/insurance/policy"
+	"strings"
+	"time"
 )
 
 // Notifier emits user-facing notifications (cover bound / top-up offer).
@@ -30,7 +35,6 @@ type Auditor interface {
 // Router (provider-agnostic bind). It writes policies into the SAME
 // insurance_policy table as IB0 via policy.Repository, with binding_mode=embedded
 // and source_event_id set.
-//
 // IDEMPOTENT on source_event_id: a replayed event is a no-op. Two guards:
 //  1. fast pre-check (PolicyForSourceEvent), and
 //  2. the hard DB unique index uq_insurance_policy_source_event — a racing
@@ -317,12 +321,220 @@ func (s *Service) notifySafe(ctx context.Context, userID, kind, message string) 
 	}
 }
 
-// knownEvents returns the sorted set of event types the engine maps (handy for
-// the internal test route's discovery + docs). Unused branches are tolerated.
-func knownEvents() string {
-	out := make([]string, 0, len(eventProductLine))
-	for k := range eventProductLine {
-		out = append(out, k)
+// Register wires the internal/member embedded-engine routes. The engine is
+// primarily driven by Handle() from existing emit points; these routes exist for
+// testing + manual triggers.
+//   - member/internal:
+//     POST /embedded/events   (trigger an embedded bind; idempotent on source_event_id)
+//     GET  /embedded/events   (list mapped event types)
+func Register(member *gin.RouterGroup, h *Handler) {
+	g := member.Group("/embedded")
+	g.POST("/events", h.Trigger)
+	g.GET("/events", h.KnownEvents)
+}
+
+// Handler exposes an internal/member route for exercising the embedded engine
+// (testing + manual triggers). In production the engine is driven by Handle()
+// called from existing platform emit points, not by this route.
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler constructs the embedded handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Trigger (member/internal): POST /embedded/events
+// body: {source_event_id, event_type, user_id?, sum_insured_kobo?, inputs?}
+// For the member-authenticated variant the caller's user_id is used unless an
+// admin override is supplied.
+func (h *Handler) Trigger(c *gin.Context) {
+	var body struct {
+		SourceEventID  string         `json:"source_event_id" binding:"required"`
+		EventType      string         `json:"event_type" binding:"required"`
+		UserID         string         `json:"user_id"`
+		SumInsuredKobo int64          `json:"sum_insured_kobo"`
+		Inputs         map[string]any `json:"inputs"`
 	}
-	return strings.Join(out, ",")
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	uid := body.UserID
+	if uid == "" {
+		uid = ginutil.UserID(c)
+	}
+	if uid == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id required"})
+		return
+	}
+	res, err := h.svc.Handle(c.Request.Context(), EmbeddedEvent{
+		SourceEventID:  body.SourceEventID,
+		EventType:      body.EventType,
+		UserID:         uid,
+		SumInsuredKobo: body.SumInsuredKobo,
+		Inputs:         body.Inputs,
+	})
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": res})
+}
+
+// KnownEvents (member/internal): GET /embedded/events — lists the mapped event
+// types (discovery for clients/tests).
+func (h *Handler) KnownEvents(c *gin.Context) {
+	events := make([]string, 0, len(eventProductLine))
+	for k := range eventProductLine {
+		events = append(events, k)
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"events": strings.Join(events, ","), "as_of": time.Now().UTC()}})
+}
+
+// State is the embedded-binding engine state (PRD §10.3).
+//
+//	EVENT_RECEIVED → COVER_RESOLVED → PREMIUM_HELD → BINDING → ACTIVE
+//	        └─ NO_MAPPING (no-op, log)
+//
+// The engine is IDEMPOTENT on source_event_id — a replayed platform event never
+// double-binds (enforced by uq_insurance_policy_source_event + a pre-check).
+type State string
+
+const (
+	StateEventReceived     State = "EVENT_RECEIVED"
+	StateCoverResolved     State = "COVER_RESOLVED"
+	StatePremiumHeld       State = "PREMIUM_HELD"
+	StateBinding           State = "BINDING"
+	StateActive            State = "ACTIVE"
+	StateFailed            State = "FAILED"
+	StateUncovered         State = "UNCOVERED"
+	StateNoMapping         State = "NO_MAPPING"
+	StateInsufficientFunds State = "INSUFFICIENT_FUNDS"
+)
+
+// EmbeddedEvent is a normalised platform lifecycle event that may trigger an
+// embedded bind. SourceEventID is the platform's unique event id and is the
+// idempotency key for the whole bind. ProductLine resolves the cover via the
+// catalog (data-driven routing — no event→product branching in code beyond the
+// well-known mapping table).
+type EmbeddedEvent struct {
+	// SourceEventID is the globally-unique platform event id. A replayed event
+	// with the same id is a safe no-op (never double-binds).
+	SourceEventID string `json:"source_event_id"`
+	// EventType is the platform event name, e.g. "trip.started", "loan.disbursed".
+	EventType string `json:"event_type"`
+	// UserID is the policyholder the cover binds for.
+	UserID string `json:"user_id"`
+	// SumInsuredKobo is an optional declared cover amount (e.g. parcel value); 0
+	// lets the product's sum_insured_rules drive it.
+	SumInsuredKobo int64 `json:"sum_insured_kobo"`
+	// Inputs are product-specific, schema-minimised fields (trip_id, imei, ...).
+	Inputs map[string]any `json:"inputs"`
+}
+
+// Result is the outcome of handling an embedded event.
+type Result struct {
+	State       State  `json:"state"`
+	PolicyID    string `json:"policy_id,omitempty"`
+	ProductCode string `json:"product_code,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	// Replayed is true when the event was already processed (idempotent no-op).
+	Replayed bool `json:"replayed,omitempty"`
+}
+
+// eventProductLine maps a platform event type to the catalog product_line whose
+// active product carries the cover. This is the §13/§B embedded event catalog
+// (PRD lines 347-355). The actual provider + product code are resolved from the
+// catalog (single source of truth) — this table only names the line.
+//
+//	trip.started            -> transport  (Octamile passenger/rider)
+//	parcel.booked           -> logistics  (Octamile GIT per-shipment)
+//	bus.seat_booked         -> transport  (Octamile passenger)
+//	consignment.created     -> logistics  (Octamile haulage/GIT)
+//	loan.disbursed          -> credit-life (MyCover credit-life)
+//	device.purchased        -> device     (MyCover device cover)
+//	wallet.funded           -> wallet     (MyCover wallet insurance)
+//	spotlight.event_created -> spotlight-event (MyCover event cover)
+//	contestant.enrolled     -> spotlight-contestant (MyCover contestant cover)
+var eventProductLine = map[string]string{
+	"trip.started":            "transport",
+	"parcel.booked":           "logistics",
+	"bus.seat_booked":         "transport",
+	"consignment.created":     "logistics",
+	"loan.disbursed":          "credit-life",
+	"device.purchased":        "device",
+	"wallet.funded":           "wallet",
+	"spotlight.event_created": "spotlight-event",
+	"contestant.enrolled":     "spotlight-contestant",
+}
+
+// Repository is the read side the embedded engine needs that IB0 did not expose:
+// resolving the active EMBEDDED product for a product_line, and a fast
+// source_event_id idempotency pre-check against insurance_policy. All queries are
+// read-only + parameterized; the engine writes policies via policy.Repository.
+type Repository struct {
+	db *pgxpool.Pool
+}
+
+// NewRepository constructs the embedded repository.
+func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
+
+// EmbeddedProduct is the slice of the catalog the engine needs to resolve cover.
+type EmbeddedProduct struct {
+	Code                string
+	Provider            string
+	ProviderProductCode string
+	UnderwriterDisplay  string
+	Currency            string
+	SumInsuredRules     map[string]any
+}
+
+// ErrNoMapping is returned when no active embedded product exists for a line.
+var ErrNoMapping = errors.New("embedded: no active product mapped for line")
+
+// ResolveCoverByLine returns the active EMBEDDED product for a product_line. The
+// catalog is the single source of truth for product → provider routing; this
+// query never branches on the event type. When multiple embedded products exist
+// for a line, the most recently updated active one wins.
+func (r *Repository) ResolveCoverByLine(ctx context.Context, line string) (*EmbeddedProduct, error) {
+	if r.db == nil {
+		return nil, ErrNoMapping
+	}
+	var p EmbeddedProduct
+	var sumRules []byte
+	err := r.db.QueryRow(ctx, `
+		SELECT code, provider, provider_product_code, underwriter_display, sum_insured_rules
+		FROM public.insurance_products
+		WHERE product_line = $1 AND binding_mode = 'embedded' AND active = true
+		ORDER BY updated_at DESC
+		LIMIT 1`, line).Scan(&p.Code, &p.Provider, &p.ProviderProductCode, &p.UnderwriterDisplay, &sumRules)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNoMapping
+		}
+		return nil, err
+	}
+	_ = json.Unmarshal(sumRules, &p.SumInsuredRules)
+	p.Currency = "NGN"
+	return &p, nil
+}
+
+// PolicyForSourceEvent returns (policyID, found) for an existing embedded policy
+// bound off a source_event_id. This is the fast idempotency pre-check; the DB
+// unique index (uq_insurance_policy_source_event) is the hard guard.
+func (r *Repository) PolicyForSourceEvent(ctx context.Context, sourceEventID string) (string, bool, error) {
+	if r.db == nil || sourceEventID == "" {
+		return "", false, nil
+	}
+	var id string
+	err := r.db.QueryRow(ctx, `
+		SELECT id FROM public.insurance_policy WHERE source_event_id = $1 LIMIT 1`, sourceEventID).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return id, true, nil
 }

@@ -1,8 +1,6 @@
 package crypto_test
 
-// ---------------------------------------------------------------------------
 // Crypto withdrawal state-machine invariants — DB-FREE subset.
-//
 // The withdrawal state machine's transition table (allowedWithdrawalTransitions,
 // canTransitionWithdrawal) in backend/internal/crypto/model_ext.go is
 // UNEXPORTED by design. Per the house pattern established in
@@ -14,12 +12,10 @@ package crypto_test
 //   2. Where the guard's OBSERVABLE effect crosses into exported territory
 //      (the exported status string constants), the values are asserted
 //      against the exported crypto.Withdrawal* constants directly.
-//
 // Live-DB tests that drive crypto.Service.Withdraw/ConfirmWithdrawal end-to-end
 // (proving units-parked-on-create and units-returned-on-failed against a real
 // Postgres) live in live_db_integration_test.go (skip-gated on
 // TEST_DATABASE_URL).
-// ---------------------------------------------------------------------------
 
 import (
 	"testing"
@@ -30,7 +26,6 @@ import (
 // withdrawalTransitionsMirror transcribes allowedWithdrawalTransitions
 // verbatim from backend/internal/crypto/model_ext.go:104-110:
 //
-//	var allowedWithdrawalTransitions = map[string]map[string]bool{
 //	    WithdrawalRequested: {WithdrawalPending: true, WithdrawalFailed: true},
 //	    WithdrawalPending:   {WithdrawalBroadcast: true, WithdrawalFailed: true},
 //	    WithdrawalBroadcast: {WithdrawalConfirmed: true, WithdrawalFailed: true},
@@ -101,7 +96,6 @@ func TestWithdrawalFSM_ExhaustiveTransitionMatrix(t *testing.T) {
 		}
 	}
 	// requested{pending_review,failed} + pending_review{approved,failed} +
-	// approved{broadcast,failed} + broadcast{confirmed,failed} = 8.
 	if legalCount != 8 {
 		t.Errorf("expected exactly 8 legal withdrawal edges, got %d", legalCount)
 	}
@@ -187,19 +181,12 @@ func TestWithdrawalFSM_EveryNonTerminalStateHasFailedAsAnEscapeHatch(t *testing.
 	}
 }
 
-// ---------------------------------------------------------------------------
 // networkFeeUnits — the exact fee formula reused by both the withdrawal
 // preview (QuoteWithdrawal) and the execution path (Withdraw), so the
 // preview and the fill always agree (service_ext.go comment at
 // QuoteWithdrawal, L298-300).
 // Source: backend/internal/crypto/service_ext.go:328-336 (unexported):
-//
-//	func networkFeeUnits(units int64) int64 {
-//	    fee := units / 2000 // 0.05%
-//	    if fee < 1 { fee = 1 }
-//	    return fee
 //	}
-// ---------------------------------------------------------------------------
 
 func networkFeeUnitsMirror(units int64) int64 {
 	fee := units / 2000
@@ -239,12 +226,8 @@ func TestWithdraw_TooSmallToClearNetworkFeeIsRejected(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Whitelisted-address requirement — Withdraw's allow-list gate
 // (service_ext.go:360-367):
-//   addr, err := s.repo.GetAddress(ctx, userID, addressID)  // owned + active
-//   if addr.AssetID != a.ID { return nil, ErrAddressNotFound }
-// ---------------------------------------------------------------------------
 
 // TestWithdraw_RequiresWhitelistedAddressForSameAsset transcribes the
 // asset-match guard: even an OWNED, active address is rejected if it belongs
@@ -311,16 +294,13 @@ func TestWithdraw_InactiveOrUnownedAddressIsNotReturnedByGetAddress(t *testing.T
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Units parked on create / returned on failed — transcribed from
 // CreateWithdrawal (repository_ext.go:261-311) and TransitionWithdrawal
 // (repository_ext.go:318-368).
-//
 // CreateWithdrawal parks units by decrementing the holding (never mints; CHECK
 // units>=0 fail-closes an over-withdrawal). TransitionWithdrawal's
 // `returnUnits>0` branch re-credits the SAME holding in the SAME transaction
 // as the status flip to failed — a true compensating entry, not a fresh mint.
-// ---------------------------------------------------------------------------
 
 // fakeHoldingLedger models the crypto_holdings projection the withdrawal
 // state machine parks/returns units against.
@@ -399,12 +379,10 @@ func TestWithdraw_ConfirmedWithdrawal_UnitsAreBurnedNotReturned(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Withdrawal idempotency — CreateWithdrawal's ON CONFLICT (idempotency_key)
 // DO NOTHING (repository_ext.go:268-273) — a replay returns the EXISTING row
 // id (dup=true) without re-parking units or re-inserting the opening
 // transition event.
-// ---------------------------------------------------------------------------
 
 type fakeWithdrawalTable struct {
 	idByIdemKey map[string]string

@@ -1,12 +1,10 @@
 // Command marketplace-cron runs the periodic (non-request-driven) jobs the
 // marketplace listing lifecycle depends on:
-//
 //   - listing auto_expire            (§2.1: active -> expired when expires_at < now())
 //
 // The order auto_release and hourly escrow reconciliation jobs were removed with
 // the escrow order FSM (ADR-023 listings-and-connect pivot): the marketplace no
 // longer holds escrow orders, so there is nothing to release or reconcile.
-//
 // House pattern: ticker-goroutine-style loop per job, mirroring
 // internal/fractionalre/autoinvest_runner.go (StartAutoInvestRunner) — this
 // repo has no pg_cron and no asynq periodic scheduler. This binary is ledger-free

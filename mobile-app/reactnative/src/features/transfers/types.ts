@@ -44,8 +44,6 @@ export interface TransferReceiptData {
   provider?: string;
 }
 
-// ── Request payloads ────────────────────────────────────────────────────────
-
 export interface WalletBankTransferInput {
   bankCode: string;
   bankName: string;

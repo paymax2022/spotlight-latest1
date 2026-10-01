@@ -7,11 +7,11 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Clock, XCircle, RefreshCw } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import PrimaryButton from '@/components/PrimaryButton';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { getRidePaystackStatus } from '@/features/mobility/api/mobility.api';
 
 // Resolver screen for a Paystack-funded (no-wallet, no-KYC-tier-gate) ride
@@ -21,7 +21,6 @@ import { getRidePaystackStatus } from '@/features/mobility/api/mobility.api';
 // Paystack webhook, or self-healed by this screen's own polling read (see
 // transport/paystackcheckout.Service.CheckStatus, since Paystack cannot
 // webhook localhost in dev). Once confirmed, hand off to the normal
-// searching-for-driver screen; on any other terminal status, the charge has
 // already been reversed server-side (RequestRidePaystackFunded's
 // refund-on-failure path) — the rider was not left out of pocket.
 

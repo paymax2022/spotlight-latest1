@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/ptr"
+	"spotlight/backend/go-common/strutil"
 )
 
 // Service owns the Sponsor-a-Student pledge → fund → apply flow (build-spec E9). Money moves
@@ -55,8 +57,6 @@ func NewServiceWithDeps(store Store, ledger LedgerPoster, invoice InvoicePayer) 
 // (ledger idempotency_key, invoice payment idempotency_key) and the award idempotency_key — a
 // replay with the same key posts no second money move and inserts no second award.
 
-// ── CreatePledge (state=pledged) ────────────────────────────────────────────────
-
 // CreatePledge records a sponsor's Sponsor-a-Student pledge for a target student.
 func (s *Service) CreatePledge(ctx context.Context, actorID string, req CreatePledgeRequest) (*Pledge, error) {
 	if actorID == "" {
@@ -85,8 +85,6 @@ func (s *Service) CreatePledge(ctx context.Context, actorID string, req CreatePl
 		map[string]any{"sponsorIdentityId": sponsor, "targetStudentId": req.TargetStudentID, "amountMinor": req.AmountMinor})
 	return p, nil
 }
-
-// ── FundPledge (pledged → funded; money via ledger, idempotent) ─────────────────
 
 // FundPledge moves the pledged amount into the scholarship fund via the injected LedgerPoster
 // (idempotent) and transitions the pledge pledged → funded, recording the ledger reference.
@@ -124,8 +122,6 @@ func (s *Service) FundPledge(ctx context.Context, actorID, pledgeID, idemKey str
 		map[string]any{"amountMinor": p.AmountMinor, "ledgerRef": ledgerRef, "idempotencyKey": idemKey})
 	return s.store.GetPledge(ctx, pledgeID)
 }
-
-// ── ApplyAward (funded → applied; via invoice.RecordPayment, idempotent) ────────
 
 // ApplyResult bundles the award with the resulting invoice payment reference.
 type ApplyResult struct {
@@ -178,9 +174,9 @@ func (s *Service) ApplyAward(ctx context.Context, actorID string, req ApplyAward
 		a, inserted, aerr := tx.AppendAward(ctx, Award{
 			PledgeID:         req.PledgeID,
 			InvoiceID:        req.InvoiceID,
-			StudentID:        firstNonEmpty(req.StudentID, p.TargetStudentID),
+			StudentID:        strutil.FirstNonEmpty(req.StudentID, p.TargetStudentID),
 			AmountMinor:      req.AmountMinor,
-			InvoicePaymentID: ptrOrNil(paymentID),
+			InvoicePaymentID: ptr.OrNil(paymentID),
 			IdempotencyKey:   idemKey,
 		})
 		if aerr != nil {
@@ -210,29 +206,10 @@ func (s *Service) ApplyAward(ctx context.Context, actorID string, req ApplyAward
 	return &ApplyResult{Award: award, InvoicePaymentID: paymentID, Replayed: replayed || awardReplayed}, nil
 }
 
-// ── reads ─────────────────────────────────────────────────────────────────────
-
 func (s *Service) GetPledge(ctx context.Context, id string) (*Pledge, error) {
 	return s.store.GetPledge(ctx, id)
 }
 
 func (s *Service) ListAwards(ctx context.Context, pledgeID string) ([]Award, error) {
 	return s.store.ListAwardsByPledge(ctx, pledgeID)
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────────────
-
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
-}
-
-func ptrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	v := s
-	return &v
 }

@@ -14,8 +14,6 @@ import (
 // routes are RBAC-gated (health.admin.intake) and audit-logged at the wiring layer.
 // The record viewer additionally writes a health_intake_access_log row (admin role).
 
-// ── Red-flag rules (A2) ───────────────────────────────────────────────────────
-
 type RedFlagRule struct {
 	ID          string          `json:"id"`
 	Code        string          `json:"code"`
@@ -103,8 +101,6 @@ func (s *Service) getRule(ctx context.Context, code string) (*RedFlagRule, error
 	return &r, nil
 }
 
-// ── Consent versions (A4) ─────────────────────────────────────────────────────
-
 type ConsentVersion struct {
 	ID         string    `json:"id"`
 	ConsentKey string    `json:"consent_key"`
@@ -154,8 +150,6 @@ func (s *Service) CreateConsentVersion(ctx context.Context, actor string, c Cons
 	return &c, nil
 }
 
-// ── Clinical vocab (A3) ───────────────────────────────────────────────────────
-
 func (s *Service) ListVocab(ctx context.Context, kind string) ([]Vocab, error) {
 	return s.listVocab(ctx, kind)
 }
@@ -178,8 +172,6 @@ func (s *Service) UpsertVocab(ctx context.Context, actor, kind, code, label stri
 	return nil
 }
 
-// ── Config get/set (A1/A5/A6/A7) ──────────────────────────────────────────────
-
 func (s *Service) GetConfig(ctx context.Context, key string) (json.RawMessage, error) {
 	return s.getConfig(ctx, key)
 }
@@ -199,8 +191,6 @@ func (s *Service) SetConfig(ctx context.Context, actor, key string, value json.R
 	s.audited(actor, "", "health.preconsult.admin.config.set", key, nil, map[string]any{"key": key})
 	return nil
 }
-
-// ── Intake monitoring (A8) ────────────────────────────────────────────────────
 
 type MonitorRow struct {
 	IntakeID        string     `json:"intake_id"`
@@ -247,8 +237,6 @@ func (s *Service) Monitoring(ctx context.Context, incompleteOnly bool, nearMinut
 	return out, rows.Err()
 }
 
-// ── Intake record viewer (A9; access-logged + audited) ────────────────────────
-
 type AdminIntakeRecord struct {
 	Intake  *Intake        `json:"intake"`
 	Answers map[string]any `json:"answers"`
@@ -276,8 +264,6 @@ func (s *Service) AdminViewIntake(ctx context.Context, actor, appointmentID stri
 	access, _ := s.AccessLog(ctx, it.ID)
 	return &AdminIntakeRecord{Intake: it, Answers: answers, Access: access}, nil
 }
-
-// ── Access & audit log (A10) ──────────────────────────────────────────────────
 
 type AccessLogRow struct {
 	IntakeID     string    `json:"intake_id"`
@@ -309,8 +295,6 @@ func (s *Service) AccessLog(ctx context.Context, intakeID string) ([]AccessLogRo
 	return out, rows.Err()
 }
 
-// ── Red-flag queue (A11) ──────────────────────────────────────────────────────
-
 type RedFlagQueueRow struct {
 	IntakeID      string          `json:"intake_id"`
 	AppointmentID string          `json:"appointment_id"`
@@ -341,8 +325,6 @@ func (s *Service) RedFlagQueue(ctx context.Context) ([]RedFlagQueueRow, error) {
 	}
 	return out, rows.Err()
 }
-
-// ── Analytics (A12/A13; de-identified, counts only) ───────────────────────────
 
 type Analytics struct {
 	Total          int            `json:"total_intakes"`

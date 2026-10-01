@@ -1,11 +1,7 @@
-// ── Admin — Spotlight Wealth content management ───────────────────────────────
 // Wires to the real Go backend: content-authoring mutations live under
 // /api/v1/spotlight/admin (backend/internal/spotlightwealth/admin.go,
-// RBAC-gated on "spotlight.admin.manage"); list reads (videos / challenges /
 // campaigns) live on the module root /api/v1/spotlight (backend/internal/
 // spotlightwealth/handler.go) since admin.go has no duplicate GET list routes.
-//
-// MONEY: challenge reward amounts are BIGINT kobo (int64) on the wire
 // (AdminChallengeInput.rewardKobo) — never a float, never a string for math
 // (Iron Rule: money handling). Display-only conversion to ₦ happens here via
 // formatNaira, mirroring associationAdminService's convention exactly.
@@ -59,7 +55,6 @@ export function formatNaira(kobo: number): string {
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-// ── Types (mirror backend/internal/spotlightwealth/model.go + admin.go DTOs) ──
 export type SpotlightTopic = 'budgeting' | 'investing-basics' | 'crypto' | 'stocks' | 'saving' | 'mindset';
 export type ChallengeKind = 'literacy' | 'quiz' | 'savings';
 
@@ -129,7 +124,6 @@ export interface AdminCampaignInput {
   published?: boolean | null;
 }
 
-// ── Videos ────────────────────────────────────────────────────────────────────
 // GET /videos is on the module root (routes.go) — there is no admin-only
 // "list including unpublished" endpoint for videos, unlike learn paths.
 export async function listVideos(topic?: string): Promise<FinanceVideo[]> {
@@ -146,7 +140,6 @@ export async function deleteVideo(id: string): Promise<{ ok: boolean }> {
   return del(`/videos/${id}`);
 }
 
-// ── Challenges ────────────────────────────────────────────────────────────────
 export async function listChallenges(): Promise<Challenge[]> {
   return getJson<Challenge[]>('/challenges', 'module');
 }
@@ -160,7 +153,6 @@ export async function deleteChallenge(id: string): Promise<{ ok: boolean }> {
   return del(`/challenges/${id}`);
 }
 
-// ── Campaigns ─────────────────────────────────────────────────────────────────
 export async function listCampaigns(): Promise<Campaign[]> {
   return getJson<Campaign[]>('/campaigns', 'module');
 }

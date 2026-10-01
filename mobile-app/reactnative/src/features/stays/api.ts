@@ -1,8 +1,5 @@
-// ── Paymax Stays — API wrapper ───────────────────────────────────────────────
-// Typed data layer the screens code against. Mock-first via USE_MOCK; live path
 // hits the frontend-web proxy at `${STAYS_API_BASE}/...` → Go /api/finance/stays/*.
 // Supplier/provider JSON never leaks past this layer — only normalised models.
-//
 // BACKEND SHAPE NOTE (see docs/stays-integration-plan.md): the Go backend is a
 // dual-rail SUPPLY GATEWAY. Rates only exist inside a dated /search and are
 // addressed by rail + supplier_code + supplier_*_ref + offer_token. The mobile
@@ -11,7 +8,6 @@
 // into the opaque `id` strings the UI already passes around (PropertyCard.id,
 // RoomType.id, RatePlan.id, PrebookResult.bookToken) and DECODED here. Every
 // live response is unwrapped from the Go `{ "data": ... }` envelope.
-//
 // IRON RULES:
 //  • All monetary amounts are integers in minor units (kobo for NGN, cents USD).
 //  • Two-step prebook → book (PRD §11). Book carries an Idempotency-Key.
@@ -84,9 +80,7 @@ function nights(checkIn: string, checkOut: string): number {
   return Math.max(1, Math.round((b - a) / 86_400_000));
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // LIVE ADAPTER — envelope unwrap, composite-id codec, backend↔frontend mappers.
-// ════════════════════════════════════════════════════════════════════════════
 
 /** Unwrap the Go `{ data: ... }` envelope; tolerate a bare body too. */
 function unwrap<T>(body: unknown): T {
@@ -96,7 +90,6 @@ function unwrap<T>(body: unknown): T {
   return body as T;
 }
 
-// The composite offer key we thread through opaque ids. Kept small; carries the
 // supplier addressing + the dated-search context + a few card essentials so a
 // property/room screen can rebuild without a second round-trip.
 interface OfferKey {
@@ -166,7 +159,6 @@ function toReservationState(s: string | undefined): ReservationState {
   return RESERVATION_STATES.includes(v as ReservationState) ? (v as ReservationState) : 'PREBOOK_OK';
 }
 
-// ── Backend DTOs (subset we read) ────────────────────────────────────────────
 interface BEBreakdown {
   net_rate_kobo: number;
   markup_kobo: number;
@@ -322,7 +314,6 @@ async function ensureStaysConsent(): Promise<void> {
   await api.post(`${STAYS_API_BASE}/consent`, { scope: 'supplier_data_share' });
 }
 
-// ── Home / discovery ─────────────────────────────────────────────────────────
 export async function getStaysHome(): Promise<StaysHome> {
   if (USE_MOCK) {
     await delay();
@@ -336,7 +327,6 @@ export async function getStaysHome(): Promise<StaysHome> {
       saved: MOCK_PROPERTIES.filter((p) => savedIds.has(p.id)),
     };
   }
-  // Live: trending destinations come from real inventory; deals/recent/saved are
   // still client-side/unbacked (see the plan doc) and return empty for now.
   const { data } = await api.get(`${STAYS_API_BASE}/home`);
   const body = unwrap<{
@@ -358,7 +348,6 @@ function addDays(n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-// ── Destination autocomplete ─────────────────────────────────────────────────
 export async function searchDestinations(q: string): Promise<DestinationSuggestion[]> {
   if (USE_MOCK) {
     await delay(180);
@@ -380,14 +369,11 @@ export async function searchDestinations(q: string): Promise<DestinationSuggesti
   }));
 }
 
-// ── Deals ────────────────────────────────────────────────────────────────────
 export async function getDeals(): Promise<Deal[]> {
   if (USE_MOCK) {
     await delay();
     return MOCK_DEALS;
   }
-  // Live: curated deals from stays_deals. Each carries a denormalised property
-  // snapshot; we rebuild a PropertyCard (its id encodes the supplier key so a tap
   // navigates to the real property detail).
   const { data } = await api.get(`${STAYS_API_BASE}/deals`);
   const rows = unwrap<Array<{
@@ -432,7 +418,6 @@ export async function getDeals(): Promise<Deal[]> {
   });
 }
 
-// ── Search & ranking (PRD §15) ───────────────────────────────────────────────
 const SORT = {
   top_picks: (a: PropertyCard, b: PropertyCard) =>
     Number(a.soldOut) - Number(b.soldOut) || b.reviewScore - a.reviewScore,
@@ -553,7 +538,6 @@ export async function getNearbyStays(): Promise<PropertyCard[]> {
   return [];
 }
 
-// ── Property detail ──────────────────────────────────────────────────────────
 export async function getProperty(id: string): Promise<PropertyDetail> {
   if (USE_MOCK) {
     await delay(260);
@@ -616,8 +600,6 @@ export async function getRoomTypes(propertyId: string): Promise<RoomType[]> {
   }
   const key = decodeKey(propertyId);
   if (!key) return [];
-  // Re-run the dated search and keep only this property's offers; each offer is a
-  // room+rate. Group into RoomType[] with RatePlan[]; encode the supplier refs +
   // offer_token into each RatePlan.id so prebook can address it.
   const q: SearchQuery = {
     destination: key.cy ?? '',
@@ -681,8 +663,6 @@ export async function getReviews(propertyId: string): Promise<Review[]> {
     return MOCK_REVIEWS[propertyId] ?? MOCK_REVIEWS.__default;
   }
   const key = decodeKey(propertyId);
-  // Backend reviews are keyed by the internal property_id; we only hold the
-  // supplier ref, so this may return [] until a supplier-ref→property_id lookup
   // exists. TODO(stays): map supplier ref to internal property id for reviews.
   const propId = key?.p ?? propertyId;
   const { data } = await api.get(`${STAYS_API_BASE}/reviews`, { params: { property_id: propId } });
@@ -701,7 +681,6 @@ export async function getReviews(propertyId: string): Promise<Review[]> {
   }));
 }
 
-// ── Add-ons (cross-sell into Transport / Insurance) ──────────────────────────
 export async function getAddOns(): Promise<AddOn[]> {
   // Add-ons are a fixed local catalogue (Transport/Insurance cross-sell), not
   // user data — served the same in mock and live until a backend catalogue exists.
@@ -709,7 +688,6 @@ export async function getAddOns(): Promise<AddOn[]> {
   return MOCK_ADDONS;
 }
 
-// ── Profile prefill ──────────────────────────────────────────────────────────
 export async function getGuestProfile(): Promise<GuestProfile> {
   if (USE_MOCK) {
     await delay(140);
@@ -720,13 +698,11 @@ export async function getGuestProfile(): Promise<GuestProfile> {
   return { fullName: '', email: '', phone: '', country: 'NG', kycTier: 0 };
 }
 
-// ── Saved / wishlists (client-only until a backend wishlist exists) ──────────
 export async function getSaved(): Promise<PropertyCard[]> {
   if (USE_MOCK) {
     await delay(180);
     return MOCK_PROPERTIES.filter((p) => savedIds.has(p.id));
   }
-  // Live: backend wishlist returns opaque property keys (most-recent first). Each
   // key decodes back into a PropertyCard via the composite-id codec. Keep the
   // module-level savedIds Set in sync so isSavedSync stays correct.
   const { data } = await api.get(`${STAYS_API_BASE}/saved`);
@@ -779,7 +755,6 @@ export function isSavedSync(id: string): boolean {
   return savedIds.has(id);
 }
 
-// ── Pricing helper (shared by prebook + review preview) ───────────────────────
 export function buildBreakdown(input: PrebookInput, addOns: AddOn[], priceBumpPct = 0): PriceBreakdownData {
   const { draft, addOnKeys, useLoyalty, promoCode } = input;
   const n = draft.nights;
@@ -827,12 +802,10 @@ export async function previewBreakdown(input: PrebookInput): Promise<PriceBreakd
     await delay(160);
     return buildBreakdown(input, addOns);
   }
-  // No standalone /quote endpoint — the client-side breakdown is the preview; the
   // authoritative price comes from /prebook. Add-ons are always NGN.
   return buildBreakdown(input, addOns);
 }
 
-// ── Prebook (step 1 — live re-check price + availability) ─────────────────────
 export async function prebook(input: PrebookInput): Promise<PrebookResult> {
   if (USE_MOCK) {
     await delay(700);
@@ -846,7 +819,6 @@ export async function prebook(input: PrebookInput): Promise<PrebookResult> {
   }
   // Live: address the offer via the refs encoded in the rate-plan id.
   // TODO(stays): VERIFY against a running backend — `property_id/room_type_id/
-  // rate_plan_id` are sent as the supplier refs; if the gateway requires the
   // INTERNAL mapped ids for mapped supply, thread offer.mapped_property_id here.
   const key = decodeKey(input.draft.ratePlanId) ?? decodeKey(input.draft.propertyId);
   if (!key) throw new Error('This offer expired. Please search again.');
@@ -880,7 +852,6 @@ export async function prebook(input: PrebookInput): Promise<PrebookResult> {
   };
 }
 
-// ── Book (step 2 — consume token; CHARGE on confirm / RELEASE on fail) ────────
 export async function book(args: BookInput): Promise<BookResult> {
   if (USE_MOCK) {
     await delay(1200);
@@ -916,7 +887,6 @@ export async function book(args: BookInput): Promise<BookResult> {
     mockOffers.delete(args.bookToken);
     return { ok: true, reservation };
   }
-  // Live: Idempotency-Key REQUIRED on book (money-path; PRD §12). The bookToken
   // carries the reservation id + backend book_token (see prebook()).
   const carrier = decodeKey(args.bookToken);
   if (!carrier || carrier.r !== 'BOOK') return { ok: false, errorCode: 'OFFER_EXPIRED', holdReleased: true };
@@ -957,7 +927,6 @@ export async function getReservation(id: string): Promise<Reservation> {
   return mapReservation(unwrap<BEReservation>(data));
 }
 
-// ── Internal: build a property detail from a card (mock) ──────────────────────
 function toDetail(p: PropertyCard): PropertyDetail {
   const media = [
     p.coverUrl,

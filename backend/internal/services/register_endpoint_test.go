@@ -120,7 +120,6 @@ func registerRaw(t *testing.T, otpEnabled bool, settings func(*captured)) (strin
 // which sends no mail. /auth/v1/signup would send GoTrue's own confirmation email
 // on top of ours — two codes for one registration, redeemed at two different
 // endpoints.
-//
 // There is no setting that avoids this: enable_confirmations (mailer_autoconfirm
 // on cloud) governs BOTH whether the mail goes out AND whether the account starts
 // unconfirmed, so turning it off would auto-confirm every sign-up and remove
@@ -175,8 +174,6 @@ func keysOf(m map[string]any) []string {
 	}
 	return out
 }
-
-// ── the project signup policy on the admin path ─────────────────────────────
 
 // /auth/v1/admin/users is NOT gated by the project's enable_signup switch — that
 // is the price of a creation call that sends no mail. So a project that closed
@@ -239,7 +236,6 @@ func TestRegisterDoesNotReadTheSignupPolicyOnTheSignupPath(t *testing.T) {
 }
 
 // THE regression for a defect this file's earlier version did not catch.
-//
 // RegisterUser used to branch on cfg.FeatureOTPEmailEnabled while the register
 // HANDLER branched on whether an issuer was actually wired. Those disagree in a
 // state that is easy to reach — flag on, Brevo credentials absent, which is the
@@ -247,7 +243,6 @@ func TestRegisterDoesNotReadTheSignupPolicyOnTheSignupPath(t *testing.T) {
 // silent admin path (so GoTrue sent nothing) with no code issued either.
 // Unconfirmed, unverifiable, login refused forever, and /api/auth/otp/request
 // answering 503 so the user could not even ask for one.
-//
 // Reproduced live before the fix: registration returned 201, the mail catcher
 // recorded zero messages, otp_codes was empty, and login answered 403.
 func TestRegisterUsesSignupWhenTheFlagIsOnButOTPNeverWired(t *testing.T) {

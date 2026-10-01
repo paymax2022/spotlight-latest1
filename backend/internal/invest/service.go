@@ -2,15 +2,18 @@ package invest
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/ptr"
+	"spotlight/backend/internal/finance/ledger"
+	platformRedis "spotlight/backend/internal/platform/redis"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"spotlight/backend/internal/finance/ledger"
 )
 
 // PINVerifier validates the user's confirmation factor before an order. The
@@ -84,8 +87,6 @@ var (
 	ErrNotEligible         = errors.New("invest: account not eligible to trade")
 )
 
-// ── Onboarding / profile ─────────────────────────────────────────────────────
-
 func (s *Service) GetProfile(ctx context.Context, userID string) (*Profile, error) {
 	p, err := s.repo.GetProfile(ctx, userID)
 	if errors.Is(err, ErrNotFound) {
@@ -155,8 +156,6 @@ func (s *Service) AcceptAgreements(ctx context.Context, userID string) error {
 	return s.refreshProfileGates(ctx, userID)
 }
 
-// ── Suitability ──────────────────────────────────────────────────────────────
-
 // SuitabilityQuestions returns the static questionnaire (config-driven; the
 // client must never hard-code scoring).
 func (s *Service) SuitabilityQuestions() []map[string]any {
@@ -172,7 +171,7 @@ func (s *Service) SubmitSuitability(ctx context.Context, userID string, answers 
 		}
 	}
 	cat := scoreToCategory(score)
-	raw, _ := json.Marshal(answers)
+	raw := jsonx.Marshal(answers)
 	id, err := s.repo.InsertSuitability(ctx, userID, raw, score, cat)
 	if err != nil {
 		return nil, err
@@ -249,8 +248,6 @@ func (s *Service) SetKYCTier(ctx context.Context, userID string, tier int) error
 	return s.refreshProfileGates(ctx, userID)
 }
 
-// ── Stocks / discovery ───────────────────────────────────────────────────────
-
 func (s *Service) ListStocks(ctx context.Context, query, sector string, limit, offset int) ([]StockWithQuote, error) {
 	stocks, err := s.repo.ListStocks(ctx, query, sector, limit, offset)
 	if err != nil {
@@ -292,8 +289,6 @@ func (s *Service) CorporateActions(ctx context.Context, symbol string) ([]Corpor
 func (s *Service) MarketStatus(ctx context.Context) (string, error) {
 	return s.market.GetMarketStatus(ctx)
 }
-
-// ── Watchlists / alerts ──────────────────────────────────────────────────────
 
 func (s *Service) Watchlists(ctx context.Context, userID string) ([]Watchlist, error) {
 	if _, err := s.repo.EnsureDefaultWatchlist(ctx, userID); err != nil {
@@ -353,8 +348,6 @@ func (s *Service) UpdateAlert(ctx context.Context, userID, id, status string) er
 func (s *Service) DeleteAlert(ctx context.Context, userID, id string) error {
 	return s.repo.DeleteAlert(ctx, userID, id)
 }
-
-// ── Wallet ───────────────────────────────────────────────────────────────────
 
 func (s *Service) Wallet(ctx context.Context, userID string) (*WalletView, error) {
 	cash, locked, settlement, err := s.il.Balances(ctx, userID)
@@ -425,8 +418,6 @@ func (s *Service) Withdraw(ctx context.Context, userID, idem string, amountKobo 
 func (s *Service) WalletTransactions(ctx context.Context, userID string, limit, offset int) ([]map[string]any, error) {
 	return s.il.Transactions(ctx, userID, limit, offset)
 }
-
-// ── Orders ───────────────────────────────────────────────────────────────────
 
 // preTradeChecks runs the server-side gate that must pass before EVERY order.
 func (s *Service) preTradeChecks(ctx context.Context, userID string, st *StockAsset, side OrderSide, orderType OrderType) error {
@@ -572,7 +563,7 @@ func (s *Service) Buy(ctx context.Context, userID, idem string, req BuyOrderRequ
 	if err := s.transition(ctx, o, StatusSubmitted, "submitted to broker"); err != nil {
 		return nil, err
 	}
-	o.SubmittedAt = ptime(s.now())
+	o.SubmittedAt = ptr.Of(s.now())
 	res, err := s.broker.SubmitBuyOrder(ctx, *o, quote)
 	if err != nil || !res.Accepted {
 		// Release locked cash, mark failed.
@@ -615,7 +606,7 @@ func (s *Service) Buy(ctx context.Context, userID, idem string, req BuyOrderRequ
 	o.ExecutedPriceKobo = execPrice
 	o.FilledQuantity = filledQty
 	o.FeesKobo = feeFinal
-	o.FilledAt = ptime(s.now())
+	o.FilledAt = ptr.Of(s.now())
 	if err := s.il.SettleBuy(ctx, userID, "order:"+o.ID, res.ProviderReference, "settlebuy:"+idem, cost, feeFinal, totalDebit); err != nil {
 		return nil, err
 	}
@@ -627,7 +618,7 @@ func (s *Service) Buy(ctx context.Context, userID, idem string, req BuyOrderRequ
 	// Filled → PendingSettlement (shares credited at T+N).
 	due := s.now().Add(time.Duration(st.SettlementDays) * 24 * time.Hour)
 	o.SettlementDueAt = &due
-	if err := s.transition(ctx, o, StatusPendingSettlement, "awaiting T+"+itoa(st.SettlementDays)+" settlement"); err != nil {
+	if err := s.transition(ctx, o, StatusPendingSettlement, "awaiting T+"+strconv.Itoa(st.SettlementDays)+" settlement"); err != nil {
 		return nil, err
 	}
 	return s.receipt(o), nil
@@ -710,7 +701,7 @@ func (s *Service) Sell(ctx context.Context, userID, idem string, req SellOrderRe
 	if err := s.transition(ctx, o, StatusSubmitted, "submitted to broker"); err != nil {
 		return nil, err
 	}
-	o.SubmittedAt = ptime(s.now())
+	o.SubmittedAt = ptr.Of(s.now())
 	res, err := s.broker.SubmitSellOrder(ctx, *o, quote)
 	if err != nil || !res.Accepted {
 		_ = s.repo.UnlockShares(ctx, userID, st.ID, req.Quantity)
@@ -738,7 +729,7 @@ func (s *Service) Sell(ctx context.Context, userID, idem string, req SellOrderRe
 	o.FilledQuantity = res.FilledQuantity
 	o.FeesKobo = feeFinal
 	o.TotalAmountKobo = grossFinal - feeFinal
-	o.FilledAt = ptime(s.now())
+	o.FilledAt = ptr.Of(s.now())
 	// Proceeds (net) → pending settlement; fee → fee income.
 	if err := s.il.SellProceedsToPending(ctx, userID, "order:"+o.ID, res.ProviderReference, "sellpx:"+idem, grossFinal, feeFinal); err != nil {
 		return nil, err
@@ -823,7 +814,7 @@ func (s *Service) ProcessDueSettlements(ctx context.Context, batch int) (int, er
 				continue
 			}
 		}
-		o.SettledAt = ptime(s.now())
+		o.SettledAt = ptr.Of(s.now())
 		from := o.Status
 		o.Status = StatusSettled
 		if err := s.repo.UpdateOrder(ctx, o, from, "settled (T+N reached)"); err != nil {
@@ -833,8 +824,6 @@ func (s *Service) ProcessDueSettlements(ctx context.Context, batch int) (int, er
 	}
 	return count, nil
 }
-
-// ── Portfolio ────────────────────────────────────────────────────────────────
 
 func (s *Service) Portfolio(ctx context.Context, userID string) (*PortfolioView, error) {
 	positions, err := s.positionsWithMarks(ctx, userID)
@@ -893,8 +882,6 @@ func (s *Service) investedAndGain(ctx context.Context, userID string) (invested,
 	}
 	return invested, gain, nil
 }
-
-// ── Public offers / rights issues ────────────────────────────────────────────
 
 func (s *Service) PublicOffers(ctx context.Context) ([]PublicOffer, error) {
 	return s.repo.ListPublicOffers(ctx)
@@ -972,8 +959,6 @@ func (s *Service) RightsApplications(ctx context.Context, userID string) ([]Righ
 	return s.repo.ListRightsApplications(ctx, userID)
 }
 
-// ── internal helpers ─────────────────────────────────────────────────────────
-
 // transition validates and persists an order status change (records an event).
 func (s *Service) transition(ctx context.Context, o *Order, to OrderStatus, note string) error {
 	from := o.Status
@@ -1024,10 +1009,6 @@ func (st StockAsset) providerSym() string {
 	}
 	return st.Symbol
 }
-
-func ptime(t time.Time) *time.Time { return &t }
-
-func itoa(n int) string { return fmt.Sprintf("%d", n) }
 
 func settlementNote(o *Order) string {
 	if o.Side == SideBuy {
@@ -1088,4 +1069,167 @@ func categoryEligibility(cat RiskCategory) []string {
 	default:
 		return []string{"education_only"}
 	}
+}
+
+// Price-alert evaluation. Alerts are stored by the user-facing API; this worker
+// evaluates active alerts against current (mock/real) quotes, marks triggered
+// ones, and emits a notification via a pluggable Notifier.
+
+// Notifier delivers a triggered-alert message to a user. The default LogNotifier
+// just logs; inject a real implementation (push/in-app) via Deps.Notifier.
+type Notifier interface {
+	AlertTriggered(ctx context.Context, userID, symbol, message string) error
+}
+
+// LogNotifier is the no-op default — it logs rather than delivering.
+type LogNotifier struct{}
+
+func (LogNotifier) AlertTriggered(ctx context.Context, userID, symbol, message string) error {
+	log.Printf("[invest] price alert for user=%s %s: %s", userID, symbol, message)
+	return nil
+}
+
+// NotifierFunc adapts a function to the Notifier interface.
+type NotifierFunc func(ctx context.Context, userID, symbol, message string) error
+
+func (f NotifierFunc) AlertTriggered(ctx context.Context, userID, symbol, message string) error {
+	return f(ctx, userID, symbol, message)
+}
+
+// ListActiveAlerts returns active alerts across all users (for the worker).
+func (r *Repository) ListActiveAlerts(ctx context.Context, limit int) ([]PriceAlert, error) {
+	const q = `SELECT id, user_id, stock_asset_id, symbol, condition, target_price_kobo, status, triggered_at, created_at
+		FROM invest_price_alerts WHERE status='active' ORDER BY created_at LIMIT $1`
+	rows, err := r.db.Query(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PriceAlert{}
+	for rows.Next() {
+		var a PriceAlert
+		if err := rows.Scan(&a.ID, &a.UserID, &a.StockAssetID, &a.Symbol, &a.Condition,
+			&a.TargetPriceKobo, &a.Status, &a.TriggeredAt, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// MarkAlertTriggered flips an alert to triggered with a timestamp (idempotent:
+// only active rows transition).
+func (r *Repository) MarkAlertTriggered(ctx context.Context, id string) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE invest_price_alerts SET status='triggered', triggered_at=now() WHERE id=$1 AND status='active'`, id)
+	return err
+}
+
+// alertHit reports whether the alert condition is met by the quote.
+// Conventions:
+//   - above / below: target_price_kobo is a PRICE in kobo.
+//   - pct_gain / pct_loss: target_price_kobo holds the threshold in hundredths of
+//     a percent (e.g. 500 = 5.00%), compared against the day's change percentage.
+func alertHit(a PriceAlert, q Quote) bool {
+	switch a.Condition {
+	case "above":
+		return q.PriceKobo >= a.TargetPriceKobo
+	case "below":
+		return q.PriceKobo <= a.TargetPriceKobo
+	case "pct_gain":
+		return q.DayChangePct >= float64(a.TargetPriceKobo)/100.0
+	case "pct_loss":
+		return q.DayChangePct <= -float64(a.TargetPriceKobo)/100.0
+	}
+	return false
+}
+
+func alertMessage(a PriceAlert, q Quote) string {
+	switch a.Condition {
+	case "above":
+		return fmt.Sprintf("%s is now at or above your target (current ₦%.2f).", a.Symbol, float64(q.PriceKobo)/100)
+	case "below":
+		return fmt.Sprintf("%s is now at or below your target (current ₦%.2f).", a.Symbol, float64(q.PriceKobo)/100)
+	case "pct_gain":
+		return fmt.Sprintf("%s is up %.2f%% today.", a.Symbol, q.DayChangePct)
+	case "pct_loss":
+		return fmt.Sprintf("%s is down %.2f%% today.", a.Symbol, q.DayChangePct)
+	}
+	return fmt.Sprintf("Your %s price alert was triggered.", a.Symbol)
+}
+
+// EvaluateAlerts checks all active alerts once, marks any that fire and notifies
+// the user. Quotes are fetched at most once per distinct symbol. Returns the
+// number of alerts triggered.
+func (s *Service) EvaluateAlerts(ctx context.Context) (int, error) {
+	alerts, err := s.repo.ListActiveAlerts(ctx, 1000)
+	if err != nil {
+		return 0, err
+	}
+	quoteCache := map[string]Quote{}
+	triggered := 0
+	for _, a := range alerts {
+		q, ok := quoteCache[a.Symbol]
+		if !ok {
+			st, err := s.repo.GetStockBySymbol(ctx, a.Symbol)
+			if err != nil {
+				continue
+			}
+			q, err = s.market.GetQuote(ctx, st.providerSym())
+			if err != nil {
+				continue
+			}
+			quoteCache[a.Symbol] = q
+		}
+		if !alertHit(a, q) {
+			continue
+		}
+		if err := s.repo.MarkAlertTriggered(ctx, a.ID); err != nil {
+			continue
+		}
+		_ = s.notifier.AlertTriggered(ctx, a.UserID, a.Symbol, alertMessage(a, q))
+		triggered++
+	}
+	return triggered, nil
+}
+
+// SetNotifier injects a real notifier (defaults to LogNotifier).
+func (s *Service) SetNotifier(n Notifier) {
+	if n != nil {
+		s.notifier = n
+	}
+}
+
+// StartAlertWorker periodically evaluates price alerts. Like the settlement
+// worker, triggering is idempotent (only active alerts transition) and guarded
+// by a Redlock so only one node evaluates per tick.
+func StartAlertWorker(ctx context.Context, svc *Service, rc *platformRedis.Client, interval time.Duration) {
+	if svc == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 2 * time.Minute
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				withLock(ctx, rc, "invest:alerts", 90*time.Second, func() {
+					n, err := svc.EvaluateAlerts(ctx)
+					if err != nil {
+						log.Printf("[invest] alert worker error: %v", err)
+						return
+					}
+					if n > 0 {
+						log.Printf("[invest] alert worker triggered %d alert(s)", n)
+					}
+				})
+			}
+		}
+	}()
+	log.Printf("[invest] price-alert worker started (interval=%s, redlock=%v)", interval, rc != nil)
 }

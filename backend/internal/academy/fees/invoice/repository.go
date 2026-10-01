@@ -11,13 +11,14 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ptr"
 	feesstatemachine "spotlight/backend/internal/academy/fees/statemachine"
 )
 
 // Store is the data-access contract for invoices + invoice payments. Defined as an
 // in-package interface so invoice_test.go can substitute an in-memory fake (no live DB),
 // mirroring feeschedule_test.go / edupay_test.go isolation.
-//
 // SF-2 STRUCTURAL GUARANTEE: this interface has NO method that sets a balance/amount_paid
 // column, because academy_invoices HAS no such column. Balance is only ever read via
 // SumSucceededPayments. The only writes to the payment table are APPENDS (AppendPayment).
@@ -168,7 +169,7 @@ func (r *Repository) AppendPayment(ctx context.Context, p Payment) (*Payment, bo
 	    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 	    ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := r.db.Exec(ctx, ins, id, p.InvoiceID, p.GuardianUserID, p.AmountMinor,
-		nullStr(deref(p.GatewayRef)), nullStr(deref(p.LedgerReference)), string(status), p.IdempotencyKey, now)
+		dbutil.NullStr(ptr.DerefZero(p.GatewayRef)), dbutil.NullStr(ptr.DerefZero(p.LedgerReference)), string(status), p.IdempotencyKey, now)
 	if err != nil {
 		return nil, false, err
 	}
@@ -179,7 +180,7 @@ func (r *Repository) AppendPayment(ctx context.Context, p Payment) (*Payment, bo
 	}
 	inserted := &Payment{
 		ID: id, InvoiceID: p.InvoiceID, GuardianUserID: p.GuardianUserID, AmountMinor: p.AmountMinor,
-		GatewayRef: ptrOrNil(deref(p.GatewayRef)), LedgerReference: ptrOrNil(deref(p.LedgerReference)),
+		GatewayRef: ptr.OrNil(ptr.DerefZero(p.GatewayRef)), LedgerReference: ptr.OrNil(ptr.DerefZero(p.LedgerReference)),
 		Status: status, IdempotencyKey: p.IdempotencyKey, CreatedAt: now,
 	}
 	return inserted, true, nil
@@ -240,8 +241,6 @@ func scanPayment(row pgx.Row) (*Payment, error) {
 	return &p, nil
 }
 
-// ── Audit ───────────────────────────────────────────────────────────────────────
-
 func (r *Repository) WriteAudit(ctx context.Context, actorID, action, entityID, from, to string, detail any) error {
 	return writeAudit(ctx, r.db, actorID, action, entityID, from, to, detail)
 }
@@ -251,7 +250,7 @@ func writeAudit(ctx context.Context, q querier, actorID, action, entityID, from,
 	const ins = `INSERT INTO public.academy_commerce_audit
 	             (actor_id, action, entity_type, entity_id, from_state, to_state, detail)
 	             VALUES ($1,$2,'academy_invoice',$3,$4,$5,$6)`
-	_, err := q.Exec(ctx, ins, nullStr(actorID), action, nullUUID(entityID), nullStr(from), nullStr(to), toJSON(detail))
+	_, err := q.Exec(ctx, ins, dbutil.NullStr(actorID), action, dbutil.NullUUID(entityID), dbutil.NullStr(from), dbutil.NullStr(to), toJSON(detail))
 	return err
 }
 
@@ -265,37 +264,6 @@ func (r *Repository) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-// ── small helpers ─────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func nullUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
-}
-
-func ptrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	v := s
-	return &v
 }
 
 func toJSON(v any) []byte {

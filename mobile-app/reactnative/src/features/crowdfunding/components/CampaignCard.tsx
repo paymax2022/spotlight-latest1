@@ -1,11 +1,11 @@
 import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet, ViewStyle } from 'react-native';
 import { Heart, Flame, Siren, MapPin } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import CampaignProgress from './CampaignProgress';
 import VerificationBadge from './VerificationBadge';
 import type { CampaignSummary } from '../types/crowdfunding.types';
@@ -14,7 +14,7 @@ interface Props {
   campaign: CampaignSummary;
   onPress: () => void;
   onToggleSave?: (next: boolean) => void;
-  variant?: 'full' | 'compact';   // compact = horizontal mini card for carousels
+  variant?: 'full' | 'compact';
   style?: ViewStyle;
 }
 

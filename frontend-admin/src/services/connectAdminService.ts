@@ -1,6 +1,4 @@
-// ── Admin — Paymax Connect control-plane service ─────────────────────────────
 // Mock by default (mirrors realtorAdminService). Flip with
-// NEXT_PUBLIC_CONNECT_ADMIN_USE_MOCK=false to hit the live Go backend at
 // /api/connect/admin/*. Read-only in Phase 0 (cases + audit + config views).
 
 import { apiRoot } from '@/config/env';
@@ -31,7 +29,6 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CONNECT_ADMIN_USE
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_CONNECT_ADMIN_USE_MOCK';
 
-// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/connect/admin')`,
 // which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
 // proxy origin instead), so the regex became a silent no-op and every live call
 // 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
@@ -54,7 +51,6 @@ async function getJson<T>(path: string): Promise<T> {
   return (j?.data ?? j) as T;
 }
 
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 const CASES: ConnectCase[] = [
   { id: 'case_1', reporter_id: 'usr_a', subject_id: 'usr_b', type: 'harassment', source_ref: 'message:abc', status: 'open', severity: 'high', resolution: null, assigned_admin: null, notes: null, created_at: new Date(Date.now() - 2 * 3_600_000).toISOString(), updated_at: new Date(Date.now() - 2 * 3_600_000).toISOString() },
   { id: 'case_2', reporter_id: 'usr_c', subject_id: 'usr_d', type: 'scam', source_ref: 'profile:xyz', status: 'investigating', severity: 'critical', resolution: null, assigned_admin: 'adm_1', notes: 'Possible romance-scam script', created_at: new Date(Date.now() - 26 * 3_600_000).toISOString(), updated_at: new Date(Date.now() - 5 * 3_600_000).toISOString() },
@@ -67,7 +63,6 @@ const AUDIT: ConnectAuditEntry[] = [
   { id: 'a3', actor_id: 'usr_a', actor_role: null, action: 'connect.case.open', entity_type: 'connect_case', entity_id: 'case_1', reason: null, created_at: new Date(Date.now() - 2 * 3_600_000).toISOString() },
 ];
 
-// ─── API ──────────────────────────────────────────────────────────────────────
 export async function getCases(status?: string): Promise<ConnectCase[]> {
   if (USE_MOCK) { await delay(); return status ? CASES.filter((c) => c.status === status) : [...CASES]; }
   return getJson<ConnectCase[]>(`/cases${status ? `?status=${encodeURIComponent(status)}` : ''}`);
@@ -78,7 +73,6 @@ export async function getAudit(): Promise<ConnectAuditEntry[]> {
   return getJson<ConnectAuditEntry[]>('/audit');
 }
 
-// ─── Shared helpers ────────────────────────────────────────────────────────────
 /** Format kobo (minor units) → "₦1,234.56". Always money via this helper. */
 export function formatNaira(kobo: number): string {
   const naira = kobo / 100;
@@ -98,9 +92,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 
 const iso = (hAgo: number) => new Date(Date.now() - hAgo * 3_600_000).toISOString();
 
-// ════════════════════════════════════════════════════════════════════════════
 // §11.1 — Dashboard
-// ════════════════════════════════════════════════════════════════════════════
 const DASHBOARD: ConnectDashboard = {
   dau: 18_420, mau: 142_900, matches_today: 3_184, live_sessions: 47,
   gift_volume_today_kobo: 4_820_650_00, gift_volume_30d_kobo: 118_430_900_00,
@@ -120,9 +112,7 @@ export async function getConnectDashboard(): Promise<ConnectDashboard> {
   return getJson<ConnectDashboard>('/dashboard');
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // §11.2 — Users & identity
-// ════════════════════════════════════════════════════════════════════════════
 const USERS: ConnectUserSummary[] = [
   { id: 'usr_a', handle: '@ada_live', display_name: 'Ada O.', tier: 2, status: 'active', region: 'Lagos', verification: 'full', flags: [], wallet_balance_kobo: 1_240_500_00, created_at: iso(2400), last_active_at: iso(1) },
   { id: 'usr_b', handle: '@tunde_fx', display_name: 'Tunde A.', tier: 1, status: 'restricted', region: 'Abuja', verification: 'bvn', flags: ['velocity'], wallet_balance_kobo: 86_300_00, created_at: iso(1800), last_active_at: iso(3) },
@@ -194,9 +184,7 @@ export async function listUnderageFlags(status?: string): Promise<UnderageFlag[]
   return getJson<UnderageFlag[]>(`/underage${status ? `?status=${encodeURIComponent(status)}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // §11.4 — Moderation
-// ════════════════════════════════════════════════════════════════════════════
 const MODERATION: ModerationCaseSummary[] = [
   { id: 'mod_1', case_id: 'case_1', content_type: 'message', reason: 'Harassment reported', ai_reason_codes: ['HARASSMENT', 'THREAT'], reporter_id: 'usr_a', subject_id: 'usr_b', severity: 'high', status: 'open', created_at: iso(2) },
   { id: 'mod_2', case_id: 'case_2', content_type: 'profile', reason: 'Romance-scam script', ai_reason_codes: ['FINANCIAL_SOLICITATION', 'SCAM_SCRIPT', 'OFF_PLATFORM_PRESSURE'], reporter_id: 'usr_c', subject_id: 'usr_d', severity: 'critical', status: 'investigating', created_at: iso(26) },
@@ -236,9 +224,7 @@ export async function listMediaReview(state?: string): Promise<MediaReviewItem[]
   return getJson<MediaReviewItem[]>(`/media-review${state ? `?state=${encodeURIComponent(state)}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // §11.5 — Finance, gifting & AML
-// ════════════════════════════════════════════════════════════════════════════
 const FINANCE: ConnectFinanceSummary = {
   gift_volume_today_kobo: 4_820_650_00, gift_volume_30d_kobo: 118_430_900_00,
   paid_vote_volume_30d_kobo: 31_209_400_00, payout_volume_30d_kobo: 76_540_000_00,
@@ -272,7 +258,6 @@ export async function listGifts(opts?: { status?: string; limit_state?: string }
   return getJson<GiftTransaction[]>(`/gifts${s ? `?${s}` : ''}`);
 }
 
-// ── Real backend shapes (backend/internal/connect/aml) ────────────────────────
 // Routes actually registered (handlers.go Register()):
 //   GET  /aml/alerts             ListAlerts  (connect.aml.view)
 //   GET  /aml/cases              ListCases   (connect.aml.view)
@@ -285,7 +270,6 @@ export async function listGifts(opts?: { status?: string; limit_state?: string }
 // never populated by any code path — OpenCase takes a subject + report type,
 // not an alert id). Rather than inventing new backend routes/columns to
 // paper over that, the mappings below reuse the real list routes and derive
-// only what the real columns actually support; anything the schema has no
 // source for is left disclosed (0 / null / "not available"), never
 // fabricated — mirrors healthLabAdminService.ts's custody-audit reduction.
 
@@ -489,9 +473,7 @@ export async function listPayouts(status?: string): Promise<ConnectPayout[]> {
   return getJson<ConnectPayout[]>(`/payouts${status ? `?status=${encodeURIComponent(status)}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // §11.6 — Voting integrity
-// ════════════════════════════════════════════════════════════════════════════
 const CONTESTS: VotingContestSummary[] = [
   { id: 'vc_1', title: 'Connect Star — Season 3', status: 'live', paid_votes: 482_300, free_votes: 1_204_900, paid_vote_volume_kobo: 24_115_000_00, integrity_score: 78, flags_open: 2, starts_at: iso(72), ends_at: iso(-48) },
   { id: 'vc_2', title: 'Lagos Creator Cup', status: 'scheduled', paid_votes: 0, free_votes: 0, paid_vote_volume_kobo: 0, integrity_score: 100, flags_open: 0, starts_at: iso(-120), ends_at: iso(-240) },

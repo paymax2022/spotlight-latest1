@@ -1,20 +1,15 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests for campaign milestones.
-//
 // cf_campaign_milestones existed and a read endpoint existed, but nothing ever
 // wrote a row: the submit DTO accepted no milestone data, so the wizard collected
 // a funding plan and the server dropped it. GetDetail returned a literal empty
 // array on top of that, so the Milestones screen told every visitor "this campaign
 // releases funds without milestone gating" — a claim about how money moves, made
 // on no evidence.
-//
 // Gated on TEST_DATABASE_URL alone (scripts/ci/check-live-db-gate.sh).
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Milestone -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

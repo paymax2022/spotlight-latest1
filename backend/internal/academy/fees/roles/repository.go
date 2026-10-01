@@ -12,7 +12,6 @@ import (
 // scoped roles and resolve slug→id. It is an in-package interface (satisfied directly by
 // *services.rbacService, which implements services.RBACService) so the authorization
 // logic is unit-testable with an in-memory fake — no live DB, no parallel authz layer.
-//
 // Reuse notes:
 //   - AssignRoleToUser / RemoveRoleFromUser are the EXISTING RBAC mutations; we do NOT
 //     insert into user_roles with raw SQL. AssignRoleToUser writes a user_roles row with

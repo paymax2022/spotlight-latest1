@@ -1,5 +1,3 @@
-// ── Service — Platform SUPER-ADMIN console for the EdTech module (SU-01..SU-12) ──
-//
 // This is a NEW platform-operator surface. It is RBAC-separated from every
 // school-level role: the ONLY capability that unlocks it is `platform_edtech_admin`.
 // A school owner / bursar / class_teacher / head_teacher has ZERO visibility — the
@@ -7,12 +5,10 @@
 // re-asserts it via <PlatformGuard> (see app/admin/platform/edtech/_ui.tsx).
 // This is Checkpoint E: a platform-operator surface, NOT an escalated school-admin
 // surface. Backend RBAC (Go middleware.RequirePermission) remains authoritative.
-//
 // Request stack copies academyAdminService.ts EXACTLY:
 //   • base() rewrites apiRoot() (the proxy origin, /api/v1 already stripped) → the
 //     platform/academy admin group
 //   • authHeaders() attaches the admin Bearer token from localStorage
-//   • mock by default (NEXT_PUBLIC_EDTECH_PLATFORM_USE_MOCK); flip to 'false' to hit
 //     the live Go backend (academy fees admin + platform routes).
 // Live routes target the academy fees admin group + platform oversight endpoints:
 //   /api/academy/admin/platform/<module> — gated academy.fees.* + platform_edtech_admin.
@@ -31,11 +27,8 @@ import type {
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_EDTECH_PLATFORM_USE_MOCK);
 
-// Mounted directly at r.Group("/api/academy/admin/platform") — see
 // backend/internal/app/academy_platform_routes.go:59 (RegisterAcademyPlatform) —
 // so the full path is exactly apiRoot() + that literal prefix + <call path>.
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/academy/admin/platform')`,
 // which stopped matching the moment apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
 // the same regression. Every request 404'd against <proxy>/schools etc. instead of
@@ -55,7 +48,6 @@ const delay = (ms = 200) => new Promise((r) => setTimeout(r, ms));
 // Verified against backend/internal/app/academy_platform_routes.go +
 // backend/internal/academy/platform/{handlers,actions,feature_flags}.go.
 // Every write below has a real endpoint (some of the route file's own "no
-// store → no-op" comments were stale — the flag store is real and persists);
 // fixture mode has nothing to add and refuses loudly instead of reporting a
 // write it did not perform. See docs/audit/ADMIN_SIMULATED_WRITES.md.
 const NOT_IN_FIXTURE_MODE =
@@ -78,7 +70,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH', path: string, body: unknown
   return (j?.data ?? j) as T;
 }
 
-// ── Mock fixture helpers ──────────────────────────────────────────────────────
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dstr = (daysFromNow: number) => new Date(Date.now() + daysFromNow * 86_400_000).toISOString().slice(0, 10);
 const naira = (n: number) => n * 100; // ₦ → kobo
@@ -89,7 +80,6 @@ function trendKobo(n: number, base: number, jitter: number) {
   }));
 }
 
-// ── Shared mock school set (SU-01) ────────────────────────────────────────────
 const MOCK_SCHOOLS: PlatformSchool[] = [
   { id: 'sch_001', name: 'Bright Future Academy', state: 'Lagos', owner_identity_id: 'id_9a1', verification_tier: 'verified', status: 'active', students: 1240, gmv_kobo: naira(48_500_000), trust_score: 87, gov_sync_opt_in: true, created_at: iso(24 * 210) },
   { id: 'sch_002', name: 'Crescent Model College', state: 'Kano', owner_identity_id: 'id_4c2', verification_tier: 'basic', status: 'active', students: 860, gmv_kobo: naira(21_300_000), trust_score: 74, gov_sync_opt_in: false, created_at: iso(24 * 160) },
@@ -99,13 +89,11 @@ const MOCK_SCHOOLS: PlatformSchool[] = [
 ];
 const schoolName = (id: string) => MOCK_SCHOOLS.find((s) => s.id === id)?.name ?? id;
 
-// ════════════════════ SU-01 — Platform School Directory ══════════════════════
 export async function listPlatformSchools(): Promise<PlatformSchool[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_SCHOOLS]; }
   return getJson<PlatformSchool[]>('/schools');
 }
 
-// ════════════════════ SU-02 — School Verification Queue ══════════════════════
 const MOCK_VERIFICATIONS: VerificationSubmission[] = [
   { id: 'ver_01', school_id: 'sch_004', school_name: 'Unity Comprehensive', requested_tier: 'verified', cac_number: 'RC-1839221', cac_doc_url: '/mock/cac/unity.pdf', references: [{ name: 'Mrs A. Bello', role: 'PTA Chair', phone: '0803...' }, { name: 'Mr K. Ojo', role: 'LGA Education Officer', phone: '0812...' }], submitted_at: iso(30), status: 'pending' },
   { id: 'ver_02', school_id: 'sch_002', school_name: 'Crescent Model College', requested_tier: 'premium', cac_number: 'RC-2201004', cac_doc_url: '/mock/cac/crescent.pdf', references: [{ name: 'Alh. M. Sani', role: 'Proprietor', phone: '0806...' }], submitted_at: iso(52), status: 'pending' },
@@ -120,7 +108,6 @@ export async function reviewVerification(input: VerificationReviewInput): Promis
   return sendJson<VerificationSubmission>('POST', `/verification-queue/${input.id}/review`, input);
 }
 
-// ════════════════════ SU-03 — Platform-Wide Collections ══════════════════════
 export async function getCollectionsOverview(): Promise<CollectionsOverview> {
   if (USE_MOCK) {
     await delay();
@@ -140,7 +127,6 @@ export async function getCollectionsOverview(): Promise<CollectionsOverview> {
   return getJson<CollectionsOverview>('/collections');
 }
 
-// ════════════════════ SU-04 — Fraud & Risk Queue ═════════════════════════════
 const MOCK_RISK: RiskCase[] = [
   { id: 'rsk_01', kind: 'anomalous_payment', school_id: 'sch_003', school_name: 'Green Valley Schools', severity: 'high', amount_kobo: naira(1_450_000), summary: '32 fee payments from a single card in 4 minutes.', opened_at: iso(9), status: 'open' },
   { id: 'rsk_02', kind: 'disputed_promotion', school_id: 'sch_001', school_name: 'Bright Future Academy', severity: 'low', summary: 'Guardian disputes a repeat decision recorded before the second approval.', opened_at: iso(40), status: 'investigating' },
@@ -152,13 +138,10 @@ export async function listRiskCases(): Promise<RiskCase[]> {
 }
 export async function actionRiskCase(input: RiskActionInput): Promise<RiskCase> {
   if (USE_MOCK) throw new Error(`Actioning a risk case ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /risk/:id/action (platform.Handler.ActionRiskCase) — audit-only by
-  // design (no risk-case status table exists yet); it records the decision to the
   // immutable audit log and echoes it back rather than persisting a status column.
   return sendJson<RiskCase>('POST', `/risk/${input.id}/action`, input);
 }
 
-// ═══════════ SU-05 — Gov/Regulator Sync Oversight (+ ComplianceExport SF-11) ══
 export async function listGovSync(): Promise<GovSyncRow[]> {
   if (USE_MOCK) {
     await delay();
@@ -182,7 +165,6 @@ export async function listComplianceExports(): Promise<ComplianceExportLog[]> {
   return getJson<ComplianceExportLog[]>('/compliance-exports');
 }
 
-// ════════════ SU-11 — Platform Audit Log Viewer (immutable trail) ════════════
 export async function searchAuditLog(q: { module?: string; entity?: string; school_id?: string }): Promise<AuditLogEntry[]> {
   if (USE_MOCK) {
     await delay();
@@ -205,7 +187,6 @@ export async function searchAuditLog(q: { module?: string; entity?: string; scho
   return getJson<AuditLogEntry[]>(`/audit-log?${params.toString()}`);
 }
 
-// ════════════ SU-06 — Competition & Tournament Ops (E12 Schools Cup) ═════════
 const MOCK_COMPETITIONS: Competition[] = [
   { id: 'cmp_01', name: 'Spotlight Schools Cup 2027 — National', scope: 'national', status: 'open_registration', participating_schools: 128, sponsor: 'Paymax Foundation', start_date: dstr(30), end_date: dstr(75), broadcast_ready: false },
   { id: 'cmp_02', name: 'Lagos Inter-School Maths Challenge', scope: 'state', status: 'in_progress', participating_schools: 40, sponsor: 'GTBank', start_date: dstr(-5), end_date: dstr(10), broadcast_ready: true },
@@ -236,7 +217,6 @@ export async function transitionCompetition(input: CompetitionTransitionInput): 
   return sendJson<Competition>('POST', `/competitions/${input.id}/transition`, { event });
 }
 
-// ════════════════════ SU-07 — School Trust Score Admin ══════════════════════
 const MOCK_TRUST: TrustScoreRow[] = MOCK_SCHOOLS.map((s) => ({
   school_id: s.id, school_name: s.name, score: s.trust_score,
   components: [
@@ -256,7 +236,6 @@ export async function overrideTrustScore(input: TrustScoreOverrideInput): Promis
   return sendJson<TrustScoreRow>('POST', `/trust-scores/${input.school_id}/override`, input);
 }
 
-// ════════════════ SU-08 — Sponsor & Scholarship Oversight ════════════════════
 export async function listScholarshipPledges(): Promise<ScholarshipPledge[]> {
   if (USE_MOCK) {
     await delay();
@@ -270,7 +249,6 @@ export async function listScholarshipPledges(): Promise<ScholarshipPledge[]> {
   return getJson<ScholarshipPledge[]>('/scholarship-pledges');
 }
 
-// ════════════════════ SU-09 — Support Ticket Queue ══════════════════════════
 const MOCK_TICKETS: SupportTicket[] = [
   { id: 'tkt_01', subject: 'Payment applied to wrong invoice', origin: 'parent', school_name: 'Bright Future Academy', priority: 'high', status: 'open', opened_at: iso(4), last_update_at: iso(4) },
   { id: 'tkt_02', subject: 'Cannot generate data export (SF-10)', origin: 'school_admin', school_name: 'Green Valley Schools', priority: 'low', status: 'in_review', opened_at: iso(28), last_update_at: iso(10) },
@@ -288,7 +266,6 @@ export async function actionSupportTicket(input: TicketActionInput): Promise<Sup
   return sendJson<SupportTicket>('POST', `/support-tickets/${input.id}/action`, input);
 }
 
-// ════════════════ SU-10 — Feature Flag & Tenant Configuration ════════════════
 const MOCK_FLAGS: FeatureFlag[] = [
   { key: 'FEATURE_ACADEMY_FEES_ENABLED', label: 'Academy Fees module', description: 'Master flag for the EdTech fees domain.', scope_type: 'global', scope_ref: '', enabled: true, updated_at: iso(24 * 30) },
   { key: 'fees.installments', label: 'Installment payments (Model A)', description: 'Guardian-pays-school-over-time only. Never Paymax fronting fees.', scope_type: 'tier', scope_ref: 'verified', enabled: true, updated_at: iso(24 * 12) },
@@ -301,7 +278,6 @@ export async function listFeatureFlags(): Promise<FeatureFlag[]> {
 }
 export async function toggleFeatureFlag(input: FlagToggleInput): Promise<FeatureFlag> {
   if (USE_MOCK) throw new Error(`Toggling a feature flag ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /flags/toggle (platform.Handler.ToggleFlag → academy_feature_flags,
   // a real per-key upsert — a route.go comment calling this "no override store, no-op"
   // was stale). But the store is GLOBAL ONLY: scope_type/scope_ref are accepted in the
   // body and silently DROPPED (the handler hardcodes "scope_type": "global" in its
@@ -317,7 +293,6 @@ export async function toggleFeatureFlag(input: FlagToggleInput): Promise<Feature
   return sendJson<FeatureFlag>('POST', '/flags/toggle', input);
 }
 
-// ════════════ SU-12 — Compliance & Licensing (Model-A-only posture) ══════════
 export async function getCompliancePosture(): Promise<CompliancePosture> {
   if (USE_MOCK) {
     await delay();

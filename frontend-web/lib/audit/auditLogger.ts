@@ -137,7 +137,7 @@ export class AuditLogger {
         },
       ],
       severity: AuditSeverity.CRITICAL,
-      threshold: 5, // 5 failures = alert
+      threshold: 5,
       timeWindow: 5 * 60 * 1000, // 5 minutes
     });
 
@@ -241,7 +241,6 @@ export class AuditLogger {
     const oneHourAgo = Date.now() - 60 * 60 * 1000;
     this.recentEvents = this.recentEvents.filter((e) => e.timestamp > oneHourAgo);
 
-    // Check for anomalies
     await this.detectAnomalies(event);
 
     // Auto-flush if buffer is large
@@ -260,13 +259,11 @@ export class AuditLogger {
       let anomalyScore = 0;
 
       for (const trigger of pattern.triggers) {
-        // Check if event matches trigger
         if (this.matchesTrigger(newEvent, trigger)) {
           anomalyScore += trigger.weight;
         }
       }
 
-      // Check if threshold exceeded
       if (anomalyScore >= pattern.threshold) {
         await this.logEvent(
           'suspicious_activity',
@@ -349,7 +346,6 @@ export class AuditLogger {
     if (typeof Error.captureStackTrace === 'function') {
       const stack = new Error().stack || '';
       const lines = stack.split('\n');
-      // Extract component from stack trace
       for (const line of lines) {
         if (line.includes('at ') && !line.includes('auditLogger')) {
           const match = line.match(/at\s+(.+?)\s*\(/);

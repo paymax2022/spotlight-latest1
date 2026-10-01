@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -63,7 +64,7 @@ type memberCampaignRow struct {
 // MemberDashboard: GET /merchant/dashboard — the caller's merchant zone. Returns
 // an empty dashboard when the caller owns no merchant. Money is integer kobo.
 func (h *Handler) MemberDashboard(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -114,7 +115,7 @@ func (h *Handler) MemberDashboard(c *gin.Context) {
 // MemberPerformance: GET /merchant/campaigns/:mcid/performance — one campaign,
 // owner-scoped (404 if the caller doesn't own it).
 func (h *Handler) MemberPerformance(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -204,7 +205,7 @@ func (h *Handler) CreateCampaign(c *gin.Context) {
 }
 
 func (h *Handler) Fund(c *gin.Context) {
-	idem := c.GetHeader("Idempotency-Key")
+	idem := ginutil.IdempotencyKey(c)
 	if idem == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
@@ -223,12 +224,12 @@ func (h *Handler) Fund(c *gin.Context) {
 }
 
 func (h *Handler) Settle(c *gin.Context) {
-	idem := c.GetHeader("Idempotency-Key")
+	idem := ginutil.IdempotencyKey(c)
 	if idem == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
 	}
-	var in FundInput // reuse {amount_kobo}
+	var in FundInput
 	if err := c.ShouldBindJSON(&in); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return

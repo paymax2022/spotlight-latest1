@@ -17,7 +17,6 @@ import type { Page } from '@playwright/test';
  * catalog would make them fail whenever an insurer retires a plan.
  */
 
-// ── Products ────────────────────────────────────────────────────────────────
 /** Sovereign Trust comprehensive motor — a real 20-field schema. */
 export const STI_COMPREHENSIVE = {
   code: 'sti-comprehensive',
@@ -152,7 +151,6 @@ export const CATALOG = [
   BROKEN_PLAN,
 ];
 
-// ── Schemas ─────────────────────────────────────────────────────────────────
 /** The real Bastion health field table, in contract form. */
 export const BASTION_SCHEMA = {
   fields: [
@@ -218,7 +216,6 @@ export const MOTOR_SCHEMA = {
   ],
 };
 
-// ── Route stubs ─────────────────────────────────────────────────────────────
 export interface InsuranceStubOptions {
   policies?: unknown[];
   claims?: unknown[];
@@ -264,7 +261,6 @@ export async function mockInsurance(page: Page, opts: InsuranceStubOptions = {})
     body: JSON.stringify(status < 400 ? { data } : data),
   });
 
-  // Consent is checked by the quote screens before the form renders; left
   // unmocked it reaches the real backend with the seeded token, 401s, and the
   // global interceptor signs the test user out mid-flow.
   await page.route('**/api/v1/insurance/consent**', async (route) => {

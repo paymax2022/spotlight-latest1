@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { authHeaders } from '@/src/lib/auth/client';
 import { createClient } from '@/src/lib/supabase/client';
-import { loadPaystackClient } from '@/src/lib/payments/paystack-client';
+import { loadPaystackClient } from '@/src/lib/payments';
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(n);
@@ -175,7 +175,6 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
   const atLimit = form.areas_of_interest.length >= maxInterestAreas;
 
   // TUITION for the chosen areas — payable on ACCEPTANCE and refundable. Shown so
-  // the applicant knows the commitment; NOT collected here. The server recomputes
   // this same total from the same admin-managed rows when the application is
   // submitted, so this is a display convenience and cannot be used to pay less.
   const tuitionTotal = availableAreas

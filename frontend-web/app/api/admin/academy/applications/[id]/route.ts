@@ -5,8 +5,8 @@ import {
   sendAcademyApplicationApprovedEmail,
   sendAcademyApplicationRejectedEmail,
 } from '@/src/server/services/academy/service';
-import { autoCreateInstallmentPlan } from '@/src/server/services/academy/installments';
-import { ensureEnrollment } from '@/src/server/services/academy/enrollment';
+import { autoCreateInstallmentPlan } from '@/src/server/services/academy';
+import { ensureEnrollment } from '@/src/server/services/academy';
 import { createAdminClient } from '@/lib/supabase/server';
 import type { AcademyReviewUpdateInput } from '@/src/lib/validation/academy';
 

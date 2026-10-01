@@ -1,20 +1,12 @@
-// ── Paymax Invest · Learn Center — API wrapper ───────────────────────────────
 // Typed data layer the Learn screens code against (Backend role owns this file).
-// Mirrors crypto.api.ts: mock-flagged. Flip EXPO_PUBLIC_LEARN_USE_MOCK=false once
 // the real Paymax /api/v1/learn/* endpoints (docs/crypto/api.md envelope) land.
-//
 // The Learn surface is read-mostly: getPaths / getPath / getLesson / getQuiz /
-// getGlossary are GETs; submitQuiz is the only mutation and is scored server-side
 // in production (the client never decides pass/fail authoritatively).
-//
 // GO-LIVE (2026-07): the real backend module now EXISTS —
 // backend/internal/learn (service+handler+routes) is registered on the Go router
 // under /api/v1/learn/* (see backend/internal/app/learn_routes.go), backed by the
 // learn_* tables (migration 20260912000000_learn_center.sql). Content matches
 // these mock fixtures, so a flipped client renders identical copy.
-//
-// REMAINING DEPENDENCY before flipping EXPO_PUBLIC_LEARN_USE_MOCK=false: the Next
-// gateway only rewrites /api/finance/* to Go; /api/v1/* paths need a frontend-web
 // proxy. Add a catch-all at frontend-web/app/api/v1/learn/[...path]/route.ts (a
 // thin mirror of the existing app/api/v1/invest proxy) that forwards to the Go
 // backend's /api/v1/learn/*. Once that proxy lands, flip the flag — the live
@@ -38,7 +30,6 @@ import type {
   QuizResult,
 } from '../types/learn.types';
 
-// ─── Feature flag: flip to false once real endpoints are ready ────────────────
 const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_LEARN_USE_MOCK, true);
 
 /** Simulated network latency so loading states render in mock mode. */
@@ -51,8 +42,6 @@ function toLearnError(err: unknown): Error {
   const msg = e?.response?.data?.message ?? e?.message ?? 'Something went wrong. Please try again.';
   return new Error(msg);
 }
-
-// ─── Paths (GET /learn/paths, /learn/paths/:id) ───────────────────────────────
 
 export async function getPaths(): Promise<LearnPath[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_PATHS]; }
@@ -69,8 +58,6 @@ export async function getPath(id: string): Promise<LearnPath> {
   return unwrap<LearnPath>(await api.get(`/api/v1/learn/paths/${id}`));
 }
 
-// ─── Lessons (GET /learn/lessons/:id) ─────────────────────────────────────────
-
 export async function getLesson(id: string): Promise<Lesson> {
   if (USE_MOCK) {
     await delay(220);
@@ -80,8 +67,6 @@ export async function getLesson(id: string): Promise<Lesson> {
   }
   return unwrap<Lesson>(await api.get(`/api/v1/learn/lessons/${id}`));
 }
-
-// ─── Quiz (GET /learn/lessons/:lessonId/quiz) ─────────────────────────────────
 
 /** Resolve the quiz attached to a lesson, or null if the lesson has none. */
 export async function getQuiz(lessonId: string): Promise<Quiz | null> {
@@ -96,7 +81,6 @@ export async function getQuiz(lessonId: string): Promise<Quiz | null> {
   }
 }
 
-// ─── Submit quiz (POST /learn/quizzes/:quizId/submit) ─────────────────────────
 // Scored server-side in production. The mock grades against the answer key so
 // the result/retake path is reachable end-to-end.
 
@@ -119,8 +103,6 @@ export async function submitQuiz(quizId: string, answers: QuizAnswers): Promise<
     throw toLearnError(err);
   }
 }
-
-// ─── Glossary (GET /learn/glossary) ───────────────────────────────────────────
 
 export async function getGlossary(): Promise<GlossaryTerm[]> {
   if (USE_MOCK) {

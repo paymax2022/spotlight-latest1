@@ -208,8 +208,6 @@ func (r *Repository) SetSettled(ctx context.Context, id, payoutLedgerRef string,
 	return nil
 }
 
-// --- evidence ---
-
 // AddEvidence records an evidence object reference on a claim.
 func (r *Repository) AddEvidence(ctx context.Context, e *Evidence) (*Evidence, error) {
 	row := r.db.QueryRow(ctx, `
@@ -243,8 +241,6 @@ func (r *Repository) ListEvidence(ctx context.Context, claimID string) ([]Eviden
 	}
 	return out, rows.Err()
 }
-
-// --- payouts ---
 
 // InsertPayout records a claim payout money move. UNIQUE(idempotency_key) makes a
 // retried settlement a safe no-op at the DB layer (ON CONFLICT DO NOTHING).

@@ -2,8 +2,14 @@ package marketplace
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"math"
+	"net/http"
+	"slices"
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/go-common/strutil"
 	"strings"
 	"time"
 )
@@ -81,7 +87,6 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 	// local listings sit in market NG under a category from another market. Market is
 	// this module's tenancy boundary (categories and search are both scoped to one),
 	// so such a listing shows up in one half of a market's UI and not the other.
-	//
 	// The category is already loaded for the attrs check, so this costs no extra
 	// query. The composite FK added in 20270119000000 is the backstop; this exists so
 	// the caller gets a field error naming category_id instead of a raw FK violation.
@@ -91,7 +96,7 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 	if err := validateAttrs(cat.AttributeSchema, in.Attrs); err != nil {
 		return nil, err
 	}
-	condition := orStr(in.Condition, "used")
+	condition := strutil.Or(in.Condition, "used")
 	// Only spend the ancestor-walk query when the condition actually needs it.
 	isVehicle := false
 	if vehicleOnlyConditions[condition] {
@@ -129,7 +134,6 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 	}
 	// Persist the photos. MediaIDs was parsed and thrown away before this, so
 	// mkt_listing_media stayed empty and every listing rendered without an image.
-	//
 	// A failure here does NOT fail the create: the listing itself is valid and
 	// already written, and losing a draft because a photo row would not insert is
 	// the worse outcome. It is logged so the gap is visible rather than silent.
@@ -145,13 +149,11 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 
 // ownedMediaKeys filters client-supplied media ids down to object keys this
 // seller actually uploaded.
-//
 // Two things make this necessary. The composer sends `fileUrl ?? photo.id` — so
 // when an upload fails it posts a LOCAL photo id, which would otherwise be stored
 // as if it were an object key and render as a broken image forever. And a key is
 // just a string from the client, so without the ownership check a caller could
 // claim another seller's object by guessing its path.
-//
 // The shape is the one presign mints: marketplace/<seller-uuid>/<32 hex><ext>.
 func ownedMediaKeys(sellerID string, ids []string) []string {
 	prefix := "marketplace/" + sellerID + "/"
@@ -460,11 +462,9 @@ func (s *Service) PauseListing(ctx context.Context, sellerID, id string) (*Listi
 // from sold, which is deliberate — a sold listing must not silently return to
 // discovery. SetListingStatus stamps sold_at, and the outbox delete removes it
 // from search.
-//
 // The mobile client has called POST /listings/:id/mark-sold since the Sell group
 // was built; the route was never registered, so "Mark as sold" 404ed and the
 // listing stayed live with the item gone.
-//
 // A PAUSED listing cannot be marked sold: paused only leads to active, expired or
 // removed_user. A seller who paused and then sold has to resume first, which is a
 // product question rather than a bug — widening the FSM is a deliberate decision
@@ -570,8 +570,6 @@ func (s *Service) sellerListingTransition(ctx context.Context, sellerID, id stri
 	return l, nil
 }
 
-// ─── Admin moderation (§2.1 approve/reject; writes mkt_admin_audit_log) ───────
-
 // ModerationQueue returns pending_review listings (admin).
 func (s *Service) ModerationQueue(ctx context.Context, limit, offset int) ([]Listing, error) {
 	return s.repo.ModerationQueue(ctx, limit, offset)
@@ -594,7 +592,7 @@ func (s *Service) ApproveListing(ctx context.Context, adminID, id, reasonCode st
 	_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(ctx, l))
 	_ = s.writeAudit(ctx, AuditEntry{
 		AdminID: adminID, Action: "mkt.listing.approve", TargetType: "listing", TargetID: id,
-		ReasonCode:  orStr(reasonCode, "approved"),
+		ReasonCode:  strutil.Or(reasonCode, "approved"),
 		BeforeState: map[string]any{"status": string(ListingPendingReview)},
 		AfterState:  map[string]any{"status": string(ListingActive)},
 	})
@@ -717,7 +715,6 @@ func (s *Service) searchPayload(ctx context.Context, l *Listing) map[string]any 
 // listing gets the single strongest boost's additive weight, not the sum of
 // stacked boosts (stacking must not let a seller buy their way to unbounded
 // dominance).
-//
 // Reads Boost.Weight — frozen on the row at purchase time by
 // ComputeBoostQuote/PurchaseBoost — rather than looking the tier up against
 // the current catalog. A live lookup would let an admin's later price/weight
@@ -737,4 +734,241 @@ func maxBoostWeight(boosts []Boost) float64 {
 // wordCount counts whitespace-delimited words (matches the §1 generated column intent).
 func wordCount(s string) int {
 	return len(strings.Fields(s))
+}
+
+// Listing FSM (§2.1). Every transition is explicit; anything not listed is illegal
+// and returns a typed CodedError. NO implicit transitions.
+//	draft            → pending_review | active (auto-approve) | removed_user
+//	pending_review   → active (approve) | removed_policy (reject) | removed_user
+//	active           → paused | expired | sold | removed_policy | removed_user
+//	paused           → active (resume) | removed_user
+//	expired          → active (renew) | removed_user
+//	(terminal: sold, removed_policy, removed_user)
+
+// listingTransitions is the allowed-edge set for the listing lifecycle.
+// Terminal states (sold, removed_policy, removed_user) simply have no entry.
+var listingTransitions = fsm.Table[ListingStatus]{
+	ListingDraft: fsm.Set(
+		ListingPendingReview,
+		ListingActive, // auto-approve path
+		ListingRemovedUser,
+	),
+	ListingPendingReview: fsm.Set(
+		ListingActive,        // approve
+		ListingRemovedPolicy, // reject
+		ListingRemovedUser,
+	),
+	ListingActive: fsm.Set(
+		ListingPaused,
+		ListingExpired,
+		ListingSold,
+		ListingPendingReview, // re-moderation: a content edit to a live listing
+		ListingRemovedPolicy,
+		ListingRemovedUser,
+	),
+	ListingPaused: fsm.Set(
+		ListingActive, // resume
+		ListingExpired,
+		ListingRemovedUser,
+	),
+	ListingExpired: fsm.Set(
+		ListingActive, // renew
+		ListingRemovedUser,
+	),
+}
+
+// guardListingTransition returns a typed error when from → to is illegal.
+func guardListingTransition(from, to ListingStatus) error {
+	if !listingTransitions.Can(from, to) {
+		return &CodedError{
+			Status:  http.StatusConflict,
+			Code:    CodeInvalidListingTransition,
+			Message: "illegal listing transition " + string(from) + " → " + string(to),
+		}
+	}
+	return nil
+}
+
+// listingAffectsSearch reports whether a listing status implies an outbox op, and
+// which one. active ⇒ upsert; anything that removes it from discovery ⇒ delete.
+func listingOutboxOp(to ListingStatus) (string, bool) {
+	switch to {
+	case ListingActive:
+		return OutboxUpsert, true
+	case ListingPaused, ListingExpired, ListingSold, ListingRemovedPolicy, ListingRemovedUser:
+		return OutboxDelete, true
+	default:
+		return "", false
+	}
+}
+
+// Attribute-schema validation (§1: "attrs validated against category.attribute_schema
+// at write time"). The migration calls the schema "draft-07 JSON-schema", but the
+// marketplace only ever uses a small, well-defined subset — required, per-property
+// type (string/boolean/number/integer/array), enum, numeric minimum/maximum, array
+// items/minItems/maxItems, and additionalProperties:false. We validate exactly that
+// subset with no external dependency. An empty schema ({}) accepts any attrs, so
+// every currently-seeded category stays backward-compatible.
+// A category's attribute_schema JSONB may also carry a sibling top-level "fields"
+// array consumed only by the mobile client (form rendering: widget type, label,
+// group, options, unit, placeholder — see mobile-app/reactnative/src/features/
+// marketplace/api/sell.mock.ts AttributeField). This validator ignores "fields"
+// entirely; it only reads required/properties/additionalProperties.
+
+// attrSchema is the supported subset of a category's attribute_schema.
+type attrSchema struct {
+	Required             []string                  `json:"required"`
+	Properties           map[string]attrPropSchema `json:"properties"`
+	AdditionalProperties *bool                     `json:"additionalProperties"`
+}
+
+type attrPropSchema struct {
+	Type     string          `json:"type"` // string | number | integer | boolean | array
+	Enum     []any           `json:"enum"`
+	Minimum  *float64        `json:"minimum"`
+	Maximum  *float64        `json:"maximum"`
+	Items    *attrPropSchema `json:"items"`    // element schema, only consulted when Type == "array"
+	MinItems *int            `json:"minItems"` // only consulted when Type == "array"
+	MaxItems *int            `json:"maxItems"` // only consulted when Type == "array"
+}
+
+// validateAttrs checks attrs against a category's attribute_schema. A nil/empty
+// schema or nil attrs is permitted (accepts anything). It returns a typed
+// CodeValidation error naming the offending attribute so callers get a 422.
+func validateAttrs(schemaJSON json.RawMessage, attrs map[string]any) error {
+	if len(schemaJSON) == 0 {
+		return nil
+	}
+	var sc attrSchema
+	if err := json.Unmarshal(schemaJSON, &sc); err != nil {
+		// A malformed category schema must never hard-fail seller writes; treat as
+		// "no constraints" (categories are admin-authored and validated on write).
+		return nil
+	}
+	if len(sc.Required) == 0 && len(sc.Properties) == 0 {
+		return nil // empty {} schema: unconstrained
+	}
+	if attrs == nil {
+		attrs = map[string]any{}
+	}
+
+	// Required keys must be present and non-null.
+	for _, key := range sc.Required {
+		v, ok := attrs[key]
+		if !ok || v == nil {
+			return fieldErr(CodeValidation, "missing required attribute: "+key, "attrs."+key)
+		}
+	}
+
+	// additionalProperties:false rejects any attr not named in properties.
+	if sc.AdditionalProperties != nil && !*sc.AdditionalProperties {
+		for key := range attrs {
+			if _, declared := sc.Properties[key]; !declared {
+				return fieldErr(CodeValidation, "unknown attribute not allowed: "+key, "attrs."+key)
+			}
+		}
+	}
+
+	// Per-property type / enum / range checks (only for keys actually supplied).
+	for key, prop := range sc.Properties {
+		v, ok := attrs[key]
+		if !ok || v == nil {
+			continue // presence is governed by Required, not here
+		}
+		if err := checkProp(key, prop, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkProp(key string, prop attrPropSchema, v any) error {
+	switch prop.Type {
+	case "string":
+		if _, ok := v.(string); !ok {
+			return typeErr(key, "string")
+		}
+	case "boolean":
+		if _, ok := v.(bool); !ok {
+			return typeErr(key, "boolean")
+		}
+	case "number", "integer":
+		f, ok := toFloat(v)
+		if !ok {
+			return typeErr(key, prop.Type)
+		}
+		if prop.Type == "integer" && f != math.Trunc(f) {
+			return typeErr(key, "integer")
+		}
+		if prop.Minimum != nil && f < *prop.Minimum {
+			return fieldErr(CodeValidation, fmt.Sprintf("attribute %s must be ≥ %v", key, *prop.Minimum), "attrs."+key)
+		}
+		if prop.Maximum != nil && f > *prop.Maximum {
+			return fieldErr(CodeValidation, fmt.Sprintf("attribute %s must be ≤ %v", key, *prop.Maximum), "attrs."+key)
+		}
+	case "array":
+		arr, ok := v.([]any)
+		if !ok {
+			return typeErr(key, "array")
+		}
+		if prop.MinItems != nil && len(arr) < *prop.MinItems {
+			return fieldErr(CodeValidation, fmt.Sprintf("attribute %s must have at least %d item(s)", key, *prop.MinItems), "attrs."+key)
+		}
+		if prop.MaxItems != nil && len(arr) > *prop.MaxItems {
+			return fieldErr(CodeValidation, fmt.Sprintf("attribute %s must have at most %d item(s)", key, *prop.MaxItems), "attrs."+key)
+		}
+		if prop.Items != nil {
+			for _, elem := range arr {
+				if err := checkProp(key, *prop.Items, elem); err != nil {
+					return err
+				}
+			}
+		}
+	case "":
+		// no declared type: only enum (if any) constrains it
+	default:
+		// unsupported type keyword: don't constrain (forward-compatible)
+	}
+
+	if len(prop.Enum) > 0 && !enumContains(prop.Enum, v) {
+		return fieldErr(CodeValidation, "attribute "+key+" is not an allowed value", "attrs."+key)
+	}
+	return nil
+}
+
+func typeErr(key, want string) error {
+	return fieldErr(CodeValidation, "attribute "+key+" must be a "+want, "attrs."+key)
+}
+
+// toFloat normalizes the JSON number forms that can reach attrs (json.Number,
+// float64 from a decoded body, or native ints from Go callers).
+func toFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	default:
+		return 0, false
+	}
+}
+
+// enumContains compares scalars by value, coercing numbers so 2015 (int) matches
+// 2015 (float64 from a decoded schema).
+func enumContains(enum []any, v any) bool {
+	if vf, ok := toFloat(v); ok {
+		for _, e := range enum {
+			if ef, ok := toFloat(e); ok && ef == vf {
+				return true
+			}
+		}
+	}
+	return slices.Contains(enum, v)
 }

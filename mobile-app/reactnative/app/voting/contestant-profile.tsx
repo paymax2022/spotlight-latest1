@@ -7,11 +7,11 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Share2, Heart, BadgeCheck, MapPin, Music, PlayCircle, ExternalLink } from 'lucide-react-native';
 import { useQueryClient } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useContestantProfile, useShareContestant, useToggleContestantLike } from '@/features/voting/hooks/useContestantProfile';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
@@ -116,7 +116,6 @@ export default function ContestantProfileScreen() {
       setShareUrl(result.url);
     } catch {
       // Recording the share failed (e.g. feature flag off, or offline) — still
-      // let the person share the plain profile; ShareBottomSheet falls back to
       // its own default link when shareUrl is undefined.
       setShareUrl(undefined);
     }
@@ -141,11 +140,9 @@ export default function ContestantProfileScreen() {
   // NO MOCK FALLBACK. These previously read `?? MOCK_…`, which meant a live
   // response that was missing, empty or still loading silently rendered invented
   // vote packages — regardless of EXPO_PUBLIC_VOTING_USE_MOCK.
-  //
   // That was not merely cosmetic: handlePaidVote builds the payment URL from
   // `pkg.amount` and `pkg.id`, so a tap on a fabricated package sent a real voter
   // into checkout with a price and a package id the server has never heard of.
-  //
   // Absent data now reads as absent. Free-vote state falls back to a ZERO
   // allowance (never a generous invented one), and paid packages simply are not
   // offered until the server says what they are.

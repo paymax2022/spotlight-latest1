@@ -8,12 +8,10 @@ import (
 	"testing"
 )
 
-// ---------------------------------------------------------------------------
 // WAL-011: SaveBeneficiary must never write a full bank account number to the
 // audit log. audit()'s log.Printf mechanism is intentionally NOT redacting
 // (it's shared by other legitimate money-path breadcrumbs), so the call site
 // must mask before the value reaches audit().
-// ---------------------------------------------------------------------------
 
 // TestMaskAccountNumberLast4 locks the masking convention itself: it must
 // match the existing account_number_last4 truncation used elsewhere in this
@@ -41,7 +39,6 @@ func TestMaskAccountNumberLast4(t *testing.T) {
 // SaveBeneficiary uses on success — action "transfer.beneficiary.save" with
 // the account number as detail — and asserts the emitted line contains ONLY
 // the masked last-4, never the full NUBAN.
-//
 // NOTE: SaveBeneficiary itself requires a live registry + DB pool (it does a
 // real name-enquiry call and an upsert) and so cannot be driven end-to-end as
 // a pure unit test. This test instead locks the mechanism at the boundary

@@ -1,5 +1,3 @@
-// ── Pharmacy merchant — react-query hooks ────────────────────────────────────
-//
 // Mirrors the restaurantmerchant hooks: one namespace key, and every mutation
 // invalidates it so the inbox and the open order agree after an action.
 

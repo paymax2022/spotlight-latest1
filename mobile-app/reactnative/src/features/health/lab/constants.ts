@@ -1,8 +1,7 @@
-// ── Paymax Health — Laboratory presentation constants ────────────────────────
 // Status → label/colour maps and copy. Resolve all colours through the design
 // tokens; never hardcode hex in screens.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   LabOrderStatus,
   AnalyteFlag,

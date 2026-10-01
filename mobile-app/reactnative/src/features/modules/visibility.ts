@@ -1,13 +1,7 @@
-// ── Module visibility (client half of the platform module registry) ──────────
-//
-// The server decides which modules this environment may show; the app asks and
 // renders accordingly. The rule itself is NOT reimplemented here — a second copy
 // is how a client and server drift apart, and the drift shows up as a module
 // appearing in production that nobody published.
-//
 // Usage:
-//   const { isVisible, loading } = useModuleVisibility();
-//   if (!isVisible('telemedicine')) return null;
 
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api/client';
@@ -54,8 +48,6 @@ export function useModuleVisibility() {
     stateOf: (key: string): ModuleState => moduleStateFor(data ?? null, key),
   };
 }
-
-// ─── Per-user access ─────────────────────────────────────────────────────────
 
 /** What THIS user may use, already intersected with what the environment publishes. */
 export interface UserModuleAccess {

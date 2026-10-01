@@ -3,17 +3,17 @@ import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Mail, Phone, Briefcase, UserPlus, FileCheck2, FileX2, Clock, AlertTriangle, CheckCircle2 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useApplication, useDecideApplication } from '@/features/association/hooks/useAdmin';
-import { formatNaira, formatDateTime } from '@/features/association/utils/associationFormatters';
-import type { ApprovalDecision } from '@/features/association/types/admin.types';
+import { useApplication, useDecideApplication } from '@/features/association/hooks';
+import { formatNaira, formatDateTime } from '@/features/association/utils';
+import type { ApprovalDecision } from '@/features/association/types';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 export default function ApplicationDetail() {

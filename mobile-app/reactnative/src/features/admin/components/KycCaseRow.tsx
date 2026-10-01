@@ -1,13 +1,12 @@
-// ── Paymax · Admin — KycCaseRow ──────────────────────────────────────────────
 // One KYC queue case: name + requested tier, status pill, risk flags, submitted
 // time. Pressable to drill into the case detail.
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import StatusPill from './StatusPill';
 import { KYC_STATUS_STYLE, relativeTime } from '../constants/admin.constants';
 import type { KycCase } from '../types/admin.types';

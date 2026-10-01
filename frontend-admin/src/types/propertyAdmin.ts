@@ -1,4 +1,3 @@
-// ── Admin — Property Management Suite types ─────────────────────────────────
 // Mirrors backend/internal/property/{context.go,rentpassport.go}. All money is
 // integer minor units (kobo). See docs/qa/modules/property.md for the full
 // endpoint contract this was derived from.

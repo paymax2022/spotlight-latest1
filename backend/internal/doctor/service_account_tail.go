@@ -18,8 +18,6 @@ import (
 //     READS (list/get/report/account) or REQUEST rows (dispute) — the actual
 //     payout money path is Service.RequestPayout, which is left untouched.
 
-// ── DTOs / request bodies ────────────────────────────────────────────────────
-
 // BankAccountRequest is the body for POST /profile/bank-account.
 type BankAccountRequest struct {
 	BankName      *string         `json:"bankName,omitempty"`
@@ -77,8 +75,6 @@ type EmergencyScheduleRequest struct {
 	Enabled  *bool           `json:"enabled,omitempty"`
 	Schedule json.RawMessage `json:"schedule,omitempty"`
 }
-
-// ── Models / projections ─────────────────────────────────────────────────────
 
 // BankAccount mirrors public.doctor_bank_accounts. AccountNumber is masked to the
 // last 4 digits before the row leaves the service (never returns the full PAN).
@@ -172,11 +168,8 @@ func maskAccountNumber(b *BankAccount) {
 	b.AccountNumber = &masked
 }
 
-// ── Profile ──────────────────────────────────────────────────────────────────
-
 // CreateBankAccount upserts a bank account (idempotent) and masks the account
 // number in the response.
-//
 // If a DisbursementProvider is wired, CreateBankAccount attempts real-time verification
 // against the banking network (Paystack's /bank/resolve). Verification failures are
 // soft-fail: the account is saved with is_verified=false, allowing offline onboarding
@@ -274,15 +267,13 @@ func (s *Service) VerifyBankAccount(ctx context.Context, userID string, req Bank
 	}
 
 	return map[string]interface{}{
-		"is_verified":          true,
-		"account_name":         accountNameToReturn,
-		"bank_name":            req.BankName,
-		"bank_code":            bankCode,
+		"is_verified":           true,
+		"account_name":          accountNameToReturn,
+		"bank_name":             req.BankName,
+		"bank_code":             bankCode,
 		"account_number_masked": maskedAcct,
 	}, nil
 }
-
-// ── Payouts (reads + dispute request) ────────────────────────────────────────
 
 func (s *Service) ListPayouts(ctx context.Context, userID string) ([]Payout, error) {
 	return s.repo.ListPayouts(ctx, userID)
@@ -315,8 +306,6 @@ func (s *Service) DisputePayout(ctx context.Context, userID, payoutID, idemKey s
 	return s.repo.InsertSettlementDispute(ctx, userID, payoutID, idemKey, req)
 }
 
-// ── Privacy ──────────────────────────────────────────────────────────────────
-
 func (s *Service) RequestPrivacyExport(ctx context.Context, userID string) (*DataPrivacySettings, error) {
 	return s.repo.RequestPrivacyExport(ctx, userID)
 }
@@ -336,8 +325,6 @@ func (s *Service) ChangePassword(ctx context.Context, userID, idemKey string) er
 	return s.repo.InsertAudit(ctx, userID, "security.password_change_requested", "auth", userID, idemKey, nil)
 }
 
-// ── Compliance ───────────────────────────────────────────────────────────────
-
 func (s *Service) GetCompliance(ctx context.Context, userID string) (*ComplianceStatus, error) {
 	return s.repo.GetComplianceStatus(ctx, userID)
 }
@@ -353,21 +340,15 @@ func (s *Service) AckPolicy(ctx context.Context, userID, policyKey, idemKey stri
 	return s.repo.GetComplianceStatus(ctx, userID)
 }
 
-// ── Onboarding (legal) ───────────────────────────────────────────────────────
-
 // GetLegalOnboarding returns the legal/consent documents the doctor must accept.
 // Read-only thin projection over the existing ListConsents read.
 func (s *Service) GetLegalOnboarding(ctx context.Context, userID string) ([]LegalConsent, error) {
 	return s.repo.ListConsents(ctx, userID)
 }
 
-// ── Reputation ───────────────────────────────────────────────────────────────
-
 func (s *Service) GetReputation(ctx context.Context, userID string) (*ReputationSummary, error) {
 	return s.repo.GetReputation(ctx, userID)
 }
-
-// ── Patients (composed projections) ──────────────────────────────────────────
 
 // GetPatientFullProfile composes the base patient record with the doctor's recent
 // clinical notes for that patient. Reuses GetPatientRecord (patient + appointments)
@@ -422,8 +403,6 @@ func (s *Service) GetPatientRecordHub(ctx context.Context, userID, patientID str
 		AccessLog:    accessLog,
 	}, nil
 }
-
-// ── Misc ─────────────────────────────────────────────────────────────────────
 
 // SetPresence updates the doctor's presence on doctor_profiles.
 func (s *Service) SetPresence(ctx context.Context, userID string, req PresenceRequest) error {

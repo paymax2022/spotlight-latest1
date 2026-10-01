@@ -2,15 +2,15 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
-import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
+import { useAdminAccess } from '@/features/association/hooks';
 import { createEvent } from '@/features/association/api/authoring.api';
 import { alertAsync } from '@/lib/confirm';
 
@@ -44,7 +44,6 @@ export default function NewEventScreen() {
       : new Date(startsAt) <= new Date()
         ? 'Pick a time in the future'
         : undefined;
-  // The server refuses paid-with-no-fee and free-with-a-fee; catching it here
   // avoids a round trip to be told something the form already knows.
   const feeKobo = Math.round(Number(fee.replace(/[^0-9.]/g, '') || '0') * 100);
   const feeError = paid && feeKobo <= 0 ? 'Set a ticket price' : undefined;

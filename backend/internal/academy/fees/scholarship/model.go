@@ -11,7 +11,6 @@ import (
 // pledge is a sponsor-funded scholarship targeted at a specific student, and an award is applied
 // toward that student's INVOICE via the existing feesinvoice.RecordPayment (SF-2 derived-balance
 // discipline preserved — this package NEVER writes a balance).
-//
 // Fund flow (fully auditable):
 //   1. CreatePledge      — a sponsor pledges an amount for a target student (state=pledged).
 //   2. FundPledge        — the pledged amount is moved into the scholarship fund via the INJECTED
@@ -20,11 +19,8 @@ import (
 //                          package's RecordPayment (idempotent, records an invoice payment; the
 //                          real guardian-side ledger move is E3's concern — here the funded
 //                          scholarship is the payment source). state=applied.
-//
 // Money moves ONLY through the injected LedgerPoster (fund) and the invoice payment record
 // (apply). This package posts no ledger entry of its own and writes no balance column.
-
-// ── Pledge / Award state machines ───────────────────────────────────────────────
 
 // PledgeState is the sponsor pledge lifecycle: pledged → funded → applied (or → cancelled).
 type PledgeState string
@@ -43,8 +39,6 @@ const (
 	AwardApplied  AwardState = "applied"
 	AwardReversed AwardState = "reversed"
 )
-
-// ── Entities ─────────────────────────────────────────────────────────────────────
 
 // Pledge is a Sponsor-a-Student pledge. It EXTENDS the edupay scholarship concept with a
 // concrete target student. SponsorIdentityID is the sponsor's academy identity;
@@ -75,8 +69,6 @@ type Award struct {
 	CreatedAt        time.Time  `json:"createdAt"`
 }
 
-// ── Request DTOs ────────────────────────────────────────────────────────────────
-
 // CreatePledgeRequest creates a Sponsor-a-Student pledge.
 type CreatePledgeRequest struct {
 	SponsorIdentityID string `json:"sponsorIdentityId"`
@@ -94,8 +86,6 @@ type ApplyAwardRequest struct {
 	GuardianUserID string `json:"guardianUserId"`
 	AmountMinor    int64  `json:"amountMinor" binding:"required"`
 }
-
-// ── Sentinel errors ─────────────────────────────────────────────────────────────
 
 var (
 	ErrNotFound            = errors.New("not_found")

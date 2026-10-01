@@ -2,18 +2,18 @@ package restaurant
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
-
-// ── Discovery / reads ─────────────────────────────────────────────────────────
 
 // ListOpenRestaurants returns the WHOLE discovery list of open restaurants,
 // unpaged. Retained for internal callers and tests that want the full set; the
 // HTTP handler serves ListOpenRestaurantsPage instead, because at 2,016 open
 // rows an unbounded list is a payload no client should be asked to render.
-//
 // The predicate, column list and ordering all come from discovery_page.go, so
 // this and the paged read cannot drift apart.
 func (s *Service) ListOpenRestaurants(ctx context.Context) ([]Restaurant, error) {
@@ -224,15 +224,12 @@ func (s *Service) ListOrders(ctx context.Context, userID, role string) ([]Order,
 	return out, rows.Err()
 }
 
-// ── Menu management (owner only) ──────────────────────────────────────────────
-
 // ctxKeyAdminOverride marks a call as made by a PLATFORM OPERATOR rather than the
 // store owner. It is the single, greppable bypass of the ownership check below.
 type ctxKeyAdminOverride struct{}
 
 // WithAdminOverride marks ctx as an admin-authenticated call, allowing the store
 // mutations below to run for an operator who does not own the store.
-//
 // SECURITY: only ever call this from a route already fail-closed behind
 // middleware.RequirePermission(rbac, "restaurant.manage") — the RBAC check IS the
 // security boundary for those routes, and ownership is deliberately not a second
@@ -361,8 +358,6 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 	}
 	return &it, nil
 }
-
-// ── Store management (owner only) ─────────────────────────────────────────────
 
 // ListMyRestaurants returns every store owned by the caller (the merchant's own
 // stores), newest first. Used by the merchant app to load the store to manage.
@@ -496,7 +491,6 @@ func (s *Service) UpdateRestaurant(ctx context.Context, restaurantID, userID str
 
 // SetAvailability is the merchant's operational open/closed switch (business
 // hours / pausing new orders).
-//
 // FOOD-010: the comment this replaced claimed "eligibility/KYC gating is
 // handled upstream by the merchant-onboarding engine" — that gate did not
 // exist anywhere. PlaceOrder only ever checked `is_open`, never `kyb_status`,
@@ -568,8 +562,6 @@ func (s *Service) DeleteCategory(ctx context.Context, restaurantID, userID, cate
 	}
 	return nil
 }
-
-// ── Rider / delivery lifecycle ────────────────────────────────────────────────
 
 // AssignRider sets the rider candidate on an order (restaurant owner only). The
 // candidate must accept before becoming the order's rider_id.
@@ -734,4 +726,221 @@ func (s *Service) queryOrders(ctx context.Context, q string, arg string) ([]Orde
 		out = append(out, o)
 	}
 	return out, rows.Err()
+}
+
+// OrderMessage is one chat message between an order's three participants
+// (customer, restaurant owner, assigned rider). SenderRole is derived from the
+// sender's relation to the order.
+type OrderMessage struct {
+	ID            string    `json:"id"`
+	OrderID       string    `json:"order_id"`
+	SenderID      string    `json:"sender_id"`
+	SenderRole    string    `json:"sender_role"`
+	Body          string    `json:"body"`
+	AttachmentURL *string   `json:"attachment_url,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// SendMessageRequest is the body for POST .../messages.
+type SendMessageRequest struct {
+	Body          string  `json:"body" binding:"required,min=1,max=4000"`
+	AttachmentURL *string `json:"attachment_url,omitempty"`
+}
+
+// ListMessages returns an order's chat thread, oldest first. Caller must be a
+// participant (customer, owner, or assigned rider).
+func (s *Service) ListMessages(ctx context.Context, orderID, userID string) ([]OrderMessage, error) {
+	ok, _, err := s.isParticipant(ctx, orderID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("restaurant: not a participant of this order")
+	}
+	const q = `SELECT id, order_id, sender_id, sender_role, body, attachment_url, created_at
+	           FROM restaurant_order_messages WHERE order_id=$1 ORDER BY created_at`
+	rows, err := s.db.Query(ctx, q, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OrderMessage
+	for rows.Next() {
+		var m OrderMessage
+		if err := rows.Scan(&m.ID, &m.OrderID, &m.SenderID, &m.SenderRole, &m.Body, &m.AttachmentURL, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// SendMessage posts a chat message scoped to the order's three participants.
+// The sender role is derived from the user's relation to the order; the two
+// counterparties are notified and the message is broadcast over the order WS.
+func (s *Service) SendMessage(ctx context.Context, orderID, senderID string, req SendMessageRequest) (*OrderMessage, error) {
+	customer, owner, rider, err := s.orderParties(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	var role string
+	switch senderID {
+	case customer:
+		role = "customer"
+	case owner:
+		role = "restaurant"
+	case rider:
+		if rider == "" {
+			return nil, errors.New("restaurant: not a participant of this order")
+		}
+		role = "rider"
+	default:
+		return nil, errors.New("restaurant: not a participant of this order")
+	}
+
+	m := &OrderMessage{
+		ID:            uuid.New().String(),
+		OrderID:       orderID,
+		SenderID:      senderID,
+		SenderRole:    role,
+		Body:          req.Body,
+		AttachmentURL: req.AttachmentURL,
+		CreatedAt:     time.Now(),
+	}
+	const ins = `INSERT INTO restaurant_order_messages (id, order_id, sender_id, sender_role, body, attachment_url)
+	             VALUES ($1,$2,$3,$4,$5,$6)`
+	if _, err := s.db.Exec(ctx, ins, m.ID, m.OrderID, m.SenderID, m.SenderRole, m.Body, m.AttachmentURL); err != nil {
+		return nil, err
+	}
+
+	// Notify the two counterparties (skip the sender + any unassigned rider).
+	for _, uid := range []string{customer, owner, rider} {
+		if uid == "" || uid == senderID {
+			continue
+		}
+		s.notify(ctx, Notification{
+			UserID: uid,
+			Event:  EventNewMessage,
+			Title:  "New message",
+			Body:   m.Body,
+			Data:   map[string]any{"order_id": orderID, "sender_role": role},
+		})
+	}
+	s.broadcastMessage(orderID, m)
+	return m, nil
+}
+
+// SavedAddress is a customer's reusable delivery address (GEO-001/005/006).
+type SavedAddress struct {
+	ID        string   `json:"id"`
+	Label     string   `json:"label"`
+	Address   string   `json:"address"`
+	Lat       *float64 `json:"lat,omitempty"`
+	Lng       *float64 `json:"lng,omitempty"`
+	IsDefault bool     `json:"is_default"`
+}
+
+// validateAddress checks the required fields + coordinate ranges (GEO-001). Coordinates
+// are optional (geocoding may fill them later) but, if present, must be on-globe.
+func validateAddress(a SavedAddress) error {
+	if l := strings.TrimSpace(a.Label); l == "" || len(l) > 60 {
+		return errors.New("restaurant: address label must be 1–60 chars")
+	}
+	if ad := strings.TrimSpace(a.Address); len(ad) < 3 || len(ad) > 300 {
+		return errors.New("restaurant: address must be 3–300 chars")
+	}
+	if a.Lat != nil && (*a.Lat < -90 || *a.Lat > 90) {
+		return errors.New("restaurant: lat out of range")
+	}
+	if a.Lng != nil && (*a.Lng < -180 || *a.Lng > 180) {
+		return errors.New("restaurant: lng out of range")
+	}
+	return nil
+}
+
+// AddAddress saves a delivery address for a customer. The first address (or one flagged
+// default) becomes the default; setting a new default clears the previous one so the
+// one-default invariant holds.
+func (s *Service) AddAddress(ctx context.Context, userID string, a SavedAddress) (*SavedAddress, error) {
+	if err := validateAddress(a); err != nil {
+		return nil, err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM customer_addresses WHERE user_id=$1`, userID).Scan(&count); err != nil {
+		return nil, err
+	}
+	makeDefault := a.IsDefault || count == 0 // first address is the default
+	if makeDefault {
+		if _, err := tx.Exec(ctx, `UPDATE customer_addresses SET is_default=FALSE WHERE user_id=$1 AND is_default`, userID); err != nil {
+			return nil, err
+		}
+	}
+	a.ID = uuid.New().String()
+	a.IsDefault = makeDefault
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO customer_addresses (id, user_id, label, address, lat, lng, is_default)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		a.ID, userID, strings.TrimSpace(a.Label), strings.TrimSpace(a.Address), a.Lat, a.Lng, a.IsDefault); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// ListAddresses returns a customer's saved addresses, default first.
+func (s *Service) ListAddresses(ctx context.Context, userID string) ([]SavedAddress, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT id, label, address, lat, lng, is_default FROM customer_addresses
+		 WHERE user_id=$1 ORDER BY is_default DESC, created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SavedAddress{}
+	for rows.Next() {
+		var a SavedAddress
+		if err := rows.Scan(&a.ID, &a.Label, &a.Address, &a.Lat, &a.Lng, &a.IsDefault); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// SetDefaultAddress marks one of the customer's addresses as default (object-level authz
+// via the user_id predicate) and clears the previous default in one transaction.
+func (s *Service) SetDefaultAddress(ctx context.Context, userID, addressID string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `SELECT 1 FROM customer_addresses WHERE id=$1 AND user_id=$2`, addressID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("restaurant: address not found")
+	}
+	if _, err := tx.Exec(ctx, `UPDATE customer_addresses SET is_default=FALSE WHERE user_id=$1 AND is_default`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE customer_addresses SET is_default=TRUE, updated_at=now() WHERE id=$1 AND user_id=$2`, addressID, userID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// DeleteAddress removes a customer's saved address.
+func (s *Service) DeleteAddress(ctx context.Context, userID, addressID string) error {
+	_, err := s.db.Exec(ctx, `DELETE FROM customer_addresses WHERE id=$1 AND user_id=$2`, addressID, userID)
+	return err
 }

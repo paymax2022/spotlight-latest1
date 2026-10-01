@@ -31,7 +31,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       throw new ApiError('Voting is not open for this election', 409);
     }
 
-    // Validate candidate belongs to this election.
     const { data: cand } = await supabase
       .from('election_candidates')
       .select('id')

@@ -1,21 +1,17 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the promo discount on the food-delivery money
 // path: a code supplied to PlaceOrder must actually DISCOUNT the escrow, be
 // PERSISTED on the order (discount_kobo / promo_id / promo_funder), RECORD a
 // redemption so usage limits are enforceable, and be charged at settlement to
 // whichever party funded it — with conservation intact (escrow released ==
 // provider + platform + rider legs).
-//
 // Regression guard: PlaceOrder never called resolvePromo, so req.PromoCode was
 // silently dropped. The customer paid full price, discount_kobo/promo_id/
 // promo_funder stayed 0/NULL, no redemption was ever written (making
 // usage_limit / per_user_limit unenforceable), and an invalid code was ignored
 // instead of failing the order.
-//
 // Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -181,7 +177,6 @@ func TestLiveDB_OrderPromoRestaurantFunded(t *testing.T) {
 		t.Fatalf("place discounted order: %v", err)
 	}
 
-	// --- The returned order carries the discount + its provenance. ---
 	if order.DiscountKobo != wantDiscount {
 		t.Errorf("returned discount_kobo = %d, want %d (the promo code was dropped)", order.DiscountKobo, wantDiscount)
 	}
@@ -195,7 +190,6 @@ func TestLiveDB_OrderPromoRestaurantFunded(t *testing.T) {
 		t.Errorf("returned promo_funder = %v, want restaurant", order.PromoFunder)
 	}
 
-	// --- Persisted on the order row (all three columns were always 0/NULL before). ---
 	var dbDiscount, dbTotal int64
 	var dbPromoID, dbFunder *string
 	if err := pool.QueryRow(ctx,
@@ -216,7 +210,6 @@ func TestLiveDB_OrderPromoRestaurantFunded(t *testing.T) {
 		t.Errorf("persisted total_kobo = %d, want %d", dbTotal, wantTotal)
 	}
 
-	// --- The customer was actually charged the DISCOUNTED amount, no more. ---
 	var debited int64
 	if err := pool.QueryRow(ctx,
 		`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries WHERE reference=$1 AND type='DEBIT'`,
@@ -241,7 +234,6 @@ func TestLiveDB_OrderPromoRestaurantFunded(t *testing.T) {
 		t.Errorf("escrowed total = %d, want the discounted %d", escrowedTotal, wantTotal)
 	}
 
-	// --- A redemption was recorded: this is what makes usage limits enforceable. ---
 	var redeemedDiscount int64
 	var redeemedUser string
 	if err := pool.QueryRow(ctx,
@@ -253,7 +245,6 @@ func TestLiveDB_OrderPromoRestaurantFunded(t *testing.T) {
 		t.Errorf("redemption = (%d, %s), want (%d, %s)", redeemedDiscount, redeemedUser, wantDiscount, f.customer)
 	}
 
-	// --- Settlement: the RESTAURANT funds the discount; platform + rider are unaffected. ---
 	deliverWithRider(t, ctx, f, order.ID)
 
 	wantPlatform := int64(float64(gross) * splitPlatformPct)
@@ -783,7 +774,6 @@ func TestLiveDB_OrderPromoUsageLimitHoldsUnderConcurrency(t *testing.T) {
 
 // TestLiveDB_PromoReservationSerializesUnderContention races the critical section
 // DIRECTLY, with nothing in front of it.
-//
 // This exists because the end-to-end PlaceOrder race is NOT a sufficient guard: the work
 // before the reservation (restaurant lookup, menu reads, delivery pricing) staggers the
 // goroutines enough that they stop genuinely overlapping, and the test then passes even
@@ -804,7 +794,6 @@ func TestLiveDB_PromoReservationSerializesUnderContention(t *testing.T) {
 	// Simulate a concurrent redeemer that is mid-reservation, deterministically — two
 	// goroutines racing does NOT work here: on a fast local DB they reliably fail to
 	// overlap, and such a test passes even with the lock removed (verified).
-	//
 	// FOR KEY SHARE is precisely the lock a redemption INSERT takes on its parent promo
 	// row via the foreign key, so this holder is exactly what a concurrent reservation
 	// looks like from the DB's point of view. Getting this right matters: a FOR UPDATE

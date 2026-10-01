@@ -6,10 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/referrals"
 	"spotlight/backend/internal/finance/tiers"
@@ -101,7 +105,6 @@ func (s *Service) WithReferralEmitter(e ReferralEmitter) *Service {
 
 // billMarginKobo is the platform margin (kobo) attributed to a settled bill for
 // referral-reward purposes.
-//
 // CALIBRATION POINT (PRD §7.1 margin source): Maplerad bills in v1 post NO ledger
 // hold and the domain computes NO explicit bill fee/commission/markup — the only
 // fee schedule the module exposes is TransferFee (the banded money-movement fee).
@@ -121,8 +124,6 @@ func (s *Service) gateConfigured() error {
 	return nil
 }
 
-// ── KYC-tier gate (fail-closed, BEFORE any adapter call) ─────────────────────
-
 func (s *Service) requireTier(ctx context.Context, userID string, min tiers.Tier) error {
 	t, err := s.tiers.GetUserTier(ctx, userID)
 	if err != nil {
@@ -134,8 +135,6 @@ func (s *Service) requireTier(ctx context.Context, userID string, min tiers.Tier
 	}
 	return nil
 }
-
-// ── EnsureCustomer ───────────────────────────────────────────────────────────
 
 // EnsureCustomer maps a Paymax user to a Maplerad customer, idempotently. The
 // KYC-tier gate runs BEFORE the adapter call; BVN/NIN are forwarded to Identity
@@ -201,8 +200,6 @@ func (s *Service) loadKYC(ctx context.Context, userID string) (kycRecord, error)
 	return kr, nil
 }
 
-// ── OpenVirtualAccount ───────────────────────────────────────────────────────
-
 // OpenVirtualAccount ensures the provider customer exists, gates on KYC tier,
 // then provisions (idempotently) the collections virtual account via the shared
 // va service with provider=maplerad.
@@ -228,8 +225,6 @@ func (s *Service) OpenVirtualAccount(ctx context.Context, userID string) (*va.Vi
 	s.audit(ctx, "maplerad.va.opened", userID, last4(acct.AccountNumber), 0)
 	return acct, nil
 }
-
-// ── InitiateTransfer ─────────────────────────────────────────────────────────
 
 // InitiateTransfer starts a bank payout via Maplerad. It is a MONEY path:
 //  1. validate (DB-free) + KYC-tier + daily-limit gate (fail-closed),
@@ -379,8 +374,6 @@ func (s *Service) toTransferRecord(row *RefRow, fee int64) *TransferRecord {
 	return tr
 }
 
-// ── applyTransition (the guarded state machine → ledger bridge) ──────────────
-
 // applyTransition is the single funnel for every transfer state change (sync
 // initiate, webhook, orphan sweep). It:
 //   - loads the current status,
@@ -498,8 +491,6 @@ func (s *Service) resolveAccount(ctx context.Context, userID string, at ledger.A
 	return acc.ID, nil
 }
 
-// ── PurchaseBill ─────────────────────────────────────────────────────────────
-
 // PurchaseBill submits a bill purchase, idempotent on the client reference via a
 // provider_reference op_type 'bill'. The sync return is PENDING; the bill webhook
 // is authoritative for the terminal state.
@@ -553,8 +544,6 @@ func (s *Service) PurchaseBill(ctx context.Context, userID string, req provider.
 	s.audit(ctx, "maplerad.bill.initiated", userID, req.Ref, req.AmountKobo)
 	return &BillResult{Ref: req.Ref, ProviderRef: bill.ProviderRef, Type: bill.Type, Status: StatusPending, AmountKobo: req.AmountKobo}, nil
 }
-
-// ── HandleWebhookEvent (dedupe + dispatch) ───────────────────────────────────
 
 // HandleWebhookEvent is the settlement backbone: dedupe by event id, then
 // dispatch. Exactly one delivery of a (provider, event_id) processes; every
@@ -734,14 +723,12 @@ func (s *Service) resolveBill(ctx context.Context, ev *provider.WebhookEvent) er
 	}
 	s.audit(ctx, "maplerad.bill.resolved", row.UserID, ref, row.AmountKobo)
 
-	// ── Direct Referral Rewards emit (PRD §2.5/§7.1) — POST-COMMIT, best-effort ──
 	// The bill's terminal state is now committed. Only a SUCCESSFUL settlement is a
 	// revenue-bearing purchase; a FAILED bill posts no reward. We emit SYNCHRONOUSLY
 	// here (right after the settle commits) with MarginKobo from billMarginKobo (see
 	// the calibration note on that function). The engine is idempotent on the bill
 	// reference (TransactionID), so a redelivered webhook is safe; the error is
 	// swallowed so the referral engine can never fail bill reconciliation.
-	//
 	// LEDGER-AUDITOR NOTE: (1) MarginKobo is a PROXY (billMarginKobo → TransferFee),
 	// not a true per-bill platform margin — recalibrate when a real bill-margin field
 	// exists. (2) Maplerad bills v1 have NO reversal/refund state (a settled bill is
@@ -765,8 +752,6 @@ func (s *Service) resolveBill(ctx context.Context, ev *provider.WebhookEvent) er
 	}
 	return nil
 }
-
-// ── Reconciliation + orphan sweep (jobs) ─────────────────────────────────────
 
 // ReconcileWallets compares each user's internal derived balance against the
 // provider custody balance. Any drift is quarantined in reconciliation_drift +
@@ -839,4 +824,413 @@ func (s *Service) SweepOrphans(ctx context.Context, ttl time.Duration) error {
 // It never logs PII (BVN/NIN/full account numbers).
 func (s *Service) audit(_ context.Context, event, userID, ref string, amountKobo int64) {
 	log.Printf("audit maplerad event=%s user=%s ref=%s amount_kobo=%d", event, userID, ref, amountKobo)
+}
+
+// Background reconciliation jobs (ADR-012 reconciliation.md). Both follow the
+// goroutine+ticker pattern used by orchestration/monitor.go: they run on an
+// interval and stop when ctx is cancelled. All work is idempotent (drift is
+// quarantined, never auto-corrected; orphan transitions go through the guard).
+
+// StartReconcile runs daily full reconciliation of internal derived balances vs
+// Maplerad custody balances. Drift → quarantine + alert (never auto-correct).
+func StartReconcile(ctx context.Context, svc *Service, interval time.Duration) {
+	if interval <= 0 {
+		interval = 24 * time.Hour
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := svc.ReconcileWallets(ctx); err != nil {
+					log.Printf("maplerad: reconcile job: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+// StartOrphanSweep periodically finds PENDING transfers with no terminal webhook
+// past the TTL and re-queries/transitions them. The TTL equals the sweep
+// interval here (a PENDING op older than one interval is an orphan candidate).
+func StartOrphanSweep(ctx context.Context, svc *Service, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	ttl := interval
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := svc.SweepOrphans(ctx, ttl); err != nil {
+					log.Printf("maplerad: orphan sweep job: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+// Pure webhook-pipeline + reconciliation decision logic (no DB, no network).
+// The handler/service apply these decisions; keeping them pure makes the
+// dedupe rule, dispatch routing, and drift policy independently unit-testable.
+
+// EventKind classifies a parsed Maplerad webhook into the v1 dispatch buckets.
+type EventKind string
+
+const (
+	EventVACredit        EventKind = "va_credit"         // inbound collection → ledger CREDIT
+	EventTransferSuccess EventKind = "transfer_success"  // → state machine SUCCESS
+	EventTransferFailed  EventKind = "transfer_failed"   // → state machine FAILED
+	EventTransferReverse EventKind = "transfer_reversed" // → state machine REVERSED
+	EventBillResult      EventKind = "bill_result"       // → bill resolution
+	EventUnknown         EventKind = "unknown"           // stored + logged, never dropped
+)
+
+// ClassifyEvent maps a raw provider event-type string to an EventKind. Unknown
+// types resolve to EventUnknown (the handler stores + logs them, never crashes).
+func ClassifyEvent(eventType string) EventKind {
+	switch eventType {
+	case "collection.successful", "collection.success", "virtual_account.credit", "transfer.received":
+		return EventVACredit
+	case "transfer.successful", "transfer.success", "payout.successful":
+		return EventTransferSuccess
+	case "transfer.failed", "payout.failed":
+		return EventTransferFailed
+	case "transfer.reversed", "payout.reversed", "transfer.refunded":
+		return EventTransferReverse
+	case "bill.successful", "bill.failed", "bill.result", "bill.completed":
+		return EventBillResult
+	default:
+		return EventUnknown
+	}
+}
+
+// DedupeDecision is the pure outcome of the dedupe step. The handler INSERTs
+// into webhook_event ON CONFLICT DO NOTHING; rowsInserted reports whether this
+// delivery was new (1) or a redelivery (0).
+type DedupeDecision struct {
+	// Process is true only for a first-seen event (rowsInserted == 1).
+	Process bool
+	// AckNoOp is true for a redelivery — ACK 200 with no ledger effect.
+	AckNoOp bool
+}
+
+// DecideDedupe turns the INSERT … ON CONFLICT row count into a process/ack
+// decision. Exactly one delivery of a given (provider,event_id) processes;
+// every redelivery is a benign ACK no-op.
+func DecideDedupe(rowsInserted int64) DedupeDecision {
+	if rowsInserted >= 1 {
+		return DedupeDecision{Process: true}
+	}
+	return DedupeDecision{AckNoOp: true}
+}
+
+// DriftDecision is the pure outcome of comparing an internal derived balance to
+// the provider custody balance for one wallet.
+type DriftDecision struct {
+	// InSync is true when the two balances match (no drift, no alert).
+	InSync bool
+	// DiffKobo is provider − internal (signed). Quarantined as-is; never used to
+	// auto-correct — resolution is always a human-reviewed compensating entry.
+	DiffKobo int64
+	// Quarantine is true when drift is detected and must be recorded + alerted.
+	Quarantine bool
+}
+
+// DetectDrift compares internal (ledger-derived) vs provider (custody) balances.
+// Equal → in sync, no alert. Any difference → quarantine + alert, NEVER an
+// automatic correction. Pure + unit-tested.
+func DetectDrift(internalKobo, providerKobo int64) DriftDecision {
+	diff := providerKobo - internalKobo
+	if diff == 0 {
+		return DriftDecision{InSync: true}
+	}
+	return DriftDecision{DiffKobo: diff, Quarantine: true}
+}
+
+// LegKind tags how a planned leg is posted to the ledger so the service can
+// dispatch to the right ledger primitive (balanced journal vs reversal pair).
+type LegKind string
+
+const (
+	// LegJournal — a balanced DR/CR posted via ledger.PostJournal.
+	LegJournal LegKind = "journal"
+	// LegReversalPair — a REVERSAL_DEBIT/REVERSAL_CREDIT posted via ledger.PostReversal.
+	// RestoreAccount is credited back (+balance); ReleaseAccount has its hold drained.
+	LegReversalPair LegKind = "reversal"
+)
+
+// PlannedLeg is one ledger posting the money path must apply for a transition.
+// It is a pure description — no DB. The service resolves the named standing/
+// user accounts to IDs and calls the matching ledger primitive.
+type PlannedLeg struct {
+	Kind           LegKind
+	AmountKobo     int64
+	IdempotencyKey string
+	// For LegJournal: debit + credit account types.
+	DebitAccount  ledger.AccountType
+	CreditAccount ledger.AccountType
+	// For LegReversalPair: which account is restored vs drained.
+	RestoreAccount ledger.AccountType
+	ReleaseAccount ledger.AccountType
+	// IsUserWallet flags that DebitAccount / RestoreAccount refers to the user's
+	// wallet (resolved per-user) rather than a standing account.
+	DebitIsUserWallet   bool
+	RestoreIsUserWallet bool
+}
+
+// PlanHold returns the single leg for INITIATED→PENDING:
+//
+//	DR user_wallet (amount+fee) → CR failed_transfer_suspense
+//
+// This reserves the funds (the suspense hold). amountKobo MUST already include
+// the fee — the caller computes total = amount + fee.
+func PlanHold(ref string, totalKobo int64) []PlannedLeg {
+	return []PlannedLeg{{
+		Kind:              LegJournal,
+		AmountKobo:        totalKobo,
+		IdempotencyKey:    LegKey(ref, LegHold),
+		DebitAccount:      ledger.AccountUserWallet,
+		DebitIsUserWallet: true,
+		CreditAccount:     ledger.AccountFailedTransferSusp,
+	}}
+}
+
+// PlanFinalize returns the legs for PENDING→SUCCESS:
+//
+//	DR suspense(amount) → CR settlement                 (money has left the building)
+//	DR suspense(fee)    → CR paymax_revenue   (fee recognition, only when fee > 0)
+//
+// The held total (amount+fee) is swept out of suspense exactly once, split
+// between settlement and revenue. Each leg has a distinct idempotency key.
+func PlanFinalize(ref string, amountKobo, feeKobo int64) []PlannedLeg {
+	legs := []PlannedLeg{{
+		Kind:           LegJournal,
+		AmountKobo:     amountKobo,
+		IdempotencyKey: LegKey(ref, LegSettle),
+		DebitAccount:   ledger.AccountFailedTransferSusp,
+		CreditAccount:  ledger.AccountSettlement,
+	}}
+	if feeKobo > 0 {
+		legs = append(legs, PlannedLeg{
+			Kind:           LegJournal,
+			AmountKobo:     feeKobo,
+			IdempotencyKey: LegKey(ref, LegFee),
+			DebitAccount:   ledger.AccountFailedTransferSusp,
+			CreditAccount:  ledger.AccountPaymaxRevenue,
+		})
+	}
+	return legs
+}
+
+// PlanReverseHold returns the leg for PENDING→FAILED:
+//
+//	REVERSAL: restore user_wallet (+amount+fee), drain failed_transfer_suspense
+//
+// The full held total returns to the user. This is the exact inverse of PlanHold.
+func PlanReverseHold(ref string, totalKobo int64) []PlannedLeg {
+	return []PlannedLeg{{
+		Kind:                LegReversalPair,
+		AmountKobo:          totalKobo,
+		IdempotencyKey:      LegKey(ref, LegReversal),
+		RestoreAccount:      ledger.AccountUserWallet,
+		RestoreIsUserWallet: true,
+		ReleaseAccount:      ledger.AccountFailedTransferSusp,
+	}}
+}
+
+// PlanCompensate returns the leg for PENDING→REVERSED (a debit that had already
+// settled out is compensated): restore the user_wallet (+amount+fee) and drain
+// the settlement account. Compensating entry, append-only — never a balance edit.
+func PlanCompensate(ref string, totalKobo int64) []PlannedLeg {
+	return []PlannedLeg{{
+		Kind:                LegReversalPair,
+		AmountKobo:          totalKobo,
+		IdempotencyKey:      LegKey(ref, LegCompensate),
+		RestoreAccount:      ledger.AccountUserWallet,
+		RestoreIsUserWallet: true,
+		ReleaseAccount:      ledger.AccountSettlement,
+	}}
+}
+
+// NetEffectKobo computes the net change to a user's available wallet balance
+// implied by a sequence of planned legs, for invariant testing. A hold debits
+// the wallet (-total); a reverse-hold / compensate restores it (+total);
+// finalize touches only standing accounts (0 wallet effect). Pure.
+func NetEffectKobo(legs []PlannedLeg) int64 {
+	var net int64
+	for _, l := range legs {
+		switch l.Kind {
+		case LegJournal:
+			if l.DebitIsUserWallet {
+				net -= l.AmountKobo
+			}
+		case LegReversalPair:
+			if l.RestoreIsUserWallet {
+				net += l.AmountKobo
+			}
+		}
+	}
+	return net
+}
+
+// Handler exposes the member-facing Maplerad money-path endpoints. Every op
+// derives the caller's user id from the auth context (set by RequireAuthContext /
+// requireUserID) — never from the request body — enforcing object-level authz.
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler builds the Maplerad member handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// errMap maps domain errors to HTTP status codes (model.go documents each).
+var errMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusForbidden, ErrTierTooLow, ErrForbidden),
+	httperr.R(http.StatusServiceUnavailable, ErrProviderUnavailable),
+	httperr.R(http.StatusBadRequest, ErrMissingRef, ErrInvalidAmount),
+	httperr.R(http.StatusUnprocessableEntity, ledger.ErrInsufficientFunds),
+	httperr.R(http.StatusNotFound, ErrInvalidAccount, ErrNotFound),
+	httperr.R(http.StatusConflict, ErrIllegalTransition),
+)
+
+func writeErr(c *gin.Context, err error) {
+	body := gin.H{"error": err.Error()}
+	switch {
+	case errors.Is(err, ErrTierTooLow):
+		body["code"] = "tier_required"
+	case errors.Is(err, ledger.ErrInsufficientFunds):
+		body["code"] = "insufficient_funds"
+	}
+	c.JSON(errMap.Code(err), body)
+}
+
+// CreateCustomer handles POST /api/finance/maplerad/customer
+func (h *Handler) CreateCustomer(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	cust, err := h.svc.EnsureCustomer(c.Request.Context(), userID)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"customer_id": cust.CustomerID, "status": cust.Status})
+}
+
+// OpenVirtualAccount handles POST /api/finance/maplerad/virtual-account
+func (h *Handler) OpenVirtualAccount(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	acct, err := h.svc.OpenVirtualAccount(c.Request.Context(), userID)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, acct)
+}
+
+// transferRequestBody is the JSON shape for POST /transfers.
+type transferRequestBody struct {
+	BankCode      string `json:"bank_code"`
+	AccountNumber string `json:"account_number"`
+	AmountKobo    int64  `json:"amount_kobo"`
+	Narration     string `json:"narration"`
+	Ref           string `json:"ref"`
+}
+
+// InitiateTransfer handles POST /api/finance/maplerad/transfers. The
+// Idempotency-Key header is the client reference (ref); a body ref is a
+// fallback. The ref is the ledger posting key + provider_reference id.
+func (h *Handler) InitiateTransfer(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	var body transferRequestBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	ref := body.Ref
+	if k := ginutil.IdempotencyKey(c); k != "" {
+		ref = k // header Idempotency-Key wins (it IS the ref).
+	}
+	rec, err := h.svc.InitiateTransfer(c.Request.Context(), userID, TransferRequest{
+		BankCode:      body.BankCode,
+		AccountNumber: body.AccountNumber,
+		AmountKobo:    body.AmountKobo,
+		Narration:     body.Narration,
+		Ref:           ref,
+	})
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, rec) // 202: PENDING, terminal via webhook
+}
+
+// GetTransfer handles GET /api/finance/maplerad/transfers/:ref
+func (h *Handler) GetTransfer(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	rec, err := h.svc.GetTransfer(c.Request.Context(), userID, c.Param("ref"))
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, rec)
+}
+
+// billRequestBody is the JSON shape for POST /bills.
+type billRequestBody struct {
+	Ref        string            `json:"ref"`
+	Type       string            `json:"type"`
+	AmountKobo int64             `json:"amount_kobo"`
+	Params     map[string]string `json:"params"`
+}
+
+// PurchaseBill handles POST /api/finance/maplerad/bills
+func (h *Handler) PurchaseBill(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	var body billRequestBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	ref := body.Ref
+	if k := ginutil.IdempotencyKey(c); k != "" {
+		ref = k
+	}
+	res, err := h.svc.PurchaseBill(c.Request.Context(), userID, provider.BillRequest{
+		Ref:        ref,
+		Type:       body.Type,
+		AmountKobo: body.AmountKobo,
+		Params:     body.Params,
+	})
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, res)
 }

@@ -14,7 +14,6 @@ import (
 	"spotlight/backend/internal/academy/credentials"
 	"spotlight/backend/internal/academy/curriculum"
 	"spotlight/backend/internal/academy/edupay"
-	"spotlight/backend/internal/academy/tuition"
 	"spotlight/backend/internal/academy/exam"
 	feesadminapi "spotlight/backend/internal/academy/fees/adminapi"
 	feescompetition "spotlight/backend/internal/academy/fees/competition"
@@ -43,6 +42,7 @@ import (
 	"spotlight/backend/internal/academy/rewards"
 	"spotlight/backend/internal/academy/schools"
 	"spotlight/backend/internal/academy/trade"
+	"spotlight/backend/internal/academy/tuition"
 	"spotlight/backend/internal/academy/tutor"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
@@ -102,7 +102,6 @@ func (g academyApprovalGate) Authorize(ctx context.Context, userID, orderID stri
 // wallet ledger funds reward credits (no shadow ledger); RBAC academy.* gates
 // staff actions; the payments/BNPL rails are injected into commerce (stubs in
 // dev). Sub-packages own their guarded state machines + idempotent money paths.
-//
 // Member base (authenticated finance group):
 //   - identity/curriculum/commerce embed "/academy" in their own subpaths → base = finance.
 //   - gamification/rewards/assessment/exam use bare subpaths → base = finance/academy.
@@ -297,8 +296,6 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 	}
 }
 
-// ── EdTech Fees composition root ─────────────────────────────────────────────────
-//
 // registerAcademyFees constructs + registers every fees/* handler. Packages that
 // take (member, admin, pool, rbac) self-gate their admin routes; packages that take
 // an assembled *Service (vault/payment/scholarship/trustscore/competition) get their
@@ -315,7 +312,6 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 		return middleware.RequirePermission(rbac, permission)
 	}
 
-	// ── Group A: self-contained (member, admin, pool, rbac) — self-gate admin routes ──
 	feesschool.RegisterFeesSchool(member, admin, pool, rbac)        // /schools, admin verify (academy.fees.school.verify)
 	feessession.RegisterFeesSession(member, admin, pool, rbac)      // /schools/:schoolId/sessions|classes
 	feesschedule.RegisterFeesFeeSchedule(member, admin, pool, rbac) // /fee-schedules (SF-1 immutability)
@@ -337,8 +333,6 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	// It reserves RBAC to the caller, so gate the whole group here.
 	exportAdmin := admin.Group("", guard("academy.fees.export.run"))
 	feesexport.RegisterFeesExport(exportAdmin, pool, rbac)
-
-	// ── Group B: assembled Service packages (money / gamification / identity) ──
 
 	// Vault (SF-5): guardian wallet → segregated FeesVault standing account
 	// (AccountEdtechFeesVault). Money via finance/ledger only. Wire only when the
@@ -403,7 +397,6 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 
 }
 
-// ── Fees payment (T3.x) money/invoice adapters ────────────────────────────────────
 // Thin shims over the EXISTING Paymax rails: finance/ledger for the real double-entry
 // money move (guardian wallet → school settlement), fees/invoice.Service for the
 // idempotent invoice-side record (SF-2: record a payment, never write a balance), and
@@ -507,7 +500,6 @@ func (a feesPaymentInvoice) HasAnyPayment(ctx context.Context, invoiceID string)
 	return exists, nil
 }
 
-// ── Inline money/gamification/identity adapters for the fees Group-B services ─────
 // Each adapter is a thin shim over an EXISTING Paymax rail — no new money logic, no
 // shadow ledger. All monetary amounts are integers in minor units (kobo).
 
@@ -543,7 +535,6 @@ func (a feesVaultLedger) TransferVaultToInvoice(ctx context.Context, vaultAccoun
 // there is a single global AccountSettlement standing account (no per-school standing
 // account), so the settlement leg lands there; per-school attribution is carried by
 // the reference + the invoice→fee-schedule→school chain.
-//
 // NOTE: the vault→invoice application records ONLY the settlement account id here; the
 // invoice-side payment append (fees/invoice.Service.RecordPayment) is performed by the
 // vault service using the returned account. If the fees team later exposes a first-class

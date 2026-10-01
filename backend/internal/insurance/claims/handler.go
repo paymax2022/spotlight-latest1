@@ -2,11 +2,11 @@ package claims
 
 import (
 	"errors"
+	"github.com/gin-gonic/gin"
 	"net/http"
+	"spotlight/backend/go-common/ginutil"
 	"strconv"
 	"time"
-
-	"github.com/gin-gonic/gin"
 )
 
 // Handler exposes member + admin claim routes.
@@ -16,8 +16,6 @@ type Handler struct {
 
 // NewHandler constructs the claims handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
-
-func userID(c *gin.Context) string { return c.GetString("user_id") }
 
 // mapErr maps service sentinel errors to HTTP responses.
 func mapErr(c *gin.Context, err error) {
@@ -35,17 +33,14 @@ func mapErr(c *gin.Context, err error) {
 	}
 }
 
-// --- member ---
-
 // SubmitFNOL (member): POST /claims — Idempotency-Key header REQUIRED.
 // body: {policy_id, loss_event_at, claimed_amount_kobo, description, inputs}
 func (h *Handler) SubmitFNOL(c *gin.Context) {
-	uid := userID(c)
-	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+	uid, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
-	idemKey := c.GetHeader("Idempotency-Key")
+	idemKey := ginutil.IdempotencyKey(c)
 	if idemKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
@@ -88,7 +83,7 @@ func (h *Handler) SubmitFNOL(c *gin.Context) {
 func (h *Handler) List(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	cs, err := h.svc.ListClaims(c.Request.Context(), userID(c), limit, offset)
+	cs, err := h.svc.ListClaims(c.Request.Context(), ginutil.UserID(c), limit, offset)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -98,7 +93,7 @@ func (h *Handler) List(c *gin.Context) {
 
 // Get (member): GET /claims/:id
 func (h *Handler) Get(c *gin.Context) {
-	cl, err := h.svc.GetClaim(c.Request.Context(), userID(c), c.Param("id"))
+	cl, err := h.svc.GetClaim(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -118,7 +113,7 @@ func (h *Handler) AddEvidence(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ev, err := h.svc.UploadEvidence(c.Request.Context(), userID(c), c.Param("id"), body.FileName, body.ContentType, body.StorageRef)
+	ev, err := h.svc.UploadEvidence(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.FileName, body.ContentType, body.StorageRef)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -128,15 +123,13 @@ func (h *Handler) AddEvidence(c *gin.Context) {
 
 // ListEvidence (member): GET /claims/:id/evidence
 func (h *Handler) ListEvidence(c *gin.Context) {
-	evs, err := h.svc.ListEvidence(c.Request.Context(), userID(c), c.Param("id"))
+	evs, err := h.svc.ListEvidence(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": evs})
 }
-
-// --- admin ---
 
 // AdminSearch (admin): GET /claims?state=&policy_id=
 func (h *Handler) AdminSearch(c *gin.Context) {
@@ -200,4 +193,32 @@ func (h *Handler) AdminDecision(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": cl})
+}
+
+// Register wires the member + admin claim routes. The aggregator
+// (insurance_claims_routes.go) constructs the handler and the per-route RBAC
+// guards; this keeps the package self-describing about its own surface.
+//   - member (object-level authZ; claimant owns claim):
+//     POST   /claims                  (FNOL — Idempotency-Key REQUIRED)
+//     GET    /claims
+//     GET    /claims/:id
+//     POST   /claims/:id/evidence
+//     GET    /claims/:id/evidence
+//   - admin (per-route RBAC insurance.claim.*):
+//     GET    /claims/:id              (insurance.claim.view)
+//     POST   /claims/:id/decision     (insurance.claim.manage)
+func Register(member *gin.RouterGroup, admin *gin.RouterGroup, h *Handler, guard func(permission string) gin.HandlerFunc) {
+	// Member routes.
+	mc := member.Group("/claims")
+	mc.POST("", h.SubmitFNOL)
+	mc.GET("", h.List)
+	mc.GET("/:id", h.Get)
+	mc.POST("/:id/evidence", h.AddEvidence)
+	mc.GET("/:id/evidence", h.ListEvidence)
+
+	// Admin routes (claim search + decisioning).
+	ac := admin.Group("/claims")
+	ac.GET("", guard("insurance.claim.view"), h.AdminSearch)
+	ac.GET("/:id", guard("insurance.claim.view"), h.AdminGet)
+	ac.POST("/:id/decision", guard("insurance.claim.manage"), h.AdminDecision)
 }

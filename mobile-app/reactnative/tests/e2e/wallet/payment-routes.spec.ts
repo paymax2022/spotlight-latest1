@@ -3,15 +3,11 @@ import { loginAs } from '../helpers/auth';
 import { mockBillsCatalog } from '../helpers/bills';
 import { mockWallet } from '../helpers/wallet';
 
-// ─── Shared setup ────────────────────────────────────────────────────────────
-
 async function setup(page: Parameters<typeof loginAs>[0]) {
   await mockWallet(page);
   await mockBillsCatalog(page);
   await loginAs(page);
 }
-
-// ─── Wallet: Add Money (/wallet/add) ─────────────────────────────────────────
 
 test.describe('Payment routes - Add Money (wallet/add)', () => {
   test.beforeEach(async ({ page }) => { await setup(page); });
@@ -31,7 +27,6 @@ test.describe('Payment routes - Add Money (wallet/add)', () => {
     await page.goto('/wallet/add');
 
     await page.getByText('₦2,500').first().click();
-    // react-native-web renders TextInput without inputmode/type=number, so the
     // old attribute selector matched nothing. Target the amount field by its
     // placeholder instead.
     await expect(page.getByPlaceholder('₦0.00')).toHaveValue(/2500/);
@@ -82,8 +77,6 @@ test.describe('Payment routes - Add Money (wallet/add)', () => {
   });
 });
 
-// ─── Wallet: Send Money (/wallet/send) ───────────────────────────────────────
-
 test.describe('Payment routes - Send Money (wallet/send)', () => {
   test.beforeEach(async ({ page }) => { await setup(page); });
 
@@ -106,8 +99,6 @@ test.describe('Payment routes - Send Money (wallet/send)', () => {
   });
 });
 
-// ─── Wallet: Withdraw (/wallet/withdraw) ─────────────────────────────────────
-
 test.describe('Payment routes - Withdraw (wallet/withdraw)', () => {
   test.beforeEach(async ({ page }) => { await setup(page); });
 
@@ -117,7 +108,6 @@ test.describe('Payment routes - Withdraw (wallet/withdraw)', () => {
     await expect(page.getByText('Withdraw').first()).toBeVisible();
     await expect(page.getByText('Set up a withdrawal request from your wallet balance.')).toBeVisible();
 
-    // Withdraw opens on the beneficiary picker; the bank / account-number form
     // is the 'manual' step behind "New bank account". (There is no
     // 'Save Withdrawal Draft' CTA — primaryLabel() renders '' on the pick step.)
     await expect(page.getByText('Send to Bank')).toBeVisible();
@@ -128,8 +118,6 @@ test.describe('Payment routes - Withdraw (wallet/withdraw)', () => {
     await expect(page.getByPlaceholder('0123456789').first()).toBeVisible();
   });
 });
-
-// ─── Services: Cards & Methods (/services/cards) ─────────────────────────────
 
 test.describe('Payment routes - Cards & Methods (services/cards)', () => {
   test.beforeEach(async ({ page }) => { await setup(page); });
@@ -155,8 +143,6 @@ test.describe('Payment routes - Cards & Methods (services/cards)', () => {
     await expect(page.getByText(/tokenized card storage API/i)).toBeVisible();
   });
 });
-
-// ─── Services: FX Exchange (/services/fx) ────────────────────────────────────
 
 test.describe('Payment routes - FX Exchange (services/fx)', () => {
   test.beforeEach(async ({ page }) => { await setup(page); });

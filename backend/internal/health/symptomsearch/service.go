@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
-)
 
-// ─── Errors (handlers map these to HTTP statuses) ────────────────────────────
+	"github.com/jackc/pgx/v5/pgxpool"
+)
 
 var (
 	ErrNotFound   = errors.New("symptomsearch: not found")
@@ -28,7 +29,6 @@ type Auditor interface {
 // Repo is the persistence port. The production implementation is PgxRepo
 // (repo_pgx.go, pgx pool per the health-module convention); tests use an
 // in-memory fake so no DB is needed.
-//
 // Read-path contract (fail-closed): every method that feeds resolution returns
 // ONLY status=APPROVED taxonomy rows, and LiveSkusForClass returns ONLY active,
 // in-stock SKUs with classification OTC or PHARMACY_ONLY. The service
@@ -94,8 +94,6 @@ const defaultDisclaimer = "These are options for your symptoms, not a diagnosis 
 // memberBasePath is the mounted member prefix (mirrors health_pharmacy_routes).
 const memberBasePath = "/api/finance/health/pharmacy"
 
-// ─── Resolution pipeline (PRD §4) ────────────────────────────────────────────
-
 // ResolveInput is the validated symptom-search request.
 type ResolveInput struct {
 	UserID     string
@@ -106,7 +104,6 @@ type ResolveInput struct {
 }
 
 // Resolve runs term → concept → cluster → rules → tier → class groups.
-//
 //   - Term normalisation: lower/trim/collapse-whitespace; only APPROVED
 //     symptom_terms (all languages) match.
 //   - Rules: all APPROVED rules of every matched cluster are evaluated in
@@ -226,9 +223,52 @@ func (s *Service) Resolve(ctx context.Context, in ResolveInput) (*SymptomSearchR
 		DurationDays: durationDaysByBucket[in.Duration], // 0 when absent
 		TermCount:    len(norm),
 	}
-	rules, err := s.repo.ApprovedRulesForClusters(ctx, clusterIDs)
+	tier, flagged, confirm, suppressed, err := s.evaluateSafetyRules(ctx, clusterIDs, evalCtx, tier)
 	if err != nil {
 		return nil, err
+	}
+
+	result := &SymptomSearchResult{Tier: tier, Clusters: clusterMatches, Disclaimer: disclaimer}
+
+	switch tier {
+	case TierT4:
+		// Emergency: guidance + nearest facility. NO commerce on this surface.
+		result.EscalationCard = emergencyCard(flagged)
+	case TierT3:
+		result.EscalationCard = consultCard(flagged)
+	default:
+		// 4) T1/T2 → therapeutic class groups (suppressed classes are absent)
+		entries, err := s.repo.ClassMapForClusters(ctx, clusterIDs)
+		if err != nil {
+			return nil, err
+		}
+		groups := buildClassGroups(entries, suppressed)
+		if len(groups) == 0 {
+			// Everything suppressed / nothing mapped → consult, never a dead end.
+			result.Tier = TierT3
+			result.EscalationCard = consultCard(append(flagged,
+				"no suitable over-the-counter option for your situation — please speak to a pharmacist"))
+		} else {
+			result.ClassGroups = groups
+			result.PharmacistConfirmationRequired = confirm || result.Tier == TierT2
+			if result.PharmacistConfirmationRequired {
+				result.Tier = maxTier(result.Tier, TierT2)
+			}
+		}
+	}
+
+	s.logEvent(ctx, in, norm, true, result, unmatched)
+	return result, nil
+}
+
+// evaluateSafetyRules runs every APPROVED rule for the matched clusters in
+// priority order — all matching rules apply. Returns the (only ever raised)
+// tier, the user-facing flagged reasons, whether a pharmacist must confirm, and
+// the suppressed class set.
+func (s *Service) evaluateSafetyRules(ctx context.Context, clusterIDs []string, evalCtx *EvalContext, tier Tier) (Tier, []string, bool, map[string]bool, error) {
+	rules, err := s.repo.ApprovedRulesForClusters(ctx, clusterIDs)
+	if err != nil {
+		return tier, nil, false, nil, err
 	}
 	var flagged []string
 	confirm := false
@@ -266,38 +306,7 @@ func (s *Service) Resolve(ctx context.Context, in ResolveInput) (*SymptomSearchR
 			}
 		}
 	}
-
-	result := &SymptomSearchResult{Tier: tier, Clusters: clusterMatches, Disclaimer: disclaimer}
-
-	switch {
-	case tier == TierT4:
-		// Emergency: guidance + nearest facility. NO commerce on this surface.
-		result.EscalationCard = emergencyCard(flagged)
-	case tier == TierT3:
-		result.EscalationCard = consultCard(flagged)
-	default:
-		// 4) T1/T2 → therapeutic class groups (suppressed classes are absent)
-		entries, err := s.repo.ClassMapForClusters(ctx, clusterIDs)
-		if err != nil {
-			return nil, err
-		}
-		groups := buildClassGroups(entries, suppressed)
-		if len(groups) == 0 {
-			// Everything suppressed / nothing mapped → consult, never a dead end.
-			result.Tier = TierT3
-			result.EscalationCard = consultCard(append(flagged,
-				"no suitable over-the-counter option for your situation — please speak to a pharmacist"))
-		} else {
-			result.ClassGroups = groups
-			result.PharmacistConfirmationRequired = confirm || result.Tier == TierT2
-			if result.PharmacistConfirmationRequired {
-				result.Tier = maxTier(result.Tier, TierT2)
-			}
-		}
-	}
-
-	s.logEvent(ctx, in, norm, true, result, unmatched)
-	return result, nil
+	return tier, flagged, confirm, suppressed, nil
 }
 
 // buildClassGroups dedupes by class (best rank wins), drops suppressed classes
@@ -456,8 +465,6 @@ func primaryClusterName(clusters []SymptomClusterMatch) *string {
 	return &n
 }
 
-// ─── Class → live SKUs (query-time stock/region/price) ───────────────────────
-
 // ListClassSkus resolves a therapeutic class to live SKUs. Server-side gates:
 // class must be APPROVED; SKUs must be active + in stock; classification must
 // be OTC or PHARMACY_ONLY (POM/BLOCKED_ONLINE are excluded in SQL and
@@ -534,8 +541,6 @@ func skuAllowedForCohort(sku Sku, who string) bool {
 	return true
 }
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
 // normalizeTerm lowercases, trims and collapses internal whitespace — matching
 // the DB's lower(btrim(term)) lookup index semantics.
 func normalizeTerm(s string) string {
@@ -564,4 +569,204 @@ func sortedKeys(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Safety-metrics read surface (PRD §9 safety KPIs) backing
+// GET /api/health/pharmacy/admin/symptom/metrics (RBAC
+// SymptomSafetyMetrics). Aggregate-safe by construction: counts and
+// percentiles only — never per-user rows, never terms, never PII (NDPR).
+
+// SafetyMetrics mirrors components/schemas/SymptomSafetyMetrics. All map keys
+// are always present (zero-filled) so the admin console renders a stable
+// shape; the nullable KPIs serialise as JSON null when the window is empty.
+type SafetyMetrics struct {
+	// ByState counts review cases created in the last 7 days per state.
+	ByState map[string]int `json:"by_state"`
+	// ByTier counts review cases created in the last 7 days per triage tier.
+	ByTier map[string]int `json:"by_tier"`
+	// OpenOverdue counts currently open cases (SUBMITTED / PHARMACIST_REVIEW /
+	// NEEDS_INFO) whose sla_deadline has passed — any age, not 7d-scoped.
+	OpenOverdue int `json:"open_overdue"`
+	// MedianDecisionSeconds is the median creation→decision latency over cases
+	// decided APPROVED/REJECTED in the last 7 days (decision timestamps from
+	// the evented history). nil ⇒ no decisions in the window.
+	MedianDecisionSeconds *float64 `json:"median_decision_seconds"`
+	// Searches24h counts symptom_search_events rows from the last 24 hours.
+	Searches24h int `json:"searches_24h"`
+	// GatedShare7d is the share (0..1) of searches in the last 7 days that
+	// resolved T2 or higher. nil ⇒ no searches in the window.
+	GatedShare7d *float64 `json:"gated_share_7d"`
+}
+
+// normalize zero-fills every state/tier key — the contract promises all keys
+// are always present regardless of data volume.
+func (m *SafetyMetrics) normalize() {
+	if m.ByState == nil {
+		m.ByState = map[string]int{}
+	}
+	for _, st := range []ReviewState{ReviewSubmitted, ReviewAutoCleared, ReviewPharmacistReview, ReviewNeedsInfo, ReviewApproved, ReviewRejected} {
+		if _, ok := m.ByState[string(st)]; !ok {
+			m.ByState[string(st)] = 0
+		}
+	}
+	if m.ByTier == nil {
+		m.ByTier = map[string]int{}
+	}
+	for _, t := range []Tier{TierT1, TierT2, TierT3, TierT4} {
+		if _, ok := m.ByTier[string(t)]; !ok {
+			m.ByTier[string(t)] = 0
+		}
+	}
+}
+
+// metricsReader is the optional repo port for the KPI read (PgxRepo implements
+// it; in-memory test fakes may seed canned values).
+type metricsReader interface {
+	SafetyMetrics(ctx context.Context) (*SafetyMetrics, error)
+}
+
+// SafetyMetrics is the service read behind the admin metrics endpoint.
+func (s *Service) SafetyMetrics(ctx context.Context) (*SafetyMetrics, error) {
+	mr, ok := s.repo.(metricsReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: safety metrics unavailable", ErrNotFound)
+	}
+	m, err := mr.SafetyMetrics(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if m == nil {
+		m = &SafetyMetrics{}
+	}
+	m.normalize()
+	return m, nil
+}
+
+func (r *PgxRepo) SafetyMetrics(ctx context.Context) (*SafetyMetrics, error) {
+	m := &SafetyMetrics{ByState: map[string]int{}, ByTier: map[string]int{}}
+
+	// Review cases created in the last 7 days, rolled up by (state, tier) in
+	// one pass; both maps are derived from the grouped rows.
+	const qCases = `
+		SELECT state, tier, count(*)
+		FROM pharmacy_review_cases
+		WHERE created_at >= now() - interval '7 days'
+		GROUP BY state, tier`
+	rows, err := r.db.Query(ctx, qCases)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var state, tier string
+		var n int
+		if err := rows.Scan(&state, &tier, &n); err != nil {
+			return nil, err
+		}
+		m.ByState[state] += n
+		m.ByTier[tier] += n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Open cases past SLA — any age (the queue-health number, not a 7d rollup).
+	const qOverdue = `
+		SELECT count(*)
+		FROM pharmacy_review_cases
+		WHERE state IN ('SUBMITTED','PHARMACIST_REVIEW','NEEDS_INFO')
+		  AND sla_deadline < now()`
+	if err := r.db.QueryRow(ctx, qOverdue).Scan(&m.OpenOverdue); err != nil {
+		return nil, err
+	}
+
+	// Median creation→decision latency over decisions of the last 7 days. The
+	// decision timestamp comes from the evented history (the case row's
+	// updated_at can be touched by later writes); percentile_cont returns NULL
+	// on an empty set, which scans into the nil pointer directly.
+	const qMedian = `
+		SELECT percentile_cont(0.5) WITHIN GROUP (
+		         ORDER BY EXTRACT(EPOCH FROM (e.created_at - c.created_at)))
+		FROM pharmacy_review_case_events e
+		JOIN pharmacy_review_cases c ON c.id = e.case_id
+		WHERE e.to_state IN ('APPROVED','REJECTED')
+		  AND e.created_at >= now() - interval '7 days'`
+	if err := r.db.QueryRow(ctx, qMedian).Scan(&m.MedianDecisionSeconds); err != nil {
+		return nil, err
+	}
+
+	// Search volume (24h) + T2+ gated share (7d) in one scan window each.
+	const qSearches = `
+		SELECT
+		  count(*) FILTER (WHERE created_at >= now() - interval '24 hours'),
+		  count(*) FILTER (WHERE resolved_tier IN ('T2','T3','T4')),
+		  count(*)
+		FROM symptom_search_events
+		WHERE created_at >= now() - interval '7 days'`
+	var gated, total int
+	if err := r.db.QueryRow(ctx, qSearches).Scan(&m.Searches24h, &gated, &total); err != nil {
+		return nil, err
+	}
+	if total > 0 {
+		share := float64(gated) / float64(total)
+		m.GatedShare7d = &share
+	}
+	return m, nil
+}
+
+// NDPR retention loop (PRD §5.4): symptom queries are sensitive health data
+// and retention-limited. The purge itself is the SECURITY DEFINER SQL function
+// public.pharmacy_symptom_events_purge(retention_days) (migration
+// 20260830000000_pharmacy_symptom_hardening.sql, service_role-executable
+// only); this loop merely invokes it on a schedule.
+// Scheduling decision: the repo has NO pg_cron (no cron.schedule anywhere in
+// supabase/migrations) and NO asynq periodic scheduler (asynq is used for
+// enqueue/serve only) — the house pattern for periodic work is a background
+// ticker goroutine (orchestration.StartTreasuryMonitor /
+// StartReconScheduler). This mirrors that pattern. Linked rows are never
+// orphaned: pharmacy_orders.search_event_id and
+// pharmacy_review_cases.search_event_id are ON DELETE SET NULL.
+
+// DefaultSearchEventRetentionDays is the NDPR retention default for
+// symptom_search_events (override via SYMPTOM_EVENTS_RETENTION_DAYS).
+const DefaultSearchEventRetentionDays = 180
+
+// StartRetentionPurge runs pharmacy_symptom_events_purge once at startup and
+// then every `every` (default 24h) until ctx is cancelled. Multi-instance
+// safe: the DELETE is idempotent, so concurrent runs are merely redundant.
+func StartRetentionPurge(ctx context.Context, db *pgxpool.Pool, retentionDays int, every time.Duration) {
+	if db == nil {
+		return
+	}
+	if retentionDays <= 0 {
+		retentionDays = DefaultSearchEventRetentionDays
+	}
+	if every <= 0 {
+		every = 24 * time.Hour
+	}
+	run := func() {
+		cctx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		var deleted int
+		if err := db.QueryRow(cctx, `SELECT public.pharmacy_symptom_events_purge($1)`, retentionDays).Scan(&deleted); err != nil {
+			log.Printf("[health.pharmacy.symptom] retention purge failed: %v", err)
+			return
+		}
+		if deleted > 0 {
+			log.Printf("[health.pharmacy.symptom] retention purge: %d symptom_search_events older than %dd removed (NDPR)", deleted, retentionDays)
+		}
+	}
+	go func() {
+		run()
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				run()
+			}
+		}
+	}()
 }

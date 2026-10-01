@@ -1,9 +1,6 @@
 // Pure-logic unit tests for the child-safety spend gate (NDPR / SF-7).
-// Run: npm run test:academy
-//
 // Rule (fail-closed): a MINOR may not purchase or redeem unless guardian consent
 // is 'granted'. Non-minors are never blocked. The bug this pins: the gate only
-// ran `if (USE_MOCK)` (so the live path was fail-OPEN) and the competition redeem
 // had no gate at all.
 
 import { test } from 'node:test';

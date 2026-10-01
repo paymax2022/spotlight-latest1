@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-// ── Config-driven provider selection ─────────────────────────────────────────
-
 func TestDefaultSurfaceConfigRouting(t *testing.T) {
 	cfg := DefaultSurfaceConfig()
 
@@ -100,8 +98,6 @@ func TestCapKey(t *testing.T) {
 	}
 }
 
-// ── In-memory rate limiter ───────────────────────────────────────────────────
-
 func TestMemLimiterFixedWindow(t *testing.T) {
 	l := &memLimiter{store: map[string]*memBucket{}, limit: 2, window: time.Minute}
 	if _, ok := l.allow("u1"); !ok {
@@ -123,8 +119,6 @@ func TestMemLimiterFixedWindow(t *testing.T) {
 		t.Fatal("after window reset the call should pass again")
 	}
 }
-
-// ── Plus Code edge cases ─────────────────────────────────────────────────────
 
 func TestPlusCodeEdgeCases(t *testing.T) {
 	codec := NewPlusCodec()

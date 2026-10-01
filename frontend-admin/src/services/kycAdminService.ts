@@ -15,13 +15,11 @@ import type {
 // KYC verification admin console — service layer.
 // Backend: Go, mounted at /api/finance/admin/kyc (RBAC: finance.admin.kyc).
 // Auth: Bearer localStorage 'spotlight_admin_access_token' (matches fintechService).
-//
 // Backend / flag may not be running — default to deterministic fixtures unless
 // explicitly disabled, so every screen renders. Mirrors transfersAdminService.
 const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_KYC_ADMIN_USE_MOCK);
 
 // Go backend finance admin routes live at /api/finance/admin/... — this used to
-// be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin'), which
 // stopped matching once apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) instead of ending in /api/v1.
 // apiRoot() strips that trailing /api/v1 (if any) and nothing else, so the
@@ -45,8 +43,6 @@ function authHeaders(): Record<string, string> {
 function idempotencyKeyFor(action: string, id: string): string {
   return operationKey('kyc', action, id);
 }
-
-// ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const now = Date.now();
 const iso = (minsAgo: number) => new Date(now - minsAgo * 60_000).toISOString();
@@ -133,8 +129,6 @@ function toReviewItem(session: VerificationSession): KycReviewItem {
   };
 }
 
-// ─── API ─────────────────────────────────────────────────────────────────────
-
 // AK1 — Review queue: sessions/checks currently in NEEDS_REVIEW, prioritized.
 export async function listReviewQueue(): Promise<KycReviewItem[]> {
   if (USE_FIXTURES) {
@@ -193,7 +187,6 @@ export async function rejectCase(id: string, reason: string): Promise<void> {
 }
 
 // Request re-submit — modelled as a reject-with-resubmit intent. Backend contract
-// currently exposes approve/reject; we tag the reason so the state machine can
 // route to a re-submit prompt rather than a hard decline.
 export async function requestResubmit(id: string, reason: string): Promise<void> {
   if (USE_FIXTURES) throw new Error(`Requesting a KYC re-submit ${NOT_IN_FIXTURE_MODE}`);
@@ -208,8 +201,6 @@ export async function requestResubmit(id: string, reason: string): Promise<void>
   if (!res.ok) throw new Error(`KYC re-submit request failed: ${res.status}`);
 }
 
-// AK2 — Access-logged evidence fetch. We deliberately do NOT return raw PII to
-// render inline; hitting the case endpoint records the access in the audit trail
 // (AK13). Returns the (re-fetched) evidence refs so the UI can confirm access.
 export async function fetchEvidenceAccess(id: string, evidenceId: string): Promise<EvidenceRef | null> {
   if (USE_FIXTURES) {

@@ -9,39 +9,29 @@ import (
 	"strings"
 )
 
-// ════════════════════════════════════════════════════════════════════════════
 // MONEY BOUNDARY — naira (provider) ⇄ kobo (Paymax)
-// ════════════════════════════════════════════════════════════════════════════
-//
 // MyCover speaks NAIRA as decimal STRINGS ("6000.0000", "0.5", "10817.0000").
 // Paymax's iron rule is INTEGER KOBO. This file is the ONLY place that crossing
 // happens, and it happens exactly once per value, in EACH direction:
-//
 //	INBOUND   premiums and sums the provider quotes  → NairaToKobo
 //	OUTBOUND  declared values the member submitted   → ConvertMoneyInputsToNaira
-//
 // The outbound half was missing for a long time. MyCover's FORM INPUTS are also
 // naira, but every client submits kobo, and the adapter forwarded the answers
 // verbatim — so a ₦200,000 phone was declared to the insurer as 20,000,000 and
 // priced at ₦1,000,000 instead of ₦10,000 (verified live on the 5%-rated gadget
 // product). Both halves now live here, side by side, so the asymmetry cannot
 // recur unnoticed.
-//
 // Implementation rule: exact decimal arithmetic via math/big (big.Rat / big.Int).
 // A float64 is NEVER used as an intermediate — float64(0.46)*100 is
 // 45.99999999999999 and float64(1.04)*100 is 103.99999999999999, which is
 // precisely the drift that turns a rate table into a money bug.
-//
 // ROUNDING RULE (single rule, applied everywhere in this file):
-//
 //	ROUND HALF-UP (ties away from zero) to the target integer unit.
-//
 // Inputs are non-negative, so "away from zero" == "up". Half-up is chosen over
 // bankers' rounding because it is the rule a human reconciling a premium against
 // MyCover's own displayed figure will apply, and over ceiling because ceiling
 // would systematically over-collect from members. The maximum divergence from
 // the provider on any single premium is 0.5 kobo.
-//
 // FAIL CLOSED: anything that is not a plain non-negative decimal literal is
 // rejected with an error. We never fall back to a guessed amount.
 
@@ -112,7 +102,6 @@ func NairaToKobo(naira string) (int64, error) {
 // RateToBps converts a MyCover percentage rate string (base_price when
 // is_percentage is true, e.g. "0.46" meaning 0.46% of the sum insured) to
 // integer BASIS POINTS, rounding half-up at the basis point.
-//
 // Every rate in the live 68-product catalog is exact at bps precision
 // (0.2500, 0.46, 0.5, 0.65, 0.9, 1, 1.04, 2.15, 2.5, 5, 7 → 25…700 bps), so
 // rounding is a guard against a future rate, not a live lossy path.
@@ -154,7 +143,6 @@ func PremiumFromRateBps(sumInsuredKobo, rateBps int64) int64 {
 // CommissionFromPercent computes a commission slice in kobo from a WHOLE-PERCENT
 // string as it appears in MyCover's sharing_formula (distributor_commission: 10
 // means 10%), rounding half-up at the kobo.
-//
 // An empty or unparseable percent yields 0 — we never guess a revenue figure.
 func CommissionFromPercent(baseKobo int64, percent string) int64 {
 	if baseKobo <= 0 {
@@ -174,14 +162,11 @@ func CommissionFromPercent(baseKobo int64, percent string) int64 {
 	return k.Int64()
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // OUTBOUND: kobo (Paymax) → naira (MyCover form inputs)
-// ════════════════════════════════════════════════════════════════════════════
 
 // KoboToNaira converts an integer kobo amount to the exact naira value MyCover's
 // form fields are denominated in, as a json.Number so it marshals as a BARE JSON
 // number (the provider's `value` is numeric; a quoted string is rejected).
-//
 // Integer arithmetic only — the naira value is built from the quotient and the
 // remainder, never from a division in floating point. 20_000_000 kobo becomes
 // exactly 200000, and 1_250 kobo becomes exactly 12.5.
@@ -208,17 +193,14 @@ func KoboToNaira(kobo int64) json.Number {
 // ConvertMoneyInputsToNaira returns a COPY of the member's schema-validated
 // answers with exactly the given paths converted from kobo to the provider's
 // naira. Everything else travels verbatim.
-//
 // `paths` comes from gateway.MoneyInputPaths over the very schema the client
 // rendered, so the client's ×100 and this ÷100 always apply to the same fields.
 // That symmetry is what makes the schema's name-based `money` heuristic safe: a
 // misclassified field is scaled up and back down and lands on the value the
 // member typed.
-//
 // A COPY is essential. Quote answers are persisted and REPLAYED verbatim at bind
 // time; converting in place would store naira in a kobo column and the bind
 // would divide an already-divided value again.
-//
 // It FAILS CLOSED. A money answer we cannot convert exactly stops the call —
 // forwarding it raw is precisely the defect this function exists to remove.
 func ConvertMoneyInputsToNaira(inputs map[string]any, paths []string) (map[string]any, error) {
@@ -285,7 +267,6 @@ func convertMoneyValue(v any, path string, money map[string]struct{}) (any, erro
 // arrived in. A money answer reaches this adapter as json.Number (a decoder
 // configured with UseNumber), float64 (a map round-tripped through
 // encoding/json), int/int64 (in process) or a decimal string.
-//
 // Every branch resolves through exact decimal arithmetic and every branch
 // requires a WHOLE number of kobo: a fractional kobo is not an amount this
 // system can hold, so it is refused rather than rounded silently.

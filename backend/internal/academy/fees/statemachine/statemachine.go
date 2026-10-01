@@ -1,12 +1,10 @@
 // Package feesstatemachine holds the PURE, dependency-free guard logic for the
 // EdTech School-Fees lifecycles (build-spec §3, invariants SF-1…SF-12).
-//
 // Nothing in this package touches a DB, a gin context, or the ledger. Every
 // machine is a table-driven set of guarded transitions so that illegal states
 // are STRUCTURALLY unreachable and the guards are trivially unit-testable
 // (statemachine_test.go), exactly like the existing academy machines
 // (academy/edupay, academy/assessment, academy/exam).
-//
 // Convention (mirrored from academy/exam/statemachine.go + academy/edupay):
 //   - Each machine defines a `State` string type with snake_case const values
 //     that match the DB CHECK constraint verbatim.

@@ -1,6 +1,5 @@
 package estate
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for PayDuesPaystackFunded / QuoteDuesInvoice
 // (backend/internal/estate/service_dues.go), the externally-funded dues
 // payment path — the estate counterpart of
@@ -9,7 +8,6 @@ package estate
 // service_dues_live_db_test.go's fixtures (estateDuesTestPool,
 // newDuesTestService, seedDuesUser, seedEstate, seedResident, seedInvoice,
 // walletBalance, duesSettlementLegKobo, paymentCount, invoiceStatus).
-//
 // What these pin:
 //  1. A Tier-0 resident — refused by the wallet-funded PayDues — can settle
 //     an invoice via the Paystack-funded path. The tier gate never runs at
@@ -22,7 +20,6 @@ package estate
 //  5. The settlement account is still credited exactly like the wallet-funded
 //     path — externally-funded dues settle into the SAME collection account,
 //     just via a different ledger leg (no wallet debit).
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

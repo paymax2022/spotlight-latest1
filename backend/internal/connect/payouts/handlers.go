@@ -3,6 +3,8 @@ package connectpayouts
 import (
 	"errors"
 	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/timeutil"
 	"strconv"
 	"strings"
 	"time"
@@ -15,9 +17,6 @@ type Handler struct{ svc *Service }
 
 // NewHandler builds a payouts handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
-
-func userID(c *gin.Context) string  { return c.GetString("user_id") }
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
 
 func mapMoneyError(c *gin.Context, err error) {
 	switch {
@@ -44,7 +43,7 @@ func mapMoneyError(c *gin.Context, err error) {
 
 // RequestPayout — POST /api/v1/connect/payouts (member, Idempotency-Key required).
 func (h *Handler) RequestPayout(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -54,7 +53,7 @@ func (h *Handler) RequestPayout(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	p, err := h.svc.Request(c.Request.Context(), uid, idemKey(c), req)
+	p, err := h.svc.Request(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		mapMoneyError(c, err)
 		return
@@ -68,7 +67,7 @@ func (h *Handler) ListPayouts(c *gin.Context) {
 	if v := c.Query("limit"); v != "" {
 		limit, _ = strconv.Atoi(v)
 	}
-	out, err := h.svc.List(c.Request.Context(), userID(c), limit)
+	out, err := h.svc.List(c.Request.Context(), ginutil.UserID(c), limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -165,7 +164,7 @@ func (h *Handler) AdminListPayouts(c *gin.Context) {
 		f.CreatorID = &uid
 	}
 	if v := c.Query("from"); v != "" {
-		t, err := time.Parse(time.RFC3339, v)
+		t, err := timeutil.ParseTime(v)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid from (expect RFC3339)"})
 			return
@@ -173,7 +172,7 @@ func (h *Handler) AdminListPayouts(c *gin.Context) {
 		f.From = &t
 	}
 	if v := c.Query("to"); v != "" {
-		t, err := time.Parse(time.RFC3339, v)
+		t, err := timeutil.ParseTime(v)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid to (expect RFC3339)"})
 			return
@@ -218,7 +217,7 @@ func (h *Handler) AdminSettlePayout(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	p, err := h.svc.AdminSettle(c.Request.Context(), userID(c), c.Param("id"), req.SettlementRef)
+	p, err := h.svc.AdminSettle(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req.SettlementRef)
 	if err != nil {
 		mapAdminError(c, err)
 		return
@@ -239,7 +238,7 @@ func (h *Handler) AdminRejectPayout(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	p, err := h.svc.AdminReject(c.Request.Context(), userID(c), c.Param("id"), req.Reason)
+	p, err := h.svc.AdminReject(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req.Reason)
 	if err != nil {
 		mapAdminError(c, err)
 		return

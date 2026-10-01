@@ -6,9 +6,7 @@ package utilitybills
 // code, and if this port derives the key even slightly differently they stop
 // decrypting — silently, at the first live provider call, with a generic
 // "message authentication failed" that says nothing about why.
-//
 // Two places where a naive Go port WOULD diverge, handled explicitly below:
-//
 //  1. Key derivation is a 3-way guess at what the operator put in
 //     UTILITY_PROVIDER_CREDENTIALS_KEY (64-char hex → base64-of-32-bytes →
 //     sha256-of-the-raw-string). The base64 branch is the trap: Node's
@@ -18,7 +16,6 @@ package utilitybills
 //     happens to decode into exactly 32 bytes takes the base64 branch there and
 //     would take the sha256 branch here — producing a different key and a dead
 //     credential row. nodeBase64Decode below reproduces Node's leniency.
-//
 //  2. Node's crypto splits the GCM auth tag out of the ciphertext
 //     (cipher.getAuthTag()); Go's cipher.AEAD expects ciphertext||tag as one
 //     slice. The envelope's `tag` field is therefore appended on decrypt and
@@ -87,7 +84,6 @@ func isHex64(raw string) bool {
 
 // nodeBase64Decode reproduces Node's Buffer.from(s, 'base64') decoding, which is
 // deliberately forgiving where Go's encoding/base64 is strict:
-//
 //   - characters outside the base64 alphabet (including '=', whitespace and
 //     punctuation) are SKIPPED rather than treated as an error;
 //   - the URL-safe alphabet is accepted in the same pass ('-' → '+', '_' → '/');
@@ -152,7 +148,6 @@ func nodeBase64Decode(raw string) []byte {
 // hashed with sha256. The ambiguity is inherited from the TS source and MUST be
 // preserved — an existing deployment's key could be any of the three shapes, and
 // only reproducing the same order picks the same 32 bytes it did.
-//
 // Takes the key material as an argument rather than reading os.Getenv, so it is
 // unit-testable with zero environment coupling (the env read happens once at
 // wiring time — see app/utilitybills_routes.go).

@@ -189,8 +189,6 @@ func TestRequireAuthContext_ValidTokenProceedsWithAuthenticatedUserInContext(t *
 	}
 }
 
-// ── platform_users status gate (rbac.GetUserStatus) ─────────────────────
-//
 // Discovery note: GetUserStatus is said to default to "pending" on a missing
 // row. Pinning the middleware's ACTUAL reaction to each status value, not
 // asserting what it "should" do.

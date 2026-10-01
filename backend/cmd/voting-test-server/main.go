@@ -6,8 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
-	connectvoting "spotlight/backend/internal/connect/voting"
 	"spotlight/backend/internal/config"
+	connectvoting "spotlight/backend/internal/connect/voting"
 )
 
 func main() {
@@ -17,8 +17,8 @@ func main() {
 	// Health check (no DB needed)
 	r.GET("/api/v1/connect/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
-			"module": "connect-voting",
-			"status": "ok",
+			"module":  "connect-voting",
+			"status":  "ok",
 			"message": "Voting test server running",
 		})
 	})

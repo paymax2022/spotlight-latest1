@@ -8,11 +8,11 @@ import * as Icons from 'lucide-react-native';
 import SearchBar from '@/components/SearchBar';
 import { BILL_CATEGORIES } from '@/data/billPayment';
 import { useBillerStore } from '@/features/services/billerStore';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1, shadow2 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1, shadow2 } from '@/constants/tokens';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import { RemoteBanner } from '@/features/media/banners';
 

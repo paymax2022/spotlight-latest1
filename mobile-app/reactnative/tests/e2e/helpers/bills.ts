@@ -379,7 +379,6 @@ export async function mockTransactions(page: Page) {
     },
     // Terminal-failure + in-flight rows for the retry/polling states. The detail
     // screen reads via Supabase (getTransactionById → rest/v1/utility_transactions),
-    // NOT the REST transactions route, so a row has to exist here or `.single()`
     // resolves to nothing and the screen falls back to empty defaults.
     'tx-provider-failed': {
       transactionId: 'tx-provider-failed',

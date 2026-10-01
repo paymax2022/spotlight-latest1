@@ -7,7 +7,6 @@ import { appendAuditLog } from '@/src/server/voting/audit.service';
 // leaderboard / vote count / rank independently of the contest-level flags.
 // The active phase is set via voting_settings.active_phase_key (settings route).
 
-// GET /api/admin/voting/phases?contestId=...
 export async function GET(request: Request) {
   try {
     await assertAdminPermission(request, 'votes:manage');
@@ -75,7 +74,6 @@ export async function POST(request: Request) {
   }
 }
 
-// DELETE /api/admin/voting/phases?contestId=...&phaseKey=...
 export async function DELETE(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');

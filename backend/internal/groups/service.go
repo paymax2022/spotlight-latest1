@@ -4,11 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
-
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
+	"strconv"
+	"time"
 )
 
 // ErrTierGateUnwired is returned by PayDues when the Service was constructed
@@ -206,4 +211,154 @@ func (s *Service) assertRole(ctx context.Context, groupID, userID string, allowe
 		}
 	}
 	return fmt.Errorf("groups: insufficient role — need %v, have %s", allowed, role)
+}
+
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+func (h *Handler) Create(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req CreateGroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	g, err := h.svc.Create(c.Request.Context(), userID, req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, g)
+}
+
+func (h *Handler) List(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	groups, err := h.svc.List(c.Request.Context(), userID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": groups})
+}
+
+func (h *Handler) Get(c *gin.Context) {
+	g, err := h.svc.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+		return
+	}
+	c.JSON(http.StatusOK, g)
+}
+
+func (h *Handler) Invite(c *gin.Context) {
+	inviterID := ginutil.UserID(c)
+	var body struct {
+		UserID string `json:"user_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.Invite(c.Request.Context(), c.Param("id"), inviterID, body.UserID); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (h *Handler) PayDues(c *gin.Context) {
+	memberID := ginutil.UserID(c)
+	var req PayDuesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	payment, err := h.svc.PayDues(c.Request.Context(), c.Param("id"), memberID, req)
+	if err != nil {
+		c.JSON(payDuesErrMap.Code(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, payment)
+}
+
+// payDuesErrMap maps PayDues' fail-closed tier-gate refusals to their HTTP
+// status, mirroring restaurant's escrowErrStatus for the same errors.
+var payDuesErrMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
+	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
+)
+
+// Group is the core entity — a community with its own wallet and subscription plan.
+type Group struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	CreatedBy   string    `json:"created_by"`
+	AvatarURL   *string   `json:"avatar_url,omitempty"`
+	IsPublic    bool      `json:"is_public"`
+	MemberCount int       `json:"member_count"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// MemberRole is a member's role within the group.
+type MemberRole string
+
+const (
+	RoleOwner  MemberRole = "owner"
+	RoleAdmin  MemberRole = "admin"
+	RoleMember MemberRole = "member"
+)
+
+// Member is a user's membership in a group.
+type Member struct {
+	ID       string     `json:"id"`
+	GroupID  string     `json:"group_id"`
+	UserID   string     `json:"user_id"`
+	Role     MemberRole `json:"role"`
+	JoinedAt time.Time  `json:"joined_at"`
+}
+
+// SubscriptionPlan is the dues configuration for a group.
+type SubscriptionPlan struct {
+	ID         string    `json:"id"`
+	GroupID    string    `json:"group_id"`
+	Name       string    `json:"name"`
+	AmountKobo int64     `json:"amount_kobo"`
+	Frequency  string    `json:"frequency"` // monthly | quarterly | annually | one_time
+	DueDay     int       `json:"due_day"`   // day of month dues are due
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// SubscriptionPayment is one member's dues payment.
+type SubscriptionPayment struct {
+	ID             string    `json:"id"`
+	GroupID        string    `json:"group_id"`
+	MemberID       string    `json:"member_id"`
+	PlanID         string    `json:"plan_id"`
+	AmountKobo     int64     `json:"amount_kobo"`
+	Status         string    `json:"status"` // paid | pending | overdue
+	PeriodStart    time.Time `json:"period_start"`
+	PeriodEnd      time.Time `json:"period_end"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// CreateGroupRequest is the body for POST /groups.
+type CreateGroupRequest struct {
+	Name        string  `json:"name" binding:"required,min=2,max=100"`
+	Description string  `json:"description"`
+	IsPublic    bool    `json:"is_public"`
+	AvatarURL   *string `json:"avatar_url,omitempty"`
+}
+
+// PayDuesRequest is the body for POST /groups/:id/dues.
+type PayDuesRequest struct {
+	PlanID         string `json:"plan_id" binding:"required"`
+	IdempotencyKey string `json:"idempotency_key" binding:"required"`
 }

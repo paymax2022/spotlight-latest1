@@ -13,8 +13,6 @@ import (
 // Money paths keep the ledger-derived-balance + escrow invariants (NL-1/2/8) and
 // require an Idempotency-Key at the handler boundary (NL-9).
 
-// ───────────────────────── Vault reads / early withdraw ─────────────────────────
-
 // GetVault returns a single vault with its derived balance. Object-level authZ:
 // only the owner may read it.
 func (s *VaultService) GetVault(ctx context.Context, ownerID, vaultID string) (*Vault, int64, error) {
@@ -150,8 +148,6 @@ func (s *VaultService) BuildSummary(ctx context.Context, ownerID string, ajo *Aj
 	return sum, nil
 }
 
-// ───────────────────────── Circle reads / contribute ─────────────────────────
-
 // CircleView is a circle plus the caller's membership context, for list rows.
 type CircleView struct {
 	Circle
@@ -270,8 +266,6 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 		map[string]any{"cycle": cy.CycleNumber, "amount_kobo": c.ContributionKobo})
 	return nil
 }
-
-// ───────────────────────── Target reads ─────────────────────────
 
 // TargetView is a group target plus the caller's context for list rows.
 type TargetView struct {

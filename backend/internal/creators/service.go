@@ -1,20 +1,33 @@
+// Package creators is the Phase-3 creator monetisation module: a creator
+// capability + storefront, a tip jar (via cashtag/wallet), paid-content gating with
+// entitlements, recurring subscription tiers (via the shared scheduler), a creator
+// earnings ledger + KYC-gated payout, plus content moderation + age controls.
+// INVARIANTS:
+//   - NL-5 perks-not-returns: creator income delivers content/perks, NEVER a
+//     financial return or revenue share. There is NO yield, NO dividend, NO
+//     investor share anywhere in this package — only payment-for-content/access.
+//   - NL-8 ledger / NL-9 idempotent: every money move reuses the finance ledger and
+//     is idempotent (tip, subscription charge, payout).
+//   - NL-10 AML: payouts are KYC-gated.
+//   - NL-11 content + age: content is moderation-gated and age-rated; gated content
+//     is never served to under-age viewers and controls are never weakened.
+//   - NL-12 audit + object-level authZ: a creator owns their storefront/content.
+
 package creators
 
 import (
 	"context"
 	"fmt"
-	"log"
-	"time"
-
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
+	"log"
 	"spotlight/backend/internal/cashtag"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/scheduler"
+	"time"
 )
 
 // JobTypeSubscriptionCharge is the scheduler handler key for recurring subscription
@@ -69,7 +82,6 @@ func NewService(db *pgxpool.Pool, led *ledger.Service, wal *wallet.Service, tags
 // creators never imports the commission package at compile time (mirrors transport's
 // CommissionRecorder seam) — the adapter, which lives in app-wiring, discards the
 // returned earning row and surfaces only the error.
-//
 // This records realized profit ONLY; it never moves money. Creators' own money
 // movements (creditCreator: wallet debit → creator credit → fee to Paymax revenue)
 // are unchanged, and the injected recorder is deliberately constructed WITHOUT a
@@ -102,8 +114,6 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 		log.Printf("[creators] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
 	}
 }
-
-// ───────────────────────── Creator capability + storefront ─────────────────────
 
 // Apply creates a PENDING creator profile (object-level: the caller is the creator).
 func (s *Service) Apply(ctx context.Context, userID, displayName, bio, handle string) (*Profile, error) {
@@ -196,8 +206,6 @@ func (s *Service) requireApproved(ctx context.Context, creatorID string) error {
 	return nil
 }
 
-// ───────────────────────── Tip jar (cashtag/wallet) ────────────────────────────
-
 // Tip sends a one-off tip to a creator. wallet.Debit(from) → ledger.Credit(creator
 // net of fee). Idempotent (NL-9). NL-5: a tip is a gift for content, not a return.
 func (s *Service) Tip(ctx context.Context, fromUserID, creatorID, idemKey string, amountKobo int64) (*Tip, error) {
@@ -232,8 +240,6 @@ func (s *Service) Tip(ctx context.Context, fromUserID, creatorID, idemKey string
 	s.log(fromUserID, "creators.tip", t.ID, map[string]any{"creator": creatorID, "amount_kobo": amountKobo})
 	return t, nil
 }
-
-// ───────────────────────── Paid content + entitlements (NL-11) ──────────────────
 
 // CreateContent publishes a creator content item. It enters moderation PENDING
 // (NL-11) and is not served until APPROVED. Object-level authZ: only the creator
@@ -399,8 +405,6 @@ func (s *Service) enforceAge(ctx context.Context, viewerID string, rating AgeRat
 	return nil
 }
 
-// ───────────────────────── Subscriptions (scheduler-driven) ─────────────────────
-
 // CreateTier defines a recurring plan for a creator (object-level authZ).
 func (s *Service) CreateTier(ctx context.Context, creatorID, name string, priceKobo, intervalSecs int64) (*SubscriptionTier, error) {
 	if err := s.requireApproved(ctx, creatorID); err != nil {
@@ -537,8 +541,6 @@ func (s *Service) chargeSubscriptionJob(hctx scheduler.HandlerCtx) error {
 	return nil
 }
 
-// ───────────────────────── Earnings ledger + KYC-gated payout ───────────────────
-
 // Balance returns a creator's withdrawable earnings = sum(net) - sum(paid payouts).
 func (s *Service) Balance(ctx context.Context, creatorID string) (int64, error) {
 	const q = `
@@ -604,8 +606,6 @@ func (s *Service) MarkPayoutPaid(ctx context.Context, payoutID, actorID string) 
 	s.log(actorID, "creators.payout.paid", payoutID, nil)
 	return nil
 }
-
-// ───────────────────────── internals ───────────────────────────────────────────
 
 // creditCreator is the single money primitive for ALL creator income. It debits the
 // payer's wallet (tier-limited, fail-closed) into the commission account for the fee
@@ -751,3 +751,297 @@ var (
 	ErrPayoutKYC            = fmt.Errorf("creators: payout requires verified KYC")
 	ErrInsufficientEarnings = fmt.Errorf("creators: insufficient earnings balance")
 )
+
+// Additive DB-backed member reads surfaced by the mobile integration agents
+// (creators discovery / my-content / my-subscriptions go-live gap). All queries
+// respect object-level authZ: discovery lists only APPROVED public storefronts;
+// "my" reads are scoped to the calling user.
+
+// Discover returns approved creator storefronts for the public directory,
+// optionally filtered by a case-insensitive handle/display-name search.
+func (s *Service) Discover(ctx context.Context, search string, limit int) ([]Profile, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	q := `SELECT user_id, handle, display_name, bio, state, storefront_url, created_at, updated_at
+	      FROM creator_profiles WHERE state='APPROVED'`
+	args := []any{}
+	if search != "" {
+		q += ` AND (handle ILIKE $1 OR display_name ILIKE $1)`
+		args = append(args, "%"+search+"%")
+	}
+	q += ` ORDER BY updated_at DESC LIMIT ` + paramRef(len(args)+1)
+	args = append(args, limit)
+	rows, err := s.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Profile{}
+	for rows.Next() {
+		var p Profile
+		var state string
+		if err := rows.Scan(&p.UserID, &p.Handle, &p.DisplayName, &p.Bio, &state, &p.StorefrontURL, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		p.State = CreatorState(state)
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// MyContent returns the calling creator's own content items (all moderation
+// states — the owner may see their own drafts/pending items).
+func (s *Service) MyContent(ctx context.Context, creatorID string, limit int) ([]Content, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	const q = `SELECT id, creator_id, title, body, price_kobo, age_rating, moderation_state, published, created_at
+	           FROM creator_content WHERE creator_id=$1 ORDER BY created_at DESC LIMIT $2`
+	rows, err := s.db.Query(ctx, q, creatorID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Content{}
+	for rows.Next() {
+		var c Content
+		var rating, mod string
+		if err := rows.Scan(&c.ID, &c.CreatorID, &c.Title, &c.Body, &c.PriceKobo, &rating, &mod, &c.Published, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		c.AgeRating = AgeRating(rating)
+		c.Moderation = ModerationState(mod)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// SubscriptionRow is a subscription the caller holds, enriched with tier/creator
+// display for the "my subscriptions" list.
+type SubscriptionRow struct {
+	Subscription
+
+	TierName    string `json:"tier_name"`
+	PriceKobo   int64  `json:"price_kobo"`
+	CreatorName string `json:"creator_name"`
+}
+
+// MySubscriptions returns the subscriptions the caller holds as a subscriber.
+func (s *Service) MySubscriptions(ctx context.Context, subscriberID string) ([]SubscriptionRow, error) {
+	const q = `SELECT su.id, su.subscriber_id, su.creator_id, su.tier_id, su.state, su.job_id,
+	                  COALESCE(t.name,''), COALESCE(t.price_kobo,0), COALESCE(p.display_name,'')
+	           FROM creator_subscriptions su
+	           LEFT JOIN creator_subscription_tiers t ON t.id = su.tier_id
+	           LEFT JOIN creator_profiles p ON p.user_id = su.creator_id
+	           WHERE su.subscriber_id=$1
+	           ORDER BY su.created_at DESC`
+	rows, err := s.db.Query(ctx, q, subscriberID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SubscriptionRow{}
+	for rows.Next() {
+		var r SubscriptionRow
+		var state string
+		if err := rows.Scan(&r.ID, &r.SubscriberID, &r.CreatorID, &r.TierID, &state, &r.JobID,
+			&r.TierName, &r.PriceKobo, &r.CreatorName); err != nil {
+			return nil, err
+		}
+		r.State = SubState(state)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// paramRef renders a positional query placeholder ($1, $2, …) for the given
+// 1-based index without importing strconv.
+func paramRef(n int) string {
+	if n <= 0 {
+		n = 1
+	}
+	var b [4]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return "$" + string(b[i:])
+}
+
+// CreatorState is the capability lifecycle. A creator must be APPROVED to publish
+// paid content or receive payouts.
+type CreatorState string
+
+const (
+	CreatorPending   CreatorState = "PENDING"   // applied, awaiting verification
+	CreatorApproved  CreatorState = "APPROVED"  // verified, may monetise
+	CreatorSuspended CreatorState = "SUSPENDED" // moderation/admin hold
+)
+
+// Profile is the creator capability + storefront. One per user (object-level authZ:
+// the owning user is the only writer; admin may moderate).
+type Profile struct {
+	UserID        string       `json:"user_id"` // FK auth.users(id)
+	Handle        string       `json:"handle"`  // cashtag handle used for tips/pay
+	DisplayName   string       `json:"display_name"`
+	Bio           string       `json:"bio"`
+	State         CreatorState `json:"state"`
+	StorefrontURL string       `json:"storefront_url"`
+	CreatedAt     time.Time    `json:"created_at"`
+	UpdatedAt     time.Time    `json:"updated_at"`
+}
+
+// ModerationState gates content visibility (NL-11). Content is PENDING until a
+// moderator (or automated check) clears it; REJECTED content is never served.
+type ModerationState string
+
+const (
+	ModPending  ModerationState = "PENDING"
+	ModApproved ModerationState = "APPROVED"
+	ModRejected ModerationState = "REJECTED"
+)
+
+// AgeRating is the content age gate (NL-11). MinAge viewers below the rating are
+// refused even with a valid entitlement.
+type AgeRating string
+
+const (
+	AgeAll AgeRating = "ALL" // general audience
+	Age13  AgeRating = "13+" // teen
+	Age18  AgeRating = "18+" // adult — strongest gate
+)
+
+// minAgeFor maps a rating to a minimum age in years.
+func minAgeFor(r AgeRating) int {
+	switch r {
+	case Age13:
+		return 13
+	case Age18:
+		return 18
+	default:
+		return 0
+	}
+}
+
+// Content is a paid (or free) creator item. Visibility is the product of
+// (moderation == APPROVED) AND (viewer age >= rating) AND (entitlement granted for
+// paid items). Price is in kobo (NL: minor units).
+type Content struct {
+	ID         string          `json:"id"`
+	CreatorID  string          `json:"creator_id"` // FK auth.users(id)
+	Title      string          `json:"title"`
+	Body       string          `json:"body"` // or storage ref; gated server-side
+	PriceKobo  int64           `json:"price_kobo"`
+	AgeRating  AgeRating       `json:"age_rating"`
+	Moderation ModerationState `json:"moderation_state"`
+	Published  bool            `json:"published"`
+	CreatedAt  time.Time       `json:"created_at"`
+}
+
+// EntitlementState tracks paid-content access. GRANTED on purchase; REVOKED on
+// refund/chargeback/moderation removal.
+type EntitlementState string
+
+const (
+	EntGranted EntitlementState = "GRANTED"
+	EntRevoked EntitlementState = "REVOKED"
+)
+
+// Entitlement is a viewer's access grant to a piece of paid content.
+type Entitlement struct {
+	ID        string           `json:"id"`
+	UserID    string           `json:"user_id"` // viewer
+	ContentID string           `json:"content_id"`
+	State     EntitlementState `json:"state"`
+	GrantedAt time.Time        `json:"granted_at"`
+	RevokedAt *time.Time       `json:"revoked_at,omitempty"`
+}
+
+// SubState is the subscription lifecycle: ACTIVE → PAST_DUE (charge failed, retrying)
+// → CANCELLED (terminal). PAST_DUE can recover to ACTIVE on a successful retry.
+type SubState string
+
+const (
+	SubActive    SubState = "ACTIVE"
+	SubPastDue   SubState = "PAST_DUE"
+	SubCancelled SubState = "CANCELLED"
+)
+
+// SubscriptionTier is a creator-defined recurring plan. PriceKobo is charged every
+// IntervalSecs via the shared scheduler.
+type SubscriptionTier struct {
+	ID           string    `json:"id"`
+	CreatorID    string    `json:"creator_id"`
+	Name         string    `json:"name"`
+	PriceKobo    int64     `json:"price_kobo"`
+	IntervalSecs int64     `json:"interval_secs"`
+	Active       bool      `json:"active"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// Subscription is a fan's enrolment in a creator tier. The scheduler drives the
+// recurring charge; this row carries the lifecycle state.
+type Subscription struct {
+	ID           string    `json:"id"`
+	SubscriberID string    `json:"subscriber_id"`
+	CreatorID    string    `json:"creator_id"`
+	TierID       string    `json:"tier_id"`
+	State        SubState  `json:"state"`
+	JobID        string    `json:"job_id"` // scheduler job driving the recurring charge
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// Tip is a one-off creator tip (via cashtag/wallet). Idempotent on the key.
+type Tip struct {
+	ID             string    `json:"id"`
+	FromUserID     string    `json:"from_user_id"`
+	CreatorID      string    `json:"creator_id"`
+	AmountKobo     int64     `json:"amount_kobo"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// EarningKind classifies a creator earnings-ledger row. ALL kinds are
+// payment-for-content/access (NL-5): there is no "yield" / "return" kind.
+type EarningKind string
+
+const (
+	EarnTip          EarningKind = "TIP"
+	EarnContentSale  EarningKind = "CONTENT_SALE"
+	EarnSubscription EarningKind = "SUBSCRIPTION"
+)
+
+// Earning is an append-only creator earnings record (projection of the money that
+// already moved through the finance ledger). Net of platform fee.
+type Earning struct {
+	ID        string      `json:"id"`
+	CreatorID string      `json:"creator_id"`
+	Kind      EarningKind `json:"kind"`
+	GrossKobo int64       `json:"gross_kobo"`
+	FeeKobo   int64       `json:"fee_kobo"`
+	NetKobo   int64       `json:"net_kobo"`
+	Reference string      `json:"reference"`
+	CreatedAt time.Time   `json:"created_at"`
+}
+
+// PayoutState is the payout lifecycle.
+type PayoutState string
+
+const (
+	PayoutRequested PayoutState = "REQUESTED"
+	PayoutPaid      PayoutState = "PAID"
+	PayoutRejected  PayoutState = "REJECTED"
+)
+
+// Payout is a creator withdrawal request. KYC-gated (NL-10) before money moves.
+type Payout struct {
+	ID         string      `json:"id"`
+	CreatorID  string      `json:"creator_id"`
+	AmountKobo int64       `json:"amount_kobo"`
+	State      PayoutState `json:"state"`
+	CreatedAt  time.Time   `json:"created_at"`
+}

@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 /**
  * Paymax Stays (SM2) — confirmation/voucher segment (PRD §17 E, screens 34–36).

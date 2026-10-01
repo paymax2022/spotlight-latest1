@@ -3,15 +3,14 @@ package octamile
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/timeutil"
 	"spotlight/backend/internal/insurance/gateway"
 )
 
@@ -20,7 +19,6 @@ import (
 // per-event cover (trip / parcel / haulage protection). Like the MyCover adapter,
 // it surfaces the disclosed underwriter into normalised models and never leaks
 // raw provider JSON past its boundary.
-//
 // Keys come from config/secrets via New(); they are NEVER hard-coded or logged.
 type Client struct {
 	apiKey        string // secret key — server-to-server auth; never logged
@@ -59,8 +57,6 @@ func (c *Client) Name() string { return "octamile" }
 // worse than declaring none: it would look verified while never matching.
 func (c *Client) WebhookSignatureHeader() string { return "" }
 
-// --- gateway.UnderwriterGateway ---
-
 func (c *Client) GetQuote(ctx context.Context, req gateway.QuoteRequest) (gateway.Quote, error) {
 	body := map[string]any{
 		"plan_code":   req.ProviderProductCode,
@@ -76,6 +72,7 @@ func (c *Client) GetQuote(ctx context.Context, req gateway.QuoteRequest) (gatewa
 	if !resp.OK() {
 		return gateway.Quote{}, fmt.Errorf("octamile: quote: %s", resp.Error)
 	}
+	expiresAt, _ := timeutil.ParseTime(resp.Quote.ExpiresAt)
 	return gateway.Quote{
 		ProviderQuoteRef:    resp.Quote.Reference,
 		ProviderProductCode: req.ProviderProductCode,
@@ -85,7 +82,7 @@ func (c *Client) GetQuote(ctx context.Context, req gateway.QuoteRequest) (gatewa
 		Underwriter:         resp.Quote.Insurer,
 		Aggregator:          c.Name(),
 		CommissionKobo:      resp.Quote.CommissionKobo,
-		ExpiresAt:           parseTime(resp.Quote.ExpiresAt),
+		ExpiresAt:           expiresAt,
 		Terms:               resp.Quote.Terms,
 	}, nil
 }
@@ -201,8 +198,6 @@ func (c *Client) VerifyWebhook(ctx context.Context, payload []byte, signature st
 	}, nil
 }
 
-// --- provider JSON shapes (never leak past this file) ---
-
 type envelope struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error"`
@@ -242,6 +237,8 @@ type policyResponse struct {
 }
 
 func (p policyResponse) toPolicy(aggregator string) gateway.Policy {
+	effectiveAt, _ := timeutil.ParseTime(p.Policy.EffectiveAt)
+	expiresAt, _ := timeutil.ParseTime(p.Policy.ExpiresAt)
 	return gateway.Policy{
 		ProviderPolicyRef:   p.Policy.Reference,
 		ProviderProductCode: p.Policy.PlanCode,
@@ -252,8 +249,8 @@ func (p policyResponse) toPolicy(aggregator string) gateway.Policy {
 		Underwriter:         p.Policy.Insurer,
 		Aggregator:          aggregator,
 		CommissionKobo:      p.Policy.CommissionKobo,
-		EffectiveAt:         parseTime(p.Policy.EffectiveAt),
-		ExpiresAt:           parseTime(p.Policy.ExpiresAt),
+		EffectiveAt:         effectiveAt,
+		ExpiresAt:           expiresAt,
 		CertificateRef:      p.Policy.CertificateRef,
 	}
 }
@@ -289,8 +286,6 @@ type webhookPayload struct {
 		ClaimReference  string `json:"claim_reference"`
 	} `json:"payload"`
 }
-
-// --- HTTP helpers ---
 
 func (c *Client) post(ctx context.Context, path string, body, dst any) error {
 	return c.postIdem(ctx, path, "", body, dst)
@@ -345,19 +340,5 @@ func verifyHMACSHA256(secret string, payload []byte, signature string) bool {
 	if secret == "" || signature == "" {
 		return false
 	}
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(payload)
-	expected := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(expected), []byte(signature))
-}
-
-func parseTime(s string) time.Time {
-	if s == "" {
-		return time.Time{}
-	}
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		return time.Time{}
-	}
-	return t
+	return cryptox.ConstantTimeEqual(cryptox.HMACSHA256Hex(secret, string(payload)), signature)
 }

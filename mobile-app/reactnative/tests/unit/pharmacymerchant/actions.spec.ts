@@ -1,9 +1,6 @@
 // Pure-logic unit tests for the pharmacist's action set.
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "tests/unit/pharmacymerchant/*.spec.ts"
-//
 // These pin the client's buttons to the server's guarded state machine
 // (backend/internal/health/pharmacy/model.go allowedOrderTransitions). Offering
-// an action the API rejects gives the pharmacist a button that fails; hiding one
 // it would accept strands a paid order with medicine undelivered.
 
 import { describe, it } from 'node:test';
@@ -52,7 +49,6 @@ describe('actionsFor — mirrors the server transition table', () => {
   });
 
   it('requires the pickup code only for collection', () => {
-    // The pharmacy is not given pickup_code; the patient presents it at the
     // counter and the server checks it. Delivery has no such credential.
     assert.equal(actionsFor('READY_FOR_PICKUP')[0].requiresPickupCode, true);
     assert.notEqual(actionsFor('IN_DELIVERY')[0].requiresPickupCode, true);

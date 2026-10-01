@@ -96,8 +96,6 @@ func AsRejection(err error) (string, bool) {
 	return "", false
 }
 
-// ── Pure eligibility gate (ordered; no DB, no side effects) ──────────────────────
-
 // eligibilityInput is the snapshot the pure gate decides on. All values are read
 // under the pool's FOR UPDATE lock before the gate runs.
 type eligibilityInput struct {
@@ -114,7 +112,6 @@ type eligibilityInput struct {
 
 // evaluateEligibility is the SINGLE ordered decision function for a reward credit.
 // It returns "" when the credit is approved, or a stable rejection reason code.
-//
 // ORDER (golden rules 1-3; state-machines §3 "approve" guard):
 //  1. amount must be positive (invalid_amount)
 //  2. pool must be active (pool_inactive)
@@ -145,11 +142,8 @@ func evaluateEligibility(in eligibilityInput) string {
 	return ""
 }
 
-// ── IssueReward (the guarded money path) ────────────────────────────────────────
-
 // IssueReward runs the reward-issuance state machine
 // (triggered → eligibility_checked → credited | rejected).
-//
 // Flow:
 //  1. Idempotency replay: a prior ledger entry for the key returns it unchanged
 //     (Duplicate=true), with NO second credit.
@@ -296,8 +290,6 @@ func (s *Service) IssueReward(ctx context.Context, in IssueInput) (IssueResult, 
 	return IssueResult{State: StateCredited, Entry: written}, nil
 }
 
-// ── RedeemPoints (points → catalog reward) ──────────────────────────────────────
-
 // RedeemPoints redeems points for a catalog SKU. Idempotent on idemKey. For a
 // wallet-kind SKU the value is credited to the user wallet (same idemKey); other
 // kinds (airtime/data/voucher) are recorded as requested for downstream fulfilment.
@@ -374,8 +366,6 @@ func (s *Service) Catalog(ctx context.Context) ([]CatalogItem, error) {
 	return s.repo.ListCatalog(ctx, true)
 }
 
-// ── Admin passthroughs ──────────────────────────────────────────────────────────
-
 func (s *Service) ListPools(ctx context.Context) ([]RewardPool, error) { return s.repo.ListPools(ctx) }
 func (s *Service) CreatePool(ctx context.Context, req CreatePoolRequest) (*RewardPool, error) {
 	return s.repo.CreatePool(ctx, req)
@@ -407,8 +397,6 @@ func (s *Service) PoolLedger(ctx context.Context, poolID string, limit int) ([]L
 func (s *Service) GlobalLedger(ctx context.Context, limit int) ([]LedgerEntry, error) {
 	return s.repo.ListAllEntries(ctx, limit)
 }
-
-// ── internal audit helpers ──────────────────────────────────────────────────────
 
 func (s *Service) auditCredit(ctx context.Context, e LedgerEntry) {
 	pool := ""

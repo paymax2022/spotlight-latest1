@@ -71,7 +71,6 @@ func TestBuildReasonScoresAndFactors(t *testing.T) {
 	if r == nil {
 		t.Fatal("expected a reason card")
 	}
-	// shared(0.4) + verified(0.3) + within-distance(0.3) = 1.0
 	if math.Abs(r.Score-1.0) > 1e-9 {
 		t.Errorf("expected score 1.0, got %f", r.Score)
 	}

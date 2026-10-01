@@ -7,12 +7,68 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"strings"
-	"time"
-
+	"spotlight/backend/go-common/timeutil"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/integrations"
+	"strings"
+	"time"
 )
+
+type StemRepository interface {
+	GetOverview() (domain.StemOverview, error)
+	ListSchools(limit int) ([]domain.StemSchool, error)
+	CreateSchool(input domain.StemSchoolCreateInput) (domain.StemSchool, error)
+	UpdateSchoolVerification(schoolID string, status string, reason string, actorID string) error
+	GetSchoolDashboard(schoolID string) (domain.StemSchoolDashboard, error)
+	ListSchoolProfiles(limit int) ([]domain.StemSchoolProfile, error)
+	CreateSchoolProfile(input domain.StemSchoolProfileCreateInput) (domain.StemSchoolProfile, error)
+	ListSchoolTeams(limit int) ([]domain.StemSchoolTeam, error)
+	CreateSchoolTeam(input domain.StemSchoolTeamCreateInput) (domain.StemSchoolTeam, error)
+	ListEmergingInnovators(limit int) ([]domain.StemEmergingInnovator, error)
+	CreateEmergingInnovator(input domain.StemEmergingInnovatorCreateInput) (domain.StemEmergingInnovator, error)
+	ListEmergingTeams(limit int) ([]domain.StemEmergingTeam, error)
+	CreateEmergingTeam(input domain.StemEmergingTeamCreateInput) (domain.StemEmergingTeam, error)
+	ListEmergingProjects(limit int) ([]domain.StemEmergingProject, error)
+	CreateEmergingProject(input domain.StemEmergingProjectCreateInput) (domain.StemEmergingProject, error)
+	ListContests(limit int) ([]domain.StemContest, error)
+	CreateContest(input domain.StemContestCreateInput) (domain.StemContest, error)
+	GetContestByID(contestID string) (domain.StemContest, error)
+	ListLeaderboard(contestID string, limit int) ([]domain.StemLeaderboardEntry, error)
+	ListLeaderboardSlices(contestID string, by string, limit int) ([]domain.StemLeaderboardSlice, error)
+	ListSubmissions(limit int, status string) ([]domain.StemSubmission, error)
+	UpdateSubmissionStatus(submissionID string, status string, reviewStage string) error
+	UpsertJudgingScore(score domain.StemJudgingScore) (domain.StemJudgingScore, error)
+	ListJudgingScores(applicationID string, limit int) ([]domain.StemJudgingScore, error)
+	UpdateJudgingScoreReviewState(scoreID string, reviewStatus string, isLocked bool, lockReason string, lockedBy string) error
+	CreateJudgingRubric(rubric domain.StemJudgingRubric, criteria []domain.StemJudgingCriterion) (domain.StemJudgingRubric, []domain.StemJudgingCriterion, error)
+	ListJudgingRubrics(contestID string, limit int) ([]domain.StemJudgingRubric, error)
+	ListJudgingCriteria(rubricID string, limit int) ([]domain.StemJudgingCriterion, error)
+	CreateJudgeAssignment(assignment domain.StemJudgeAssignment) (domain.StemJudgeAssignment, error)
+	ListJudgeAssignments(contestID string, applicationID string, judgeUserID string, limit int) ([]domain.StemJudgeAssignment, error)
+	UpdateJudgeAssignmentConflict(assignmentID string, hasConflict bool, conflictReason string, status string) error
+	UpsertVotingRule(rule domain.StemVotingRule) (domain.StemVotingRule, error)
+	ListVotingRules(contestID string, limit int) ([]domain.StemVotingRule, error)
+	CreateVotePackage(pkg domain.StemVotePackage) (domain.StemVotePackage, error)
+	ListVotePackages(contestID string, limit int) ([]domain.StemVotePackage, error)
+	CreateVoteTransaction(tx domain.StemVoteTransaction) (domain.StemVoteTransaction, error)
+	ListVoteTransactions(contestID string, limit int) ([]domain.StemVoteTransaction, error)
+	CreateBootcampCohort(cohort domain.StemBootcampCohort) (domain.StemBootcampCohort, error)
+	ListBootcampCohorts(contestID string, limit int) ([]domain.StemBootcampCohort, error)
+	CreateBootcampTask(task domain.StemBootcampTask) (domain.StemBootcampTask, error)
+	ListBootcampTasks(cohortID string, limit int) ([]domain.StemBootcampTask, error)
+	UpsertBootcampScore(score domain.StemBootcampScore) (domain.StemBootcampScore, error)
+	ListBootcampScores(cohortID string, applicationID string, limit int) ([]domain.StemBootcampScore, error)
+	CreateSponsor(sponsor domain.StemSponsor) (domain.StemSponsor, error)
+	ListSponsors(limit int) ([]domain.StemSponsor, error)
+	CreateCertificate(cert domain.StemCertificate) (domain.StemCertificate, error)
+	ListCertificates(limit int) ([]domain.StemCertificate, error)
+	CreateBadge(badge domain.StemBadge) (domain.StemBadge, error)
+	ListBadges(limit int) ([]domain.StemBadge, error)
+	AwardBadge(award domain.StemBadgeAward) (domain.StemBadgeAward, error)
+	ListBadgeAwards(applicationID string, limit int) ([]domain.StemBadgeAward, error)
+	GetReportSummary() (domain.StemReportSummary, error)
+	GetReportBuckets(kind string, contestID string, limit int) ([]domain.StemReportBucket, error)
+}
 
 type StemSupabaseRepository struct {
 	client *integrations.SupabaseRestClient
@@ -66,6 +122,12 @@ func (r *StemSupabaseRepository) ListSchools(limit int) ([]domain.StemSchool, er
 		return schools, nil
 	}
 
+	return r.listSchoolsFromApplications(limit)
+}
+
+// listSchoolsFromApplications is the ListSchools fallback: aggregate schools
+// from the stem_applications_v2 rows when the dedicated table is empty.
+func (r *StemSupabaseRepository) listSchoolsFromApplications(limit int) ([]domain.StemSchool, error) {
 	u, err := url.Parse(strings.TrimRight(r.client.BaseURL(), "/") + "/rest/v1/stem_applications_v2")
 	if err != nil {
 		return nil, err
@@ -176,7 +238,7 @@ func (r *StemSupabaseRepository) CreateSchool(input domain.StemSchoolCreateInput
 		"school_admin_name":          strings.TrimSpace(input.SchoolAdminName),
 		"school_admin_email":         strings.TrimSpace(strings.ToLower(input.SchoolAdminEmail)),
 		"school_admin_phone":         strings.TrimSpace(input.SchoolAdminPhone),
-		"number_of_students":         maxInt(input.NumberOfStudents, 0),
+		"number_of_students":         max(input.NumberOfStudents, 0),
 		"has_stem_club":              input.HasStemClub,
 		"has_stem_teacher":           input.HasStemTeacher,
 		"school_logo_url":            strings.TrimSpace(input.SchoolLogoURL),
@@ -246,10 +308,36 @@ func (r *StemSupabaseRepository) UpdateSchoolVerification(schoolID string, statu
 		return fmt.Errorf("school id and status are required")
 	}
 
-	// Read previous state for audit trail row.
-	currentURL, err := url.Parse(strings.TrimRight(r.client.BaseURL(), "/") + "/rest/v1/stem_schools")
+	prevStatus, err := r.schoolVerificationStatus(schoolID)
 	if err != nil {
 		return err
+	}
+	if err := r.patchSchoolVerification(schoolID, status, reason, actorID); err != nil {
+		return err
+	}
+	if err := r.logSchoolVerification(schoolID, prevStatus, status, reason, actorID); err != nil {
+		return err
+	}
+	_ = r.logAdminAuditAction(
+		"stem_school_verification_updated",
+		"stem_schools",
+		schoolID,
+		map[string]any{
+			"previous_status": prevStatus,
+			"new_status":      strings.ToUpper(strings.TrimSpace(status)),
+			"reason":          strings.TrimSpace(reason),
+		},
+		"STEM school verification status update",
+		actorID,
+	)
+	return nil
+}
+
+// schoolVerificationStatus reads the previous state for the audit trail row.
+func (r *StemSupabaseRepository) schoolVerificationStatus(schoolID string) (string, error) {
+	currentURL, err := url.Parse(strings.TrimRight(r.client.BaseURL(), "/") + "/rest/v1/stem_schools")
+	if err != nil {
+		return "", err
 	}
 	currentQ := currentURL.Query()
 	currentQ.Set("select", "verification_status")
@@ -259,14 +347,14 @@ func (r *StemSupabaseRepository) UpdateSchoolVerification(schoolID string, statu
 
 	currentReq, err := http.NewRequest(http.MethodGet, currentURL.String(), nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	currentReq.Header.Set("apikey", r.client.APIKey())
 	currentReq.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 
 	currentResp, err := (&http.Client{Timeout: 10 * time.Second}).Do(currentReq)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer currentResp.Body.Close()
 
@@ -279,7 +367,10 @@ func (r *StemSupabaseRepository) UpdateSchoolVerification(schoolID string, statu
 			prevStatus = rows[0].VerificationStatus
 		}
 	}
+	return prevStatus, nil
+}
 
+func (r *StemSupabaseRepository) patchSchoolVerification(schoolID, status, reason, actorID string) error {
 	updatePayload := map[string]any{
 		"verification_status": strings.ToUpper(strings.TrimSpace(status)),
 		"verification_notes":  strings.TrimSpace(reason),
@@ -316,7 +407,10 @@ func (r *StemSupabaseRepository) UpdateSchoolVerification(schoolID string, statu
 	if updateResp.StatusCode >= 400 {
 		return fmt.Errorf("school verification update failed: %d", updateResp.StatusCode)
 	}
+	return nil
+}
 
+func (r *StemSupabaseRepository) logSchoolVerification(schoolID, prevStatus, status, reason, actorID string) error {
 	verificationPayload := map[string]any{
 		"school_id":       schoolID,
 		"previous_status": emptyToNilStem(strings.TrimSpace(prevStatus)),
@@ -346,18 +440,6 @@ func (r *StemSupabaseRepository) UpdateSchoolVerification(schoolID string, statu
 	if verificationResp.StatusCode >= 400 {
 		return fmt.Errorf("school verification log failed: %d", verificationResp.StatusCode)
 	}
-	_ = r.logAdminAuditAction(
-		"stem_school_verification_updated",
-		"stem_schools",
-		schoolID,
-		map[string]any{
-			"previous_status": prevStatus,
-			"new_status":      strings.ToUpper(strings.TrimSpace(status)),
-			"reason":          strings.TrimSpace(reason),
-		},
-		"STEM school verification status update",
-		actorID,
-	)
 	return nil
 }
 
@@ -633,10 +715,18 @@ func (r *StemSupabaseRepository) GetSchoolDashboard(schoolID string) (domain.Ste
 		out.PendingVerifications = 1
 	}
 
-	// Derived counts from existing v2 submissions payload while we build dedicated relational links.
+	if err := r.fillSchoolDashboardStats(&out); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+// fillSchoolDashboardStats derives counts from the existing v2 submissions
+// payload while we build dedicated relational links.
+func (r *StemSupabaseRepository) fillSchoolDashboardStats(out *domain.StemSchoolDashboard) error {
 	appURL, err := url.Parse(strings.TrimRight(r.client.BaseURL(), "/") + "/rest/v1/stem_applications_v2")
 	if err != nil {
-		return out, err
+		return err
 	}
 	appQ := appURL.Query()
 	appQ.Set("select", "id,status,project_solution,team_info")
@@ -647,7 +737,7 @@ func (r *StemSupabaseRepository) GetSchoolDashboard(schoolID string) (domain.Ste
 
 	appReq, err := http.NewRequest(http.MethodGet, appURL.String(), nil)
 	if err != nil {
-		return out, err
+		return err
 	}
 	appReq.Header.Set("apikey", r.client.APIKey())
 	appReq.Header.Set("Authorization", "Bearer "+r.client.APIKey())
@@ -680,7 +770,7 @@ func (r *StemSupabaseRepository) GetSchoolDashboard(schoolID string) (domain.Ste
 			}
 		}
 	}
-	return out, nil
+	return nil
 }
 
 func (r *StemSupabaseRepository) ListSchoolProfiles(limit int) ([]domain.StemSchoolProfile, error) {
@@ -872,7 +962,7 @@ func (r *StemSupabaseRepository) CreateSchoolTeam(input domain.StemSchoolTeamCre
 		"contest_category": strings.TrimSpace(input.ContestCategory),
 		"coach_name":       strings.TrimSpace(input.CoachName),
 		"project_title":    strings.TrimSpace(input.ProjectTitle),
-		"team_size":        maxInt(input.TeamSize, 1),
+		"team_size":        max(input.TeamSize, 1),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -983,7 +1073,7 @@ func (r *StemSupabaseRepository) CreateEmergingTeam(input domain.StemEmergingTea
 		"innovator_id":     strings.TrimSpace(input.InnovatorID),
 		"team_name":        strings.TrimSpace(input.TeamName),
 		"innovation_track": strings.TrimSpace(input.InnovationTrack),
-		"team_size":        maxInt(input.TeamSize, 1),
+		"team_size":        max(input.TeamSize, 1),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -1817,7 +1907,7 @@ func (r *StemSupabaseRepository) UpdateJudgingScoreReviewState(scoreID string, r
 		"locked_by":     emptyToNilStem(strings.TrimSpace(lockedBy)),
 	}
 	if isLocked {
-		payload["locked_at"] = time.Now().UTC().Format(time.RFC3339)
+		payload["locked_at"] = timeutil.RFC3339(time.Now())
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -2683,7 +2773,7 @@ func (r *StemSupabaseRepository) CreateBootcampTask(task domain.StemBootcampTask
 		"cohort_id":   strings.TrimSpace(task.CohortID),
 		"title":       strings.TrimSpace(task.Title),
 		"description": strings.TrimSpace(task.Description),
-		"day_number":  maxInt(task.DayNumber, 1),
+		"day_number":  max(task.DayNumber, 1),
 		"max_score":   maxFloat(task.MaxScore, 1),
 	}
 	body, err := json.Marshal(payload)

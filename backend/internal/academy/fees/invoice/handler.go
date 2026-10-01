@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -21,10 +22,9 @@ type Handler struct {
 // NewHandler builds the invoice handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -32,16 +32,13 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
 	}
 	return u, true
 }
-
-// idemKey reads the Idempotency-Key header (required for the money-path payment mutation).
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
 
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
@@ -103,8 +100,6 @@ func RegisterFeesInvoice(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	return h
 }
 
-// ── Handlers ────────────────────────────────────────────────────────────────────
-
 func (h *Handler) Issue(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -153,7 +148,7 @@ func (h *Handler) RecordPayment(c *gin.Context) {
 	}
 	// The guardian recording the payment is the authenticated user (member route).
 	out, err := h.svc.RecordPayment(c.Request.Context(), u, c.Param("id"), u,
-		req.AmountMinor, req.GatewayRef, req.LedgerReference, idemKey(c))
+		req.AmountMinor, req.GatewayRef, req.LedgerReference, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return

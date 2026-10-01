@@ -16,7 +16,7 @@ interface AttrRow {
   key: string;
   type: MktAttributeType;
   required: boolean;
-  enumCsv: string; // comma-separated allowed values (blank = unconstrained)
+  enumCsv: string;
   min: string;
   max: string;
 }

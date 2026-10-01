@@ -22,7 +22,6 @@ const EXT_BY_MIME: Record<string, string> = {
   'image/svg+xml': 'svg',
 };
 
-// GET /api/admin/voting/contest-templates?connectContestId=<uuid>&status=<draft|active|archived>
 // Lists templates (optionally filtered), each with its slots + text overlays
 // embedded so the admin UI can render everything from a single call.
 export async function GET(request: Request) {
@@ -85,7 +84,6 @@ export async function GET(request: Request) {
 }
 
 // POST /api/admin/voting/contest-templates — multipart/form-data
-// Fields: name (required), connectContestId (required uuid), file (required
 // image), width/height/aspectRatio (optional, default 1080/1080/'1:1').
 // Uploads the file to the contest-templates Supabase Storage bucket and
 // inserts a new contest_templates row with status:'draft' (never 'active' on

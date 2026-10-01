@@ -1,5 +1,3 @@
-// ── Towing — API wrapper ─────────────────────────────────────────────────────
-// Mock-flagged, BASE = '/api/v1'. Booking is a money mutation (escrow →
 // settle on completion) and carries an Idempotency-Key. Callout/distance fares
 // come from the SERVER.
 

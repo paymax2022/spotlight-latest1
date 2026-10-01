@@ -170,7 +170,6 @@ describe('POST /api/auth/reset-password', () => {
     const body = await res.json();
 
     expect(res.status).toBe(503);
-    // There is no Supabase equivalent for a code Supabase never issued; the user
     // is pointed at the link, which is the mechanism that works in that state.
     expect(String(body.error)).toContain('link');
   });

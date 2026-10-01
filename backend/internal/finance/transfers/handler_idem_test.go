@@ -16,7 +16,6 @@ import (
 // AFTER binding, so the documented header-only contract 400'd before the merge
 // ever ran. These specs pin: header-only is accepted (fails deeper, not at
 // binding) and neither-source still 400s.
-//
 // The handler is constructed with a nil service on purpose: reaching the service
 // at all is the signal under test — a bind rejection answers 400 first.
 

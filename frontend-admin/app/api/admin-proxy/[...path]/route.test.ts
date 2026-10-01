@@ -15,7 +15,7 @@ import { extractSessionToken } from './route';
 
 function base64Url(input: Buffer | string): string {
   const buf = typeof input === 'string' ? Buffer.from(input) : input;
-  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return buf.toString('base64').replace(/\+/g, '-').replace(/\
 }
 
 function makeToken(payload: Record<string, unknown>, secret: string | undefined): string {

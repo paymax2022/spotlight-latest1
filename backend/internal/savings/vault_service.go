@@ -26,7 +26,6 @@ const AutoSaveJobType = "savings.autosave"
 // before maturity, in basis points (1000 = 10%). It matches the 10% the central
 // commission module already assumes for this fee (see app wiring). Override per
 // deployment with SAVINGS_EARLY_BREAK_PENALTY_BPS.
-//
 // This rate MUST be server-side. It previously arrived in the request body, so
 // any member could break a lock penalty-free by sending penalty_bps: 0.
 const DefaultEarlyBreakPenaltyBps int64 = 1000
@@ -98,7 +97,6 @@ func (s *VaultService) penaltyFor(v *Vault, amountKobo int64) int64 {
 // when the commission feature is off (or no recorder is wired) the field is nil and
 // recording is a silent no-op. Modeled as a LOCAL interface so savings never imports
 // the commission package at compile time (mirrors transport/service.go).
-//
 // This records realized profit ONLY; it never moves money. The savings module's own
 // money movements (the early-break penalty debit into paymax_revenue) are unchanged,
 // and the injected recorder is deliberately constructed WITHOUT a ledger so RecordFor
@@ -187,7 +185,6 @@ func (s *VaultService) CreateVault(ctx context.Context, ownerID, name string, ki
 // it is safe only on paths that have already established ownership (Deposit,
 // Withdraw, EarlyWithdraw, GetVault). Exposing Balance() directly is what made
 // any authenticated user able to read any vault's balance by id.
-//
 // Note RLS is no defense here: the backend connects through the pgx pool as the
 // table owner, so savings_vault_ledger_own never applies. The check must be in
 // Go.

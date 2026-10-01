@@ -30,7 +30,6 @@ export const visitorKeys = {
   overstays: () => [...visitorKeys.all, 'overstays'] as const,
 };
 
-// ── Resident ─────────────────────────────────────────────────────────────────
 export function useRestrictionStatus() {
   return useQuery({ queryKey: visitorKeys.restriction(), queryFn: api.getRestrictionStatus });
 }
@@ -87,7 +86,6 @@ export function useVisitHistory() {
   return useQuery({ queryKey: visitorKeys.history(), queryFn: api.listVisitHistory });
 }
 
-// ── Guard ────────────────────────────────────────────────────────────────────
 export function useGateSession() {
   return useQuery({ queryKey: visitorKeys.gateSession(), queryFn: api.getGateSession });
 }
@@ -148,7 +146,6 @@ export function useDenyEntry() {
   });
 }
 
-// ── Guard P1: open visits / check-out / walk-in / handover ────────────────────
 export function useOpenVisits() {
   return useQuery({ queryKey: visitorKeys.openVisits(), queryFn: api.listOpenVisits });
 }
@@ -195,7 +192,6 @@ export function useSubmitHandover() {
   });
 }
 
-// ── Notifications (Section W) ────────────────────────────────────────────────
 export function useNotifications() {
   return useQuery({ queryKey: visitorKeys.notifications(), queryFn: api.listNotifications });
 }
@@ -226,7 +222,6 @@ export function useMarkAllNotificationsRead() {
   });
 }
 
-// ── Blacklist (VM-241 / 244) ─────────────────────────────────────────────────
 export function useBlacklist() {
   return useQuery({ queryKey: visitorKeys.blacklist(), queryFn: api.listBlacklist });
 }
@@ -248,7 +243,6 @@ export function useRemoveBlacklist() {
   });
 }
 
-// ── Incident / suspicious (VM-242 / 217) ─────────────────────────────────────
 export function useIncidents() {
   return useQuery({ queryKey: visitorKeys.incidents(), queryFn: api.listIncidents });
 }
@@ -262,12 +256,10 @@ export function useSubmitIncident() {
   });
 }
 
-// ── Analytics (Section X) ────────────────────────────────────────────────────
 export function useVisitorAnalytics() {
   return useQuery({ queryKey: visitorKeys.analytics(), queryFn: api.getVisitorAnalytics });
 }
 
-// ── Lookup (VM-204) ──────────────────────────────────────────────────────────
 export function useLookup(query: string) {
   return useQuery({
     queryKey: visitorKeys.lookup(query),
@@ -276,12 +268,10 @@ export function useLookup(query: string) {
   });
 }
 
-// ── Vehicle entry log (VM-210) ───────────────────────────────────────────────
 export function useVehicleEntries() {
   return useQuery({ queryKey: visitorKeys.vehicles(), queryFn: api.listVehicleEntries });
 }
 
-// ── Event guest bulk (VM-107) ────────────────────────────────────────────────
 export function useCreateEventGuests() {
   const qc = useQueryClient();
   return useMutation({
@@ -291,7 +281,6 @@ export function useCreateEventGuests() {
   });
 }
 
-// ── Restriction: proof & appeal (§10) ────────────────────────────────────────
 export function useSubmitProofOfPayment() {
   const qc = useQueryClient();
   return useMutation({
@@ -308,7 +297,6 @@ export function useSubmitAppeal() {
   });
 }
 
-// ── Attendance: live check-in/out + phonebook ────────────────────────────────
 export function useCodeAttendance(codeId: string, options?: { poll?: boolean }) {
   return useQuery({
     queryKey: visitorKeys.attendance(codeId),

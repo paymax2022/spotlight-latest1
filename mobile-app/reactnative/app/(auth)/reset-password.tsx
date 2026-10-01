@@ -8,9 +8,9 @@ import { useRouter } from 'expo-router';
 import AuthScreenWrapper from '@/components/AuthScreenWrapper';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import * as authApi from '@/api/auth.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 

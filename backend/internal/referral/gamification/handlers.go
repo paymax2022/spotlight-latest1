@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -43,10 +44,8 @@ func Register(member, admin *gin.RouterGroup, svc *Service, rbac services.RBACSe
 	ag.GET("/contests", guard("referral.gam.view"), h.AdminContestsList)
 }
 
-// --- member ---
-
 func (h *Handler) MissionList(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -60,7 +59,7 @@ func (h *Handler) MissionList(c *gin.Context) {
 }
 
 func (h *Handler) MyProgress(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -74,12 +73,12 @@ func (h *Handler) MyProgress(c *gin.Context) {
 }
 
 func (h *Handler) Claim(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
-	idem := c.GetHeader("Idempotency-Key")
+	idem := ginutil.IdempotencyKey(c)
 	if idem == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
@@ -102,7 +101,7 @@ func (h *Handler) RanksList(c *gin.Context) {
 }
 
 func (h *Handler) MyRank(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -119,7 +118,7 @@ func (h *Handler) MyRank(c *gin.Context) {
 // consecutive-active streak (M-GAM-03). NON-CASH status data. Returns the shape
 // the mobile StreakState expects; a zeroed default when the user has no row.
 func (h *Handler) Streak(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -178,8 +177,6 @@ func (h *Handler) ContestsList(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"contests": list})
 }
-
-// --- admin ---
 
 func (h *Handler) AdminMissionList(c *gin.Context) {
 	list, err := h.svc.repo.ListAllMissions(c.Request.Context())

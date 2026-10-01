@@ -8,11 +8,9 @@ import "context"
 // double-reassign, because reassignment is expressed as a set-to-target write (SET
 // class_id = to_class) rather than an increment, and the fee-schedule step is a
 // side-effect-free verify against the immutable schedule (SF-1).
-//
 // The rollover moves NO money. Fee schedules are immutable once locked (SF-1), so the
 // "reassignment" is a forward-looking association the invoice service reads at the next
 // issuance cycle, never a destructive rewrite of an existing schedule.
-//
 // Decision semantics on apply:
 //   - promoted / conditional ⇒ class_id = to_class_id, status = StudentPromoted
 //   - repeated               ⇒ class_id = from_class_id (unchanged), status = StudentRepeated

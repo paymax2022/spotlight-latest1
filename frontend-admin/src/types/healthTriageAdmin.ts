@@ -1,11 +1,8 @@
-// ── Types — Paymax Health · AI Symptom Checker (Triage) admin console ──────────
 // Companion to the Symptom Checker PRD (§9 admin console, §10 state machines,
 // §11 SC-1..SC-12 safety invariants). This owns the clinical-management surface:
 // triage session monitoring, escalation queue, clinical-content governance,
 // red-flag-rule governance and the validation/accuracy harness.
-//
 // SAFETY FRAMING (PRD §11 — release blockers):
-//  SC-1  Never a diagnosis — output is "possible causes / guidance"; triage +
 //        navigation only (no "diagnosis" wording anywhere in this console).
 //  SC-2  The deterministic RED-FLAG layer can ALWAYS override the engine toward
 //        HIGHER urgency — emergency detection is rules-based, never probability-only.
@@ -15,16 +12,13 @@
 //  SC-6  Clinical content + red-flag rules require licensed-clinician review &
 //        sign-off before publish; versioned & auditable.
 //  SC-12 Immutable audit of every disposition, escalation and content/rule change.
-//
-// RBAC: review surfaces (sessions, escalations) gate on `health.triage.review`;
 // governance surfaces (content, rules, validation) gate on `health.triage.admin`.
 
-// ── 5-level disposition (PRD §6 care-loop; emergency-sensitivity-first) ─────────
 export type DispositionLevel =
   | 'emergency_ambulance' // nearest ER + ambulance + first-aid (MapService)
   | 'emergency_urgent' // nearest facility + optional urgent telemedicine
   | 'consult_24h' // telemedicine / pharmacist consult within 24h
-  | 'consult_routine' // book vet/doctor/pharmacist; optional lab test
+  | 'consult_routine'
   | 'self_care'; // home-care guidance + OTC → optional Pharmacy order
 
 export type TriageChannel = 'app' | 'whatsapp' | 'ussd' | 'sms' | 'agent';
@@ -79,7 +73,6 @@ export type TriageSessionStats = {
   by_channel: ChannelStat[];
 };
 
-// ── Escalation queue (PRD §10 EscalationCase) ──────────────────────────────────
 //  RAISED → NOTIFIED(patient + clinician) → ACKNOWLEDGED → RESOLVED
 export type EscalationState = 'raised' | 'notified' | 'acknowledged' | 'resolved';
 
@@ -109,7 +102,6 @@ export type EscalationActionResult = {
   message: string;
 };
 
-// ── Lifecycle (PRD §10) — shared by ClinicalContentItem + RedFlagRule ──────────
 //  DRAFT → CLINICAL_REVIEW → APPROVED → PUBLISHED → DEPRECATED
 //  (licensed-clinician sign-off required to publish — SC-6)
 export type GovernanceState =
@@ -152,7 +144,6 @@ export type ClinicalContentInput = {
   body_preview: string;
 };
 
-// ── Red-flag rules (PRD §5 deterministic layer; SC-2) ──────────────────────────
 // A rule's only permitted effect is to RAISE urgency to its escalate_to level —
 // it can never lower a disposition. Condition is clinician-authored JSON logic.
 export type RedFlagRule = {
@@ -188,7 +179,6 @@ export type GovernanceResult = {
   message: string;
 };
 
-// ── Validation / accuracy harness (PRD §5; emergency-sensitivity-first) ─────────
 export type LanguageParity = {
   emergency_sensitivity: number; // 0..1 — the headline safety metric (SC-3)
   level_accuracy: number; // 0..1 — exact disposition-level agreement
@@ -200,7 +190,6 @@ export type ValidationRun = {
   run_id: string;
   ran_at: string;
   vignette_count: number;
-  // Emergency sensitivity FIRST — the metric that matters most (SC-3); the share
   // of true emergencies the system correctly escalated. Target ~1.0 (~0 missed).
   emergency_sensitivity: number;
   over_triage: number; // controlled over-referral (acceptable)

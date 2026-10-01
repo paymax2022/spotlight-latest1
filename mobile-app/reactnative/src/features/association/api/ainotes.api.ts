@@ -3,14 +3,14 @@
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
 import type {
   AiNote,
   AiNoteSummary,
   CreateAiNoteInput,
   AiNoteStatus,
-} from '../types/ainotes.types';
-import { MOCK_AI_NOTES } from './ainotes.mock';
+} from '../types';
+import { MOCK_AI_NOTES } from './mocks';
 
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 

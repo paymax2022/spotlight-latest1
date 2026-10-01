@@ -3,22 +3,22 @@ import { View, Text, Image, ScrollView, Pressable, StyleSheet } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MessageCircle, CalendarDays, ListTodo, FileText, Check, Clock, Crown, Pencil, X, UserMinus, Trash2 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useCommittee, useRequestJoinCommittee, useUpdateCommittee, useDeleteCommittee } from '@/features/association/hooks/useCommunity';
-import CommitteeFormModal from '@/features/association/components/CommitteeFormModal';
-import { canManageCommittees } from '@/features/association/utils/committeePermissions';
-import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
+import { useCommittee, useRequestJoinCommittee, useUpdateCommittee, useDeleteCommittee } from '@/features/association/hooks';
+import {CommitteeFormModal} from '@/features/association/components';
+import { canManageCommittees } from '@/features/association/utils';
+import { useAdminAccess } from '@/features/association/hooks';
 import { useQueryClient } from '@tanstack/react-query';
 import { decideCommitteeRequest, removeCommitteeMember } from '@/features/association/api/authoring.api';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
-import { initials, formatCount } from '@/features/association/utils/associationFormatters';
+import { initials, formatCount } from '@/features/association/utils';
 
 export default function CommitteeDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -220,7 +220,6 @@ export default function CommitteeDetail() {
           {members.length === 0 ? (
             <Text style={styles.emptyText}>No members listed for this committee yet.</Text>
           ) : members.map((m, i) => {
-            // The mock fixture sends `name`; the Go DTO sends `fullName`
             // (+ `membershipId`). Accept either rather than rendering blank.
             const displayName = m.fullName ?? m.name ?? m.membershipId ?? 'Member';
             return (

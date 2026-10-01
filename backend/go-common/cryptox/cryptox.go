@@ -109,17 +109,19 @@ func ConstantTimeEqualBytes(a, b []byte) bool {
 	return subtle.ConstantTimeCompare(a, b) == 1
 }
 
-// APIKey mints a prefixed opaque key: "<prefix>_<48 url-safe chars>" — the
-// shape used by admin/service keys (AUD-SEC-003). The prefix is not secret;
-// the entropy is 32 bytes.
+// APIKey mints a prefixed opaque key: "<prefix>_<64 lowercase hex chars>" —
+// the shape used by admin/service keys (AUD-SEC-003). The prefix is not
+// secret; the entropy is 32 bytes. Hex secrets contain no '_', so the LAST
+// underscore is always the prefix/secret boundary — even for multi-segment
+// prefixes like "sk_test".
 func APIKey(prefix string) string {
-	return strings.TrimSpace(prefix) + "_" + TokenB64(32)
+	return strings.TrimSpace(prefix) + "_" + RandHex(32)
 }
 
 // ParseAPIKey splits a prefixed key back into (prefix, secret) — for routers
 // that dispatch on the key class. ok is false when the shape is wrong.
 func ParseAPIKey(key string) (string, string, bool) {
-	i := strings.IndexByte(key, '_')
+	i := strings.LastIndexByte(key, '_')
 	if i <= 0 || i == len(key)-1 {
 		return "", "", false
 	}

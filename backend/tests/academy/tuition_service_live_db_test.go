@@ -2,11 +2,9 @@ package academy
 
 // tuition_service_live_db_test.go tests the Film Academy tuition money path
 // against a live Postgres database. Run with TEST_DATABASE_URL set.
-//
 // Payment rail is Paystack (card), not a wallet debit — ConfirmPayment verifies a
 // gateway reference and posts a balanced provider_clearing -> settlement ledger
 // journal. Tests use a local fake provider.PaymentProvider (no live network).
-//
 // Tests cover:
 //   - Full confirm saga: verify -> ledger journal -> payment recorded -> plan completion
 //   - Ownership + ownership-mismatch rejection
@@ -102,8 +100,10 @@ func (f *fakePaymentProvider) InitiatePayout(ctx context.Context, req provider.P
 	return &provider.PayoutResponse{Reference: req.Reference, Status: "success"}, nil
 }
 
-func (f *fakePaymentProvider) VerifyWebhookSignature(payload []byte, signature string) bool { return true }
-func (f *fakePaymentProvider) Name() string                                                 { return "fake" }
+func (f *fakePaymentProvider) VerifyWebhookSignature(payload []byte, signature string) bool {
+	return true
+}
+func (f *fakePaymentProvider) Name() string { return "fake" }
 
 // seedVerifiedUser creates (or updates) an auth.users + user_profiles row.
 // user_profiles.id has an FK to auth.users(id), so the auth row must exist first.

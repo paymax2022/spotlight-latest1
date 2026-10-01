@@ -1,4 +1,3 @@
-// ── Paymax Mobility — Multi-mode constants ───────────────────────────────────
 // Display labels + per-mode feature flags for parcel · bus · towing · movers ·
 // car-hire. Pricing values are NEVER hard-coded for use — fares come from the
 // backend at runtime. These are display labels and feature flags only.
@@ -31,7 +30,6 @@ import type {
   BookingStatus,
 } from '../types/event.types';
 
-// ─── React Query namespaces (siblings of MOBILITY_KEY) ─────────────────────────
 export const PARCEL_KEY = 'parcel';
 export const BUS_KEY = 'bus';
 export const TOWING_KEY = 'towing';
@@ -40,7 +38,6 @@ export const CARHIRE_KEY = 'carhire';
 export const LOGISTICS_KEY = 'logistics';
 export const EVENT_KEY = 'event';
 
-// ─── Per-mode feature flags (default ON in mock; gate per BUILD-CONTRACT-MODES) ──
 const flag = (env: string | undefined, fallback = 'true') =>
   (env ?? fallback).toLowerCase() !== 'false';
 
@@ -53,7 +50,6 @@ export const LOGISTICS_ENABLED = flag(process.env.EXPO_PUBLIC_LOGISTICS_ENABLED)
 export const EVENT_ENABLED = flag(process.env.EXPO_PUBLIC_EVENT_ENABLED);
 export const SCHEDULED_ENABLED = flag(process.env.EXPO_PUBLIC_SCHEDULED_ENABLED);
 
-// ─── Mobility-home service tiles (the new modes appear alongside Ride) ─────────
 export interface ModeTile {
   id: string;
   label: string;
@@ -74,9 +70,7 @@ export const MODE_TILES: ModeTile[] = [
   { id: 'events',   label: 'Event transport',    description: 'Rides, fan bus & shuttles',  icon: 'Ticket',       route: '/mobility/events',   enabled: EVENT_ENABLED },
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // SCHEDULED (advance booking: ride/parcel/airport/bus)
-// ═══════════════════════════════════════════════════════════════════════════════
 export const SCHEDULED_KEY = 'scheduled';
 
 export const SCHEDULED_MODE_META: {
@@ -106,9 +100,7 @@ export const SCHEDULED_STATUS_LABEL: Record<
   expired: 'Expired',
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PARCEL
-// ═══════════════════════════════════════════════════════════════════════════════
 export const PARCEL_CATEGORIES: { value: ParcelCategory; label: string; icon: string }[] = [
   { value: 'documents',   label: 'Documents',   icon: 'FileText' },
   { value: 'electronics', label: 'Electronics', icon: 'Smartphone' },
@@ -151,9 +143,7 @@ export const PARCEL_PHASE_LABEL: Record<ParcelPhase, string> = {
   cancelled: 'Cancelled',
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // BUS
-// ═══════════════════════════════════════════════════════════════════════════════
 export const BUS_PHASE_LABEL: Record<BusTicketPhase, string> = {
   booked: 'Booked',
   issued: 'Ticket issued',
@@ -165,9 +155,7 @@ export const BUS_PHASE_LABEL: Record<BusTicketPhase, string> = {
   refunded: 'Refunded',
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // TOWING
-// ═══════════════════════════════════════════════════════════════════════════════
 export const TOWING_SERVICES: { value: TowingServiceType; label: string; hint: string; icon: string }[] = [
   { value: 'flatbed',    label: 'Flatbed tow',  hint: 'Safest for most cars', icon: 'Truck' },
   { value: 'wheel_lift', label: 'Wheel-lift',   hint: 'Quick short-distance', icon: 'Truck' },
@@ -202,9 +190,7 @@ export const TOWING_PHASE_LABEL: Record<TowingPhase, string> = {
   cancelled: 'Cancelled',
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // MOVERS
-// ═══════════════════════════════════════════════════════════════════════════════
 export const TRUCK_SIZES: { value: TruckSize; label: string; hint: string }[] = [
   { value: 'pickup',      label: 'Pickup',      hint: 'Few items, studio' },
   { value: 'small_van',   label: 'Small van',   hint: '1-bedroom' },
@@ -235,9 +221,7 @@ export const MOVER_PHASE_LABEL: Record<MoverPhase, string> = {
   cancelled: 'Cancelled',
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // CAR HIRE
-// ═══════════════════════════════════════════════════════════════════════════════
 export const HIRE_TYPES: { value: HireType; label: string; hint: string; icon: string }[] = [
   { value: 'hourly', label: 'Hourly',  hint: 'Pay by the hour',     icon: 'Clock' },
   { value: 'daily',  label: 'Daily',   hint: 'Full-day rental',     icon: 'CalendarDays' },
@@ -263,9 +247,7 @@ export const CARHIRE_PHASE_LABEL: Record<CarHirePhase, string> = {
   cancelled: 'Cancelled',
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // BUSINESS LOGISTICS
-// ═══════════════════════════════════════════════════════════════════════════════
 export const LOGISTICS_SIZES: { value: DeliverySize; label: string; hint: string }[] = [
   { value: 'small',  label: 'Small',  hint: 'Envelope / small parcel (≤ 5kg)' },
   { value: 'medium', label: 'Medium', hint: 'Carton size (≤ 15kg)' },
@@ -296,9 +278,7 @@ export const INVOICE_STATUS_LABEL: Record<InvoiceStatus, string> = {
   overdue: 'Overdue',
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // EVENT TRANSPORT
-// ═══════════════════════════════════════════════════════════════════════════════
 export const EVENT_OFFER_TYPES: { value: EventOfferType; label: string; icon: string }[] = [
   { value: 'group_ride',    label: 'Group ride',    icon: 'Users' },
   { value: 'fan_bus',       label: 'Fan bus',       icon: 'BusFront' },

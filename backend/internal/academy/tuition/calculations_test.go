@@ -5,8 +5,6 @@ import (
 	"time"
 )
 
-// ── CalculateInstallmentAmount ──────────────────────────────────────────
-
 func TestCalculateInstallmentAmount_EvenSplit(t *testing.T) {
 	// 5000 NGN / 4 = 1250 each
 	got, err := CalculateInstallmentAmount(5000, 4)
@@ -57,8 +55,6 @@ func TestCalculateInstallmentAmount_NegativeCount(t *testing.T) {
 	}
 }
 
-// ── CalculateLumpSumDiscount ────────────────────────────────────────────
-
 func TestCalculateLumpSumDiscount_10Percent(t *testing.T) {
 	// 5000 with 10% discount = 4500
 	got := CalculateLumpSumDiscount(5000, 10)
@@ -98,8 +94,6 @@ func TestCalculateLumpSumDiscount_MoreThanFull(t *testing.T) {
 		t.Errorf("expected 0, got %d", got)
 	}
 }
-
-// ── CalculateTotalPaidSoFar ────────────────────────────────────────────
 
 func TestCalculateTotalPaidSoFar_AllPaid(t *testing.T) {
 	payments := []InstallmentPayment{
@@ -146,8 +140,6 @@ func TestCalculateTotalPaidSoFar_NoPaid(t *testing.T) {
 	}
 }
 
-// ── IsDueAndUnpaid ──────────────────────────────────────────────────────
-
 func TestIsDueAndUnpaid_True(t *testing.T) {
 	now := time.Date(2025, 2, 15, 12, 0, 0, 0, time.UTC)
 	payment := InstallmentPayment{
@@ -192,8 +184,6 @@ func TestIsDueAndUnpaid_Waived(t *testing.T) {
 	}
 }
 
-// ── IsApplicationReadyForEnrollment ────────────────────────────────────
-
 func TestIsApplicationReadyForEnrollment_OnePaid(t *testing.T) {
 	payments := []InstallmentPayment{
 		{Status: PaymentStatusPaid},
@@ -232,8 +222,6 @@ func TestIsApplicationReadyForEnrollment_Empty(t *testing.T) {
 		t.Error("expected false (no payments)")
 	}
 }
-
-// ── CalculateDueDate ────────────────────────────────────────────────────
 
 func TestCalculateDueDate_Weekly(t *testing.T) {
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -275,8 +263,6 @@ func TestCalculateDueDate_MonthlyIndex2(t *testing.T) {
 	}
 }
 
-// ── HasCompletePayment ──────────────────────────────────────────────────
-
 func TestHasCompletePayment_AllPaidOrWaived(t *testing.T) {
 	payments := []InstallmentPayment{
 		{Status: PaymentStatusPaid},
@@ -316,8 +302,6 @@ func TestHasCompletePayment_Empty(t *testing.T) {
 		t.Error("expected true (no payments means all are terminal)")
 	}
 }
-
-// ── NormalizePlanFrequency ────────────────────────────────────────────────
 
 func TestNormalizePlanFrequency_OneOffAlwaysMonthlySingle(t *testing.T) {
 	freq, count := NormalizePlanFrequency("one_off", "biweekly", 6)

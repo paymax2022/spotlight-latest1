@@ -3,6 +3,7 @@ package connectpayouts
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // WalletDebiter debits the creator's wallet and credits the given standing
@@ -101,7 +102,6 @@ func NewService(repo *Repository, wallet WalletDebiter, settlement SettlementAcc
 }
 
 // Request is the money path for a creator gift-revenue payout.
-//
 // Ordering (correctness > convenience):
 //  1. require an Idempotency-Key + positive amount;
 //  2. enforce the Tier-2+/KYC gate, fail-closed;
@@ -286,4 +286,53 @@ func (s *Service) AdminReject(ctx context.Context, adminID, payoutID, reason str
 		"reason": reason, "amount_kobo": p.AmountKobo, "creator_id": p.CreatorID,
 	})
 	return p, nil
+}
+
+// Payout mirrors a row of public.connect_payouts.
+type Payout struct {
+	ID             string    `json:"id"`
+	CreatorID      string    `json:"creator_id"`
+	AmountKobo     int64     `json:"amount_kobo"`
+	Status         string    `json:"status"`
+	DestinationRef *string   `json:"destination_ref,omitempty"`
+	IdempotencyKey string    `json:"-"`
+	LedgerRef      string    `json:"ledger_ref"`
+	SettlementRef  *string   `json:"settlement_ref,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at,omitempty"`
+}
+
+// RequestPayoutRequest is the body for POST /payouts. The amount is in kobo; the
+// destination is a tokenised reference to a previously-verified bank account
+// (never raw account details in this request).
+type RequestPayoutRequest struct {
+	AmountKobo     int64  `json:"amountKobo" binding:"required"`
+	DestinationRef string `json:"destinationRef"`
+}
+
+// AdminListFilter narrows the admin payout queue. All fields are optional;
+// Status must be one of the connect_payouts.status CHECK values when set
+// ("requested","processing","settled","failed") — the repo does not validate
+// it (an unknown value simply matches no rows), so the handler validates it.
+type AdminListFilter struct {
+	Status    string
+	CreatorID *string
+	From      *time.Time
+	To        *time.Time
+	Limit     int
+	Offset    int
+}
+
+// AdminPayout is the admin-list/detail projection: a Payout row enriched with
+// data that is not stored per-row and must be read live —
+//   - CreatorHandle: from connect_creator_profiles.handle (falling back to
+//     user_profiles.display_name), joined at read time so it always reflects
+//     the creator's current profile, not a stale copy.
+//   - CreatorTier: from tiers.Service.GetUserTier, read live for the same
+//     reason (a creator's tier can change after the payout was requested).
+type AdminPayout struct {
+	Payout
+
+	CreatorHandle string `json:"creator_handle"`
+	CreatorTier   int    `json:"creator_tier"`
 }

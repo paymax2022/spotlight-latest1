@@ -99,7 +99,6 @@ type BuyFractionRequest struct {
 
 // BuyFraction is a MONEY PATH on the secondary market. Order of operations
 // (every iron rule, fail-closed before money):
-//
 //  1. Idempotency-Key required; duplicate returns the existing order.
 //  2. Market not halted; listing active with enough units.
 //  3. Buyer 10%-income cap check (compliance engine reused server-side).
@@ -251,8 +250,6 @@ func (s *Service) settleSecondary(ctx context.Context, settlementID, sellerID st
 func (s *Service) ListOrdersForUser(ctx context.Context, userID string, limit, offset int) ([]SecondaryOrder, error) {
 	return s.repo.ListOrdersForUser(ctx, userID, limit, offset)
 }
-
-// ── Market controls (admin) ───────────────────────────────────────────────────
 
 func (s *Service) GetMarketControls(ctx context.Context) (*MarketControls, error) {
 	return s.repo.GetMarketControls(ctx)

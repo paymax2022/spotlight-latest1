@@ -1,9 +1,7 @@
 'use client';
 
 // AK11 — Webhook / event monitor.
-// RBAC: finance.admin.kyc. Wired to GET /api/finance/admin/kyc/events. Shows
 // delivery, retries, dedupe and signature failures per provider. (Analytics such
-// as per-provider delivery rate are a follow-up; this is the live event feed.)
 
 import { useCallback, useEffect, useState } from 'react';
 import { listEvents } from '@/services/kycAdminService';

@@ -18,8 +18,6 @@ import (
 	"paymax/crypto-backend/internal/webhook"
 )
 
-// ── Eligibility ───────────────────────────────────────────────────────────────
-
 // getEligibility computes the trading gate from the user's compliance facts
 // (KYC tier + suitability + agreements + crypto product flag). The decision is
 // server-authoritative (Rule 2) and fail-closed (engine.EvaluateEligibility).
@@ -49,8 +47,6 @@ func (s *Server) requireEligible(w http.ResponseWriter) bool {
 	return false
 }
 
-// ── Assets / market data ──────────────────────────────────────────────────────
-
 func (s *Server) getAssets(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.MD.Assets())
 }
@@ -76,8 +72,6 @@ func (s *Server) getChart(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, pts)
 }
-
-// ── Quote (buy/sell or swap, discriminated by `side`) ─────────────────────────
 
 type quoteReq struct {
 	Side     string `json:"side"`
@@ -120,8 +114,6 @@ func (s *Server) postQuote(w http.ResponseWriter, r *http.Request) {
 	s.S.PutQuote(q)
 	writeJSON(w, http.StatusOK, q)
 }
-
-// ── Buy / sell — execute strictly against a persisted server quote ────────────
 
 // tradeReq is the execute payload. The client sends back the quoteId it was
 // shown; the server fetches that exact persisted quote and executes it. We never
@@ -253,8 +245,6 @@ func shadowKey(idemKey, reference string) string {
 	return reference
 }
 
-// ── Swap ──────────────────────────────────────────────────────────────────────
-
 func (s *Server) postSwap(w http.ResponseWriter, r *http.Request) {
 	if !s.requireEligible(w) {
 		return
@@ -308,8 +298,6 @@ func (s *Server) postSwap(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// ── Deposit ───────────────────────────────────────────────────────────────────
-
 func (s *Server) getDepositAddress(w http.ResponseWriter, r *http.Request) {
 	symbol := r.URL.Query().Get("symbol")
 	network := r.URL.Query().Get("network")
@@ -320,8 +308,6 @@ func (s *Server) getDepositAddress(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, addr)
 }
-
-// ── Portfolio ─────────────────────────────────────────────────────────────────
 
 // getPortfolio serves crypto by default; `?assetType=stock` returns the stock
 // portfolio (the mobile crypto + stock modules share this path).
@@ -340,8 +326,6 @@ func (s *Server) getPositions(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, s.S.Positions())
 }
-
-// ── Unified net worth (crypto + stocks + cash) ────────────────────────────────
 
 type netWorthBreakdown struct {
 	Crypto domain.Money `json:"crypto"`
@@ -368,7 +352,6 @@ type netWorthResponse struct {
 // SINGLE net-worth view — the unified portfolio the audit found missing (crypto,
 // stocks and cash were three separate screens with no combined figure). All amounts
 // are integer minor units in the base currency.
-//
 // Cash is taken once from the crypto portfolio's investable balance (the
 // ledger-backed wallet, canonical per the Stage 1.5 consolidation) so it is never
 // double-counted across the crypto and stock silos.
@@ -411,8 +394,6 @@ func (s *Server) getNetWorth(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-// ── Transactions ──────────────────────────────────────────────────────────────
-
 func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.S.Transactions(r.URL.Query().Get("side")))
 }
@@ -425,8 +406,6 @@ func (s *Server) getTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, tx)
 }
-
-// ── Watchlist ─────────────────────────────────────────────────────────────────
 
 func (s *Server) getWatchlist(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.S.Watchlist())
@@ -448,8 +427,6 @@ func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {
 	s.S.RemoveWatch(r.PathValue("assetId"))
 	writeJSON(w, http.StatusNoContent, nil)
 }
-
-// ── Alerts ────────────────────────────────────────────────────────────────────
 
 func (s *Server) getAlerts(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.S.Alerts())
@@ -482,8 +459,6 @@ func (s *Server) deleteAlert(w http.ResponseWriter, r *http.Request) {
 	s.S.DeleteAlert(r.PathValue("id"))
 	writeJSON(w, http.StatusNoContent, nil)
 }
-
-// ── Address book ──────────────────────────────────────────────────────────────
 
 func (s *Server) getAddresses(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.S.Addresses(r.URL.Query().Get("symbol")))
@@ -524,8 +499,6 @@ func (s *Server) deleteAddress(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNoContent, nil)
 }
 
-// ── Withdrawal ────────────────────────────────────────────────────────────────
-
 func (s *Server) getWithdrawalEligibility(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, domain.WithdrawalEligibility{
 		Gate:                  "eligible",
@@ -560,15 +533,11 @@ func (s *Server) postWithdrawalQuote(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, q)
 }
 
-// ── Admin: reconciliation ─────────────────────────────────────────────────────
-
 // getReconciliation reports ledger/holdings reconciliation + exceptions.
 // s.S (store.Repository) satisfies recon.Source structurally.
 func (s *Server) getReconciliation(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, recon.Reconcile(s.S))
 }
-
-// ── Provider webhooks (Rule 7: verify signature + prevent replay) ─────────────
 
 // txEventStatus maps provider event types to a transaction status (status-only
 // transitions). Balance-affecting events (deposit.confirmed) are handled apart.

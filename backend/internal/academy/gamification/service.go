@@ -131,8 +131,6 @@ func (s *Service) EvaluateBadges(ctx context.Context, userID string, counters ma
 	return granted, nil
 }
 
-// ── Read helpers for handlers ───────────────────────────────────────────────────
-
 func (s *Service) GetProfile(ctx context.Context, userID string) (*Profile, error) {
 	return s.loadOrInit(ctx, userID)
 }
@@ -162,7 +160,11 @@ func (s *Service) GetChallenges(ctx context.Context, userID string) ([]Challenge
 		}
 		progress := 0
 		if metric != "" && userID != "" {
-			n, err := s.repo.CountMetric(ctx, userID, metric, windowStart(now, window))
+			since := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+			if window == "week" {
+				since = now.AddDate(0, 0, -7)
+			}
+			n, err := s.repo.CountMetric(ctx, userID, metric, since)
 			if err != nil {
 				return nil, err
 			}
@@ -244,15 +246,6 @@ func firstName(full string) string {
 	return full
 }
 
-// windowStart returns the lower bound for a challenge window: 'week' = last 7
-// days, anything else = start of today (UTC).
-func windowStart(now time.Time, window string) time.Time {
-	if window == "week" {
-		return now.AddDate(0, 0, -7)
-	}
-	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-}
-
 func (s *Service) GetLeaderboard(ctx context.Context, id, periodKey string, limit int) (*Leaderboard, []LeaderboardEntry, error) {
 	lb, err := s.repo.GetLeaderboard(ctx, id)
 	if err != nil {
@@ -269,8 +262,6 @@ func (s *Service) GetLeaderboard(ctx context.Context, id, periodKey string, limi
 func (s *Service) RecordLeaderboardScore(ctx context.Context, leaderboardID, userID, periodKey string, delta int64) error {
 	return s.repo.AddLeaderboardScore(ctx, leaderboardID, userID, periodKey, delta)
 }
-
-// ── Admin CRUD passthroughs ─────────────────────────────────────────────────────
 
 func (s *Service) AdminUpsertBadge(ctx context.Context, in UpsertBadgeRequest) (*Badge, error) {
 	return s.repo.UpsertBadge(ctx, in)

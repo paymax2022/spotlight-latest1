@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Handler exposes the member, admin, and public placement routes.
@@ -17,39 +20,42 @@ type Handler struct {
 // NewHandler constructs the placement handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func ctxUserID(c *gin.Context) string { return c.GetString("user_id") }
+// errMap maps service sentinel errors to HTTP statuses; mapErr adds the
+// per-error "code" field the placement contract carries.
+var errMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusForbidden, ErrForbidden),
+	httperr.R(http.StatusNotFound, ErrNotFound, ErrZoneNotFound),
+	httperr.R(http.StatusConflict, ErrSlotTaken, ErrBadState, ErrConflict),
+	httperr.R(http.StatusPaymentRequired, ErrInsufficient),
+	httperr.R(http.StatusUnprocessableEntity, ErrIneligible),
+	httperr.R(http.StatusBadRequest, ErrInvalidInput),
+)
 
-// mapErr maps service sentinel errors to HTTP responses.
+// mapErr writes the HTTP response for a service error.
 func mapErr(c *gin.Context, err error) {
+	body := gin.H{"error": err.Error()}
 	switch {
 	case errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-	case errors.Is(err, ErrNotFound), errors.Is(err, ErrZoneNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		body["error"] = "forbidden"
 	case errors.Is(err, ErrSlotTaken):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "SLOT_TAKEN"})
+		body["code"] = "SLOT_TAKEN"
 	case errors.Is(err, ErrInsufficient):
-		c.JSON(http.StatusPaymentRequired, gin.H{"error": err.Error(), "code": "INSUFFICIENT_FUNDS"})
+		body["code"] = "INSUFFICIENT_FUNDS"
 	case errors.Is(err, ErrIneligible):
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error(), "code": "INELIGIBLE"})
+		body["code"] = "INELIGIBLE"
 	case errors.Is(err, ErrBadState):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "BAD_STATE"})
-	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		body["code"] = "BAD_STATE"
 	case errors.Is(err, ErrConflict):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "CONFLICT"})
-	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		body["code"] = "CONFLICT"
 	}
+	c.JSON(errMap.Code(err), body)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Member handlers
-// ─────────────────────────────────────────────────────────────────────────────
 
 // CreateCampaign (member): POST /campaigns
 func (h *Handler) CreateCampaign(c *gin.Context) {
-	uid := ctxUserID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -90,7 +96,7 @@ func (h *Handler) CreateCampaign(c *gin.Context) {
 func (h *Handler) ListCampaigns(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	rs, err := h.svc.List(c.Request.Context(), ctxUserID(c), limit, offset)
+	rs, err := h.svc.List(c.Request.Context(), ginutil.UserID(c), limit, offset)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -100,7 +106,7 @@ func (h *Handler) ListCampaigns(c *gin.Context) {
 
 // GetCampaign (member): GET /campaigns/:id
 func (h *Handler) GetCampaign(c *gin.Context) {
-	camp, err := h.svc.Get(c.Request.Context(), ctxUserID(c), c.Param("id"))
+	camp, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -110,7 +116,7 @@ func (h *Handler) GetCampaign(c *gin.Context) {
 
 // Quote (member): POST /campaigns/:id/quote
 func (h *Handler) Quote(c *gin.Context) {
-	camp, err := h.svc.Quote(c.Request.Context(), ctxUserID(c), c.Param("id"))
+	camp, err := h.svc.Quote(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -120,11 +126,11 @@ func (h *Handler) Quote(c *gin.Context) {
 
 // Submit (member): POST /campaigns/:id/submit — Idempotency-Key required.
 func (h *Handler) Submit(c *gin.Context) {
-	if c.GetHeader("Idempotency-Key") == "" {
+	if ginutil.IdempotencyKey(c) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
 	}
-	camp, err := h.svc.Submit(c.Request.Context(), ctxUserID(c), c.Param("id"))
+	camp, err := h.svc.Submit(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -134,11 +140,11 @@ func (h *Handler) Submit(c *gin.Context) {
 
 // Pay (member): POST /campaigns/:id/pay — Idempotency-Key required (PENDING_PAYMENT retry).
 func (h *Handler) Pay(c *gin.Context) {
-	if c.GetHeader("Idempotency-Key") == "" {
+	if ginutil.IdempotencyKey(c) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
 	}
-	camp, err := h.svc.Pay(c.Request.Context(), ctxUserID(c), c.Param("id"))
+	camp, err := h.svc.Pay(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -148,7 +154,7 @@ func (h *Handler) Pay(c *gin.Context) {
 
 // Cancel (member): POST /campaigns/:id/cancel
 func (h *Handler) Cancel(c *gin.Context) {
-	camp, err := h.svc.Cancel(c.Request.Context(), ctxUserID(c), c.Param("id"))
+	camp, err := h.svc.Cancel(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -158,7 +164,7 @@ func (h *Handler) Cancel(c *gin.Context) {
 
 // Pause (member): POST /campaigns/:id/pause
 func (h *Handler) Pause(c *gin.Context) {
-	camp, err := h.svc.Pause(c.Request.Context(), ctxUserID(c), c.Param("id"))
+	camp, err := h.svc.Pause(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -168,7 +174,7 @@ func (h *Handler) Pause(c *gin.Context) {
 
 // Resume (member): POST /campaigns/:id/resume
 func (h *Handler) Resume(c *gin.Context) {
-	camp, err := h.svc.Resume(c.Request.Context(), ctxUserID(c), c.Param("id"))
+	camp, err := h.svc.Resume(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -178,7 +184,7 @@ func (h *Handler) Resume(c *gin.Context) {
 
 // Analytics (member): GET /campaigns/:id/analytics
 func (h *Handler) Analytics(c *gin.Context) {
-	a, err := h.svc.Analytics(c.Request.Context(), ctxUserID(c), c.Param("id"))
+	a, err := h.svc.Analytics(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -196,9 +202,7 @@ func (h *Handler) Zones(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": zones})
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Admin handlers
-// ─────────────────────────────────────────────────────────────────────────────
 
 // AdminReviewQueue (admin): GET /review-queue?state=
 func (h *Handler) AdminReviewQueue(c *gin.Context) {
@@ -224,7 +228,7 @@ func (h *Handler) AdminGetCampaign(c *gin.Context) {
 
 // AdminApprove (admin): POST /campaigns/:id/approve
 func (h *Handler) AdminApprove(c *gin.Context) {
-	camp, err := h.svc.Approve(c.Request.Context(), ctxUserID(c), c.Param("id"))
+	camp, err := h.svc.Approve(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -238,7 +242,7 @@ func (h *Handler) AdminReject(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	camp, err := h.svc.Reject(c.Request.Context(), ctxUserID(c), c.Param("id"), body.Reason)
+	camp, err := h.svc.Reject(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Reason)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -252,7 +256,7 @@ func (h *Handler) AdminRequestInfo(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	camp, err := h.svc.RequestInfo(c.Request.Context(), ctxUserID(c), c.Param("id"), body.Reason)
+	camp, err := h.svc.RequestInfo(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Reason)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -266,7 +270,7 @@ func (h *Handler) AdminSuspend(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	camp, err := h.svc.Suspend(c.Request.Context(), ctxUserID(c), c.Param("id"), body.Reason)
+	camp, err := h.svc.Suspend(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Reason)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -274,9 +278,7 @@ func (h *Handler) AdminSuspend(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": camp})
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Public handlers (no auth)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Landing (public): GET /api/finance/placement/landing
 func (h *Handler) Landing(c *gin.Context) {

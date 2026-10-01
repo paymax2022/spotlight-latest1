@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ptr"
+	"spotlight/backend/go-common/timeutil"
 	"spotlight/backend/internal/crowdfunding"
 	"spotlight/backend/internal/crowdfunding/engage"
 )
@@ -36,18 +38,12 @@ var ErrNotFound = errors.New("crowdfunding/creator: not found")
 // payout rather than added to the contributor's bill. A ₦1,000 contribution
 // therefore rendered as "₦1,025 total paid" against a ₦1,000 debit.
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-func ptr(s string) *string { return &s }
-
 func nullPtr(ns *string) *string {
 	if ns == nil || *ns == "" {
 		return nil
 	}
 	return ns
 }
-
-func rfc3339(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
 // reference derives a stable human reference from a contribution id + key.
 func reference(id, idemKey string) string {
@@ -105,8 +101,6 @@ func (s *Service) creatorDisplayName(ctx context.Context, userID string) string 
 	return "Anonymous"
 }
 
-// ─── Contributors (per campaign) ─────────────────────────────────────────────
-
 // GetContributors returns the contributors to a campaign, derived from the
 // append-only contributions table. The contributions table has no anonymity
 // column, so every contributor is treated as named (displayName resolved from
@@ -143,13 +137,11 @@ func (s *Service) GetContributors(ctx context.Context, campaignID string) ([]Con
 			AmountKobo:  amount,
 			Message:     nil,
 			Anonymous:   false,
-			CreatedAt:   rfc3339(createdAt),
+			CreatedAt:   timeutil.RFC3339(createdAt),
 		})
 	}
 	return out, rows.Err()
 }
-
-// ─── Contributions (the caller's own) ────────────────────────────────────────
 
 // ListContributions returns the caller's own contributions, newest first.
 // An optional client ContributionStatus filter is applied in Go after mapping.
@@ -186,14 +178,12 @@ func (s *Service) ListContributions(ctx context.Context, userID, status string) 
 }
 
 // GetContribution returns a single contribution BELONGING TO contributorID.
-//
 // The owner predicate is the whole access control here. A contribution id is a
 // bare uuid the client holds after paying, and the previous "the proxy auth
 // layer gates the caller" reasoning only established that the caller is *some*
 // logged-in user — not that it is *this* contribution's contributor. Without
 // the predicate any authenticated account could read another person's
 // amount, campaign and payment reference from an id it happened to see.
-//
 // A row that exists but belongs to someone else returns ErrNotFound — the same
 // answer as a row that does not exist — so the endpoint never confirms the
 // existence of an id it will not serve. The owner is compared as text so that
@@ -280,7 +270,7 @@ func scanContribution(scan func(dest ...any) error) (Contribution, error) {
 		Anonymous:         false,
 		Message:           nil,
 		RewardTierTitle:   nil,
-		CreatedAt:         rfc3339(createdAt),
+		CreatedAt:         timeutil.RFC3339(createdAt),
 		RefundEligible:    rawStatus == "escrowed" && !refundRequested,
 	}, nil
 }
@@ -289,7 +279,6 @@ func scanContribution(scan func(dest ...any) error) (Contribution, error) {
 // callerID. It NEVER moves money — an admin processes the actual refund in a
 // separate slice. The insert is idempotent on the contribution (UNIQUE), so
 // re-requesting is a no-op.
-//
 // The ownership predicate is load-bearing. This used to look the contribution up
 // by id alone and then take requester_id from the ROW, which meant it could
 // never misattribute a request — but any authenticated account could file one
@@ -297,7 +286,6 @@ func scanContribution(scan func(dest ...any) error) (Contribution, error) {
 // overwrite the reason on a request the real contributor had already filed. A
 // refund request is what an admin acts on, so that is someone else's money
 // dispute opened, or reworded, by a third party.
-//
 // Scoping the lookup is what makes the wrong write impossible rather than
 // merely unlikely: with the predicate in place, callerID and the row's
 // contributor_id are the same value by construction, so requester_id is written
@@ -336,8 +324,6 @@ func (s *Service) RequestRefund(ctx context.Context, contributionID, callerID, r
 	}
 	return map[string]any{"status": "REFUND_REQUESTED"}, nil
 }
-
-// ─── Creator stats (all derived) ─────────────────────────────────────────────
 
 // GetCreatorStats returns the creator's dashboard counters, derived from their
 // campaigns and the append-only contributions/cf_withdrawals tables.
@@ -397,8 +383,6 @@ func round2(v float64) float64 {
 	return float64(int64(v*100+0.5)) / 100
 }
 
-// ─── Creator campaigns ───────────────────────────────────────────────────────
-
 // GetMyCampaigns returns the creator's own campaigns as list-card summaries,
 // with raised/contributor counts derived from contributions.
 func (s *Service) GetMyCampaigns(ctx context.Context, userID, status string) ([]CampaignSummary, error) {
@@ -446,7 +430,7 @@ func (s *Service) GetMyCampaigns(ctx context.Context, userID, status string) ([]
 		sum.Paused = pausedAt != nil
 		sum.CategoryLabel = categoryLabel(sum.Category)
 		if !deadline.IsZero() {
-			sum.Deadline = ptr(rfc3339(deadline))
+			sum.Deadline = ptr.Of(timeutil.RFC3339(deadline))
 		}
 		sum.CreatorName = name
 		sum.CreatorType = "INDIVIDUAL"
@@ -483,7 +467,7 @@ func (s *Service) GetCreatorContributions(ctx context.Context, userID string) ([
 		if err := rows.Scan(&cc.ID, &cc.CampaignTitle, &cc.AmountKobo, &createdAt, &cc.ContributorName); err != nil {
 			return nil, err
 		}
-		cc.CreatedAt = rfc3339(createdAt)
+		cc.CreatedAt = timeutil.RFC3339(createdAt)
 		cc.Anonymous = false
 		out = append(out, cc)
 	}
@@ -519,8 +503,8 @@ func (s *Service) GetCreatorWithdrawals(ctx context.Context, userID string) ([]C
 			&w.BankLabel, &requestedAt, &note); err != nil {
 			return nil, err
 		}
-		w.RequestedAt = rfc3339(requestedAt)
-		w.Note = nullPtr(note)
+		w.RequestedAt = timeutil.RFC3339(requestedAt)
+		w.Note = ptr.OrNil(ptr.DerefZero(note))
 		out = append(out, w)
 	}
 	return out, rows.Err()
@@ -549,13 +533,11 @@ func (s *Service) GetCreatorNotifications(ctx context.Context, userID string) ([
 		if err := rows.Scan(&n.ID, &n.Type, &n.Title, &n.Body, &n.Read, &createdAt); err != nil {
 			return nil, err
 		}
-		n.CreatedAt = rfc3339(createdAt)
+		n.CreatedAt = timeutil.RFC3339(createdAt)
 		out = append(out, n)
 	}
 	return out, rows.Err()
 }
-
-// ─── Campaign analytics (derived) ────────────────────────────────────────────
 
 // GetCampaignAnalytics returns analytics for a campaign. dailyRaised is grouped
 // from the append-only contributions table; views/shares are deterministic from
@@ -612,10 +594,7 @@ func (s *Service) GetCampaignAnalytics(ctx context.Context, campaignID string) (
 	}
 
 	// Views / shares / traffic — real rows from cf_campaign_events.
-	//
 	// These were previously invented from a hash of the campaign id
-	//   views  := 1200 + idSeed(campaignID)%8000 + contributorCount*40
-	//   shares := 40 + idSeed(campaignID)%400
 	// with the traffic breakdown a fixed percentage split of that number. The
 	// figures moved when contributors changed, which is what made them read as
 	// real. They are now aggregated from recorded events, and a campaign with no
@@ -706,8 +685,6 @@ func (s *Service) GetCampaignAnalytics(ctx context.Context, campaignID string) (
 	}, nil
 }
 
-// ─── Milestones ──────────────────────────────────────────────────────────────
-
 // GetMilestones returns a campaign's milestones ordered by sort_order.
 func (s *Service) GetMilestones(ctx context.Context, campaignID string) ([]CampaignMilestone, error) {
 	const q = `
@@ -731,14 +708,12 @@ func (s *Service) GetMilestones(ctx context.Context, campaignID string) ([]Campa
 			return nil, err
 		}
 		if dueAt != nil {
-			m.DueAt = ptr(rfc3339(*dueAt))
+			m.DueAt = ptr.Of(timeutil.RFC3339(*dueAt))
 		}
 		out = append(out, m)
 	}
 	return out, rows.Err()
 }
-
-// ─── Reward fulfilment ───────────────────────────────────────────────────────
 
 // validRewardStatus mirrors the client RewardFulfilmentStatus union.
 var validRewardStatus = map[string]bool{
@@ -777,8 +752,8 @@ func (s *Service) GetRewardBackers(ctx context.Context, status string) ([]Reward
 			&city, &b.RequiresShipping, &claimedAt); err != nil {
 			return nil, err
 		}
-		b.ShippingCity = nullPtr(city)
-		b.ClaimedAt = rfc3339(claimedAt)
+		b.ShippingCity = ptr.OrNil(ptr.DerefZero(city))
+		b.ClaimedAt = timeutil.RFC3339(claimedAt)
 		out = append(out, b)
 	}
 	return out, rows.Err()
@@ -799,8 +774,6 @@ func (s *Service) UpdateRewardStatus(ctx context.Context, backerID, status strin
 	}
 	return nil
 }
-
-// ─── Saved / recently viewed ─────────────────────────────────────────────────
 
 // GetSaved returns the caller's saved campaigns as list-card summaries.
 func (s *Service) GetSaved(ctx context.Context, userID string) ([]CampaignSummary, error) {
@@ -864,7 +837,7 @@ func (s *Service) scanSummaries(ctx context.Context, q, userID string, saved boo
 		}
 		sum.CategoryLabel = categoryLabel(sum.Category)
 		if !deadline.IsZero() {
-			sum.Deadline = ptr(rfc3339(deadline))
+			sum.Deadline = ptr.Of(timeutil.RFC3339(deadline))
 		}
 		sum.Saved = saved
 		sum.CreatorName = s.creatorDisplayName(ctx, creatorID)
@@ -892,4 +865,179 @@ func (s *Service) ToggleSave(ctx context.Context, userID, campaignID string, sav
 		}
 	}
 	return map[string]any{"id": campaignID, "saved": saved}, nil
+}
+
+// Contributor mirrors the client Contributor type.
+type Contributor struct {
+	ID          string  `json:"id"`
+	DisplayName string  `json:"displayName"`
+	AvatarURL   *string `json:"avatarUrl"`
+	AmountKobo  int64   `json:"amountKobo"`
+	Message     *string `json:"message"`
+	Anonymous   bool    `json:"anonymous"`
+	CreatedAt   string  `json:"createdAt"`
+}
+
+// Contribution mirrors the client Contribution type (the caller's own record).
+type Contribution struct {
+	ID            string  `json:"id"`
+	Reference     string  `json:"reference"`
+	CampaignID    string  `json:"campaignId"`
+	CampaignTitle string  `json:"campaignTitle"`
+	CampaignCover *string `json:"campaignCover"`
+	AmountKobo    int64   `json:"amountKobo"`
+	// FeeKobo is the platform's cut, DEDUCTED from the creator's payout — it is
+	// not part of what the contributor paid. TotalKobo is what the contributor
+	// was actually debited, and NetToCampaignKobo is what reaches the campaign.
+	// So the arithmetic is amount == total and amount - fee == net, NOT
+	// amount + fee == total.
+	FeeKobo           int64   `json:"feeKobo"`
+	NetToCampaignKobo int64   `json:"netToCampaignKobo"`
+	TotalKobo         int64   `json:"totalKobo"`
+	Currency          string  `json:"currency"`
+	Status            string  `json:"status"` // ContributionStatus
+	PaymentMethod     string  `json:"paymentMethod"`
+	Anonymous         bool    `json:"anonymous"`
+	Message           *string `json:"message"`
+	RewardTierTitle   *string `json:"rewardTierTitle"`
+	CreatedAt         string  `json:"createdAt"`
+	RefundEligible    bool    `json:"refundEligible"`
+}
+
+// CreatorStats mirrors the client CreatorStats type. Balances are derived.
+type CreatorStats struct {
+	TotalRaisedKobo      int64   `json:"totalRaisedKobo"`
+	ContributorCount     int     `json:"contributorCount"`
+	ActiveCampaigns      int     `json:"activeCampaigns"`
+	TotalCampaigns       int     `json:"totalCampaigns"`
+	AvailableBalanceKobo int64   `json:"availableBalanceKobo"`
+	PendingBalanceKobo   int64   `json:"pendingBalanceKobo"`
+	EscrowBalanceKobo    int64   `json:"escrowBalanceKobo"`
+	ViewsThisWeek        int     `json:"viewsThisWeek"`
+	ConversionRate       float64 `json:"conversionRate"`
+}
+
+// CreatorContribution mirrors the client CreatorContribution type.
+type CreatorContribution struct {
+	ID              string `json:"id"`
+	ContributorName string `json:"contributorName"`
+	CampaignTitle   string `json:"campaignTitle"`
+	AmountKobo      int64  `json:"amountKobo"`
+	CreatedAt       string `json:"createdAt"`
+	Anonymous       bool   `json:"anonymous"`
+}
+
+// CreatorWithdrawal mirrors the client CreatorWithdrawal type.
+type CreatorWithdrawal struct {
+	ID            string  `json:"id"`
+	Reference     string  `json:"reference"`
+	CampaignTitle string  `json:"campaignTitle"`
+	AmountKobo    int64   `json:"amountKobo"`
+	Status        string  `json:"status"` // WithdrawalStatus
+	BankLabel     string  `json:"bankLabel"`
+	RequestedAt   string  `json:"requestedAt"`
+	Note          *string `json:"note"`
+}
+
+// CreatorNotification mirrors the client CreatorNotification type.
+type CreatorNotification struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"` // CreatorNotificationType
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"createdAt"`
+	Read      bool   `json:"read"`
+}
+
+// TrafficSource mirrors the client TrafficSource type.
+type TrafficSource struct {
+	Source        string `json:"source"`
+	Visits        int    `json:"visits"`
+	Contributions int    `json:"contributions"`
+}
+
+// DailyRaised mirrors a single element of CampaignAnalytics.dailyRaised.
+type DailyRaised struct {
+	Date       string `json:"date"`
+	RaisedKobo int64  `json:"raisedKobo"`
+}
+
+// CampaignAnalytics mirrors the client CampaignAnalytics type.
+type CampaignAnalytics struct {
+	CampaignID              string          `json:"campaignId"`
+	Views                   int             `json:"views"`
+	Shares                  int             `json:"shares"`
+	ConversionRate          float64         `json:"conversionRate"`
+	AverageContributionKobo int64           `json:"averageContributionKobo"`
+	DailyRaised             []DailyRaised   `json:"dailyRaised"`
+	TrafficSources          []TrafficSource `json:"trafficSources"`
+}
+
+// CampaignMilestone mirrors the client CampaignMilestone type.
+type CampaignMilestone struct {
+	ID            string  `json:"id"`
+	Title         string  `json:"title"`
+	TargetKobo    int64   `json:"targetKobo"`
+	Status        string  `json:"status"` // LOCKED | ACTIVE | RELEASED | PENDING_REVIEW
+	DueAt         *string `json:"dueAt"`
+	EvidenceCount int     `json:"evidenceCount"`
+}
+
+// RewardBacker mirrors the client RewardBacker type.
+type RewardBacker struct {
+	ID               string  `json:"id"`
+	BackerName       string  `json:"backerName"`
+	RewardTierTitle  string  `json:"rewardTierTitle"`
+	AmountKobo       int64   `json:"amountKobo"`
+	Status           string  `json:"status"` // RewardFulfilmentStatus
+	ShippingCity     *string `json:"shippingCity"`
+	RequiresShipping bool    `json:"requiresShipping"`
+	ClaimedAt        string  `json:"claimedAt"`
+}
+
+// CampaignSummary mirrors the client CampaignSummary type (list cards).
+type CampaignSummary struct {
+	ID               string  `json:"id"`
+	Title            string  `json:"title"`
+	Summary          string  `json:"summary"`
+	Type             string  `json:"type"`
+	Status           string  `json:"status"`
+	Category         string  `json:"category"`
+	CategoryLabel    string  `json:"categoryLabel"`
+	CoverImage       *string `json:"coverImage"`
+	GoalKobo         int64   `json:"goalKobo"`
+	RaisedKobo       int64   `json:"raisedKobo"`
+	Currency         string  `json:"currency"`
+	ContributorCount int     `json:"contributorCount"`
+	Deadline         *string `json:"deadline"`
+	Verified         bool    `json:"verified"`
+	Featured         bool    `json:"featured"`
+	Trending         bool    `json:"trending"`
+	Urgent           bool    `json:"urgent"`
+	// Paused is TRUE while campaigns.paused_at is set — the owner has taken the
+	// campaign out of public discovery (and out of accepting contributions).
+	// Distinct from Status, which carries the ADMIN review_status.
+	Paused bool `json:"paused"`
+	// FeatureRequestStatus is the LATEST cf_feature_requests.status for this
+	// campaign (PENDING|APPROVED|REJECTED|WITHDRAWN), or null when the owner has
+	// never asked to be featured. It lets the app show that a request is already
+	// pending instead of inviting the owner to ask twice — the second ask would
+	// be refused by the one-open-request partial unique index anyway, so without
+	// this the only feedback would be a 409.
+	FeatureRequestStatus *string `json:"featureRequestStatus"`
+	Saved                bool    `json:"saved"`
+	Location             *string `json:"location"`
+	CreatorName          string  `json:"creatorName"`
+	CreatorType          string  `json:"creatorType"`
+	CreatorVerification  string  `json:"creatorVerification"`
+}
+
+// RefundRequestInput is the body for POST /contributions/:id/refund-request.
+type RefundRequestInput struct {
+	Reason string `json:"reason"`
+}
+
+// RewardStatusInput is the body for PUT /rewards/fulfilment/:id.
+type RewardStatusInput struct {
+	Status string `json:"status" binding:"required"`
 }

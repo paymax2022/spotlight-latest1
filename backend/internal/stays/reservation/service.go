@@ -5,12 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/stays/consent"
 	"spotlight/backend/internal/stays/gateway"
 	"spotlight/backend/internal/stays/pricing"
@@ -60,7 +65,6 @@ type Service struct {
 // imports the commission package at compile time (mirrors the Notifier / Auditor
 // seams) — the adapter, which lives in app-wiring, discards the returned earning row
 // and surfaces only the error.
-//
 // This records realized profit ONLY; it never moves money. Stays' own money
 // movements (the settle split into commission/provider-clearing) are unchanged, and
 // the injected recorder is deliberately constructed WITHOUT a ledger so RecordFor
@@ -184,7 +188,7 @@ func (s *Service) Prebook(ctx context.Context, userID string, in PrebookInput) (
 		CheckOut:       in.CheckOut,
 		Rooms:          maxInt(in.Rooms, 1),
 		Occupancy:      orEmpty(in.Occupancy),
-		Currency:       orStr(in.Currency, "NGN"),
+		Currency:       strutil.FirstNonEmpty(in.Currency, "NGN"),
 		PaymentMethod:  orMethod(in.PaymentMethod, gateway.PaymentWallet),
 		IdempotencyKey: "prebook:" + uuid.NewString(),
 	})
@@ -261,7 +265,6 @@ func (s *Service) Prebook(ctx context.Context, userID string, in PrebookInput) (
 
 // Book runs the hold→book→charge→release SAGA with MANDATORY auto-release. It is
 // idempotent on the caller-supplied Idempotency-Key.
-//
 //  1. PREBOOK_OK → re-load reservation (object-level authZ; guest owns it).
 //  2. NDPA consent gate (Book forwards guest PII to the supplier).
 //  3. HOLD: settlement.Escrow(gross) → AccountEscrow (idempotency key). No charge
@@ -462,8 +465,6 @@ func (s *Service) transition(ctx context.Context, res *Reservation, to State) er
 	return nil
 }
 
-// --- queries + lifecycle ops (object-level authZ) ---
-
 // Get returns a reservation the caller owns.
 func (s *Service) Get(ctx context.Context, userID, reservationID string) (*Reservation, error) {
 	res, err := s.repo.Get(ctx, reservationID)
@@ -551,7 +552,6 @@ func (s *Service) Cancel(ctx context.Context, userID, reservationID, reason stri
 // gate still applies: a modify re-validates live availability + price BEFORE any
 // money moves, and only mutates the reservation row AFTER the money movement
 // succeeds. It is idempotent on the caller-supplied Idempotency-Key.
-//
 // Money legs (REUSE — no new ledger accounts):
 //   - delta > 0 (CHARGE): settlement.Escrow(delta) → AccountEscrow with key
 //     "stays:modify:charge:<id>:<seq>", then settleConfirmed → the same split the
@@ -737,14 +737,10 @@ func (s *Service) settleModifyDelta(ctx context.Context, res *Reservation, settl
 	return s.settlement.Settle(ctx, settlementID, split)
 }
 
-// --- admin ---
-
 // SearchAdmin returns reservations across guests (admin; RBAC gated at the route).
 func (s *Service) SearchAdmin(ctx context.Context, state, city string, limit, offset int) ([]Reservation, error) {
 	return s.repo.SearchAdmin(ctx, state, city, limit, offset)
 }
-
-// --- safe side-effects (never fail the saga) ---
 
 func (s *Service) auditSafe(ctx context.Context, userID, action string, detail map[string]any) {
 	if s.audit != nil {
@@ -757,8 +753,6 @@ func (s *Service) notifySafe(ctx context.Context, userID, kind, message string) 
 		s.notify.Notify(ctx, userID, kind, message)
 	}
 }
-
-// --- small helpers ---
 
 func bps(amountKobo, b int64) int64 {
 	if b <= 0 || amountKobo <= 0 {
@@ -774,13 +768,6 @@ func maxInt(a, b int) int {
 	return b
 }
 
-func orStr(s, def string) string {
-	if s == "" {
-		return def
-	}
-	return s
-}
-
 func orEmpty(m map[string]any) map[string]any {
 	if m == nil {
 		return map[string]any{}
@@ -793,4 +780,256 @@ func orMethod(m, def gateway.PaymentMethod) gateway.PaymentMethod {
 		return def
 	}
 	return m
+}
+
+// agent_support.go — repository helpers for the agent-assisted booking channel
+// (internal/stays/agent). These are ADDITIVE to the reservation repository: the
+// core self-service saga never touches the agent_* columns, and the agent channel
+// reuses the SAME Book saga then tags the row here. No new money primitive.
+
+// AgentReservationTag is the walk-in-customer + booking-agent metadata written onto
+// a reservation booked through the agent channel.
+type AgentReservationTag struct {
+	AgentUserID     string
+	CustomerName    string
+	CustomerContact string
+}
+
+// TagAgentBooking stamps the agent_user_id + walk-in customer contact onto a
+// reservation the agent booked. Called AFTER the standard Book saga confirms; it
+// only annotates provenance and does NOT move money or change state. Idempotent:
+// re-tagging with the same agent is a no-op-safe UPDATE.
+func (r *Repository) TagAgentBooking(ctx context.Context, reservationID string, tag AgentReservationTag) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE public.stays_reservation
+		SET agent_user_id = $2, customer_name = $3, customer_contact = $4, updated_at = now()
+		WHERE id = $1`,
+		reservationID, tag.AgentUserID, tag.CustomerName, tag.CustomerContact)
+	if err != nil {
+		return fmt.Errorf("reservation: tag agent booking: %w", err)
+	}
+	return nil
+}
+
+// ListByAgent returns reservations this agent booked, newest-first.
+func (r *Repository) ListByAgent(ctx context.Context, agentUserID string, limit, offset int) ([]Reservation, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT `+resCols+` FROM public.stays_reservation
+		WHERE agent_user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, agentUserID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Reservation
+	for rows.Next() {
+		res, err := scanReservation(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *res)
+	}
+	return out, rows.Err()
+}
+
+// AgentCommissionTotals is the aggregate commission an agent has earned across
+// booked+settled reservations (CONFIRMED or terminally-completed, not released/void).
+type AgentCommissionTotals struct {
+	BookingsCount  int   `json:"bookings_count"`
+	GrossSalesKobo int64 `json:"gross_sales_kobo"`
+	CommissionKobo int64 `json:"commission_kobo"`
+}
+
+// SumAgentCommission sums the agent's commission over reservations that actually
+// booked+settled (states where the escrow split posted the commission). Released /
+// void / failed bookings contribute nothing (their commission never settled).
+func (r *Repository) SumAgentCommission(ctx context.Context, agentUserID string) (AgentCommissionTotals, error) {
+	var t AgentCommissionTotals
+	// commission_kobo is the pre-computed DirectCommission split persisted at
+	// prebook; only booked-and-settled states have posted it to AccountCommission.
+	row := r.db.QueryRow(ctx, `
+		SELECT COUNT(*),
+		       COALESCE(SUM(gross_amount_kobo), 0),
+		       COALESCE(SUM(commission_kobo), 0)
+		FROM public.stays_reservation
+		WHERE agent_user_id = $1
+		  AND state IN ('CONFIRMED','COMPLETED')`, agentUserID)
+	if err := row.Scan(&t.BookingsCount, &t.GrossSalesKobo, &t.CommissionKobo); err != nil {
+		return AgentCommissionTotals{}, err
+	}
+	return t, nil
+}
+
+// voucher_signer.go — reusable R2 presigner for stays booking vouchers.
+// The reservation handler holds a `signRef func(ref string) (string, error)` that
+// turns a stored voucher object ref into a short-lived, presigned GET URL the guest
+// can download. When wired to nil the handler returns the raw stored ref (see
+// NewHandler); this file provides a real, fail-closed signer.
+// It REUSES the shared std-lib SigV4 presigner (internal/platform/r2), the same
+// client the estate/marketplace/transport/doctor/KYC modules use — no hand-rolled
+// signing, no aws-sdk dependency. R2 credentials are SERVER-SIDE ONLY and never
+// reach a client; the client only ever sees the minted URL.
+// Fail-closed: when R2 env is absent the signer returns a clear
+// "voucher storage not configured" error rather than a broken/unsigned URL, so
+// local/dev still builds and runs (the voucher route then surfaces the error
+// instead of leaking a raw ref that would 403 at R2).
+
+// voucherPresignTTL bounds how long an issued voucher download URL is valid.
+const voucherPresignTTL = 15 * time.Minute
+
+// ErrVoucherStorageNotConfigured is returned by the signer when R2 creds are
+// incomplete (fail-closed; never a fabricated URL).
+var ErrVoucherStorageNotConfigured = errors.New("reservation: voucher storage not configured")
+
+// NewR2VoucherSigner builds the voucher presigner from the R2 env vars
+// (R2_ACCOUNT_ENDPOINT, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
+// R2_REGION), reusing the shared platform/r2 SigV4 presigner. It returns a
+// `func(ref string) (string, error)` matching what reservation.NewHandler expects.
+// It NEVER returns a nil signer + nil error: when R2 is unconfigured it returns a
+// working func that yields ErrVoucherStorageNotConfigured (so the caller can wire
+// it unconditionally and the route fails closed rather than presenting a raw ref).
+// The returned error is reserved for future hard-validation; today it is always nil
+// so wiring code can ignore it and stay nil-safe.
+func NewR2VoucherSigner() (func(ref string) (string, error), error) {
+	presigner := r2.New(r2.Config{
+		AccountEndpoint: os.Getenv("R2_ACCOUNT_ENDPOINT"),
+		Bucket:          os.Getenv("R2_BUCKET"),
+		AccessKeyID:     os.Getenv("R2_ACCESS_KEY_ID"),
+		SecretAccessKey: os.Getenv("R2_SECRET_ACCESS_KEY"),
+		Region:          os.Getenv("R2_REGION"),
+	})
+	return newVoucherSignerFromPresigner(presigner), nil
+}
+
+// NewR2VoucherSignerFromConfig is the config-injected variant used by the
+// orchestrator, which already loads the R2 settings onto its Config struct (it
+// does not re-read os.Getenv per module). Both variants produce the identical
+// fail-closed signer.
+func NewR2VoucherSignerFromConfig(accountEndpoint, bucket, accessKeyID, secretAccessKey, region string) func(ref string) (string, error) {
+	return newVoucherSignerFromPresigner(r2.New(r2.Config{
+		AccountEndpoint: accountEndpoint,
+		Bucket:          bucket,
+		AccessKeyID:     accessKeyID,
+		SecretAccessKey: secretAccessKey,
+		Region:          region,
+	}))
+}
+
+// newVoucherSignerFromPresigner wraps a platform/r2 Presigner into the
+// reservation signRef shape. It treats the stored ref as the R2 object key.
+//   - If R2 is unconfigured → ErrVoucherStorageNotConfigured (fail-closed).
+//   - If the stored ref is already an absolute URL (http/https) → returned
+//     unchanged; some legacy/mock vouchers persist a full URL rather than a bare
+//     object key, and re-signing an absolute URL would corrupt it.
+//   - Otherwise → a presigned GET URL valid for voucherPresignTTL.
+func newVoucherSignerFromPresigner(p *r2.Presigner) func(ref string) (string, error) {
+	return func(ref string) (string, error) {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			return "", ErrVoucherStorageNotConfigured
+		}
+		// Legacy/mock full-URL vouchers are passed through unchanged.
+		if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
+			return ref, nil
+		}
+		if !p.Configured() {
+			return "", ErrVoucherStorageNotConfigured
+		}
+		// The stored ref is the object key (server-controlled at book time).
+		key := strings.TrimPrefix(ref, "/")
+		url, err := p.PresignGet(key, voucherPresignTTL)
+		if err != nil {
+			// Never leak a broken/unsigned URL — surface the failure.
+			return "", ErrVoucherStorageNotConfigured
+		}
+		return url, nil
+	}
+}
+
+// State is the guarded booking lifecycle state (PRD §11). Transitions are enforced
+// by canTransition; the saga drives them in one direction with optimistic locking.
+type State string
+
+const (
+	StateSearching     State = "SEARCHING"
+	StateOfferSelected State = "OFFER_SELECTED"
+	StatePrebookOK     State = "PREBOOK_OK"
+	StatePaymentHeld   State = "PAYMENT_HELD"
+	StateBooking       State = "BOOKING"
+	StateConfirmed     State = "CONFIRMED"
+	StateCompleted     State = "COMPLETED"
+
+	StateCancelledByGuest State = "CANCELLED_BY_GUEST"
+	StateCancelledByHotel State = "CANCELLED_BY_HOTEL"
+	StateNoShow           State = "NO_SHOW"
+
+	StateBookFailed    State = "BOOK_FAILED"    // → release hold (no debit) → VOID
+	StatePaymentFailed State = "PAYMENT_FAILED" // → VOID
+	StatePrebookFailed State = "PREBOOK_FAILED" // price drift / sold out → re-quote | VOID
+	StateVoid          State = "VOID"
+)
+
+// transitions encodes the legal forward edges of the state machine. Any edge not
+// listed is rejected (fail-closed) by canTransition.
+var transitions = fsm.Table[State]{
+	StateSearching:     {StateOfferSelected: true, StateVoid: true},
+	StateOfferSelected: {StatePrebookOK: true, StatePrebookFailed: true, StateVoid: true},
+	StatePrebookOK:     {StatePaymentHeld: true, StatePaymentFailed: true, StateVoid: true},
+	StatePaymentHeld:   {StateBooking: true, StatePaymentFailed: true},
+	StateBooking:       {StateConfirmed: true, StateBookFailed: true},
+	StateConfirmed: {
+		StateCompleted:        true,
+		StateCancelledByGuest: true,
+		StateCancelledByHotel: true,
+		StateNoShow:           true,
+	},
+	StateCompleted: {}, // terminal (REVIEWABLE is a derived view, not a state)
+
+	StatePrebookFailed: {StateOfferSelected: true, StateVoid: true}, // re-quote | VOID
+	StatePaymentFailed: {StateVoid: true},
+	StateBookFailed:    {StateVoid: true},
+}
+
+// canTransition returns true if from→to is a legal edge.
+func canTransition(from, to State) bool {
+	return transitions.Can(from, to)
+}
+
+// IsTerminal reports whether a state has no outbound saga transitions.
+func (s State) IsTerminal() bool {
+	return transitions.IsTerminal(s)
+}
+
+// Reservation is the durable booking projection. Money columns are kobo (minor
+// units); state is the guarded lifecycle; version is the optimistic lock.
+type Reservation struct {
+	ID                 string                `json:"id"`
+	GuestUserID        string                `json:"guest_user_id"`
+	PropertyID         string                `json:"property_id"`
+	RoomTypeID         string                `json:"room_type_id"`
+	RatePlanID         string                `json:"rate_plan_id"`
+	SourceRail         gateway.SourceRail    `json:"source_rail"`
+	SupplierCode       string                `json:"supplier_code"`
+	SupplierRef        *string               `json:"supplier_ref"` // NULL until confirmed
+	State              State                 `json:"state"`
+	CheckIn            time.Time             `json:"check_in"`
+	CheckOut           time.Time             `json:"check_out"`
+	Rooms              int                   `json:"rooms"`
+	Occupancy          map[string]any        `json:"occupancy"`
+	Currency           string                `json:"currency"`
+	GrossAmountKobo    int64                 `json:"gross_amount_kobo"`
+	TaxAmountKobo      int64                 `json:"tax_amount_kobo"`
+	NetRateKobo        int64                 `json:"net_rate_kobo"`
+	MarkupKobo         int64                 `json:"markup_kobo"`
+	CommissionKobo     int64                 `json:"commission_kobo"`
+	PaymentMethod      gateway.PaymentMethod `json:"payment_method"`
+	CancellationPolicy map[string]any        `json:"cancellation_policy_snapshot"`
+	IdempotencyKey     string                `json:"idempotency_key"`
+	BookTokenRef       *string               `json:"book_token_ref"`
+	VoucherRef         *string               `json:"voucher_ref"`
+	CreatedAt          time.Time             `json:"created_at"`
+	UpdatedAt          time.Time             `json:"updated_at"`
+	Version            int                   `json:"version"`
 }

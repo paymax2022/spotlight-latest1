@@ -1,9 +1,6 @@
 package spotlightwealth_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the Spotlight Wealth module.
-//
-// spotlightwealth.Service (spotlightwealth.NewService(pool, ledgerSvc, audit))
 // talks to a concrete *pgxpool.Pool for every mutation (JoinChallenge,
 // CompleteChallenge) and to the real ledger.Service for the reward's balanced
 // double-entry posting. None of this can run without a migrated Postgres. This
@@ -12,7 +9,6 @@ package spotlightwealth_test
 // fully written end-to-end so it can be un-skipped the moment infra is
 // available — the skip is NOT a stub; every step below drives the real Service
 // against real tables.
-//
 // ── Bring-up note (read before running) ───────────────────────────────────
 //  1. Apply the spotlightwealth migration (spotlight_challenges,
 //     spotlight_challenge_members, spotlight_reward_ledger,
@@ -27,11 +23,9 @@ package spotlightwealth_test
 //       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  4. Run:
 //       cd backend && go test ./tests/spotlightwealth/... -run LiveDB -v
-//
 // Every row this file touches is created by the test itself with a fresh
 // uuid.New() id — no truncation, no shared fixtures, safe to run repeatedly
 // against the same test database.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -123,9 +117,7 @@ func seedWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 	}
 }
 
-// ---------------------------------------------------------------------------
 // CompleteChallenge: idempotency, balanced posting, reward wallet history.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_CompleteChallenge_IdempotentRetry_OneLedgerCreditOneRewardRow
 // drives a real challenge completion twice with the SAME Idempotency-Key and
@@ -324,9 +316,7 @@ func TestLiveDB_JoinChallenge_RejectsEndedChallenge(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Leaderboard: ranks learning points, live read-path smoke check.
-// ---------------------------------------------------------------------------
 
 // seedLearningPoints inserts a spotlight_learning_points row for a synthetic
 // user and returns the user id.

@@ -19,7 +19,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get the user's access token from cookies or headers
     const token = request.cookies.get('access_token')?.value;
     if (!token) {
       return NextResponse.json(
@@ -28,7 +27,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Call the Go backend API
     const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     const response = await fetch(
       `${backendUrl}/api/v1/doctor/profile/bank-account/verify`,

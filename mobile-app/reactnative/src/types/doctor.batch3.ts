@@ -1,14 +1,10 @@
-// ── Doctor (Telemedicine, provider-side) — Batch 3 Domain Types ──────────────
-// Batch 3 = spec sections K, L, M, N. ADDITIVE to `@/types/doctor`,
 // `@/types/doctor.phase2` (and the other doctor type files) — those shapes are
 // imported/reused, never duplicated. Money amounts are integers in minor units
 // (kobo). Use `import type` for type-only imports.
-//
 // APPROACH IS CONSOLIDATED: granular variants (each warning kind, each lifecycle
 // step, each status, alternatives, edit/cancel/expired, audit) are modelled as
 // states/data on top of the existing entities, not as separate entities. The
 // Frontend renders all variants from the same shapes.
-//
 // Sections:
 //   K — E-Prescription                 (extends PrescriptionDrugItem → RxDrugLine; adds warnings/lifecycle/issue/audit).
 //   L — Pharmacy & Drug Fulfilment     (REUSES Phase 2 pharmacy/delivery/substitute; adds Pharmacy/stock/messages).
@@ -37,7 +33,6 @@ import type {
   RefillStatus,
 } from '@/types/doctor.phase2';
 
-// Re-export the primitives Batch 3 screens lean on, so a screen can pull
 // everything it needs from one import site.
 export type {
   PatientSummary,
@@ -61,17 +56,13 @@ export type {
   RefillStatus,
 } from '@/types/doctor.phase2';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION K — E-PRESCRIPTION (45)
-// ═══════════════════════════════════════════════════════════════════════════
 // Extends Phase 1 `PrescriptionDrugItem` ADDITIVELY via a richer `RxDrugLine`
 // that COMPOSES the base item (it is never modified). Safety warnings are a
 // `RxWarning` union rendered as severity-toned banners — not separate entities.
 // The prescription lifecycle (draft/preview/signed/issued/expired/cancelled) is
 // a single `status` field; `IssuedPrescription` adds the QR/verification payload.
 // Refill request/approve/reject REUSES the Phase 2 `RefillRequest` / `reviewRefill`.
-
-// ─── Drug catalogue entry (strengths / dosage forms / alternatives) ──────────
 
 export type DosageForm =
   | 'tablet'
@@ -137,8 +128,6 @@ export interface RxWarning {
   relatedTo?: string;             // the other drug / condition involved
 }
 
-// ─── Rich drug line (composes Phase 1 PrescriptionDrugItem) ──────────────────
-
 // The rich prescription line — COMPOSES the Phase 1 `PrescriptionDrugItem` and
 // adds the e-prescription fields ADDITIVELY. The base item (and
 // `CreatePrescriptionInput`) is untouched.
@@ -152,8 +141,6 @@ export interface RxDrugLine {
   quantity:         number;                // dispense quantity (units)
   warnings:         RxWarning[];           // safety warnings for this line
 }
-
-// ─── Prescription lifecycle ──────────────────────────────────────────────────
 
 // The e-prescription lifecycle status. "preview" is the pre-sign review, "signed"
 // is digitally signed (but not yet sent), "issued" is sent/active, "expired" and
@@ -213,18 +200,14 @@ export interface IssuedPrescription {
   audit:            RxAuditEntry[];        // audit trail entries
 }
 
-// ─── Pharmacy send / fulfilment option (Section K send step) ──────────────────
-
 // How an issued prescription is fulfilled (drives the send-to-pharmacy options).
 export type RxFulfilmentOption =
   | 'send_to_pharmacy'            // send to a specific partner pharmacy
-  | 'patient_choice'             // let the patient pick a pharmacy
+  | 'patient_choice'
   | 'print'                      // print / download for offline use
   | 'share';                     // share the code with the patient
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION L — PHARMACY & DRUG FULFILMENT (21)
-// ═══════════════════════════════════════════════════════════════════════════
 // Mostly REUSES Phase 2 (`PharmacyFulfilment`, `DrugDelivery`, `SubstituteDrug`,
 // `reviewSubstitute`). Adds the MISSING pieces: a `Pharmacy` directory entry,
 // drug stock availability, a lightweight pharmacy clarification thread, an
@@ -294,9 +277,7 @@ export interface DeliveryAlert {
   at:           string;          // ISO datetime
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION M — LAB TEST ORDERING (26)
-// ═══════════════════════════════════════════════════════════════════════════
 // Extends Phase 1 `LabTest` / `LabOrder` ADDITIVELY. A `LabCatalogueEntry`
 // COMPOSES `LabTest` and adds sample type / fasting / price / turnaround. Lab
 // packages, lab providers, urgency, collection-mode and HMO-coverage are added
@@ -380,9 +361,7 @@ export interface LabOrderRich {
   validUntil?:    string;         // ISO date — drives the expired state
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION N — LAB RESULT REVIEW (20)
-// ═══════════════════════════════════════════════════════════════════════════
 // Extends Phase 1 `LabResult` / `LabResultValue` ADDITIVELY. An inbox row
 // (`LabResultInbox`) plus a `LabResultStatus` (pending/ready/delayed) drive the
 // list + new/critical flags. `LabResultRich` composes the Phase 1 result and adds
@@ -411,7 +390,7 @@ export interface LabResultInbox {
 // `flag: normal|low|high`) is reused verbatim under `base`.
 export interface LabResultValueRich {
   base:          LabResultValue;  // reuse Phase 1 testName/value/unit/refRange/flag
-  abnormal:      boolean;         // derived: flag !== 'normal'
+  abnormal:      boolean;
   critical:      boolean;         // critically out of range
   refLow?:       number;          // numeric lower bound (for compare/plot)
   refHigh?:      number;          // numeric upper bound
@@ -475,13 +454,9 @@ export interface LabResultRich {
   audit:          LabResultAuditEntry[];
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // MUTATION INPUTS / RESULTS
-// ═══════════════════════════════════════════════════════════════════════════
 // `idempotencyKey` is required on every state-changing mutation. Hooks generate
 // it; callers pass `Omit<Input, 'idempotencyKey'>`.
-
-// ─── Section K — e-prescription ──────────────────────────────────────────────
 
 // Issue (digitally sign + activate) a prescription.
 export interface IssuePrescriptionInput {
@@ -552,8 +527,6 @@ export interface RequestRefillConsultationResult {
   ref:              string;
 }
 
-// ─── Section L — pharmacy & drug fulfilment ──────────────────────────────────
-
 // Select a pharmacy for a fulfilment.
 export interface SelectPharmacyInput {
   prescriptionId:  string;
@@ -605,8 +578,6 @@ export interface ReportPharmacyResult {
   ref:      string;
 }
 
-// ─── Section M — lab test ordering ───────────────────────────────────────────
-
 // Share a lab order (with the patient / lab).
 export interface ShareLabOrderInput {
   orderId:         string;
@@ -632,8 +603,6 @@ export interface CancelLabOrderResult {
   status:  LabOrderStatus;        // Phase 1 status (cancellation reflected by the screen)
   cancelled: boolean;
 }
-
-// ─── Section N — lab result review ───────────────────────────────────────────
 
 // Add / update a doctor interpretation + recommendation for a result.
 export interface AddInterpretationInput {

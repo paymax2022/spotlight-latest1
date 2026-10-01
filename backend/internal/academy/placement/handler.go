@@ -5,7 +5,9 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/ginutil"
 )
 
 type Handler struct{ svc *Service }
@@ -46,7 +48,7 @@ func (h *Handler) GetQuiz(c *gin.Context) {
 }
 
 func (h *Handler) Submit(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req submitRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

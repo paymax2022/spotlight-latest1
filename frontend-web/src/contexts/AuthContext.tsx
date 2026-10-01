@@ -40,7 +40,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
-    // Get initial session
     supabase.auth.getSession().then(({ data }: { data: { session: Session | null } }) => {
       const { session } = data;
       setSession(session);
@@ -96,7 +95,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     if (error) throw error;
   };
 
-  // Get Current User
   const getCurrentUser = async () => {
     const {
       data: { user },
@@ -106,12 +104,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     return user;
   };
 
-  // Check if Email is Verified
   const isEmailVerified = () => {
     return user?.email_confirmed_at !== null;
   };
 
-  // Check if User is Admin
   const isAdmin = useCallback(
     async (userId: string) => {
       const { data, error }: { data: { role?: string } | null; error: unknown } = await supabase
@@ -125,7 +121,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     [supabase]
   );
 
-  // Check admin status on user change
   useEffect(() => {
     const checkAdminStatus = async () => {
       if (user) {
@@ -138,7 +133,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     checkAdminStatus();
   }, [user, isAdmin]);
 
-  // Get User Profile from Database
   const getUserProfile = async () => {
     if (!user) return null;
     const { data, error } = await supabase

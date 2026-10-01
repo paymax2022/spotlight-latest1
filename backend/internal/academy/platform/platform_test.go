@@ -1,7 +1,6 @@
 package platform
 
 // platform_test.go — package-local unit tests for the academy platform package.
-//
 // Scope: the pure, DB-free logic only — the composition-root FlagResolver (fail-closed
 // default-off semantics) and the pure handler/repo helpers. Every method that needs a
 // *pgxpool.Pool (Repo.GetFlag/SetFlag/List*, FlagService.*, and the gin Handlers) is
@@ -15,8 +14,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
-
-// ── FlagResolver: the fail-closed composition-root resolver ────────────────────
 
 func TestFlagResolver_NilResolver_ReturnsCompileDefault(t *testing.T) {
 	var r *FlagResolver // nil receiver must be safe and fall back to the default
@@ -99,8 +96,6 @@ func TestFlagKeys_AreDistinctAndNamespaced(t *testing.T) {
 	}
 }
 
-// ── firstNonEmpty ─────────────────────────────────────────────────────────────
-
 func TestFirstNonEmpty(t *testing.T) {
 	cases := []struct {
 		a, b, want string
@@ -116,8 +111,6 @@ func TestFirstNonEmpty(t *testing.T) {
 		}
 	}
 }
-
-// ── topByGMV: selection sort + top-n truncation ────────────────────────────────
 
 func TestTopByGMV_SortsDescendingAndTruncates(t *testing.T) {
 	rows := []gin.H{
@@ -159,8 +152,6 @@ func TestTopByGMV_Empty(t *testing.T) {
 	}
 }
 
-// ── dateOrEmpty ───────────────────────────────────────────────────────────────
-
 func TestDateOrEmpty(t *testing.T) {
 	if got := dateOrEmpty(nil); got != "" {
 		t.Errorf("dateOrEmpty(nil) = %q, want empty", got)
@@ -192,8 +183,6 @@ func TestRFCPtr(t *testing.T) {
 	}
 }
 
-// ── itoa ──────────────────────────────────────────────────────────────────────
-
 func TestItoa(t *testing.T) {
 	cases := map[int]string{0: "0", 1: "1", 9: "9", 10: "10", 42: "42", 100: "100", 123456: "123456"}
 	for in, want := range cases {
@@ -202,8 +191,6 @@ func TestItoa(t *testing.T) {
 		}
 	}
 }
-
-// ── trustJSON: pure projection of a TrustRow ──────────────────────────────────
 
 func TestTrustJSON_ZeroUpdatedAt_OmitsTimestamp(t *testing.T) {
 	row := TrustRow{

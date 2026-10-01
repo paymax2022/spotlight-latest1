@@ -62,7 +62,7 @@ func TestAggregateMasteryBySubject(t *testing.T) {
 	if math.SubjectID != "math" || math.Objectives != 2 || math.Mastered != 1 {
 		t.Errorf("math summary wrong: %+v", math)
 	}
-	if math.AvgScore < 0.69 || math.AvgScore > 0.71 { // (0.9+0.5)/2 = 0.7
+	if math.AvgScore < 0.69 || math.AvgScore > 0.71 {
 		t.Errorf("math avg_score = %v; want ~0.7", math.AvgScore)
 	}
 	if math.MasteryRatio != 0.5 { // 1/2

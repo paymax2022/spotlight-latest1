@@ -7,8 +7,6 @@ import (
 
 func ptr(v int64) *int64 { return &v }
 
-// ── applyBasisPoints: hand-computed truncation table ────────────────────
-//
 // Two cases below (333333@250bps and 7@5000bps) land on a non-exact
 // division on purpose, to prove the floor/truncation direction is right —
 // not just "close enough". A third (1@9999bps) proves a numerator smaller
@@ -55,8 +53,6 @@ func TestFloorDivInt64_NegativeNumeratorFloorsTowardNegativeInfinity(t *testing.
 	}
 }
 
-// ── CalculateUtilityPricing: fixed-amount product ────────────────────────
-
 func TestCalculateUtilityPricing_FixedAmountProductPricesCorrectly(t *testing.T) {
 	product := Product{
 		AmountType:          AmountTypeFixed,
@@ -89,8 +85,6 @@ func TestCalculateUtilityPricing_FixedAmountProductPricesCorrectly(t *testing.T)
 		t.Errorf("CalculateUtilityPricing() = %+v, want %+v", got, want)
 	}
 }
-
-// ── CalculateUtilityPricing: variable-amount product within bounds ──────
 
 func TestCalculateUtilityPricing_VariableAmountWithinBoundsPricesCorrectly(t *testing.T) {
 	product := Product{
@@ -127,8 +121,6 @@ func TestCalculateUtilityPricing_VariableAmountWithinBoundsPricesCorrectly(t *te
 	}
 }
 
-// ── CalculateUtilityPricing: variable-amount product outside bounds ─────
-
 func TestCalculateUtilityPricing_VariableAmountOutsideBoundsErrors(t *testing.T) {
 	product := Product{
 		AmountType:    AmountTypeVariable,
@@ -152,8 +144,6 @@ func TestCalculateUtilityPricing_VariableAmountOutsideBoundsErrors(t *testing.T)
 	})
 }
 
-// ── CalculateUtilityPricing: missing amount ──────────────────────────────
-
 func TestCalculateUtilityPricing_MissingAmountErrors(t *testing.T) {
 	mapping := ProviderMapping{Status: MappingStatusActive, ProviderCostKobo: ptr(int64(1))}
 
@@ -173,8 +163,6 @@ func TestCalculateUtilityPricing_MissingAmountErrors(t *testing.T) {
 		}
 	})
 }
-
-// ── CalculateUtilityPricing: non-positive provider cost errors ──────────
 
 func TestCalculateUtilityPricing_NonPositiveProviderCostErrors(t *testing.T) {
 	cases := []struct {

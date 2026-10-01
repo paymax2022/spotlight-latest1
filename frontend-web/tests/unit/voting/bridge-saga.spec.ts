@@ -8,19 +8,18 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { bridgedCastFreeVote } from '@/server/voting-bridge/bridge';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient } from '@/lib/supabase/server';
 import { assertKycTier, KycGateError } from '@/server/voting-bridge/kyc-gate';
 import { castFreeVoteAtomic } from '@/server/voting-bridge/free-vote-atomic';
 import { fakeIdempotencyTable } from './_idempotency-fake';
 import { enableBridge } from '@/server/voting-bridge/feature-flag';
 
-vi.mock('@/lib/supabase/admin');
+vi.mock('@/lib/supabase/server');
 
 // The KYC tier gate is mocked at the module boundary rather than choreographed
 // through the Supabase stub below. bridgedCastFreeVote gained the
 // assertKycTier() call (bridge.ts step 2) in the same commit that added these
 // specs, so their stubs never arranged its three-query chain
-// (profiles -> contestants -> competitions); single() returned undefined, the
 // gate fail-closed on the TypeError, and every vote in this file was refused.
 // Mocking the gate keeps each test on its actual subject — idempotency, caching
 // and outbox behaviour — while the gate's own logic stays covered by
@@ -213,7 +212,6 @@ describe('Bridge Saga (Failure Handling)', () => {
   });
 
   it('preserves the thrown status code so the route can answer 403, not 400', async () => {
-    // The failure path used to return only { success, error }, so the route
     // mapped a KYC rejection and a malformed body to the same 400. Carrying the
     // code is what lets /api/v2/votes/free answer 403 (and, once the atomic
     // claim is wired, 429 for a cap-exhausted voter).
@@ -282,7 +280,6 @@ describe('Bridge Saga (Failure Handling)', () => {
     expect(result.success).toBe(false);
 
     // Verify update was never called (no result caching on failure).
-    // storeIdempotencyResult is the only writer of `update`; the failure path
     // now issues a `delete` to release the claim, which is a separate verb.
     expect(mockSupabase.update).not.toHaveBeenCalled();
   });
@@ -301,7 +298,6 @@ describe('Bridge Saga (Failure Handling)', () => {
 
     let outboxInsertCount = 0;
 
-    // Setup: vote insert fails
     mockSupabase.insert.mockImplementationOnce(() => {
       mockSupabase.select.mockReturnThis();
       mockSupabase.single.mockResolvedValueOnce({
@@ -329,7 +325,6 @@ describe('Bridge Saga (Failure Handling)', () => {
 
     expect(result.success).toBe(false);
     // Outbox events are enqueued only after a successful claim. The original
-    // spec left this implicit with a comment and asserted nothing; now that the
     // counter is actually reachable, assert it.
     expect(outboxInsertCount).toBe(0);
   });

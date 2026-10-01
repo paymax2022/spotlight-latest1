@@ -2,10 +2,9 @@ package connectvoting
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
+	"spotlight/backend/go-common/cryptox"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -108,13 +107,11 @@ func (r *Repository) CountFreeVotes(ctx context.Context, contestID, voterID stri
 // claims for the SAME (contest, voter) pair before either can read the count
 // — the second claim can only see the first's insert once it commits, so the
 // count it reads is never stale.
-//
 // An advisory lock, not a `SELECT ... FOR UPDATE` on an existing row: unlike
 // the per-contestant daily-cap row the universal TS engine's claim_free_vote
 // locks (voter_contestant_daily_limits, upserted first so a row always exists
 // to lock), there is no per-(contest,voter) tracking row here to lock ahead of
 // a voter's first vote — connect_votes is an append-only log with no such row.
-//
 // Returns (vote, true, nil) on success, (nil, false, nil) when the cap is
 // already reached (not an error — the caller maps this to ErrFreeVoteUsed).
 func (r *Repository) ClaimFreeVote(ctx context.Context, v *Vote, allowance int) (*Vote, bool, error) {
@@ -290,10 +287,8 @@ type RosterEntry struct {
 // ListRoster returns the active contestants for a contest ordered by total
 // votes, highest first. Only contestants promoted from an approved registration
 // (or otherwise linked to this contest) appear.
-//
 // includeInactive surfaces evicted/rejected contestants too, which the admin
 // views need; the member-facing list passes false.
-//
 // viewerID sets LikedByMe per row (pass "" when the caller has no need for
 // it, e.g. the internal roster-membership check in checkRosterTarget — an
 // empty user_id never matches a real contestant_likes row, so it degrades
@@ -366,9 +361,7 @@ func (r *Repository) IsOnRoster(ctx context.Context, contestID, optionRef string
 // GetRosterEntry returns one contestant by id, with its live tally. Keyed on the
 // contestant id alone (a UUID primary key), so the caller does not need to know
 // which contest it belongs to.
-//
 // Returns (nil, nil) when no such contestant exists.
-//
 // viewerID sets LikedByMe (pass "" if the caller has no viewer, e.g. an
 // unauthenticated resolve path — it degrades to false, never errors).
 func (r *Repository) GetRosterEntry(ctx context.Context, contestantID, viewerID string) (*RosterEntry, error) {
@@ -429,8 +422,6 @@ func (r *Repository) GetRosterEntry(ctx context.Context, contestantID, viewerID 
 	return &e, nil
 }
 
-// ─── My votes / contestant supporters ────────────────────────────────────────
-
 // MyVote is one vote the caller cast, resolved to the contest and contestant it
 // was for. connect_votes stores option_ref as the contestant id, so the name and
 // photo come from a join rather than being duplicated onto the immutable log.
@@ -448,7 +439,6 @@ type MyVote struct {
 }
 
 // MyVotes returns the caller's own votes, newest first.
-//
 // Scoped on voter_id and nothing else: this is the one read where a user is
 // entitled to the identities involved, because every row is their own action.
 // The (contest_id, voter_id, created_at DESC) index does not cover a voter-only
@@ -525,16 +515,13 @@ func (r *Repository) ContestantOwner(ctx context.Context, contestantID string) (
 }
 
 // Supporters lists who voted for one contestant, newest first.
-//
 // ANONYMITY IS RESOLVED HERE, NOT IN THE CLIENT. When the contest sets
 // allow_anonymous_free_vote, a FREE vote was cast under a promise of anonymity
 // and its voter must never be named — so the name is dropped at the query and
 // the row comes back flagged instead. Returning the id and letting the client
 // decide would ship the identity to a device and rely on it to look away.
-//
 // Paid votes are always attributed: they are a transaction with a receipt, and
 // the anonymity setting covers free voting only.
-//
 // IF PAID SUPPORTERS ARE MISSING, LOOK IN bridge_outbox BEFORE SUSPECTING THIS
 // QUERY. Paid votes reach connect_votes through
 // trg_connect_tally_follows_credit on vote_transactions, and that trigger
@@ -580,7 +567,6 @@ func (r *Repository) Supporters(ctx context.Context, contestantID, contestID str
 }
 
 // MyVote returns one of the caller's own votes, or pgx.ErrNoRows.
-//
 // Scoped on voter_id as well as id: a vote id is a bare uuid, and a receipt is
 // the voter's own record. Someone else's vote answers the same as a vote that
 // does not exist, so the endpoint never confirms an id it will not serve.
@@ -616,12 +602,10 @@ type Notification struct {
 }
 
 // Notifications derives the caller's voting activity feed.
-//
 // THERE IS NO NOTIFICATIONS STORE. Nothing in this module has ever written a
 // voting notification anywhere, so this feed is COMPUTED from the two things the
 // database actually records: the caller's votes, and the deadline of contests
 // they voted in.
-//
 // The client's VotingNotification union names seven kinds. Two are derivable and
 // are produced here. The other five are not, and it is worth being exact about
 // why, because "not implemented" and "impossible from this data" are different
@@ -640,7 +624,6 @@ type Notification struct {
 //
 // Emitting those five needs an events table written at the moment each happens,
 // which is a different change from this one.
-//
 // `read` is always true. Read state is per-user, per-notification durable state,
 // and a derived feed has nowhere to keep it — returning false would give every
 // row a permanent unread dot that no amount of reading could clear.
@@ -707,8 +690,6 @@ func (r *Repository) Notifications(ctx context.Context, userID string) ([]Notifi
 	return out, rows.Err()
 }
 
-// --- Likes + profile shares ---
-
 // LikeContestant records userID's like of contestantID. Idempotent: a second
 // like from the same user is a no-op (ON CONFLICT DO NOTHING against the
 // (user_id, contestant_id) unique index), never an error — the client cannot
@@ -743,24 +724,13 @@ func (r *Repository) UnlikeContestant(ctx context.Context, contestantID, userID 
 // hashed. 128 bits of entropy makes a collision with an existing row
 // astronomically unlikely, so unlike a human-typed referral code (27^5
 // space, requires a retry-on-conflict loop) this generates once and inserts.
-func newShareToken() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("voting: could not generate a share token: %w", err)
-	}
-	return hex.EncodeToString(b), nil
-}
-
 // CreateShare records a share action and returns its token, the piece of
 // the record the caller needs to build the shareable link. sharerID is the
 // authenticated user who tapped "share" — kept for later attribution, not
 // read by anything yet.
 func (r *Repository) CreateShare(ctx context.Context, contestantID, sharerID string) (string, error) {
-	token, err := newShareToken()
-	if err != nil {
-		return "", err
-	}
-	_, err = r.db.Exec(ctx, `
+	token := cryptox.Token()
+	_, err := r.db.Exec(ctx, `
 		INSERT INTO contestant_shares (contestant_id, sharer_user_id, share_token)
 		VALUES ($1, $2, $3)`, contestantID, sharerID, token)
 	if err != nil {

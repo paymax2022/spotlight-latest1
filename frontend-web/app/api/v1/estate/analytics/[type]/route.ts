@@ -6,7 +6,6 @@ import { getResidentContext } from '@/src/server/estate/resident';
 import { buildAnalytics, isAnalyticsType } from '@/src/server/estate/analytics';
 
 // GET /api/v1/estate/analytics/{type}?from=&to= — chart-ready estate analytics.
-// Resident-scoped: the estate is resolved server-side from the auth token; the
 // client never passes an estate ID. Estate-admin only (mirrors reports).
 export async function GET(request: Request, context: { params: Promise<{ type: string }> }) {
   try {

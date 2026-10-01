@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 /**
  * Spotlight Academy (K-12 EdTech) learner stack. Mock-first; the whole surface

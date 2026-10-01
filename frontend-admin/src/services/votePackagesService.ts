@@ -137,18 +137,13 @@ export async function deactivateVotePackage(id: string): Promise<void> {
   await readJsonOrThrow(res, 'Deactivating vote package');
 }
 
-// ── Reusable templates ──────────────────────────────────────────────────────
-//
 // A vote_packages row belongs to exactly one contest (contest_id is NOT NULL),
 // so there is no such thing as a reusable package: every contest meant retyping
 // the same tiers, and they drifted apart. Templates are the catalog authored
-// once; attaching one CLONES it into an ordinary vote_packages row for the
 // contest, carrying template_id for provenance.
-//
 // Cloning rather than referencing is deliberate. A contest that is selling votes
 // must not have its prices change underneath it because a template was edited
 // later, and must not lose its packages because one was deleted.
-//
 // ⚠️ Template `amount` is NAIRA too, mirroring vote_packages.amount exactly, so
 // the clone is a straight copy with no scaling.
 
@@ -281,19 +276,14 @@ export function formatNaira(amount: number): string {
   }).format(Number(amount || 0));
 }
 
-// ── Contest voting settings ─────────────────────────────────────────────────
-//
 // /api/admin/voting/settings has had read AND write since long before this, and
 // nothing in the console ever called it — the same gap the package CRUD had.
 // The consequence: an operator could not set what a vote costs or how many free
 // votes a contest grants, so "make this contest votable" had no answer in the UI
 // even though the endpoint was sitting there.
-//
 // The contest row is the authority for whether voting is on and what a vote
-// costs; voting_settings carries the rest. Saving writes both, and a trigger
 // mirrors contests.vote_price_ngn * 100 into connect_contests.paid_vote_kobo,
 // which is what the voting paths actually gate on.
-//
 // ⚠️ pricePerVoteNgn is NAIRA. The trigger does the ×100. Sending kobo here
 // would price every vote at 100x.
 

@@ -4,7 +4,7 @@ import {
   encryptProviderCredentials,
   isEncryptedProviderCredentials,
   protectProviderCredentialsPayload,
-} from '@/src/server/utility/credentials';
+} from '@/src/server/utility/helpers';
 
 const OLD_KEY = process.env.UTILITY_PROVIDER_CREDENTIALS_KEY;
 

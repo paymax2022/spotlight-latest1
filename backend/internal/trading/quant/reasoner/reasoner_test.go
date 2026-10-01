@@ -60,13 +60,13 @@ func TestVote_OutOfRangeDiscarded(t *testing.T) {
 // vetoes, a supervisor withholds authorization.
 func TestVote_FailClosedByRole(t *testing.T) {
 	cases := []struct {
-		role      committee.Role
-		gen       fakeGen
-		wantVeto  bool // for hard-veto: Decide should treat invalid as veto
+		role     committee.Role
+		gen      fakeGen
+		wantVeto bool // for hard-veto: Decide should treat invalid as veto
 	}{
-		{committee.RoleVoting, fakeGen{enabled: false}, false},                         // disabled
+		{committee.RoleVoting, fakeGen{enabled: false}, false},                             // disabled
 		{committee.RoleHardVeto, fakeGen{enabled: true, err: errors.New("timeout")}, true}, // network error
-		{committee.RoleVoting, fakeGen{enabled: true, out: `{"nonsense":`}, false},     // malformed (still valid JSON? no)
+		{committee.RoleVoting, fakeGen{enabled: true, out: `{"nonsense":`}, false},         // malformed (still valid JSON? no)
 		{committee.RoleSupervisor, fakeGen{enabled: true, out: `not json`}, false},
 	}
 	for _, c := range cases {

@@ -38,7 +38,6 @@ export function useBackgroundSync(onEvent?: (event: SyncEvent) => void) {
   const [itemsSynced, setItemsSynced] = useState(0);
   const isSyncingRef = useRef(false);
 
-  // Check for pending syncs when coming online
   useEffect(() => {
     if (network.isOnline && syncStatus !== SyncStatus.SYNCING) {
       performSync();
@@ -78,7 +77,6 @@ export function useBackgroundSync(onEvent?: (event: SyncEvent) => void) {
         try {
           let response;
 
-          // Handle different sync actions
           if (item.action === 'save_progress') {
             response = await fetch('/api/mock-exams/progress', {
               method: 'POST',
@@ -189,7 +187,6 @@ export function useOfflineQueue() {
   const network = useNetworkStatus();
   const [queueCount, setQueueCount] = useState(0);
 
-  // Update queue count on mount and when online status changes
   useEffect(() => {
     updateQueueCount();
   }, [network.isOnline]);

@@ -1,14 +1,10 @@
-// ── Film Academy — assignments ───────────────────────────────────────────────
 // A NATIVE screen. Brief, submission, and the tutor's grade in one place, so a
 // learner never has to remember what they sent.
-//
 // A graded assignment is read-only here AND on the server: resubmitting would
 // erase the tutor's score and feedback, so the form is not offered at all.
-//
 // PAGINATED. The list used to render every assignment a learner had ever been
 // set, in one response and one render. A cohort's brief list grows all term, so
 // both grew with it; pages of 10 are fetched as the learner asks for them.
-//
 // PARTS. An assignment may be delivered in parts, each scheduled in a programme
 // week (week 1-4). Each part is submitted on its own, so a learner who sends
 // week 1 and later sends week 2 keeps both — before this the single
@@ -25,10 +21,10 @@ import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, CircleCheck, Clock, Lock, Award, ExternalLink, CalendarDays } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import {
   getAssignments,
   submitAssignment,

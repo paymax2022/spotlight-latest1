@@ -1,9 +1,6 @@
-// ── Bus provider marketplace — React Query hooks ─────────────────────────────
 // Customer (search + directory) and provider (dashboard + management) hooks for
 // the interstate bus marketplace. Mirrors useModes.ts conventions so screens
 // stay declarative and share caching / loading / error contracts.
-//
-// Money: only customer booking (useBookBus in useModes.ts) charges. Provider
 // route/schedule mutations are free management operations — no Idempotency-Key.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -24,9 +21,7 @@ import type {
 const MKT_KEY = 'busmkt';
 const PROV_KEY = 'busprov';
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // CUSTOMER — search + directory
-// ═══════════════════════════════════════════════════════════════════════════════
 export function useBusSearch(params: BusSearchParams, enabled: boolean) {
   return useQuery({
     queryKey: [BUS_KEY, MKT_KEY, 'search', params.tripKind ?? '', params.fromState, params.toState, params.fromCity ?? '', params.toCity ?? '', params.providerId ?? '', params.date ?? ''],
@@ -53,9 +48,7 @@ export function useBusProviderDetail(id?: string) {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PROVIDER — dashboard + management (free operations, no money movement)
-// ═══════════════════════════════════════════════════════════════════════════════
 export function useProviderMe() {
   return useQuery({
     queryKey: [BUS_KEY, PROV_KEY, 'me'],
@@ -118,7 +111,6 @@ export function useCreateSchedule() {
   });
 }
 
-// ─── Recurring departure templates ─────────────────────────────────────────────
 const TPL_KEY = 'templates';
 
 export function useTemplates() {

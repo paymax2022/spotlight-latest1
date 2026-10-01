@@ -1,17 +1,13 @@
 // Durable contest definitions.
-//
 // `src/server/registration/store.ts` keeps contest definitions on globalThis,
-// mirrored to a JSON file in os.tmpdir(). Its own comment says "until this moves
 // to Supabase", and `supabase-store.ts` moved registrations across but left
 // contests behind, re-exporting the in-memory pair. The consequence: a contest
 // created in /admin/contests never reached Postgres, so nothing outside that one
 // Next.js process — the web contest list, the Go voting API, the mobile app —
 // could ever see it.
-//
 // This writes contest definitions to public.contests, which is the table the web
 // `/api/v1/contests` endpoint serves and which 20261223000000 mirrors into
 // connect_contests for the mobile voting plane.
-//
 // Additive by construction: store.ts is protected and is NOT modified. The admin
 // route writes through BOTH, so the registration flow (which resolves a contest
 // by slug out of the in-memory catalog) keeps working unchanged.
@@ -21,7 +17,6 @@ import { resolveCategoryLabel } from '@/src/server/contests/categories';
 import type { ContestRegistrationDefinition } from '@/src/features/registration/types';
 
 // Lazy + memoized for the same reason as supabase-store: a module-level
-// createClient() throws "supabaseUrl is required" at import time whenever env is
 // unset (vitest collection, next build).
 let supabaseClient: SupabaseClient | null = null;
 function getSupabase() {
@@ -93,17 +88,14 @@ export async function persistContestDefinition(
       description: '',
       category: await resolveContestCategoryLabel(def.contestCategory),
       // UPCOMING, not active — and not 'draft' either.
-      //
       // 'active' was wrong: the contests -> connect_contests mirror maps it to
       // 'open', so a newly saved contest appeared on the phone as LIVE the moment
       // an admin hit save. Creating a contest and opening voting on it are
       // separate decisions.
-      //
       // 'draft' replaced it and overcorrected: /api/v1/contests filters
       // status in (active, upcoming) and Go's ListContests filters (open, closed),
       // so a draft contest was invisible on BOTH planes — and nothing in the repo
       // could move it out of draft, which stranded every contest an admin created.
-      //
       // 'upcoming' keeps both intents: the contest is visible on the web list
       // immediately, while the mirror maps upcoming -> draft so it stays off the
       // phone until an admin sets it active from the status control.

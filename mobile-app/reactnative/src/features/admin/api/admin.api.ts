@@ -1,12 +1,8 @@
-// ── Paymax · Admin Console — API wrapper ─────────────────────────────────────
 // Typed data layer the admin screens code against. Mirrors crypto.api.ts:
 // mock-flagged via EXPO_PUBLIC_ADMIN_USE_MOCK (default true). Flip to false once
 // the real Go admin endpoints under /api/v1/admin/* are live.
-//
 // RULES honoured here:
-//  • all money is integer minor units;
 //  • the selected admin Role is attached to every LIVE request as the
-//    `X-Admin-Role` header (set via setAdminRole / the AdminRole context);
 //  • the backend returns `{ type, code, message }` on errors — `toAdminError`
 //    normalises that into an Error carrying `message` + `adminType`/`adminCode`.
 
@@ -51,14 +47,12 @@ import type {
   WithdrawalReviewItem,
 } from '../types/admin.types';
 
-// ─── Feature flag: flip to false once real endpoints are ready ────────────────
 const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ADMIN_USE_MOCK, true);
 
 /** Simulated network latency so loading states render in mock mode. */
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 
-// ─── Current admin role (attached as X-Admin-Role on live requests) ────────────
 // Module-level holder; the AdminRole context calls setAdminRole on every change.
 
 let currentRole: Role = 'SuperAdmin';
@@ -105,14 +99,10 @@ async function live<T>(fn: () => Promise<{ data: { data?: T } & T }>): Promise<T
   }
 }
 
-// ─── Dashboard ──────────────────────────────────────────────────────────────--
-
 export async function getDashboard(): Promise<Dashboard> {
   if (USE_MOCK) { await delay(280); return MOCK_DASHBOARD; }
   return live<Dashboard>(() => api.get('/api/v1/admin/dashboard', roleHeaders()));
 }
-
-// ─── Users ──────────────────────────────────────────────────────────────────--
 
 export async function getUsers(): Promise<UserSummary[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_USERS]; }
@@ -138,8 +128,6 @@ export async function getUser(id: string): Promise<UserDetail> {
   return live<UserDetail>(() => api.get(`/api/v1/admin/users/${id}`, roleHeaders()));
 }
 
-// ─── KYC ────────────────────────────────────────────────────────────────────--
-
 export async function getKycQueue(): Promise<KycCase[]> {
   if (USE_MOCK) {
     await delay();
@@ -161,8 +149,6 @@ export async function reviewKyc(id: string, decision: KycDecision, reason: strin
   );
 }
 
-// ─── Asset controls ────────────────────────────────────────────────────────--
-
 export async function getAssetControls(): Promise<AssetControl[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_ASSET_CONTROLS]; }
   return live<AssetControl[]>(() => api.get('/api/v1/admin/assets', roleHeaders()));
@@ -179,8 +165,6 @@ export async function updateAssetControl(id: string, patch: AssetControlPatch): 
   return live<AssetControl>(() => api.patch(`/api/v1/admin/assets/${id}`, patch, roleHeaders()));
 }
 
-// ─── Orders ───────────────────────────────────────────────────────────────────
-
 export async function getOrders(filter: OrderFilter = 'all'): Promise<AdminOrder[]> {
   if (USE_MOCK) {
     await delay();
@@ -193,8 +177,6 @@ export async function getOrders(filter: OrderFilter = 'all'): Promise<AdminOrder
   }
   return live<AdminOrder[]>(() => api.get('/api/v1/admin/orders', { ...roleHeaders(), params: { filter } }));
 }
-
-// ─── Withdrawal review ─────────────────────────────────────────────────────--
 
 export async function getWithdrawalQueue(): Promise<WithdrawalReviewItem[]> {
   if (USE_MOCK) {
@@ -221,21 +203,15 @@ export async function reviewWithdrawal(
   );
 }
 
-// ─── Reconciliation ───────────────────────────────────────────────────────────
-
 export async function getReconciliation(): Promise<ReconReport> {
   if (USE_MOCK) { await delay(300); return MOCK_RECON; }
   return live<ReconReport>(() => api.get('/api/v1/admin/reconciliation', roleHeaders()));
 }
 
-// ─── Providers ─────────────────────────────────────────────────────────────--
-
 export async function getProviders(): Promise<ProviderHealth[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_PROVIDERS]; }
   return live<ProviderHealth[]>(() => api.get('/api/v1/admin/providers', roleHeaders()));
 }
-
-// ─── Risk limits ──────────────────────────────────────────────────────────────
 
 export async function getRiskLimits(): Promise<RiskLimit[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_RISK_LIMITS]; }
@@ -253,8 +229,6 @@ export async function updateRiskLimit(id: string, valueMinor: number): Promise<R
   return live<RiskLimit>(() => api.patch(`/api/v1/admin/risk-limits/${id}`, { valueMinor }, roleHeaders()));
 }
 
-// ─── Fees ─────────────────────────────────────────────────────────────────────
-
 export async function getFees(): Promise<FeeConfigItem[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_FEES]; }
   return live<FeeConfigItem[]>(() => api.get('/api/v1/admin/fees', roleHeaders()));
@@ -271,8 +245,6 @@ export async function updateFee(id: string, bps: number): Promise<FeeConfigItem>
   return live<FeeConfigItem>(() => api.patch(`/api/v1/admin/fees/${id}`, { bps }, roleHeaders()));
 }
 
-// ─── Feature flags ─────────────────────────────────────────────────────────--
-
 export async function getFeatureFlags(): Promise<FeatureFlag[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_FLAGS]; }
   return live<FeatureFlag[]>(() => api.get('/api/v1/admin/feature-flags', roleHeaders()));
@@ -288,8 +260,6 @@ export async function setFeatureFlag(key: string, enabled: boolean): Promise<Fea
   }
   return live<FeatureFlag>(() => api.patch(`/api/v1/admin/feature-flags/${key}`, { enabled }, roleHeaders()));
 }
-
-// ─── Approvals (maker-checker) ─────────────────────────────────────────────--
 
 export async function getApprovals(): Promise<Approval[]> {
   if (USE_MOCK) {
@@ -323,8 +293,6 @@ export async function rejectApproval(id: string, reason: string): Promise<Approv
   return live<Approval>(() => api.post(`/api/v1/admin/approvals/${id}/reject`, { reason }, roleHeaders()));
 }
 
-// ─── Audit log ─────────────────────────────────────────────────────────────--
-
 export async function getAudit(): Promise<AuditEntry[]> {
   if (USE_MOCK) {
     await delay();
@@ -332,8 +300,6 @@ export async function getAudit(): Promise<AuditEntry[]> {
   }
   return live<AuditEntry[]>(() => api.get('/api/v1/admin/audit', roleHeaders()));
 }
-
-// ─── Admin directory ─────────────────────────────────────────────────────────-
 
 export async function getAdmins(): Promise<AdminUser[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_ADMINS]; }

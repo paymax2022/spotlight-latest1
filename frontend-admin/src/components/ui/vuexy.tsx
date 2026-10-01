@@ -1,15 +1,10 @@
-// ── Vuexy UI kit ─────────────────────────────────────────────────────────────
 // The single source of the Vuexy design tokens + presentational primitives for
 // frontend-admin. Interactive primitives (Button/Input) render `.vx-*` classes
-// defined in app/globals.css, so they get real hover/focus states; structural
 // pieces (Page/Card/Badge/PageHeader) are inline. Import from '@/components/ui/vuexy'.
-//
-// Purely presentational — safe in server or client components; interactivity
 // (onClick etc.) is supplied by the consumer.
 
 import type { ButtonHTMLAttributes, CSSProperties, InputHTMLAttributes, ReactNode } from 'react';
 
-// ── Tokens (mirror the CSS variables in app/globals.css) ─────────────────────
 export const colors = {
   primary: '#7367f0',
   secondary: '#82868b',
@@ -32,7 +27,6 @@ export function tint(hex: string, a: number): string {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
 }
 
-// ── Table cell style tokens (apply directly on <th>/<td>) ────────────────────
 export const thCell: CSSProperties = {
   textAlign: 'left', padding: '11px 14px', fontSize: 11, fontWeight: 700,
   textTransform: 'uppercase', letterSpacing: 0.5, color: colors.muted,
@@ -41,8 +35,6 @@ export const thCell: CSSProperties = {
 export const tdCell: CSSProperties = { padding: '11px 14px', fontSize: 13, borderBottom: `1px solid ${colors.border}`, color: colors.text };
 
 export type ButtonVariant = 'primary' | 'outline' | 'danger' | 'secondary';
-
-// ── Components ────────────────────────────────────────────────────────────────
 
 /** Full-bleed light-bg page wrapper (offsets AdminShell's 24px main padding). */
 export function Page({ children, style }: { children: ReactNode; style?: CSSProperties }) {
@@ -62,10 +54,8 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
 }
 
 // `right` is an optional header action slot (a Refresh button, an Edit toggle).
-// The module-local _ui.tsx kits have carried one for a while; callers importing
 // Card from here had no equivalent, which is what broke the type-check on the
 // estate-facilities and modules pages.
-//
 // The no-`right` branch deliberately renders the bare <h2> exactly as before,
 // rather than always wrapping in a flex row: Card has ~1180 call sites across the
 // admin app and none of them should shift by a pixel for a slot they do not use.

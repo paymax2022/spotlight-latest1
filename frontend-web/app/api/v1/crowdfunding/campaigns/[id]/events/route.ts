@@ -4,11 +4,9 @@ import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // POST /api/v1/crowdfunding/campaigns/[id]/events — record a VIEW or SHARE.
-//
 // Feeds the real Views / Shares / Conversion / traffic-source figures on the
 // creator performance screen (see the 20261228000000 migration for why those
 // were previously fabricated).
-//
 // A signed-in caller is required here even though the Go service accepts an
 // anonymous actor: every surface that currently reaches this route is behind
 // auth, and requiring a user keeps the route consistent with the rest of the

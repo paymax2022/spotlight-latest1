@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -17,13 +18,9 @@ type Handler struct {
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func userID(c *gin.Context) string { return c.GetString("user_id") }
-
-// ── Member ──────────────────────────────────────────────────────────────────────
-
 // GetProfile handles GET /gamification/profile.
 func (h *Handler) GetProfile(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -38,7 +35,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 
 // GetBadges handles GET /gamification/badges.
 func (h *Handler) GetBadges(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -66,7 +63,7 @@ func (h *Handler) GetLeaderboard(c *gin.Context) {
 // GetClassLeaderboard handles GET /gamification/leaderboard/class — the caller's
 // class XP ranking (classmates only, first-name).
 func (h *Handler) GetClassLeaderboard(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -81,15 +78,13 @@ func (h *Handler) GetClassLeaderboard(c *gin.Context) {
 
 // GetChallenges handles GET /gamification/challenges.
 func (h *Handler) GetChallenges(c *gin.Context) {
-	ch, err := h.svc.GetChallenges(c.Request.Context(), userID(c))
+	ch, err := h.svc.GetChallenges(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"challenges": ch})
 }
-
-// ── Admin ───────────────────────────────────────────────────────────────────────
 
 func (h *Handler) AdminListBadges(c *gin.Context) {
 	b, err := h.svc.AdminListBadges(c.Request.Context())
@@ -165,10 +160,6 @@ func (h *Handler) AdminUpsertLeaderboard(c *gin.Context) {
 //	  GET /gamification/leaderboards/:id
 //	  GET /gamification/challenges
 //	admin (per-route RBAC academy.*):
-//	  GET  /gamification/badges               (academy.content)
-//	  POST /gamification/badges               (academy.content)
-//	  POST /gamification/challenges           (academy.sponsor)
-//	  POST /gamification/leaderboards         (academy.content)
 func (h *Handler) Register(member, admin *gin.RouterGroup, guard func(permission string) gin.HandlerFunc) {
 	mg := member.Group("/gamification")
 	mg.GET("/profile", h.GetProfile)
@@ -197,10 +188,6 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard func(permission
 //	  GET /academy/gamification/leaderboards/:id
 //	  GET /academy/gamification/challenges
 //	admin (per-route RBAC academy.*):
-//	  GET  /academy/gamification/badges       (academy.content)
-//	  POST /academy/gamification/badges       (academy.content)
-//	  POST /academy/gamification/challenges   (academy.sponsor)
-//	  POST /academy/gamification/leaderboards (academy.content)
 func RegisterAcademyGamification(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
 	svc := NewService(NewRepository(pool), DefaultConfig())
 	h := NewHandler(svc)

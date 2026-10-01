@@ -26,8 +26,6 @@ func NewService(db *pgxpool.Pool, audit Auditor) *Service {
 	return &Service{db: db, audit: audit}
 }
 
-// ───────────────────────── Paths ─────────────────────────
-
 // ListPaths returns every published path with its ordered lesson ids and the
 // caller's derived completion percentage (server-tracked from lesson progress).
 func (s *Service) ListPaths(ctx context.Context, userID string) ([]LearnPath, error) {
@@ -118,8 +116,6 @@ func (s *Service) progress(ctx context.Context, userID, pathID string, total int
 	return (done * 100) / total
 }
 
-// ───────────────────────── Lessons ─────────────────────────
-
 // GetLesson returns a single lesson (or ErrNotFound). Reading a lesson marks it
 // complete for the caller (idempotent) so path progress advances — this is the
 // only side effect of the read and is best-effort (never fails the read).
@@ -148,8 +144,6 @@ func (s *Service) markLessonRead(ctx context.Context, userID, lessonID string) {
 	             ON CONFLICT (user_id, lesson_id) DO UPDATE SET completed=true, completed_at=now()`
 	_, _ = s.db.Exec(ctx, ins, userID, lessonID)
 }
-
-// ───────────────────────── Quiz ─────────────────────────
 
 // GetQuiz returns the quiz attached to a lesson, or ErrNotFound if the lesson
 // has none. The answer key (is_correct) is NEVER serialised — every option's
@@ -263,8 +257,6 @@ func (s *Service) SubmitQuiz(ctx context.Context, userID, quizID string, answers
 	})
 	return &QuizResult{Score: score, Total: total, Passed: passed}, nil
 }
-
-// ───────────────────────── Glossary ─────────────────────────
 
 // Glossary returns every term alphabetically.
 func (s *Service) Glossary(ctx context.Context) ([]GlossaryTerm, error) {

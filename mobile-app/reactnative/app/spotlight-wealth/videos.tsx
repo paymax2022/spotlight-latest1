@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { View, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SegmentedControl, { SegmentOption } from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';

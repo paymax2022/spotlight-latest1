@@ -2,7 +2,6 @@
 
 // 9.H — Secondary market: listings oversight, price-vs-NAV sanity, halt,
 // fee/price-band controls.
-//
 // Current control state is read via GET /market/controls (mirrors the Go admin
 // group's PUT /market/controls). The GET may lag the PUT on older backend
 // deploys — a failed GET degrades to an em-dash state and disables mutations,

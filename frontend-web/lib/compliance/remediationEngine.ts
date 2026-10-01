@@ -100,7 +100,6 @@ export class RemediationEngine {
    * Initialize default remediation templates
    */
   private initializeDefaultTemplates(): void {
-    // GDPR Templates
     this.templates.set('gdpr-slow-response', {
       id: 'gdpr-slow-response',
       category: 'gdpr',
@@ -179,7 +178,6 @@ export class RemediationEngine {
       successCriteria: ['Failure rate < 5%', 'No successful brute force attempts'],
     });
 
-    // Performance Templates
     this.templates.set('performance-high-lcp', {
       id: 'performance-high-lcp',
       category: 'performance',

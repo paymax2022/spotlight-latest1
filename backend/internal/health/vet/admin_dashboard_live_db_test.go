@@ -1,13 +1,10 @@
 package healthvet_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB coverage for the Veterinary (Module 17) admin-portal gap closure:
 // GET /admin/dashboard (appointment-state aggregate + trailing-7-day platform
 // revenue + APPROVED-vet count, mirroring Lab's own AdminDashboard fix and
 // PHARMACY-001's AdminDashboard exactly).
-//
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -40,9 +37,9 @@ func vetAdminDashboardPool(t *testing.T) *pgxpool.Pool {
 }
 
 type vetAdminFixture struct {
-	owner, patient, other string
-	provider               string
-	serviceID              string
+	owner, patient, other                 string
+	provider                              string
+	serviceID                             string
 	requestedID, completedID, cancelledID string
 }
 

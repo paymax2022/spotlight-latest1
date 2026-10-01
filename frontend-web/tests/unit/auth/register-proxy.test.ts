@@ -42,7 +42,6 @@ describe('POST /api/auth/register', () => {
     const [url, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toContain('/api/auth/register');
     const sent = JSON.parse(String(init.body));
-    // Referral attribution only ever happened on the web path; it must survive
     // the move to Go, which means the code has to reach it.
     expect(sent.referralCode).toBe('SPOT-XYZ');
     expect(sent.email).toBe('ada@example.test');   // normalised
@@ -58,7 +57,6 @@ describe('POST /api/auth/register', () => {
   });
 
   it('defaults needsVerification to TRUE when Go omits it', async () => {
-    // Fail closed: treating an unknown state as "verified" would let an
     // unconfirmed account straight into the app.
     mockUpstream(201, { success: true, user: { id: 'u-1' }, tokens: {} });
     const res = await callRoute({ fullName: 'A B', email: 'a@b.test', password: 'Str0ngPass!23' });

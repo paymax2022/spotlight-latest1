@@ -12,7 +12,6 @@ test.describe('Bills E2E - Retry and polling states', () => {
   });
 
   test('FAILED transaction detail shows retry button', async ({ page }) => {
-    // Override single-transaction route to return a FAILED transaction
     await page.route('**/transactions/tx-provider-failed', async (route) => {
       // The app route /services/transactions/<id> matches this pattern too —
       // without this guard page.goto() renders the mocked JSON, not the screen.

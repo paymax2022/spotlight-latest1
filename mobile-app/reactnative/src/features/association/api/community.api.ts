@@ -1,12 +1,11 @@
-// ── Association — Committees & Events API wrapper ─────────────────────────────
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
 import type {
   Committee, CommitteeSummary, Event, EventSummary, EventRsvp, EventRegistrationResult,
-} from '../types/community.types';
-import { MOCK_COMMITTEES, MOCK_EVENTS } from './community.mock';
+} from '../types';
+import { MOCK_COMMITTEES, MOCK_EVENTS } from './mocks';
 
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
@@ -17,8 +16,6 @@ const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 // frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
 const notInFixtureMode = (action: string) =>
   new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_ASSOCIATION_USE_MOCK=false to send this against the live backend.`);
-
-// ─── Committees ───────────────────────────────────────────────────────────────
 
 const toCommitteeSummary = (c: Committee): CommitteeSummary => {
   const { id, name, purpose, memberCount, joinStatus, myRole } = c;
@@ -49,8 +46,6 @@ export async function requestJoinCommittee(id: string): Promise<{ ok: true }> {
   });
   return data;
 }
-
-// ─── Events ───────────────────────────────────────────────────────────────────
 
 const toEventSummary = (e: Event): EventSummary => {
   const { id, title, startsAt, location, state, paid, feeKobo, registered, rsvp, coverUrl } = e;

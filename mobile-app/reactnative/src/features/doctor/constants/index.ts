@@ -1,4 +1,3 @@
-// ── Doctor module — constants ────────────────────────────────────────────────
 // Static option lists used across the doctor (provider-side) screens.
 // Pure data only — no money math here. Money is always integers in kobo.
 
@@ -8,8 +7,6 @@ import type {
   PrescriptionDrugItem,
   Weekday,
 } from '@/types/doctor';
-
-// ─── Specialties & sub-specialties (signup / profile) ────────────────────────
 
 export const SPECIALTY_OPTIONS: { id: string; label: string }[] = [
   { id: 'gp',        label: 'General Practice' },
@@ -38,8 +35,6 @@ export const SUB_SPECIALTY_OPTIONS: string[] = [
   'Oral Health',
 ];
 
-// ─── Verification documents ──────────────────────────────────────────────────
-
 export const VERIFICATION_DOC_TYPES: { type: VerificationDocType; label: string; required: boolean }[] = [
   { type: 'mdcn_certificate',   label: 'MDCN Certificate',    required: true },
   { type: 'medical_license',    label: 'Medical License',     required: true },
@@ -48,8 +43,6 @@ export const VERIFICATION_DOC_TYPES: { type: VerificationDocType; label: string;
   { type: 'passport_photo',    label: 'Passport Photograph',  required: true },
   { type: 'cv',                label: 'Curriculum Vitae',     required: false },
 ];
-
-// ─── ICD-lite diagnosis options ──────────────────────────────────────────────
 
 export const DIAGNOSIS_OPTIONS: { code: string; label: string }[] = [
   { code: 'I10',   label: 'Essential Hypertension' },
@@ -65,8 +58,6 @@ export const DIAGNOSIS_OPTIONS: { code: string; label: string }[] = [
   { code: 'N39',   label: 'Urinary Tract Infection' },
   { code: 'R51',   label: 'Headache' },
 ];
-
-// ─── Drug catalogue (prescription authoring) ─────────────────────────────────
 
 export const DRUG_CATALOGUE: { name: string; commonDosages: string[] }[] = [
   { name: 'Paracetamol',  commonDosages: ['500mg', '1000mg'] },
@@ -101,8 +92,6 @@ export const EMPTY_DRUG_ITEM: PrescriptionDrugItem = {
   name: '', dosage: '', route: 'Oral', frequency: 'Twice daily', duration: '5 days',
 };
 
-// ─── Lab test catalogue (lab orders) ─────────────────────────────────────────
-
 export const LAB_TEST_CATALOGUE: LabTest[] = [
   { id: 'lt-fbc',   name: 'Full Blood Count',         code: 'FBC',    category: 'Haematology' },
   { id: 'lt-mp',    name: 'Malaria Parasite',         code: 'MP',     category: 'Haematology' },
@@ -115,8 +104,6 @@ export const LAB_TEST_CATALOGUE: LabTest[] = [
   { id: 'lt-hcg',   name: 'Pregnancy Test (β-hCG)',   code: 'hCG',    category: 'Endocrinology' },
   { id: 'lt-tsh',   name: 'Thyroid Function Test',    code: 'TFT',    category: 'Endocrinology' },
 ];
-
-// ─── Availability scheduling ─────────────────────────────────────────────────
 
 export const WEEKDAYS: { day: Weekday; label: string; short: string }[] = [
   { day: 'mon', label: 'Monday',    short: 'Mon' },
@@ -131,39 +118,26 @@ export const WEEKDAYS: { day: Weekday; label: string; short: string }[] = [
 export const CONSULT_DURATION_OPTIONS: number[] = [15, 20, 30, 45, 60]; // minutes
 export const BUFFER_OPTIONS: number[] = [0, 5, 10, 15];                 // minutes
 
-// ─── Support ─────────────────────────────────────────────────────────────────
-
 export const SUPPORT_CATEGORIES: string[] = ['Payments', 'Technical', 'Account', 'Patients', 'Verification', 'Other'];
 
-// ─── Phase 2 constants ───────────────────────────────────────────────────────
 export * from './phase2';
 
-// ─── Section B (Profile & Verification) constants ────────────────────────────
 export * from './profile';
 
-// ─── Phase 3 constants (Vet · AI · Practice) ─────────────────────────────────
 export * from './phase3';
 
-// ─── Batch 1 constants (Sections C · D · E · F) ──────────────────────────────
 export * from './batch1';
 
-// ─── Batch 2 constants (Sections G · H · I · J) ──────────────────────────────
 export * from './batch2';
 
-// ─── Batch 3 constants (Sections K · L · M · N) ──────────────────────────────
 export * from './batch3';
 
-// ─── Batch 4 constants (Sections O · P · Q · R) ──────────────────────────────
 export * from './batch4';
 
-// ─── Batch 5 constants (Sections S · T · U · V — Veterinary) ──────────────────
 export * from './batch5';
 
-// ─── Batch 6 constants (Sections W · X · Y · Z) ──────────────────────────────
 export * from './batch6';
 
-// ─── Batch 7 constants (Sections AA · AB · AC · AD) ──────────────────────────
 export * from './batch7';
 
-// ─── Section A (Onboarding) constants ─────────────────────────────────────────
 export * from './onboarding';

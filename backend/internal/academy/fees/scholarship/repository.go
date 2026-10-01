@@ -10,12 +10,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/dbutil"
 )
 
 // Store is the data-access contract for pledges + awards. Defined as an in-package interface so
 // scholarship_test.go can substitute an in-memory fake (no live DB), mirroring feesinvoice /
 // edupay isolation.
-//
 // This package EXTENDS the existing academy scholarship spine: pledges are recorded against a
 // scholarship row and awards against academy_scholarship_awards (reused where possible). There
 // is NO balance column: a pledge's remaining headroom is amount − applied, tracked on the row
@@ -83,7 +83,7 @@ func (r *Repository) InsertPledge(ctx context.Context, p Pledge) (*Pledge, error
 	const q = `INSERT INTO academy_scholarship_pledges
 	    (id, sponsor_identity_id, target_student_id, amount_minor, applied_minor, currency, state, created_at)
 	    VALUES ($1,$2,$3,$4,0,$5,'pledged',$6)`
-	if _, err := r.db.Exec(ctx, q, id, nullStr(p.SponsorIdentityID), p.TargetStudentID, p.AmountMinor, p.Currency, now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, dbutil.NullStr(p.SponsorIdentityID), p.TargetStudentID, p.AmountMinor, p.Currency, now); err != nil {
 		return nil, err
 	}
 	return r.GetPledge(ctx, id)
@@ -121,7 +121,7 @@ func setPledgeState(ctx context.Context, q querier, id string, from, to PledgeSt
 	const upd = `UPDATE academy_scholarship_pledges
 	             SET state = $2, fund_ledger_ref = COALESCE($3, fund_ledger_ref)
 	             WHERE id = $1 AND state = $4`
-	tag, err := q.Exec(ctx, upd, id, string(to), fundRefArg(fundLedgerRef), string(from))
+	tag, err := q.Exec(ctx, upd, id, string(to), dbutil.NullStrP(fundLedgerRef), string(from))
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +217,7 @@ func writeAudit(ctx context.Context, q querier, actorID, action, entityID, from,
 	const ins = `INSERT INTO academy_commerce_audit
 	    (actor_id, action, entity_type, entity_id, from_state, to_state, detail, idempotency_key)
 	    VALUES ($1,$2,'academy_scholarship_pledge',$3,$4,$5,$6,NULL)`
-	_, err := q.Exec(ctx, ins, nullStr(actorID), action, nullUUID(entityID), nullStr(from), nullStr(to), toJSON(detail))
+	_, err := q.Exec(ctx, ins, dbutil.NullStr(actorID), action, dbutil.NullUUID(entityID), dbutil.NullStr(from), dbutil.NullStr(to), toJSON(detail))
 	return err
 }
 
@@ -247,29 +247,6 @@ func (t *txAdapter) SetPledgeState(ctx context.Context, id string, from, to Pled
 }
 func (t *txAdapter) WriteAudit(ctx context.Context, actorID, action, entityID, from, to string, detail any) error {
 	return writeAudit(ctx, t.tx, actorID, action, entityID, from, to, detail)
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func nullUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func fundRefArg(p *string) any {
-	if p == nil || *p == "" {
-		return nil
-	}
-	return *p
 }
 
 func toJSON(v any) []byte {

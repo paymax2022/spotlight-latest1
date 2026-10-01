@@ -44,7 +44,6 @@ export async function listAdminContests(type?: string): Promise<AdminContest[]> 
   return (await res.json()).contests ?? [];
 }
 
-// ── Generic contest create/edit/delete ──────────────────────────────────────
 // Reaches the SAME /api/admin/contests[/[slug]] routes SmePitchAdminService
 // uses for sme_pitch specifically — this is the generic version, any
 // category/type. Real writes to Postgres (registration-v2/contest-store.ts).
@@ -158,7 +157,6 @@ export async function setContestStatus(slug: string, status: ContestPublishStatu
   return { mobileStatus: (json.mobileStatus as string | null) ?? null };
 }
 
-// ── Contest stages ───────────────────────────────────────────────────────────
 // /api/admin/contests/:slug/stages[/:stageId] — CRUD over public.contest_stages,
 // the same table Go's connect/voting module reads for the mobile eviction flow
 // (GetStages, GetContestantsByStage). A stage groups a start/end voting window
@@ -256,8 +254,6 @@ export async function advanceStageSurvivors(slug: string, stageNumber: number): 
   const json = await readJsonOrThrow(res, 'Advancing stage survivors');
   return json.result as AdvanceStageResult;
 }
-
-// ── Contest banner upload ────────────────────────────────────────────────────
 
 /**
  * Upload a contest banner and return the URL to store in `bannerImageUrl`.

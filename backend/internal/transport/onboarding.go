@@ -186,8 +186,6 @@ func (s *Service) SetDriverOnline(ctx context.Context, userID string, req Driver
 	return err
 }
 
-// ─── Rider mobility profile ──────────────────────────────────────────────────
-
 func (s *Service) GetProfile(ctx context.Context, userID string) (*MobilityProfile, error) {
 	p, err := s.queryProfile(ctx, userID)
 	if err == nil {

@@ -22,7 +22,6 @@ import (
 // This lets the SEPARATE trading service (mobile-app/reactnative/backend, its own
 // Postgres) post the CASH legs of a trade through THIS money-core's authoritative
 // double-entry ledger — the trading service never runs its own money ledger.
-//
 // Additive brownfield: this only EXPOSES the existing ledger.Service (it does not
 // reimplement any posting/idempotency/balance logic — every mutation stays balanced,
 // idempotent and audited by the ledger of record). Gated upstream by

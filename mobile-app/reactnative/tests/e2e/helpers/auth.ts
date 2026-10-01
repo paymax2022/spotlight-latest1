@@ -21,7 +21,6 @@ function supabaseAuthUser(user: AnyTestUser) {
   };
 }
 
-// ── Transaction-PIN gate ─────────────────────────────────────────────────────
 // AuthGate in app/_layout.tsx parks EVERY signed-in user on /security/set-pin
 // until getPinStatus() reports a PIN. Two paths have to be satisfied because
 // transfers defaults to mock mode (EXPO_PUBLIC_TRANSFERS_USE_MOCK unset/'true'):

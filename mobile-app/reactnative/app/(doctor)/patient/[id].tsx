@@ -8,10 +8,10 @@ import {
   FlaskConical, Stethoscope, X, HeartPulse, Siren,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader, DoctorAvatar } from '@/features/telemedicine/components';
 import { SectionCard, InfoRow, StateView, AlertCard, StatusBadge, BarRow, StatusTimeline } from '@/features/doctor/components';

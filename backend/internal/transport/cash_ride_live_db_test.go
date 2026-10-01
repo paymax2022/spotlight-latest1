@@ -1,12 +1,10 @@
 package transport
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for the cash-ride payment workflow: no escrow on
 // request, a driver-wallet balance gate on the open-requests feed + accept,
 // and a driver-wallet platform-fee debit at trip completion (no escrow to
 // split for a fare the rider paid the driver directly). Skipped unless
 // TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -69,7 +67,6 @@ func seedCashTestDriver(t *testing.T, ctx context.Context, pool *pgxpool.Pool) s
 // "cash_fee:<tripID>" (cash_settlement.go debits the driver wallet with that base
 // idempotency key; PostJournal writes the sides as ":debit"/":credit"). 0 means the
 // fee was never posted.
-//
 // Deliberately NOT a before/after read of the account's BALANCE. paymax_revenue is a
 // single global standing account, and `go test ./...` runs packages concurrently
 // against one database (make test / CI), with ~40 other suites moving it — a balance
@@ -121,7 +118,6 @@ func TestLiveDB_CashRideNoEscrowAndBalanceGate(t *testing.T) {
 		t.Fatalf("fund rich driver: %v", err)
 	}
 
-	// ── Step 1: requesting a cash ride escrows NOTHING. ──────────────────────
 	req := RequestRideRequest{
 		Pickup:        Place{Lat: 6.50, Lng: 3.40, Address: "Pickup"},
 		Dest:          Place{Lat: 6.55, Lng: 3.45, Address: "Dest"},
@@ -161,7 +157,6 @@ func TestLiveDB_CashRideNoEscrowAndBalanceGate(t *testing.T) {
 		t.Fatalf("expected a positive fare_kobo, got %d", fareKobo)
 	}
 
-	// ── Step 2: the poor driver never sees it, and accept is rejected. ──────
 	openForPoor, err := svc.OpenRequests(ctx, poorDriver)
 	if err != nil {
 		t.Fatalf("OpenRequests (poor): %v", err)
@@ -177,7 +172,6 @@ func TestLiveDB_CashRideNoEscrowAndBalanceGate(t *testing.T) {
 		t.Errorf("expected CodeInsufficientDriverBalance, got %v", err)
 	}
 
-	// ── Step 3: the rich driver sees it and can accept. ──────────────────────
 	openForRich, err := svc.OpenRequests(ctx, richDriver)
 	if err != nil {
 		t.Fatalf("OpenRequests (rich): %v", err)
@@ -195,7 +189,6 @@ func TestLiveDB_CashRideNoEscrowAndBalanceGate(t *testing.T) {
 		t.Fatalf("DriverAccept (rich): %v", err)
 	}
 
-	// ── Step 4: drive the trip to completion via the real state machine. ────
 	if err := svc.DriverArrive(ctx, tripID, richDriver); err != nil {
 		t.Fatalf("DriverArrive: %v", err)
 	}

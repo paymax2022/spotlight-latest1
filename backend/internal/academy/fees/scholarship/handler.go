@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -13,7 +14,6 @@ import (
 // Handler exposes the Sponsor-a-Student pledge → fund → apply surface over Gin. Router
 // registration into RegisterAcademy is owned by the QA/integration task — see
 // RegisterFeesScholarship.
-//
 // NOTE (integration wiring): this package takes an already-assembled Service because it needs
 // the injected LedgerPoster (finance/ledger) + InvoicePayer (feesinvoice) ports composed at the
 // academy registration root (the same pattern edupay uses for its rails).
@@ -24,10 +24,9 @@ type Handler struct {
 // NewHandler builds the scholarship handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -35,16 +34,13 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
 	}
 	return u, true
 }
-
-// idemKey reads the Idempotency-Key header (required for the money-path fund/apply mutations).
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
 
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
@@ -97,8 +93,6 @@ func RegisterFeesScholarship(group *gin.RouterGroup, svc *Service, rbac services
 	return h
 }
 
-// ── Handlers ────────────────────────────────────────────────────────────────────
-
 func (h *Handler) CreatePledge(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -122,7 +116,7 @@ func (h *Handler) FundPledge(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := h.svc.FundPledge(c.Request.Context(), u, c.Param("id"), idemKey(c))
+	out, err := h.svc.FundPledge(c.Request.Context(), u, c.Param("id"), ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -141,7 +135,7 @@ func (h *Handler) ApplyAward(c *gin.Context) {
 		return
 	}
 	req.PledgeID = c.Param("id")
-	out, err := h.svc.ApplyAward(c.Request.Context(), u, req, idemKey(c))
+	out, err := h.svc.ApplyAward(c.Request.Context(), u, req, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return

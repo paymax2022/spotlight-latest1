@@ -1,12 +1,8 @@
-// ── Arena — application draft (save-as-you-go) ───────────────────────────────
 // Module singleton the C2 application form reads/writes as the user types, and a
 // parallel autosave buffer for the C6 exam runner. Follows the kycverify `draft`
 // pattern: transient client-only state kept out of React Query.
-//
 // Persisting here means a user who backgrounds the app (or gets KYC-stepped-up)
 // returns to a pre-filled form instead of starting over (UX rule: save-as-you-go).
-
-// ─── C2 application draft ────────────────────────────────────────────────────
 
 export interface ArenaApplicationDraft {
   competitionId: string | null;
@@ -56,8 +52,6 @@ export function resetApplicationDraft() {
 export function patchApplicationDraft(patch: Partial<ArenaApplicationDraft>) {
   arenaApplicationDraft.current = { ...arenaApplicationDraft.current, ...patch };
 }
-
-// ─── C6 exam autosave buffer (answers survive a paused/dropped session) ──────
 
 export interface ExamAutosave {
   competitionId: string | null;

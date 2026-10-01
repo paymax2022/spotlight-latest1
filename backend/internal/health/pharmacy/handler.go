@@ -2,6 +2,8 @@ package healthpharmacy
 
 import (
 	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/strutil"
 	"strconv"
 	"strings"
 
@@ -24,18 +26,12 @@ func NewHandler(svc *Service, isAdmin func(c *gin.Context) bool) *Handler {
 	return &Handler{svc: svc, isAdmin: isAdmin}
 }
 
-func uid(c *gin.Context) string { return c.GetString("user_id") }
-
-func fail(c *gin.Context, status int, msg string) {
-	c.JSON(status, gin.H{"success": false, "error": msg})
-}
-
 // VerifyPrescription — POST /prescriptions/:id/verify  (pharmacist, HL-3)
 // body: { begin, approve, reason }. Reuses healthrx via the service verifier.
 func (h *Handler) VerifyPrescription(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
@@ -44,11 +40,11 @@ func (h *Handler) VerifyPrescription(c *gin.Context) {
 		Reason  string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	if err := h.svc.VerifyPrescription(c.Request.Context(), id, c.Param("id"), req.Begin, req.Approve, req.Reason); err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -56,14 +52,14 @@ func (h *Handler) VerifyPrescription(c *gin.Context) {
 
 // ListMyPrescriptions — GET /prescriptions  (patient's own list)
 func (h *Handler) ListMyPrescriptions(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	rx, err := h.svc.MyPrescriptions(c.Request.Context(), id)
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "prescriptions": rx})
@@ -74,7 +70,7 @@ func (h *Handler) ListMyPrescriptions(c *gin.Context) {
 func (h *Handler) ListProducts(c *gin.Context) {
 	products, err := h.svc.ListProducts(c.Request.Context(), c.Query("pharmacy_provider_id"), c.Query("q"))
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "products": products})
@@ -84,7 +80,7 @@ func (h *Handler) ListProducts(c *gin.Context) {
 func (h *Handler) GetProduct(c *gin.Context) {
 	p, err := h.svc.GetProduct(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		fail(c, http.StatusNotFound, "product not found")
+		ginutil.FailOK(c, http.StatusNotFound, "product not found")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "product": p})
@@ -92,34 +88,32 @@ func (h *Handler) GetProduct(c *gin.Context) {
 
 // UpsertProduct — POST /products  (pharmacy owner, HL-5 NAFDAC write-time gate)
 func (h *Handler) UpsertProduct(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var p Product
 	if err := c.ShouldBindJSON(&p); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	out, err := h.svc.UpsertProduct(c.Request.Context(), id, p)
 	if err != nil {
-		fail(c, http.StatusUnprocessableEntity, err.Error())
+		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "product": out})
 }
 
 // MyProducts — GET /products/mine
-//
 // The owner's own shelf, including lines customers cannot see (deactivated, or
 // pending NAFDAC). Scoped by ownership server-side.
-//
 // Registered BEFORE /products/:id so Gin does not read "mine" as an id.
 func (h *Handler) MyProducts(c *gin.Context) {
-	list, err := h.svc.ListProductsForOwner(c.Request.Context(), uid(c))
+	list, err := h.svc.ListProductsForOwner(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "products": list})
@@ -127,9 +121,9 @@ func (h *Handler) MyProducts(c *gin.Context) {
 
 // CreateOrder — POST /orders  (patient, payment HELD, HL-9)
 func (h *Handler) CreateOrder(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
@@ -137,7 +131,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		PrescriptionID     *string  `json:"prescription_id"`
 		FulfilmentMethod   string   `json:"fulfilment_method"`
 		IdempotencyKey     string   `json:"idempotency_key"`
-		SearchEventID      *string  `json:"search_event_id"` // optional symptom-search link (PRD §10)
+		SearchEventID      *string  `json:"search_event_id"`  // optional symptom-search link (PRD §10)
 		DeliveryAddress    string   `json:"delivery_address"` // required when fulfilment_method=DELIVERY
 		DeliveryLat        *float64 `json:"delivery_lat"`
 		DeliveryLng        *float64 `json:"delivery_lng"`
@@ -147,13 +141,10 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		} `json:"lines"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
-	idem := req.IdempotencyKey
-	if hk := c.GetHeader("Idempotency-Key"); hk != "" {
-		idem = hk
-	}
+	idem := strutil.FirstNonEmpty(ginutil.IdempotencyKey(c), req.IdempotencyKey)
 	in := CreateOrderInput{
 		PharmacyProviderID: req.PharmacyProviderID,
 		PrescriptionID:     req.PrescriptionID,
@@ -180,9 +171,9 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 
 // Confirm — POST /orders/:id/confirm  (HL-3 verified e-Rx gate for Rx orders)
 func (h *Handler) Confirm(c *gin.Context) {
-	o, err := h.svc.Confirm(c.Request.Context(), uid(c), c.Param("id"))
+	o, err := h.svc.Confirm(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -190,14 +181,14 @@ func (h *Handler) Confirm(c *gin.Context) {
 
 // Dispense — POST /orders/:id/dispense  (pharmacist, HL-1 clinical action, HL-3 dispense-once)
 func (h *Handler) Dispense(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	o, err := h.svc.Dispense(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -205,14 +196,14 @@ func (h *Handler) Dispense(c *gin.Context) {
 
 // Dispatch — POST /orders/:id/dispatch  (transport last-mile rail / pickup code)
 func (h *Handler) Dispatch(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	o, err := h.svc.Dispatch(c.Request.Context(), id, c.Param("id"))
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -221,9 +212,9 @@ func (h *Handler) Dispatch(c *gin.Context) {
 // Complete — POST /orders/:id/complete  (release payment, HL-9)
 // body: { pickup_code } (required only for PICKUP completion).
 func (h *Handler) Complete(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
@@ -232,7 +223,7 @@ func (h *Handler) Complete(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	o, err := h.svc.Complete(c.Request.Context(), id, c.Param("id"), req.PickupCode)
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -240,9 +231,9 @@ func (h *Handler) Complete(c *gin.Context) {
 
 // Cancel — POST /orders/:id/cancel  (patient, pre-DISPENSED → refund, HL-9)
 func (h *Handler) Cancel(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
@@ -251,7 +242,7 @@ func (h *Handler) Cancel(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	o, err := h.svc.Cancel(c.Request.Context(), id, c.Param("id"), req.Reason)
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
@@ -259,82 +250,65 @@ func (h *Handler) Cancel(c *gin.Context) {
 
 // Get — GET /orders/:id  (object-level authZ: patient / pharmacy / admin)
 func (h *Handler) Get(c *gin.Context) {
-	o, err := h.svc.Get(c.Request.Context(), uid(c), c.Param("id"), h.isAdmin(c))
+	o, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), c.Param("id"), h.isAdmin(c))
 	if err != nil {
-		fail(c, http.StatusForbidden, err.Error())
+		ginutil.FailOK(c, http.StatusForbidden, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
 }
 
 // ListMine — GET /orders?state=&limit=&offset=
-//
 // The pharmacist's inbox: orders belonging to the pharmacies the CALLER owns.
 // Scoping is derived server-side from ownership — the caller never names a
 // pharmacy — so there is no id to tamper with, and a user who owns none gets an
 // empty list.
-//
 // Registered BEFORE /orders/:id so Gin does not treat "orders" as an :id.
 func (h *Handler) ListMine(c *gin.Context) {
+	limit, offset := ginutil.LimitOffset(c)
 	orders, err := h.svc.ListForOwner(
-		c.Request.Context(), uid(c), c.Query("state"),
-		parseIntDefault(c.Query("limit"), 0), parseIntDefault(c.Query("offset"), 0),
+		c.Request.Context(), ginutil.UserID(c), c.Query("state"), limit, offset,
 	)
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "orders": orders})
 }
 
 // ListMyOrders — GET /orders/mine?state=&limit=&offset=
-//
 // The patient's own order history: orders the CALLER placed. Counterpart to
 // ListMine (the pharmacist inbox at GET /orders) — kept on a distinct path so
 // the two never collide. Registered BEFORE /orders/:id for the same reason
 // ListMine is: Gin must not bind "mine" as :id.
 func (h *Handler) ListMyOrders(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	limit, offset := ginutil.LimitOffset(c)
 	orders, err := h.svc.ListForPatient(
-		c.Request.Context(), id, c.Query("state"),
-		parseIntDefault(c.Query("limit"), 0), parseIntDefault(c.Query("offset"), 0),
+		c.Request.Context(), id, c.Query("state"), limit, offset,
 	)
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "orders": orders})
 }
 
-// parseIntDefault reads a non-negative integer query param, falling back to def
-// for anything absent or malformed. The service clamps the range; a bad string is
-// not worth a 400 on a list read.
-func parseIntDefault(raw string, def int) int {
-	n, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || n < 0 {
-		return def
-	}
-	return n
-}
-
 // Earnings — GET /earnings
-//
 // What the caller's pharmacies have been paid, and what is still held for them.
 // Scoped by ownership server-side; an owner of nothing sees zeros.
 func (h *Handler) Earnings(c *gin.Context) {
-	e, err := h.svc.EarningsForOwner(c.Request.Context(), uid(c))
+	e, err := h.svc.EarningsForOwner(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "earnings": e})
 }
-
-// ─── Multi-pharmacy discovery + ratings (HL-2 gated) ─────────────────────────
 
 // DiscoverPharmacies — GET /pharmacies?lat=&lng=&radius_m=&sort=distance|rating|name&q=
 // Browse ALL discoverable pharmacies (HL-2); lat/lng are optional query params
@@ -346,7 +320,7 @@ func (h *Handler) DiscoverPharmacies(c *gin.Context) {
 	radiusM, _ := strconv.ParseFloat(c.Query("radius_m"), 64)
 	rows, err := h.svc.DiscoverPharmacies(c.Request.Context(), lat, lng, radiusM, c.Query("sort"), c.Query("q"))
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "pharmacies": rows})
@@ -356,7 +330,7 @@ func (h *Handler) DiscoverPharmacies(c *gin.Context) {
 func (h *Handler) GetPharmacy(c *gin.Context) {
 	p, err := h.svc.GetPharmacyProfile(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		fail(c, http.StatusNotFound, err.Error())
+		ginutil.FailOK(c, http.StatusNotFound, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "pharmacy": p})
@@ -366,7 +340,7 @@ func (h *Handler) GetPharmacy(c *gin.Context) {
 func (h *Handler) ListPharmacyReviews(c *gin.Context) {
 	rows, err := h.svc.ListReviews(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "reviews": rows})
@@ -374,19 +348,19 @@ func (h *Handler) ListPharmacyReviews(c *gin.Context) {
 
 // UpsertPharmacyProfile — POST /pharmacies/:id/profile  (verified owner, HL-2)
 func (h *Handler) UpsertPharmacyProfile(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req UpsertPharmacyProfileInput
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	p, err := h.svc.UpsertPharmacyProfile(c.Request.Context(), id, c.Param("id"), req)
 	if err != nil {
-		fail(c, http.StatusUnprocessableEntity, err.Error())
+		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "pharmacy": p})
@@ -394,9 +368,9 @@ func (h *Handler) UpsertPharmacyProfile(c *gin.Context) {
 
 // SubmitReview — POST /orders/:id/reviews  (patient, order must be completed)
 func (h *Handler) SubmitReview(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
@@ -404,12 +378,12 @@ func (h *Handler) SubmitReview(c *gin.Context) {
 		Body   string `json:"body"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	r, err := h.svc.SubmitReview(c.Request.Context(), id, c.Param("id"), req.Rating, req.Body)
 	if err != nil {
-		fail(c, http.StatusUnprocessableEntity, err.Error())
+		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "review": r})
@@ -426,10 +400,7 @@ func parseOptionalFloat(s string) *float64 {
 	return &v
 }
 
-// ─── Admin handlers (RBAC health.pharmacy.* applied at route registration) ───
-
 // AdminListOrders — GET /admin/orders  order/delivery oversight.
-//
 // PHARMACY-001: the admin frontend (healthPharmacyAdminService.ts listOrders)
 // sends `status` + `fulfilment` query params; this used to read only `state` +
 // `pharmacy_provider_id`, so both filters silently no-op'd. Backend now accepts
@@ -441,11 +412,11 @@ func parseOptionalFloat(s string) *float64 {
 // (OrderState/FulfilmentMethod, model.go) while the frontend's own status
 // vocabulary (types/healthAdmin.ts PharmacyOrderStatus) is lower-case.
 func (h *Handler) AdminListOrders(c *gin.Context) {
-	state := strings.ToUpper(strings.TrimSpace(firstNonEmpty(c.Query("status"), c.Query("state"))))
-	fulfilment := strings.ToUpper(strings.TrimSpace(firstNonEmpty(c.Query("fulfilment"), c.Query("fulfilment_method"))))
+	state := strings.ToUpper(strings.TrimSpace(strutil.FirstNonEmpty(c.Query("status"), c.Query("state"))))
+	fulfilment := strings.ToUpper(strings.TrimSpace(strutil.FirstNonEmpty(c.Query("fulfilment"), c.Query("fulfilment_method"))))
 	rows, err := h.svc.AdminListOrders(c.Request.Context(), state, fulfilment, c.Query("pharmacy_provider_id"))
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": rows, "orders": rows})
@@ -457,7 +428,7 @@ func (h *Handler) AdminListOrders(c *gin.Context) {
 func (h *Handler) AdminGetOrder(c *gin.Context) {
 	o, err := h.svc.AdminGetOrder(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		fail(c, http.StatusNotFound, err.Error())
+		ginutil.FailOK(c, http.StatusNotFound, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": o, "order": o})
@@ -471,24 +442,17 @@ func (h *Handler) AdminGetOrder(c *gin.Context) {
 func (h *Handler) AdminDashboard(c *gin.Context) {
 	d, err := h.svc.AdminDashboard(c.Request.Context())
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": d})
-}
-
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 // AdminDispenseAudit — GET /admin/dispense-audit  Rx/controlled dispense audit (HL-12).
 func (h *Handler) AdminDispenseAudit(c *gin.Context) {
 	rows, err := h.svc.AdminDispenseAudit(c.Request.Context(), c.Query("pharmacy_provider_id"))
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "records": rows})
@@ -496,8 +460,8 @@ func (h *Handler) AdminDispenseAudit(c *gin.Context) {
 
 // AdminRecallProduct — POST /admin/products/:id/recall  pharmacovigilance/recall.
 func (h *Handler) AdminRecallProduct(c *gin.Context) {
-	if err := h.svc.AdminRecallProduct(c.Request.Context(), uid(c), c.Param("id")); err != nil {
-		fail(c, http.StatusConflict, err.Error())
+	if err := h.svc.AdminRecallProduct(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})

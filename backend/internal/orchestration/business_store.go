@@ -6,12 +6,10 @@ package orchestration
 // hold admin/console metadata + a money-approval DECISION record — NOT the money
 // path (no ledger, no balances; the actual value movement stays on the
 // transfer/conversion path).
-//
 // Tenant model: the FX account owner (the authenticated customer id) IS the
-// business/tenant, so every query is scoped by business_id (= customerID(c)) for
+// business/tenant, so every query is scoped by business_id (= ginutil.UserID(c)) for
 // object-level authorization. A nil store makes handlers fall back to honest
 // defaults so the app still renders in a DB-less dev setup.
-//
 // Requires migration 20260913000000_fx_business_admin.sql.
 
 import (
@@ -23,8 +21,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// ─── Contract-shaped records (camelCase JSON mirrors mobile fx.types.ts) ───────
 
 // TeamMember is one RBAC seat under a business.
 type TeamMember struct {
@@ -106,8 +102,6 @@ type Notification struct {
 	Deeplink  *string `json:"deeplink,omitempty"`
 }
 
-// ─── Store interface ──────────────────────────────────────────────────────────
-
 // BusinessStore persists the FX business-admin console tables. An interface so
 // handlers stay testable and so a nil store degrades to honest defaults.
 type BusinessStore interface {
@@ -162,8 +156,6 @@ func tsPtr(t *time.Time) *string {
 	return &s
 }
 
-// ─── Team ─────────────────────────────────────────────────────────────────────
-
 func (s *sqlBusinessStore) ListTeam(ctx context.Context, business string) ([]TeamMember, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, name, email, role, status, last_active_at
@@ -204,8 +196,6 @@ func (s *sqlBusinessStore) UpdateMemberRole(ctx context.Context, business, id, r
 	m.LastActiveAt = tsPtr(last)
 	return m, true, nil
 }
-
-// ─── Approvals + thresholds ───────────────────────────────────────────────────
 
 func (s *sqlBusinessStore) ListApprovals(ctx context.Context, business string) ([]Approval, error) {
 	rows, err := s.db.Query(ctx, `
@@ -293,8 +283,6 @@ func (s *sqlBusinessStore) UpdateThreshold(ctx context.Context, business, id str
 	return t, true, nil
 }
 
-// ─── Activity / audit ─────────────────────────────────────────────────────────
-
 func (s *sqlBusinessStore) ListActivity(ctx context.Context, business string) ([]ActivityEvent, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, actor, action, target, kind, at
@@ -327,8 +315,6 @@ func (s *sqlBusinessStore) LogActivity(ctx context.Context, business, actor, act
 		newID("act"), business, actor, action, target, kind)
 	return err
 }
-
-// ─── API keys (hash-only) ─────────────────────────────────────────────────────
 
 func (s *sqlBusinessStore) ListAPIKeys(ctx context.Context, business string) ([]APIKey, error) {
 	rows, err := s.db.Query(ctx, `
@@ -397,8 +383,6 @@ func (s *sqlBusinessStore) RotateAPIKey(ctx context.Context, business, id, prefi
 	return k, true, nil
 }
 
-// ─── Webhooks ─────────────────────────────────────────────────────────────────
-
 func (s *sqlBusinessStore) ListWebhooks(ctx context.Context, business string) ([]Webhook, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, url, events, enabled
@@ -466,8 +450,6 @@ func (s *sqlBusinessStore) DeleteWebhook(ctx context.Context, business, id strin
 	_, err := s.db.Exec(ctx, `DELETE FROM orch_fx_webhooks WHERE id=$1 AND business_id=$2`, id, business)
 	return err
 }
-
-// ─── Settings ─────────────────────────────────────────────────────────────────
 
 // FxSettings mirrors the mobile FxSettings contract.
 type FxSettings struct {
@@ -585,8 +567,6 @@ func (s *sqlBusinessStore) UpdateSettings(ctx context.Context, business string, 
 	}
 	return cur, nil
 }
-
-// ─── Notifications ────────────────────────────────────────────────────────────
 
 func (s *sqlBusinessStore) ListNotifications(ctx context.Context, business string) ([]Notification, error) {
 	rows, err := s.db.Query(ctx, `

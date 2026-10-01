@@ -1,19 +1,16 @@
 package onboarding_test
 
 // LIVE-DB test for the onboarding → workspace seam.
-//
 // Approval is what turns a customer into a merchant: it grants the role, activates
 // the profile, and writes the workspace_route the app navigates to. Nothing tested
 // any of that — no existing test referenced Approve or workspace_route — and the
 // route it writes turned out to point at a screen the app did not have
 // (`/merchant/<slug>`, while app/(merchant) is a route GROUP, not a path). Every
 // approved merchant tapped their capability and went nowhere.
-//
 // The app side now serves `/merchant/[slug]` and resolves the slug against the
 // caller's capabilities. This pins the CONTRACT between the two halves: the route
 // must stay `/merchant/<merchant-type-slug>`, because the app parses that slug
 // back out to decide which workspace to open.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (
@@ -107,7 +104,6 @@ func TestLiveDB_ApprovalWritesAResolvableWorkspaceRoute(t *testing.T) {
 		t.Errorf("status = %s, want APPROVED", approved.Status)
 	}
 
-	// --- The seam. ---
 	var route, status, role string
 	if err := pool.QueryRow(ctx,
 		`SELECT workspace_route, status, role_granted FROM onb_merchant_profile

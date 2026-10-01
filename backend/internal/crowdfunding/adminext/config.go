@@ -3,14 +3,12 @@ package adminext
 // Platform-configuration admin slice: campaign categories, fee schedule and the
 // feature-flag registry. These back the still-mock "settings" surfaces in
 // frontend-admin/src/services/crowdfundingAdminService.ts:
-//
 //	GET   /config/categories          → category list with live campaign counts
 //	PATCH /config/categories/:id      → toggle enabled / requiresEnhancedReview
 //	GET   /config/fees                → singleton fee schedule
 //	PUT   /config/fees                → replace fee schedule (audited)
 //	GET   /config/flags               → feature-flag registry
 //	PATCH /config/flags/:key          → toggle a (non-locked) flag (audited)
-//
 // Categories are read from the EXISTING crowdfunding_categories table; fees and
 // flags live in cf_fee_config / cf_feature_flags (20260621050000_crowdfunding_live.sql).
 // Every mutation is transactional and writes an immutable cf_audit_logs row.
@@ -22,9 +20,9 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-)
 
-// ─── DTOs (camelCase to match the admin web client TS shapes) ────────────────
+	"spotlight/backend/go-common/ginutil"
+)
 
 // CategoryConfig matches CfCategoryConfig.
 type CategoryConfig struct {
@@ -55,8 +53,6 @@ type FeatureFlag struct {
 	Locked      bool   `json:"locked"`
 }
 
-// ─── Request bodies ──────────────────────────────────────────────────────────
-
 // CategoryPatchRequest is the PATCH body for a category toggle. Pointers so the
 // caller can send exactly one field; the other stays unchanged.
 type CategoryPatchRequest struct {
@@ -68,8 +64,6 @@ type CategoryPatchRequest struct {
 type FlagPatchRequest struct {
 	Enabled *bool `json:"enabled"`
 }
-
-// ─── Service: categories ─────────────────────────────────────────────────────
 
 // ListCategories returns the configured categories with a LIVE campaign count
 // (derived from the campaigns table — never a stored counter).
@@ -127,8 +121,6 @@ func (s *Service) PatchCategory(ctx context.Context, id, adminID string, req Cat
 	return tx.Commit(ctx)
 }
 
-// ─── Service: fees ───────────────────────────────────────────────────────────
-
 // GetFees returns the singleton fee schedule (row id=1).
 func (s *Service) GetFees(ctx context.Context) (*FeeConfig, error) {
 	var f FeeConfig
@@ -183,8 +175,6 @@ func (s *Service) UpdateFees(ctx context.Context, adminID string, f FeeConfig) (
 	return &f, nil
 }
 
-// ─── Service: feature flags ──────────────────────────────────────────────────
-
 // ListFlags returns the feature-flag registry in display order.
 func (s *Service) ListFlags(ctx context.Context) ([]FeatureFlag, error) {
 	const q = `SELECT key, label, description, enabled, locked
@@ -234,8 +224,6 @@ func (s *Service) SetFlag(ctx context.Context, key, adminID string, enabled bool
 	return tx.Commit(ctx)
 }
 
-// ─── Handlers ────────────────────────────────────────────────────────────────
-
 // ListCategories — GET /config/categories.
 func (h *Handler) ListCategories(c *gin.Context) {
 	items, err := h.svc.ListCategories(c.Request.Context())
@@ -253,7 +241,7 @@ func (h *Handler) PatchCategory(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.PatchCategory(c.Request.Context(), c.Param("id"), c.GetString("user_id"), req); err != nil {
+	if err := h.svc.PatchCategory(c.Request.Context(), c.Param("id"), ginutil.UserID(c), req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -277,7 +265,7 @@ func (h *Handler) UpdateFees(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.UpdateFees(c.Request.Context(), c.GetString("user_id"), req)
+	res, err := h.svc.UpdateFees(c.Request.Context(), ginutil.UserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -306,7 +294,7 @@ func (h *Handler) PatchFlag(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "enabled is required"})
 		return
 	}
-	if err := h.svc.SetFlag(c.Request.Context(), strings.TrimSpace(c.Param("key")), c.GetString("user_id"), *req.Enabled); err != nil {
+	if err := h.svc.SetFlag(c.Request.Context(), strings.TrimSpace(c.Param("key")), ginutil.UserID(c), *req.Enabled); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

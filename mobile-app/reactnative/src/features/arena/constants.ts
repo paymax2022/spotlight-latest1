@@ -1,4 +1,3 @@
-// ── Arena (Driver Contest) — constants, copy & lifecycle helpers ─────────────
 // Single source of truth for the progress stepper, human labels, NDC-1 copy, and
 // the 36 states + FCT selector. Keeps screens declarative.
 
@@ -7,7 +6,6 @@ import type { ContestantState, MeritStage, QuizStage } from './types';
 
 // Dev/offline mode: when true (the default), the arena api returns mock data
 // WITHOUT calling the backend — so the spectator screens are walkable and the
-// console isn't spammed with 404s. Set EXPO_PUBLIC_ARENA_USE_MOCK=false once the
 // Go /api/arena backend is live.
 export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ARENA_USE_MOCK, true);
 
@@ -24,8 +22,6 @@ export const NDC1_MERIT_NOTE =
 /** Small-cashback disclosure for the Play-Along reward (NL5-style). */
 export const CASHBACK_DISCLOSURE =
   'Cashback is a small promotional reward credited to your wallet and ledgered. It is not a prize and does not affect any competition ranking.';
-
-// ─── Progress stepper (Applied → Screened → Trained → Theory → Qualified → Finalist → Crowned) ──
 
 export interface StepperNode {
   key: string;
@@ -65,7 +61,6 @@ export const TERMINAL_STATES: ContestantState[] = [
 
 /** Index of the stepper node the given state currently sits on (0-based). */
 export function stepperIndexForState(state: ContestantState): number {
-  // Failure states collapse onto the furthest node the contestant reached; we
   // approximate to the theory node so the UI still reads sensibly.
   if (state === 'REJECTED') return 0;
   if (state === 'ELIMINATED') return 4;
@@ -76,8 +71,6 @@ export function stepperIndexForState(state: ContestantState): number {
   const node = STEPPER.findIndex((n) => n.states.includes(state));
   return node < 0 ? 0 : node;
 }
-
-// ─── Human labels ────────────────────────────────────────────────────────────
 
 export const STATE_LABELS: Record<ContestantState, string> = {
   APPLIED: 'Application submitted',
@@ -100,8 +93,6 @@ export const MERIT_STAGE_LABELS: Record<MeritStage, string> = {
   FIRST_AID: 'First-aid (finale)',
 };
 
-// ─── Support presets (S5 / S8) — kobo ────────────────────────────────────────
-
 export const SUPPORT_PRESETS_KOBO = [50_000, 100_000, 200_000, 500_000, 1_000_000];
 
 /** Published split of a support contribution (must match backend attribution). */
@@ -109,8 +100,6 @@ export const SUPPORT_SPLIT = [
   { label: 'Prize pot', fraction: 0.7 },
   { label: "People’s Champion award", fraction: 0.3 },
 ];
-
-// ─── 36 states + FCT ─────────────────────────────────────────────────────────
 
 export const NIGERIA_STATES: string[] = [
   'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
@@ -120,15 +109,12 @@ export const NIGERIA_STATES: string[] = [
   'FCT (Abuja)',
 ];
 
-// ─── Play-Along quiz categories (S2) ─────────────────────────────────────────
-
 export const PLAYALONG_CATEGORIES: { value: string; label: string }[] = [
   { value: 'road-signs', label: 'Road signs' },
   { value: 'highway-code', label: 'Highway code' },
   { value: 'safety', label: 'Road safety' },
 ];
 
-// ─── Naija Driver bank — 3 stages × 30 questions, 120s per question (S2) ─────
 // The public Play-Along and the proctored Theory exam draw from the SAME
 // safe-driving bank (ARENA-PRD Rail 3). Stage metadata mirrors the seed
 // (naija_driver_quiz_seed.json). Pass marks rise per stage.
@@ -183,10 +169,8 @@ export function categoryLabel(tag?: string | null): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// ─── Play-Along rounds (S2) ──────────────────────────────────────────────────
 // The quiz is organised into three categorised rounds, each opening with a short
 // lesson video. In production the round's video (title / url / poster) is served
-// from the competition config and is ADMIN-EDITABLE (A1 config console); the URLs
 // below are mock placeholders so the flow is walkable in dev — swap them for the
 // real safety-curriculum clips.
 export interface PlayAlongVideo {

@@ -1,8 +1,7 @@
-// ── Paymax Invest · Learn Center — Constants ─────────────────────────────────
 // Level styling + education disclosures + UI thresholds. Colors come from the
 // brand palette only (Rule: nothing invented at the call site).
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { LearnLevel } from '../types/learn.types';
 
 /** Feature flag gating the whole Learn surface (every module sits behind a flag). */

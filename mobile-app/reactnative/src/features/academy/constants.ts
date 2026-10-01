@@ -1,20 +1,16 @@
-// ── Spotlight Academy (K-12 EdTech) — Constants & design-token map ───────────
 // Phase 0 + Phase 1, mock-first. Never hardcode hex in screens — resolve through
 // AcademyColors which is built strictly on the base design tokens.
 // Money in kobo → display via formatNaira. Reward points are plain integers.
 
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { ExamSlug, MasteryState, OrderStatus } from './types';
 
-// Flip to false (or set EXPO_PUBLIC_ACADEMY_USE_MOCK=false) once the live
 // /api/finance/academy endpoints are reachable. Mock-first, mirroring the
 // health/connect/crowdfunding conventions — the app runs fully with no backend.
 export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ACADEMY_USE_MOCK, true);
 
 // Member REST namespace. Confirmed against backend/internal/app/academy_routes.go
-// (RegisterAcademy: memberAcad := finance.Group("/academy") → most sub-packages
-// mount bare subpaths under this, so the wire base is /api/finance/academy/*;
 // see backend/internal/app/finance_routes.go for the FeatureAcademyEnabled gate).
 // The blanket Next.js rewrite (/api/finance/:path* → Go) covers this base
 // directly — no dedicated frontend-web proxy route is needed, unlike the
@@ -43,7 +39,6 @@ export const AcademyColors = {
   white: Colors.white,
 } as const;
 
-// ── Exam arena presentation ──────────────────────────────────────────────────
 export const EXAM_META: Record<
   ExamSlug,
   { label: string; full: string; icon: string; color: string; iconBg: string }
@@ -56,7 +51,6 @@ export const EXAM_META: Record<
   nabteb: { label: 'NABTEB', full: 'NABTEB (Tech/Trade)',       icon: 'Wrench',        color: Colors.onWarning, iconBg: Colors.iconBgGold },
 };
 
-// ── Mastery state presentation ───────────────────────────────────────────────
 export const MASTERY_META: Record<
   MasteryState,
   { label: string; color: string; bg: string }

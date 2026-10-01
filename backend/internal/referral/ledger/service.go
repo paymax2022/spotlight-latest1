@@ -11,13 +11,18 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ginutil"
 	financeledger "spotlight/backend/internal/finance/ledger"
 )
 
@@ -64,7 +69,6 @@ var ErrKYCRequired = fmt.Errorf("referral/ledger: verified KYC required to withd
 // ErrAccountNotEligible is returned when the beneficiary's platform_users
 // account status blocks referral money movement (REF-009) — both the actual
 // payout (Transition to 'paid') and a withdrawal request.
-//
 // SCOPE NOTE: this gates Refer & Earn's OWN money-path entry points
 // (Transition, WithdrawEligible) — it does NOT touch
 // finance/ledger.Service.Credit itself, which is the shared primitive used
@@ -162,10 +166,10 @@ func (s *Service) Accrue(ctx context.Context, in AccrueInput) (string, error) {
 		RETURNING id`
 	var id string
 	err := s.db.QueryRow(ctx, q,
-		nullable(in.BeneficiaryID),
-		nullable(in.HouseAccountID),
-		nullable(in.ReferredUserID),
-		nullable(in.CampaignID),
+		dbutil.NullStr(in.BeneficiaryID),
+		dbutil.NullStr(in.HouseAccountID),
+		dbutil.NullStr(in.ReferredUserID),
+		dbutil.NullStr(in.CampaignID),
 		kind,
 		in.AmountKobo,
 		currency,
@@ -213,7 +217,6 @@ func (s *Service) Transition(ctx context.Context, rewardID, nextState, idempoten
 
 	// Real payout: post a balanced credit to the human beneficiary's wallet.
 	// House rows are notional and skip the wallet entirely.
-	//
 	// REF-009 (closing the accrual/payout-side half): a suspended/locked/
 	// deleted beneficiary is refused HERE too, not just at WithdrawEligible.
 	// This closes the remaining gap deliberately left open when REF-009 was
@@ -248,7 +251,6 @@ func (s *Service) Transition(ctx context.Context, rewardID, nextState, idempoten
 	// drains the beneficiary's wallet and restores the standing referral
 	// reward account. A clawback of a not-yet-paid (or house) row never
 	// credited a wallet in the first place, so it stays state-only (REF-011).
-	//
 	// The idempotency key is derived from rewardID alone — NOT the caller's
 	// idempotencyKey — so a replayed clawback (with any key, or none at all
 	// beyond ClawBack's own arg) is always a safe no-op, and it can never
@@ -352,7 +354,6 @@ type WithdrawResult struct {
 // Spotlight wallet. Each eligible row is transitioned eligible→paid, which posts
 // a balanced double-entry (DR referral_reward_expense / CR user_wallet) with a
 // per-row idempotency key. The operation is:
-//
 //   - idempotent  — replayed with the same idempotencyKey it credits nothing twice
 //     (the pay primitive dedups on key and the state flip is guarded WHERE state=eligible);
 //   - serialized  — a per-user advisory lock prevents a concurrent second withdraw
@@ -494,7 +495,6 @@ func (s *Service) verifiedKYCTier(ctx context.Context, userID string) (int, erro
 // platform_users.status, CHECK'd to one of
 // 'active','pending','suspended','locked','deleted' (see
 // supabase/migrations/20260527100000_enterprise_auth_rbac.sql).
-//
 // Fail-open ONLY when no platform_users row exists for this id: a missing row
 // is not itself evidence of suspension (some beneficiaries may predate or sit
 // outside platform_users sync), so this narrow, additive gate does not block
@@ -596,9 +596,86 @@ func (s *Service) idByKey(ctx context.Context, key string) (string, error) {
 	return id, nil
 }
 
-func nullable(s string) any {
-	if s == "" {
-		return nil
+// Handler exposes reward-ledger endpoints (member summary + admin views).
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// MySummary handles GET /api/finance/referral/my-rewards — the caller's reward
+// summary across states (M-HOME-03).
+func (h *Handler) MySummary(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
 	}
-	return s
+	sum, err := h.svc.GetSummary(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, sum)
+}
+
+// MyEligible handles GET /api/finance/referral/withdraw-eligible — the caller's
+// eligible (withdrawable) reward rows.
+func (h *Handler) MyEligible(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	sum, err := h.svc.GetSummary(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"beneficiary_id": userID,
+		"eligible_kobo":  sum.EligibleKobo,
+		"currency":       "NGN",
+	})
+}
+
+// MyWithdraw handles POST /api/finance/referral/withdraw — sweep the caller's
+// eligible referral rewards into their Spotlight wallet. Money mutation: requires
+// an Idempotency-Key header (fail-closed) and a verified KYC tier. The balanced
+// double-entry + audit event are posted inside the service.
+func (h *Handler) MyWithdraw(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	idem := ginutil.IdempotencyKey(c)
+	if idem == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
+		return
+	}
+	res, err := h.svc.WithdrawEligible(c.Request.Context(), userID, idem)
+	if err != nil {
+		if errors.Is(err, ErrKYCRequired) || errors.Is(err, ErrAccountNotEligible) {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// AdminList handles GET /api/referral/admin/ledger — reward ledger view
+// (RBAC referral.ledger.view). Optional ?beneficiary= filter.
+func (h *Handler) AdminList(c *gin.Context) {
+	beneficiary := c.Query("beneficiary")
+	entries, err := h.svc.ListByBeneficiary(c.Request.Context(), beneficiary, 200)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"entries": entries})
 }

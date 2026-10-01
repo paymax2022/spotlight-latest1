@@ -1,10 +1,8 @@
 package app
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for the academy rail webhook receiver
 // (AUD-BE-013). Drives the real ingest pipeline (HMAC verify → dedupe insert →
 // reconcile) against real Postgres + the real finance ledger.Service.
-//
 // Invariants under test:
 //   (1) A VALIDLY-SIGNED webhook for a provider ref with NO matching obligation
 //       must NOT move pooled escrow → settlement. Previously the leg posted
@@ -15,14 +13,11 @@ package app
 //       release.
 //   (3) A matching obligation flips state AND posts exactly one balanced leg.
 //   (4) Replay dedupes at the database: same (rail, provider_ref) is a no-op.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset — same gate as the other
 // finance/ledger live-DB tests. Every row is keyed by a fresh UUID; safe to run
 // repeatedly.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./internal/app/... -run AcademyRailWebhook -v
-// ---------------------------------------------------------------------------
 
 import (
 	"bytes"

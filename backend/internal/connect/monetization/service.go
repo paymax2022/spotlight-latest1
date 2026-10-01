@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,13 +50,13 @@ type WalletRefunder interface {
 
 // Sentinel errors.
 var (
-	ErrPlanNotFound   = errors.New("connect: plan not found or inactive")
-	ErrMissingIdem    = errors.New("connect: Idempotency-Key required")
-	ErrInvalidAmount  = errors.New("connect: amount must be positive kobo")
-	ErrKindMismatch   = errors.New("connect: plan kind does not match endpoint")
-	ErrOrderNotFound  = errors.New("connect: order not found")
-	ErrNotRefundable  = errors.New("connect: order is not in a refundable state")
-	ErrNoRefunder     = errors.New("connect: refunds not configured")
+	ErrPlanNotFound  = errors.New("connect: plan not found or inactive")
+	ErrMissingIdem   = errors.New("connect: Idempotency-Key required")
+	ErrInvalidAmount = errors.New("connect: amount must be positive kobo")
+	ErrKindMismatch  = errors.New("connect: plan kind does not match endpoint")
+	ErrOrderNotFound = errors.New("connect: order not found")
+	ErrNotRefundable = errors.New("connect: order is not in a refundable state")
+	ErrNoRefunder    = errors.New("connect: refunds not configured")
 )
 
 // Service orchestrates Phase 6 money flows. It owns NO balance state — money
@@ -116,7 +117,6 @@ func (s *Service) getPlan(ctx context.Context, code string) (*Plan, error) {
 }
 
 // Purchase is the core money path: subscribe / buy a boost / buy a pass.
-//
 // Ordering (correctness > convenience):
 //  1. validate input + resolve plan (price comes from the DB, NOT the client);
 //  2. require an Idempotency-Key;
@@ -329,7 +329,6 @@ func (s *Service) Book(ctx context.Context, userID, idemKey string, req BookingR
 // Refund reverses a paid order (PAY-007): it returns the exact charged amount to
 // the buyer's wallet via a balanced reversing ledger entry, marks the order
 // 'refunded', and revokes the entitlement it granted. Admin-initiated.
-//
 // SAFE & SINGLE: the reversing entry is keyed by the order id, so the ledger's
 // unique-idempotency-key constraint guarantees the money is returned at most once
 // even under retries or concurrent calls (the refunder maps a duplicate key to
@@ -390,8 +389,6 @@ func (s *Service) Refund(ctx context.Context, orderID, adminID, reason string) (
 	})
 	return o, nil
 }
-
-// --- PAY-006: subscription billing cycle (cancel / auto-renew / proration) ---
 
 // ErrNoActiveSubscription is returned when a cancel finds no active subscription.
 var ErrNoActiveSubscription = errors.New("connect: no active subscription")
@@ -480,7 +477,6 @@ type RenewalReport struct {
 // ProcessRenewals charges + extends every subscription due to bill at `now`
 // (PAY-006 auto-renewal). Intended to be driven by a scheduler; `now` is injected
 // so it is deterministically testable.
-//
 // Per due entitlement: charge the plan price via the wallet, keyed by
 // entitlement+period so a cycle is billed AT MOST ONCE (retry/crash-safe); on
 // success (or an already-charged duplicate) extend expires_at by the interval and
@@ -567,13 +563,11 @@ func (s *Service) ProcessRenewals(ctx context.Context, now time.Time) (*RenewalR
 // message so this package need not import the ledger (same approach as the HTTP
 // error mapper). The ledger guarantees these substrings.
 func isDuplicateErr(err error) bool {
-	return err != nil && contains(err.Error(), "duplicate")
+	return err != nil && strings.Contains(err.Error(), "duplicate")
 }
 func isInsufficientFundsErr(err error) bool {
-	return err != nil && contains(err.Error(), "insufficient funds")
+	return err != nil && strings.Contains(err.Error(), "insufficient funds")
 }
-
-// --- Admin: plan management + reconciliation ---
 
 // UpsertPlan creates or updates a plan (admin only). Backend-owned catalogue write.
 func (s *Service) UpsertPlan(ctx context.Context, adminID string, p Plan) (*Plan, error) {
@@ -625,4 +619,167 @@ func (s *Service) ListOrders(ctx context.Context, userID string, limit int) ([]O
 		out = append(out, o)
 	}
 	return out, rows.Err()
+}
+
+// proratedRefundKobo computes the refund (in kobo) for the UNUSED portion of a
+// subscription period when it is cancelled immediately at `now`.
+// It uses integer arithmetic on seconds — never floats (iron rule: money math is
+// integer minor units). The result is clamped to [0, priceKobo]: a `now` at/after
+// expiry refunds nothing; a `now` at/before period start refunds the whole price.
+// Flooring means we never over-refund a partial kobo.
+func proratedRefundKobo(priceKobo int64, periodStart, expiresAt, now time.Time) int64 {
+	if priceKobo <= 0 || !expiresAt.After(periodStart) {
+		return 0
+	}
+	total := expiresAt.Sub(periodStart).Seconds()
+	remaining := expiresAt.Sub(now).Seconds()
+	if remaining <= 0 {
+		return 0
+	}
+	if remaining >= total {
+		return priceKobo
+	}
+	// int64 math: priceKobo * remaining / total, computed on whole seconds.
+	refund := priceKobo * int64(remaining) / int64(total)
+	if refund < 0 {
+		return 0
+	}
+	if refund > priceKobo {
+		return priceKobo
+	}
+	return refund
+}
+
+// featureEnabled reports whether any of the given entitlements enables a named
+// boolean feature, OR carries a positive numeric quota for it. Pure function so
+// the server-side enforcement rule is unit-testable without a DB.
+// A feature is "enabled" when, across active entitlements, its value is:
+//   - boolean true, or
+//   - a number > 0 (a quota such as super_likes_per_day).
+func featureEnabled(ents []Entitlement, feature string) bool {
+	for _, e := range ents {
+		if !e.Active {
+			continue
+		}
+		if e.ExpiresAt != nil && !e.ExpiresAt.After(time.Now().UTC()) {
+			continue
+		}
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(e.Features, &m); err != nil {
+			continue
+		}
+		raw, ok := m[feature]
+		if !ok {
+			continue
+		}
+		var b bool
+		if err := json.Unmarshal(raw, &b); err == nil {
+			if b {
+				return true
+			}
+			continue
+		}
+		var n float64
+		if err := json.Unmarshal(raw, &n); err == nil && n > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// PlanKind enumerates the purchasable product kinds.
+type PlanKind string
+
+const (
+	KindSubscription PlanKind = "subscription"
+	KindBoost        PlanKind = "boost"
+	KindPass         PlanKind = "pass"
+)
+
+// ValidPlanKind reports whether k is an allowed plan kind.
+func ValidPlanKind(k PlanKind) bool {
+	switch k {
+	case KindSubscription, KindBoost, KindPass:
+		return true
+	}
+	return false
+}
+
+// Plan is a backend-owned catalogue entry (row of connect_plans). Prices and
+// entitlements come from the DB, never the client.
+type Plan struct {
+	ID           string          `json:"id"`
+	Code         string          `json:"code"`
+	Kind         PlanKind        `json:"kind"`
+	Name         string          `json:"name"`
+	PriceKobo    int64           `json:"price_kobo"`
+	IntervalDays *int            `json:"interval_days,omitempty"`
+	Entitlements json.RawMessage `json:"entitlements"`
+	Active       bool            `json:"active"`
+}
+
+// Order is an immutable purchase record (row of connect_orders).
+type Order struct {
+	ID             string    `json:"id"`
+	UserID         string    `json:"user_id"`
+	PlanID         string    `json:"plan_id"`
+	PlanCode       string    `json:"plan_code"`
+	Kind           PlanKind  `json:"kind"`
+	AmountKobo     int64     `json:"amount_kobo"`
+	Status         string    `json:"status"`
+	IdempotencyKey string    `json:"-"` // never serialised to clients
+	LedgerRef      string    `json:"ledger_ref"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// Entitlement is the server-side projection of what a user may do (row of
+// connect_entitlements). Reads are server-side; the client never asserts these.
+type Entitlement struct {
+	ID        string          `json:"id"`
+	UserID    string          `json:"user_id"`
+	PlanCode  string          `json:"plan_code"`
+	Kind      PlanKind        `json:"kind"`
+	Features  json.RawMessage `json:"features"`
+	GrantedAt time.Time       `json:"granted_at"`
+	ExpiresAt *time.Time      `json:"expires_at,omitempty"`
+	Active    bool            `json:"active"`
+}
+
+// Booking is a date-planner ride/ticket booking reference (row of
+// connect_date_plan_bookings). The actual ride/ticket lives in its own module.
+type Booking struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Kind        string    `json:"kind"` // ride | ticket
+	ExternalRef string    `json:"external_ref,omitempty"`
+	EventID     string    `json:"event_id,omitempty"`
+	AmountKobo  int64     `json:"amount_kobo"`
+	Status      string    `json:"status"`
+	LedgerRef   string    `json:"ledger_ref"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// PurchaseRequest is the body for POST /subscriptions|/boosts|/passes.
+// Amount is NOT taken from the client — the server resolves price from the plan.
+type PurchaseRequest struct {
+	PlanCode string `json:"plan_code" binding:"required"`
+}
+
+// BookingRequest is the body for POST /date-plans/:id/ride|/tickets.
+type BookingRequest struct {
+	Kind         string `json:"kind"`           // ride | ticket
+	EventID      string `json:"event_id"`       // for tickets
+	TicketTypeID string `json:"ticket_type_id"` // for tickets (reuse event_ticket_types)
+	AmountKobo   int64  `json:"amount_kobo"`    // server still validates >0 and tier-checks
+	ExternalRef  string `json:"external_ref"`   // ride quote id, etc.
+}
+
+// expiresFor computes an expiry for a subscription given its interval, or nil
+// for one-off boosts/passes (which are short-lived/consumable, expiry optional).
+func (p *Plan) expiresFor(now time.Time) *time.Time {
+	if p.Kind == KindSubscription && p.IntervalDays != nil && *p.IntervalDays > 0 {
+		t := now.AddDate(0, 0, *p.IntervalDays)
+		return &t
+	}
+	return nil
 }

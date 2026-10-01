@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 )
@@ -33,7 +34,6 @@ func NewService(db *pgxpool.Pool, ledger *ledger.Service, settlement *settlement
 // crowdfunding never imports the commission package at compile time (mirrors the
 // transport/restaurant/stays seams) — the adapter, which lives in app-wiring,
 // discards the returned earning row and surfaces only the error.
-//
 // This records realized profit ONLY; it never moves money. Crowdfunding's own money
 // movement (the 90/10 escrow split at Release) is unchanged, and the injected
 // recorder is deliberately constructed WITHOUT a ledger so RecordFor never re-posts
@@ -120,13 +120,11 @@ func (s *Service) Get(ctx context.Context, id string) (*Campaign, error) {
 
 // CreatorPayoutPct and PlatformFeePct are the crowdfunding split, and this is
 // the ONLY authority for those numbers.
-//
 // The fee is DEDUCTED from the creator's payout, never added to the
 // contributor's bill: a ₦1,000 contribution debits the contributor ₦1,000,
 // pays the creator ₦900 and keeps ₦100. Anything that displays a fee — a
 // checkout quote, a receipt — must describe that shape, and every past
 // contribution is recorded under it.
-//
 // Two other places used to state a different number and neither moved money:
 // the mobile client derived 2.5% and added it on top of the charge, and
 // cf_fee_config.platform_fee_bps (admin-editable, currently 250) is read by the
@@ -342,7 +340,6 @@ type RefundResult struct {
 
 // RefundAll refunds every contribution still sitting in escrow when a
 // campaign fails or is cancelled, then marks the campaign failed.
-//
 // Contribute() settles the 90/10 split IMMEDIATELY on arrival (see that
 // function's own comment) — a contribution only stays 'escrowed' if that
 // instant settle failed and is waiting on a manual sweep. So on a campaign
@@ -409,4 +406,45 @@ func (s *Service) checkAndMarkFunded(ctx context.Context, campaignID string) {
 	if raisedKobo >= goalKobo {
 		s.db.Exec(ctx, `UPDATE campaigns SET status='funded' WHERE id=$1 AND status='active'`, campaignID)
 	}
+}
+
+// Campaign is a fundraising campaign with a goal amount and deadline.
+type Campaign struct {
+	ID          string    `json:"id"`
+	CreatorID   string    `json:"creator_id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description,omitempty"`
+	GoalKobo    int64     `json:"goal_kobo"`
+	RaisedKobo  int64     `json:"raised_kobo"`
+	Status      string    `json:"status"` // draft | active | funded | failed | cancelled
+	Deadline    time.Time `json:"deadline"`
+	CoverURL    *string   `json:"cover_url,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// Contribution is a single pledge to a campaign.
+type Contribution struct {
+	ID             string    `json:"id"`
+	CampaignID     string    `json:"campaign_id"`
+	ContributorID  string    `json:"contributor_id"`
+	AmountKobo     int64     `json:"amount_kobo"`
+	Status         string    `json:"status"` // escrowed | released | refunded
+	IdempotencyKey string    `json:"idempotency_key"`
+	SettlementID   string    `json:"settlement_id"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// CreateCampaignRequest is the body for POST /crowdfunding/campaigns.
+type CreateCampaignRequest struct {
+	Title       string    `json:"title" binding:"required,min=2,max=200"`
+	Description string    `json:"description"`
+	GoalKobo    int64     `json:"goal_kobo" binding:"required,min=100"`
+	Deadline    time.Time `json:"deadline" binding:"required"`
+	CoverURL    *string   `json:"cover_url,omitempty"`
+}
+
+// ContributeRequest is the body for POST /crowdfunding/campaigns/:id/contribute.
+type ContributeRequest struct {
+	AmountKobo     int64  `json:"amount_kobo" binding:"required,min=100"`
+	IdempotencyKey string `json:"idempotency_key" binding:"required"`
 }

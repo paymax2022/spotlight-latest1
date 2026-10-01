@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, StyleSheet, ScrollView } from 'react-native';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { MarketColors } from '../constants';
 
 // Skeleton blocks (never spinners on content areas — offline-first convention).

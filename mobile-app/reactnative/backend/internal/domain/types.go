@@ -4,8 +4,6 @@
 // the Go backend and the React Native client.
 package domain
 
-// ── Money primitives ─────────────────────────────────────────────────────────
-
 // Money is an integer minor-unit fiat amount (kobo/cents) + ISO-4217 currency.
 type Money struct {
 	Amount   int64  `json:"amount"`
@@ -24,8 +22,6 @@ type Network struct {
 	Name          string `json:"name"`
 	Confirmations int    `json:"confirmations"`
 }
-
-// ── Asset ────────────────────────────────────────────────────────────────────
 
 // Asset is an admin-whitelisted tradable crypto asset. Every control is
 // server-config: the client renders, it never decides availability.
@@ -59,8 +55,6 @@ type CandlePoint struct {
 	T     string `json:"t"`
 	Price int64  `json:"price"`
 }
-
-// ── Quotes / orders ──────────────────────────────────────────────────────────
 
 // Fee is one itemised charge in settlement fiat (transparency: never hidden).
 type Fee struct {
@@ -117,8 +111,6 @@ type Order struct {
 	CreatedAt         string       `json:"createdAt"`
 }
 
-// ── Transactions ─────────────────────────────────────────────────────────────
-
 // TxSummary is the unified history row (embedded into TxDetail).
 type TxSummary struct {
 	ID        string       `json:"id"`
@@ -146,8 +138,6 @@ type TxDetail struct {
 	StatusHistory     []StatusEvent `json:"statusHistory"`
 	FailureReason     string        `json:"failureReason,omitempty"`
 }
-
-// ── Portfolio ────────────────────────────────────────────────────────────────
 
 // Position is a single crypto holding with computed performance.
 type Position struct {
@@ -178,8 +168,6 @@ type Portfolio struct {
 	InvestableBalance Money      `json:"investableBalance"`
 	Positions         []Position `json:"positions"`
 }
-
-// ── Eligibility ──────────────────────────────────────────────────────────────
 
 // Eligibility is the trading gate (KYC + suitability + agreements + product).
 type Eligibility struct {
@@ -222,8 +210,6 @@ type EligibilityFacts struct {
 // conservative, fail-closed default gates all crypto trading at Tier 2.
 const MinCryptoKycTier = 2
 
-// ── Watchlist / alerts ───────────────────────────────────────────────────────
-
 // PriceAlert is a price-threshold notification.
 type PriceAlert struct {
 	ID          string  `json:"id"`
@@ -236,8 +222,6 @@ type PriceAlert struct {
 	TriggeredAt *string `json:"triggeredAt"`
 	CreatedAt   string  `json:"createdAt"`
 }
-
-// ── Withdrawal address book ──────────────────────────────────────────────────
 
 // Address is a whitelisted withdrawal destination.
 type Address struct {
@@ -257,8 +241,6 @@ type AddressScreening struct {
 	Risk   string `json:"risk"`
 	Reason string `json:"reason,omitempty"`
 }
-
-// ── Withdrawal ───────────────────────────────────────────────────────────────
 
 // WithdrawalEligibility gates the withdrawal flow.
 type WithdrawalEligibility struct {
@@ -303,8 +285,6 @@ type WithdrawalResult struct {
 	FailureReason      string       `json:"failureReason,omitempty"`
 }
 
-// ── Deposit ──────────────────────────────────────────────────────────────────
-
 // DepositAddress is a custody deposit address for one asset on one network.
 type DepositAddress struct {
 	Symbol          string       `json:"symbol"`
@@ -316,8 +296,6 @@ type DepositAddress struct {
 	Confirmations   int          `json:"confirmations"`
 	CustodyProvider string       `json:"custodyProvider"`
 }
-
-// ── Swap ─────────────────────────────────────────────────────────────────────
 
 // SwapQuote is an executable crypto-to-crypto quote.
 type SwapQuote struct {
@@ -351,8 +329,6 @@ type SwapResult struct {
 	FailureReason     string       `json:"failureReason,omitempty"`
 	CreatedAt         string       `json:"createdAt"`
 }
-
-// ── Ledger (double-entry; balances never trust provider alone) ───────────────
 
 // LedgerEntry is one double-entry record. Every balance movement writes one.
 type LedgerEntry struct {

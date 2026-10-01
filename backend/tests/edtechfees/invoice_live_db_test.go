@@ -1,8 +1,6 @@
 package edtechfees_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the EdTech School-Fees INVOICE money path.
-//
 // The invoice service (feesinvoice.NewService(pool)) talks to a concrete
 // *pgxpool.Pool for every mutation (Issue, RecordPayment) and wires the REAL
 // feeschedule.Service for the SF-1 lock on first issue. None of this can run
@@ -11,7 +9,6 @@ package edtechfees_test
 // backend/tests/crypto/live_db_integration_test.go and
 // backend/tests/association/live_db_integration_test.go). The skip is NOT a stub:
 // every step drives the real Service against real tables and asserts DB state.
-//
 // Invariants proven here (build-spec §4):
 //   SF-2  Invoice balance is DERIVED (total_amount_minor − SUM(succeeded
 //         payments)); academy_invoices has NO balance/amount_paid column and none
@@ -21,7 +18,6 @@ package edtechfees_test
 //         idempotency_key — a replay inserts NO second academy_invoice_payments
 //         row and re-advances no status.
 //   SF-1  Issuing an invoice LOCKS the referenced fee schedule (locked=true).
-//
 // ── Bring-up note (read before running) ───────────────────────────────────
 //  1. Apply migrations (supabase db reset), in particular:
 //       20260815001100_academy_spine_edupay.sql       (academy_schools, academy_fee_schedules)
@@ -36,10 +32,8 @@ package edtechfees_test
 //       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  3. Run:
 //       cd backend && go test ./tests/edtechfees/... -run LiveDB -v
-//
 // Every row a test touches is created by that test with a fresh uuid.New() id and
 // torn down via t.Cleanup — no shared fixtures, safe to re-run.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -245,10 +239,8 @@ func cleanupInvoice(t *testing.T, pool *pgxpool.Pool, invoiceID string) {
 	})
 }
 
-// ---------------------------------------------------------------------------
 // Issue → SF-1 lock; RecordPayment partial → paid; derived balance (SF-2);
 // idempotent replay.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_Invoice_IssueLocksSchedule_PartialThenFull_DerivedBalance_Idempotent
 // drives the full invoice money path end-to-end and proves:
@@ -273,7 +265,6 @@ func TestLiveDB_Invoice_IssueLocksSchedule_PartialThenFull_DerivedBalance_Idempo
 	studentID := seedStudent(t, ctx, pool, schoolID, guardianID)
 	feeScheduleID := seedFeeSchedule(t, ctx, pool, schoolID, total)
 
-	// ── Issue (draft → issued) ──────────────────────────────────────────────
 	inv, err := svc.Issue(ctx, actorID, feesinvoice.IssueInvoiceRequest{
 		StudentID:        studentID,
 		FeeScheduleID:    feeScheduleID,
@@ -302,7 +293,6 @@ func TestLiveDB_Invoice_IssueLocksSchedule_PartialThenFull_DerivedBalance_Idempo
 	// Structural SF-2 guard: academy_invoices carries no balance/amount_paid column.
 	assertNoStoredBalanceColumn(t, ctx, pool)
 
-	// ── Partial payment: 40,000 → partially_paid, derived balance 60,000 ─────
 	const partial = int64(40_000)
 	partialKey := newIdemKey(t, "inv-partial")
 	res1, err := svc.RecordPayment(ctx, actorID, inv.ID, guardianID, partial, "", "", partialKey)
@@ -332,7 +322,6 @@ func TestLiveDB_Invoice_IssueLocksSchedule_PartialThenFull_DerivedBalance_Idempo
 		t.Errorf("SUM(succeeded academy_invoice_payments) = %d, want %d", got, partial)
 	}
 
-	// ── Full payment: +60,000 → paid, derived balance 0 ─────────────────────
 	const rest = int64(60_000)
 	res2, err := svc.RecordPayment(ctx, actorID, inv.ID, guardianID, rest, "", "", newIdemKey(t, "inv-rest"))
 	if err != nil {
@@ -345,7 +334,6 @@ func TestLiveDB_Invoice_IssueLocksSchedule_PartialThenFull_DerivedBalance_Idempo
 		t.Errorf("derived balance after full payment = %d, want 0", res2.Invoice.Balance)
 	}
 
-	// ── Idempotent replay of the PARTIAL payment: no second row, no change ───
 	res1b, err := svc.RecordPayment(ctx, actorID, inv.ID, guardianID, partial, "", "", partialKey)
 	if err != nil {
 		t.Fatalf("RecordPayment (partial replay): %v", err)
@@ -404,8 +392,6 @@ func TestLiveDB_Invoice_RecordPayment_RequiresIdempotencyKey(t *testing.T) {
 		t.Errorf("a keyless RecordPayment must write no payment row, found %d", n)
 	}
 }
-
-// ── small DB assertion helpers ────────────────────────────────────────────
 
 func countPayments(t *testing.T, ctx context.Context, pool *pgxpool.Pool, invoiceID string) int {
 	t.Helper()

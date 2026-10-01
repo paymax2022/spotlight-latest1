@@ -8,7 +8,6 @@ import (
 // MockLedger is an in-memory double-entry ledger used as the offline/dev default.
 // It mirrors the money-core invariants so a later swap to the HTTP client changes
 // nothing observable:
-//
 //   - balances are DERIVED by summing immutable entries (never stored);
 //   - every post writes a balanced pair (debit −amount, credit +amount);
 //   - a replayed idempotency key is a no-op success (recorded once);

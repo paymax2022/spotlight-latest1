@@ -1,4 +1,3 @@
-// ── Bus provider marketplace — mock store ────────────────────────────────────
 // In-memory seed for the interstate PROVIDER MARKETPLACE so the whole flow works
 // offline (EXPO_PUBLIC_BUS_USE_MOCK). One shared store backs BOTH the customer
 // search/directory and the provider dashboard, so a route/departure a provider
@@ -126,7 +125,6 @@ const manifests: Record<string, BusManifestEntry[]> = {
   ],
 };
 
-// ─── Mappers to API-facing (camelCase) shapes ──────────────────────────────────
 const nextDeparture = (routeId: string): string | null => {
   const upcoming = schedules
     .filter((s) => s.routeId === routeId)
@@ -176,9 +174,7 @@ const toSchedule = (s: StoreSchedule): BusProviderSchedule => ({
   fareKobo: s.fareKobo,
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // CUSTOMER (search + directory)
-// ═══════════════════════════════════════════════════════════════════════════════
 export function mockSearchTrips(params: BusSearchParams): BusTrip[] {
   const from = params.fromState.toLowerCase();
   const to = params.toState.toLowerCase();
@@ -242,9 +238,7 @@ export function mockProviderDetail(id: string): BusProviderDetail {
   return { provider: toListItem(p), routes: routes.filter((r) => r.providerId === id).map(toRoute) };
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PROVIDER (dashboard + management)
-// ═══════════════════════════════════════════════════════════════════════════════
 export function mockProviderMe(): BusProviderMe {
   const p = providers.find((x) => x.id === ME_ID);
   if (!p) return { provider: null, routes: [], upcomingSchedules: [] };
@@ -336,7 +330,6 @@ export function mockManifest(scheduleId: string): BusManifestEntry[] {
   return manifests[scheduleId] ?? [];
 }
 
-// ─── Recurring departure templates ─────────────────────────────────────────────
 const toTemplate = (t: StoreTemplate): BusDepartureTemplate => ({
   id: t.id,
   providerId: t.providerId,

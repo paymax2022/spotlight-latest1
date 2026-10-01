@@ -1,8 +1,7 @@
-// ── Paymax Health — Veterinary presentation constants ────────────────────────
 // Status → label/colour maps and copy. Resolve all colours through the design
 // tokens; never hardcode hex in screens. Money in kobo → display via formatNaira.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   AppointmentStatus,
   AppointmentType,

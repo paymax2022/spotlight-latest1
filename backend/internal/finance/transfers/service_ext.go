@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/provider"
 )
 
@@ -26,14 +27,6 @@ func maskAccountNumber(acct string) string {
 		return acct
 	}
 	return acct[len(acct)-4:]
-}
-
-// defaultStr returns v when non-empty, else fallback.
-func defaultStr(v, fallback string) string {
-	if v == "" {
-		return fallback
-	}
-	return v
 }
 
 // bankName resolves a display bank name from payment_banks (falls back to code).
@@ -97,9 +90,7 @@ func (s *Service) saveBeneficiaryRow(ctx context.Context, userID, prov, bankCode
 	_, _ = s.db.Exec(ctx, q, userID, prov, bankCode, s.bankName(ctx, bankCode), accountNumber, accountName, recipientCode)
 }
 
-// ---------------------------------------------------------------------------
 // Banks / account resolution
-// ---------------------------------------------------------------------------
 
 // ListBanks returns the provider bank list (registry, with payment_banks fallback).
 func (s *Service) ListBanks(ctx context.Context, preferred string) ([]provider.Bank, error) {
@@ -139,9 +130,7 @@ func (s *Service) ResolveAccount(ctx context.Context, req ResolveAccountRequest)
 	return res, nil
 }
 
-// ---------------------------------------------------------------------------
 // Beneficiaries
-// ---------------------------------------------------------------------------
 
 // ListBeneficiaries returns the user's saved payout destinations.
 func (s *Service) ListBeneficiaries(ctx context.Context, userID string) ([]Beneficiary, error) {
@@ -172,7 +161,7 @@ func (s *Service) SaveBeneficiary(ctx context.Context, userID string, req SaveBe
 	if s.registry == nil {
 		return nil, ErrProviderUnavailable
 	}
-	prov := defaultStr(req.Provider, s.registry.Default())
+	prov := strutil.Or(req.Provider, s.registry.Default())
 	res, _, err := s.registry.ResolveAccountFailover(ctx, req.Provider, req.BankCode, req.AccountNumber)
 	if err != nil || res == nil {
 		return nil, ErrInvalidAccount
@@ -210,9 +199,7 @@ func (s *Service) DeleteBeneficiary(ctx context.Context, userID, id string) erro
 	return nil
 }
 
-// ---------------------------------------------------------------------------
 // Transaction PIN
-// ---------------------------------------------------------------------------
 
 // SetPin sets or replaces the user's transaction PIN. When one already exists the
 // caller must supply the correct current PIN.
@@ -253,9 +240,7 @@ func (s *Service) HasPin(ctx context.Context, userID string) (bool, error) {
 	return s.pins.Has(ctx, userID)
 }
 
-// ---------------------------------------------------------------------------
 // Webhook routing helpers
-// ---------------------------------------------------------------------------
 
 // ProviderByName exposes a registered disbursement provider (for webhook verify).
 func (s *Service) ProviderByName(name string) (provider.DisbursementProvider, bool) {

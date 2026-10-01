@@ -1,31 +1,25 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regressions for CROWDFUNDING-SEC-004 (amount tampering) and
 // CROWDFUNDING-SEC-005 (idempotency-key replay with a different amount), the
 // two abuse cases the QA plan (docs/qa/modules/crowdfunding.md §6) flagged as
 // "code-reasoned as sound" but never exhaustively live-tested (Batch 4/5,
 // Crowdfunding UAT queue position 5).
-//
 // SEC-004: SubmitWithdrawal accepts a client-supplied amountKobo in the
 // request body (unlike Release/Refund, which take no body at all — read by
 // hand, confirmed neither accepts an amount). Pin that a client cannot
 // request more than the creator's real ledger-derived available balance.
-//
 // SEC-005: root Contribute() reads its idempotency key from the request BODY
 // (unlike wallet/investment/csr, which read the Idempotency-Key HEADER) — a
 // genuine surface inconsistency. Pin that replaying the same body-supplied
 // key with a DIFFERENT amount cannot be used to retroactively change what was
 // charged: the server must return the ORIGINAL stored amount, never the
 // replayed one, and must not post any extra money.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL. See
 // campaign_analytics_live_db_test.go in this package for the pattern.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Withdraw_Amount -v
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Contribute_Tamper -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

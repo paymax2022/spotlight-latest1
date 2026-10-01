@@ -1,4 +1,3 @@
-// ── Admin — Crowdfunding service ─────────────────────────────────────────────
 // Live Go endpoints exist under /api/crowdfunding/admin/* (review queue, finance,
 // disputes, withdrawals, fraud, KYC, compliance, users, and config/settings).
 // Mirrors fintechService shape: flip USE_MOCK to false and the fetch branches hit
@@ -39,7 +38,6 @@ import type {
   CfUsersPage,
 } from '@/types/crowdfunding';
 
-// Mock is the default. Set NEXT_PUBLIC_CF_USE_MOCK=false to hit the live Go backend
 // at /api/crowdfunding/admin/* (campaign review queue, decision, stats).
 // Migrated to resolveUseMock now that the Go endpoints are confirmed live:
 // GET /api/crowdfunding/admin/campaigns returns real PENDING_REVIEW campaigns.
@@ -52,7 +50,6 @@ function adminBase(): string {
   // apiRoot() strips a trailing /api/v1 (if present) off env.apiBaseUrl and
   // nothing else, then the module's absolute path is appended — the same
   // shape restaurantAdminService uses.
-  //
   // This used to REPLACE /api/v1 with the module path, which silently produced a
   // base with no module prefix at all once frontend-admin moved env.apiBaseUrl to
   // the same-origin proxy (<origin>/api/admin-proxy): the regex no longer matched,
@@ -76,8 +73,6 @@ const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 const NOT_IN_FIXTURE_MODE =
   'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
   'Set NEXT_PUBLIC_CF_USE_MOCK=false to make this change against the live backend.';
-
-// ─── Mock dataset ─────────────────────────────────────────────────────────────
 
 const MOCK_CAMPAIGNS: CfReviewCampaign[] = [
   {
@@ -197,8 +192,6 @@ const MOCK_FRAUD: CfFraudAlert[] = [
   { id: 'fa3', campaignId: 'rv4', campaignTitle: 'Flood Relief for Bayelsa Families', creatorName: 'Niger Delta Relief Org', riskLevel: 'MEDIUM', status: 'INVESTIGATING', signals: ['Document pending verification'], raisedKobo: 0, createdAt: '2026-06-19T08:00:00Z' },
 ];
 
-// ─── API ──────────────────────────────────────────────────────────────────────
-
 export async function getPlatformStats(): Promise<CfPlatformStats> {
   if (USE_MOCK) {
     await delay();
@@ -294,8 +287,6 @@ export async function setCampaignFreeze(campaignId: string, freeze: boolean, not
   if (!res.ok) throw new Error(`Freeze failed: ${res.status}`);
 }
 
-// ─── Finance ──────────────────────────────────────────────────────────────────
-
 const MOCK_REFUNDS: CfRefundRequest[] = [
   { id: 're1', reference: 'SPL-RF-7001', campaignTitle: 'Flood Relief for Bayelsa Families', contributorName: 'Anonymous', amountKobo: 2_000_000, reason: 'Concerns about how funds are used', status: 'REQUESTED', requestedAt: '2026-06-19T07:30:00Z', refundEligible: true, isDemo: true },
   { id: 're2', reference: 'SPL-RF-7002', campaignTitle: 'Àdìre Documentary', contributorName: 'Tunde Bakare', amountKobo: 500_000, reason: 'Contributed by mistake', status: 'REQUESTED', requestedAt: '2026-06-18T22:10:00Z', refundEligible: true, isDemo: true },
@@ -353,8 +344,6 @@ export async function listSettlements(): Promise<CfSettlementBatch[]> {
   return (await res.json()).batches ?? [];
 }
 
-// ─── Support & disputes ───────────────────────────────────────────────────────
-
 const MOCK_DISPUTES: CfDispute[] = [
   { id: 'dp1', reference: 'SPL-DS-9001', type: 'FAKE_CAMPAIGN', status: 'OPEN', campaignTitle: 'Cryptocurrency Doubling Scheme', campaignId: 'rv2', raisedBy: 'Community report', description: 'Multiple users report this as a guaranteed-returns scam.', createdAt: '2026-06-18T21:00:00Z', slaHoursLeft: 4, resolution: null, adminNote: null },
   { id: 'dp2', reference: 'SPL-DS-9002', type: 'REWARD', status: 'INVESTIGATING', campaignTitle: 'Àdìre Documentary', campaignId: 'cf3', raisedBy: 'Fatima Sani', description: 'Producer-credit reward not delivered 3 weeks after the estimated date.', createdAt: '2026-06-17T10:00:00Z', slaHoursLeft: 20, resolution: null, adminNote: 'Contacted creator for shipping update.' },
@@ -375,8 +364,6 @@ export async function resolveDispute(id: string, resolution: CfDisputeResolution
   });
   if (!res.ok) throw new Error(`Resolve failed: ${res.status}`);
 }
-
-// ─── Platform configuration ───────────────────────────────────────────────────
 
 const MOCK_CATEGORIES: CfCategoryConfig[] = [
   { id: 'c1', label: 'Medical', slug: 'medical', enabled: true, requiresEnhancedReview: true, campaignCount: 312 },
@@ -444,8 +431,6 @@ export async function toggleFeatureFlag(key: string, enabled: boolean): Promise<
   if (!res.ok) throw new Error(`Flag update failed: ${res.status}`);
 }
 
-// ─── KYC / KYB ────────────────────────────────────────────────────────────────
-
 // Mirrors the platform's shared KYC (finance/kyc) — see CfKycCase.
 const MOCK_KYC: CfKycCase[] = [
   {
@@ -482,8 +467,6 @@ export async function decideKyc(id: string, approve: boolean, note: string): Pro
   });
   if (!res.ok) throw new Error(`KYC decision failed: ${res.status}`);
 }
-
-// ─── Compliance ───────────────────────────────────────────────────────────────
 
 const MOCK_AUDIT: CfAuditLog[] = [
   { id: 'a1', actor: 'admin@spotlight.ng', action: 'campaign.approve', target: 'rv1 · Help Baby Zara', createdAt: '2026-06-19T09:10:00Z', ip: '102.89.x.x' },
@@ -536,8 +519,6 @@ export async function fulfilDataRequest(id: string): Promise<void> {
   const res = await fetch(`${adminBase()}/compliance/data-requests/${encodeURIComponent(id)}/fulfil`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:data-request-fulfil', id) } });
   if (!res.ok) throw new Error(`Fulfil failed: ${res.status}`);
 }
-
-// ─── User & Creator management ────────────────────────────────────────────────
 
 const MOCK_USERS: CfUser[] = [
   {
@@ -612,7 +593,6 @@ export async function listUsersPage(
   const body = await res.json();
   return {
     users: body.users ?? [],
-    // Older backends answer without these; fall back to the page itself so the
     // UI degrades to "one page" instead of rendering NaN.
     total: typeof body.total === 'number' ? body.total : (body.users?.length ?? 0),
     page: typeof body.page === 'number' ? body.page : page,
@@ -641,12 +621,9 @@ export async function setUserStatus(id: string, status: 'ACTIVE' | 'SUSPENDED' |
   if (!res.ok) throw new Error(`Status update failed: ${res.status}`);
 }
 
-// ─── Featured / promotion management ──────────────────────────────────────────
-//
 // Backed by GET   /api/crowdfunding/admin/featured
 //           PATCH /api/crowdfunding/admin/campaigns/:id/flags
 //           GET   /api/crowdfunding/admin/featured/report
-//
 // Placement rule enforced by the backend: a promotion flag may only be set TRUE on
 // an ACTIVE campaign — anything else is refused with a 4xx. Clearing a flag stays
 // legal at any status (that is how a frozen/completed campaign gets pulled off the
@@ -724,19 +701,14 @@ export async function getFeaturedReport(): Promise<CfFeaturedReport> {
   return res.json();
 }
 
-// ─── Feature requests (owner-initiated promotion requests) ───────────────────
-//
 // Backed by GET  /api/crowdfunding/admin/feature-requests
 //           POST /api/crowdfunding/admin/feature-requests/:id/approve
 //           POST /api/crowdfunding/admin/feature-requests/:id/reject   { note }
-//
 // Featuring is not self-serve — an owner can only REQUEST the editorial placement.
 // Approving sets the campaign's `featured` flag, so it inherits the placement rule
-// above: only an ACTIVE campaign can be promoted, and the backend refuses anything
 // else with 409 { error }. The UI gates on `campaignStatus` so an operator is never
 // offered an action guaranteed to fail — but it still surfaces a server error when
 // one arrives, because a campaign can leave ACTIVE between load and click.
-//
 // ⚠️ PROVISIONAL CONTRACT. The backend's feature-request storage is being designed
 // in parallel and the field names / id scheme may land differently. Everything that
 // depends on the wire shape is confined to mapFeatureRequest + the two unwrap
@@ -875,7 +847,6 @@ export async function decideFeatureRequest(id: string, approve: boolean, note: s
   return mapFeatureRequest(unwrapRequest(body));
 }
 
-// ─── Campaign directory ───────────────────────────────────────────────────────
 // Every campaign, not just the review queue, with the funding figures the queue
 // never carried. Live-only by design: there is no fixture for these and this
 // console does not invent campaign or money numbers — see NOT_IN_FIXTURE_MODE.

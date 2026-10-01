@@ -1,14 +1,11 @@
 package app
 
-// ---------------------------------------------------------------------------
 // LIVE-DB suite for the per-module admin transaction-detail resolvers (see
 // admin_transaction_resolvers.go) that back GET
 // /api/finance/admin/transactions/:id's module_detail field.
-//
 // Priority per the build brief: Insurance-premium and FX-conversion are the
 // most self-contained fixtures, so they're covered first and most
 // thoroughly; marketplace-boost and utility-bill are also covered here.
-//
 // Each test seeds ONLY its own module's domain row(s) (no ledger_entries row
 // is required — Resolve() only needs the reference string) under a random
 // unique reference, proving:
@@ -18,14 +15,11 @@ package app
 //  2. A reference that doesn't match ANY module's pattern (a bare random
 //     UUID, no colon/prefix) returns (nil, false, nil) from every resolver —
 //     not an error.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset, so `go test ./...` without a
 // DB stays green.
-//
 // Bring-up:
 //   export TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 //   cd backend && go test ./internal/app/... -run TestAdminTransactionResolver -v -count=1
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -71,8 +65,6 @@ func seedFixtureUser(t *testing.T, pool *pgxpool.Pool) string {
 	return userID
 }
 
-// ── Insurance premium resolver ───────────────────────────────────────────────
-
 func TestAdminTransactionResolver_InsurancePremium_Match(t *testing.T) {
 	pool := mustLiveResolverPool(t)
 	ctx := context.Background()
@@ -99,7 +91,9 @@ func TestAdminTransactionResolver_InsurancePremium_Match(t *testing.T) {
 		policyID, reference, idemKey); err != nil {
 		t.Fatalf("seed insurance_premium_transaction: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM insurance_premium_transaction WHERE policy_id = $1`, policyID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM insurance_premium_transaction WHERE policy_id = $1`, policyID)
+	})
 
 	r := NewInsurancePremiumResolver(pool)
 	detail, found, err := r.Resolve(ctx, reference)
@@ -144,8 +138,6 @@ func TestAdminTransactionResolver_InsurancePremium_NoMatch(t *testing.T) {
 	}
 }
 
-// ── FX conversion resolver ───────────────────────────────────────────────────
-
 func TestAdminTransactionResolver_FXConversion_Match(t *testing.T) {
 	pool := mustLiveResolverPool(t)
 	ctx := context.Background()
@@ -160,7 +152,9 @@ func TestAdminTransactionResolver_FXConversion_Match(t *testing.T) {
 		userID, status, reference, idemKey); err != nil {
 		t.Fatalf("seed fx_conversions: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM fx_conversions WHERE reference = $1`, reference) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM fx_conversions WHERE reference = $1`, reference)
+	})
 
 	r := NewFXConversionResolver(pool)
 	detail, found, err := r.Resolve(ctx, reference)
@@ -219,8 +213,6 @@ func TestAdminTransactionResolver_FXConversion_ExcludesReversalPrefix(t *testing
 	}
 }
 
-// ── Marketplace boost resolver ───────────────────────────────────────────────
-
 func TestAdminTransactionResolver_MarketplaceBoost_Match(t *testing.T) {
 	pool := mustLiveResolverPool(t)
 	ctx := context.Background()
@@ -253,7 +245,9 @@ func TestAdminTransactionResolver_MarketplaceBoost_Match(t *testing.T) {
 		listingID, sellerID, tier, reference); err != nil {
 		t.Fatalf("seed mkt_boosts: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE ledger_charge_ref = $1`, reference) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE ledger_charge_ref = $1`, reference)
+	})
 
 	r := NewMarketplaceBoostResolver(pool)
 	detail, found, err := r.Resolve(ctx, reference)
@@ -295,8 +289,6 @@ func TestAdminTransactionResolver_MarketplaceBoost_NoMatch(t *testing.T) {
 	}
 }
 
-// ── Utility bill resolver ────────────────────────────────────────────────────
-
 func TestAdminTransactionResolver_UtilityBill_Match(t *testing.T) {
 	pool := mustLiveResolverPool(t)
 	ctx := context.Background()
@@ -318,7 +310,9 @@ func TestAdminTransactionResolver_UtilityBill_Match(t *testing.T) {
 		providerID, providerCode); err != nil {
 		t.Fatalf("seed utility_providers: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM utility_providers WHERE id = $1`, providerID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM utility_providers WHERE id = $1`, providerID)
+	})
 
 	receipt := "UTL-20260918-" + uuid.NewString()[:8]
 	idemKey := "idem-" + uuid.NewString()
@@ -331,7 +325,9 @@ func TestAdminTransactionResolver_UtilityBill_Match(t *testing.T) {
 		userID, billerID, providerID, receipt, idemKey); err != nil {
 		t.Fatalf("seed utility_transactions: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM utility_transactions WHERE receipt_number = $1`, receipt) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM utility_transactions WHERE receipt_number = $1`, receipt)
+	})
 
 	r := NewUtilityBillResolver(pool)
 	detail, found, err := r.Resolve(ctx, receipt)

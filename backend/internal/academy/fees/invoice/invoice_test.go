@@ -12,13 +12,10 @@ import (
 
 // PURE tests — no DB. The pgx Repository is replaced by an in-memory fakeStore and the
 // fee-schedule locker by a fakeLocker, mirroring feeschedule_test.go / edupay_test.go.
-//
 // GREP-PROOF SF-2: the fakeStore below stores payment ROWS only and computes the balance by
 // SUMMING succeeded rows in SumSucceededPayments — there is NO balance/amount_paid field on
 // the stored invoice and NO Set-balance method anywhere. The Store interface (repository.go)
 // likewise has no balance-setter. Balance is therefore structurally derived-only.
-
-// ── fakes ─────────────────────────────────────────────────────────────────────
 
 type fakeStore struct {
 	invoices map[string]*Invoice
@@ -174,8 +171,6 @@ func newService(store Store, locker feeScheduleLocker) *Service {
 	return NewServiceWithDeps(store, locker, &fakeFeeReader{amount: 100000})
 }
 
-// ── SF-1 interplay: issuing an invoice locks its fee schedule ─────────────────────
-
 func TestSF1_IssueLocksFeeSchedule(t *testing.T) {
 	f := newFakeStore()
 	locker := newFakeLocker()
@@ -199,8 +194,6 @@ func TestSF1_IssueLocksFeeSchedule(t *testing.T) {
 		t.Fatal("SF-1: the correct fee schedule (fee-1) must be locked")
 	}
 }
-
-// ── SF-2: balance is DERIVED from payment rows across a two-payment progression ───
 
 func TestSF2_DerivedBalanceProgression(t *testing.T) {
 	f := newFakeStore()
@@ -253,8 +246,6 @@ func TestSF2_DerivedBalanceProgression(t *testing.T) {
 	}
 }
 
-// ── Idempotency (money path): same key twice = one payment, same result ────────────
-
 func TestRecordPayment_Idempotent(t *testing.T) {
 	f := newFakeStore()
 	svc := newService(f, newFakeLocker())
@@ -298,8 +289,6 @@ func TestRecordPayment_Idempotent(t *testing.T) {
 	}
 }
 
-// ── Guard: payments rejected on non-payable states ───────────────────────────────
-
 func TestRecordPayment_RejectsUnpayable(t *testing.T) {
 	f := newFakeStore()
 	svc := newService(f, newFakeLocker())
@@ -318,8 +307,6 @@ func TestRecordPayment_RejectsUnpayable(t *testing.T) {
 	}
 }
 
-// ── Idempotency-Key required (money path) ─────────────────────────────────────────
-
 func TestRecordPayment_RequiresIdempotencyKey(t *testing.T) {
 	f := newFakeStore()
 	svc := newService(f, newFakeLocker())
@@ -331,8 +318,6 @@ func TestRecordPayment_RequiresIdempotencyKey(t *testing.T) {
 		t.Fatalf("missing idempotency key must be rejected, got %v", err)
 	}
 }
-
-// ── Issue derives amount from fee schedule when total omitted ─────────────────────
 
 func TestIssue_DerivesAmountFromSchedule(t *testing.T) {
 	f := newFakeStore()

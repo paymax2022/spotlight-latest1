@@ -16,13 +16,9 @@ import type {
 } from '@/types/intakeAdmin';
 
 // The Go health intake admin routes hang off adminGroupTop5(r,
-// "/api/health/admin").Group("/intake") — see backend/internal/app/health_routes.go
-// (RegisterHealth's `aig := admin.Group("/intake")`, wired from finance_routes.go
 // as adminGroupTop5(r, "/api/health/admin")) — giving the full mount point
 // /api/health/admin/intake/... that BASE below appends onto. apiRoot() strips
 // any trailing /api/v1 from the same-origin proxy base and nothing else.
-//
-// This used to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api'), which
 // stopped matching once apiBaseUrl became the proxy path itself
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see
 // insuranceAdminService.ts for the same regression. The replace became a
@@ -39,7 +35,6 @@ function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
 
-// Mock by default; flip with NEXT_PUBLIC_INTAKE_ADMIN_USE_MOCK=false once the
 // live Go admin endpoints (/api/health/admin/intake/*) are deployed. Matches the
 // onboarding/nutrition/mobility admin-service convention.
 const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_INTAKE_ADMIN_USE_MOCK);
@@ -49,8 +44,6 @@ const BASE = '/health/admin/intake';
 function delay<T>(value: T, ms = 250): Promise<T> {
   return new Promise((r) => setTimeout(() => r(value), ms));
 }
-
-// ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const schemaFixture: IntakeSchema = {
   version: 4,
@@ -207,8 +200,6 @@ const analyticsFixture: IntakeAnalytics = {
   red_flag_trigger_rate: 0.031,
 };
 
-// ─── Read endpoints ──────────────────────────────────────────────────────────
-
 async function getJson<T>(path: string, fallback: T): Promise<T> {
   if (USE_FIXTURES) return delay(fallback);
   const res = await fetch(`${adminApiBase()}${BASE}${path}`, { cache: 'no-store', headers: authHeaders() });
@@ -257,9 +248,7 @@ export function getAnalytics(): Promise<IntakeAnalytics> {
   return getJson('/analytics', analyticsFixture);
 }
 
-// ─── Write funnel ────────────────────────────────────────────────────────────
 // All mutating actions route through one funnel (mirrors onboardingService
-// postAction): fixtures echo the payload after a small latency; live mode POSTs
 // to the matching admin endpoint. Server RBAC (health.admin.intake) is
 // authoritative; the UI gates are convenience only.
 
@@ -345,8 +334,6 @@ export function addConsentVersion(entry: ConsentVersion): Promise<{ ok: true }> 
 export function saveConfig(key: string, value: Record<string, unknown>): Promise<{ ok: true }> {
   return postAction({ kind: 'save-config', key, body: value });
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 export function ageFromNow(iso: string | null): string {
   if (!iso) return '—';

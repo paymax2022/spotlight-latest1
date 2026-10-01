@@ -1,10 +1,8 @@
-// ── Paymax Media — RemoteBanner ──────────────────────────────────────────────
 // Resolves a marketing banner by slug (see ../hooks, ../api) and renders it.
 // The resolver hands back either a Cloudinary public ID (preferred — rendered
 // through the reusable SpotlightBanner, which picks a responsive width, shows
 // a blurred placeholder, and caches to disk) or, for older banners not yet
 // migrated, a presigned Cloudflare R2 URL (rendered with a plain Image).
-//
 // Behaviour is deliberately quiet: the banner is decoration, so while it loads
 // the component reserves its exact aspect ratio (no layout shift when the image
 // pops in), and if the resolver or the image fails it renders NOTHING rather
@@ -13,8 +11,8 @@
 
 import React, { useState } from 'react';
 import { View, Image, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import SpotlightBanner from '@/components/SpotlightBanner';
 import { useBanner } from '../hooks';
 

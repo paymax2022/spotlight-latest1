@@ -17,7 +17,6 @@ export async function POST(request: Request) {
     const gateId: string = body?.gateId ?? guard.gateId;
     if (!visitEventId) throw new ApiError('visitEventId is required', 400);
 
-    // Load original check-in event for context.
     const { data: checkIn, error: ciErr } = await supabase
       .from('visitor_gate_events')
       .select('*')

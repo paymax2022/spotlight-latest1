@@ -1,4 +1,3 @@
-// ── Nutrition Resolution Engine — Data hooks (v2) ────────────────────────────
 // React Query hooks mirroring food/hooks.ts so screens stay declarative and
 // share caching / loading / error contracts. v2 surfaces approve / approve-all
 // / lightweight edit (portion + macro) / allergen attestation, plus the hidden
@@ -10,7 +9,6 @@ import type { EditNutritionRequest, DeclareRecipeRequest, AttestAllergenRequest 
 
 const KEY = 'nutrition';
 
-// ─── Buyer ────────────────────────────────────────────────────────────────────
 export function useDishNutrition(dishId?: string) {
   return useQuery({
     queryKey: [KEY, 'dish', dishId],
@@ -30,7 +28,6 @@ export function useCartNutrition(ids: string[]) {
   });
 }
 
-// ─── Vendor menu review ─────────────────────────────────────────────────────
 export function useMenuNutrition(menuId?: string) {
   return useQuery({
     queryKey: [KEY, 'menu', menuId],
@@ -62,7 +59,6 @@ export function useApproveAll() {
   });
 }
 
-// ─── Vendor mutations (per dish) ────────────────────────────────────────────
 export function useApprove() {
   const qc = useQueryClient();
   return useMutation({
@@ -101,7 +97,6 @@ export function useAttestAllergen() {
   });
 }
 
-// ─── Hidden power-user path ─────────────────────────────────────────────────
 export function useDeclareRecipe() {
   const qc = useQueryClient();
   return useMutation({

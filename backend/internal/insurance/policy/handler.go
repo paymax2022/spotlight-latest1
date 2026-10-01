@@ -7,6 +7,8 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // Handler exposes member + admin policy/quote routes.
@@ -20,8 +22,6 @@ type Handler struct {
 func NewHandler(svc *Service, signRef func(ref string) (string, error)) *Handler {
 	return &Handler{svc: svc, signRef: signRef}
 }
-
-func userID(c *gin.Context) string { return c.GetString("user_id") }
 
 // mapErr maps service sentinel errors to HTTP responses.
 func mapErr(c *gin.Context, err error) {
@@ -58,9 +58,8 @@ func mapErr(c *gin.Context, err error) {
 
 // CreateQuote (member): POST /quotes {product_code, sum_insured_kobo, inputs}
 func (h *Handler) CreateQuote(c *gin.Context) {
-	uid := userID(c)
-	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+	uid, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -82,7 +81,7 @@ func (h *Handler) CreateQuote(c *gin.Context) {
 
 // GetQuote (member): GET /quotes/:id
 func (h *Handler) GetQuote(c *gin.Context) {
-	qr, err := h.svc.GetQuote(c.Request.Context(), userID(c), c.Param("id"))
+	qr, err := h.svc.GetQuote(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -93,12 +92,11 @@ func (h *Handler) GetQuote(c *gin.Context) {
 // Bind (member): POST /policies {quote_id} — Idempotency-Key header REQUIRED.
 // Runs the premium-debit→bind saga with mandatory auto-reverse.
 func (h *Handler) Bind(c *gin.Context) {
-	uid := userID(c)
-	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+	uid, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
-	idemKey := c.GetHeader("Idempotency-Key")
+	idemKey := ginutil.IdempotencyKey(c)
 	if idemKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
@@ -128,7 +126,7 @@ func (h *Handler) Bind(c *gin.Context) {
 func (h *Handler) List(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	ps, err := h.svc.ListPolicies(c.Request.Context(), userID(c), limit, offset)
+	ps, err := h.svc.ListPolicies(c.Request.Context(), ginutil.UserID(c), limit, offset)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -138,7 +136,7 @@ func (h *Handler) List(c *gin.Context) {
 
 // Get (member): GET /policies/:id
 func (h *Handler) Get(c *gin.Context) {
-	p, err := h.svc.GetPolicy(c.Request.Context(), userID(c), c.Param("id"))
+	p, err := h.svc.GetPolicy(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -148,7 +146,7 @@ func (h *Handler) Get(c *gin.Context) {
 
 // Certificate (member): GET /policies/:id/certificate — signed URL.
 func (h *Handler) Certificate(c *gin.Context) {
-	ref, err := h.svc.CertificateRef(c.Request.Context(), userID(c), c.Param("id"))
+	ref, err := h.svc.CertificateRef(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -168,7 +166,7 @@ func (h *Handler) Cancel(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	p, err := h.svc.Cancel(c.Request.Context(), userID(c), c.Param("id"), body.Reason)
+	p, err := h.svc.Cancel(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Reason)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -188,7 +186,7 @@ func (h *Handler) AddBeneficiary(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	b, err := h.svc.AddBeneficiary(c.Request.Context(), userID(c), c.Param("id"), &Beneficiary{
+	b, err := h.svc.AddBeneficiary(c.Request.Context(), ginutil.UserID(c), c.Param("id"), &Beneficiary{
 		FullName:     body.FullName,
 		Relationship: body.Relationship,
 		SharePercent: body.SharePercent,
@@ -203,7 +201,7 @@ func (h *Handler) AddBeneficiary(c *gin.Context) {
 
 // ListBeneficiaries (member): GET /policies/:id/beneficiaries
 func (h *Handler) ListBeneficiaries(c *gin.Context) {
-	bs, err := h.svc.ListBeneficiaries(c.Request.Context(), userID(c), c.Param("id"))
+	bs, err := h.svc.ListBeneficiaries(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return

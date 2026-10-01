@@ -1,12 +1,11 @@
-// ── Paymax · Admin Console — Providers ───────────────────────────────────────
 // Integration health (custody / liquidity / payments / market-data) grouped by
 // status (up / degraded / down) with a health-summary KPI row. Read-only.
 
 import React, { useMemo } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import SectionHeader from '@/components/SectionHeader';
 import { AdminHeader, ListCard, KpiCard, ProviderRow } from '@/features/admin/components';

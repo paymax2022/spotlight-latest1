@@ -9,9 +9,7 @@ import type {
 
 // The Go restaurant admin routes hang off the /api prefix (same convention as
 // nutritionAdminService), verified: backend/internal/app/finance_routes.go
-// `restAdmin := r.Group("/api/restaurant/admin")` with GET/PUT
 // "/delivery-config" registered on it. This used to be
-// `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api')`, which relied on
 // apiBaseUrl ending in /api/v1 — it no longer does (see config/env.ts), so
 // that regex silently stopped matching and every live delivery-fee admin call
 // 404'd against the bare proxy origin. apiRoot() strips the /api/v1 suffix
@@ -28,12 +26,9 @@ function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
 
-// Mock by default; flip with NEXT_PUBLIC_DELIVERY_FEE_ADMIN_USE_MOCK=false once
 // the live Go admin endpoints (/api/restaurant/admin/delivery-config) are
 // deployed. Matches the nutrition/mobility admin-service convention.
 const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_DELIVERY_FEE_ADMIN_USE_MOCK);
-
-// ── Money helpers (integer kobo ↔ naira) ─────────────────────────────────────
 
 // Kobo → naira (numeric, e.g. 80000 → 800).
 export function koboToNaira(kobo: number): number {
@@ -53,7 +48,6 @@ export function nairaLabel(kobo: number): string {
   })}`;
 }
 
-// ── Default-config fixture ───────────────────────────────────────────────────
 // Realistic platform defaults (the hard-coded fallback used when no override
 // exists). Money fields are integer kobo.
 export const DEFAULT_DELIVERY_CONFIG: DeliveryFeeConfig = {
@@ -89,10 +83,7 @@ const RESTAURANT_OVERRIDE_FIXTURE: DeliveryFeeConfig = {
   max_fee_kobo: 500000, // ₦5,000 cap
 };
 
-// ── Reads ─────────────────────────────────────────────────────────────────
-
 // GET /restaurant/admin/delivery-config?restaurant_id=
-// Pass a restaurant_id to load that restaurant's override; omit to load the
 // global default config.
 export async function getDeliveryConfig(
   restaurantId?: string | null,
@@ -119,10 +110,7 @@ export async function getDeliveryConfig(
   };
 }
 
-// ── Writes ──────────────────────────────────────────────────────────────────
-
 // PUT /restaurant/admin/delivery-config
-// restaurant_id null/omitted → save the global default; a string → save that
 // restaurant's override.
 export async function saveDeliveryConfig(
   body: PutDeliveryConfigBody,
@@ -156,8 +144,6 @@ export async function saveDeliveryConfig(
   };
 }
 
-// ── Fee formula (shared by backend semantics + live preview) ─────────────────
-
 export interface FeeBreakdown {
   base: number;
   extraDistance: number;
@@ -175,7 +161,6 @@ export interface FeeBreakdown {
 }
 
 // Derive ETA (minutes) from a straight-line distance using the road factor and
-// average speed: roadDistance = distance * road_factor; minutes = roadDistance /
 // speed * 60.
 export function deriveEtaMinutes(distanceKm: number, cfg: DeliveryFeeConfig): number {
   const speed = cfg.avg_speed_kmph > 0 ? cfg.avg_speed_kmph : 1;
@@ -192,7 +177,6 @@ export function isNightHour(hour: number, cfg: DeliveryFeeConfig): boolean {
   return hour >= s || hour < e; // wraps midnight
 }
 
-// Compute the full fee breakdown. distanceKm is the straight-line distance;
 // hour (0-23) decides the night surcharge. Mirrors the backend formula exactly.
 export function computeFee(
   distanceKm: number,

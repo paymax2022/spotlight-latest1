@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // Repository is the pgx data layer for the NRE. It NEVER mutates money — there is
@@ -38,9 +40,7 @@ func isCheckViolation(err error) bool {
 	return false
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Ownership (replicates restaurant.assertOwner's join chain).
-// ─────────────────────────────────────────────────────────────────────────────
 
 // DishOwnership is the resolved (restaurant_id, owner_id, name) for a menu item.
 type DishOwnership struct {
@@ -71,9 +71,7 @@ func (r *Repository) DishInfo(ctx context.Context, menuItemID string) (*DishOwne
 	return &d, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Composition reference.
-// ─────────────────────────────────────────────────────────────────────────────
 
 const compCols = `id, food_code, name, source, prep_method,
 	COALESCE(energy_kcal,0), COALESCE(protein_g,0), COALESCE(carb_g,0), COALESCE(sugar_g,0),
@@ -140,9 +138,7 @@ func (r *Repository) UpsertComposition(ctx context.Context, c Composition) (*Com
 	return scanComposition(row)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Dish library (Tier 2).
-// ─────────────────────────────────────────────────────────────────────────────
 
 // AllLibraryEntries loads the curated library for in-memory fuzzy matching.
 func (r *Repository) AllLibraryEntries(ctx context.Context) ([]LibraryEntry, error) {
@@ -184,9 +180,7 @@ func (r *Repository) UpsertLibrary(ctx context.Context, e LibraryEntry) error {
 	return err
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Recipe (Tier 1, vendor-owned).
-// ─────────────────────────────────────────────────────────────────────────────
 
 // GetRecipe loads the recipe for a dish, or (nil, nil) when none exists.
 func (r *Repository) GetRecipe(ctx context.Context, menuItemID string) (*Recipe, error) {
@@ -232,9 +226,7 @@ func (r *Repository) UpsertRecipe(ctx context.Context, rec Recipe) (*Recipe, err
 	return &out, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Profile (the resolved output; optimistic-version-locked status machine).
-// ─────────────────────────────────────────────────────────────────────────────
 
 const profileCols = `id, menu_item_id, restaurant_id, grounding, confidence, status,
 	portion_label, portion_size_g, per_serving, composition_version, confirmed_by::text, version`
@@ -436,7 +428,7 @@ func (r *Repository) InsertLibraryFeedback(ctx context.Context, slug, menuItemID
 	const q = `INSERT INTO nutrition_library_feedback
 		(id, library_slug, menu_item_id, restaurant_id, portion_size_g, per_serving)
 		VALUES ($1,$2,$3,$4,$5,$6)`
-	_, err := r.db.Exec(ctx, q, uuid.New().String(), slug, nilUUID(menuItemID), nilUUID(restaurantID), portionG, psJSON)
+	_, err := r.db.Exec(ctx, q, uuid.New().String(), slug, dbutil.NullUUID(menuItemID), dbutil.NullUUID(restaurantID), portionG, psJSON)
 	return err
 }
 
@@ -479,9 +471,7 @@ func (r *Repository) ListAllProfiles(ctx context.Context, limit int) ([]Profile,
 	return out, rows.Err()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Admin oversight reads (review queue). Thin, read-only. No money.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ReviewProfile is a profile enriched with its dish name + timestamps, for the
 // admin review queue ("consults" surface). The join to menu_items gives the human
@@ -537,9 +527,7 @@ func (r *Repository) ListReviewProfiles(ctx context.Context, limit int) ([]Revie
 	return out, rows.Err()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Allergens (SAFETY-CRITICAL).
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ListAllergens returns all allergen declarations for a dish (buyer-readable).
 func (r *Repository) ListAllergens(ctx context.Context, menuItemID string) ([]AllergenDeclaration, error) {
@@ -593,10 +581,8 @@ func (r *Repository) UpsertAllergen(ctx context.Context, a AllergenDeclaration) 
 	return nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Audit (immutable, INSERT-only — AI estimates + vendor confirmations +
 // allergen attestations).
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Audit appends an immutable audit row. actorID may be empty (system/AI → NULL).
 func (r *Repository) Audit(ctx context.Context, menuItemID, actorID, action string, before, after, metadata map[string]any) error {
@@ -606,21 +592,12 @@ func (r *Repository) Audit(ctx context.Context, menuItemID, actorID, action stri
 	const ins = `INSERT INTO nutrition_audit_log
 		(id, menu_item_id, actor_id, action, before, after, metadata)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)`
-	_, err := r.db.Exec(ctx, ins, uuid.New().String(), nilUUID(menuItemID), nilUUID(actorID),
+	_, err := r.db.Exec(ctx, ins, uuid.New().String(), dbutil.NullUUID(menuItemID), dbutil.NullUUID(actorID),
 		action, beforeJSON, afterJSON, metaJSON)
 	return err
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // small helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-func nilUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
 
 func orPerServing(p PerServing) PerServing {
 	if p == nil {

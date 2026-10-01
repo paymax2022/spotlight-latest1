@@ -25,7 +25,6 @@ export async function POST(request: Request) {
     // Idempotency (shared core) — the durable dedup anchor is the Paystack
     // payment_reference, which is unique per payment and already persisted on
     // competition_entry_votes. The webhook path (and a redirect retry) can both
-    // arrive for the same payment; keying off payment_reference makes whichever
     // lands first the winner and any later call a safe no-op. Same helper that
     // v1/v2 use — only the storage table differs.
     const supabase = createAdminClient();
@@ -52,7 +51,6 @@ export async function POST(request: Request) {
     });
 
     if (idem.status === 'cached') {
-      // Already credited for this reference — return 200 with the current count
       // instead of 409 so retries (and races with the webhook) are idempotent.
       return successResponse(idem.value);
     }
@@ -64,7 +62,6 @@ export async function POST(request: Request) {
     }
 
     // Cast the vote. castVote inserts into competition_entry_votes keyed by
-    // payment_reference; if the webhook processed this same payment in the
     // window between our check and here, the recompute-from-source-of-truth in
     // castVote keeps the count correct, and a duplicate-reference insert is
     // handled below as an already-processed result.

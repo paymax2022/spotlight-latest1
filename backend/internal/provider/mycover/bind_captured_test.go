@@ -9,7 +9,6 @@ import (
 )
 
 // Parsing tests built from a REAL, captured POST /v2/products/buy response.
-//
 // Every other test in this package uses a hand-written body. This one does not:
 // the JSON below is the actual payload MyCover returned for a live test-mode
 // purchase of "Surgery and Outpatient Hospicash Mini" (policy
@@ -17,12 +16,10 @@ import (
 // 2026-08-31 — the first successful bind this integration has ever made. It was
 // blocked until then on an unfunded distributor wallet, so no test could be
 // written against the real shape.
-//
 // Person-shaped fields (email, names, phone, date_of_birth) are stripped; every
 // remaining value is verbatim. The point of the fixture is precisely the keys
 // that are NOT here — the adapter's pick-lists name several fields the provider
 // never sends, and only a real response proves which fallback actually fires.
-//
 // ⚠️ Bind spends real money from a prefunded wallet and MyCover exposes no
 // idempotency, so this must never become a live-calling test. It is a pure
 // parse test over a stored body.
@@ -108,7 +105,6 @@ func TestCapturedBuy_StatusComesFromIsActive(t *testing.T) {
 	// carries none of them — liveness is the boolean `is_active`, which the
 	// adapter parsed on the CATALOG struct but never on the policy path. Every
 	// bound policy was therefore recorded with an empty status.
-	//
 	// Verified live 2026-08-31: is_active was true on all five bound policies and
 	// on GET /v2/policies/{id}, and no status field appeared anywhere.
 	got := parseCaptured(t)

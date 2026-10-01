@@ -7,8 +7,8 @@ import type {
   AcademySettingsUpdateInput,
 } from '@/lib/validation/academy';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getOptionalEnv } from '@/lib/config/env';
-import { sendTransactionalEmail } from '@/lib/email/transactional';
+import { getOptionalEnv } from '@/lib/config';
+import { sendTransactionalEmail } from '@/lib/email';
 
 type ServerSupabaseClient = Awaited<ReturnType<typeof createClient>>;
 
@@ -345,7 +345,7 @@ export async function submitAcademyApplication(input: AcademyApplicationInput) {
 }
 
 export async function confirmAcademyPayment(applicationId: string, paymentReference: string) {
-  const { verifyPaystackTransaction } = await import('@/lib/payments/paystack');
+  const { verifyPaystackTransaction } = await import('@/lib/payments');
   const adminSupabase = getOptionalEnv('SUPABASE_SERVICE_ROLE_KEY') ? createAdminClient() : null;
 
   let payment;

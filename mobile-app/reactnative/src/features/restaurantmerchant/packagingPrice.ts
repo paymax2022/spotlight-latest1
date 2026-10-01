@@ -1,9 +1,4 @@
-// ── Owner-set packaging price: parsing what they typed ───────────────────────
-//
-// The owner types NAIRA; the wire, the column and every calculation are integer
-// KOBO. That conversion is where money bugs live, so it is a pure function with
 // its own tests rather than an inline `Number(x) * 100` in a screen.
-//
 // The bounds mirror the server exactly (restaurant.UpdateRestaurant rejects
 // < 0 and > ₦10,000/pack). Client-side validation is for the owner's benefit —
 // the server re-validates and is the authority — but matching the bounds means
@@ -61,8 +56,6 @@ export function packagingPriceInput(kobo: number): string {
   const naira = kobo / 100;
   return Number.isInteger(naira) ? String(naira) : naira.toFixed(2);
 }
-
-// ── PATCH body for a store update ────────────────────────────────────────────
 
 /**
  * Map a store patch onto the snake_case body the API expects.

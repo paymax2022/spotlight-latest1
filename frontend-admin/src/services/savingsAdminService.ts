@@ -1,4 +1,3 @@
-// ── Admin — Paymax Savings (Goal Vaults + Ajo/Esusu) ops control-plane service ─
 // Mock by default (mirrors stays / connect / insurance admin services). Flip with
 // NEXT_PUBLIC_SAVINGS_USE_MOCK=false to hit the live Go backend at /api/savings/admin/*.
 // RBAC: savings.admin.* gates wired on the sidebar.
@@ -26,7 +25,6 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SAVINGS_USE_MOCK)
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_SAVINGS_USE_MOCK';
 
 // apiBaseUrl is the same-origin admin-proxy path (<origin>/api/admin-proxy),
-// not a plain API root — the old `env.apiBaseUrl.replace(/\/api\/v1\/?$/, ...)`
 // here stopped matching once the proxy migration landed (apiBaseUrl stopped
 // ending in /api/v1), silently no-op'ing this replace and leaving every call
 // pointed at the bare proxy root instead of .../api/savings/admin/... — see
@@ -47,7 +45,6 @@ const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 // Verified against backend/internal/savings (Handler.Register): the only
 // admin route registered is GET /circles/:id. No force-unlock or default-
 // handling mutation exists anywhere in the module — grepped for "ForceUnlock"/
-// "force-unlock"/"/defaults", zero hits; VaultService only has Deposit/
 // Withdraw/EarlyBreak/TransitionState, none exposed admin-side.
 const NO_BACKEND_YET =
   'has no backend yet (see the comment on the live-mode call below). ' +
@@ -72,7 +69,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -82,9 +78,7 @@ const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).to
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 const dateAhead = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Dashboard
-// ════════════════════════════════════════════════════════════════════════════
 const DASHBOARD: SavingsDashboard = {
   total_float_liability_kobo: 4_812_400_000_00,
   ledger_balance_kobo: 4_812_400_000_00,
@@ -128,9 +122,7 @@ export async function getSavingsDashboard(): Promise<SavingsDashboard> {
   return getJson<SavingsDashboard>('/dashboard');
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // B · Vaults
-// ════════════════════════════════════════════════════════════════════════════
 const VAULTS: VaultRecord[] = [
   { id: 'vlt_30221', owner_masked: 'Chioma A•••', name: 'Rent 2026', lock_type: 'LOCKED', status: 'locked', balance_kobo: 1_240_000_00, target_kobo: 1_800_000_00, yield_kobo: 0, auto_save_enabled: true, auto_save_amount_kobo: 25_000_00, auto_save_frequency: 'weekly', locked_until: dateAhead(120), early_break_requested: true, created_at: dateStr(210), matured_at: null },
   { id: 'vlt_30188', owner_masked: 'Tunde B•••', name: 'Japa Fund', lock_type: 'LOCKED', status: 'locked', balance_kobo: 4_820_000_00, target_kobo: 12_000_000_00, yield_kobo: 0, auto_save_enabled: true, auto_save_amount_kobo: 100_000_00, auto_save_frequency: 'monthly', locked_until: dateAhead(310), early_break_requested: false, created_at: dateStr(140), matured_at: null },
@@ -165,9 +157,7 @@ export async function forceUnlock(vaultId: string, reason: string): Promise<Forc
   return sendJson<ForceUnlockResult>('POST', `/vaults/${vaultId}/force-unlock`, { reason });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Float reconciliation
-// ════════════════════════════════════════════════════════════════════════════
 const FLOAT_RECON: FloatRecon = {
   generated_at: iso(0.2),
   total_ledger_kobo: 4_812_400_000_00,
@@ -184,9 +174,7 @@ export async function getFloatRecon(): Promise<FloatRecon> {
   return getJson<FloatRecon>('/float-recon');
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // D · Ajo / Esusu circles
-// ════════════════════════════════════════════════════════════════════════════
 const CIRCLES: AjoCircleSummary[] = [
   { id: 'cir_5012', name: 'Market Women Esusu', status: 'active', contribution_kobo: 20_000_00, frequency: 'weekly', members_count: 10, cycle_index: 4, total_cycles: 10, collected_this_cycle_kobo: 180_000_00, expected_this_cycle_kobo: 200_000_00, health: 'at_risk', defaults_count: 1, next_payout_member_masked: 'Funke A•••', next_payout_kobo: 200_000_00, next_payout_date: dateAhead(3), created_at: dateStr(28) },
   { id: 'cir_4980', name: 'Tech Bros Ajo', status: 'active', contribution_kobo: 60_000_00, frequency: 'monthly', members_count: 8, cycle_index: 6, total_cycles: 8, collected_this_cycle_kobo: 480_000_00, expected_this_cycle_kobo: 480_000_00, health: 'healthy', defaults_count: 0, next_payout_member_masked: 'Seun K•••', next_payout_kobo: 480_000_00, next_payout_date: dateAhead(12), created_at: dateStr(170) },
@@ -245,9 +233,7 @@ export async function getAjoCircle(id: string): Promise<AjoCircleDetail> {
   return getJson<AjoCircleDetail>(`/ajo/${id}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // E · Defaults queue + default handling
-// ════════════════════════════════════════════════════════════════════════════
 const DEFAULTS: DefaultRecord[] = [
   { id: 'def_881', circle_id: 'cir_5012', circle_name: 'Market Women Esusu', member_masked: 'Risi O•••', cycle_index: 4, amount_due_kobo: 20_000_00, days_overdue: 5, status: 'defaulted', policy: 'make_good', created_at: iso(120) },
   { id: 'def_874', circle_id: 'cir_5101', circle_name: 'Traders Weekly', member_masked: 'Musa I•••', cycle_index: 2, amount_due_kobo: 10_000_00, days_overdue: 2, status: 'grace', policy: 'grace', created_at: iso(48) },

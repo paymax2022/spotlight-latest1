@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Calculator } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import { PET_DRUG_CATEGORY_LABELS } from '@/features/doctor/constants';
 import type { PetDosageCalculation, PetDrugCategory } from '@/types/doctor.batch5';
 
@@ -15,7 +15,6 @@ interface Props {
 
 // New component: renders a weight-based dosage result (low/high range + suggested
 // midpoint + frequency) from the pure computePetDosage output. The existing
-// inline dose box in prescription.tsx is screen-local; extracting it lets the
 // dosage calculator sheet (T.4/T.5) reuse the exact same readout.
 export default function DosageCalculatorField({ calc, category }: Props) {
   return (

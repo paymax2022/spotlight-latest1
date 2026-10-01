@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/jsonx"
 )
 
 // Repository is the pgx data-access layer for academy commerce. Every query is
@@ -29,8 +31,6 @@ type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// ── Catalog reads ──────────────────────────────────────────────────────────────
-
 func (r *Repository) ListPlans(ctx context.Context) ([]Plan, error) {
 	const q = `SELECT id, code, name, price_minor, period, features, status
 	           FROM academy_plans WHERE status = 'active' ORDER BY price_minor ASC`
@@ -46,7 +46,7 @@ func (r *Repository) ListPlans(ctx context.Context) ([]Plan, error) {
 		if err := rows.Scan(&p.ID, &p.Code, &p.Name, &p.PriceMinor, &p.Period, &features, &p.Status); err != nil {
 			return nil, err
 		}
-		p.Features = rawOrEmptyObject(features)
+		p.Features = jsonx.RawOrEmptyObject(features)
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -64,7 +64,7 @@ func (r *Repository) GetPlan(ctx context.Context, id string) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	p.Features = rawOrEmptyObject(features)
+	p.Features = jsonx.RawOrEmptyObject(features)
 	return &p, nil
 }
 
@@ -89,7 +89,7 @@ func (r *Repository) ListBundles(ctx context.Context, arenaID string) ([]ExamBun
 		if err := rows.Scan(&b.ID, &b.ArenaID, &b.Name, &b.PriceMinor, &contents, &b.Season, &b.Status); err != nil {
 			return nil, err
 		}
-		b.Contents = rawOrEmptyObject(contents)
+		b.Contents = jsonx.RawOrEmptyObject(contents)
 		out = append(out, b)
 	}
 	return out, rows.Err()
@@ -107,11 +107,9 @@ func (r *Repository) GetBundle(ctx context.Context, id string) (*ExamBundle, err
 	if err != nil {
 		return nil, err
 	}
-	b.Contents = rawOrEmptyObject(contents)
+	b.Contents = jsonx.RawOrEmptyObject(contents)
 	return &b, nil
 }
-
-// ── Offline content-bundle manifest (read-only) ────────────────────────────────
 
 func (r *Repository) GetContentBundleManifest(ctx context.Context, id string) (*BundleManifest, error) {
 	const q = `SELECT id, name, version_id, arena_code, size_budget_bytes, lesson_ids, status, manifest
@@ -129,11 +127,9 @@ func (r *Repository) GetContentBundleManifest(ctx context.Context, id string) (*
 	if m.LessonIDs == nil {
 		m.LessonIDs = []string{}
 	}
-	m.Manifest = rawOrEmptyObject(manifest)
+	m.Manifest = jsonx.RawOrEmptyObject(manifest)
 	return &m, nil
 }
-
-// ── Orders ─────────────────────────────────────────────────────────────────────
 
 // InsertOrder creates an order locked to checkout with the price from the catalog.
 func (r *Repository) InsertOrder(ctx context.Context, userID, kind, refID string, amountMinor int64) (*Order, error) {
@@ -179,8 +175,6 @@ func scanOrder(row pgx.Row) (*Order, error) {
 	return o, nil
 }
 
-// ── Idempotency store ──────────────────────────────────────────────────────────
-
 // idemRecord is a persisted idempotency result.
 type idemRecord struct {
 	ResultRef   string
@@ -208,7 +202,7 @@ func (r *Repository) FindIdem(ctx context.Context, key, scope string) (*idemReco
 	if reqHash != nil {
 		rec.RequestHash = *reqHash
 	}
-	rec.Result = rawOrEmptyObject(result)
+	rec.Result = jsonx.RawOrEmptyObject(result)
 	return &rec, nil
 }
 
@@ -217,11 +211,9 @@ func saveIdem(ctx context.Context, q querier, key, scope, userID, requestHash, r
 	const ins = `INSERT INTO academy_idempotency_keys
 		(idempotency_key, scope, user_id, request_hash, result_ref, result)
 		VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (idempotency_key, scope) DO NOTHING`
-	_, err := q.Exec(ctx, ins, key, scope, nullStr(userID), nullStr(requestHash), nullStr(resultRef), toJSON(result))
+	_, err := q.Exec(ctx, ins, key, scope, dbutil.NullStr(userID), dbutil.NullStr(requestHash), dbutil.NullStr(resultRef), toJSON(result))
 	return err
 }
-
-// ── Entitlements ───────────────────────────────────────────────────────────────
 
 // GrantEntitlement flips an entitlement active for (user, kind, refID, source).
 // Idempotent via UNIQUE(user_id, kind, ref_id): a replay returns the existing row.
@@ -288,18 +280,14 @@ func (r *Repository) ListEntitlements(ctx context.Context, userID string) ([]Ent
 	return out, rows.Err()
 }
 
-// ── Audit (immutable) ──────────────────────────────────────────────────────────
-
 func writeAudit(ctx context.Context, q querier, actorID, action, entityType, entityID, fromState, toState, idemKey string, detail any) error {
 	const ins = `INSERT INTO academy_commerce_audit
 		(actor_id, action, entity_type, entity_id, from_state, to_state, detail, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
-	_, err := q.Exec(ctx, ins, nullStr(actorID), action, entityType, nullStr(entityID),
-		nullStr(fromState), nullStr(toState), toJSON(detail), nullStr(idemKey))
+	_, err := q.Exec(ctx, ins, dbutil.NullStr(actorID), action, entityType, dbutil.NullStr(entityID),
+		dbutil.NullStr(fromState), dbutil.NullStr(toState), toJSON(detail), dbutil.NullStr(idemKey))
 	return err
 }
-
-// ── Subscriptions ──────────────────────────────────────────────────────────────
 
 func insertSubscription(ctx context.Context, q querier, userID, planID, idemKey string) (*Subscription, error) {
 	id := uuid.New().String()
@@ -311,8 +299,6 @@ func insertSubscription(ctx context.Context, q querier, userID, planID, idemKey 
 	}
 	return &Subscription{ID: id, UserID: userID, PlanID: planID, State: "active", StartedAt: now}, nil
 }
-
-// ── Access cards ───────────────────────────────────────────────────────────────
 
 func (r *Repository) InsertCard(ctx context.Context, batch, serial, pinHash, grantKind, grantRefID string) (string, error) {
 	id := uuid.New().String()
@@ -416,8 +402,6 @@ func markCardActivated(ctx context.Context, q querier, id, userID string) error 
 	return err
 }
 
-// ── Sync (deterministic idempotent upsert) ─────────────────────────────────────
-
 // upsertSyncEvent records one client event idempotently keyed by (user, clientEventId).
 // Returns whether the row was newly inserted (false ⇒ replay; deterministic no-op).
 func upsertSyncEvent(ctx context.Context, q querier, userID string, ev SyncEvent, resolution string) (bool, error) {
@@ -425,14 +409,12 @@ func upsertSyncEvent(ctx context.Context, q querier, userID string, ev SyncEvent
 		(user_id, client_event_id, kind, payload, client_ts, resolution)
 		VALUES ($1,$2,$3,$4,$5,$6)
 		ON CONFLICT (user_id, client_event_id) DO NOTHING`
-	tag, err := q.Exec(ctx, ins, userID, ev.ClientEventID, ev.Kind, rawOrEmptyObject(ev.Payload), ev.ClientTS, resolution)
+	tag, err := q.Exec(ctx, ins, userID, ev.ClientEventID, ev.Kind, jsonx.RawOrEmptyObject(ev.Payload), ev.ClientTS, resolution)
 	if err != nil {
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
 }
-
-// ── tx helper ──────────────────────────────────────────────────────────────────
 
 // withTx runs fn inside a transaction, committing on nil error and rolling back otherwise.
 func (r *Repository) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
@@ -445,15 +427,6 @@ func (r *Repository) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-// ── small helpers ──────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 func toJSON(v any) []byte {

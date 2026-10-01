@@ -1,12 +1,10 @@
-// ── Bill payments — saved biller/beneficiary store ────────────────────────────
 // Saved billers (airtime, data, electricity, cable) the user reuses for repeat
 // bill payments. This is the single source of truth shared by the Bills hub and
 // the Beneficiaries screen. NON-MONEY: a saved biller is just a reusable target
-// (a phone number / meter / smartcard); no balance or amount is moved here — the
 // actual purchase runs through the bill payment checkout with its own idempotency.
 
 import { create } from 'zustand';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { RECENT_BILLERS } from '@/data/billPayment';
 
 /** A saved biller the user can pay again in one tap. */

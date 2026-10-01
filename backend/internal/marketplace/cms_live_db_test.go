@@ -1,18 +1,14 @@
 package marketplace
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests for MKT-007 — the admin CMS backend (home/category banners +
 // per-category landing/SEO content). Non-money config: no ledger posting, no
 // tier-limit gate. Follows the pattern established by
 // service_boost_live_db_test.go: TEST_DATABASE_URL-gated, pgxpool via
 // t.Cleanup (never defer — per this session's Live-DB Test Gate note), real
 // Service wired the same way app-wiring does.
-//
 // Run:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/marketplace/... -run TestLiveDB_CMS -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -65,8 +61,6 @@ func cmsSeedAdmin(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string 
 	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id) })
 	return id
 }
-
-// ── Banner CRUD + derived status ────────────────────────────────────────────
 
 func TestLiveDB_CMS_CreateBanner_NoScheduleIsLive(t *testing.T) {
 	ctx := context.Background()
@@ -227,8 +221,6 @@ func TestLiveDB_CMS_UpdateBanner_PersistsAndAudits(t *testing.T) {
 		t.Fatalf("reload shows stale title: %q", reloaded.Title)
 	}
 }
-
-// ── Category content: synthesized default + upsert round-trip ─────────────
 
 func TestLiveDB_CMS_GetCategoryContent_NoRowYetSynthesizesDefault(t *testing.T) {
 	ctx := context.Background()

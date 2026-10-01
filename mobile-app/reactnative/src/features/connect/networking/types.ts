@@ -1,8 +1,6 @@
 // Paymax Connect — Networking types (PRD §10.3 NW-*).
-//
 // Self-contained networking slice. Reuses ConnectColors / USE_MOCK /
 // CONNECT_API_BASE from ../constants/connect.constants.
-//
 // SAFETY INVARIANTS upheld here (docs/prd/dating/CLAUDE.md):
 //  §5 Network mode is request-to-connect: you send a connection REQUEST with an
 //     optional note — a thread is NOT created until the request is accepted.
@@ -18,7 +16,7 @@ export interface NetworkProfile {
   occupation: string;
   company?: string;
   bio?: string;
-  photos: string[];            // remote URIs (primary = index 0)
+  photos: string[];
   skills: string[];
   interests: string[];
   distanceLabel: string;       // approximate copy only (§3)
@@ -63,7 +61,6 @@ export interface EndorsableSkill {
   endorsedByViewer: boolean;
 }
 
-// ── Communities (NW-05..NW-07) ───────────────────────────────────────────────
 export interface Community {
   id: string;
   name: string;
@@ -92,7 +89,6 @@ export interface CreateCommunityInput {
   isPrivate: boolean;
 }
 
-// ── Events (NW-08..NW-10) ────────────────────────────────────────────────────
 export type RsvpState = 'none' | 'going' | 'interested';
 
 export interface NetworkEvent {
@@ -107,7 +103,7 @@ export interface NetworkEvent {
   hostName: string;
   attendeeCount: number;
   capacity?: number;
-  priceKobo: number;          // 0 => free; money is ALWAYS kobo
+  priceKobo: number;
   rsvp: RsvpState;
   tags: string[];
 }

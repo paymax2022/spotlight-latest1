@@ -6,11 +6,7 @@ import "time"
 // Every threshold comes from Config (caller-supplied), never a hardcoded constant.
 
 // levelForXP returns the level for a given cumulative XP under the configured curve.
-//
 // Curve: the XP required to *reach* level L (L >= 1) is
-//
-//	threshold(L) = cfg.LevelBaseXP*(L-1) + cfg.LevelStepXP*((L-1)*(L-2)/2)
-//
 // i.e. level 1 starts at 0 XP, and each subsequent level costs LevelBaseXP plus a
 // linearly growing LevelStepXP increment. Level is clamped to [1, cfg.MaxLevel].
 func levelForXP(xp int64, cfg Config) int {
@@ -48,7 +44,6 @@ type StreakOutcome struct {
 
 // applyStreak computes the next streak state given the prior state and today's
 // date. Daily-goal driven: calling this represents "the learner met today's goal".
-//
 // Rules (pure, deterministic):
 //   - same day as lastActive          → no change (idempotent within a day).
 //   - exactly +1 day                  → streak extends by 1.

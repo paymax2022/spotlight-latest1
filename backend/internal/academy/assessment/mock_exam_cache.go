@@ -16,7 +16,6 @@ type CacheService struct {
 
 func NewCacheService(rc *redis.Client) *CacheService {
 	if rc == nil {
-		// Return a no-op cache service if Redis is unavailable
 		return &CacheService{redis: nil}
 	}
 	return &CacheService{redis: rc}
@@ -24,13 +23,11 @@ func NewCacheService(rc *redis.Client) *CacheService {
 
 // Cache TTLs
 const (
-	LearnerAnalyticsTTL = 5 * time.Minute   // Refresh every 5 minutes
-	AdminAnalyticsTTL   = 10 * time.Minute  // Less frequent updates for admin
-	TemplateCacheTTL    = 30 * time.Minute  // Stable data
-	StatisticsCacheTTL  = 15 * time.Minute  // Moderate refresh
+	LearnerAnalyticsTTL = 5 * time.Minute  // Refresh every 5 minutes
+	AdminAnalyticsTTL   = 10 * time.Minute // Less frequent updates for admin
+	TemplateCacheTTL    = 30 * time.Minute // Stable data
+	StatisticsCacheTTL  = 15 * time.Minute // Moderate refresh
 )
-
-// ─── Learner Analytics Cache ───────────────────────────────────────
 
 // GetLearnerAnalyticsFromCache attempts to retrieve cached analytics
 func (c *CacheService) GetLearnerAnalyticsFromCache(ctx context.Context, userID string) (*LearnerAnalytics, error) {
@@ -77,8 +74,6 @@ func (c *CacheService) InvalidateLearnerAnalyticsCache(ctx context.Context, user
 	return c.redis.Del(ctx, key).Err()
 }
 
-// ─── Admin Analytics Cache ────────────────────────────────────────
-
 // GetAdminAnalyticsFromCache retrieves cached admin analytics
 func (c *CacheService) GetAdminAnalyticsFromCache(ctx context.Context, timeRange string) (*AdminAnalytics, error) {
 	if c.redis == nil {
@@ -120,7 +115,6 @@ func (c *CacheService) InvalidateAdminAnalyticsCache(ctx context.Context) error 
 		return nil
 	}
 
-	// Invalidate all time ranges
 	timeRanges := []string{"week", "month", "quarter", "year"}
 	for _, tr := range timeRanges {
 		key := fmt.Sprintf("admin:analytics:%s", tr)
@@ -129,8 +123,6 @@ func (c *CacheService) InvalidateAdminAnalyticsCache(ctx context.Context) error 
 
 	return nil
 }
-
-// ─── Template Cache ───────────────────────────────────────────────
 
 // GetTemplatesFromCache retrieves cached template list
 func (c *CacheService) GetTemplatesFromCache(ctx context.Context, classID, examType string) ([]MockExamTemplate, error) {
@@ -173,7 +165,6 @@ func (c *CacheService) InvalidateTemplatesCache(ctx context.Context) error {
 		return nil
 	}
 
-	// Use pattern delete for all template keys
 	keys, err := c.redis.Keys(ctx, "templates:*").Result()
 	if err != nil {
 		return err
@@ -185,8 +176,6 @@ func (c *CacheService) InvalidateTemplatesCache(ctx context.Context) error {
 
 	return nil
 }
-
-// ─── Statistics Cache ─────────────────────────────────────────────
 
 // GetStatisticsFromCache retrieves cached template statistics
 func (c *CacheService) GetStatisticsFromCache(ctx context.Context, templateID string) (interface{}, error) {
@@ -233,8 +222,6 @@ func (c *CacheService) InvalidateStatisticsCache(ctx context.Context, templateID
 	return c.redis.Del(ctx, key).Err()
 }
 
-// ─── Attempt Cache ────────────────────────────────────────────────
-
 // GetAttemptFromCache retrieves cached attempt details
 func (c *CacheService) GetAttemptFromCache(ctx context.Context, attemptID string) (*MockExamAttempt, error) {
 	if c.redis == nil {
@@ -280,8 +267,6 @@ func (c *CacheService) InvalidateAttemptCache(ctx context.Context, attemptID str
 	key := fmt.Sprintf("attempt:%s", attemptID)
 	return c.redis.Del(ctx, key).Err()
 }
-
-// ─── Cache Invalidation Patterns ──────────────────────────────────
 
 // InvalidateAllCaches clears all mock exam caches (used after bulk operations)
 func (c *CacheService) InvalidateAllCaches(ctx context.Context) error {
@@ -370,11 +355,8 @@ func (c *CacheService) GetCacheStats(ctx context.Context) (*CacheStats, error) {
 		}
 	}
 
-	// Get memory usage
 	info := c.redis.Info(ctx, "memory")
 	if info.Val() != "" {
-		// Parse memory stats from Redis INFO
-		// In production, use proper parsing
 		stats.TotalMemoryUsage = 0
 	}
 

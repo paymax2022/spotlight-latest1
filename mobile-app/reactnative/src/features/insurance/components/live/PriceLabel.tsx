@@ -1,4 +1,3 @@
-// ── Insurance (live) — the price, rendered honestly ─────────────────────────
 // 27 of MyCover's 68 products are PERCENTAGE-priced: `base_price` is a RATE, not
 // an amount. Rendering "₦0.50" where the product actually costs 0.5% of whatever
 // you insure misprices it by orders of magnitude to the reader's eye, which is
@@ -7,10 +6,10 @@
 
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { InsuranceColors } from '../../constants/insurance.constants';
 import { priceDisplay } from '../../live/money';
 import type { Product } from '../../live/types';

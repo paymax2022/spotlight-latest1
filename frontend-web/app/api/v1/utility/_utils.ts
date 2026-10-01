@@ -55,9 +55,6 @@ export function pagination(request: Request) {
   return { limit, offset };
 }
 
-// ── Go backend cutover (migration Phase 2) ──────────────────────────────────
-//
-// Gated by featureFlags.utilityBillsGoProxy() (off by default). Only pay/
 // validate are cut over — both have a real Go-native equivalent from Phase 1
 // (backend/internal/utilitybills). paystack/initiate and logos have none: the
 // former never touches the wallet/ledger (it only creates a Paystack checkout
@@ -75,7 +72,6 @@ type GoProxyResult =
   | { ok: false; response: Response };
 
 // Calls a Go utilitybills endpoint and returns its parsed JSON body, or a
-// ready-to-return error Response reshaped into this module's own
 // `{ success: false, error }` convention (never the Go backend's raw shape,
 // which callers of this module have never seen).
 export async function callUtilityBillsGo(

@@ -1,7 +1,6 @@
 // Mirrors newly-arrived in-app visitor notifications as local OS notifications,
 // so residents get an alert (e.g. "Visitor at the gate", "Visitor checked in")
 // even when not on the notifications screen. The backend should also send a real
-// push with the matching { type:'visitor_*', accessCodeId } payload; this client
 // bridge polls and is the foreground fallback. Primes silently on first load so
 // existing notifications don't fire a burst.
 

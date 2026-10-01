@@ -13,7 +13,6 @@ import (
 // (create/transition/register/record-score) are gated per-route by an injected
 // RBAC guard; the public leaderboard GET is member-readable but ALWAYS runs
 // through the SF-7 Serializer before responding.
-//
 // Wiring note (integration task): RegisterAcademyFeesCompetition is intentionally
 // NOT defined here — this package exposes NewHandler + Handler.Register so the
 // academy_routes integration owner composes the concrete gamification service,
@@ -150,7 +149,6 @@ func (h *Handler) GetLeaderboard(c *gin.Context) {
 //	member:
 //	  GET  /competitions/:id/leaderboard        (SF-7 serialized)
 //	admin (per-route RBAC):
-//	  POST /competitions                        (academy.fees.competition.manage)
 //	  POST /competitions/:id/transition         (academy.fees.competition.manage)
 //	  POST /competitions/:id/register           (academy.fees.competition.register)
 //	  POST /competitions/:id/scores             (academy.fees.competition.score)

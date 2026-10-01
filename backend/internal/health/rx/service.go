@@ -3,14 +3,21 @@ package healthrx
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/internal/health/clinicalsafety"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
 
-	"spotlight/backend/internal/health/clinicalsafety"
+const (
+	keyPrescription = "prescription"
 )
 
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
@@ -37,22 +44,18 @@ const (
 	StateRejected  State = "REJECTED"
 )
 
-var allowedTransitions = map[State]map[State]bool{
-	StateIssued:    {StateSent: true},
-	StateSent:      {StateVerifying: true},
-	StateVerifying: {StateVerified: true, StateRejected: true},
-	StateVerified:  {StateDispensed: true},
-	StateDispensed: {StateFulfilled: true},
-	StateFulfilled: {},
-	StateRejected:  {},
+var allowedTransitions = fsm.Table[State]{
+	StateIssued:    fsm.Set(StateSent),
+	StateSent:      fsm.Set(StateVerifying),
+	StateVerifying: fsm.Set(StateVerified, StateRejected),
+	StateVerified:  fsm.Set(StateDispensed),
+	StateDispensed: fsm.Set(StateFulfilled),
+	StateFulfilled: fsm.Set[State](),
+	StateRejected:  fsm.Set[State](),
 }
 
 func canTransition(from, to State) bool {
-	next, ok := allowedTransitions[from]
-	if !ok {
-		return false
-	}
-	return next[to]
+	return allowedTransitions.Can(from, to)
 }
 
 type Item struct {
@@ -110,7 +113,6 @@ func (s *Service) Issue(ctx context.Context, prescriberID, patientID string, con
 // contraindicated/major interaction, out-of-range dose, species-toxic/human-only
 // drug) blocks issuance with a *SafetyBlockError unless overrideReason documents a
 // licensed prescriber's decision to proceed (RX-011), which is then audited.
-//
 //   - pc != nil: caller supplies the clinical context explicitly (vet passes the
 //     pet's species/weight so species-toxicity rules apply).
 //   - pc == nil: the injected ClinicalContextProvider is consulted (human path);
@@ -302,8 +304,6 @@ func (s *Service) ListForPatient(ctx context.Context, patientID string) ([]Presc
 	return out, nil
 }
 
-// --- internals ---
-
 // internal carrier carrying the POM flag fetched during the locked read.
 type prescriptionRow struct {
 	Prescription
@@ -402,4 +402,104 @@ func (s *Service) audited(actor, target, action, resourceID string, oldV, newV m
 		return
 	}
 	s.audit.LogAction(actor, target, action, "health", "health_prescription", resourceID, oldV, newV, "", "", "info")
+}
+
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Issue — POST /prescriptions  (vet/clinician)
+func (h *Handler) Issue(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		PatientID      string  `json:"patient_id"`
+		ConsultID      *string `json:"consult_id"`
+		Items          []Item  `json:"items"`
+		OverrideReason string  `json:"override_reason"` // documents proceeding past a safety hard stop (RX-011)
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	// Human path: the injected ClinicalContextProvider supplies allergies/meds; a
+	// hard stop blocks unless override_reason is provided (audited).
+	p, err := h.svc.IssueChecked(c.Request.Context(), id, req.PatientID, req.ConsultID, req.Items, nil, req.OverrideReason)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"success": true, keyPrescription: p})
+}
+
+// Get — GET /prescriptions/:id
+func (h *Handler) Get(c *gin.Context) {
+	p, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, keyPrescription: p})
+}
+
+// Send — POST /prescriptions/:id/send  { pharmacy_provider_id }
+func (h *Handler) Send(c *gin.Context) {
+	var req struct {
+		PharmacyProviderID string `json:"pharmacy_provider_id"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	p, err := h.svc.SendToPharmacy(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req.PharmacyProviderID)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, keyPrescription: p})
+}
+
+// Verify — POST /prescriptions/:id/verify  { approve, reason }  (pharmacist, HL-3)
+func (h *Handler) Verify(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		Begin   bool   `json:"begin"` // true → move SENT→VERIFYING first
+		Approve bool   `json:"approve"`
+		Reason  string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.Begin {
+		if _, err := h.svc.BeginVerify(c.Request.Context(), id, c.Param("id")); err != nil {
+			ginutil.FailOK(c, http.StatusConflict, err.Error())
+			return
+		}
+	}
+	p, err := h.svc.Verify(c.Request.Context(), id, c.Param("id"), req.Approve, req.Reason)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, keyPrescription: p})
+}
+
+// Dispense — POST /prescriptions/:id/dispense  (pharmacist, HL-3 dispense-once)
+func (h *Handler) Dispense(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	p, err := h.svc.Dispense(c.Request.Context(), id, c.Param("id"))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, keyPrescription: p})
 }

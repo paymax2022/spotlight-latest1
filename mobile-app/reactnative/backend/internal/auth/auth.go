@@ -1,6 +1,5 @@
 // Package auth verifies the bearer token the mobile client attaches (a Supabase
 // HS256 JWT) and threads the authenticated user id through request context.
-//
 // Stdlib-only (crypto/hmac + crypto/sha256), so the service stays dependency-free
 // and the offline build keeps working. For Supabase projects using RS256/JWKS,
 // swap Verify for a JWKS-fetching variant behind the same Middleware.
@@ -85,8 +84,6 @@ func Verify(token, secret string) (Claims, error) {
 	return c, nil
 }
 
-// ── Request context ───────────────────────────────────────────────────────────
-
 type ctxKey struct{}
 
 // principal is the authenticated identity threaded through request context: the
@@ -113,8 +110,6 @@ func Role(ctx context.Context) string {
 	p, _ := ctx.Value(ctxKey{}).(principal)
 	return p.Role
 }
-
-// ── Middleware ────────────────────────────────────────────────────────────────
 
 // Middleware verifies the bearer token and injects the user id + role into context.
 //   - /healthz, /readyz, /metrics and provider webhooks are always exempt.

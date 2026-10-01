@@ -1,7 +1,6 @@
 // Package placement implements Featured Placement — a paid landing-page promotion
 // module. It is a booking system over scarce ad inventory with ledger escrow, a
 // guarded state machine, and a serving resolver.
-//
 // Iron rules honored:
 //   - All money is int64 kobo (minor units). Never float for money math; pricing
 //     and pro-rata splits use integer arithmetic only.
@@ -16,11 +15,11 @@ package placement
 import (
 	"errors"
 	"time"
+
+	"spotlight/backend/go-common/fsm"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // State machine
-// ─────────────────────────────────────────────────────────────────────────────
 
 // State is the guarded campaign lifecycle state. Transitions are enforced by
 // canTransition; any edge not listed is rejected (fail-closed).
@@ -43,7 +42,6 @@ const (
 )
 
 // transitions encodes the legal forward edges. Any edge not present is rejected.
-//
 // DRAFT→SUBMITTED→UNDER_REVIEW;
 // UNDER_REVIEW→{NEEDS_MORE_INFO,REJECTED,SCHEDULED(approve+paid),PENDING_PAYMENT(approve+payment_failed)};
 // NEEDS_MORE_INFO→UNDER_REVIEW(resubmit);
@@ -51,7 +49,7 @@ const (
 // SCHEDULED→{ACTIVE(scheduler@start),CANCELLED(before start, full refund)};
 // ACTIVE→{PAUSED⇄(resume→ACTIVE),SUSPENDED(admin),CANCELLED_EARLY(pro-rata),COMPLETED(scheduler@end)}.
 // Terminal: COMPLETED,REJECTED,CANCELLED,CANCELLED_EARLY,SUSPENDED.
-var transitions = map[State]map[State]bool{
+var transitions = fsm.Table[State]{
 	StateDraft:          {StateSubmitted: true},
 	StateSubmitted:      {StateUnderReview: true},
 	StateUnderReview:    {StateNeedsMoreInfo: true, StateRejected: true, StateScheduled: true, StatePendingPayment: true},
@@ -73,28 +71,12 @@ var transitions = map[State]map[State]bool{
 	StateCompleted:      {},
 }
 
-// canTransition returns true if from→to is a legal edge (fail-closed default).
-func canTransition(from, to State) bool {
-	edges, ok := transitions[from]
-	if !ok {
-		return false
-	}
-	return edges[to]
-}
+func canTransition(from, to State) bool { return transitions.Can(from, to) }
 
 // IsTerminal reports whether a state has no outbound transitions.
-func (s State) IsTerminal() bool {
-	switch s {
-	case StateCompleted, StateRejected, StateCancelled, StateCancelledEarly, StateSuspended:
-		return true
-	default:
-		return false
-	}
-}
+func (s State) IsTerminal() bool { return transitions.IsTerminal(s) }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Domain types
-// ─────────────────────────────────────────────────────────────────────────────
 
 // LayoutType matches placement_zone.layout_type.
 type LayoutType string
@@ -167,9 +149,7 @@ type ServedItem struct {
 	House          bool           `json:"house,omitempty"`
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Pricing (integer kobo only)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // durationDiscountBps returns the duration discount in basis points (1bps = 0.01%).
 // Mapping: nearest packaged duration ≤ the requested duration_days.
@@ -225,9 +205,7 @@ func halfUpDiv(n, d int64) int64 {
 	return (n + d/2) / d
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Pro-rata earned / refund split (integer kobo only)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // proRataSplit computes the earned vs unused split for an early stop. elapsedDays is
 // the number of whole days the campaign actually ran; it is clamped to [0,duration].
@@ -237,7 +215,7 @@ func halfUpDiv(n, d int64) int64 {
 //	                                              over-charged by rounding)
 func proRataSplit(quotedKobo int64, elapsedDays, durationDays int) (earnedKobo, refundKobo int64) {
 	if durationDays <= 0 || quotedKobo <= 0 {
-		return 0, maxInt64(quotedKobo, 0)
+		return 0, max(quotedKobo, 0)
 	}
 	if elapsedDays < 0 {
 		elapsedDays = 0
@@ -266,16 +244,7 @@ func elapsedDaysUTC(start, now time.Time, durationDays int) int {
 	return d
 }
 
-func maxInt64(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Sentinel errors (mapped to HTTP codes by the handler)
-// ─────────────────────────────────────────────────────────────────────────────
 
 var (
 	ErrNotFound     = errors.New("placement: not found")

@@ -1,15 +1,19 @@
 package kycverify
 
 import (
-	"crypto/rand"
-	"encoding/hex"
+	"context"
 	"errors"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/provider"
 )
 
@@ -27,33 +31,25 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc, wh: svc.NewWebhookService()}
 }
 
-// writeErr maps domain errors to HTTP status codes (model.go documents each).
+// errMap maps domain errors to HTTP status codes (service.go documents each).
+var errMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusForbidden, ErrConsentRequired, ErrForbidden),
+	httperr.R(http.StatusBadRequest, ErrInvalidTier, ErrInvalidRequest),
+	httperr.R(http.StatusServiceUnavailable, ErrNoProvider, ErrProviderUnavailable),
+	httperr.R(http.StatusNotFound, ErrNotFound),
+	httperr.R(http.StatusConflict, ErrIllegalTransition),
+)
+
 func writeErr(c *gin.Context, err error) {
+	body := gin.H{"error": err.Error()}
 	switch {
 	case errors.Is(err, ErrConsentRequired):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "code": "consent_required"})
-	case errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-	case errors.Is(err, ErrInvalidTier):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-	case errors.Is(err, ErrInvalidRequest):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		body["code"] = "consent_required"
 	case errors.Is(err, ErrNoProvider):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error(), "code": "no_provider"})
-	case errors.Is(err, ErrProviderUnavailable):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		body["code"] = "no_provider"
 	}
+	c.JSON(errMap.Code(err), body)
 }
-
-func callerID(c *gin.Context) string { return c.GetString("user_id") }
-
-// ── Member: session ──────────────────────────────────────────────────────────
 
 type startSessionBody struct {
 	TargetTier int `json:"target_tier"`
@@ -61,7 +57,7 @@ type startSessionBody struct {
 
 // StartSession handles POST /api/finance/kyc/session
 func (h *Handler) StartSession(c *gin.Context) {
-	uid := callerID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -81,7 +77,7 @@ func (h *Handler) StartSession(c *gin.Context) {
 
 // GetSession handles GET /api/finance/kyc/session/:id
 func (h *Handler) GetSession(c *gin.Context) {
-	uid := callerID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -94,8 +90,6 @@ func (h *Handler) GetSession(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"session": sess, "checks": checks})
 }
 
-// ── Member: consent ──────────────────────────────────────────────────────────
-
 type consentBody struct {
 	Scope   string `json:"scope"`
 	Version string `json:"version"`
@@ -103,7 +97,7 @@ type consentBody struct {
 
 // RecordConsent handles POST /api/finance/kyc/consent
 func (h *Handler) RecordConsent(c *gin.Context) {
-	uid := callerID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -120,8 +114,6 @@ func (h *Handler) RecordConsent(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, rec)
 }
-
-// ── Member: checks ───────────────────────────────────────────────────────────
 
 // checkBody is the shared JSON shape for every check submission. The
 // Idempotency-Key header (falling back to client_ref) is the provider idempotency
@@ -147,7 +139,7 @@ type checkBody struct {
 }
 
 func (h *Handler) runCheck(c *gin.Context, ct provider.KycCheckType) {
-	uid := callerID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -162,7 +154,7 @@ func (h *Handler) runCheck(c *gin.Context, ct provider.KycCheckType) {
 		return
 	}
 	clientRef := body.ClientRef
-	if k := c.GetHeader("Idempotency-Key"); k != "" {
+	if k := ginutil.IdempotencyKey(c); k != "" {
 		clientRef = k // header wins (it IS the client_ref).
 	}
 	// Accept both the contract field names (front_b64/back_b64) and the legacy
@@ -212,8 +204,6 @@ func (h *Handler) CheckDocument(c *gin.Context) { h.runCheck(c, provider.KycDocu
 // CheckAML handles POST /api/finance/kyc/checks/aml
 func (h *Handler) CheckAML(c *gin.Context) { h.runCheck(c, provider.KycAML) }
 
-// ── Member: SDK token (stub) ─────────────────────────────────────────────────
-
 type sdkTokenBody struct {
 	Provider string `json:"provider"`
 }
@@ -223,14 +213,14 @@ type sdkTokenBody struct {
 // never receives a provider SECRET. A real implementation mints a provider
 // session token server-side; this keeps the contract stable meanwhile.
 func (h *Handler) SDKToken(c *gin.Context) {
-	uid := callerID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
 	var body sdkTokenBody
 	_ = c.ShouldBindJSON(&body)
-	tok := "sdk_" + randToken(16)
+	tok := "sdk_" + cryptox.Token()
 	c.JSON(http.StatusOK, gin.H{
 		"provider":   body.Provider,
 		"token":      tok,
@@ -238,16 +228,6 @@ func (h *Handler) SDKToken(c *gin.Context) {
 		"stub":       true,
 	})
 }
-
-func randToken(n int) string {
-	b := make([]byte, n)
-	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		return "0000000000000000"
-	}
-	return hex.EncodeToString(b)
-}
-
-// ── Webhook (no auth; signature-verified) ────────────────────────────────────
 
 // Webhook handles POST /api/kyc/webhooks/:provider. Pipeline: read raw body →
 // verify signature via the registered parser → dedupe + process. Deterministic
@@ -302,8 +282,6 @@ func webhookSignature(c *gin.Context, providerName string) string {
 	}
 }
 
-// ── Admin (RBAC finance.admin.kyc) ───────────────────────────────────────────
-
 // ReviewQueue handles GET /api/finance/admin/kyc/review-queue
 func (h *Handler) ReviewQueue(c *gin.Context) {
 	cases, err := h.svc.ReviewQueue(c.Request.Context(), 100, 0)
@@ -332,7 +310,7 @@ type decisionBody struct {
 func (h *Handler) ApproveCase(c *gin.Context) {
 	var body decisionBody
 	_ = c.ShouldBindJSON(&body)
-	st, err := h.svc.ApproveCase(c.Request.Context(), c.Param("id"), callerID(c), body.Reason)
+	st, err := h.svc.ApproveCase(c.Request.Context(), c.Param("id"), ginutil.UserID(c), body.Reason)
 	if err != nil {
 		writeErr(c, err)
 		return
@@ -344,7 +322,7 @@ func (h *Handler) ApproveCase(c *gin.Context) {
 func (h *Handler) RejectCase(c *gin.Context) {
 	var body decisionBody
 	_ = c.ShouldBindJSON(&body)
-	st, err := h.svc.RejectCase(c.Request.Context(), c.Param("id"), callerID(c), body.Reason)
+	st, err := h.svc.RejectCase(c.Request.Context(), c.Param("id"), ginutil.UserID(c), body.Reason)
 	if err != nil {
 		writeErr(c, err)
 		return
@@ -386,7 +364,7 @@ func (h *Handler) UpdateRoutingRule(c *gin.Context) {
 		Threshold:        body.Threshold,
 		Enabled:          body.Enabled,
 	}
-	if err := h.svc.UpdateRoutingRule(c.Request.Context(), callerID(c), rule); err != nil {
+	if err := h.svc.UpdateRoutingRule(c.Request.Context(), ginutil.UserID(c), rule); err != nil {
 		writeErr(c, err)
 		return
 	}
@@ -412,4 +390,139 @@ func validCheckType(ct provider.KycCheckType) bool {
 		return true
 	}
 	return false
+}
+
+// WebhookService ingests provider callbacks/webhooks. Pipeline (hardened):
+//  1. verify the signature via the provider's registered KycWebhookParser,
+//  2. dedupe via webhook_event ON CONFLICT (provider,event_id) — redelivery is a
+//     200 no-op,
+//  3. parse into the normalized KycWebhookEvent,
+//  4. find the check by client_ref,
+//  5. guarded transition to the terminal status + persist normalized fields,
+//  6. run the orchestrator (may elevate the tier),
+//  7. audit.
+//
+// Idempotent: a redelivery of the same (provider,event_id) processes nothing.
+type WebhookService struct {
+	repo *Repository
+	reg  *Registry
+	pii  *PIIStore
+	orch *Orchestrator
+}
+
+// NewWebhookService builds the webhook ingestion service. It shares the repo,
+// registry, PII store and orchestrator with the member Service.
+func (s *Service) NewWebhookService() *WebhookService {
+	return &WebhookService{repo: s.repo, reg: s.reg, pii: s.pii, orch: s.orch}
+}
+
+// Verify reports whether the raw payload's signature is valid for a provider. A
+// provider with no registered parser fails closed (unknown provider → false).
+func (w *WebhookService) Verify(providerName string, payload []byte, signature string) bool {
+	parser, ok := w.reg.ParserFor(providerName)
+	if !ok {
+		return false
+	}
+	return parser.VerifyKycSignature(payload, signature)
+}
+
+// Ingest processes one verified webhook delivery. The signature MUST already have
+// been checked (handler calls Verify first). Returns nil for both a successful
+// process and a benign redelivery no-op; a non-nil error is a genuine processing
+// failure (the handler still ACKs 200 to stop provider retries, recording
+// status=failed).
+func (w *WebhookService) Ingest(ctx context.Context, providerName string, payload []byte) error {
+	parser, ok := w.reg.ParserFor(providerName)
+	if !ok {
+		return fmt.Errorf("%w: unknown provider %q", ErrProviderUnavailable, providerName)
+	}
+	ev, err := parser.ParseKycWebhook(payload)
+	if err != nil {
+		return fmt.Errorf("kycverify: parse webhook %s: %w", providerName, err)
+	}
+	if ev == nil {
+		return nil
+	}
+
+	eventID := ev.EventID
+	if eventID == "" {
+		// No event id surfaced — fall back to a deterministic dedupe key so we
+		// still dedupe. Never drop.
+		eventID = ev.ClientRef + ":" + string(ev.Status)
+	}
+
+	inserted, err := w.repo.InsertWebhookEvent(ctx, providerName, eventID, "kyc", payload)
+	if err != nil {
+		return err
+	}
+	if dec := DecideDedupe(boolToRows(inserted)); dec.AckNoOp {
+		return nil // redelivery → ACK no-op
+	}
+
+	procErr := w.process(ctx, providerName, ev)
+
+	status := "processed"
+	if procErr != nil {
+		status = "failed"
+	}
+	if merr := w.repo.MarkWebhookProcessed(ctx, providerName, eventID, status); merr != nil {
+		log.Printf("kycverify: mark webhook processed provider=%s event=%s: %v", providerName, eventID, merr)
+	}
+	return procErr
+}
+
+// process correlates the event to a check by client_ref, applies the guarded
+// terminal transition, and recomputes the session.
+func (w *WebhookService) process(ctx context.Context, providerName string, ev *provider.KycWebhookEvent) error {
+	if ev.ClientRef == "" {
+		log.Printf("kycverify: webhook provider=%s missing client_ref — stored, no action", providerName)
+		return nil
+	}
+	ch, err := w.repo.GetCheckByClientRef(ctx, ev.ClientRef)
+	if err != nil {
+		return err
+	}
+
+	dec := DecideTerminal(ev.Status)
+	if !dec.Apply {
+		return nil // still pending — leave the check as-is
+	}
+	// Idempotent: a redelivered terminal for an already-terminal check is a no-op
+	// via the state machine's same-status rule.
+	if err := applyCheckTransition(ch.Status, dec.Target); err != nil {
+		return err
+	}
+
+	// Seal any raw payload the webhook carried (AAD = check id). Never logged.
+	if len(ev.Raw) > 0 {
+		if ref, perr := w.pii.Put(ctx, ch.ID, ch.UserID, providerName, ev.Raw); perr == nil {
+			ch.RawPayloadRef = ref
+		} else {
+			log.Printf("kycverify: seal webhook payload check=%s: %v", ch.ID, perr)
+		}
+	}
+	ch.Provider = providerName
+	ch.ProviderRef = ev.ProviderRef
+	ch.Status = dec.Target
+	ch.Match = ev.Match
+	ch.Confidence = ev.Confidence
+	ch.Reason = ev.Reason
+	if err := w.repo.UpdateCheckResult(ctx, ch); err != nil {
+		return err
+	}
+	log.Printf("audit kycverify event=kycverify.webhook.applied user=%s id=%s detail=provider=%s status=%s",
+		ch.UserID, ch.ID, providerName, dec.Target)
+
+	// Recompute the session (may elevate the tier when the full set passed).
+	if _, err := w.orch.Recompute(ctx, ch.SessionID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func boolToRows(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }

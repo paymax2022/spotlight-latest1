@@ -1,4 +1,3 @@
-// ── Paymax Stays — React Query v5 hooks ──────────────────────────────────────
 // Thin query/mutation wrappers over the api layer so screens never call fetch
 // directly and cache keys stay consistent.
 

@@ -1,6 +1,4 @@
-// ── Paymax Stays (SM2) — Reviews / loyalty / profile data layer ──────────────
 // Self-contained, mock-first. ADDS to SM1; never edits SM1's owned files.
-//
 // Review integrity (PRD §14): a review is unlocked ONLY after a COMPLETED
 // reservation and binds to that reservation (verified-guest only). Sub-scores
 // (cleanliness, staff, location, value, comfort, facilities, WiFi) + overall.
@@ -55,7 +53,6 @@ function mapReview(r: BEReview): MyReview {
   };
 }
 
-// ── Types ──────────────────────────────────────────────────────────────────--
 export interface ReviewableStay {
   reservationId: string;
   propertyId: string;
@@ -90,7 +87,6 @@ export interface WriteReviewInput {
   body: string;
 }
 
-// ── Loyalty (PRD §16 — Paymax Stays, Genius equivalent) ──────────────────────
 export interface LoyaltyTierPerk {
   icon: string; // lucide name
   label: string;
@@ -114,7 +110,6 @@ export interface LoyaltyStatus {
   lifetimeSavingsKobo: number;
 }
 
-// ── Saved guests / travel docs (PRD §17 G, screen 54) ────────────────────────
 export interface SavedGuest {
   id: string;
   fullName: string;
@@ -125,7 +120,6 @@ export interface SavedGuest {
   docExpiry?: string;
 }
 
-// ── Mock stores ───────────────────────────────────────────────────────────────
 const myReviews: MyReview[] = [
   {
     id: 'rev_001',
@@ -180,8 +174,6 @@ const LOYALTY_TIERS: LoyaltyTier[] = [
     ],
   },
 ];
-
-// ── API ──────────────────────────────────────────────────────────────────────
 
 /** Stays eligible for a review = COMPLETED reservations without a review yet. */
 export async function listReviewableStays(): Promise<ReviewableStay[]> {
@@ -305,7 +297,6 @@ export async function writeReview(input: WriteReviewInput): Promise<MyReview> {
   };
 }
 
-// ── Loyalty ────────────────────────────────────────────────────────────────--
 export async function getLoyaltyStatus(): Promise<LoyaltyStatus> {
   if (USE_MOCK) {
     await delay(220);
@@ -329,7 +320,6 @@ export async function getLoyaltyStatus(): Promise<LoyaltyStatus> {
       lifetimeSavingsKobo: 3_640_000,
     };
   }
-  // Live: backend returns raw stay counts; tier/perks/discount are derived here
   // against the client-side LOYALTY_TIERS table (single source of tier config).
   const { data } = await api.get(`${STAYS_API_BASE}/loyalty`);
   const b = unwrap<{
@@ -360,9 +350,7 @@ export async function getLoyaltyStatus(): Promise<LoyaltyStatus> {
   };
 }
 
-// ── Saved guests / travel docs ───────────────────────────────────────────────
 // Backend saved-guest shape (member routes /api/finance/stays/saved-guests). The
-// backend stores name/email/phone/is_lead only; the local SavedGuest carries a
 // few extra travel-doc fields that live client-side (not persisted server-side).
 interface BESavedGuest {
   id: string;
@@ -420,7 +408,6 @@ export async function removeSavedGuest(id: string): Promise<{ ok: true }> {
   return { ok: true };
 }
 
-// ── Hooks ──────────────────────────────────────────────────────────────────--
 export function useReviewableStays() {
   return useQuery({ queryKey: [KEY, 'reviewable'], queryFn: listReviewableStays, staleTime: 15_000 });
 }

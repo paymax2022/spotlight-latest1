@@ -1,23 +1,16 @@
-// ── Marketplace realtime (SSE) client ────────────────────────────────────────
-//
 // Opt-in Server-Sent Events push for the Deal Room chat. When enabled, it lets
 // the backend nudge React Query to refetch the affected thread the instant a
 // message lands, instead of waiting up to MESSAGE_POLL_MS for the next poll. The
 // existing polling in transact.hooks.ts stays in place as the safety net — this
 // hook only ADDS invalidations; it never replaces the polls.
-//
-// Transport: react-native-sse's EventSource polyfill (pure JS, supports custom
 // request headers — the browser/RN EventSource does NOT, which is why we need it
 // to attach the Supabase Bearer). It auto-reconnects on error/close with backoff,
 // so we don't hand-roll reconnection; we just (re)connect with a fresh token.
-//
 // Gating (ALL must hold, else this hook is inert and we fall back to polling):
 //   • EXPO_PUBLIC_REALTIME_ENABLED === 'true'   (OFF by default)
 //   • NOT MKT_USE_MOCK                           (mock mode has no backend)
 //   • the user is signed in                      (a stream needs an auth token)
-//
 // Mirrors the axios client: same baseURL (getDevUrl + EXPO_PUBLIC_API_BASE_URL)
-// and same token source (supabase.auth.getSession().access_token). The proxy at
 // frontend-web/app/api/v1/realtime/[...path]/route.ts forwards the stream to Go.
 
 import { useEffect } from 'react';
@@ -95,7 +88,6 @@ export function useMarketplaceRealtime(): void {
         }
       });
 
-      // react-native-sse auto-reconnects on 'error'/timeout; nothing to do here
       // beyond swallowing the event so it doesn't surface as an unhandled listener.
       es.addEventListener('error', () => { /* auto-reconnect handled by the lib */ });
     })();

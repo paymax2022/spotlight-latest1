@@ -1,12 +1,10 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for FOOD-001: the restaurant/rider payout-run
 // DISBURSEMENT subsystem (payout.go BuildRun/ProcessRun) had zero test coverage.
 // The only existing payout-adjacent test (payout_readiness_live_db_test.go)
 // covers the read-only eligibility check (payout_readiness.go), not the real
 // money-moving transfer logic here. Skipped unless TEST_DATABASE_URL is set.
-//
 // Design constraint that shapes these tests: a payout RUN is scoped to exactly
 // ONE (provider_type, provider_id, period_key) — see the unique index
 // uq_restaurant_payout_runs_provider_period and BuildRun's signature. There is
@@ -19,7 +17,6 @@ package restaurant
 // cross-credit each other's wallet, which is the real-world equivalent of the
 // scenario (a payout admin processing a batch of runs touching both restaurant
 // owners and riders in one sitting).
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -139,7 +136,6 @@ func prWalletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, user
 // account by one or more payout runs' own deterministic journals — the DEBIT leg(s)
 // PostJournal writes under "<run.IdempotencyKey>:debit" (repository.go suffixes the
 // balanced pair ":debit"/":credit"). 0 means nothing was posted.
-//
 // Deliberately NOT a before/after read of the account's BALANCE. settlement is a single
 // global standing account also moved by estate dues, academy, connect, realtor and other
 // suites, and `go test ./...` runs packages concurrently against one database (make test
@@ -491,7 +487,6 @@ func TestLiveDB_ProcessRunUnknownRunFailsCleanly(t *testing.T) {
 }
 
 // TestLiveDB_ProcessRunRecoversFromCrashBetweenPostAndFinalise: FOOD-002.
-//
 // ProcessRun's real sequence is: (1) atomically claim the run draft->processing,
 // (2) post the ledger transfer, (3) atomically finalise processing->paid. If the
 // process dies after (2) commits but before (3) does, the run was stuck at
@@ -500,7 +495,6 @@ func TestLiveDB_ProcessRunUnknownRunFailsCleanly(t *testing.T) {
 // and returned a bare "not disbursable" error. The money had already moved;
 // only the run's own bookkeeping never caught up. Nothing else in the codebase
 // reconciled this (no cron, no admin retry-to-paid path).
-//
 // This simulates that exact crash window directly — claim the run and post the
 // real ledger transfer by hand, WITHOUT running the finalise step — then calls
 // ProcessRun again exactly as an operator retrying a stuck run would, and

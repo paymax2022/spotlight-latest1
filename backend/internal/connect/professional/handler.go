@@ -3,6 +3,7 @@ package connectprofessional
 import (
 	"errors"
 	"net/http"
+	"spotlight/backend/go-common/ginutil"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -12,10 +13,8 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string { return c.GetString("user_id") }
-
 func (h *Handler) GetProfile(c *gin.Context) {
-	p, err := h.svc.GetProfile(c.Request.Context(), uid(c))
+	p, err := h.svc.GetProfile(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no professional profile"})
 		return
@@ -29,7 +28,7 @@ func (h *Handler) UpsertProfile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	p, err := h.svc.UpsertProfile(c.Request.Context(), uid(c), in)
+	p, err := h.svc.UpsertProfile(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -47,7 +46,7 @@ func (h *Handler) RequestVerification(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "evidence_ref required"})
 		return
 	}
-	if err := h.svc.RequestBusinessVerification(c.Request.Context(), uid(c), body.EvidenceRef); err != nil {
+	if err := h.svc.RequestBusinessVerification(c.Request.Context(), ginutil.UserID(c), body.EvidenceRef); err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
@@ -56,7 +55,7 @@ func (h *Handler) RequestVerification(c *gin.Context) {
 
 func (h *Handler) Discover(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
-	out, err := h.svc.Discover(c.Request.Context(), uid(c), c.Query("industry"), limit)
+	out, err := h.svc.Discover(c.Request.Context(), ginutil.UserID(c), c.Query("industry"), limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -70,7 +69,7 @@ func (h *Handler) SendIntro(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	r, err := h.svc.SendIntro(c.Request.Context(), uid(c), in)
+	r, err := h.svc.SendIntro(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		if errors.Is(err, ErrSelfIntro) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -88,7 +87,7 @@ func (h *Handler) RespondIntro(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	r, err := h.svc.RespondIntro(c.Request.Context(), uid(c), c.Param("id"), body.Accept)
+	r, err := h.svc.RespondIntro(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Accept)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotRecipient):
@@ -109,7 +108,7 @@ func (h *Handler) UpsertCard(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	bc, err := h.svc.UpsertCard(c.Request.Context(), uid(c), in)
+	bc, err := h.svc.UpsertCard(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -126,7 +125,7 @@ func (h *Handler) ExchangeCard(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	sc, err := h.svc.ExchangeCard(c.Request.Context(), uid(c), body.ContactID)
+	sc, err := h.svc.ExchangeCard(c.Request.Context(), ginutil.UserID(c), body.ContactID)
 	if err != nil {
 		if errors.Is(err, ErrNoConsent) {
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -139,7 +138,7 @@ func (h *Handler) ExchangeCard(c *gin.Context) {
 }
 
 func (h *Handler) ListContacts(c *gin.Context) {
-	out, err := h.svc.ListContacts(c.Request.Context(), uid(c))
+	out, err := h.svc.ListContacts(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -153,7 +152,7 @@ func (h *Handler) CreateRoom(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	r, err := h.svc.CreateRoom(c.Request.Context(), uid(c), in)
+	r, err := h.svc.CreateRoom(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -162,7 +161,7 @@ func (h *Handler) CreateRoom(c *gin.Context) {
 }
 
 func (h *Handler) JoinRoom(c *gin.Context) {
-	if err := h.svc.JoinRoom(c.Request.Context(), uid(c), c.Param("id")); err != nil {
+	if err := h.svc.JoinRoom(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
@@ -175,7 +174,7 @@ func (h *Handler) ModerateRoom(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.ModerateRoom(c.Request.Context(), uid(c), c.Param("id"), in); err != nil {
+	if err := h.svc.ModerateRoom(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in); err != nil {
 		if errors.Is(err, ErrNotRoomOwner) {
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 			return
@@ -185,8 +184,6 @@ func (h *Handler) ModerateRoom(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
 }
-
-// --- Admin ---
 
 // AdminReviewVerification — POST /admin/business/verification {user_id, approve, reason}.
 func (h *Handler) AdminReviewVerification(c *gin.Context) {
@@ -199,7 +196,7 @@ func (h *Handler) AdminReviewVerification(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.ReviewBusinessVerification(c.Request.Context(), uid(c), body.UserID, body.Approve, body.Reason); err != nil {
+	if err := h.svc.ReviewBusinessVerification(c.Request.Context(), ginutil.UserID(c), body.UserID, body.Approve, body.Reason); err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}

@@ -1,4 +1,3 @@
-// ── Featured Placement — Formatters & helpers ─────────────────────────────────
 // All money is integer kobo. Re-uses the canonical formatNaira so currency
 // display matches the rest of the app.
 
@@ -8,13 +7,11 @@ import type { CampaignState, FeaturedError } from './types';
 
 export { formatNaira };
 
-// ─── Idempotency ──────────────────────────────────────────────────────────────
 /** Generate an Idempotency-Key for a money mutation (matches food pattern). */
 export function newIdempotencyKey(prefix = 'featured'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-// ─── Campaign state presentation ──────────────────────────────────────────────
 export type StatusTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
 
 export const STATE_LABEL: Record<CampaignState, string> = {
@@ -76,7 +73,6 @@ export function canRenew(s: CampaignState): boolean {
   return s === 'COMPLETED' || s === 'CANCELLED' || s === 'CANCELLED_EARLY';
 }
 
-// ─── Dates / windows ──────────────────────────────────────────────────────────
 export function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -111,14 +107,12 @@ export function countdownLabel(endIso: string): string {
   return `${hours}h left`;
 }
 
-// ─── Session id (for de-duping placement events) ──────────────────────────────
 let _sessionId: string | null = null;
 export function sessionId(): string {
   if (!_sessionId) _sessionId = `sess-${secureRandomId()}`;
   return _sessionId;
 }
 
-// ─── Error mapping ────────────────────────────────────────────────────────────
 export function toFeaturedError(err: unknown): FeaturedError {
   const e = err as {
     response?: { status?: number; data?: { error?: string; code?: string } };

@@ -1,15 +1,12 @@
-// ── Cross-platform confirm / alert ───────────────────────────────────────────
 // React Native's `Alert.alert` is a silent no-op on react-native-web: no dialog
 // renders and button `onPress` handlers never fire, so any confirmation gate
 // (cast vote, log out, delete account…) silently blocks the action on the web
 // build used for preview/testing.
-//
 // This module exposes promise-based helpers that work on both platforms:
 //   • native → wraps `Alert.alert` (resolves true on confirm, false on cancel)
 //   • web    → renders an in-app modal via <ConfirmHost/> (mounted at the app
 //              root). If the host isn't mounted yet, it falls back to the
 //              browser's window.confirm/window.alert so a call is never lost.
-//
 // Prefer these over raw `Alert.alert(...)` for any multi-button confirmation.
 
 import { Alert, Platform } from 'react-native';
@@ -42,7 +39,6 @@ export interface ConfirmRequest {
   resolve: (value: boolean) => void;
 }
 
-// ── Web request store ─────────────────────────────────────────────────────────
 // A tiny module-level store so `confirmAsync`/`alertAsync` can be called from
 // anywhere (not just React components) while <ConfirmHost/> renders the UI.
 
@@ -74,8 +70,6 @@ function enqueue(req: Omit<ConfirmRequest, 'id'>): boolean {
   listener(queue);
   return true;
 }
-
-// ── Public API ────────────────────────────────────────────────────────────────
 
 /**
  * Ask the user to confirm an action. Resolves `true` if they confirm, `false`

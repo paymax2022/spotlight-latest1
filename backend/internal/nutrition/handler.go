@@ -2,10 +2,15 @@ package nutrition
 
 import (
 	"errors"
+	"log"
 	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/services"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Handler exposes the member (buyer + vendor) and admin nutrition routes.
@@ -15,8 +20,6 @@ type Handler struct {
 
 // NewHandler constructs the nutrition handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
-
-func uid(c *gin.Context) string { return c.GetString("user_id") }
 
 // mapErr maps service sentinels to clean HTTP codes (no raw DB error leaks; a
 // 23514 check_violation is already mapped to ErrAllergenRuleViolation in the repo).
@@ -39,8 +42,6 @@ func mapErr(c *gin.Context, err error) {
 	}
 }
 
-// ── Member (buyer-readable + vendor actions) ──────────────────────────────────
-
 // GetDish (buyer-readable): GET /dishes/:dishId — current profile + display +
 // allergens. Lazily resolves on first read so the block is never empty.
 func (h *Handler) GetDish(c *gin.Context) {
@@ -54,7 +55,7 @@ func (h *Handler) GetDish(c *gin.Context) {
 
 // DeclareRecipe (vendor, owner-checked, HIDDEN power path): POST /dishes/:dishId/recipe.
 func (h *Handler) DeclareRecipe(c *gin.Context) {
-	if uid(c) == "" {
+	if ginutil.UserID(c) == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
@@ -67,7 +68,7 @@ func (h *Handler) DeclareRecipe(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	profile, err := h.svc.DeclareRecipe(c.Request.Context(), c.Param("dishId"), uid(c), DeclareRecipeInput{
+	profile, err := h.svc.DeclareRecipe(c.Request.Context(), c.Param("dishId"), ginutil.UserID(c), DeclareRecipeInput{
 		Ingredients:  body.Ingredients,
 		PortionSizeG: body.PortionSizeG,
 		CookMethod:   body.CookMethod,
@@ -83,11 +84,11 @@ func (h *Handler) DeclareRecipe(c *gin.Context) {
 // estimate RESTAURANT_CONFIRMED (still an estimate) and grants the
 // "Nutrition-Verified" badge.
 func (h *Handler) Approve(c *gin.Context) {
-	if uid(c) == "" {
+	if ginutil.UserID(c) == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
-	profile, err := h.svc.Approve(c.Request.Context(), c.Param("dishId"), uid(c))
+	profile, err := h.svc.Approve(c.Request.Context(), c.Param("dishId"), ginutil.UserID(c))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -99,7 +100,7 @@ func (h *Handler) Approve(c *gin.Context) {
 // selector + macro nudge ONLY (never ingredients); an edit is an implicit
 // approval → RESTAURANT_CONFIRMED.
 func (h *Handler) Edit(c *gin.Context) {
-	if uid(c) == "" {
+	if ginutil.UserID(c) == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
@@ -115,7 +116,7 @@ func (h *Handler) Edit(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "provide portion_label and/or portion_macro_nudges"})
 		return
 	}
-	profile, err := h.svc.Edit(c.Request.Context(), c.Param("dishId"), uid(c), EditInput{
+	profile, err := h.svc.Edit(c.Request.Context(), c.Param("dishId"), ginutil.UserID(c), EditInput{
 		PortionLabel:      body.PortionLabel,
 		PortionMacroNudge: body.PortionMacroNudge,
 	})
@@ -130,11 +131,11 @@ func (h *Handler) Edit(c *gin.Context) {
 // menuId IS the restaurantId (menu_items has no menu_id column). Batch-estimates +
 // auto-publishes AI_ESTIMATE for every item lacking a profile (or STALE).
 func (h *Handler) AutoSuggestMenu(c *gin.Context) {
-	if uid(c) == "" {
+	if ginutil.UserID(c) == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
-	n, err := h.svc.AutoSuggestMenu(c.Request.Context(), c.Param("menuId"), uid(c))
+	n, err := h.svc.AutoSuggestMenu(c.Request.Context(), c.Param("menuId"), ginutil.UserID(c))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -145,11 +146,11 @@ func (h *Handler) AutoSuggestMenu(c *gin.Context) {
 // ApproveAll (vendor, owner-checked): POST /menus/:menuId/approve-all. menuId IS
 // the restaurantId. Approves every AI_ESTIMATE dish for the restaurant.
 func (h *Handler) ApproveAll(c *gin.Context) {
-	if uid(c) == "" {
+	if ginutil.UserID(c) == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
-	n, err := h.svc.ApproveAll(c.Request.Context(), c.Param("menuId"), uid(c))
+	n, err := h.svc.ApproveAll(c.Request.Context(), c.Param("menuId"), ginutil.UserID(c))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -159,7 +160,7 @@ func (h *Handler) ApproveAll(c *gin.Context) {
 
 // AttestAllergens (vendor, owner-checked): POST /dishes/:dishId/allergens.
 func (h *Handler) AttestAllergens(c *gin.Context) {
-	if uid(c) == "" {
+	if ginutil.UserID(c) == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
@@ -170,7 +171,7 @@ func (h *Handler) AttestAllergens(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	out, err := h.svc.AttestAllergens(c.Request.Context(), c.Param("dishId"), uid(c), body.Allergens)
+	out, err := h.svc.AttestAllergens(c.Request.Context(), c.Param("dishId"), ginutil.UserID(c), body.Allergens)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -204,8 +205,6 @@ func (h *Handler) CartSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, summary)
 }
 
-// ── Admin (RBAC-gated at the route) ───────────────────────────────────────────
-
 // AdminUpsertComposition: POST /composition — append a new versioned reference.
 func (h *Handler) AdminUpsertComposition(c *gin.Context) {
 	var c0 Composition
@@ -213,7 +212,7 @@ func (h *Handler) AdminUpsertComposition(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	out, err := h.svc.UpsertComposition(c.Request.Context(), uid(c), c0)
+	out, err := h.svc.UpsertComposition(c.Request.Context(), ginutil.UserID(c), c0)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -228,7 +227,7 @@ func (h *Handler) AdminUpsertLibrary(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.UpsertLibrary(c.Request.Context(), uid(c), e); err != nil {
+	if err := h.svc.UpsertLibrary(c.Request.Context(), ginutil.UserID(c), e); err != nil {
 		mapErr(c, err)
 		return
 	}
@@ -248,8 +247,6 @@ func (h *Handler) AdminReresolve(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"reresolved": n})
 }
-
-// ── Admin oversight (consults + payouts) — makes the admin console live ───────
 
 // AdminListConsults: GET /consults?status=&priority=&q= — the review queue of dish
 // nutrition profiles awaiting a human resolve/accept (mapped onto the console's
@@ -278,7 +275,7 @@ func (h *Handler) AdminResolveConsult(c *gin.Context) {
 		Note       string `json:"note"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	out, err := h.svc.AdminResolveConsult(c.Request.Context(), c.Param("id"), uid(c), body.Resolution, body.Note)
+	out, err := h.svc.AdminResolveConsult(c.Request.Context(), c.Param("id"), ginutil.UserID(c), body.Resolution, body.Note)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -314,4 +311,63 @@ func (h *Handler) AdminResolve(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"profile": profile, "disclaimer": Disclaimer})
+}
+
+// RBAC permission slugs for the admin surface.
+const (
+	PermNutritionManage  = "nutrition.admin.manage"  // composition + library curation
+	PermNutritionResolve = "nutrition.admin.resolve" // force/batch resolve
+)
+
+// RegisterNutrition wires the Nutrition Resolution Engine routes.
+//
+//	member — the authed finance group (auth via the finance group's requireUserID;
+//	         vendor actions are object-level owner-checked inside the service).
+//	admin  — the admin group (already has requireUserID); per-route RBAC is added
+//	         here via middleware.RequirePermission.
+//	pool   — the pgx pool (money is N/A; this is read/write of NRE rows only).
+//	rbac   — the RBAC service for the admin permission gates.
+//	llm    — the Tier-3 AI estimator (an *llm.Client satisfies LLMGenerator); may
+//	         be nil/disabled, in which case the deterministic mock is used.
+//
+// The Tier-0 barcode/label source defaults to the deterministic MockLabelLookup
+// so the engine resolves end-to-end without a network dependency.
+func RegisterNutrition(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, llm LLMGenerator) {
+	if pool == nil {
+		log.Println("[nutrition] nil pool — skipping nutrition routes")
+		return
+	}
+
+	repo := NewRepository(pool)
+	svc := NewService(repo).
+		WithLLM(llm).
+		WithLabelLookup(NewMockLabelLookup())
+	h := NewHandler(svc)
+
+	nut := member.Group("/nutrition")
+	nut.GET("/dishes/:dishId", h.GetDish)                      // buyer-readable
+	nut.POST("/dishes/:dishId/approve", h.Approve)             // vendor approve → RESTAURANT_CONFIRMED
+	nut.POST("/dishes/:dishId/edit", h.Edit)                   // vendor portion+macro edit (no ingredients)
+	nut.POST("/dishes/:dishId/allergens", h.AttestAllergens)   // vendor allergen attest
+	nut.POST("/dishes/:dishId/recipe", h.DeclareRecipe)        // HIDDEN power path → grounding RECIPE
+	nut.POST("/menus/:menuId/auto-suggest", h.AutoSuggestMenu) // batch auto-estimate (menuId = restaurantId)
+	nut.POST("/menus/:menuId/approve-all", h.ApproveAll)       // batch approve (menuId = restaurantId)
+	nut.GET("/cart/summary", h.CartSummary)                    // ?ids=a,b,c
+	nut.POST("/cart/summary", h.CartSummary)                   // body {dish_ids:[...]}
+
+	admin.POST("/composition", middleware.RequirePermission(rbac, PermNutritionManage), h.AdminUpsertComposition)
+	admin.POST("/library", middleware.RequirePermission(rbac, PermNutritionManage), h.AdminUpsertLibrary)
+	admin.POST("/reresolve", middleware.RequirePermission(rbac, PermNutritionResolve), h.AdminReresolve)
+	admin.POST("/resolve", middleware.RequirePermission(rbac, PermNutritionResolve), h.AdminResolve)
+
+	//    consults = the dish-profile review queue mapped onto the console's consult
+	//    shape (real review entity; person fields are documented placeholders).
+	//    resolve  = a real human resolve/accept/close over that profile (audited).
+	//    payouts  = READ-ONLY explicit empty shape — no settlement entity exists,
+	//               money is never fabricated here (see admin_oversight.go).
+	admin.GET("/consults", middleware.RequirePermission(rbac, PermNutritionManage), h.AdminListConsults)
+	admin.POST("/consults/:id/resolve", middleware.RequirePermission(rbac, PermNutritionResolve), h.AdminResolveConsult)
+	admin.GET("/payouts", middleware.RequirePermission(rbac, PermNutritionManage), h.AdminPayoutRuns)
+
+	log.Println("[nutrition] NRE routes registered at /api/finance/nutrition + /api/nutrition/admin")
 }

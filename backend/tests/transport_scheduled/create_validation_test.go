@@ -1,29 +1,19 @@
 package transport_scheduled_test
 
-// ---------------------------------------------------------------------------
 // CreateScheduled / EstimateScheduled input-validation guards that run BEFORE
 // any DB call, transcribed verbatim from backend/internal/transport/scheduled.go
 // so they are provable DB-free (mirrors the reason_code guard pattern in
 // authz_and_contract_test.go).
-//
 // Cited verbatim, CreateScheduled (in order):
-//
 //	if idempotencyKey == "" { return 400 MISSING_IDEMPOTENCY_KEY }
 //	if !scheduledModes[req.Mode] { return 422 INVALID_MODE }
-//	pickupAt, err := time.Parse(time.RFC3339, req.ScheduledPickupAt)
 //	if err != nil { return 400 INVALID_TIME }
-//	... (airport arrival_time derivation) ...
 //	if pickupAt.Before(time.Now()) { return 422 PICKUP_IN_PAST }
-//	lead := defaultLeadMinutes(req.Mode)
 //	if req.LeadTimeMinutes != nil {
 //		if *req.LeadTimeMinutes < 0 { return 422 INVALID_LEAD_TIME }
-//		lead = *req.LeadTimeMinutes
 //	}
-//
 // Cited verbatim, EstimateScheduled:
-//
 //	if !scheduledModes[req.Mode] { return 422 INVALID_MODE }
-// ---------------------------------------------------------------------------
 
 import (
 	"net/http"

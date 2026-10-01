@@ -1,4 +1,3 @@
-// ── Referral Earnings & Rewards types ────────────────────────────────────────
 // Self-contained types for the M-ERN-* surfaces (ledger, detail, vesting,
 // withdraw, currency, catalog, statement, clawback, appeal). Money is ALWAYS
 // integer kobo. Rewards are conditioned on a friend's real verified activity (§7).
@@ -7,7 +6,6 @@ import type { EarnStateKey } from '../constants/referral.constants';
 
 export type { EarnStateKey };
 
-// ── Reward ledger row (M-ERN-01 / M-ERN-02) ──────────────────────────────────
 export type RewardKind = 'referrer' | 'referee' | 'override' | 'mission' | 'manual';
 
 export type QualifyingAction =
@@ -36,7 +34,6 @@ export interface RewardLedgerRow {
   clawbackId?: string | null;
 }
 
-// ── Reward detail (M-ERN-02) ─────────────────────────────────────────────────
 export interface RewardTimelineEntry {
   state: EarnStateKey | 'event';
   label: string;
@@ -51,7 +48,6 @@ export interface RewardDetail extends RewardLedgerRow {
   timeline: RewardTimelineEntry[];
 }
 
-// ── Vesting / holdback (M-ERN-03) ────────────────────────────────────────────
 export interface VestingTranche {
   id: string;
   label: string;
@@ -72,7 +68,6 @@ export interface VestingSchedule {
   tranches: VestingTranche[];
 }
 
-// ── Withdraw (M-ERN-04) ──────────────────────────────────────────────────────
 export interface WithdrawQuote {
   eligibleKobo: number;
   minWithdrawKobo: number;
@@ -93,7 +88,6 @@ export interface WithdrawResult {
   error?: 'below_min' | 'insufficient' | 'kyc_required' | 'failed';
 }
 
-// ── Reward currency (M-ERN-05) ───────────────────────────────────────────────
 export type RewardCurrency = 'cash' | 'airtime_data' | 'points' | 'discount' | 'charity';
 
 export interface CurrencyOption {
@@ -105,7 +99,6 @@ export interface CurrencyOption {
   active: boolean;
 }
 
-// ── Rewards catalog (M-ERN-06) ───────────────────────────────────────────────
 export interface CatalogItem {
   id: string;
   name: string;
@@ -123,7 +116,6 @@ export interface RedeemResult {
   error?: 'insufficient_points' | 'out_of_stock';
 }
 
-// ── Statement / export (M-ERN-07) ────────────────────────────────────────────
 export type StatementPeriod = '30d' | '90d' | 'ytd' | 'all';
 
 export interface StatementSummary {
@@ -143,7 +135,6 @@ export interface StatementExport {
   format: 'pdf' | 'csv';
 }
 
-// ── Clawback / appeal (M-ERN-08 / M-ERN-09) ──────────────────────────────────
 export type ClawbackReason =
   | 'self_referral'
   | 'fake_account'

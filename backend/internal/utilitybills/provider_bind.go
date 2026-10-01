@@ -10,28 +10,22 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ════════════════════════════════════════════════════════════════════════════
 // OUTBOUND PURCHASE IDEMPOTENCY
-// ════════════════════════════════════════════════════════════════════════════
-//
 // Adapted from backend/internal/insurance/policy/outbound_idempotency.go, whose
 // Claim/Succeeded/Failed/Unknown/UnresolvedCount shape solves exactly this
 // problem. The columns differ (VTpass routes across multiple providers and keys
 // on a biller/product code, not a policy id), which is why this is a separate
 // table rather than a widened insurance one — see the migration plan's decision
 // #3.
-//
 // VTpass's own idempotency is WEAK in a way that matters here: request_id is
 // derived from an Africa/Lagos YYYYMMDDHHmm prefix plus the key's last 20
 // alphanumerics (see provider/vtpass/vtpass.go's vtpassRequestID), so the SAME
 // idempotency key retried in the NEXT minute produces a DIFFERENT request_id and
 // VTpass happily sells the customer a second unit of electricity. The guarantee
 // therefore has to live on our side.
-//
 // The mechanism is the primary key on utility_provider_bind: claiming a key is an
 // INSERT ... ON CONFLICT DO NOTHING, so a replayed or concurrent attempt cannot
 // claim it and therefore cannot reach VTpass at all. No locks, no windows.
-//
 // The hard case is a TRANSPORT failure (timeout, reset connection, context
 // deadline). VTpass keeps processing after our socket gives up, so the error
 // genuinely does not say whether a purchase happened. That outcome is recorded as
@@ -88,7 +82,6 @@ func NewBindRegistry(db *pgxpool.Pool) *BindRegistry { return &BindRegistry{db: 
 
 // Claim attempts to take ownership of an idempotency key for one outbound
 // purchase attempt.
-//
 //   - Nobody has used the key      → Fresh=true; the caller MUST make the call.
 //   - A previous attempt succeeded → Fresh=false with the provider ref; replay it.
 //   - A previous attempt failed    → Fresh=true; the provider rejected it and
@@ -171,7 +164,6 @@ func (r *BindRegistry) Claim(ctx context.Context, key, providerName, billerCode,
 
 // Succeeded records a purchase the provider ACCEPTED. The stored reference is
 // what a later replay of the same key returns instead of purchasing again.
-//
 // Note this is also called for a PENDING outcome, deliberately. "Pending" means
 // VTpass took the request and is processing it — the money-relevant fact is that
 // the request LANDED, and a replay must not send it a second time. Whether it
@@ -209,7 +201,6 @@ func (r *BindRegistry) Failed(ctx context.Context, key, reason string) {
 }
 
 // Unknown records that a purchase was SENT but its outcome was never learned.
-//
 // This is the state that must not be guessed. The key stays locked: a later
 // attempt gets ErrBindOutcomeUnknown rather than a silent second purchase, and
 // the row shows up in UnresolvedCount until Phase 3's requery job (or a human)

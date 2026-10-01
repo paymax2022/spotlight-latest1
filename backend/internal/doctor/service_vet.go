@@ -4,25 +4,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
-
+	"spotlight/backend/go-common/ptr"
 	platformRedis "spotlight/backend/internal/platform/redis"
+	"time"
 )
 
 // service_vet.go — Wave 3b (VETERINARY / PET-side) business logic.
-//
 // Mirrors service_clinical.go: reads delegate to the repository scoped to the
 // authenticated vet; mutations that target a table with a UNIQUE idempotency_key,
 // or that transition an existing row, require the Idempotency-Key header
 // (ErrIdempotencyRequired) and rely on the repository's ON CONFLICT replay /
 // status-guarded UPDATE. None of these touch the money ledger — they are clinical /
 // document writes for pet patients. Monetary fields stay int64 kobo (no floats).
-//
 // The free-form `Generic` request bodies are passed through as json.RawMessage and the
 // few typed knobs implied by the OpenAPI summaries are pulled out of the raw patch via
-// the shared parseClinicalPatch / strOrDefault / derefStr helpers (defined in
-// service_clinical.go / repository.go / service.go — reused, not redefined).
-//
+// the shared parseClinicalPatch / strOrDefault helpers (defined in
+// service_clinical.go / repository.go — reused, not redefined).
 // Reference / inventory paths with NO backing table in the migration return an empty
 // projection ([]json.RawMessage{} or json.RawMessage("{}")) without querying a phantom
 // table; no-table writes echo the merged request body (no persistence target exists).
@@ -36,8 +33,6 @@ func vetEcho(raw json.RawMessage) json.RawMessage {
 	}
 	return raw
 }
-
-// ══ VET CONSULT ═════════════════════════════════════════════════════════════
 
 // GetVetDashboard composites the vet profile + the vet's pets.
 func (s *Service) GetVetDashboard(ctx context.Context, userID string) (*VetDashboard, error) {
@@ -166,8 +161,6 @@ func (s *Service) ListVetConsultHistory(ctx context.Context, userID string) ([]j
 	return []json.RawMessage{}, nil
 }
 
-// ══ PET PROFILE ═════════════════════════════════════════════════════════════
-
 func (s *Service) GetPet(ctx context.Context, userID, petID string) (*Pet, error) {
 	return s.repo.GetPet(ctx, userID, petID)
 }
@@ -224,7 +217,6 @@ func (s *Service) GetPetGrowth(ctx context.Context, userID, petID string) (*PetG
 
 // RecordPetGrowth appends a growth measurement to the pet (Idempotency-Key required;
 // the measurement is wrapped in a single-element array for the jsonb || append).
-//
 // IDEMPOTENCY: doctor_pets.growth_history is a JSONB-append column with no per-point
 // idempotency_key, so a naive retry would double-append the same measurement. We
 // dedupe with a Redis SETNX claim on the idem key (scoped to user+pet, 24h TTL)
@@ -257,8 +249,6 @@ func (s *Service) RecordPetGrowth(ctx context.Context, userID, petID, idemKey st
 	wrapped, _ := json.Marshal([]json.RawMessage{measurement})
 	return s.repo.AppendPetGrowth(ctx, userID, petID, wrapped)
 }
-
-// ══ PET E-PRESCRIPTION ══════════════════════════════════════════════════════
 
 func (s *Service) ListPetPrescriptions(ctx context.Context, userID string) ([]PetPrescription, error) {
 	return s.repo.ListPetPrescriptions(ctx, userID)
@@ -330,8 +320,6 @@ func (s *Service) ReviewPetRefill(ctx context.Context, userID, refillID, idemKey
 func (s *Service) ListPetPharmacies(ctx context.Context, userID string) ([]json.RawMessage, error) {
 	return []json.RawMessage{}, nil
 }
-
-// ══ PET LABS ════════════════════════════════════════════════════════════════
 
 func (s *Service) ListPetLabOrders(ctx context.Context, userID string) ([]PetLabOrder, error) {
 	return s.repo.ListPetLabOrders(ctx, userID)
@@ -409,13 +397,11 @@ func (s *Service) SetPetVaccinationReminder(ctx context.Context, userID, idemKey
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &p)
 	}
-	petID := derefStr(p.PetID)
+	petID := ptr.DerefZero(p.PetID)
 	return s.repo.InsertPetVaccinationReminder(ctx, userID, petID, p.Vaccine, p.DueAt, raw, idemKey)
 }
 
 // GetPetHealthRecord composite is defined in the PET PROFILE section above.
-
-// ══ PET STORE ═══════════════════════════════════════════════════════════════
 
 func (s *Service) ListPetProducts(ctx context.Context, userID string) ([]PetProduct, error) {
 	return s.repo.ListPetProducts(ctx, userID)
@@ -464,8 +450,6 @@ func (s *Service) GetPetFulfilment(ctx context.Context, userID, id string) (*Pet
 	return s.repo.GetPetFulfilment(ctx, userID, id)
 }
 
-// ── Pet chronic monitoring (no pet-specific backing table → empty / echo) ─────
-
 // ListPetChronicMonitoring — no doctor_pet_chronic_monitoring table → empty projection
 // (confirms pet ownership). The human-side doctor_chronic_monitoring table is patient-
 // scoped and is NOT reused here to avoid mixing pet/human records.
@@ -485,4 +469,203 @@ func (s *Service) SavePetChronicMonitoring(ctx context.Context, userID, petID, i
 		return nil, err
 	}
 	return vetEcho(raw), nil
+}
+
+// Wave 3b (VETERINARY / PET-side) request & response shapes.
+// As with model_clinical.go / model_account.go, the OpenAPI (contracts/doctor.openapi.yaml)
+// types these endpoints as the free-form `Generic` schema, so request bodies are captured
+// as json.RawMessage and merged/stored into the doctor_pet_* JSONB columns, while responses
+// mirror the underlying tables (camelCase JSON to match the mobile contracts in
+// mobile-app/reactnative/src/types/doctor.phase3.ts / doctor.batch5.ts).
+// None of these are money movements — they are clinical / document writes for the vet's
+// pet patients. Monetary columns (price_kobo / total_kobo) surface as int64 kobo only
+// (no floats, no stored balances). All reads are scoped to the authenticated vet's user_id;
+// child rows are joined through a pet (doctor_pets) that the vet owns.
+
+// VetProfile mirrors public.doctor_vet_profiles.
+type VetProfile struct {
+	ID             string          `json:"id"`
+	UserID         string          `json:"userId"`
+	VetModeEnabled bool            `json:"vetModeEnabled"`
+	LicenceNumber  *string         `json:"licenceNumber,omitempty"`
+	Verification   string          `json:"verification"`
+	IsPublished    bool            `json:"isPublished"`
+	ProfileDraft   json.RawMessage `json:"profileDraft,omitempty"`
+	Detail         json.RawMessage `json:"detail,omitempty"`
+	CreatedAt      time.Time       `json:"createdAt"`
+	UpdatedAt      time.Time       `json:"updatedAt"`
+}
+
+// VetDashboard is the composite projection for GET /vet/dashboard.
+type VetDashboard struct {
+	Vet  *VetProfile `json:"vet"`
+	Pets []Pet       `json:"pets"`
+}
+
+// Pet mirrors public.doctor_pets.
+type Pet struct {
+	ID            string          `json:"id"`
+	UserID        string          `json:"userId"`
+	OwnerRef      *string         `json:"ownerRef,omitempty"`
+	Name          *string         `json:"name,omitempty"`
+	Species       *string         `json:"species,omitempty"`
+	Breed         *string         `json:"breed,omitempty"`
+	Profile       json.RawMessage `json:"profile,omitempty"`
+	GrowthHistory json.RawMessage `json:"growthHistory,omitempty"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
+}
+
+// PetHealthRecord is the composite read for GET /vet/pets/{petId}/health-record.
+type PetHealthRecord struct {
+	Pet           *Pet              `json:"pet"`
+	Vaccinations  []PetVaccination  `json:"vaccinations"`
+	Prescriptions []PetPrescription `json:"prescriptions"`
+	LabOrders     []PetLabOrder     `json:"labOrders"`
+}
+
+// PetGrowth is the projection for GET /vet/pets/{petId}/growth.
+type PetGrowth struct {
+	PetID         string          `json:"petId"`
+	GrowthHistory json.RawMessage `json:"growthHistory"`
+}
+
+// PetVaccination mirrors public.doctor_pet_vaccinations.
+type PetVaccination struct {
+	ID             string          `json:"id"`
+	PetID          string          `json:"petId"`
+	UserID         string          `json:"userId"`
+	Vaccine        *string         `json:"vaccine,omitempty"`
+	DueAt          *time.Time      `json:"dueAt,omitempty"`
+	AdministeredAt *time.Time      `json:"administeredAt,omitempty"`
+	ReminderSet    bool            `json:"reminderSet"`
+	Detail         json.RawMessage `json:"detail,omitempty"`
+	CreatedAt      time.Time       `json:"createdAt"`
+}
+
+// PetPrescription mirrors public.doctor_pet_prescriptions.
+type PetPrescription struct {
+	ID        string          `json:"id"`
+	UserID    string          `json:"userId"`
+	PetID     *string         `json:"petId,omitempty"`
+	Ref       *string         `json:"ref,omitempty"`
+	Status    string          `json:"status"` // draft|issued|dispensed|cancelled
+	Items     json.RawMessage `json:"items,omitempty"`
+	IssuedAt  *time.Time      `json:"issuedAt,omitempty"`
+	CreatedAt time.Time       `json:"createdAt"`
+	UpdatedAt time.Time       `json:"updatedAt"`
+}
+
+// PetLabOrder mirrors public.doctor_pet_lab_orders.
+type PetLabOrder struct {
+	ID        string          `json:"id"`
+	UserID    string          `json:"userId"`
+	PetID     *string         `json:"petId,omitempty"`
+	Ref       *string         `json:"ref,omitempty"`
+	Status    string          `json:"status"`
+	Tests     json.RawMessage `json:"tests,omitempty"`
+	CreatedAt time.Time       `json:"createdAt"`
+	UpdatedAt time.Time       `json:"updatedAt"`
+}
+
+// PetLabResult mirrors public.doctor_pet_lab_results.
+type PetLabResult struct {
+	ID             string          `json:"id"`
+	UserID         string          `json:"userId"`
+	OrderID        *string         `json:"orderId,omitempty"`
+	Reviewed       bool            `json:"reviewed"`
+	ReviewedAt     *time.Time      `json:"reviewedAt,omitempty"`
+	Values         json.RawMessage `json:"values,omitempty"`
+	Interpretation *string         `json:"interpretation,omitempty"`
+	CreatedAt      time.Time       `json:"createdAt"`
+	UpdatedAt      time.Time       `json:"updatedAt"`
+}
+
+// PetProduct mirrors public.doctor_pet_products.
+type PetProduct struct {
+	ID        string          `json:"id"`
+	UserID    string          `json:"userId"`
+	Name      *string         `json:"name,omitempty"`
+	Category  *string         `json:"category,omitempty"`
+	PriceKobo int64           `json:"priceKobo"`
+	Detail    json.RawMessage `json:"detail,omitempty"`
+	CreatedAt time.Time       `json:"createdAt"`
+}
+
+// PetRecommendation mirrors public.doctor_pet_recommendations.
+type PetRecommendation struct {
+	ID        string          `json:"id"`
+	UserID    string          `json:"userId"`
+	PetID     *string         `json:"petId,omitempty"`
+	ProductID *string         `json:"productId,omitempty"`
+	Status    string          `json:"status"` // recommended|shared
+	SharedAt  *time.Time      `json:"sharedAt,omitempty"`
+	Detail    json.RawMessage `json:"detail,omitempty"`
+	CreatedAt time.Time       `json:"createdAt"`
+}
+
+// PetFulfilment mirrors public.doctor_pet_fulfilments.
+type PetFulfilment struct {
+	ID        string          `json:"id"`
+	UserID    string          `json:"userId"`
+	ProductID *string         `json:"productId,omitempty"`
+	PetID     *string         `json:"petId,omitempty"`
+	Status    string          `json:"status"`
+	TotalKobo int64           `json:"totalKobo"`
+	Detail    json.RawMessage `json:"detail,omitempty"`
+	CreatedAt time.Time       `json:"createdAt"`
+	UpdatedAt time.Time       `json:"updatedAt"`
+}
+
+// business logic for the VET licence / verification /
+// profile-publish / profile-draft "tail" endpoints. Additive to service_vet.go
+// (separate file to avoid colliding with concurrent edits there).
+// These mirror the human-side service_account.go methods (RenewLicence,
+// PublishProfile, SaveProfileDraft) and service.go SubmitVerification, but operate on
+// the vet profile (doctor_vet_profiles) and use vet-unique names so nothing is
+// redeclared. All four are mutations: those that re-enter verification or upsert the
+// draft require an Idempotency-Key (ErrIdempotencyRequired); doctor_vet_profiles has no
+// idempotency_key column, so the underlying UPDATEs are naturally idempotent on replay.
+// None touch the money ledger.
+
+// RenewVetLicence records a vet licence renewal: it stores the (optional) new licence
+// number and re-enters verification (verification → 'pending'), retaining any renewal
+// notes / documents on the vet row. Mirrors service_account.go RenewLicence (which
+// re-submits a 'renewal' verification). Requires an Idempotency-Key.
+func (s *Service) RenewVetLicence(ctx context.Context, userID, idemKey string, req SubmitVerificationRequest) (*VetProfile, error) {
+	if idemKey == "" {
+		return nil, ErrIdempotencyRequired
+	}
+	// On the human side the licence number rides in on MDCNNumber; reuse the same field.
+	return s.repo.RenewVetLicenceRecord(ctx, userID, req.MDCNNumber, marshalVetRenewalDetail(req))
+}
+
+// SubmitVetVerification submits the vet's verification, flipping the vet-scoped
+// verification column to 'pending' and retaining the submitted documents / notes.
+// Mirrors service.go SubmitVerification (which inserts a 'pending' doctor_verifications
+// row) but targets the vet profile column. Requires an Idempotency-Key.
+func (s *Service) SubmitVetVerification(ctx context.Context, userID, idemKey string, req SubmitVerificationRequest) (*VetProfile, error) {
+	if idemKey == "" {
+		return nil, ErrIdempotencyRequired
+	}
+	return s.repo.SubmitVetVerificationRecord(ctx, userID, marshalVetVerificationDetail(req))
+}
+
+// PublishVetProfile marks the vet profile live. Fail-closed: the repository only
+// publishes when verification == 'approved'. Mirrors service_account.go PublishProfile.
+// Requires an Idempotency-Key.
+func (s *Service) PublishVetProfile(ctx context.Context, userID, idemKey string) (*VetProfile, error) {
+	if idemKey == "" {
+		return nil, ErrIdempotencyRequired
+	}
+	return s.repo.PublishVetProfile(ctx, userID)
+}
+
+// SaveVetProfileDraft patch-merges the supplied JSON into the vet profile_draft.
+// Mirrors service_account.go SaveProfileDraft. Requires an Idempotency-Key.
+func (s *Service) SaveVetProfileDraft(ctx context.Context, userID, idemKey string, patch json.RawMessage) (*VetProfile, error) {
+	if idemKey == "" {
+		return nil, ErrIdempotencyRequired
+	}
+	return s.repo.SaveVetProfileDraftRecord(ctx, userID, patch)
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -23,21 +24,17 @@ type Handler struct {
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated user (finance/connect groups mirror it into c).
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
 	return ""
 }
 
-// idemKey reads the Idempotency-Key header (required for money-path mutations).
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
-
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -80,7 +77,6 @@ func (h *Handler) fail(c *gin.Context, err error) {
 // gates admin routes with middleware.RequirePermission(rbac, "academy.schools"). A nil
 // rail falls back to the deterministic dev stub; nil pool / member / admin groups are
 // skipped (nil-safe stub).
-//
 // Member routes use BARE subpaths — the aggregator passes the /api/finance/academy base
 // group. Admin routes are grouped under /schools/admin on the admin base.
 //
@@ -143,8 +139,6 @@ func RegisterAcademySchools(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 	}
 }
 
-// ── Member handlers (school-admin lite) ──────────────────────────────────────────
-
 func (h *Handler) MyInstitutions(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -170,15 +164,13 @@ func (h *Handler) MemberOverview(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── Admin handlers (RBAC academy.schools) ─────────────────────────────────────────
-
 func (h *Handler) AdminOnboard(c *gin.Context) {
 	var req OnboardInstitutionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.OnboardInstitution(c.Request.Context(), uid(c), req)
+	out, err := h.svc.OnboardInstitution(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -260,7 +252,7 @@ func (h *Handler) AdminIssueLicence(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.IssueLicence(c.Request.Context(), uid(c), req)
+	out, err := h.svc.IssueLicence(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -269,7 +261,7 @@ func (h *Handler) AdminIssueLicence(c *gin.Context) {
 }
 
 func (h *Handler) AdminSuspendLicence(c *gin.Context) {
-	out, err := h.svc.SuspendLicence(c.Request.Context(), uid(c), c.Param("id"))
+	out, err := h.svc.SuspendLicence(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -278,7 +270,7 @@ func (h *Handler) AdminSuspendLicence(c *gin.Context) {
 }
 
 func (h *Handler) AdminReactivateLicence(c *gin.Context) {
-	out, err := h.svc.ReactivateLicence(c.Request.Context(), uid(c), c.Param("id"))
+	out, err := h.svc.ReactivateLicence(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -287,7 +279,7 @@ func (h *Handler) AdminReactivateLicence(c *gin.Context) {
 }
 
 func (h *Handler) AdminExpireLicence(c *gin.Context) {
-	out, err := h.svc.ExpireLicence(c.Request.Context(), uid(c), c.Param("id"))
+	out, err := h.svc.ExpireLicence(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -301,7 +293,7 @@ func (h *Handler) AdminCreateClassGroup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.CreateClassGroup(c.Request.Context(), uid(c), req)
+	out, err := h.svc.CreateClassGroup(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -315,7 +307,7 @@ func (h *Handler) AdminBulkEnroll(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.BulkEnroll(c.Request.Context(), uid(c), req, idemKey(c))
+	out, err := h.svc.BulkEnroll(c.Request.Context(), ginutil.UserID(c, authUserID), req, ginutil.IdempotencyKey(c))
 	if err != nil {
 		// Seat-cap is a partial success: return the result (how many succeeded) alongside
 		// the seat_limit_exceeded code so the caller knows where the run stopped.
@@ -341,7 +333,7 @@ func (h *Handler) AdminRemoveEnrollment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	if err := h.svc.RemoveEnrollment(c.Request.Context(), uid(c), req.InstitutionID, req.LearnerUserID); err != nil {
+	if err := h.svc.RemoveEnrollment(c.Request.Context(), ginutil.UserID(c, authUserID), req.InstitutionID, req.LearnerUserID); err != nil {
 		h.fail(c, err)
 		return
 	}
@@ -354,7 +346,7 @@ func (h *Handler) AdminGenerateBilling(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.GenerateBilling(c.Request.Context(), uid(c), req)
+	out, err := h.svc.GenerateBilling(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -363,7 +355,7 @@ func (h *Handler) AdminGenerateBilling(c *gin.Context) {
 }
 
 func (h *Handler) AdminChargeBilling(c *gin.Context) {
-	out, err := h.svc.ChargeBilling(c.Request.Context(), uid(c), c.Param("id"), idemKey(c))
+	out, err := h.svc.ChargeBilling(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return

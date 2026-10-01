@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Maintenance triangle types (V2) ──────────────────────
 // The three-party repair SLA: tenant → owner/manager → vendor. Costs flow into
 // the owner's financial cockpit. Money is integer minor units (kobo).
 
@@ -77,8 +76,6 @@ export interface NewMaintenanceDraft {
   description: string;
   mediaUris: string[];
 }
-
-// ── Vendor side ──────────────────────────────────────────────────────────────
 
 export interface VendorJob {
   id: string;                 // == request id

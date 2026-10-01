@@ -7,11 +7,11 @@ import {
   ArrowLeft, Share2, Heart, BedDouble, Bath, Maximize, MapPin, ShieldCheck,
   Star, MessageCircle, ChevronRight, Images, Flag,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1, shadow3 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1, shadow3 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import SectionHeader from '@/components/SectionHeader';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -35,7 +35,6 @@ export default function ListingDetailScreen() {
   const savedQuery = useIsListingSaved(String(id));
   const saveMutation = useSaveListing();
   const unsaveMutation = useUnsaveListing();
-  // Optimistic local mirror of the server state so the heart responds instantly;
   // reset from the query whenever the server value changes (screen load, refocus).
   const [saved, setSaved] = React.useState(false);
   React.useEffect(() => {
@@ -49,7 +48,7 @@ export default function ListingDetailScreen() {
       if (next) await saveMutation.mutateAsync(String(id));
       else await unsaveMutation.mutateAsync(String(id));
     } catch {
-      setSaved(!next); // revert on failure — never let the heart lie about server state
+      setSaved(!next);
     }
   };
 

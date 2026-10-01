@@ -119,8 +119,6 @@ func TestRequireAdminConsoleRole_RejectedTokenReturns401(t *testing.T) {
 	}
 }
 
-// --- AUTH-012: fail closed when GetUserStatus errors -----------------------
-
 // fakeConsoleRBAC embeds the (large) RBACService interface as a nil value so
 // only the two methods RequireAdminConsoleRole actually calls need overriding
 // — any other method being invoked would nil-panic, which none of these tests

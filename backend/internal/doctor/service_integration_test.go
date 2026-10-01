@@ -1,12 +1,10 @@
 //go:build doctor_integration
 
 // Package doctor integration tests — the DEEP money path.
-//
 // These cover the iron-rule cases that require a real Postgres + the real ledger
 // and tiers services, because doctor.Service depends on the CONCRETE *Repository,
 // *ledger.Service and *tiers.Service (no interface seam to fake — see the note in
 // service_test.go and docs/QA_DOCTOR_BACKEND_REPORT.md).
-//
 // Run with:
 //
 //	DOCTOR_TEST_DATABASE_URL=postgres://... \
@@ -54,7 +52,6 @@ func newIntegrationService(t *testing.T) (*doctor.Service, *ledger.Service, *db.
 // seedTier inserts a user_profiles row with the given kyc_tier so the
 // tiers.EnforceWalletDebitLimit check passes (it fail-closes when no profile row
 // exists). Tier 3 is used in the happy-path tests for a generous debit limit.
-//
 // email is supplied explicitly: the column is NOT NULL with no default and carries
 // a UNIQUE index, so it is derived from userID rather than fixed. Omitting it made
 // every caller of this helper fail with a not-null violation, which is what killed
@@ -262,7 +259,6 @@ func TestEarningsProjectedFromLedger(t *testing.T) {
 
 // Regression: a user who has never requested an upgrade must get the
 // `not_started` STATE, never an error.
-//
 // The repository correctly reports "no row"; the bug was translating that into a
 // 404 at the service boundary. Every provider looks exactly like this on their
 // first visit, so the 404 made /onboarding/upgrade-merchant unreachable for the
@@ -312,12 +308,10 @@ func seedAuthUser(t *testing.T, pool *db.Pool) string {
 	}
 	// BEST EFFORT, and it deliberately does not fail the test when it cannot
 	// delete.
-	//
 	// auth.users cascades to ledger_accounts, but ledger_entries -> ledger_accounts
 	// is ON DELETE NO ACTION — the schema enforcing "ledger entries are immutable".
 	// So any user this suite has funded or debited CANNOT be removed, and that
 	// refusal is the invariant working, not a bug.
-	//
 	// Do NOT "fix" a failure here by deleting from ledger_entries first: that
 	// teaches the suite to erase the append-only record the whole module exists to
 	// protect. Users with no ledger activity (the onboarding tests) do get removed.
@@ -329,7 +323,6 @@ func seedAuthUser(t *testing.T, pool *db.Pool) string {
 
 // Regression: choosing a provider type must work for a user with NO doctor_profiles
 // row — which is everyone who reaches this step.
-//
 // Nothing in this backend ever INSERTed into doctor_profiles, so the UPDATE this
 // path used to run matched zero rows and returned ErrNotFound → HTTP 404, blocking
 // onboarding at the provider-type step for every real user.

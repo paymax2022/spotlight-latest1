@@ -5,20 +5,26 @@ import (
 	"errors"
 	"fmt"
 	"log"
-
-	"github.com/jackc/pgx/v5/pgxpool"
-	goredis "github.com/redis/go-redis/v9"
-
+	"net/http"
+	"path"
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/integrations/rtc"
-	"spotlight/backend/internal/provider"
+	"spotlight/backend/internal/platform/r2"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	platformWS "spotlight/backend/internal/platform/ws"
+	"spotlight/backend/internal/provider"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // Service implements the doctor (provider) telemedicine MVP.
-//
 // Money path (RequestPayout) honours every iron rule:
 //  1. requires + dedupes on an Idempotency-Key (Redis lock + DB UNIQUE replay),
 //  2. tier-limit check (fail-closed: any error/denial rejects),
@@ -27,14 +33,14 @@ import (
 //  5. emits an immutable audit row,
 //  6. returns the payout result.
 type Service struct {
-	repo           *Repository
-	ledger         *ledger.Service
-	tiers          *tiers.Service
-	redis          *goredis.Client    // optional; nil disables the fast idempotency lock
-	rtc            *rtc.Issuer        // optional; nil/disabled → empty token + "not configured"
-	hub            *platformWS.Hub    // optional; nil disables realtime WS push (best-effort)
-	commission     CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
-	disbursement   provider.DisbursementProvider // optional; nil ⇒ no account verification on bank-account add
+	repo         *Repository
+	ledger       *ledger.Service
+	tiers        *tiers.Service
+	redis        *goredis.Client               // optional; nil disables the fast idempotency lock
+	rtc          *rtc.Issuer                   // optional; nil/disabled → empty token + "not configured"
+	hub          *platformWS.Hub               // optional; nil disables realtime WS push (best-effort)
+	commission   CommissionRecorder            // optional; nil ⇒ realized-profit recording is a no-op
+	disbursement provider.DisbursementProvider // optional; nil ⇒ no account verification on bank-account add
 }
 
 // NewService wires the doctor service. redis may be nil (lock falls back to the
@@ -67,7 +73,6 @@ func (s *Service) WithDisbursementProvider(p provider.DisbursementProvider) *Ser
 // doctor never imports the commission package at compile time (mirrors the
 // transport/stays seams) — the adapter, which lives in app-wiring, discards the
 // returned earning row and surfaces only the error.
-//
 // This records realized profit ONLY; it never moves money. The doctor module's own
 // money movements (the RequestPayout wallet debit and the per-consult commission
 // withheld into doctor_invoices) are unchanged, and the injected recorder is
@@ -107,8 +112,6 @@ var (
 	ErrInvalidAmount       = errors.New("doctor: amount must be a positive integer (kobo)")
 	ErrDuplicateRequest    = errors.New("doctor: duplicate request (idempotency replay)")
 )
-
-// ── Reads ───────────────────────────────────────────────────────────────────
 
 func (s *Service) GetProfile(ctx context.Context, userID string) (*Profile, error) {
 	return s.repo.GetProfile(ctx, userID)
@@ -177,8 +180,6 @@ func (s *Service) GetEarnings(ctx context.Context, userID string) (*Earnings, er
 	}, nil
 }
 
-// ── Mutations (require Idempotency-Key) ─────────────────────────────────────
-
 func (s *Service) SubmitVerification(ctx context.Context, userID string, req SubmitVerificationRequest) (*Verification, error) {
 	return s.repo.InsertVerification(ctx, userID, req)
 }
@@ -227,8 +228,6 @@ func (s *Service) MarkNotificationRead(ctx context.Context, userID, id string) e
 	return s.repo.MarkNotificationRead(ctx, userID, id)
 }
 
-// ── Money path ──────────────────────────────────────────────────────────────
-
 // RequestPayout withdraws funds from the doctor's wallet to the settlement clearing
 // account. Satisfies the six money requirements (see Service doc comment).
 func (s *Service) RequestPayout(ctx context.Context, userID, idemKey string, req RequestPayoutRequest) (*RequestPayoutResult, error) {
@@ -242,7 +241,7 @@ func (s *Service) RequestPayout(ctx context.Context, userID, idemKey string, req
 
 	// (1) Dedupe — fast path: if a payout already exists for this key, replay it.
 	if prior, err := s.repo.FindPayoutByIdem(ctx, userID, idemKey); err == nil {
-		return &RequestPayoutResult{PayoutID: prior.ID, Ref: derefStr(prior.Ref), Status: prior.Status}, ErrDuplicateRequest
+		return &RequestPayoutResult{PayoutID: prior.ID, Ref: ptr.DerefZero(prior.Ref), Status: prior.Status}, ErrDuplicateRequest
 	} else if !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
@@ -288,13 +287,126 @@ func (s *Service) RequestPayout(ctx context.Context, userID, idemKey string, req
 		return nil, fmt.Errorf("doctor: persist payout request + audit: %w", err)
 	}
 
-	// (6) Return the result.
-	return &RequestPayoutResult{PayoutID: payout.ID, Ref: derefStr(payout.Ref), Status: payout.Status}, nil
+	return &RequestPayoutResult{PayoutID: payout.ID, Ref: ptr.DerefZero(payout.Ref), Status: payout.Status}, nil
 }
 
-func derefStr(p *string) string {
-	if p == nil {
-		return ""
+// backend-owned presigned Cloudflare R2 uploads for the doctor module.
+// Flow (mirrors DOCTOR_GO_LIVE.md "Uploads (R2)"):
+//  1. Client calls POST /api/v1/doctor/uploads/presign with {kind, fileName, contentType}.
+//  2. Backend derives a SERVER-CONTROLLED object key (doctor/<uid>/<kind>/<rand><ext>)
+//     and returns a short-lived presigned PUT URL + the key.
+//  3. Client PUTs the binary directly to R2 (never through our API).
+//  4. Client records metadata via the existing endpoints (SetProfilePhoto,
+//     UploadProfileDocument, RenewVetLicence, SendChatAttachment, AddDisputeEvidence),
+//     passing the returned key/url. The API stores metadata only — no binary touches
+//     our servers, and the client cannot choose an arbitrary key (no overwrite of
+//     another doctor's objects).
+// Covers the five upload kinds called out for go-live:
+//   uploadProfilePhoto · uploadDocument · renewLicence · sendAttachment · uploadDisputeEvidence
+// Security: R2 credentials are server-side only (config). When R2 is not configured
+// the endpoint fails closed with 503 (never a fabricated URL). The presign TTL is short.
+
+// presignTTL bounds how long an issued upload URL is valid.
+const presignTTL = 10 * time.Minute
+
+// uploadKinds maps the client-facing upload kind → object-key prefix segment.
+// Each corresponds 1:1 to a metadata-recording endpoint.
+var uploadKinds = map[string]string{
+	"profile_photo":    "photo",   // uploadProfilePhoto  → POST /profile/photo
+	"document":         "doc",     // uploadDocument      → POST /profile/documents
+	"licence":          "licence", // renewLicence        → POST /vet/licence/renew
+	"chat_attachment":  "chat",    // sendAttachment      → POST /chat/:threadId/attachments
+	"dispute_evidence": "dispute", // uploadDisputeEvidence→ POST /disputes/:id/evidence
+}
+
+// allowedUploadContentTypes restricts what a presigned PUT may upload (bound into
+// the signature, so the client must send exactly this Content-Type).
+var allowedUploadContentTypes = map[string]bool{
+	"image/png":       true,
+	"image/jpeg":      true,
+	"image/webp":      true,
+	"application/pdf": true,
+	"audio/mpeg":      true, // voice attachments
+	"audio/mp4":       true,
+	"audio/wav":       true,
+}
+
+// allowedUploadExt restricts the file extension we append to the derived key.
+var allowedUploadExt = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true, ".webp": true,
+	".pdf": true, ".mp3": true, ".m4a": true, ".wav": true,
+}
+
+// PresignUploadRequest is the body for POST /uploads/presign.
+type PresignUploadRequest struct {
+	Kind        string `json:"kind" binding:"required"`        // see uploadKinds
+	FileName    string `json:"fileName" binding:"required"`    // used only for its extension
+	ContentType string `json:"contentType" binding:"required"` // must be in allowedUploadContentTypes
+}
+
+// PresignUploadResponse is what the client uses to PUT the binary to R2.
+type PresignUploadResponse struct {
+	UploadURL   string `json:"uploadUrl"` // presigned PUT URL (short-lived)
+	ObjectKey   string `json:"objectKey"` // server-chosen key to echo back when recording metadata
+	Bucket      string `json:"bucket"`
+	ContentType string `json:"contentType"` // the client MUST send this exact header on the PUT
+	ExpiresIn   int    `json:"expiresIn"`   // seconds
+	Method      string `json:"method"`      // always "PUT"
+}
+
+// PresignUpload issues a presigned R2 PUT URL scoped to the authenticated doctor.
+// POST /api/v1/doctor/uploads/presign
+func (h *Handler) PresignUpload(c *gin.Context) {
+	uid, ok := h.userID(c)
+	if !ok {
+		return
 	}
-	return *p
+	if h.presigner == nil || !h.presigner.Configured() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "uploads are not configured"})
+		return
+	}
+
+	var req PresignUploadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	prefix, ok := uploadKinds[req.Kind]
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported upload kind"})
+		return
+	}
+	ct := strings.ToLower(strings.TrimSpace(req.ContentType))
+	if !allowedUploadContentTypes[ct] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported content type"})
+		return
+	}
+	ext := strings.ToLower(path.Ext(req.FileName))
+	if !allowedUploadExt[ext] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported file extension"})
+		return
+	}
+
+	// Server-controlled key: the client cannot influence the path beyond its own
+	// scope. Random component prevents guessing/overwrite.
+	key := fmt.Sprintf("doctor/%s/%s/%s%s", uid, prefix, cryptox.Token(), ext)
+
+	url, err := h.presigner.PresignPut(key, ct, presignTTL)
+	if err != nil {
+		if errors.Is(err, r2.ErrNotConfigured) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "uploads are not configured"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not issue upload url"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": PresignUploadResponse{
+		UploadURL:   url,
+		ObjectKey:   key,
+		Bucket:      h.presignBucket,
+		ContentType: ct,
+		ExpiresIn:   int(presignTTL.Seconds()),
+		Method:      "PUT",
+	}})
 }

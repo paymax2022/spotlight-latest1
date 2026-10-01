@@ -1,10 +1,8 @@
 package transport_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test: empty booking lists must serialize as [] — not null — so
 // clients that do Array.isArray(bookings) (k6 harness, mobile app) don't
 // crash on a user with zero rows. Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

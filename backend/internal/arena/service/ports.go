@@ -23,8 +23,6 @@ var (
 	ErrRateLimited     = errors.New("arena: rate limited")
 )
 
-// ── Domain records (thin projections; DB is source of truth) ────────────────
-
 // Competition is an Arena competition.
 type Competition struct {
 	ID            string `json:"id"`
@@ -107,8 +105,6 @@ type AuditRecord struct {
 	Before        map[string]any
 	After         map[string]any
 }
-
-// ── Ports (implemented by arena/repo; faked in tests) ───────────────────────
 
 // MeritRepo is the append-only signed merit ledger. It has NO method that writes
 // merit from anything but a verified arena.SignedMeritEntry (NDC-1, NDC-2).

@@ -1,8 +1,6 @@
-// ── Nutrition Resolution Engine — Mock data (v2) ─────────────────────────────
 // Runs the whole buyer + vendor flow offline (EXPO_PUBLIC_NUTRITION_USE_MOCK
 // !== 'false'). A tiny in-memory store lets vendor approve/edit/approve-all/
 // allergen writes persist within a session so the buyer surfaces reflect them.
-//
 // v2 honesty states (onboarding-first):
 //   • i1  — AI_ESTIMATE (range "≈610–710 kcal · AI estimate"), auto-published
 //   • i5  — RESTAURANT_CONFIRMED (point value + "restaurant-confirmed (estimate)")
@@ -31,7 +29,6 @@ const v = (value: number, low?: number, high?: number): NutrientValue => ({ valu
 const MENU = 'm1';
 const dishMenu: Record<string, string> = { i1: MENU, i4: MENU, i5: MENU };
 
-// ─── In-memory store (vendor writes persist within the session) ──────────────
 const store: Record<string, DishNutritionProfile> = {};
 
 function seed(p: DishNutritionProfile) {
@@ -124,7 +121,6 @@ seed({
   ],
 });
 
-// ─── Portion rescale factors (relative to "regular") ─────────────────────────
 const PORTION_FACTOR: Record<PortionLabel, number> = { small: 0.7, regular: 1, large: 1.35 };
 
 function scaleValue(val: NutrientValue, factor: number): NutrientValue {
@@ -205,8 +201,6 @@ export function mockCartSummary(ids: string[]): CartSummary {
     disclaimer: DISCLAIMER,
   };
 }
-
-// ─── Vendor mutations (persist to the in-memory store) ───────────────────────
 
 /** Promote a profile to RESTAURANT_CONFIRMED + Nutrition-Verified badge. */
 function confirm(base: DishNutritionProfile): DishNutritionProfile {

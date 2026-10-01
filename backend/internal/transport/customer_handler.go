@@ -4,13 +4,13 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-)
 
-// ─── Customer (rider) mobility handlers ──────────────────────────────────────
+	"spotlight/backend/go-common/ginutil"
+)
 
 // Home returns the rider's mobility landing payload.
 func (h *Handler) Home(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	active, _ := h.svc.ActiveRide(c.Request.Context(), userID)
 	profile, _ := h.svc.GetProfile(c.Request.Context(), userID)
 	c.JSON(http.StatusOK, gin.H{
@@ -50,13 +50,13 @@ func (h *Handler) Estimate(c *gin.Context) {
 
 // RequestRide creates and escrows a ride.
 func (h *Handler) RequestRide(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req RequestRideRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	key := idemKey(c)
+	key := ginutil.IdempotencyKey(c)
 	trip, err := h.svc.RequestRide(c.Request.Context(), userID, req, key)
 	if err != nil {
 		respondErr(c, err)
@@ -67,7 +67,7 @@ func (h *Handler) RequestRide(c *gin.Context) {
 
 // Offer records a rider offer.
 func (h *Handler) Offer(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req OfferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -83,7 +83,7 @@ func (h *Handler) Offer(c *gin.Context) {
 
 // AcceptCounter accepts a driver counter-offer.
 func (h *Handler) AcceptCounter(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	fo, err := h.svc.AcceptCounter(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -94,7 +94,7 @@ func (h *Handler) AcceptCounter(c *gin.Context) {
 
 // CancelRide refunds escrow and cancels.
 func (h *Handler) CancelRide(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req CancelRequest
 	_ = c.ShouldBindJSON(&req)
 	if err := h.svc.CancelRide(c.Request.Context(), c.Param("id"), userID, req.Reason); err != nil {
@@ -106,7 +106,7 @@ func (h *Handler) CancelRide(c *gin.Context) {
 
 // GetRide returns a trip detail (rider view, includes PIN).
 func (h *Handler) GetRide(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	detail, err := h.svc.TripDetail(c.Request.Context(), c.Param("id"), userID, true)
 	if err != nil {
 		respondErr(c, err)
@@ -117,7 +117,7 @@ func (h *Handler) GetRide(c *gin.Context) {
 
 // ActiveRide returns the rider's active trip.
 func (h *Handler) ActiveRide(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	detail, err := h.svc.ActiveRide(c.Request.Context(), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -132,7 +132,7 @@ func (h *Handler) ActiveRide(c *gin.Context) {
 
 // ShareRide returns a live-share link ({shareToken, url, expiresAt}).
 func (h *Handler) ShareRide(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	link, err := h.svc.ShareToken(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -155,7 +155,7 @@ func (h *Handler) ResolveShare(c *gin.Context) {
 
 // SOS creates a safety incident from the rider.
 func (h *Handler) SOS(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req SOSRequest
 	_ = c.ShouldBindJSON(&req)
 	tripID := c.Param("id")
@@ -169,7 +169,7 @@ func (h *Handler) SOS(c *gin.Context) {
 
 // Rate records a rating + tip.
 func (h *Handler) Rate(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req RateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -185,7 +185,7 @@ func (h *Handler) Rate(c *gin.Context) {
 
 // History returns past trips.
 func (h *Handler) History(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	trips, err := h.svc.History(c.Request.Context(), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -196,7 +196,7 @@ func (h *Handler) History(c *gin.Context) {
 
 // GetProfile returns the rider mobility profile.
 func (h *Handler) GetProfile(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	p, err := h.svc.GetProfile(c.Request.Context(), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -207,7 +207,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 
 // UpdateProfile updates the rider mobility profile.
 func (h *Handler) UpdateProfile(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req UpsertProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -223,7 +223,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 
 // ListContacts returns trusted contacts.
 func (h *Handler) ListContacts(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	cs, err := h.svc.ListTrustedContacts(c.Request.Context(), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -234,7 +234,7 @@ func (h *Handler) ListContacts(c *gin.Context) {
 
 // AddContact adds a trusted contact.
 func (h *Handler) AddContact(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req TrustedContactRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -250,7 +250,7 @@ func (h *Handler) AddContact(c *gin.Context) {
 
 // DeleteContact removes a trusted contact.
 func (h *Handler) DeleteContact(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if err := h.svc.DeleteTrustedContact(c.Request.Context(), userID, c.Param("id")); err != nil {
 		respondErr(c, err)
 		return

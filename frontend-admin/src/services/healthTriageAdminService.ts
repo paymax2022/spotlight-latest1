@@ -1,20 +1,14 @@
-// ── Admin — Paymax Health · AI Symptom Checker (Triage) clinical console ────────
 // Mock by default (mirrors healthVetAdminService / healthVetVerificationService).
-// Flip with NEXT_PUBLIC_HEALTH_USE_MOCK=false to hit the live Go backend at
 // /api/health/triage/admin/*. RBAC: review surfaces gate on health.triage.review,
 // governance surfaces on health.triage.admin (wired on the sidebar + pages).
-//
 // Request building / auth / errors mirror the existing health admin services:
 //  • adminBase() builds the absolute backend path via apiRoot() + /api/health/triage/admin
 //  • authHeaders() attaches the admin Bearer token from localStorage
 //  • getJson/sendJson unwrap { data } and throw on non-2xx
-//
-// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/triage/admin')`,
 // which stopped matching the moment apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
 // the same regression. Every request 404'd against <proxy>/sessions/stats instead
 // of <proxy>/api/health/triage/admin/sessions/stats; USE_MOCK hid it whenever set.
-//
 // SAFETY (PRD §11): triage + navigation only — NEVER a diagnosis (SC-1). The
 // deterministic red-flag layer can only RAISE urgency (SC-2). Content + rules need
 // licensed-clinician sign-off before publish (SC-6). Optimise EMERGENCY
@@ -58,7 +52,6 @@ const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 // has nothing to add and refuses loudly instead of reporting a write it did
 // not perform. Two of them (acknowledgeEscalation, resolveEscalation) used to
 // go further and fabricate compliance language — "Written to immutable audit
-// (SC-12)" — about an audit entry that was never written; that class of claim
 // is exactly what docs/audit/ADMIN_SIMULATED_WRITES.md calls "the most
 // dangerous strings in this codebase," and it wasn't caught by
 // scripts/ci/check-simulated-writes.py's claim-pattern check because the
@@ -97,9 +90,7 @@ export function pct(n: number): string {
   return `${(n * 100).toFixed(1)}%`;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Triage sessions monitor + disposition stats
-// ════════════════════════════════════════════════════════════════════════════
 const SESSIONS: TriageSession[] = [
   { id: 'tsx_9001', state: 'escalated', disposition_level: 'emergency_ambulance', channel: 'whatsapp', language: 'pcm', red_flag: true, profile_kind: 'self', consent_on_file: true, age_band: '30-39', top_condition_count: 3, created_at: iso(0.3) },
   { id: 'tsx_9002', state: 'disposition_given', disposition_level: 'consult_24h', channel: 'app', language: 'en', red_flag: false, profile_kind: 'self', consent_on_file: true, age_band: '20-29', top_condition_count: 3, created_at: iso(0.6) },
@@ -167,10 +158,7 @@ export async function listSessions(opts?: { state?: string; level?: string; chan
   return getJson<TriageSession[]>(`/sessions${qs.toString() ? `?${qs}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// B · Escalation queue (EscalationCase; human-in-loop, SC-5)
 //  RAISED → NOTIFIED → ACKNOWLEDGED → RESOLVED
-// ════════════════════════════════════════════════════════════════════════════
 const ESCALATIONS: EscalationCase[] = [
   { id: 'esc_4401', session_id: 'tsx_9001', state: 'raised', disposition_level: 'emergency_ambulance', red_flag_rule_id: 'rfr_2201', red_flag_summary: 'Chest pain with sweating + breathlessness — deterministic red-flag fired; routed to nearest ER + ambulance (SC-2).', channel: 'whatsapp', language: 'pcm', profile_kind: 'self', patient_masked: 'pt •••821', acknowledged_by: null, handoff_note: null, raised_at: iso(0.3), notified_at: null, acknowledged_at: null, resolved_at: null },
   { id: 'esc_4402', session_id: 'tsx_9004', state: 'notified', disposition_level: 'emergency_urgent', red_flag_rule_id: 'rfr_2204', red_flag_summary: 'Infant <3mo with high fever — paediatric red-flag fired; caregiver + clinician notified (SC-9).', channel: 'ussd', language: 'hau', profile_kind: 'child', patient_masked: 'pt •••144', acknowledged_by: null, handoff_note: null, raised_at: iso(1.8), notified_at: iso(1.7), acknowledged_at: null, resolved_at: null },
@@ -205,10 +193,8 @@ export async function resolveEscalation(id: string, handoffNote?: string): Promi
   return sendJson<EscalationActionResult>('POST', `/escalations/${id}/resolve`, { handoff_note: handoffNote });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Clinical content governance (DRAFT→CLINICAL_REVIEW→APPROVED→PUBLISHED→DEPRECATED)
 //  Publish requires a licensed-clinician sign-off (reviewer) — SC-6.
-// ════════════════════════════════════════════════════════════════════════════
 const CONTENT: ClinicalContentItem[] = [
   { id: 'cnt_7001', title: 'Malaria — possible causes & guidance (EN)', kind: 'condition_library', language: 'en', state: 'published', version: 3, body_preview: 'Malaria is common in this region. This is guidance, not a diagnosis (SC-1). If you have fever with chills, a test can confirm…', reviewer_id: 'dr_clin_1', signed_off_at: iso(120), author_id: 'editor_a', updated_at: iso(118) },
   { id: 'cnt_7002', title: 'Malaria — possible causes & guidance (Pidgin)', kind: 'condition_library', language: 'pcm', state: 'clinical_review', version: 1, body_preview: 'Malaria dey common for here. Dis na guidance, no be diagnosis. If you get fever wey dey shake your body…', reviewer_id: null, signed_off_at: null, author_id: 'editor_b', updated_at: iso(20) },
@@ -252,9 +238,6 @@ export async function governContent(id: string, action: GovernanceAction): Promi
   return sendJson<GovernanceResult>('POST', `/content/${id}/${action}`, {});
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// D · Red-flag rule governance (same lifecycle; rules can only RAISE urgency, SC-2)
-// ════════════════════════════════════════════════════════════════════════════
 const RULES: RedFlagRule[] = [
   { id: 'rfr_2201', name: 'Cardiac/stroke red-flag', state: 'published', version: 4, escalate_to: 'emergency_ambulance', condition: { any_of: ['chest_pain_radiating', 'face_arm_speech_deficit'], with: ['acute_onset'] }, rationale: 'Time-critical emergencies — must always route to ambulance regardless of engine probability (SC-2/SC-3).', reviewer_id: 'dr_clin_1', signed_off_at: iso(500), author_id: 'editor_a', updated_at: iso(498) },
   { id: 'rfr_2203', name: 'Severe dehydration (adult)', state: 'published', version: 2, escalate_to: 'emergency_urgent', condition: { all_of: ['no_urine_8h', 'dizzy_on_standing'], age_band_min: 18 }, rationale: 'Raises urgency to urgent facility referral; never lowers a higher engine level (SC-2).', reviewer_id: 'dr_clin_2', signed_off_at: iso(300), author_id: 'editor_a', updated_at: iso(298) },
@@ -277,7 +260,6 @@ export async function listRedFlagRules(opts?: { state?: string; q?: string }): P
   const qs = new URLSearchParams();
   if (opts?.state) qs.set('state', opts.state);
   if (opts?.q) qs.set('q', opts.q);
-  // backend: GET /rules (governance.Handler.ListRules) — the OLD /red-flag-rules
   // path here matched no route; fixed to the real one.
   return getJson<RedFlagRule[]>(`/rules${qs.toString() ? `?${qs}` : ''}`);
 }
@@ -289,14 +271,10 @@ export async function createRedFlagRule(input: RedFlagRuleInput): Promise<RedFla
 
 export async function governRedFlagRule(id: string, action: GovernanceAction): Promise<GovernanceResult> {
   if (USE_MOCK) throw new Error(`Governing a red-flag rule ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /rules/:id/:action (governance.Handler.RuleLifecycle) — the OLD
   // /red-flag-rules/:id/:action path here matched no route; fixed to the real one.
   return sendJson<GovernanceResult>('POST', `/rules/${id}/${action}`, {});
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// E · Validation / accuracy harness (emergency-sensitivity-first; SC-3)
-// ════════════════════════════════════════════════════════════════════════════
 const VIGNETTES: Vignette[] = [
   { id: 'vig_001', title: 'Adult — chest pain radiating to arm', language: 'en', expected_level: 'emergency_ambulance', is_emergency: true, category: 'cardiac', last_eval_level: 'emergency_ambulance' },
   { id: 'vig_002', title: 'Pikin wey get fever + dey shake (infant)', language: 'pcm', expected_level: 'emergency_urgent', is_emergency: true, category: 'paediatric-febrile', last_eval_level: 'emergency_urgent' },
@@ -334,9 +312,6 @@ export async function listVignettes(): Promise<Vignette[]> {
   return getJson<Vignette[]>('/vignettes');
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// F · Language packs (voice-first / parity; PRD §3 / SC-3)
-// ════════════════════════════════════════════════════════════════════════════
 const LANGUAGE_PACKS: LanguagePack[] = [
   { code: 'en', label: 'English', voice_supported: true, coverage_pct: 1.0, content_published: 42, content_pending: 0, parity_ok: true },
   { code: 'pcm', label: 'Pidgin', voice_supported: true, coverage_pct: 0.86, content_published: 31, content_pending: 5, parity_ok: true },

@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// ── Test bank builders ───────────────────────────────────────────────────────
-
 // stageBank builds n questions for a stage, all with the given pass mark, whose
 // correct option is index (i % 4) so answers can be constructed deterministically.
 func stageBank(prefix string, n, passMark int) []Question {
@@ -49,8 +47,6 @@ func firstNCorrect(qs []Question, n int) []Answer {
 	}
 	return out
 }
-
-// ── mark(): scoring correctness ──────────────────────────────────────────────
 
 func TestMark_FullyCorrect(t *testing.T) {
 	qs := stageBank("ND-S1", 30, 70)
@@ -133,8 +129,6 @@ func TestMark_IgnoresAnswersForUnknownQuestions(t *testing.T) {
 		t.Fatalf("responses len = %d, want 3 (ghost answer must not create a response)", len(responses))
 	}
 }
-
-// ── passes(): pass-mark boundary per stage ───────────────────────────────────
 
 // The pass rule is score*100 >= passMark*total (i.e. percentage >= pass mark).
 func TestPasses_BoundaryPerStage(t *testing.T) {

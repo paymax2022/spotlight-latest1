@@ -1,5 +1,3 @@
-// ── Association — Shared controls for the admin authoring forms ───────────────
-//
 // Five content types share one editing vocabulary (a card, a chip row, a
 // switch, a string-list editor, a date+time field). Building them once here
 // keeps the five form screens to their own fields and validation rather than
@@ -9,17 +7,15 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, Switch, Pressable, StyleSheet } from 'react-native';
 import { Plus, X, AlertTriangle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
 import DatePickerField from '@/components/DatePickerField';
-import { parseDateSafe } from '../utils/associationFormatters';
-
-// ─── Layout ───────────────────────────────────────────────────────────────────
+import { parseDateSafe } from '../utils';
 
 export function FormCard({ title, children }: { title?: string; children: React.ReactNode }) {
   return (
@@ -41,8 +37,6 @@ export function FormNotice({ tone = 'warn', text }: { tone?: 'warn' | 'error' | 
     </View>
   );
 }
-
-// ─── Controls ─────────────────────────────────────────────────────────────────
 
 export interface Option<T extends string> { value: T; label: string }
 
@@ -91,7 +85,6 @@ export function OptionSelect<T extends string>({
   allowClear?: boolean;
   clearLabel?: string;
 }) {
-  // Labels must be unique for the round-trip; disambiguate duplicates rather
   // than silently selecting the first match.
   const rows = useMemo(() => {
     const seen = new Map<string, number>();

@@ -3,10 +3,17 @@ package healthconsent
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	keySuccess = "success"
 )
 
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
@@ -156,4 +163,75 @@ func nullTime(t *time.Time) any {
 		return nil
 	}
 	return *t
+}
+
+// grantActive is the canonical rule for whether a consent grant currently permits
+// a read of `wantScope` at `now`. It is the single source of truth enforced by
+// HasActiveGrant (HL-8 cross-vertical gate):
+//   - the grant must be ACTIVE — a REVOKED grant never permits access, so
+//     withdrawal stops further sharing immediately (AC-008);
+//   - the grant's scope must cover the requested scope (exact match, or the
+//     catch-all "ALL") — a narrower grant cannot be escalated (AC-004);
+//   - the grant must be unexpired — expiry is half-open, so a grant expiring
+//     exactly at `now` no longer permits access (AC-004).
+func grantActive(state, grantScope string, expiresAt *time.Time, wantScope string, now time.Time) bool {
+	if state != "ACTIVE" {
+		return false
+	}
+	if grantScope != wantScope && grantScope != "ALL" {
+		return false
+	}
+	if expiresAt != nil && !expiresAt.After(now) {
+		return false
+	}
+	return true
+}
+
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Grant / Revoke — POST /consent  (action discriminator in body)
+func (h *Handler) Grant(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		Action         string     `json:"action"` // grant | revoke
+		ConsentID      string     `json:"consent_id"`
+		GranteeID      string     `json:"grantee_id"`
+		SubjectOwnerID string     `json:"subject_owner_id"`
+		Scope          string     `json:"scope"`
+		ExpiresAt      *time.Time `json:"expires_at"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.Action == "revoke" {
+		if err := h.svc.Revoke(c.Request.Context(), id, req.ConsentID); err != nil {
+			ginutil.FailOK(c, http.StatusConflict, err.Error())
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{keySuccess: true})
+		return
+	}
+	out, err := h.svc.Grant(c.Request.Context(), id, req.GranteeID, req.SubjectOwnerID, req.Scope, req.ExpiresAt)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{keySuccess: true, "consent": out})
+}
+
+// List — GET /consent
+func (h *Handler) List(c *gin.Context) {
+	out, err := h.svc.ListForGrantor(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "consents": out})
 }

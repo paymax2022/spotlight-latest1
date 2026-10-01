@@ -6,13 +6,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
 
 // Handler exposes School Trust Score read + admin override over Gin. Router registration into
 // RegisterAcademy is owned by the QA/integration task — see RegisterFeesTrustScore.
-//
 // NOTE (integration wiring): this package takes a MetricsReader + OverrideStore rather than a
 // pgx pool, because the metrics are aggregated across the invoice / payment / reconciliation
 // packages. The integration task constructs those adapters (backed by the fees repos) and calls
@@ -24,10 +24,9 @@ type Handler struct {
 // NewHandler builds the trust-score handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -35,7 +34,7 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -80,8 +79,6 @@ func RegisterFeesTrustScore(admin *gin.RouterGroup, svc *Service, rbac services.
 	_ = rbac
 	return h
 }
-
-// ── Handlers ────────────────────────────────────────────────────────────────────
 
 func (h *Handler) Compute(c *gin.Context) {
 	out, err := h.svc.Compute(c.Request.Context(), c.Param("schoolId"))

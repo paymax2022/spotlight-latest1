@@ -1,4 +1,3 @@
-// ── FX Exchange — Formatters & quote math ────────────────────────────────────
 // All money is minor units (integer). Display helpers convert to major units.
 // Quote/fee math lives here so the mock API and the screens compute identically.
 
@@ -18,8 +17,6 @@ import {
   RAIL_FEE_FLAT,
   RATE_LOCK_SECONDS,
 } from '../constants/fx.constants';
-
-// ─── Display ──────────────────────────────────────────────────────────────────
 
 /**
  * Currency metadata that never returns undefined.
@@ -105,8 +102,6 @@ export function minorToInput(amount: number, currency: CurrencyCode): string {
   return (amount / 10 ** meta.decimals).toString();
 }
 
-// ─── Time / countdown ─────────────────────────────────────────────────────────
-
 /** Seconds remaining until an ISO expiry (clamped ≥ 0). */
 export function secondsUntil(iso: string): number {
   return Math.max(0, Math.floor((new Date(iso).getTime() - Date.now()) / 1000));
@@ -154,7 +149,6 @@ export function newIdempotencyKey(prefix = 'fx'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-// ─── Quote engine (mock) ──────────────────────────────────────────────────────
 // A small deterministic pricing model so the mock API and screens agree.
 // Base mid-market rates expressed as 1 unit of `from` → units of `to`.
 

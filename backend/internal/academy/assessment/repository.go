@@ -26,8 +26,6 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("assessment: not found")
 
-// ── helpers ────────────────────────────────────────────────────────────────────
-
 func toJSONB(v any) []byte {
 	if v == nil {
 		return []byte("{}")
@@ -84,8 +82,6 @@ func (r *Repository) insertAudit(ctx context.Context, actor, action, resourceTyp
 	_, err := r.db.Exec(ctx, q, actorArg, action, resourceType, resourceID, toJSONB(newValues), severity)
 	return err
 }
-
-// ── Question bank ───────────────────────────────────────────────────────────────
 
 func (r *Repository) InsertItem(ctx context.Context, actor string, req CreateItemRequest) (*QuestionItem, error) {
 	id := uuid.New().String()
@@ -294,8 +290,6 @@ func (r *Repository) ItemAnalysis(ctx context.Context, f ItemFilter) ([]ItemAnal
 	return out, nil
 }
 
-// ── Mastery records & progress events ──────────────────────────────────────────
-
 func (r *Repository) GetMastery(ctx context.Context, userID, objectiveID string) (*MasteryRecord, error) {
 	const q = `
 		SELECT id, user_id, objective_id, state, score, history, updated_at
@@ -404,7 +398,6 @@ func (r *Repository) ApplyProgression(ctx context.Context, userID, objectiveID s
 		}
 	}
 
-	// Append to history.
 	var history []map[string]any
 	_ = json.Unmarshal(histRaw, &history)
 	history = append(history, map[string]any{

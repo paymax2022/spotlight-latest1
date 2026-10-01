@@ -1,6 +1,4 @@
-// ── Paymax Invest · Learn Center — Data hooks ────────────────────────────────
 // React Query hooks mirroring useCrypto.ts so Learn screens stay declarative and
-// share the same caching / loading / error contracts. Content is read-mostly;
 // submitting a quiz is the only mutation.
 
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -8,8 +6,6 @@ import * as learn from '../api/learn.api';
 import type { QuizAnswers } from '../types/learn.types';
 
 const KEY = 'learn';
-
-// ─── Paths ────────────────────────────────────────────────────────────────--
 
 export function useLearnPaths() {
   return useQuery({ queryKey: [KEY, 'paths'], queryFn: learn.getPaths, staleTime: 60_000 });
@@ -24,8 +20,6 @@ export function useLearnPath(id?: string) {
   });
 }
 
-// ─── Lessons ──────────────────────────────────────────────────────────────--
-
 export function useLesson(id?: string) {
   return useQuery({
     queryKey: [KEY, 'lesson', id],
@@ -34,8 +28,6 @@ export function useLesson(id?: string) {
     staleTime: 60_000,
   });
 }
-
-// ─── Quiz ─────────────────────────────────────────────────────────────────--
 
 export function useQuiz(lessonId?: string) {
   return useQuery({
@@ -52,8 +44,6 @@ export function useSubmitQuiz() {
       learn.submitQuiz(quizId, answers),
   });
 }
-
-// ─── Glossary ────────────────────────────────────────────────────────────--
 
 export function useGlossary() {
   return useQuery({ queryKey: [KEY, 'glossary'], queryFn: learn.getGlossary, staleTime: 300_000 });

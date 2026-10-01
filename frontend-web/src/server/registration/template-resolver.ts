@@ -14,7 +14,6 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { SlotConfig } from '@/src/lib/rendering/imageCompositor';
 
 // Lazy + memoized for the same reason as supabase-store.ts / contest-store.ts:
-// a module-level createClient() throws "supabaseUrl is required" at import
 // time whenever env is unset (vitest collection, next build).
 let supabaseClient: SupabaseClient | null = null;
 function getSupabase() {

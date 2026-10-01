@@ -5,7 +5,6 @@ import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { colors, tint } from '@/components/ui/vuexy';
 
 // Shared presentational helpers for the Paymax HEALTH ops consoles — pharmacy,
-// laboratory and veterinary admin all import from this single file via relative
 // path. Matches the Connect / Insurance / Stays / Savings / Events admin
 // light-card inline-style convention (copied from events/_ui.tsx).
 // Lab + Vet admin (added later) reuse the same primitives + their own *Tabs.
@@ -65,7 +64,6 @@ const STATUS_COLORS: Record<string, string> = {
   catalog_rejected: colors.danger, order_dispensed: colors.info,
   recall_issued: colors.warning, payout_held: colors.warning,
   controlled_blocked: colors.danger,
-  // ── Lab vertical (HEALTH-BUILD Phase 2 ADM) — additive status colours ──
   // chain-of-custody (HL-6) — note: `breached` already defined above (danger group)
   in_custody: colors.info, handed_over: colors.info,
   accessioned: colors.success,
@@ -79,8 +77,6 @@ const STATUS_COLORS: Record<string, string> = {
   mlscn_approved: colors.success, custody_breach: colors.danger,
   result_released: colors.success, critical_escalated: colors.danger,
   catalog_governed: colors.warning,
-  // ── Vet vertical (HEALTH-BUILD Phase 3 ADM) — additive status colours ──
-  // Appointment lifecycle (REQUESTED→ACCEPTED→CONFIRMED→IN_PROGRESS→COMPLETED; →CANCELLED|NO_SHOW).
   // note: confirmed/completed/in_progress/cancelled/held/released/refunded already defined above.
   requested: colors.info, accepted: colors.info,
   rescheduled: colors.warning, no_show: colors.danger,
@@ -92,17 +88,14 @@ const STATUS_COLORS: Record<string, string> = {
   vcn_approved: colors.success, appointment_completed: colors.info,
   eprescription_issued: colors.info, content_moderated: colors.warning,
   sos_routed: colors.danger,
-  // ── Triage / AI Symptom Checker (clinical console) — additive status colours ──
   // TriageSession states
   started: colors.secondary, consented: colors.info,
   interviewing: colors.info, red_flag_detected: colors.danger,
   assessed: colors.info, disposition_given: colors.success,
   referred: colors.success, abandoned: colors.secondary,
-  // 5-level disposition (emergency-sensitivity-first; never a diagnosis, SC-1)
   emergency_ambulance: colors.danger, emergency_urgent: colors.danger,
   consult_24h: colors.warning, consult_routine: colors.info,
   self_care: colors.success,
-  // EscalationCase states (raised/notified already share groups; add explicit)
   raised: colors.danger, notified: colors.warning,
   // Governance lifecycle (DRAFT→CLINICAL_REVIEW→APPROVED→PUBLISHED→DEPRECATED; SC-6)
   clinical_review: colors.warning, published: colors.success,

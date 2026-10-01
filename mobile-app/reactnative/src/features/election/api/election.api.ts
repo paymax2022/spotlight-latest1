@@ -1,6 +1,3 @@
-// ── Estate Election API surface ──────────────────────────────────────────────
-// Two paths per function:
-//   • USE_MOCK === true  → in-memory mock; "live" derived from the admin window
 //   • USE_MOCK === false → real HTTP against /elections via api/client
 // Signatures/types/hooks are identical for both. Flip EXPO_PUBLIC_ELECTION_USE_MOCK=false to go live.
 

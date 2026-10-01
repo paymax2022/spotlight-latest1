@@ -9,14 +9,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
 
 // Handler exposes the academy curriculum over Gin. Member routes are open reads
 // of the versioned curriculum spine. Admin routes are RBAC-gated by the
-// "academy.curriculum" permission and audited (actor = c.GetString("user_id")).
-//
+// "academy.curriculum" permission and audited (actor = the authenticated user id).
 // GOLDEN RULE: curriculum is VERSIONED DATA. Handlers only read/administer the
 // rows in academy_curriculum_versions and its child tables — no hardcoded lists.
 type Handler struct {
@@ -105,8 +105,6 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
 }
-
-// ── Member reads ────────────────────────────────────────────────────────────
 
 func (h *Handler) ListVersions(c *gin.Context) {
 	out, err := h.svc.ListVersions(c.Request.Context())
@@ -208,8 +206,6 @@ func (h *Handler) ListTradeTracks(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"trade_tracks": out})
 }
 
-// ── Admin CRUD (academy.curriculum) ─────────────────────────────────────────
-
 func (h *Handler) AdminTree(c *gin.Context) {
 	out, err := h.svc.AdminTree(c.Request.Context())
 	if err != nil {
@@ -225,7 +221,7 @@ func (h *Handler) CreateVersion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	v, err := h.svc.CreateVersion(c.Request.Context(), c.GetString("user_id"), req)
+	v, err := h.svc.CreateVersion(c.Request.Context(), ginutil.UserID(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -239,7 +235,7 @@ func (h *Handler) UpdateVersion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	v, err := h.svc.UpdateVersion(c.Request.Context(), c.GetString("user_id"), c.Param("id"), req)
+	v, err := h.svc.UpdateVersion(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -248,7 +244,7 @@ func (h *Handler) UpdateVersion(c *gin.Context) {
 }
 
 func (h *Handler) PublishVersion(c *gin.Context) {
-	v, err := h.svc.PublishVersion(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+	v, err := h.svc.PublishVersion(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -262,7 +258,7 @@ func (h *Handler) CreateClass(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	out, err := h.svc.CreateClass(c.Request.Context(), c.GetString("user_id"), req)
+	out, err := h.svc.CreateClass(c.Request.Context(), ginutil.UserID(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -276,7 +272,7 @@ func (h *Handler) UpdateClass(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	out, err := h.svc.UpdateClass(c.Request.Context(), c.GetString("user_id"), c.Param("id"), req)
+	out, err := h.svc.UpdateClass(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -290,7 +286,7 @@ func (h *Handler) CreateSubject(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	out, err := h.svc.CreateSubject(c.Request.Context(), c.GetString("user_id"), req)
+	out, err := h.svc.CreateSubject(c.Request.Context(), ginutil.UserID(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -304,7 +300,7 @@ func (h *Handler) UpdateSubject(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	out, err := h.svc.UpdateSubject(c.Request.Context(), c.GetString("user_id"), c.Param("id"), req)
+	out, err := h.svc.UpdateSubject(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -318,7 +314,7 @@ func (h *Handler) CreateTopic(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	out, err := h.svc.CreateTopic(c.Request.Context(), c.GetString("user_id"), req)
+	out, err := h.svc.CreateTopic(c.Request.Context(), ginutil.UserID(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -332,7 +328,7 @@ func (h *Handler) UpdateTopic(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	out, err := h.svc.UpdateTopic(c.Request.Context(), c.GetString("user_id"), c.Param("id"), req)
+	out, err := h.svc.UpdateTopic(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -346,7 +342,7 @@ func (h *Handler) CreateObjective(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	out, err := h.svc.CreateObjective(c.Request.Context(), c.GetString("user_id"), req)
+	out, err := h.svc.CreateObjective(c.Request.Context(), ginutil.UserID(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -360,7 +356,7 @@ func (h *Handler) UpdateObjective(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	out, err := h.svc.UpdateObjective(c.Request.Context(), c.GetString("user_id"), c.Param("id"), req)
+	out, err := h.svc.UpdateObjective(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req)
 	if err != nil {
 		h.fail(c, err)
 		return

@@ -9,7 +9,6 @@ import "testing"
 
 func strPtr(s string) *string { return &s }
 
-// ─── escrowStatusFromSettlement ───────────────────────────────────────────────
 // Maps the shared settlements.status enum (escrowed/releasing/settled/
 // disputed/refunded) onto the modes' EscrowStatus contract (none/held/
 // released/refunded) used by parcels/towing/car-hire (mover_jobs has its own
@@ -37,7 +36,6 @@ func TestEscrowStatusFromSettlement(t *testing.T) {
 	}
 }
 
-// ─── moverEscrowStatus ─────────────────────────────────────────────────────--
 // mover_jobs.escrow_status uses "funded" where every other mode says "held";
 // everything else already matches the shared EscrowStatus contract verbatim.
 
@@ -55,7 +53,6 @@ func TestMoverEscrowStatus(t *testing.T) {
 	}
 }
 
-// ─── deriveParcelPodStatus ─────────────────────────────────────────────────--
 // There is no dedicated pod_status column/workflow: VerifyParcelDropoff sets
 // proof_url and advances the parcel straight from dropoff_verified to
 // delivered inside the same call (parcel.go), so a persisted "submitted,

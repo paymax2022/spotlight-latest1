@@ -1,9 +1,7 @@
 package ledger_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB suite for the centralized admin "Transactions" console
 // (AdminListTransactions / GET /api/finance/admin/transactions).
-//
 // ledger_entries has no module/source column and no per-module transactions
 // table exists — this console is the only cross-module read of money
 // movement, built entirely on real rows. Every assertion here is scoped to a
@@ -12,7 +10,6 @@ package ledger_test
 // absolute table count and the suite is safe to re-run against the shared
 // local Supabase instance, which already carries thousands of unrelated
 // ledger_entries rows.
-//
 // Two database-enforced invariants constrain HOW the fixture writes:
 //   • ledger_entries is APPEND-ONLY (the immutability trigger rejects every
 //     DELETE/UPDATE), so nothing this suite writes can ever be cleaned up — the
@@ -23,7 +20,6 @@ package ledger_test
 //     (postContra). An unbalanced fixture row poisons
 //     TestLiveDB_LedgerGlobalConservation permanently, because nothing can
 //     remove it afterwards.
-//
 // What it proves:
 //  1. Join shape: a NULL-user (standing account) row is returned, not dropped,
 //     and carries account_type so the UI can label it "System: <type>".
@@ -36,14 +32,11 @@ package ledger_test
 //  7. RBAC: a caller lacking finance.admin.transactions.view is 403'd by
 //     middleware.RequirePermission; a caller holding it reaches the handler
 //     and gets a real 200 with real rows.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset, so `go test ./...` without a
 // DB stays green.
-//
 // Bring-up:
 //   export TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 //   cd backend && go test ./internal/finance/ledger/... -run TestAdmin -v -count=1
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -236,7 +229,6 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 // keeping this suite inside ADR-040's global conservation invariant
 // (SUM(signed amount_kobo) == 0 over the whole table, asserted by the live-DB
 // conservation tests in backend/tests/ledger).
-//
 // It is invisible to every assertion in this file by construction:
 //   - a STANDING account (user_id IS NULL) can never match the search-by-user
 //     assertions (AdminListTransactions searches le.reference plus the joined

@@ -5,7 +5,6 @@ import { handleApiError } from '@/src/lib/api/responses';
 // Catch-all proxy: /api/v1/learn/<...> → Go /api/v1/learn/<...>.
 // No matching feature flag exists, so the flag check is intentionally omitted —
 // Go enforces flags/authZ. No money mutations in this module (read-only paths,
-// glossary, lesson/quiz content); Idempotency-Key is still forwarded verbatim
 // by proxyToGoBackend for consistency.
 async function forward(request: Request, path: string[]) {
   try {

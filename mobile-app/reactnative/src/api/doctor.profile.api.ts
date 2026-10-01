@@ -1,12 +1,9 @@
-// ── Doctor (Telemedicine, provider-side) — Section B API client ──────────────
 // Section B: Doctor Profile & Verification flow (31 screens). Phase A style:
 // every function resolves demo data so screens render without a live API.
 // `DEMO_*` exports double as `placeholderData` in useQuery. ADDITIVE to
 // `@/api/doctor.api` and `@/api/doctor.phase2.api` — those fns/exports are
 // untouched.
-//
 // TODO(Phase C): replace each body with the live endpoint, e.g.
-//   const res = await api.get('/api/v1/doctor/profile/draft'); return res.data.data;
 // uploads → presigned R2 PUT; mutations pass the Idempotency-Key header below.
 
 import type {
@@ -47,7 +44,6 @@ const iso = (daysAgo: number): string => new Date(Date.now() - daysAgo * 8640000
 const isoDate = (daysFromNow: number): string =>
   new Date(Date.now() + daysFromNow * 86400000).toISOString().slice(0, 10);
 
-// ─── Demo data: document slots ───────────────────────────────────────────────
 // The full set of document slots collected by the builder, keyed by doc type.
 // Reuses the Phase 1 VerificationDocType values plus Section B additions.
 
@@ -63,8 +59,6 @@ export const DEMO_DOCUMENT_SLOTS: ProfileDocumentSlot[] = [
   { type: 'association_membership', label: 'Professional Association Membership', required: false },
   { type: 'cv',                    label: 'Curriculum Vitae',                 required: false },
 ];
-
-// ─── Demo data: the in-progress profile draft ────────────────────────────────
 
 export const DEMO_PROFILE_DRAFT: DoctorProfileDraft = {
   id: 'draft-1', doctorId: 'doc-1',
@@ -137,9 +131,6 @@ export const DEMO_LICENCE_EXPIRY_WARNING: LicenceExpiryWarning = {
   message: 'Your MDCN licence expires in 45 days. Upload your renewed licence to avoid suspension.',
 };
 
-// ─── Demo data: verification decision (screens 26, 27, 28) ───────────────────
-
-// PRIVACY: reason labels are shown to the doctor — keep them coarse and never
 // reference the MDCN register or matched-field detail.
 export const DEMO_REJECTION_REASONS: VerificationRejectionReason[] = [
   { code: 'doc_unclear',      label: 'Document image is blurry or unreadable', docType: 'government_id' },
@@ -152,14 +143,10 @@ export const DEMO_VERIFICATION_DECISION: VerificationDecision = {
   submissionId: 'ver-1', outcome: 'approved', decidedAt: iso(27),
 };
 
-// ─── Read endpoints ──────────────────────────────────────────────────────────
-
 // GET /profile/draft (internal/doctor Service/Repository.GetProfileDraft) wires
 // straight to GetProfile, whose response is the flat doctor_profiles row — id,
 // userId, providerType, name, bio, specialtyId, languages, ..., profileDraft,
 // completedSteps, createdAt, updatedAt — not the DoctorProfileDraft shape this
-// function promises (personalInfo, licence, pricing, freeFollowUp, ...). Every
-// one of Section B's screens writes and reads through this same function, so
 // this was never reachable with real data: each screen's `save.mutateAsync({
 // draft: {...} })` call sends the WHOLE SaveProfileDraftInput as the PUT body
 // (doctorPut passes `input` straight through), so what actually lands in the
@@ -167,20 +154,16 @@ export const DEMO_VERIFICATION_DECISION: VerificationDecision = {
 // idempotencyKey: "..."}` — the real fields the builder needs live one level
 // deeper, at `profileDraft.draft`, not at the wire's top level or even at
 // `profileDraft` directly.
-//
 // This unwraps that one level and fills in every required DoctorProfileDraft
 // field DEMO_PROFILE_DRAFT already exercises, so a field a given user hasn't
 // reached yet renders as empty rather than crashing the screen that reads it
 // (`draft.personalInfo` etc. would otherwise be `undefined`, which is exactly
-// what made personal.tsx's `if (isError || !draft || !form)` guard permanently
 // true on the live path — the reported "We could not load your profile.").
-//
 // NOT fixed here, and out of scope for that crash: because `profileDraft.draft`
 // is replaced wholesale on every save (jsonb `||` merges top-level keys only,
 // and every screen's patch is nested one level under the same `draft` key),
 // each step's save currently overwrites every OTHER step's already-saved data
 // — a real, separate data-loss defect in the write path, not a shape mismatch.
-// Reading it back accurately here does not fix that; it surfaces it (a
 // returning user will see only whichever screen they saved last).
 interface ProfileDraftWire {
   id:            string;
@@ -237,8 +220,6 @@ export async function getVerificationDecision(submissionId?: string): Promise<Ve
   if (DOCTOR_USE_MOCK) return wait(DEMO_VERIFICATION_DECISION);
   return doctorGet<VerificationDecision>('/verification/decision', { submissionId });
 }
-
-// ─── Mutations ───────────────────────────────────────────────────────────────
 
 export async function saveProfileDraft(input: SaveProfileDraftInput): Promise<SaveProfileDraftResult> {
   if (DOCTOR_USE_MOCK) {
@@ -308,7 +289,7 @@ export async function saveBankAccount(input: SaveBankAccountInput): Promise<Save
   if (DOCTOR_USE_MOCK) {
     const account: BankAccount = {
       bankName: input.bankName, bankCode: input.bankCode, accountNumber: input.accountNumber,
-      accountName: 'AMAKA OBI', isVerified: true, // demo: name enquiry "resolves"
+      accountName: 'AMAKA OBI', isVerified: true,
     };
     return wait({ account }, 600);
   }

@@ -1,4 +1,3 @@
-// ── Admin — Realtor control plane types ──────────────────────────────────────
 // All money is integer minor units (kobo).
 
 export interface RealtorOverview {

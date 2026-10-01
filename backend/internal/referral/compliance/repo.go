@@ -6,6 +6,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ptr"
 )
 
 // Repository is the parameterized data layer for the compliance tables.
@@ -16,21 +19,6 @@ type Repository struct {
 func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
-
-func nullable(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func deref(dst *string, src *string) {
-	if src != nil {
-		*dst = *src
-	}
-}
-
-// --- disclosures ---
 
 const discCols = `id, slug, version, title, body, jurisdiction, active, effective_at, created_by, created_at`
 
@@ -43,7 +31,7 @@ func scanDisclosure(row pgx.Row) (*Disclosure, error) {
 		&d.Active, &d.EffectiveAt, &creBy, &d.CreatedAt); err != nil {
 		return nil, err
 	}
-	deref(&d.CreatedBy, creBy)
+	ptr.Assign(&d.CreatedBy, creBy)
 	return &d, nil
 }
 
@@ -74,7 +62,7 @@ func (r *Repository) PublishDisclosure(ctx context.Context, in DisclosureInput, 
 		        COALESCE((SELECT max(version) FROM referral_disclosures WHERE slug = $1), 0) + 1,
 		        $2, $3, $4, true, $5)
 		RETURNING ` + discCols
-	d, err := scanDisclosure(tx.QueryRow(ctx, q, in.Slug, in.Title, in.Body, jur, nullable(createdBy)))
+	d, err := scanDisclosure(tx.QueryRow(ctx, q, in.Slug, in.Title, in.Body, jur, dbutil.NullStr(createdBy)))
 	if err != nil {
 		return nil, fmt.Errorf("compliance: insert disclosure: %w", err)
 	}
@@ -123,8 +111,6 @@ func (r *Repository) ActiveDisclosure(ctx context.Context, slug string) (*Disclo
 	return d, nil
 }
 
-// --- consents ---
-
 const consentCols = `id, user_id, disclosure_id, consent_type, granted, version, source, created_at`
 
 func scanConsent(row pgx.Row) (*Consent, error) {
@@ -136,8 +122,8 @@ func scanConsent(row pgx.Row) (*Consent, error) {
 	if err := row.Scan(&c.ID, &c.UserID, &disc, &c.ConsentType, &c.Granted, &version, &src, &c.CreatedAt); err != nil {
 		return nil, err
 	}
-	deref(&c.DisclosureID, disc)
-	deref(&c.Source, src)
+	ptr.Assign(&c.DisclosureID, disc)
+	ptr.Assign(&c.Source, src)
 	if version != nil {
 		c.Version = *version
 	}
@@ -165,7 +151,7 @@ func (r *Repository) RecordConsent(ctx context.Context, userID string, in Consen
 		VALUES ($1,$2,$3,$4,$5,$6)
 		RETURNING ` + consentCols
 	return scanConsent(r.db.QueryRow(ctx, q,
-		userID, nullable(in.DisclosureID), in.ConsentType, granted, version, nullable(in.Source)))
+		userID, dbutil.NullStr(in.DisclosureID), in.ConsentType, granted, version, dbutil.NullStr(in.Source)))
 }
 
 // ConsentsByUser returns a user's consents.
@@ -189,8 +175,6 @@ func (r *Repository) ConsentsByUser(ctx context.Context, userID string) ([]Conse
 	return out, rows.Err()
 }
 
-// --- AML flags ---
-
 const amlCols = `id, subject_id, reason_code, amount_kobo, window_count, status, reward_id, reported_ref, created_at`
 
 func scanAML(row pgx.Row) (*AMLFlag, error) {
@@ -201,9 +185,9 @@ func scanAML(row pgx.Row) (*AMLFlag, error) {
 	if err := row.Scan(&f.ID, &subj, &f.ReasonCode, &f.AmountKobo, &f.WindowCount, &f.Status, &reward, &repd, &f.CreatedAt); err != nil {
 		return nil, err
 	}
-	deref(&f.SubjectID, subj)
-	deref(&f.RewardID, reward)
-	deref(&f.ReportedRef, repd)
+	ptr.Assign(&f.SubjectID, subj)
+	ptr.Assign(&f.RewardID, reward)
+	ptr.Assign(&f.ReportedRef, repd)
 	return &f, nil
 }
 
@@ -217,7 +201,7 @@ func (r *Repository) RaiseAML(ctx context.Context, in AMLFlagInput) (*AMLFlag, e
 	if wc <= 0 {
 		wc = 1
 	}
-	return scanAML(r.db.QueryRow(ctx, q, nullable(in.SubjectID), in.ReasonCode, in.AmountKobo, wc, nullable(in.RewardID)))
+	return scanAML(r.db.QueryRow(ctx, q, dbutil.NullStr(in.SubjectID), in.ReasonCode, in.AmountKobo, wc, dbutil.NullStr(in.RewardID)))
 }
 
 // ListAML lists AML flags, optional status filter.
@@ -262,8 +246,6 @@ func (r *Repository) SetAMLStatus(ctx context.Context, id, status, reportedRef s
 	return nil
 }
 
-// --- policy ---
-
 // GetPolicy returns the structural policy singleton.
 func (r *Repository) GetPolicy(ctx context.Context) (*Policy, error) {
 	const q = `
@@ -281,7 +263,7 @@ func (r *Repository) GetPolicy(ctx context.Context) (*Policy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compliance: get policy: %w", err)
 	}
-	deref(&p.UpdatedBy, updBy)
+	ptr.Assign(&p.UpdatedBy, updBy)
 	return &p, nil
 }
 
@@ -314,13 +296,11 @@ func (r *Repository) UpdatePolicy(ctx context.Context, in PolicyInput, updatedBy
 			updated_by = EXCLUDED.updated_by,
 			updated_at = now()`
 	if _, err := r.db.Exec(ctx, q,
-		cur.MaxPyramidDepth, cur.TierCapKobo, cur.RequireActivity, cur.AllowedJurisdictions, nullable(updatedBy)); err != nil {
+		cur.MaxPyramidDepth, cur.TierCapKobo, cur.RequireActivity, cur.AllowedJurisdictions, dbutil.NullStr(updatedBy)); err != nil {
 		return nil, fmt.Errorf("compliance: update policy: %w", err)
 	}
 	return r.GetPolicy(ctx)
 }
-
-// --- earnings-claim review (read referral_review_queue) ---
 
 // ClaimReview returns held/queued reward rows for earnings-claim review.
 func (r *Repository) ClaimReview(ctx context.Context, status string) ([]ClaimReviewItem, error) {
@@ -347,14 +327,12 @@ func (r *Repository) ClaimReview(ctx context.Context, status string) ([]ClaimRev
 		if err := rows.Scan(&it.ID, &reward, &subj, &it.ReasonCode, &it.Status, &it.CreatedAt); err != nil {
 			return nil, err
 		}
-		deref(&it.RewardID, reward)
-		deref(&it.SubjectID, subj)
+		ptr.Assign(&it.RewardID, reward)
+		ptr.Assign(&it.SubjectID, subj)
 		out = append(out, it)
 	}
 	return out, rows.Err()
 }
-
-// --- regulatory reporting export ---
 
 // RegulatoryExport returns AML rows for a reporting period (regulatory export).
 func (r *Repository) RegulatoryExport(ctx context.Context, since, until string) ([]RegulatoryExportRow, error) {
@@ -378,8 +356,8 @@ func (r *Repository) RegulatoryExport(ctx context.Context, since, until string) 
 		if err := rows.Scan(&subj, &row.ReasonCode, &row.AmountKobo, &row.Status, &repd, &row.CreatedAt); err != nil {
 			return nil, err
 		}
-		deref(&row.SubjectID, subj)
-		deref(&row.ReportedRef, repd)
+		ptr.Assign(&row.SubjectID, subj)
+		ptr.Assign(&row.ReportedRef, repd)
 		out = append(out, row)
 	}
 	return out, rows.Err()

@@ -5,8 +5,6 @@ import (
 	"time"
 )
 
-// ── Money-path sentinel errors (Block 29) ────────────────────────────────────
-
 // ErrIdempotencyRequired is returned when a money mutation is attempted without
 // an Idempotency-Key (iron rule: money mutations fail closed without one).
 var ErrIdempotencyRequired = errors.New("estate: Idempotency-Key required")
@@ -21,8 +19,6 @@ var ErrDocumentNotFound = errors.New("estate: document not found in this estate"
 // ErrDocumentForbidden is returned when the caller may not access a (restricted)
 // document.
 var ErrDocumentForbidden = errors.New("estate: not authorised to access this document")
-
-// ── Block 29: Dues / Rent / Subscriptions ────────────────────────────────────
 
 // DuesInvoice is a billed obligation against a resident (service charge, rent…).
 type DuesInvoice struct {
@@ -90,8 +86,6 @@ type ApplyRestrictionRequest struct {
 	Reason     string `json:"reason"`
 }
 
-// ── Block 31: Tasks ──────────────────────────────────────────────────────────
-
 // Task is a committee/operations task within an estate.
 type Task struct {
 	ID          string     `json:"id"`
@@ -119,8 +113,6 @@ type CreateTaskRequest struct {
 type UpdateTaskStatusRequest struct {
 	Status string `json:"status" binding:"required,oneof=todo in_progress done"`
 }
-
-// ── Block 32: Maintenance / Repairs ──────────────────────────────────────────
 
 // RepairRequest is a maintenance ticket raised by a resident.
 type RepairRequest struct {
@@ -161,8 +153,6 @@ type AddRepairUpdateRequest struct {
 	Note   string `json:"note"`
 }
 
-// ── Block 33: Facilities / Amenities ─────────────────────────────────────────
-
 // Facility is a bookable amenity (hall, pool, court…).
 type Facility struct {
 	ID        string    `json:"id"`
@@ -201,8 +191,6 @@ type BookFacilityRequest struct {
 	EndsAt   time.Time `json:"ends_at" binding:"required"`
 }
 
-// ── Block 34: Announcements / Communication ──────────────────────────────────
-
 // Announcement is a community notice posted by an estate admin.
 type Announcement struct {
 	ID        string    `json:"id"`
@@ -221,8 +209,6 @@ type CreateAnnouncementRequest struct {
 	Body  string `json:"body" binding:"required,min=1"`
 	Kind  string `json:"kind"`
 }
-
-// ── Block 35: Emergencies / Incidents ────────────────────────────────────────
 
 // EmergencyAlert is a panic/emergency raised by a resident.
 type EmergencyAlert struct {
@@ -247,8 +233,6 @@ type RaiseEmergencyRequest struct {
 type UpdateEmergencyStatusRequest struct {
 	Status string `json:"status" binding:"required,oneof=open responding resolved"`
 }
-
-// ── Block 36: Documents ──────────────────────────────────────────────────────
 
 // Document is an estate document record (file lives in R2 behind a signed URL).
 type Document struct {
@@ -288,8 +272,6 @@ type CreateDocumentRequest struct {
 	SizeBytes   int64  `json:"size_bytes"`
 }
 
-// ── Block 37: Vendors / Artisans ─────────────────────────────────────────────
-
 // Vendor is a registered artisan/service provider for an estate.
 type Vendor struct {
 	ID        string    `json:"id"`
@@ -310,8 +292,6 @@ type CreateVendorRequest struct {
 	Phone    string `json:"phone"`
 	UserID   string `json:"user_id"`
 }
-
-// ── Block 40/43/44: aggregate / cross-cut payloads ───────────────────────────
 
 // FinanceDashboard (Block 40) is the estate operator's money summary.
 type FinanceDashboard struct {

@@ -32,16 +32,12 @@ export function useIntakePermissions() {
   return { user, can };
 }
 
-// ─── Style tokens ────────────────────────────────────────────────────────────
-
 export const card: CSSProperties = { border: `1px solid ${colors.border}`, padding: 14, borderRadius: 8, background: colors.card };
 export const th: CSSProperties = { padding: '8px 6px', fontWeight: 600, color: colors.muted };
 export const td: CSSProperties = { padding: '8px 6px', color: colors.text };
 export const input: CSSProperties = { background: colors.card, color: colors.text, border: `1px solid ${colors.inputBorder}`, padding: '5px 8px', borderRadius: 4 };
 export const btn: CSSProperties = { background: colors.card, color: colors.text, border: `1px solid ${colors.inputBorder}`, padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontWeight: 600 };
 export const btnPrimary: CSSProperties = { ...btn, background: colors.primary, color: '#fff', borderColor: colors.primary };
-
-// ─── Common components ───────────────────────────────────────────────────────
 
 export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
   return (

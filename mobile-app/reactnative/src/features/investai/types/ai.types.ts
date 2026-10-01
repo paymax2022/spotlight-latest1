@@ -1,8 +1,6 @@
-// ── Paymax Invest · AI Investment Education Assistant — Type Contract ─────────
 // Source of truth the Invest-AI screens code against. The assistant EDUCATES —
 // it never gives personalized financial advice (docs/crypto/modules.md → "AI
 // Investment Education Assistant": Allowed/Prohibited/Guardrails). Every
-// assistant turn carries a disclaimer; advice-seeking prompts are refused and
 // redirected to education.
 
 /** Who authored a chat turn. */

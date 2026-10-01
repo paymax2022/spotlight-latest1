@@ -1,9 +1,7 @@
 package utilitybills_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB suite for the Phase 3 scheduled requery sweep (SweepPending / the
 // StartPendingSweep job it feeds). Reuses newFixture from live_db_test.go.
-//
 // What it proves:
 //  1. A transaction genuinely stuck in provider_pending gets picked up and
 //     resolved by the sweep (VTpass's sandbox GetBill always answers
@@ -13,7 +11,6 @@ package utilitybills_test
 //     the sweep must not touch settled rows.
 //  3. limit is respected and rows are processed oldest-first, matching the
 //     TS source's requeryPendingUtilityTransactions ordering.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

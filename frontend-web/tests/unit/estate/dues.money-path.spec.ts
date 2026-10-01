@@ -23,18 +23,14 @@ const ESTATE = 'estate-1';
 const USER = 'user-1';
 const KEY = 'idem-key-abc';
 
-// ---------------------------------------------------------------------------
-// A minimal per-table Supabase stub. select()/eq()/is() chain; the dues service
-// terminates selects with maybeSingle()/single() and awaits update().eq()
 // directly, so the chain is also thenable (resolves the update result).
-// ---------------------------------------------------------------------------
 interface Cfg {
   invoice: any;
-  priorPayment?: any;          // returned by estate_payments .maybeSingle() (fast-path / reconcile-refetch)
-  insertResult?: any;          // returned by estate_payments insert().single()
-  insertError?: any;           // error returned by estate_payments insert().single() (e.g. { code: '23505', message } )
-  refetchAfterConflict?: any;  // returned by the .eq('reference',...).maybeSingle() refetch AFTER a 23505
-  updateError?: any;           // error returned when awaiting invoice update().eq()
+  priorPayment?: any;
+  insertResult?: any;
+  insertError?: any;
+  refetchAfterConflict?: any;
+  updateError?: any;
 }
 function makeSupabase(cfg: Cfg) {
   const calls: any = { insertPayload: null, updatePayload: null, updatedTable: null };
@@ -183,7 +179,6 @@ describe('payInvoice — idempotent replay (no double-charge)', () => {
   });
 
   it('reconciles when the wallet was already debited but no payment row was written', async () => {
-    // Fast-path finds no prior payment; debit reports alreadyProcessed (ledger UNIQUE);
     // re-check still finds none → a fresh insert recreates the payment row (no second debit).
     const { client, calls } = makeSupabase({ invoice: invoiceRow(), priorPayment: null, insertResult: paymentRow() });
     vi.mocked(createAdminClient).mockReturnValue(client as any);

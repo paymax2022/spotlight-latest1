@@ -4,7 +4,6 @@ package creator
 // every guard and every SQL builder here is a pure function precisely so the
 // rules that matter (ownership, the delete-with-funds refusal, partial-update
 // semantics, pause/resume transitions) are provable without TEST_DATABASE_URL.
-//
 // This matters beyond convenience: a Go package whose live-DB tests all SKIP
 // still prints "ok", so a guard covered only by a gated integration test is a
 // guard nothing actually verifies in CI.
@@ -24,8 +23,6 @@ func tsp() *time.Time {
 	t := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	return &t
 }
-
-// ─── Ownership ───────────────────────────────────────────────────────────────
 
 // The single most important test in this file. A campaign id arrives from the
 // client on every one of these routes; if guardOwned ever stops refusing a
@@ -71,8 +68,6 @@ func TestGuardOwned_OwnershipBeatsDeletion(t *testing.T) {
 	}
 }
 
-// ─── Delete guard ────────────────────────────────────────────────────────────
-
 // A campaign that has EVER held money must never be deletable.
 func TestGuardDelete_RefusesWithContributions(t *testing.T) {
 	st := campaignState{CreatorID: "owner-1", ReviewStatus: "ACTIVE"}
@@ -97,8 +92,6 @@ func TestGuardDelete_RefundedStillCountsAsFunded(t *testing.T) {
 		t.Fatal("a campaign whose only contribution was refunded must not be deletable")
 	}
 }
-
-// ─── Partial update ──────────────────────────────────────────────────────────
 
 // The whole point of the pointer fields: patching ONE key must not touch the
 // others. A plain-bool/plain-string struct would emit writes for every column
@@ -195,8 +188,6 @@ func TestBuildCampaignUpdate_ValuesAreBoundNotInlined(t *testing.T) {
 	}
 }
 
-// ─── Update validation ───────────────────────────────────────────────────────
-
 func TestValidateUpdate(t *testing.T) {
 	cases := []struct {
 		name string
@@ -246,8 +237,6 @@ func TestGuardGoalNotBelowRaised(t *testing.T) {
 		t.Fatalf("a body with no goalKobo must not be goal-checked, got %v", err)
 	}
 }
-
-// ─── Pause / resume transitions ──────────────────────────────────────────────
 
 func TestGuardPause(t *testing.T) {
 	cases := []struct {
@@ -326,8 +315,6 @@ func TestPauseResumeCycle(t *testing.T) {
 	}
 }
 
-// ─── Feature request ─────────────────────────────────────────────────────────
-
 // Mirrors the ADMIN promotion guard in adminext/featured.go: only an ACTIVE
 // campaign may be promoted, so only an ACTIVE campaign may ask to be.
 func TestGuardFeatureRequest(t *testing.T) {
@@ -355,8 +342,6 @@ func TestGuardFeatureRequest(t *testing.T) {
 		})
 	}
 }
-
-// ─── Owner payload contract ──────────────────────────────────────────────────
 
 // The mobile client keys off these exact names. paused and featureRequestStatus
 // are both additions to an existing payload, so a rename or an accidental
@@ -394,8 +379,6 @@ func mustJSONSummary(t *testing.T, s CampaignSummary) string {
 	}
 	return string(b)
 }
-
-// ─── Audit ───────────────────────────────────────────────────────────────────
 
 // The audit target names the campaign and the columns that moved, so a
 // suspicious edit is greppable — but never mirrors free-text user content.

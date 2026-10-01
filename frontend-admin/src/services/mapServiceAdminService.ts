@@ -1,4 +1,3 @@
-// ── Admin — MapService v2 cost/coverage + OSM contribution review ───────────────
 // Mirrors healthVetVerificationService.ts exactly for request building / auth / errors:
 //  • adminBase() rewrites env.apiBaseUrl (…/api/v1) → …/api/maps/admin
 //  • authHeaders() attaches the admin Bearer token from localStorage
@@ -21,7 +20,6 @@ import type {
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MAPS_USE_MOCK);
 
 // apiRoot() strips any trailing /api/v1 off env.apiBaseUrl → /api/maps/admin
-// (verified: backend/internal/maps/routes_v2.go `grp := r.Group("/api/maps/admin")`,
 // registered via RegisterMapsV2Admin in finance_routes.go). This used to be a
 // regex on env.apiBaseUrl itself, which relied on apiBaseUrl ending in
 // /api/v1 — it no longer does (see config/env.ts), so that regex silently
@@ -61,7 +59,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Mock fixtures (parallel to the existing health vet admin service) ───────────
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dayStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 

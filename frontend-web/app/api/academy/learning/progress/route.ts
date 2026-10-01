@@ -2,7 +2,7 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { resolveLearner } from '@/src/server/services/academy/learner';
+import { resolveLearner } from '@/src/server/services/academy';
 
 export async function POST(request: Request) {
   try {

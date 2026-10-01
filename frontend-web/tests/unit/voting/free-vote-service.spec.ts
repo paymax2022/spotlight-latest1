@@ -37,10 +37,6 @@ vi.mock('@/src/server/voting/audit.service', () => ({
   appendAuditLog: vi.fn().mockResolvedValue(undefined),
 }));
 
-// ---------------------------------------------------------------------------
-// Generic chainable/thenable fake for `supabase.from(table)...`
-// ---------------------------------------------------------------------------
-
 function makeTableClient(responses: Record<string, unknown[]>) {
   const callIndex: Record<string, number> = {};
   const calls: { table: string; method: string; args: unknown[] }[] = [];
@@ -117,7 +113,6 @@ describe('castFreeVote (real logic, mocked Supabase)', () => {
     vi.mocked(scoreFreeFraud).mockResolvedValue(0);
   });
 
-  // FV-001 ---------------------------------------------------------------
   it('FV-001: casts one free vote and increments the per-contestant counter by exactly 1', async () => {
     const { client, calls } = makeTableClient({
       voting_settings: [{ data: baseSettingsRow(), error: null }],
@@ -150,7 +145,6 @@ describe('castFreeVote (real logic, mocked Supabase)', () => {
     expect((contestantUpdate!.args[0] as any).free_votes_used).toBe(1);
   });
 
-  // FV-004 ---------------------------------------------------------------
   it('FV-004: a vote for a different contestant the same day is allowed (per-contestant cap, not per-day)', async () => {
     const settingsClient = () =>
       makeTableClient({
@@ -188,7 +182,6 @@ describe('castFreeVote (real logic, mocked Supabase)', () => {
     expect(resultB.votesAdded).toBe(1);
   });
 
-  // FV-006 -----------------------------------------------------------------
   it('FV-006: re-login on a new device/session cannot bypass the identity-scoped (user) limit once exhausted', async () => {
     const { client } = makeTableClient({
       voting_settings: [{ data: baseSettingsRow({ free_vote_limit_scope: 'user' }), error: null }],
@@ -212,7 +205,6 @@ describe('castFreeVote (real logic, mocked Supabase)', () => {
     ).rejects.toMatchObject({ status: 429 });
   });
 
-  // FV-007 -------------------------------------------------------------------
   it('FV-007: the vote-date bucket is derived from server time, ignoring any client-supplied date field', async () => {
     const { client, calls } = makeTableClient({
       voting_settings: [{ data: baseSettingsRow(), error: null }],
@@ -226,7 +218,6 @@ describe('castFreeVote (real logic, mocked Supabase)', () => {
 
     const serverToday = new Date().toISOString().split('T')[0];
 
-    // CastFreeVoteRequest has no client-timestamp field at all; even attaching
     // an arbitrary bogus one must not influence the bucket used.
     const req = {
       contestId: 'contest-1',
@@ -244,7 +235,6 @@ describe('castFreeVote (real logic, mocked Supabase)', () => {
     expect((upsertCall!.args[0] as any).vote_date).not.toBe('2020-01-01');
   });
 
-  // FV-009 -----------------------------------------------------------------
   describe('FV-009: eligibility gate (require_login_for_free_vote)', () => {
     it('rejects an unauthenticated voter when login is required', async () => {
       const { client } = makeTableClient({

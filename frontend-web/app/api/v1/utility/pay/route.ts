@@ -42,7 +42,6 @@ export async function POST(request: Request) {
         metadata,
       });
       if (!result.ok) return result.response;
-      // Go's handler always answers 200; this route's own long-standing contract
       // (what mobile/web already call) is 201 for a fresh purchase, 200 for a
       // replayed one — preserve that here rather than leaking Go's status code.
       const alreadyProcessed = Boolean(result.data.already_processed);

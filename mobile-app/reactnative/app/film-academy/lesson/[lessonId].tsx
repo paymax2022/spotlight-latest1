@@ -1,4 +1,3 @@
-// ── Film Academy — a lesson ──────────────────────────────────────────────────
 // A NATIVE screen. Reads the lesson out of the curriculum already in the query
 // cache rather than adding a per-lesson endpoint: the list is small, and one
 // source of truth means the tick here and the tick on the course screen can
@@ -11,10 +10,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, CircleCheck, Circle, Clock, Home } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { getCurriculum, setLessonProgress, FILM_ACADEMY_LEARN_KEY } from '@/features/filmAcademy/api';
 import { Lecture } from '@/features/filmAcademy/Lecture';
 import { InlineVideo } from '@/features/filmAcademy/InlineVideo';
@@ -52,7 +51,6 @@ export default function FilmAcademyLessonScreen() {
       setBusy(false);
     }
   };
-
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

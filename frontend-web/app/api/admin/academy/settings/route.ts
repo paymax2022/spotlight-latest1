@@ -18,7 +18,6 @@ export async function GET(request: Request) {
 
     if (error) return errorResponse('Failed to load settings', 500);
 
-    // If no settings row exists yet, return safe defaults
     return successResponse({
       success: true,
       settings: data ?? {
@@ -43,7 +42,6 @@ export async function PUT(request: Request) {
 
     const supabase = createAdminClient();
 
-    // Find the active settings row; if none, create one
     const { data: existing } = await supabase
       .from('academy_settings')
       .select('id')

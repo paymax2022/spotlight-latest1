@@ -17,7 +17,6 @@ export async function POST(request: Request) {
     const plate: string = String(body?.plate ?? '').trim().toUpperCase();
     if (!plate) throw new ApiError('plate is required', 400);
 
-    // Check blacklist for plate match.
     const { data: blRow } = await supabase
       .from('visitor_blacklist')
       .select('id')

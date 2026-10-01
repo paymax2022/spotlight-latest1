@@ -6,7 +6,6 @@ import type {
 } from '@/types/tradingAdmin';
 
 // Trading admin console — service layer. Backend routes hang off /v1/trading/admin
-// (Go/Gin, RBAC guard("trading.*"); reason_code mandatory on decisions; bypass is
 // two-person maker≠checker). Fixture-backed until the routes are live (USE_FIXTURES),
 // mirroring the marketplace admin service.
 export function tradingAdminBase(): string {
@@ -14,7 +13,6 @@ export function tradingAdminBase(): string {
   // against backend/internal/app/finance_routes.go:557,560
   // (`tMember := r.Group("/api/v1/trading")`, `tAdmin := r.Group("/api/v1/admin/trading")`).
   // This previously did a 3-step manual host-recovery chain
-  // (`env.apiBaseUrl.replace(/\/api\/v1\/?$/, '').replace(/\/api\/?$/, '').replace(/\/$/, '')`)
   // to strip `/api/v1` off apiBaseUrl and re-append `/v1/trading/admin`, which both
   // dropped `/api` entirely and inverted admin/trading — every admin call 404'd
   // once the routes went live. It also stopped matching altogether once
@@ -138,7 +136,6 @@ export async function listBypassRegister(): Promise<TradingBypassEntry[]> {
   const d = await res.json(); return Array.isArray(d) ? d : d.data ?? [];
 }
 
-// ── §12 Promotion ladder ──────────────────────────────────────────────────────
 // Routes: /v1/trading/admin/promotions*. Each mutating route is RBAC-guarded and the
 // two-person + Risk/legal rules are enforced by the backend ladder gate — the UI
 // only proposes. Fixtures are mutated in place so the mock flow feels real.
@@ -190,7 +187,6 @@ export async function setReadiness(id: string, input: ReadinessRequest): Promise
   const d = await res.json(); return d.strategy ?? d;
 }
 
-// promote — the acting admin is the CHECKER; maker_id must differ. Risk+legal are
 // required for canary→live; the backend gate is authoritative.
 export async function promoteStrategy(id: string, input: PromoteRequest): Promise<TradingStage> {
   if (!input.maker_id.trim()) throw new Error('A proposing admin (maker) is required, and must differ from you.');

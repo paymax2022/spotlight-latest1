@@ -5,7 +5,7 @@
  */
 
 import sharp, { OverlayOptions, FitEnum } from 'sharp';
-import { isAllowedRemoteImageUrl } from '@/lib/config/media-hosts';
+import { isAllowedRemoteImageUrl } from '@/lib/config';
 
 export interface SlotConfig {
   id: string;

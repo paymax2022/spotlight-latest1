@@ -1,4 +1,3 @@
-// ── Admin — Paymax Health · Vet VCN verification review (Mode B / ASSISTED) ─────
 // Mirrors healthVetAdminService.ts exactly for request building / auth / errors:
 //  • adminBase() builds the absolute backend path via apiRoot() + /api/health/vet/admin
 //  • authHeaders() attaches the admin Bearer token from localStorage
@@ -6,13 +5,9 @@
 // These verification endpoints live under …/api/health/vet/admin/verification
 // (backend/internal/app/health_credential_routes.go RegisterHealthVCNVerification:
 // admin param is adminGroupTop5(r, "/api/health/vet/admin"), then internally
-// `ag := admin.Group("/verification")`; this file supplies the "/verification"
 // segment itself on each call path below) and require RBAC permission
 // `health.vet.review` (carried by the admin session token). Mock by default
-// (NEXT_PUBLIC_HEALTH_USE_MOCK); flip to false to hit the live Go backend. Every
 // document-url read is access-logged server-side (HL-8 / NDPA).
-//
-// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/vet/admin')`,
 // which stopped matching the moment apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
 // the same regression. Every request 404'd against <proxy>/verification/... instead
@@ -53,7 +48,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Mock fixtures (parallel to the existing vet admin service) ──────────────────
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 

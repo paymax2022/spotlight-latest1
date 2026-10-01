@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet, Platform, Linking } from 'react-native';
 import { Play, Clapperboard } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import type { PlayAlongVideo } from '../constants';
 
 /**

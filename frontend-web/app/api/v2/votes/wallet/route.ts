@@ -56,7 +56,6 @@ export async function POST(request: Request) {
     const cached = await checkAndClaimIdempotencyKey(cacheKey);
     if (cached) return successResponse(cached as Record<string, unknown>);
 
-    // Extract bearer token to forward to Go backend.
     const authHeader = request.headers.get('Authorization') ?? '';
     const token = authHeader.replace(/^Bearer\s+/i, '');
 

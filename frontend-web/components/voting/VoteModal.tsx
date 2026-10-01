@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { authHeaders } from '@/src/lib/auth/client';
 import type { VotePackage, VotingSettings } from '@/src/features/voting/types';
-import { FORMAT_NAIRA } from '@/src/features/voting/constants';
+import { FORMAT_NAIRA } from '@/src/features/voting/types';
 
 interface Props {
   contestId: string;
@@ -103,7 +103,6 @@ export default function VoteModal({
         setStep('error');
         return;
       }
-      // Redirect to Paystack
       window.location.href = json.authorizationUrl;
     } catch {
       setErrorMsg('Network error. Please try again.');

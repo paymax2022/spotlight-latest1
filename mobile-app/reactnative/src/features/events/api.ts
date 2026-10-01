@@ -51,8 +51,6 @@ const daysFromNow = (d: number) => new Date(Date.now() + d * 86_400_000).toISOSt
 const daysAgo     = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
 const hoursFromNow = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
 
-// ── Mock fixtures (field names match the real backend shape; opt-in only via
-// EXPO_PUBLIC_EVENTS_USE_MOCK=true — see constants/events.constants.ts) ──────
 const TIERS_FELABRATION: TicketTier[] = [
   { id: 't_reg', event_id: 'e_live', name: 'Regular', price_kobo: 1_500_000, capacity: 1000, sold: 760, active: true },
   { id: 't_vip', event_id: 'e_live', name: 'VIP', price_kobo: 5_000_000, capacity: 200, sold: 168, active: true },
@@ -154,7 +152,6 @@ function summaryOf(e: EventDetail): EventSummary {
   };
 }
 
-// ── Reads ──────────────────────────────────────────────────────────────────────
 export async function listEvents(params?: { category?: string; state?: string }): Promise<EventSummary[]> {
   if (USE_MOCK) {
     await delay();
@@ -278,7 +275,6 @@ export async function listAttendees(eventId: string): Promise<Attendee[]> {
   return pickList(await api.get(`${API_BASE}/${eventId}/attendees`), 'attendees');
 }
 
-// ── Mutations (each money mutation carries an Idempotency-Key) ────────────────
 export async function purchaseTickets(input: PurchaseTicketInput): Promise<PurchaseResult> {
   if (USE_MOCK) {
     await delay();
@@ -336,7 +332,6 @@ export async function addTicketTier(eventId: string, input: AddTierInput): Promi
   return unwrap(await api.post(`${API_BASE}/${eventId}/tiers`, input));
 }
 
-// ── Organiser lifecycle (state machine: DRAFT -> SUBMITTED -> APPROVED -> LIVE -> CLOSED) ──
 export async function submitEvent(eventId: string): Promise<EventDetail> {
   if (USE_MOCK) { await delay(); return getEvent(eventId); }
   return unwrap(await api.post(`${API_BASE}/${eventId}/submit`, {}));
@@ -367,7 +362,6 @@ export async function topUpEventWallet(walletId: string, amountKobo: number, sou
 }
 
 // Tap-to-pay a vendor from the closed-loop event wallet. The charge endpoint
-// is vendor-scoped (POST /vendors/:vendorId/charge), not wallet-scoped; it
 // debits the caller's event wallet for that event server-side.
 export async function chargeVendor(vendorId: string, walletId: string, amountKobo: number): Promise<{ ok: boolean }> {
   if (USE_MOCK) {
@@ -399,7 +393,6 @@ export async function closeEventWallet(walletId: string): Promise<{ ok: boolean;
   return { ok: true, refundedKobo: res.refunded_kobo };
 }
 
-// Wallet transaction history — no dedicated list endpoint on the route table;
 // derived from mock ledger entries in mock mode, empty otherwise (see report).
 // GET /wallet/:walletId/entries — ownership-or-organiser-gated real endpoint.
 export async function listWalletEntries(walletId: string): Promise<EventWalletEntry[]> {
@@ -409,7 +402,6 @@ export async function listWalletEntries(walletId: string): Promise<EventWalletEn
 
 // Steward scan validation (offline-tolerant). Takes the REAL decoded gate token
 // (from the camera's QR scan, JSON.parse'd — see app/events/steward/scan.tsx)
-// plus which gate is scanning; POSTs the shape the backend actually expects
 // ({token, gate}), matching backend/internal/top5events's scanRequest exactly.
 // The previous version sent {credential_id: string} — a request shape the
 // backend never accepted, so live check-in was broken end to end.

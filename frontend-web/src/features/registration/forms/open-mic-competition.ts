@@ -1,13 +1,9 @@
-// ─────────────────────────────────────────────────────────────────────────────
 // Spotlight Open Mic Competition — registration form (slug: open-mic-competition)
-//
 // SELF-CONTAINED. Editing anything here affects ONLY the Open Mic form.
-//
 // Contest shape: paid (₦2,000), regional public-voting performance contest.
 // Lower legal-adult age (16) so guardian consent triggers under 16. Supports
 // audition scheduling and public voting. NO medical, NO bootcamp. Focused on
 // live performance (audio sample, performance type, genre).
-// ─────────────────────────────────────────────────────────────────────────────
 import { NIGERIA_STATES } from '../reference-data';
 import type { RegistrationDraft, RegistrationField, RegistrationStep } from '../types';
 
@@ -79,7 +75,7 @@ const complianceFields: RegistrationField[] = [
 
 const paymentFields: RegistrationField[] = [
   { key: 'payment.feeAmount', label: 'Registration fee amount', type: 'number', required: true, readOnly: true, helpText: 'This amount is configured by admin and cannot be edited.' },
-  { key: 'payment.method', label: 'Payment method', type: 'select', options: ['Card', 'Bank Transfer', 'USSD', 'Wallet'] },  // deliberately not required at wizard time — written by the payment flow; enforced in validation.ts
+  { key: 'payment.method', label: 'Payment method', type: 'select', options: ['Card', 'Bank Transfer', 'USSD', 'Wallet'] },
   { key: 'payment.transactionReference', label: 'Transaction reference', type: 'text' },
 ];
 

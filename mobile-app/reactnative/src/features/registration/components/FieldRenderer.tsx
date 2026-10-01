@@ -1,4 +1,3 @@
-// ── Registration — schema-driven field renderer ──────────────────────────────
 // Maps a RegistrationField's `type` to the app's existing inputs:
 //   text/email/tel/number/url/textarea → TextInputField
 //   date                               → DatePickerField
@@ -14,10 +13,10 @@ import { Check, Paperclip, FileCheck2, X } from 'lucide-react-native';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
 import DatePickerField from '@/components/DatePickerField';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import type { RegistrationField, UploadedFileValue } from '../types/registration.types';
 import { pickFileForField } from '../utils/filePicker';
 
@@ -170,8 +169,6 @@ function asString(value: unknown): string {
   return String(value);
 }
 
-// ── Checkbox ──────────────────────────────────────────────────────────────────
-
 function CheckboxField({ label, checked, onToggle, error }: { label: string; checked: boolean; onToggle: () => void; error?: string }) {
   return (
     <View style={styles.wrapper}>
@@ -185,8 +182,6 @@ function CheckboxField({ label, checked, onToggle, error }: { label: string; che
     </View>
   );
 }
-
-// ── Multi-select (chips) ──────────────────────────────────────────────────────
 
 function MultiSelectField({ label, options, selected, onChange, error }: { label: string; options: string[]; selected: string[]; onChange: (next: string[]) => void; error?: string }) {
   const toggle = (opt: string) => {
@@ -210,8 +205,6 @@ function MultiSelectField({ label, options, selected, onChange, error }: { label
     </View>
   );
 }
-
-// ── File upload ────────────────────────────────────────────────────────────────
 
 function FileField({ field, value, error, onUpload, onChange }: { field: RegistrationField; value?: UploadedFileValue; error?: string; onUpload: Props['onUpload']; onChange: (v: UploadedFileValue | undefined) => void }) {
   const [busy, setBusy] = React.useState(false);

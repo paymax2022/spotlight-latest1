@@ -11,15 +11,11 @@ import type {
 } from '@/types/vendorsAdmin';
 
 // Vendor oversight admin service.
-//
 // The estate vendor endpoints are estate-object-scoped (see types note), so the
 // directory/approval calls take an estateId per row. There is no cross-estate
-// admin aggregate route; the live branches below call the per-estate endpoints
 // under /api/finance/estate/:id/... and this service composes the aggregate.
 // Mock by default (NEXT_PUBLIC_VENDORS_ADMIN_USE_MOCK=false to go live).
-//
 // Vendor endpoints hang off the finance group: /api/finance/estate/... . This
-// used to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance'), which
 // stopped matching once apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) instead of ending in /api/v1 —
 // every live call 404'd against <proxy>/estate/... instead of
@@ -37,8 +33,6 @@ function authHeaders(): Record<string, string> {
 }
 
 const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_VENDORS_ADMIN_USE_MOCK);
-
-// ── Fixtures ─────────────────────────────────────────────────────────────────
 
 const vendorFixture: VendorRow[] = [
   {
@@ -188,9 +182,6 @@ const payoutFixture: VendorPayoutRow[] = [
   },
 ];
 
-// ── Directory ─────────────────────────────────────────────────────────────────
-
-// Aggregate of per-estate GET /estate/:id/vendors?status= . In live mode the
 // caller would iterate the estates the admin manages; here fixtures stand in.
 export async function listVendors(filters: VendorFilters = {}): Promise<VendorRow[]> {
   if (USE_FIXTURES) {
@@ -225,8 +216,6 @@ export async function listVendors(filters: VendorFilters = {}): Promise<VendorRo
   const data = await res.json().catch(() => ({}));
   return (data.data ?? data.vendors ?? []) as VendorRow[];
 }
-
-// ── Approval queue ─────────────────────────────────────────────────────────────
 
 // Self-onboarded vendors awaiting verification (status=pending across estates).
 export async function listVendorApplications(estateId?: string): Promise<VendorApplication[]> {
@@ -271,10 +260,7 @@ export async function setVendorStatus(
   return { status: (data.status ?? status) as VendorStatus };
 }
 
-// ── Payouts / disputes (read-only) ─────────────────────────────────────────────
-
 // Read-only oversight of vendor jobs in the payout lifecycle. There is no admin
-// aggregate endpoint and no vendor-dispute surface on the backend; disputed jobs
 // are surfaced here by title/state convention only (read-only).
 export async function listVendorPayouts(
   filters: VendorPayoutFilters = {},
@@ -298,8 +284,6 @@ export async function listVendorPayouts(
   const data = await res.json().catch(() => ({}));
   return (data.data ?? data.jobs ?? []) as VendorPayoutRow[];
 }
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
 
 export function formatKobo(kobo: number): string {
   const naira = kobo / 100;

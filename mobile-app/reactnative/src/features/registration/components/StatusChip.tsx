@@ -1,9 +1,8 @@
-// ── Registration — application status chip ───────────────────────────────────
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import type { ApplicationStatus } from '../types/registration.types';
 import { statusLabel, statusTone } from '../utils/status';
 

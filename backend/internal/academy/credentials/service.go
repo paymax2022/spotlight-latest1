@@ -68,8 +68,6 @@ var (
 	ErrNotEligible       = errors.New("credentials: not eligible for opportunity")
 )
 
-// ── Issue / sign ──────────────────────────────────────────────────────────────────
-
 // TradeCredentialIssuer is the local interface the trade package matches to issue a
 // trade credential without importing the concrete Service. IssueTradeCredential's
 // shape is exported via this interface so the trade package can call it.
@@ -157,8 +155,6 @@ func newVerificationID() (string, error) {
 	return "vc_" + strings.ToLower(enc.EncodeToString(b)), nil
 }
 
-// ── Verify (public) ─────────────────────────────────────────────────────────────
-
 // Verify returns the public sanitized verification record (no PII beyond holder
 // display name). The registry is the public source of truth — a revoked credential
 // shows status=revoked here.
@@ -169,8 +165,6 @@ func (s *Service) Verify(ctx context.Context, verificationID string) (*PublicVer
 	return s.repo.GetVerification(ctx, verificationID)
 }
 
-// ── Revoke (admin) ───────────────────────────────────────────────────────────────
-
 // Revoke runs the guarded issued→revoked transition (illegal rejected + audited) and
 // updates the public registry status=revoked. RBAC academy.credentials is enforced at
 // the route layer.
@@ -180,8 +174,6 @@ func (s *Service) Revoke(ctx context.Context, adminID, credentialID, reason stri
 	}
 	return s.repo.RevokeCredential(ctx, adminID, credentialID, reason)
 }
-
-// ── Member reads ─────────────────────────────────────────────────────────────────
 
 func (s *Service) ListMine(ctx context.Context, userID string) ([]Credential, error) {
 	if userID == "" {
@@ -208,8 +200,6 @@ func (s *Service) GetMine(ctx context.Context, userID, id string) (*Credential, 
 	}
 	return nil, ErrNotFound
 }
-
-// ── Earning bridge ───────────────────────────────────────────────────────────────
 
 // EvaluateBridge computes the earning opportunities a user is eligible for from their
 // ISSUED credentials vs each active opportunity's eligibility rules. Pure eligibility
@@ -328,8 +318,6 @@ func (s *Service) Apply(ctx context.Context, userID, opportunityID, idemKey stri
 	}
 	return &ApplyResult{Application: routed, UnlockedRole: opp.Role, PaymaxRef: paymaxRef, AlreadyRouted: false}, nil
 }
-
-// ── Opportunities admin ──────────────────────────────────────────────────────────
 
 func (s *Service) ListOpportunities(ctx context.Context, activeOnly bool) ([]EarningOpportunity, error) {
 	return s.repo.ListOpportunities(ctx, activeOnly)

@@ -1,11 +1,8 @@
 // Pure-logic unit tests for pricing mandatory takeaway packaging at checkout.
-// Run: npm run test:food
-//
 // The defect: checkout read `restaurant?.packagingFeeKobo ?? 0`, so while the
 // restaurant was loading — or had failed to load — the summary showed
 // "Takeaway packaging (3 packs)  ₦0.00" and the estimated total was short by
 // the real amount. PlaceOrder charges packaging_fee_kobo per pack off the
-// restaurant row regardless; every restaurant in the dev database charges ₦200
 // a pack, so it was never actually free.
 
 import { describe, it } from 'node:test';

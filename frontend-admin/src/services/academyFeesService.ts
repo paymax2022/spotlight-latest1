@@ -1,5 +1,3 @@
-// ── EdTech School-Fees — school-admin console service ─────────────────────────
-// Brownfield: copies academyAdminService.ts EXACTLY.
 //  • adminBase() rewrites apiRoot() (the proxy origin, /api/v1 already stripped) → …/api/academy
 //  • authHeaders() attaches the admin Bearer token from localStorage
 //  • getJson/sendJson unwrap { data } and throw on non-2xx
@@ -30,14 +28,11 @@ import type {
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ACADEMY_USE_MOCK);
 
-// Full path = apiRoot() + '/api/academy' + <call path, spelled '/admin/fees/...'
 // or '/admin/schools/...' etc below>, matching the real Go mounts: the fees
 // admin surfaces (feesschool/feesroles/feeshardship/feesadminapi/…) are
 // registered on adminGroupTop5(r, "/api/academy/admin") — see
 // backend/internal/app/academy_routes.go and each call site's own comment
 // below for the exact route it was checked against.
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/academy')`, which
 // stopped matching the moment apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
 // the same regression. Every request 404'd against <proxy>/admin/... instead of
@@ -56,10 +51,8 @@ const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 
 // Verified against backend/internal/academy/fees/**/handler.go route registrations.
 // Some functions below have a real, RBAC-gated route (some behind stale "no backend
-// route" comments that were wrong — the route existed, it was just never re-checked);
 // those throw NOT_IN_FIXTURE_MODE. A few have no backend route at all, or the real
 // route's request shape cannot be built from what this file's input types carry
-// (see each function's own comment); those throw NO_BACKEND_YET instead, since
 // flipping the mock flag would not reach a working call either way. See
 // docs/audit/ADMIN_SIMULATED_WRITES.md.
 const NOT_IN_FIXTURE_MODE =
@@ -82,13 +75,10 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Mock fixture helpers ──────────────────────────────────────────────────────
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysFromNow: number) => new Date(Date.now() + daysFromNow * 86_400_000).toISOString().slice(0, 10);
-const naira = (n: number) => n * 100; // helper: naira → kobo
+const naira = (n: number) => n * 100;
 
-// ════════════════════ SC-29 · SETUP WIZARD (school → session → class → fee schedule) ════════════════════
-// RBAC: academy.fees.setup — /api/academy/admin/fees/*
 export const PROMOTION_FLOW: PromotionStatus[] = [
   'results_finalized', 'promotion_computed', 'promotion_reviewed', 'promotion_approved', 'applied',
 ];
@@ -150,8 +140,6 @@ export async function listFeesSchools(): Promise<FeesSchool[]> {
 }
 export async function createFeesSchool(input: FeesSchoolInput): Promise<FeesSchool> {
   if (USE_MOCK) throw new Error(`Creating a school ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /admin/fees/schools (feesadminapi.CreateSchool, reuses feesschool.Service) —
-  // the OLD "no admin-group create endpoint exists" comment here was wrong; the route is
   // registered at backend/internal/academy/fees/adminapi/handler.go:66.
   return sendJson<FeesSchool>('POST', '/admin/fees/schools', input);
 }
@@ -162,8 +150,6 @@ export async function listFeesSessions(schoolId?: string): Promise<FeesSession[]
 }
 export async function createFeesSession(input: FeesSessionInput): Promise<FeesSession> {
   if (USE_MOCK) throw new Error(`Creating a session ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /admin/fees/sessions (feesadminapi.CreateSession) — the OLD "MEMBER-only,
-  // no admin-group mount" comment here was wrong; the route is registered at
   // backend/internal/academy/fees/adminapi/handler.go:72.
   return sendJson<FeesSession>('POST', '/admin/fees/sessions', input);
 }
@@ -174,8 +160,6 @@ export async function listFeesClasses(sessionId?: string): Promise<FeesClass[]> 
 }
 export async function createFeesClass(input: FeesClassInput): Promise<FeesClass> {
   if (USE_MOCK) throw new Error(`Creating a class ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /admin/fees/classes (feesadminapi.CreateClass) — the OLD "MEMBER-only, no
-  // admin-group mount" comment here was wrong; the route is registered at
   // backend/internal/academy/fees/adminapi/handler.go:74.
   return sendJson<FeesClass>('POST', '/admin/fees/classes', input);
 }
@@ -196,8 +180,6 @@ export async function issueFeeSchedule(scheduleId: string): Promise<FeeScheduleI
   return sendJson<FeeScheduleIssueResult>('POST', `/admin/fees/schedules/${scheduleId}/issue`, {});
 }
 
-// ════════════════════ SC-32 · BULK ONBOARDING (CSV import → preview → approval queue) ════════════════════
-// RBAC: academy.fees.onboarding
 const ONBOARDING_BATCHES: OnboardingBatch[] = [
   {
     id: 'ob_1', school_id: 'sch_brightstars', filename: 'jss1a-roster.csv', uploaded_by: 'bursar@brightstars.ng',
@@ -213,7 +195,6 @@ const ONBOARDING_BATCHES: OnboardingBatch[] = [
 export async function listOnboardingBatches(): Promise<OnboardingBatch[]> {
   if (USE_MOCK) { await delay(); return ONBOARDING_BATCHES.map((b) => ({ ...b, rows: b.rows.map((r) => ({ ...r })) })); }
   // TODO(no backend route): bulk onboarding is MEMBER-only import preview/approve
-  // (POST /api/finance/academy/schools/:schoolId/students/import/{preview,approve});
   // there is no admin batch-listing endpoint and no admin-group mount.
   return getJson<OnboardingBatch[]>('/admin/fees/onboarding/batches');
 }
@@ -238,13 +219,10 @@ export function parseOnboardingCsv(text: string): OnboardingRow[] {
 export async function approveOnboardingBatch(input: OnboardingApproveInput): Promise<OnboardingBatch> {
   if (USE_MOCK) throw new Error(`Deciding an onboarding batch ${NO_BACKEND_YET}`);
   // TODO(no backend route): onboarding approval is the MEMBER import-approve endpoint
-  // (POST /api/finance/academy/schools/:schoolId/students/import/approve), not an admin
   // batch-decision route; no admin-group mount reachable from adminBase().
   return sendJson<OnboardingBatch>('POST', `/admin/fees/onboarding/batches/${input.batch_id}/decision`, input);
 }
 
-// ════════════════════ SC-33 · COLLECTIONS DASHBOARD ════════════════════
-// RBAC: academy.fees.collections
 const COLLECTIONS: CollectionsOverview = {
   invoices_issued: 152,
   invoices_paid: 96,
@@ -274,7 +252,6 @@ export async function listInvoices(): Promise<InvoiceRow[]> {
   return getJson<InvoiceRow[]>('/admin/fees/invoices');
 }
 
-// ════════════════════ SC-34 · DEFAULTERS & HARDSHIP REVIEW QUEUE (SF-9) ════════════════════
 // RBAC: academy.fees.hardship — human review ONLY; never auto-approved / auto-denied.
 const HARDSHIP: HardshipRequest[] = [
   { id: 'hs_1', invoice_id: 'inv_003', student_name: 'Emeka Nwosu', class_name: 'JSS 2A', guardian_email: 'nwosu@example.com', outstanding_kobo: naira(95_000), reason: 'Guardian recently lost employment; requesting a 60-day freeze.', requested_at: iso(28), status: 'pending' },
@@ -290,13 +267,11 @@ export async function listHardshipRequests(): Promise<HardshipRequest[]> {
 export async function decideHardship(input: HardshipDecisionInput): Promise<HardshipRequest> {
   if (USE_MOCK) throw new Error(`Deciding a hardship request ${NOT_IN_FIXTURE_MODE}`);
   // feeshardship admin: POST /hardship/admin/:id/approve | /hardship/admin/:id/deny.
-  // The backend splits the decision into two endpoints (no /decision route); map the
   // decision field to the correct verb. Note is sent in the body. Envelope {data}.
   const verb = input.decision === 'approve' ? 'approve' : 'deny';
   return sendJson<HardshipRequest>('POST', `/admin/hardship/admin/${input.request_id}/${verb}`, input);
 }
 
-// ════════════════════ SC-35/36 · PROMOTION CONSOLE + ROLLOVER (SF-3 two-approval) ════════════════════
 // RBAC: academy.fees.promotion. NO path may skip promotion_computed → applied.
 const PROMOTIONS: PromotionBatch[] = [
   {
@@ -320,7 +295,6 @@ export async function listPromotions(): Promise<PromotionBatch[]> {
 }
 // The state machine advances ONE step per approval. A single approval NEVER reaches `applied`.
 // Not in the audit's flagged list — the checker's heuristic treats ANY throw inside a fixture
-// block as proof the branch is honest, but these two only throw on state-machine guards; the
 // success path below each guard still fabricated a result. Same defect class as
 // associationAdminService.ts's old handoverElection. Fixed alongside its flagged siblings.
 export async function approvePromotion(input: PromotionApproveInput): Promise<PromotionBatch> {
@@ -338,8 +312,6 @@ export async function applyPromotion(batchId: string): Promise<PromotionBatch> {
   return sendJson<PromotionBatch>('POST', `/admin/fees/promotions/${batchId}/apply`, {});
 }
 
-// ════════════════════ SC-37 · COMPETITION REGISTRATION ════════════════════
-// RBAC: academy.fees.competition
 const COMPETITIONS: Competition[] = [
   { id: 'cmp_math26', name: 'National Maths Challenge 2026', subject: 'Mathematics', scope: 'national', status: 'open_registration', starts_on: dateStr(30), registration_closes: dateStr(20), registered_schools: 84, registered_students: 1240 },
   { id: 'cmp_sci_lag', name: 'Lagos Science Bowl', subject: 'Integrated Science', scope: 'state', status: 'draft', starts_on: dateStr(55), registration_closes: dateStr(40), registered_schools: 0, registered_students: 0 },
@@ -357,7 +329,6 @@ export async function listCompetitions(): Promise<Competition[]> {
 }
 export async function listCompetitionRegistrations(): Promise<CompetitionRegistration[]> {
   if (USE_MOCK) { await delay(); return REGISTRATIONS.map((r) => ({ ...r })); }
-  // backend: GET /admin/fees/competitions/registrations?competition_id= (feesadminapi.ListCompetitionRegistrations,
   // academy.fees.competition.manage).
   return getJson<CompetitionRegistration[]>('/admin/fees/competitions/registrations');
 }
@@ -372,7 +343,6 @@ export async function registerForCompetition(input: CompetitionRegisterInput): P
   return sendJson<CompetitionRegistration>('POST', `/admin/competitions/${input.competition_id}/register`, input);
 }
 
-// ════════════════════ SC-38 · GOVERNMENT EXPORT CENTER (SF-11) ════════════════════
 // RBAC: academy.fees.export. Opt-in per data category; every export logged immutably.
 const OPT_INS: GovExportOptIn[] = [
   { school_id: 'sch_brightstars', category: 'roster', opted_in: true, updated_at: iso(200) },
@@ -399,7 +369,6 @@ export async function setGovOptIn(input: GovExportOptInInput): Promise<GovExport
 }
 export async function listComplianceExports(schoolId?: string): Promise<ComplianceExport[]> {
   if (USE_MOCK) { await delay(); return COMPLIANCE_EXPORTS.filter((e) => !schoolId || e.school_id === schoolId).map((e) => ({ ...e, data_categories: [...e.data_categories] })); }
-  // feesexport admin: GET /export/compliance/:schoolId (SF-11 export history). The schoolId
   // is a PATH param, not a query. adminBase()=/api/academy + /admin ⇒ /admin/export/compliance/:schoolId.
   // Envelope {data}. Without a schoolId the backend has no list-all route (see TODO).
   if (!schoolId) {
@@ -416,7 +385,6 @@ export async function generateComplianceExport(input: ComplianceExportInput): Pr
   return sendJson<ComplianceExport>('POST', '/admin/export/compliance', input);
 }
 
-// ════════════════════ SC-40 · STAFF & BURSAR ROLE MANAGEMENT ════════════════════
 // RBAC: academy.fees.roles. School-scoped role grants (scope_type='school').
 export const SCHOOL_ROLES: { slug: SchoolRole; label: string }[] = [
   { slug: 'school-owner', label: 'School Owner' },
@@ -437,7 +405,6 @@ export async function listRoleGrants(schoolId?: string): Promise<SchoolRoleGrant
   // feesroles admin: GET /schools/:schoolId/staff (school-scoped, RequireScopedPermission).
   // adminBase()=/api/academy + /admin ⇒ /admin/schools/:schoolId/staff. Envelope {data}.
   if (!schoolId) {
-    // backend: GET /admin/fees/roles (feesadminapi.ListRoleGrants — cross-school grants list,
     // academy.fees.roles.assign). The school-scoped variant below hits feesroles directly.
     return getJson<SchoolRoleGrant[]>('/admin/fees/roles');
   }
@@ -455,7 +422,6 @@ export async function assignRole(input: RoleAssignInput): Promise<SchoolRoleGran
 export async function revokeRole(input: RoleRevokeInput): Promise<SchoolRoleGrant> {
   if (USE_MOCK) throw new Error(`Revoking a staff role ${NO_BACKEND_YET}`);
   // TODO(no backend route as-shaped): feesroles revoke is DELETE /schools/:schoolId/staff
-  // with body {userId, role}; RoleRevokeInput carries only grant_id (no schoolId/userId/role),
   // so the school-scoped path + required body cannot be built without a types change.
   return sendJson<SchoolRoleGrant>('POST', `/admin/fees/roles/${input.grant_id}/revoke`, input);
 }

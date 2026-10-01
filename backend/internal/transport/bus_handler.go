@@ -4,9 +4,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-)
 
-// ─── Bus customer handlers ───────────────────────────────────────────────────
+	"spotlight/backend/go-common/ginutil"
+)
 
 // BusRoutes searches routes by origin/dest.
 func (h *Handler) BusRoutes(c *gin.Context) {
@@ -35,13 +35,13 @@ func (h *Handler) BusSchedules(c *gin.Context) {
 
 // BusBook books a seat and issues a QR ticket.
 func (h *Handler) BusBook(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req BusBookRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ticket, err := h.svc.BookBusTicket(c.Request.Context(), userID, req, idemKey(c))
+	ticket, err := h.svc.BookBusTicket(c.Request.Context(), userID, req, ginutil.IdempotencyKey(c))
 	if err != nil {
 		respondErr(c, err)
 		return
@@ -51,7 +51,7 @@ func (h *Handler) BusBook(c *gin.Context) {
 
 // BusTickets lists the user's tickets.
 func (h *Handler) BusTickets(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	tickets, err := h.svc.ListBusTickets(c.Request.Context(), userID)
 	if err != nil {
 		respondErr(c, err)
@@ -62,7 +62,7 @@ func (h *Handler) BusTickets(c *gin.Context) {
 
 // BusTicketCancel refunds + cancels a ticket.
 func (h *Handler) BusTicketCancel(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req CancelRequest
 	_ = c.ShouldBindJSON(&req)
 	if err := h.svc.CancelBusTicket(c.Request.Context(), c.Param("id"), userID, req.Reason); err != nil {
@@ -71,8 +71,6 @@ func (h *Handler) BusTicketCancel(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "cancelled"})
 }
-
-// ─── Bus marketplace: customer discovery handlers ────────────────────────────
 
 // BusSearch returns bookable interstate trips (state pair / provider filters).
 func (h *Handler) BusSearch(c *gin.Context) {
@@ -105,11 +103,9 @@ func (h *Handler) BusProviderDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
-// ─── Bus marketplace: provider self-service handlers (owner-gated) ────────────
-
 // BusProviderRegister creates the caller's provider row.
 func (h *Handler) BusProviderRegister(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req BusProviderRegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -125,7 +121,7 @@ func (h *Handler) BusProviderRegister(c *gin.Context) {
 
 // BusProviderMe returns the caller's provider dashboard (provider null if none).
 func (h *Handler) BusProviderMe(c *gin.Context) {
-	res, err := h.svc.GetMyBusProvider(c.Request.Context(), c.GetString("user_id"))
+	res, err := h.svc.GetMyBusProvider(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		respondErr(c, err)
 		return
@@ -135,7 +131,7 @@ func (h *Handler) BusProviderMe(c *gin.Context) {
 
 // BusProviderUpdate patches the caller's provider profile.
 func (h *Handler) BusProviderUpdate(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req BusProviderUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -151,7 +147,7 @@ func (h *Handler) BusProviderUpdate(c *gin.Context) {
 
 // BusProviderRouteCreate publishes an interstate route for the caller's provider.
 func (h *Handler) BusProviderRouteCreate(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req BusProviderRouteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -167,7 +163,7 @@ func (h *Handler) BusProviderRouteCreate(c *gin.Context) {
 
 // BusProviderRouteUpdate patches one of the caller's routes (ownership enforced).
 func (h *Handler) BusProviderRouteUpdate(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req BusProviderRoutePatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -183,7 +179,7 @@ func (h *Handler) BusProviderRouteUpdate(c *gin.Context) {
 
 // BusProviderScheduleCreate adds a departure to one of the caller's routes.
 func (h *Handler) BusProviderScheduleCreate(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req BusProviderScheduleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -204,7 +200,7 @@ func (h *Handler) BusProviderBookings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "scheduleId required"})
 		return
 	}
-	bookings, err := h.svc.ProviderBookings(c.Request.Context(), c.GetString("user_id"), scheduleID)
+	bookings, err := h.svc.ProviderBookings(c.Request.Context(), ginutil.UserID(c), scheduleID)
 	if err != nil {
 		respondErr(c, err)
 		return
@@ -212,11 +208,9 @@ func (h *Handler) BusProviderBookings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"bookings": bookings})
 }
 
-// ─── Bus marketplace: recurring departure templates (owner-gated) ────────────
-
 // BusProviderTemplateCreate creates a recurring departure template (routeId in body).
 func (h *Handler) BusProviderTemplateCreate(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req BusDepartureTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -232,7 +226,7 @@ func (h *Handler) BusProviderTemplateCreate(c *gin.Context) {
 
 // BusProviderTemplateList lists the caller's recurring departure templates.
 func (h *Handler) BusProviderTemplateList(c *gin.Context) {
-	templates, err := h.svc.ListDepartureTemplates(c.Request.Context(), c.GetString("user_id"))
+	templates, err := h.svc.ListDepartureTemplates(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		respondErr(c, err)
 		return
@@ -242,7 +236,7 @@ func (h *Handler) BusProviderTemplateList(c *gin.Context) {
 
 // BusProviderTemplateSetActive toggles a template on/off (ownership enforced).
 func (h *Handler) BusProviderTemplateSetActive(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req BusDepartureTemplateActiveRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -258,18 +252,16 @@ func (h *Handler) BusProviderTemplateSetActive(c *gin.Context) {
 
 // BusProviderTemplateDelete hard-deletes one of the caller's templates.
 func (h *Handler) BusProviderTemplateDelete(c *gin.Context) {
-	if err := h.svc.DeleteDepartureTemplate(c.Request.Context(), c.GetString("user_id"), c.Param("id")); err != nil {
+	if err := h.svc.DeleteDepartureTemplate(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 		respondErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "deleted"})
 }
 
-// ─── Bus operator (driver) handlers ──────────────────────────────────────────
-
 // BusValidate validates a QR → boarded.
 func (h *Handler) BusValidate(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req BusValidateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -283,8 +275,6 @@ func (h *Handler) BusValidate(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
-// ─── Bus admin handlers ──────────────────────────────────────────────────────
-
 // AdminBusListRoutes lists all routes.
 func (h *AdminHandler) AdminBusListRoutes(c *gin.Context) {
 	routes, err := h.svc.ListBusRoutes(c.Request.Context())
@@ -297,7 +287,7 @@ func (h *AdminHandler) AdminBusListRoutes(c *gin.Context) {
 
 // AdminBusCreateRoute creates a route.
 func (h *AdminHandler) AdminBusCreateRoute(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req BusRouteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -313,7 +303,7 @@ func (h *AdminHandler) AdminBusCreateRoute(c *gin.Context) {
 
 // AdminBusCreateSchedule creates a schedule.
 func (h *AdminHandler) AdminBusCreateSchedule(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req BusScheduleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -329,8 +319,8 @@ func (h *AdminHandler) AdminBusCreateSchedule(c *gin.Context) {
 
 // AdminBusApproveFare approves a schedule fare.
 func (h *AdminHandler) AdminBusApproveFare(c *gin.Context) {
-	adminID := c.GetString("user_id")
-	var req CancelRequest // reuse {reason}
+	adminID := ginutil.UserID(c)
+	var req CancelRequest
 	_ = c.ShouldBindJSON(&req)
 	if err := h.svc.ApproveBusFare(c.Request.Context(), adminID, c.Param("id"), req.Reason); err != nil {
 		respondErr(c, err)
@@ -351,7 +341,7 @@ func (h *AdminHandler) AdminBusListOperators(c *gin.Context) {
 
 // AdminBusSetProviderVerification verifies/suspends/re-pends an operator.
 func (h *AdminHandler) AdminBusSetProviderVerification(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req struct {
 		Status string `json:"status"`
 		Reason string `json:"reason"`

@@ -1,11 +1,10 @@
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { getDevUrl } from '@/lib/devUrl';
 import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 import type { TierBenefit } from '../types/connect.types';
 
 // Flip to false once the live Go-backend /connect endpoints are reachable from
-// the app (or set EXPO_PUBLIC_CONNECT_USE_MOCK=false). Mirrors the visitor/realtor
 // mock-first convention.
 export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CONNECT_USE_MOCK, true);
 
@@ -14,19 +13,15 @@ export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CONNECT_USE_MOCK, tr
 // `api` client still runs (attaching the Supabase Bearer token) — axios uses an
 // absolute URL as-is, ignoring the client's :3000 baseURL. The backend allows the
 // Expo web origin (:8083) via CORS_ALLOW_ORIGINS.
-//
 // Host resolution, in order:
 //   1. EXPO_PUBLIC_CONNECT_API_HOST — explicit override when the Connect backend
 //      runs somewhere other than the main one.
 //   2. EXPO_PUBLIC_API_BASE_URL — the main backend. Connect ships live in
-//      production (EXPO_PUBLIC_CONNECT_USE_MOCK=false), so it MUST follow the
 //      real backend by default.
 //   3. localhost:8091 — dev-only last resort (matches backend/.env APP_PORT).
-//
 // Step 2 was missing until 2026-09-11: CONNECT_API_HOST is set in no env file,
 // so release APKs resolved to `http://localhost:8091/api/v1/connect` — the
 // device's OWN loopback — and every Connect call failed as "no connection".
-// getDevUrl() does not rescue this: it opens with `if (!__DEV__) return url`,
 // so the loopback host is never rewritten in a release build.
 const CONNECT_API_HOST =
   process.env.EXPO_PUBLIC_CONNECT_API_HOST ??

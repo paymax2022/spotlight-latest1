@@ -124,7 +124,6 @@ async function resolveMode(request: Request): Promise<{
 }> {
   const sb = serviceClient();
   const session = await sessionState(request);
-  // No service client means the count cannot be read; null (not 0) keeps the
   // bootstrap door shut rather than opening it on an outage.
   const count = sb ? await consoleAdminCount(sb) : null;
   // Read through the sanitizer, so a code below MIN_SIGNUP_CODE_LENGTH counts
@@ -260,7 +259,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     email: input.email,
     password: input.password,
     email_confirm: true,
-    // handle_new_user() copies raw_user_meta_data.role into user_profiles.role;
     // it is written explicitly below too, so this is belt and braces for the
     // case where the trigger is absent or has been replaced.
     user_metadata: { full_name: fullName, role: PROFILE_ROLE_FOR_ADMIN },

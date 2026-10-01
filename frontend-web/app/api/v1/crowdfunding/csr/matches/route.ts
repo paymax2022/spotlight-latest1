@@ -12,7 +12,6 @@ export async function GET(request: Request) {
   } catch (err) { return handleApiError(err); }
 }
 
-// POST /api/v1/crowdfunding/csr/matches — set up a match (reserves budget;
 // the Idempotency-Key header is forwarded by the proxy).
 export async function POST(request: Request) {
   if (!featureFlags.crowdfunding()) return errorResponse('Crowdfunding is not available.', 503);

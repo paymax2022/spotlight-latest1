@@ -25,8 +25,6 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("academy/live: not found")
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-
 func toJSONB(v any) []byte {
 	if v == nil {
 		return []byte("{}")
@@ -86,8 +84,6 @@ func (r *Repository) IsMinor(ctx context.Context, userID string) (bool, error) {
 	}
 	return ok, nil
 }
-
-// ── Live sessions ──────────────────────────────────────────────────────────────
 
 func scanSession(row rowScanner) (*LiveSession, error) {
 	s := &LiveSession{}
@@ -232,8 +228,6 @@ func (r *Repository) ListAllSessions(ctx context.Context, limit int) ([]LiveSess
 	return out, rows.Err()
 }
 
-// ── Participants ───────────────────────────────────────────────────────────────
-
 // JoinParticipant upserts a participant row (re-join clears left_at). UNIQUE
 // (session_id, user_id) makes this idempotent.
 func (r *Repository) JoinParticipant(ctx context.Context, sessionID, userID string, role ParticipantRole) (*Participant, error) {
@@ -267,8 +261,6 @@ func (r *Repository) LeaveParticipant(ctx context.Context, sessionID, userID str
 	}
 	return nil
 }
-
-// ── Study groups + members ─────────────────────────────────────────────────────
 
 func (r *Repository) InsertGroup(ctx context.Context, owner string, req CreateGroupRequest) (*StudyGroup, error) {
 	id := uuid.New().String()
@@ -336,8 +328,6 @@ func (r *Repository) JoinGroup(ctx context.Context, groupID, userID string) erro
 	_, err := r.db.Exec(ctx, q, groupID, userID)
 	return err
 }
-
-// ── Discussions ────────────────────────────────────────────────────────────────
 
 func (r *Repository) InsertDiscussion(ctx context.Context, userID string, req PostDiscussionRequest) (*Discussion, error) {
 	id := uuid.New().String()
@@ -411,8 +401,6 @@ func (r *Repository) HideDiscussion(ctx context.Context, actor, id string) (*Dis
 	_ = r.insertAudit(ctx, actor, "discussion.hidden", "academy_discussion", id, nil, "warning")
 	return r.GetDiscussion(ctx, id)
 }
-
-// ── Moderation reports ─────────────────────────────────────────────────────────
 
 func (r *Repository) InsertReport(ctx context.Context, reporterID string, req ReportContentRequest) (*ModerationReport, error) {
 	id := uuid.New().String()
@@ -488,7 +476,6 @@ func (r *Repository) ListReports(ctx context.Context, state string, limit int) (
 // canReport, then flips state + stamps moderator_id. Unlike DecideReport it records no
 // action and no decided_at (these are pre-decision workflow steps, not final decisions).
 // auditAction is the audit-log action code (e.g. "moderation.triaged").
-//
 // NOTE: the academy_moderation_reports.state CHECK currently permits only
 // pending|actioned|dismissed — persisting 'triaged'/'escalated' requires an additive
 // migration widening that CHECK before this path succeeds at the DB layer.

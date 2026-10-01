@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"paymax/crypto-backend/internal/admin"
 	"paymax/crypto-backend/internal/adapter"
+	"paymax/crypto-backend/internal/admin"
 	"paymax/crypto-backend/internal/auth"
 	"paymax/crypto-backend/internal/config"
 	"paymax/crypto-backend/internal/engine"
@@ -94,7 +94,6 @@ func NewServer(repo store.Repository) *Server {
 
 // newLedgerClient selects the money-core ledger Client from LEDGER_BACKEND and
 // reports whether additive shadow-posting is enabled:
-//
 //   - "mock" (default) / unset → in-memory MockLedger, shadow DISABLED (no parallel
 //     post; the store is the only writer — a pure no-op relative to today).
 //   - "shadow"                 → shadow ENABLED. Posts additively for validation. Uses
@@ -126,7 +125,6 @@ func newLedgerClient() (ledger.Client, bool) {
 // line and NEVER affects the caller's result — the user's operation already
 // succeeded via the store. A non-positive amount is skipped so a zero-fee leg never
 // logs spurious noise.
-//
 // The post is deliberately NOT balance-checked: during the shadow phase the STORE is
 // authoritative and has already enforced the user's balance, while this parallel
 // ledger has not seen the user's deposits — so a balance check here would be a false
@@ -201,7 +199,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/crypto/withdrawals/quote", s.postWithdrawalQuote)
 	mux.HandleFunc("POST /api/v1/crypto/withdraw", s.postWithdraw)
 
-	// ── Stocks ───────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/v1/stocks", s.listStocks)
 	mux.HandleFunc("GET /api/v1/stocks/orders", s.getStockOrders)
 	mux.HandleFunc("POST /api/v1/stocks/orders", s.postStockOrder)
@@ -220,7 +217,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/stocks/ticker/{symbol}/dividends", s.getStockDividends)
 	mux.HandleFunc("GET /api/v1/stocks/ticker/{symbol}/corporate-actions", s.getStockCorporateActions)
 
-	// ── Admin console (RBAC via X-Admin-Role; mutations audited + maker-checker) ─
 	mux.HandleFunc("GET /api/v1/admin/dashboard", s.adminDashboard)
 	mux.HandleFunc("GET /api/v1/admin/users", s.adminUsers)
 	mux.HandleFunc("GET /api/v1/admin/users/{id}", s.adminUser)
@@ -295,8 +291,6 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
-
-// ── Middleware ────────────────────────────────────────────────────────────────
 
 // corsAllowedOrigins reads the CORS allowlist from CORS_ALLOW_ORIGINS (comma-
 // separated). Unset → a safe localhost dev default (NOT a wildcard). Set to "*"
@@ -435,8 +429,6 @@ func recoverMW(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-
-// ── JSON helpers ──────────────────────────────────────────────────────────────
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

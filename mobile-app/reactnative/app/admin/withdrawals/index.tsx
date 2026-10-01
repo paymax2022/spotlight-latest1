@@ -1,4 +1,3 @@
-// ── Paymax · Admin Console — Withdrawal review queue ─────────────────────────
 // Withdrawals awaiting approval. KPI row (pending count + total value), then the
 // queue as WithdrawalReviewRow items. Tapping a pending row opens an inline
 // Approve / Reject panel (reject requires a reason) gated by `withdrawal.approve`.
@@ -8,10 +7,10 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { AdminHeader, KpiCard, WithdrawalReviewRow, ListCard, ReasonPrompt } from '@/features/admin/components';
@@ -42,7 +41,6 @@ export default function AdminWithdrawalsScreen() {
 
   const kpis = useMemo(() => {
     const pendingItems = list.filter((w) => w.status === 'pending');
-    // Sum only same-currency in-asset values defensively; surface count + the
     // dominant-symbol total if the queue is single-asset, else raw count of value.
     const totalBySymbol = pendingItems.reduce<Record<string, number>>((acc, w) => {
       acc[w.amount.currency] = (acc[w.amount.currency] ?? 0) + w.amount.amount;

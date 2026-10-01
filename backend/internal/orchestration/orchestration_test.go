@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-// --- money / rate math ---
-
 func TestApplyRateRounding(t *testing.T) {
 	// $1,000.00 (100000 cents) at 1581.43 -> NGN 1,581,430.00 = 158143000 kobo
 	got := applyRate(100000, 1581.43)
@@ -43,8 +41,6 @@ func TestMidRateTriangulation(t *testing.T) {
 	}
 }
 
-// --- spread engine ---
-
 func TestSpreadCustomerRateAndGuards(t *testing.T) {
 	e := NewSpreadEngine(100,
 		SpreadRule{Corridor: "USD-NGN", Tier: "business", BPS: 50, MinBPS: 40, MaxBPS: 80},
@@ -72,8 +68,6 @@ func TestSpreadGuardClamps(t *testing.T) {
 	}
 }
 
-// --- router ---
-
 func TestRouterPicksHighestScore(t *testing.T) {
 	r := NewRouter(DefaultWeights)
 	cands := []Candidate{
@@ -97,8 +91,6 @@ func TestRouterNoViable(t *testing.T) {
 	}
 }
 
-// --- quote book ---
-
 func TestQuoteBookConsumeExpiry(t *testing.T) {
 	b := NewQuoteBook(time.Minute)
 	now := time.Now()
@@ -116,8 +108,6 @@ func TestQuoteBookConsumeExpiry(t *testing.T) {
 		t.Fatalf("expired quote should give rate_expired, got %v", e)
 	}
 }
-
-// --- end-to-end service (mem store + deterministic adapters via local stubs) ---
 
 type stubProvider struct {
 	name string

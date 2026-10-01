@@ -19,8 +19,6 @@ import {
   MeterType,
 } from '@/types/billing';
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 type Meta = Record<string, unknown>;
 type UtilityCategory = 'airtime' | 'data' | 'electricity' | 'cable_tv' | 'education';
 
@@ -139,9 +137,7 @@ async function postUtilityPaystackInitiation(input: {
   };
 }
 
-// ─── Paystack intent status (bills) ─────────────────────────────────────────
 // A utility Paystack payment creates a `utility_paystack_intents` row keyed by
-// its payment_reference; the Paystack webhook flips its status to
 // 'completed'/'failed' and links transaction_id → the utility_transactions row.
 // The in-app SDK checkout polls this to know when to route to the transaction
 // status screen. RLS scopes the row to the owner.
@@ -191,8 +187,6 @@ async function postUtilityValidation(input: {
   return (res.data?.data ?? res.data) as Record<string, unknown>;
 }
 
-// ─── Provider logos (VTPass `image`) ────────────────────────────────────────
-
 export interface ProviderLogoInfo { serviceID: string; name: string; image?: string }
 
 // Fetches official provider logos (serviceID + image) for a category from VTPass
@@ -208,7 +202,6 @@ export async function getProviderLogos(category: UtilityCategory): Promise<Provi
 }
 
 // Resolves a provider/biller (by code or name) to its VTPass logo image URL.
-// Biller codes look like 'vtpass-eko-electric' / 'vtpass-mtn-airtime'; VTPass
 // serviceIDs are 'eko-electric' / 'mtn' / 'mtn-data' / 'dstv' / 'waec'.
 export function resolveProviderImage(
   services: ProviderLogoInfo[],
@@ -228,8 +221,6 @@ export function resolveProviderImage(
   }
   return undefined;
 }
-
-// ─── Airtime ─────────────────────────────────────────────────────────────────
 
 export async function getAirtimeNetworks(): Promise<Network[]> {
   const supabase = createSupabaseClient();
@@ -285,8 +276,6 @@ export async function initiateAirtimePaystack(payload: Omit<AirtimePurchasePaylo
     idempotencyKey: payload.idempotencyKey,
   });
 }
-
-// ─── Data ─────────────────────────────────────────────────────────────────────
 
 export async function getDataNetworks(): Promise<Network[]> {
   const supabase = createSupabaseClient();
@@ -355,8 +344,6 @@ export async function initiateDataPaystack(payload: Omit<DataPurchasePayload, 'p
     idempotencyKey: payload.idempotencyKey,
   });
 }
-
-// ─── Electricity ──────────────────────────────────────────────────────────────
 
 export async function getElectricityDiscos(): Promise<Disco[]> {
   const supabase = createSupabaseClient();
@@ -453,8 +440,6 @@ export async function initiateElectricityPaystack(payload: Omit<ElectricityPayPa
   });
 }
 
-// ─── Cable TV ─────────────────────────────────────────────────────────────────
-
 export async function getCableProviders(): Promise<CableProvider[]> {
   const supabase = createSupabaseClient();
   const { data, error } = await supabase
@@ -544,8 +529,6 @@ export async function initiateCablePaystack(payload: Omit<CablePayPayload, 'paym
     idempotencyKey: payload.idempotencyKey,
   });
 }
-
-// ─── Education ────────────────────────────────────────────────────────────────
 
 const EDUCATION_COLORS: Record<string, { accent: string; bg: string }> = {
   WAEC:    { accent: '#7C3AED', bg: 'rgba(124,58,237,0.10)' },

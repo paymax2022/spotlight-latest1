@@ -1,4 +1,3 @@
-// ── Admin — Estate control plane types ───────────────────────────────────────
 // All money is integer minor units (kobo). Mirrors realtorAdmin.ts conventions.
 
 // Mirrors the live AdminDashboard struct (backend/internal/estate/admin.go
@@ -106,7 +105,6 @@ export interface AdminVendor {
   submittedAt: string;
 }
 
-// ── Property suite (cross-vertical context + rent passport) ───────────────────
 export type PropertyRole = 'resident' | 'tenant' | 'owner' | 'agent' | 'guard' | 'estate_admin' | 'agency';
 
 export interface PropertyContext {
@@ -131,7 +129,6 @@ export interface RentPassport {
   issuedAt: string;
 }
 
-// ── Platform estate oversight (backend /api/finance/estate-admin/*) ───────────
 // Read-only cross-estate oversight surfaces, RBAC-gated on estate.admin.*.
 // Every row carries estateId so HQ can scope or sweep across estates.
 
@@ -315,7 +312,6 @@ export interface ElectionAudit {
   doubleVoteDetected: boolean;
 }
 
-// ── Block 29: Property management (backend/internal/estate/property_mgmt.go) ──
 export type OccupancyStatus = 'vacant' | 'occupied' | 'reserved';
 export type TransferType = 'ownership' | 'tenancy';
 export type TransferStatus = 'pending' | 'approved' | 'rejected';

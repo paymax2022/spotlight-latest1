@@ -1,5 +1,4 @@
 // Admin: assignment progress across a cohort — who has sent which part, and when.
-//
 // The console could already list SUBMISSIONS, but a submission list only shows
 // what arrived. It cannot show what is MISSING, which is the whole question a
 // tutor is asking in week 3: who has not sent part 2? This inverts it — every
@@ -127,7 +126,6 @@ export async function GET(request: Request) {
       const items = assignments.map((a) => {
         const aParts = (partsByAssignment.get(a.id as string) ?? []).filter((p) => p.is_required !== false);
 
-        // A staged assignment is measured by its parts; a single-shot one by its
         // one submission. Counting both for a staged brief would double-count it.
         if (aParts.length > 0) {
           const partStates = aParts.map((p) => {

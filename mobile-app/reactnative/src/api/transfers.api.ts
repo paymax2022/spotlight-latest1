@@ -11,9 +11,7 @@ import type { TransferRecipient, WalletTransfer } from '@/types/wallet';
 
 type ApiRecord = Record<string, unknown>;
 
-// ---------------------------------------------------------------------------
 // Fee schedule — mirrors backend calculateTransferFee() (Block 10)
-// ---------------------------------------------------------------------------
 
 /** Returns fee in kobo for a given transfer amount in kobo. */
 export function calculateTransferFee(amountKobo: number): number {
@@ -22,9 +20,7 @@ export function calculateTransferFee(amountKobo: number): number {
   return 2_500;                               // > ₦50,000: ₦25
 }
 
-// ---------------------------------------------------------------------------
 // Recipient resolution
-// ---------------------------------------------------------------------------
 
 /**
  * Look up a Paymax user by phone, email, or username.
@@ -44,9 +40,7 @@ export async function resolvePaymaxRecipient(identifier: string): Promise<Transf
   };
 }
 
-// ---------------------------------------------------------------------------
 // Transfer initiation
-// ---------------------------------------------------------------------------
 
 export interface InitiateTransferPayload {
   recipientIdentifier: string;

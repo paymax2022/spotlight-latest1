@@ -11,18 +11,14 @@ import (
 	"spotlight/backend/internal/finance/transfers"
 )
 
-// ---------------------------------------------------------------------------
 // Wallet P2P + Bank transfer go-live invariants.
-//
 // These tests exercise the *pure* decision surface of the transfers package
 // (validation + error→HTTP mapping + reversal-entry shape). They require no DB
 // and lock in the acceptance gates from the playbook:
-//
 //	flag-off → 503, resolve → masked phone, self-transfer → 422,
 //	insufficient → 402, Tier 0 → 403, daily-limit → 403,
 //	invalid account → 404, idempotency replay → already_processed,
 //	provider-fail keeps funds_reserved, REVERSAL_DEBIT restores balance.
-// ---------------------------------------------------------------------------
 
 // TestHTTPStatusForError maps every money-path error to its acceptance-gate
 // HTTP status. This is the single source of truth the handler must obey.

@@ -3,7 +3,6 @@
 // doctor-shopping of a controlled drug ACROSS PROVIDERS within a rolling window,
 // so a patient cannot accumulate excess quantity or collect the same controlled
 // drug from multiple prescribers.
-//
 // No I/O. Controlled substances are excluded at MVP in rx.Issue (HL-4); this is the
 // guard that activates when controlled prescribing is enabled — the caller supplies
 // the patient's prior controlled-Rx history (across all providers) and the

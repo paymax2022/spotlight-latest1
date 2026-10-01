@@ -11,8 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ─── RECURRING DEPARTURE TEMPLATES (bus provider marketplace) ─────────────────
-//
 // ADR-020 deferred item. A departure template is a provider-owned weekly
 // recurring pattern ("Lagos→Abuja, Mon/Wed/Fri at 07:30, 14 seats, ₦12,000").
 // Providers create/list/toggle/delete templates for routes they own; the
@@ -188,16 +186,13 @@ func (s *Service) departureTemplateRow(ctx context.Context, id string) (map[stri
 // unique index — the ON CONFLICT predicate below mirrors the migration's index
 // predicate (WHERE template_id IS NOT NULL) EXACTLY. Returns the number of
 // schedules actually inserted (skips duplicates and past departures).
-//
 // defaultHorizonDays is a fallback cap used only when a template's own
 // horizon_days is non-positive (which the NOT NULL/CHECK column prevents in
 // practice); the per-template horizon is otherwise authoritative.
-//
 // Timezone: departures are computed in Africa/Lagos wall-clock (depart_time is
 // 'HH:MM' local) and stored as timestamptz. If the zoneinfo DB is unavailable we
 // fall back to UTC and log — better to materialize slightly-shifted departures
 // than none.
-//
 // fare_approved=TRUE mirrors the existing provider-self-create behavior in
 // CreateProviderSchedule: a provider's own declared fare is trusted (no admin
 // fare approval step for provider marketplace departures).
@@ -289,8 +284,6 @@ func (s *Service) MaterializeBusDepartures(ctx context.Context, defaultHorizonDa
 	}
 	return total, nil
 }
-
-// ─── Small pure helpers ──────────────────────────────────────────────────────
 
 // validateDaysOfWeek enforces a non-empty subset of 0..6 (Sunday..Saturday).
 func validateDaysOfWeek(days []int) error {

@@ -12,8 +12,6 @@ import (
 	"spotlight/backend/internal/platform/crypto"
 )
 
-// ── Fakes for the repo interfaces (no DB) ────────────────────────────────────
-
 type fakeAudit struct{ n int }
 
 func (f *fakeAudit) Log(context.Context, AuditRecord) error { f.n++; return nil }
@@ -132,8 +130,6 @@ func TestFirewall_MoneyRailsHaveNoSigner(t *testing.T) {
 		t.Fatal("support must post exactly one money movement + one tag")
 	}
 }
-
-// ── Fakes for the money rails ────────────────────────────────────────────────
 
 type fakeLedger struct {
 	debits, credits int
@@ -281,8 +277,6 @@ func TestPotTotal_DerivedFromSupportRows(t *testing.T) {
 		}
 	}
 }
-
-// ── Credential verify-by-hash (pure, no DB via a fake repo) ──────────────────
 
 type fakeCredRepo struct{ store map[string]*Credential }
 

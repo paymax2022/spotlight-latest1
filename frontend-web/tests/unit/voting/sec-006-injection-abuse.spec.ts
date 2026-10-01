@@ -107,9 +107,7 @@ describe('SEC-006: malformed JSON is rejected, not crashed on', () => {
       })),
       { params: Promise.resolve({ contestId: 'contest-1' }) },
     );
-    // Supabase client parameterizes `.eq()`/`.insert()` values — a string payload
     // is never concatenated into SQL. The route should process it as an opaque
-    // string and return normally (202 — proposed) rather than erroring or
     // executing anything.
     expect(res).toBeInstanceOf(Response);
     expect(res.status).toBe(202);
@@ -132,7 +130,7 @@ describe('SEC-006: malformed JSON is rejected, not crashed on', () => {
       { params: Promise.resolve({ contestId: LONG_STRING }) },
     );
     expect(res).toBeInstanceOf(Response);
-    expect(res.status).toBe(200); // handled gracefully — Number(long garbage) clamps via Math.min(500, NaN→...)
+    expect(res.status).toBe(200);
   });
 
   it('a NoSQL-operator-shaped object where a string is expected is treated as an opaque value, not executed', async () => {

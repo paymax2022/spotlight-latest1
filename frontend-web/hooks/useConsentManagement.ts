@@ -20,7 +20,6 @@ export function useConsentManagement() {
 
   const analytics = getAnalyticsService();
 
-  // Load consent on mount
   useEffect(() => {
     const stored = analytics.getConsent();
     setConsent(stored);

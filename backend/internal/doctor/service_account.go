@@ -8,7 +8,6 @@ import (
 )
 
 // service_account.go — Wave 2 (account / provider / admin) business logic.
-//
 // Mirrors the MVP service style: reads delegate straight to the repository scoped
 // to the authenticated doctor; mutations that target a table with a UNIQUE
 // idempotency_key require the Idempotency-Key header (ErrIdempotencyRequired) and
@@ -18,8 +17,6 @@ import (
 // ErrNotEligible is returned when a profile cannot be published (verification not
 // approved) or a provider gate fails. Mapped to HTTP 403 by the handler.
 var ErrNotEligible = errors.New("doctor: provider not eligible for this action")
-
-// ── Onboarding ───────────────────────────────────────────────────────────────
 
 func (s *Service) ListConsents(ctx context.Context, userID string) ([]LegalConsent, error) {
 	return s.repo.ListConsents(ctx, userID)
@@ -65,7 +62,6 @@ func (s *Service) GetMerchantUpgrade(ctx context.Context, userID string) (*Merch
 	// selectedType is a PROJECTION of the profile draft, where SetProviderType
 	// writes the choice — the client needs it here to preselect the right card
 	// when a user returns to the provider-type step.
-	//
 	// A lookup failure degrades to "not chosen" rather than failing the whole
 	// status. This endpoint backs the onboarding entry screen, and failing it is
 	// precisely the outage the branch above exists to prevent; a missing
@@ -92,8 +88,6 @@ func (s *Service) SetProviderType(ctx context.Context, userID, idemKey string, r
 	patch, _ := json.Marshal(map[string]any{"providerType": req.ProviderType})
 	return s.repo.SaveProfileDraft(ctx, userID, patch)
 }
-
-// ── Profile builder ──────────────────────────────────────────────────────────
 
 // GetProfileDraft has the same defect GetMerchantUpgrade was fixed for: no
 // doctor_profiles row is the STARTING state for a fresh provider (the row is
@@ -165,8 +159,6 @@ func (s *Service) RenewLicence(ctx context.Context, userID, idemKey string, req 
 	return s.repo.InsertVerification(ctx, userID, req)
 }
 
-// ── Notifications ────────────────────────────────────────────────────────────
-
 func (s *Service) ListNotificationGroups(ctx context.Context, userID string) ([]NotificationGroup, error) {
 	return s.repo.ListNotificationGroups(ctx, userID)
 }
@@ -185,8 +177,6 @@ func (s *Service) UpdateNotificationPreference(ctx context.Context, userID, idem
 func (s *Service) MarkAllNotificationsRead(ctx context.Context, userID string) (int64, error) {
 	return s.repo.MarkAllNotificationsRead(ctx, userID)
 }
-
-// ── Support ──────────────────────────────────────────────────────────────────
 
 func (s *Service) ListSupportTickets(ctx context.Context, userID string) ([]SupportTicket, error) {
 	return s.repo.ListSupportTickets(ctx, userID)
@@ -231,8 +221,6 @@ func (s *Service) SendSupportMessage(ctx context.Context, userID, threadID, idem
 	}
 	return s.repo.InsertSupportMessage(ctx, userID, threadID, idemKey, req)
 }
-
-// ── Compliance ───────────────────────────────────────────────────────────────
 
 func (s *Service) ListAuditTrail(ctx context.Context, userID string) ([]AuditEntry, error) {
 	return s.repo.ListAuditTrail(ctx, userID)
@@ -310,8 +298,6 @@ func (s *Service) UpdateAppPreferences(ctx context.Context, userID, idemKey stri
 	}
 	return s.repo.UpsertSettings(ctx, userID, UpdateSettingsRequest{AppPreferences: prefs})
 }
-
-// ── Reputation / reviews ─────────────────────────────────────────────────────
 
 func (s *Service) GetQualityScore(ctx context.Context, userID string) (*QualityScore, error) {
 	return s.repo.GetLatestQualityScore(ctx, userID)

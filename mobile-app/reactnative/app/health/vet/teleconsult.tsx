@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, Pressable, TextInput, KeyboardAvoid
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Mic, MicOff, Video, VideoOff, PhoneOff, Send } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import { useConsult, useSendConsultMessage, useCompleteConsult } from '@/features/health/vet/hooks';
 import { relativeTime } from '@/features/health/constants/health.constants';

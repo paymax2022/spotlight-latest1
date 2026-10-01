@@ -2,7 +2,17 @@ package connectgamification
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/services"
+	"strconv"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var (
@@ -17,7 +27,6 @@ type Auditor interface {
 }
 
 // Service owns the non-cash XP / missions / streaks / leaderboards / seasons logic.
-//
 // NON-CASH: XP and coins are points only. This service NEVER calls the finance
 // ledger/wallet and exposes NO money-conversion API.
 type Service struct {
@@ -131,8 +140,6 @@ func (s *Service) Seasons(ctx context.Context) ([]Season, error) {
 	return s.repo.ListSeasons(ctx)
 }
 
-// --- Admin ---
-
 func (s *Service) ListMissionsAdmin(ctx context.Context) ([]Mission, error) {
 	return s.repo.ListMissions(ctx, true)
 }
@@ -161,4 +168,255 @@ func (s *Service) UpsertSeason(ctx context.Context, actorID string, in UpsertSea
 	_ = s.audit.WriteAudit(ctx, "connect.gamification.season.upsert", actorID, "connect_season", se.ID,
 		map[string]any{"code": se.Code, "active": se.Active})
 	return se, nil
+}
+
+// XPEntry is one immutable, idempotent grant of non-cash XP. event_key makes a
+// repeated award a no-op (idempotency), so XP is never double-counted.
+type XPEntry struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	EventKey  string    `json:"event_key"`
+	Source    string    `json:"source"`
+	XP        int64     `json:"xp"` // NON-CASH points
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Home is the gamification dashboard projection (all non-cash). TotalXP and Coins
+// are points, NOT money; Level is derived from TotalXP.
+type Home struct {
+	UserID     string `json:"user_id"`
+	TotalXP    int64  `json:"total_xp"`
+	Level      int    `json:"level"`
+	Coins      int64  `json:"coins"`
+	StreakDays int    `json:"streak_days"`
+	SeasonCode string `json:"season_code,omitempty"`
+}
+
+// Mission is a backend-owned task definition. Cadence is daily|weekly|season|once.
+// RewardXP and RewardCoin are NON-CASH points.
+type Mission struct {
+	ID         string          `json:"id"`
+	Code       string          `json:"code"`
+	Title      string          `json:"title"`
+	Cadence    string          `json:"cadence"`
+	Target     int             `json:"target"`
+	RewardXP   int64           `json:"reward_xp"`
+	RewardCoin int64           `json:"reward_coins"`
+	Meta       json.RawMessage `json:"meta,omitempty"`
+	Active     bool            `json:"active"`
+}
+
+// MissionProgress is per-user progress against a mission.
+type MissionProgress struct {
+	MissionID string     `json:"mission_id"`
+	Code      string     `json:"code,omitempty"`
+	Progress  int        `json:"progress"`
+	Target    int        `json:"target"`
+	Completed bool       `json:"completed"`
+	Claimed   bool       `json:"claimed"`
+	ClaimedAt *time.Time `json:"claimed_at,omitempty"`
+}
+
+// Streak is the user's consecutive-day engagement counter.
+type Streak struct {
+	UserID      string     `json:"user_id"`
+	CurrentDays int        `json:"current_days"`
+	BestDays    int        `json:"best_days"`
+	LastTickOn  *time.Time `json:"last_tick_on,omitempty"`
+}
+
+// LeaderboardEntry is a single ranked row (XP is non-cash).
+type LeaderboardEntry struct {
+	Rank   int    `json:"rank"`
+	UserID string `json:"user_id"`
+	XP     int64  `json:"xp"` // NON-CASH
+}
+
+// Season is a time-boxed pass period.
+type Season struct {
+	ID       string    `json:"id"`
+	Code     string    `json:"code"`
+	Name     string    `json:"name"`
+	StartsAt time.Time `json:"starts_at"`
+	EndsAt   time.Time `json:"ends_at"`
+	Active   bool      `json:"active"`
+}
+
+type AwardInput struct {
+	EventKey string `json:"event_key" binding:"required"` // idempotency key
+	Source   string `json:"source"`
+	XP       int64  `json:"xp" binding:"required"` // NON-CASH points
+}
+
+type UpsertMissionInput struct {
+	Code       string          `json:"code" binding:"required"`
+	Title      string          `json:"title" binding:"required"`
+	Cadence    string          `json:"cadence"`
+	Target     int             `json:"target"`
+	RewardXP   int64           `json:"reward_xp"`
+	RewardCoin int64           `json:"reward_coins"`
+	Meta       json.RawMessage `json:"meta"`
+	Active     *bool           `json:"active"`
+}
+
+type UpsertSeasonInput struct {
+	Code     string    `json:"code" binding:"required"`
+	Name     string    `json:"name" binding:"required"`
+	StartsAt time.Time `json:"starts_at"`
+	EndsAt   time.Time `json:"ends_at"`
+	Active   *bool     `json:"active"`
+}
+
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+func fail(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	case errors.Is(err, ErrInvalidInput):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, ErrNotClaimable):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	}
+}
+
+// Home — GET /gamification/home.
+func (h *Handler) Home(c *gin.Context) {
+	out, err := h.svc.Home(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// Missions — GET /gamification/missions.
+func (h *Handler) Missions(c *gin.Context) {
+	out, err := h.svc.Missions(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// ClaimMission — POST /gamification/missions/:id/claim.
+func (h *Handler) ClaimMission(c *gin.Context) {
+	m, err := h.svc.ClaimMission(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": m})
+}
+
+// Streaks — GET /gamification/streaks.
+func (h *Handler) Streaks(c *gin.Context) {
+	out, err := h.svc.Streaks(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// Leaderboards — GET /gamification/leaderboards?limit=.
+func (h *Handler) Leaderboards(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	out, err := h.svc.Leaderboards(c.Request.Context(), limit)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// Seasons — GET /gamification/seasons.
+func (h *Handler) Seasons(c *gin.Context) {
+	out, err := h.svc.Seasons(c.Request.Context())
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminListMissions — GET /gamification/missions (admin).
+func (h *Handler) AdminListMissions(c *gin.Context) {
+	out, err := h.svc.ListMissionsAdmin(c.Request.Context())
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminUpsertMission — POST /gamification/missions (admin).
+func (h *Handler) AdminUpsertMission(c *gin.Context) {
+	var in UpsertMissionInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	m, err := h.svc.UpsertMission(c.Request.Context(), ginutil.UserID(c), in)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": m})
+}
+
+// AdminListSeasons — GET /gamification/seasons (admin).
+func (h *Handler) AdminListSeasons(c *gin.Context) {
+	out, err := h.svc.Seasons(c.Request.Context())
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminUpsertSeason — POST /gamification/seasons (admin).
+func (h *Handler) AdminUpsertSeason(c *gin.Context) {
+	var in UpsertSeasonInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	se, err := h.svc.UpsertSeason(c.Request.Context(), ginutil.UserID(c), in)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": se})
+}
+
+// Register wires the gamification module onto the shared Connect member + admin
+// groups. Admin routes add per-route RBAC (connect.gamification.*). NON-CASH: no
+// money path is registered.
+func Register(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit Auditor) {
+	svc := NewService(NewRepository(pool), audit)
+	h := NewHandler(svc)
+
+	g := member.Group("/gamification")
+	g.GET("/home", h.Home)
+	g.GET("/missions", h.Missions)
+	g.POST("/missions/:id/claim", h.ClaimMission)
+	g.GET("/streaks", h.Streaks)
+	g.GET("/leaderboards", h.Leaderboards)
+	g.GET("/seasons", h.Seasons)
+
+	ag := admin.Group("/gamification")
+	ag.GET("/missions",
+		middleware.RequirePermission(rbac, "connect.gamification.view"), h.AdminListMissions)
+	ag.POST("/missions",
+		middleware.RequirePermission(rbac, "connect.gamification.manage"), h.AdminUpsertMission)
+	ag.GET("/seasons",
+		middleware.RequirePermission(rbac, "connect.gamification.view"), h.AdminListSeasons)
+	ag.POST("/seasons",
+		middleware.RequirePermission(rbac, "connect.gamification.manage"), h.AdminUpsertSeason)
 }

@@ -1,4 +1,3 @@
-// ── Doctor — Batch 2 · Section I · audio & video consultation hooks ────────────
 // Rich call session (provider, network quality, device check, participant +
 // control state), pre-call checklist, duration summary, feedback, dispute,
 // technical-issue report. Reconnecting/dropped/disconnected/poor-network and
@@ -33,8 +32,6 @@ import type {
   ReportTechnicalIssueInput,
 } from '@/types/doctor.batch2';
 
-// ─── Reads ───────────────────────────────────────────────────────────────────
-
 export function useCallSessionRich(appointmentId: string) {
   return useQuery({
     queryKey:        ['doctor', 'call-rich', appointmentId],
@@ -63,8 +60,6 @@ export function useCallDisputes() {
     staleTime:       30_000,
   });
 }
-
-// ─── Mutations ─────────────────────────────────────────────────────────────────
 
 export function useRunDeviceCheck() {
   return useMutation({

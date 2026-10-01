@@ -1,8 +1,5 @@
-// ── Admin — Spray (event money-spraying) ops console ─────────────────────────
-// Mock by default. Flip with NEXT_PUBLIC_SPRAY_ADMIN_USE_MOCK=false to hit the live
 // Go backend. NOTE: the spray admin surface is THIN — the only admin route is
 // GET /api/p2p/admin/spray/leaderboard/:contextRef (RBAC spray.read), used for
-// AML oversight of a spray context's leaderboard. There is no payouts admin route;
 // the payouts view here is mock-only and documents the gap.
 // Spray enforces AML single / daily-amount / daily-count limits server-side.
 // Money is BIGINT kobo (minor units) throughout.
@@ -20,17 +17,12 @@ export const USE_MOCK_ENV = 'NEXT_PUBLIC_SPRAY_ADMIN_USE_MOCK';
 // but that route is never actually registered anywhere. Spray's admin routes
 // are mounted onto the SAME RouterGroup as the p2p-market admin routes:
 //   backend/internal/app/finance_routes.go:
-//     RegisterP2PMarket(finance.Group("/p2p"), adminGroupTop5(r, "/api/p2p/admin"), pool, rbac, auditSink)
 //   backend/internal/app/top5_p3_routes.go RegisterP2PMarket:
-//     sprayHandler.Register(member, admin, ...)   // `admin` here IS the /api/p2p/admin group
 //   backend/internal/spray/handler.go Handler.Register:
-//     admin.GET("/spray/leaderboard/:contextRef", guard("spray.read"), h.Leaderboard)
 // So the real, live path is /api/p2p/admin/spray/leaderboard/:contextRef, not
 // /api/spray/admin/spray/leaderboard/:contextRef. This is a second, independent
 // bug from the apiRoot() regression below: the suffix itself was wrong even
 // before apiBaseUrl stopped ending in /api/v1.
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/spray/admin')`,
 // which stopped matching once apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see apiRoot()'s comment in
 // config/env.ts. Both bugs combined meant the leaderboard call 404'd through two
@@ -61,7 +53,6 @@ export function formatNaira(kobo: number): string {
 
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 
-// ── Types ────────────────────────────────────────────────────────────────────
 export interface SprayDashboard {
   events_total: number;
   events_live: number;
@@ -103,7 +94,6 @@ export interface SprayPayout {
   created_at: string;
 }
 
-// ── Dashboard ────────────────────────────────────────────────────────────────
 const DASHBOARD: SprayDashboard = {
   events_total: 1_204,
   events_live: 6,
@@ -124,7 +114,6 @@ export async function getSprayDashboard(): Promise<SprayDashboard> {
   return getJson<SprayDashboard>('/dashboard');
 }
 
-// ── Events ───────────────────────────────────────────────────────────────────
 const EVENTS: SprayEvent[] = [
   { context_ref: 'evt_owambe_2026', name: 'Owambe Lagos 2026', status: 'live', host_masked: 'Chioma A•••', total_sprayed_kobo: 14_200_000_00, sprayer_count: 312, started_at: iso(3) },
   { context_ref: 'evt_wedding_5521', name: 'Tunde & Bisi Wedding', status: 'live', host_masked: 'Tunde B•••', total_sprayed_kobo: 8_900_000_00, sprayer_count: 188, started_at: iso(5) },
@@ -157,7 +146,6 @@ export async function getSprayLeaderboard(contextRef: string): Promise<SprayLead
   return getJson<SprayLeaderRow[]>(`/spray/leaderboard/${encodeURIComponent(contextRef)}`);
 }
 
-// ── Payouts (mock-only — no backend admin route exists) ──────────────────────
 const PAYOUTS: SprayPayout[] = [
   { id: 'pay_775', context_ref: 'evt_owambe_2026', event_name: 'Owambe Lagos 2026', beneficiary_masked: 'Chioma A•••', amount_kobo: 14_200_000_00, status: 'pending', created_at: iso(2) },
   { id: 'pay_771', context_ref: 'evt_concert_440', event_name: 'Afrobeats Night', beneficiary_masked: 'Seun K•••', amount_kobo: 22_500_000_00, status: 'paid', created_at: iso(30) },

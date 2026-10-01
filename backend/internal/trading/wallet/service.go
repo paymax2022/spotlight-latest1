@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
+	"spotlight/backend/internal/finance/ledger"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"spotlight/backend/internal/finance/ledger"
 )
 
 // Service is the trading fund's money-path orchestrator. ALL cash moves through
@@ -439,7 +439,6 @@ func (s *Service) Reconcile(ctx context.Context, toleranceKobo int64) (Reconcile
 	// per-user units MUST equal what the immutable order + fee journals imply
 	// (Σ order deltas − Σ fee burns). A torn write — units changed without a
 	// journal row, or vice-versa — shows up here.
-	//
 	// The cash side: in this paper foundation the fund holds only cash, so AUM ≡
 	// the ledger clearing balance and the AUM-vs-clearing check is tautologically
 	// satisfied (we pass clearingBal for both). The journal member-cash total
@@ -456,4 +455,149 @@ func max64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+const (
+	// UnitScale is the number of integer fund units that represent ONE whole
+	// unit — i.e. fractional-unit precision (6 dp). A holding of UnitScale units
+	UnitScale int64 = 1_000_000
+
+	// ParNAVKobo is the NAV of ONE WHOLE unit at fund inception (before any P&L),
+	// used to bootstrap the very first deposit when no units exist yet. ₦10,000.
+	ParNAVKobo int64 = 1_000_000
+)
+
+// NAVPerUnitKobo returns the mark-to-market NAV of ONE WHOLE unit, in kobo:
+// When no units are outstanding the fund is at inception, so NAV is par. A fund
+// whose AUM has gone to zero while units remain has NAV 0 (correctly worthless);
+// the deposit path guards against minting at NAV 0.
+func NAVPerUnitKobo(aumKobo, totalUnits int64) int64 {
+	if totalUnits <= 0 {
+		return ParNAVKobo
+	}
+	if aumKobo <= 0 {
+		return 0
+	}
+	r := new(big.Int).Mul(big.NewInt(aumKobo), big.NewInt(UnitScale))
+	r.Quo(r, big.NewInt(totalUnits))
+	if !r.IsInt64() {
+		return 0
+	}
+	nav := r.Int64()
+	if nav <= 0 {
+		// AUM is positive but tiny relative to units, so the truncated division
+		// floored to 0. Returning 0 here would make BOTH mint and redeem refuse
+		// (they reject NAV 0), freezing the pool — a griefable DoS. A fund that
+		// still holds value floors NAV at 1 kobo/unit so mint/redeem stay
+		// operable. (A near-zero NAV should also trip defensive-mode at the
+		// service layer per the brief; this floor only stops the pure math from
+		// bricking the fund.)
+		return 1
+	}
+	return nav
+}
+
+// UnitsForCash returns the fund units minted for a cash deposit at a given NAV:
+//
+//	units = cashKobo * UnitScale / navPerUnitKobo   (truncated DOWN)
+//
+// Truncating down means a depositor never receives units worth more than their
+// cash — the residual accrues to the pool, never diluting existing holders. Mint
+// is refused (0) at non-positive NAV or cash, or on overflow.
+func UnitsForCash(cashKobo, navPerUnitKobo int64) int64 {
+	if cashKobo <= 0 || navPerUnitKobo <= 0 {
+		return 0
+	}
+	r := new(big.Int).Mul(big.NewInt(cashKobo), big.NewInt(UnitScale))
+	r.Quo(r, big.NewInt(navPerUnitKobo))
+	if !r.IsInt64() {
+		return 0
+	}
+	return r.Int64()
+}
+
+// CashForUnits returns the cash (kobo) a holding of units is worth at a given NAV
+// — used both for redemption payout and mark-to-market valuation:
+//
+//	cash = units * navPerUnitKobo / UnitScale   (truncated DOWN)
+//
+// Truncating down means a redeemer is never paid more than their units are worth;
+// the residual stays in the pool. Returns 0 on non-positive inputs or overflow.
+func CashForUnits(units, navPerUnitKobo int64) int64 {
+	if units <= 0 || navPerUnitKobo <= 0 {
+		return 0
+	}
+	r := new(big.Int).Mul(big.NewInt(units), big.NewInt(navPerUnitKobo))
+	r.Quo(r, big.NewInt(UnitScale))
+	if !r.IsInt64() {
+		return 0
+	}
+	return r.Int64()
+}
+
+// ValueOfUnits is CashForUnits — the mark-to-market kobo value of a unit holding.
+// Named separately so valuation call sites read clearly vs redemption payout.
+func ValueOfUnits(units, navPerUnitKobo int64) int64 { return CashForUnits(units, navPerUnitKobo) }
+
+// High-water-mark performance fee — pure integer math (§3.5).
+// A performance fee is charged ONLY on new net profit above the holder's previous
+// peak NAV (the high-water mark), so a user who loses and then recovers is never
+// charged twice for the same gains. An optional hurdle raises the threshold NAV
+// the fund must clear before ANY fee applies. All arithmetic is integer kobo with
+// big.Int intermediates; the fee always rounds DOWN (never over-charges the user).
+
+// PerformanceFee computes the performance fee (kobo) on a unit holding at
+// assessment time, and the new high-water mark to persist.
+//
+//	navNowKobo   – current NAV per whole unit
+//	hwmKobo      – holder's previous high-water mark (NAV per whole unit); at
+//	               inception this is the par NAV
+//	units        – holder's units (scaled by UnitScale)
+//	feeBps       – performance fee rate in basis points (e.g. 2000 = 20%)
+//	hurdleBps    – optional hurdle in bps applied to the HWM (0 = pure HWM);
+//	               fee accrues only on NAV above hwm*(1+hurdle)
+//
+// Returns feeKobo (>= 0) and newHWMKobo. The high-water mark advances to the new
+// peak ONLY when a fee is actually crystallized (navNow clears the hurdle
+// threshold); on a no-fee period the HWM is left UNCHANGED. Advancing on an
+// un-charged peak would inflate the next period's hurdle base and permanently
+// exempt the intermediate gains from a legitimate fee — so the mark tracks the
+// level up to which fees have been PAID, never merely the highest NAV touched.
+// The HWM never ratchets down, so recovering a drawdown pays no fee until the
+// prior fee-paid peak is exceeded.
+func PerformanceFee(navNowKobo, hwmKobo, units, feeBps, hurdleBps int64) (int64, int64) {
+	var newHWMKobo = hwmKobo // default: unchanged unless a fee crystallizes below
+	// feeBps must be a sane rate in (0, 10000]; a misconfigured rate fails closed
+	// (no fee, no HWM move) rather than over-charging the client.
+	if units <= 0 || feeBps <= 0 || feeBps > 10_000 || hurdleBps < 0 || navNowKobo <= 0 || hwmKobo < 0 {
+		return 0, newHWMKobo
+	}
+
+	// thresholdNav = hwm + hwm*hurdleBps/10000 (the NAV that must be cleared).
+	threshold := new(big.Int).Set(big.NewInt(hwmKobo))
+	if hurdleBps > 0 {
+		h := new(big.Int).Mul(big.NewInt(hwmKobo), big.NewInt(hurdleBps))
+		h.Quo(h, big.NewInt(10_000))
+		threshold.Add(threshold, h)
+	}
+
+	navNow := big.NewInt(navNowKobo)
+	if navNow.Cmp(threshold) <= 0 {
+		return 0, hwmKobo // at/below threshold → no fee, HWM UNCHANGED
+	}
+
+	// gainPerWholeUnit = navNow - threshold   (kobo per whole unit)
+	gainPerUnit := new(big.Int).Sub(navNow, threshold)
+	// profitKobo = gainPerUnit * units / UnitScale   (holder's kobo profit above threshold)
+	profit := new(big.Int).Mul(gainPerUnit, big.NewInt(units))
+	profit.Quo(profit, big.NewInt(UnitScale))
+	// feeKobo = profit * feeBps / 10000   (truncate down)
+	fee := profit.Mul(profit, big.NewInt(feeBps))
+	fee.Quo(fee, big.NewInt(10_000))
+
+	if !fee.IsInt64() || fee.Sign() < 0 {
+		return 0, hwmKobo // fail closed on overflow / degenerate — HWM unchanged
+	}
+	// Fee crystallized: advance the mark to the new fee-paid peak.
+	return fee.Int64(), navNowKobo
 }

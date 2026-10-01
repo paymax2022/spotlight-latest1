@@ -1,11 +1,11 @@
 import React from 'react';
 import { Pressable, View, Text, StyleSheet } from 'react-native';
 import * as Icons from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { VERTICAL_META } from '../constants/health.constants';
 import type { Vertical } from '../types';
 

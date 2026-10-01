@@ -1,8 +1,6 @@
 package voting_test
 
-// ---------------------------------------------------------------------------
 // Shared fixtures for the voting projection live-DB suites.
-//
 // WHY THIS PACKAGE EXISTS. These tests began life as TypeScript integration
 // specs under frontend-web/tests/integration, written with supabase-js. They
 // were wired into no workflow and so ran only by hand — and they could not
@@ -10,11 +8,9 @@ package voting_test
 // migrated BARE Postgres with no PostgREST and no GoTrue. supabase-js speaks
 // HTTP, so the specs would have found no SUPABASE_URL, skipped silently, and
 // produced a green check that guarded nothing.
-//
 // Everything they assert is DATABASE behaviour — triggers, a partial unique
 // index and one RPC — so it belongs next to the schema it guards, in a suite the
 // Postgres service already runs.
-//
 // WHERE THIS ACTUALLY RUNS. integration-verify.yml — the only lane that stands
 // up Postgres and sets TEST_DATABASE_URL — and it triggers on pull_request and
 // on push to main. Every module lane called by ci.yml (including the repo-wide
@@ -24,13 +20,11 @@ package voting_test
 // here; closing it means giving a develop-triggered lane a Postgres service.
 // The canary step in integration-verify names four tests from this package, so
 // a future env change cannot quietly return them to skipping where they do run.
-//
 // Rule for anything added later: seed through a helper that registers its own
 // teardown, and never write `defer pool.Close()` — a deferred close fires when
 // the function returns, which is BEFORE any t.Cleanup, so every delete would run
 // against a closed pool and fail silently. That exact mistake left fixture
 // categories rendering as real tiles in the marketplace for weeks.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -53,7 +47,6 @@ const (
 )
 
 // votingPool returns a pool for the live-DB suites, or skips.
-//
 // Gated on TEST_DATABASE_URL only, never falling back to DATABASE_URL: the root
 // .env points DATABASE_URL at the production Supabase pooler and these tests
 // INSERT fixtures. Enforced repo-wide by scripts/ci/check-live-db-gate.sh.
@@ -89,7 +82,6 @@ type contestOpts struct {
 }
 
 // newContest seeds a connect_contests row.
-//
 // It deliberately does NOT create the legacy public.contests twin or the vote
 // package ladder — both are trigger output, and arranging them here would hide
 // the very behaviour these tests exist to check.
@@ -117,7 +109,6 @@ func newContest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, o contest
 // deleteContestTree removes a fixture contest and everything that references it,
 // in FK order. vote_transactions.contest_id points at the LEGACY contests row,
 // so it has to go before that row does.
-//
 // Errors are ignored on purpose: teardown may run after a test has already
 // failed, and a cascade of secondary errors would bury the real failure. The
 // start-of-run sweep in TestMain is the backstop.
@@ -147,7 +138,6 @@ func deleteContestTree(ctx context.Context, pool *pgxpool.Pool, contestID string
 }
 
 // newContestant puts an approved, active contestant on a contest's roster.
-//
 // connect_contest_id is what ListRoster filters on, so a contestant carrying
 // only the legacy contest_id is invisible there — and the tally trigger refuses
 // to project onto one, deliberately. Pass an empty contestID for the "stranger"
@@ -173,13 +163,11 @@ func newContestant(t *testing.T, ctx context.Context, pool *pgxpool.Pool, connec
 }
 
 // anyVoter returns an existing auth.users id.
-//
 // It borrows one rather than seeding. auth.users is GoTrue's table and carries
 // three ON INSERT triggers here (profile creation and two RBAC bridges), so a
 // seeded fixture user would spray rows across tables this package has no
 // business owning — and a leaked one is a login that should not exist. Nothing
 // here mutates the borrowed row.
-//
 // CI has rows to borrow: three migrations seed admin accounts, and the
 // supabase-compat prelude gives the shim table the columns they need. So this
 // FAILS rather than skipping — with the DSN set and the schema migrated, an

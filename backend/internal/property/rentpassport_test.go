@@ -1,10 +1,8 @@
 package property
 
-// ---------------------------------------------------------------------------
 // Pure, DB-free unit tests for the rent-passport scoring formula and the
 // on-time-ratio / realtor-tolerance control flow documented in rentpassport.go
 // and docs/qa/modules/property.md §3/§7.
-//
 // computeRentScore is exercised directly (same package, unexported function).
 // The on-time-ratio accumulation and the estate-vs-realtor error-tolerance
 // asymmetry are NOT their own functions — they are inlined in
@@ -17,15 +15,12 @@ package property
 // the helper here and the cited production code is the bug a reviewer should
 // catch — see also context_test.go / property_money_invariant_test.go for the
 // live-DB counterparts that exercise the real SQL.
-// ---------------------------------------------------------------------------
 
 import (
 	"errors"
 	"testing"
 	"time"
 )
-
-// ── computeRentScore ──────────────────────────────────────────────────────
 
 func TestComputeRentScore_ZeroComparablePaymentsScoresZero(t *testing.T) {
 	// rentpassport.go L180-182: comparable==0 short-circuits to 0, regardless
@@ -146,16 +141,11 @@ func monthsAgo(m int) time.Time {
 
 func ptrTime(t time.Time) *time.Time { return &t }
 
-// ── On-time ratio: NULL due date exclusion ────────────────────────────────
-//
 // Transcribed from rentpassport.go L93-100 (estate loop) / L142-148 (realtor
 // loop) — both loops share the identical shape:
-//
 //	if due != nil {
 //	    comparable++
-//	    if !paidAt.After(*due) { met++ }
 //	}
-//
 // A payment with a NULL due date contributes to NEITHER comparable NOR met —
 // it must not be silently counted as "on time" just because it has nothing to
 // be late against.
@@ -184,10 +174,10 @@ func TestOnTimeRatio_ExcludesNullDueDateRows(t *testing.T) {
 	dueTomorrow := now.Add(24 * time.Hour)
 
 	rows := []onTimeRow{
-		{paidAt: now, due: nil},              // no due date: must NOT count toward comparable or met
-		{paidAt: now, due: nil},              // second NULL-due row, same rule
-		{paidAt: now, due: &dueTomorrow},      // paid before due -> on time
-		{paidAt: now, due: &dueYesterday},     // paid after due -> comparable but NOT on time
+		{paidAt: now, due: nil},           // no due date: must NOT count toward comparable or met
+		{paidAt: now, due: nil},           // second NULL-due row, same rule
+		{paidAt: now, due: &dueTomorrow},  // paid before due -> on time
+		{paidAt: now, due: &dueYesterday}, // paid after due -> comparable but NOT on time
 	}
 
 	comparable, met := accumulateOnTime(rows)
@@ -229,15 +219,12 @@ func TestOnTimeRatio_PaidExactlyOnDueDateCountsAsOnTime(t *testing.T) {
 	}
 }
 
-// ── Realtor-schema-absent tolerance asymmetry ─────────────────────────────
-//
 // Transcribed from GetRentPassport (rentpassport.go):
 //   - estate query error (L79-81): `if err != nil { return nil, fmt.Errorf(...) }`
 //     — FATAL, the whole passport request fails.
 //   - realtor query error (L129, L167): `if err == nil { ...loop... }` with NO
 //     else branch — a non-nil err is silently swallowed and the function
 //     continues as if the user simply had no realtor history.
-//
 // This is a real, deliberate asymmetry per docs/qa/modules/property.md §6
 // ("Fail-closed on dependency error") — it must NOT be "fixed" into symmetry
 // without that being a deliberate, reviewed decision. Exercising the true

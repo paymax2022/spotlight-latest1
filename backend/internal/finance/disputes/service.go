@@ -4,10 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+)
+
+const (
+	keyError = "error"
 )
 
 // FoodDisputeResolver performs the module-specific resolution for a food-delivery
@@ -15,7 +25,6 @@ import (
 // that lives in internal/restaurant — when a food dispute reaches this generic
 // module's AdminResolve. Injected by the wiring layer (see WithFoodResolver) so this
 // package never imports internal/restaurant directly.
-//
 // FOOD-004: before this existed, Resolve() bare-flipped the status column for every
 // module_type, including "food" — silently no-op'ing the refund/clawback the admin
 // console's own request implied. See Resolve.
@@ -102,7 +111,6 @@ func (s *Service) List(ctx context.Context, userID string, limit, offset int) ([
 // status update — no money moves through this generic path today, and that has never
 // been the case for any module (see FOOD-004 below), so that behavior is preserved
 // unchanged here.
-//
 // module_type=="food" is the one exception with a REAL, already-built refund/clawback
 // implementation (internal/restaurant's AdminResolveFoodDispute) that this endpoint
 // used to bypass entirely — resolving a food dispute with resolution=refunded and a
@@ -110,7 +118,6 @@ func (s *Service) List(ctx context.Context, userID string, limit, offset int) ([
 // Dispatching to the injected FoodDisputeResolver instead of the bare update fixes
 // that without adding a second, redundant set of food-specific routes: the frontend
 // keeps calling this same endpoint.
-//
 // Fails closed rather than silently no-op'ing: a food dispute with no resolver wired
 // returns an error instead of pretending to resolve it.
 func (s *Service) Resolve(ctx context.Context, disputeID string, resolution Resolution, adminNote string, refundKobo int64, adminID string) error {
@@ -139,4 +146,125 @@ func (s *Service) moduleTypeOf(ctx context.Context, disputeID string) (string, e
 		return "", fmt.Errorf("%w: dispute not found: %v", ErrDisputeNotResolvable, err)
 	}
 	return moduleType, nil
+}
+
+// Status mirrors the disputes lifecycle.
+type Status string
+
+const (
+	StatusOpen     Status = "open"
+	StatusInReview Status = "in_review"
+	StatusResolved Status = "resolved"
+	StatusClosed   Status = "closed"
+)
+
+// Resolution is how the dispute was resolved.
+type Resolution string
+
+const (
+	ResolutionRefunded  Resolution = "refunded"
+	ResolutionSettled   Resolution = "settled"
+	ResolutionDismissed Resolution = "dismissed"
+)
+
+// DisputeType describes what the dispute is about.
+type DisputeType string
+
+const (
+	TypeFailedPayment DisputeType = "failed_payment"
+	TypeNonDelivery   DisputeType = "non_delivery"
+	TypeWrongItem     DisputeType = "wrong_item"
+	TypeNoShow        DisputeType = "no_show"
+	TypeFakeCampaign  DisputeType = "fake_campaign"
+	TypeUnauthorised  DisputeType = "unauthorised"
+	TypeOther         DisputeType = "other"
+)
+
+// Dispute is a formal complaint raised against a transaction or order.
+type Dispute struct {
+	ID           string      `json:"id"`
+	UserID       string      `json:"user_id"`     // reporter
+	Reference    string      `json:"reference"`   // transaction / order ref
+	ModuleType   string      `json:"module_type"` // food | transport | wallet | etc.
+	Type         DisputeType `json:"type"`
+	Description  string      `json:"description"`
+	EvidenceURLs []string    `json:"evidence_urls,omitempty"`
+	Status       Status      `json:"status"`
+	Resolution   *Resolution `json:"resolution,omitempty"`
+	AdminNote    *string     `json:"admin_note,omitempty"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+}
+
+// OpenRequest is the body for POST /finance/disputes.
+type OpenRequest struct {
+	Reference   string      `json:"reference" binding:"required"`
+	ModuleType  string      `json:"module_type" binding:"required"`
+	Type        DisputeType `json:"type" binding:"required"`
+	Description string      `json:"description" binding:"required,min=20"`
+}
+
+type Handler struct{ svc *Service }
+
+var errMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusForbidden, ErrDisputeForbidden),
+	httperr.R(http.StatusUnprocessableEntity, ErrDisputeNotResolvable),
+)
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Open handles POST /api/finance/disputes
+func (h *Handler) Open(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req OpenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		return
+	}
+	d, err := h.svc.Open(c.Request.Context(), userID, req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, d)
+}
+
+// List handles GET /api/finance/disputes
+func (h *Handler) List(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	disputes, err := h.svc.List(c.Request.Context(), userID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": disputes, "count": len(disputes)})
+}
+
+// AdminResolve handles POST /api/finance/admin/disputes/:id/resolve
+// refund_kobo is REQUIRED reading for module_type=="food" (see Service.Resolve /
+// FOOD-004) — it used to be silently dropped here, which is exactly how the refund
+// path went dead: the frontend's request body was correct, but nothing ever
+// unmarshalled it.
+func (h *Handler) AdminResolve(c *gin.Context) {
+	adminID := ginutil.UserID(c)
+	disputeID := c.Param("id")
+	var body struct {
+		Resolution string `json:"resolution" binding:"required"`
+		AdminNote  string `json:"admin_note"`
+		RefundKobo int64  `json:"refund_kobo"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		return
+	}
+	if err := h.svc.Resolve(c.Request.Context(), disputeID, Resolution(body.Resolution), body.AdminNote, body.RefundKobo, adminID); err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"resolved": true, "dispute_id": disputeID})
 }

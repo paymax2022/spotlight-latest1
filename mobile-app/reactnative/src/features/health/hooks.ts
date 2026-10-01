@@ -1,4 +1,3 @@
-// ── Paymax Health — React Query hooks (Phase 0) ──────────────────────────────
 // Declarative data hooks the shared screens (and verticals) reuse. React Query v5.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -29,17 +28,14 @@ import type { ConsentGrantInput, IntakeResponseValues } from './types';
 
 const KEY = 'health';
 
-// ── Hub ──────────────────────────────────────────────────────────────────────
 export function useHubSummary() {
   return useQuery({ queryKey: [KEY, 'hub'], queryFn: getHubSummary, staleTime: 30_000 });
 }
 
-// ── Subjects ──────────────────────────────────────────────────────────────────
 export function useSubjects() {
   return useQuery({ queryKey: [KEY, 'subjects'], queryFn: getSubjects, staleTime: 5 * 60_000 });
 }
 
-// ── Records ───────────────────────────────────────────────────────────────────
 export function useRecords(query?: RecordQuery) {
   return useQuery({
     queryKey: [KEY, 'records', query ?? {}],
@@ -64,7 +60,6 @@ export function useDocSignedUrl() {
   });
 }
 
-// ── Consent ───────────────────────────────────────────────────────────────────
 export function useConsents(subjectId?: string) {
   return useQuery({
     queryKey: [KEY, 'consents', subjectId ?? 'all'],
@@ -92,7 +87,6 @@ export function useRevokeConsent() {
   });
 }
 
-// ── Intake ────────────────────────────────────────────────────────────────────
 export function useIntakeSchema(schemaId?: string) {
   return useQuery({
     queryKey: [KEY, 'intake-schema', schemaId],
@@ -136,7 +130,6 @@ export function useSubmitIntake() {
   });
 }
 
-// ── Pre-Consult Intake (telemedicine appointment, M1–M17) ─────────────────────
 export function useApptIntake(appointmentId?: string) {
   return useQuery({
     queryKey: [KEY, 'appt-intake', appointmentId],
@@ -179,7 +172,6 @@ export function useHealthProfile() {
   });
 }
 
-// ── Providers ─────────────────────────────────────────────────────────────────
 export function useProviders(vertical?: 'pharmacy' | 'lab' | 'vet') {
   return useQuery({
     queryKey: [KEY, 'providers', vertical ?? 'all'],
@@ -197,7 +189,6 @@ export function useProvider(id?: string) {
   });
 }
 
-// ── Consult ───────────────────────────────────────────────────────────────────
 export function useConsult(id?: string) {
   return useQuery({
     queryKey: [KEY, 'consult', id],

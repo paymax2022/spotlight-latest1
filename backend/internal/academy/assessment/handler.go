@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -23,10 +24,9 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated learner. The finance/connect groups mirror the
 // auth user into c.Set("user_id", ...); fall back to the auth context if absent.
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -58,13 +58,11 @@ func RegisterAcademyAssessment(member, admin *gin.RouterGroup, pool *pgxpool.Poo
 	svc := NewService(pool)
 	h := NewHandler(svc)
 
-	// ── Member (learner) ──
 	member.GET("/practice", h.GetPractice)
 	member.POST("/practice/submit", h.SubmitPractice)
 	member.GET("/mastery", h.GetMastery)
 	member.GET("/progress", h.GetProgress)
 
-	// ── Admin (question bank) ──
 	guard := func(p string) gin.HandlerFunc { return middleware.RequirePermission(rbac, p) }
 	qb := admin.Group("/question-bank")
 	qb.GET("/items", guard("academy.assessment"), h.AdminListItems)
@@ -74,11 +72,8 @@ func RegisterAcademyAssessment(member, admin *gin.RouterGroup, pool *pgxpool.Poo
 	qb.POST("/items/:id/transition", guard("academy.assessment.review"), h.AdminTransitionItem)
 	qb.GET("/item-analysis", guard("academy.assessment"), h.AdminItemAnalysis)
 
-	// ── Mock Exam Routes ──
 	RegisterMockExamRoutes(member, admin, pool, rbac)
 }
-
-// ── Member handlers ─────────────────────────────────────────────────────────────
 
 // GetPractice serves approved items for an objective. Canonical answers are
 // stripped so the learner never receives the key.
@@ -98,7 +93,7 @@ func (h *Handler) GetPractice(c *gin.Context) {
 
 // SubmitPractice scores the submission server-side and runs the mastery machine.
 func (h *Handler) SubmitPractice(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -118,7 +113,7 @@ func (h *Handler) SubmitPractice(c *gin.Context) {
 }
 
 func (h *Handler) GetMastery(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -132,7 +127,7 @@ func (h *Handler) GetMastery(c *gin.Context) {
 }
 
 func (h *Handler) GetProgress(c *gin.Context) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -146,15 +141,13 @@ func (h *Handler) GetProgress(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── Admin handlers ──────────────────────────────────────────────────────────────
-
 func (h *Handler) AdminCreateItem(c *gin.Context) {
 	var req CreateItemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.CreateItem(c.Request.Context(), uid(c), req)
+	out, err := h.svc.CreateItem(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -168,7 +161,7 @@ func (h *Handler) AdminUpdateItem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.UpdateItem(c.Request.Context(), uid(c), c.Param("id"), req)
+	out, err := h.svc.UpdateItem(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -182,7 +175,7 @@ func (h *Handler) AdminTransitionItem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.TransitionItem(c.Request.Context(), uid(c), c.Param("id"), req.To)
+	out, err := h.svc.TransitionItem(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req.To)
 	if err != nil {
 		h.fail(c, err)
 		return

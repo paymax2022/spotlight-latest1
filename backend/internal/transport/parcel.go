@@ -8,22 +8,22 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/go-common/ginutil"
 )
 
-// ─── Parcel delivery ─────────────────────────────────────────────────────────
-//
 // State machine:
 //   created → courier_assigned → pickup_pin_verified → picked_up
 //          → in_transit → dropoff_verified → delivered
-//   (failed / disputed / cancelled)
-//
 // Escrow: book → Escrow(sender, "parcel:<id>", idemKey, "transport", fare).
 // Release with Settle(courier split) only on dropoff PIN + proof verification.
 // Cancel → Refund.
 
 // parcelTransitions is the guarded state machine for parcels.
-var parcelTransitions = map[string]map[string]bool{
+var parcelTransitions = fsm.Table[string]{
 	"created":             {"courier_assigned": true, "cancelled": true},
 	"courier_assigned":    {"pickup_pin_verified": true, "cancelled": true, "failed": true},
 	"pickup_pin_verified": {"picked_up": true, "cancelled": true, "failed": true},
@@ -33,14 +33,7 @@ var parcelTransitions = map[string]map[string]bool{
 }
 
 func canTransitionParcel(from, to string) bool {
-	if from == to {
-		return false
-	}
-	m, ok := parcelTransitions[from]
-	if !ok {
-		return false
-	}
-	return m[to]
+	return parcelTransitions.Can(from, to)
 }
 
 // parcelSizeMultiplier scales fare by declared package size.
@@ -100,8 +93,6 @@ func (s *Service) loadParcel(ctx context.Context, id string, p *parcelRow) error
 	)
 }
 
-// ─── Request bodies ──────────────────────────────────────────────────────────
-
 // ParcelEstimateRequest is POST /mobility/parcels/estimate.
 type ParcelEstimateRequest struct {
 	Pickup            Place  `json:"pickup" binding:"required"`
@@ -147,8 +138,6 @@ type ParcelEstimate struct {
 	SizeMultiplier  float64 `json:"sizeMultiplier"`
 	SpeedMultiplier float64 `json:"speedMultiplier"`
 }
-
-// ─── Service methods ─────────────────────────────────────────────────────────
 
 // parcelFare computes the fare: (base + per_km*km) * size * speed, floored at min.
 func parcelFare(distanceM, durationS int, size, speed string, cfg *PricingConfig) int64 {
@@ -411,8 +400,6 @@ func (s *Service) parcelSetStatus(ctx context.Context, id, from, to string) erro
 	return nil
 }
 
-// ─── Courier (driver) flows ──────────────────────────────────────────────────
-
 // OpenParcelRequests returns unassigned, created parcels for couriers.
 func (s *Service) OpenParcelRequests(ctx context.Context, driverUserID string) ([]map[string]any, error) {
 	if _, err := s.driverGate(ctx, driverUserID); err != nil {
@@ -600,4 +587,133 @@ func (s *Service) courierOwnedParcel(ctx context.Context, id, driverUserID strin
 		return nil, codedErr(http.StatusForbidden, CodeForbidden, "not the assigned courier")
 	}
 	return &p, nil
+}
+
+// ParcelEstimate returns a parcel fare estimate.
+func (h *Handler) ParcelEstimate(c *gin.Context) {
+	var req ParcelEstimateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	est, err := h.svc.EstimateParcel(c.Request.Context(), req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, est)
+}
+
+// ParcelBook books + escrows a parcel.
+func (h *Handler) ParcelBook(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req ParcelBookRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	p, err := h.svc.BookParcel(c.Request.Context(), userID, req, ginutil.IdempotencyKey(c))
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, p)
+}
+
+// ParcelGet returns a parcel detail.
+func (h *Handler) ParcelGet(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	p, err := h.svc.ParcelDetail(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, p)
+}
+
+// ParcelList returns the sender's parcels.
+func (h *Handler) ParcelList(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	ps, err := h.svc.ListParcels(c.Request.Context(), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"parcels": ps})
+}
+
+// ParcelCancel refunds + cancels a parcel.
+func (h *Handler) ParcelCancel(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req CancelRequest
+	_ = c.ShouldBindJSON(&req)
+	if err := h.svc.CancelParcel(c.Request.Context(), c.Param("id"), userID, req.Reason); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "cancelled"})
+}
+
+// ParcelRequests returns open courier requests.
+func (h *Handler) ParcelRequests(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	reqs, err := h.svc.OpenParcelRequests(c.Request.Context(), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"requests": reqs})
+}
+
+// ParcelAccept assigns the courier.
+func (h *Handler) ParcelAccept(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	p, err := h.svc.AcceptParcel(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, p)
+}
+
+// ParcelVerifyPickupPin verifies the pickup PIN.
+func (h *Handler) ParcelVerifyPickupPin(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req VerifyPinRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.VerifyParcelPickupPin(c.Request.Context(), c.Param("id"), userID, req.Pin); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "pickup_pin_verified"})
+}
+
+// ParcelPickedUp confirms pickup with a photo.
+func (h *Handler) ParcelPickedUp(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req ParcelPickedUpRequest
+	_ = c.ShouldBindJSON(&req)
+	if err := h.svc.MarkParcelPickedUp(c.Request.Context(), c.Param("id"), userID, req.PhotoURL); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "in_transit"})
+}
+
+// ParcelVerifyDropoff verifies dropoff PIN + proof, settles courier.
+func (h *Handler) ParcelVerifyDropoff(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req ParcelVerifyDropoffRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.VerifyParcelDropoff(c.Request.Context(), c.Param("id"), userID, req.Pin, req.ProofURL); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "delivered"})
 }

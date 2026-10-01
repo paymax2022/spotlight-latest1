@@ -11,12 +11,9 @@ import type {
 const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_TRANSFERS_ADMIN_USE_MOCK);
 
 // Go backend mounts finance admin transfer routes at
-// r.Group("/api/finance/admin/transfers") in backend/internal/app/finance_routes.go
 // (GET "", GET /provider-health, GET /:id, POST /:id/retry, POST /:id/reverse
 // — all appended by this file onto '/finance/admin/transfers' below). apiRoot()
 // strips any trailing /api/v1 from the same-origin proxy base and nothing else.
-//
-// This used to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api'), which
 // stopped matching once apiBaseUrl became the proxy path itself
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see
 // insuranceAdminService.ts for the same regression. The replace became a
@@ -43,8 +40,6 @@ function idempotencyKeyFor(action: string, id: string): string {
 export function formatKobo(kobo: number): string {
   return `₦${(kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
 }
-
-// ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const now = Date.now();
 const iso = (minsAgo: number) => new Date(now - minsAgo * 60_000).toISOString();
@@ -205,8 +200,6 @@ const FIXTURE_HEALTH: ProviderHealth[] = [
 function delay<T>(value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), 120));
 }
-
-// ─── API ─────────────────────────────────────────────────────────────────────
 
 export async function listTransfers(filters: TransferFilters = {}): Promise<Transfer[]> {
   if (USE_FIXTURES) {

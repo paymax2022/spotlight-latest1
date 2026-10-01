@@ -1,15 +1,11 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests for the campaign beneficiary.
-//
 // The wizard has a whole step for this and will not let a creator past it, and
 // GetDetail returned a hardcoded nil — so "raising for my mother" and "raising
 // for myself" were indistinguishable to everyone who saw the campaign.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Beneficiary -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

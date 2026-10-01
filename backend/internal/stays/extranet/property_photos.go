@@ -5,7 +5,6 @@ package extranet
 // at all: gateway.PropertyContent.Photos was always empty for it (see
 // backend/internal/stays/adapters/direct.go), so a host-created listing could
 // never actually show a picture to a guest.
-//
 // Mirrors the marketplace listing-media pattern exactly (backend/internal/
 // marketplace/presign.go + service.go's ThumbPresigner): the R2 bucket is
 // PRIVATE, so only the object KEY is stored — never a public URL. Uploading is
@@ -14,8 +13,6 @@ package extranet
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
@@ -23,6 +20,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/platform/r2"
 )
 
@@ -50,8 +49,6 @@ type PropertyPhoto struct {
 	IsCover    bool   `json:"is_cover"`
 	SortOrder  int    `json:"sort_order"`
 }
-
-// --- repository ---
 
 type propertyPhotoRow struct {
 	ID         string
@@ -172,8 +169,6 @@ func (r *Repository) CountPropertyPhotos(ctx context.Context, propertyID string)
 	return n, err
 }
 
-// --- service ---
-
 // PhotoPresigner is the slice of the R2 presigner this needs, so this package
 // does not take a dependency on the whole platform client (matches
 // marketplace.ThumbPresigner's shape).
@@ -203,7 +198,7 @@ func (s *Service) PresignPhotoUpload(ctx context.Context, userID, propertyID, mi
 	if !ok {
 		return "", "", fmt.Errorf("%w: unsupported mime_type (png, jpeg, webp only)", ErrValidation)
 	}
-	key := "stays/" + propertyID + "/" + randToken() + ext
+	key := "stays/" + propertyID + "/" + cryptox.Token() + ext
 	url, err := s.photos.PresignPut(key, mime, photoPresignTTL)
 	if err != nil {
 		if err == r2.ErrNotConfigured {
@@ -295,14 +290,6 @@ func (s *Service) DeletePhoto(ctx context.Context, userID, propertyID, photoID s
 	return err
 }
 
-func randToken() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-// --- handler ---
-
 // PresignPhoto: POST /properties/:propertyId/photos/presign {mime_type}
 func (h *Handler) PresignPhoto(c *gin.Context) {
 	var b struct {
@@ -312,7 +299,7 @@ func (h *Handler) PresignPhoto(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	uploadURL, key, err := h.svc.PresignPhotoUpload(c.Request.Context(), uid(c), c.Param("propertyId"), b.MimeType)
+	uploadURL, key, err := h.svc.PresignPhotoUpload(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), b.MimeType)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -335,7 +322,7 @@ func (h *Handler) CreatePhoto(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	photo, err := h.svc.ConfirmPhotoUpload(c.Request.Context(), uid(c), c.Param("propertyId"), b.StorageKey, b.RoomTypeID, b.Caption)
+	photo, err := h.svc.ConfirmPhotoUpload(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), b.StorageKey, b.RoomTypeID, b.Caption)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -345,7 +332,7 @@ func (h *Handler) CreatePhoto(c *gin.Context) {
 
 // ListPhotos: GET /properties/:propertyId/photos
 func (h *Handler) ListPhotos(c *gin.Context) {
-	out, err := h.svc.ListPhotos(c.Request.Context(), uid(c), c.Param("propertyId"))
+	out, err := h.svc.ListPhotos(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -368,13 +355,13 @@ func (h *Handler) UpdatePhoto(c *gin.Context) {
 	}
 	propertyID, photoID := c.Param("propertyId"), c.Param("photoId")
 	if b.IsCover != nil && *b.IsCover {
-		if err := h.svc.SetCoverPhoto(c.Request.Context(), uid(c), propertyID, photoID); err != nil {
+		if err := h.svc.SetCoverPhoto(c.Request.Context(), ginutil.UserID(c), propertyID, photoID); err != nil {
 			mapErr(c, err)
 			return
 		}
 	}
 	if b.Caption != nil || b.SortOrder != nil {
-		if err := h.svc.UpdatePhoto(c.Request.Context(), uid(c), propertyID, photoID, b.Caption, b.SortOrder); err != nil {
+		if err := h.svc.UpdatePhoto(c.Request.Context(), ginutil.UserID(c), propertyID, photoID, b.Caption, b.SortOrder); err != nil {
 			mapErr(c, err)
 			return
 		}
@@ -384,7 +371,7 @@ func (h *Handler) UpdatePhoto(c *gin.Context) {
 
 // DeletePhoto: DELETE /properties/:propertyId/photos/:photoId
 func (h *Handler) DeletePhoto(c *gin.Context) {
-	if err := h.svc.DeletePhoto(c.Request.Context(), uid(c), c.Param("propertyId"), c.Param("photoId")); err != nil {
+	if err := h.svc.DeletePhoto(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), c.Param("photoId")); err != nil {
 		mapErr(c, err)
 		return
 	}

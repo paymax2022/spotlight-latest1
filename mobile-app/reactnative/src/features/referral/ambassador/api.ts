@@ -1,4 +1,3 @@
-// ── Referral Ambassador Zone API (M-AMB-01..06) ──────────────────────────────
 // Mock-first (USE_MOCK). Live path hits `${REFERRAL_API_BASE}/...`. Money is
 // ALWAYS integer kobo. The payout mutation attaches an Idempotency-Key on the
 // live path (money mutation). Earnings tie to verified activity (§7).
@@ -113,7 +112,6 @@ interface BackendRewardSummary {
 }
 
 // Backend network.Override row (GET /network/overrides) — individual override
-// accruals; used to build payout history (each accrual references a reward
 // ledger row via reward_ledger_id).
 interface BackendOverride {
   id: string;
@@ -195,7 +193,6 @@ export async function getPayouts(): Promise<AmbassadorPayouts> {
     await delay(240);
     return { ...MOCK_PAYOUTS, history: MOCK_PAYOUTS.history.map((h) => ({ ...h })) };
   }
-  // Live: RB0 reward-ledger summary (my-rewards) gives eligible/paid/clawed-back
   // aggregates across ALL reward kinds for this beneficiary (including
   // ambassador/agent overrides). Override rows (network/overrides) supply the
   // payout HISTORY (each override references a reward_ledger_id once paid).
@@ -254,7 +251,6 @@ export async function withdrawPayout(amountKobo: number): Promise<AmbassadorWith
       reference: `referral_withdraw:${r.beneficiary_id}`,
     };
   } catch (err) {
-    // 403 ⇒ ErrKYCRequired (fail-closed KYC gate); surface as a typed error, no
     // fabricated success.
     const status = (err as { response?: { status?: number } })?.response?.status;
     if (status === 403) {
@@ -292,8 +288,6 @@ export async function getTierProgression(): Promise<TierProgression> {
     ],
   };
 }
-
-// ── Application (M-AMB-00) ───────────────────────────────────────────────────
 
 /**
  * The disclosure an applicant must accept, stored verbatim with the

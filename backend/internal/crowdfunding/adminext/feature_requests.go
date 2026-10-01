@@ -1,7 +1,6 @@
 package adminext
 
 // Crowdfunding OWNER FEATURE-REQUEST queue (admin side).
-//
 // The creator surface lets a campaign owner ASK to be placed on the featured
 // rail (POST /api/v1/crowdfunding/creator/campaigns/:id/feature-request), which
 // writes a PENDING row to cf_feature_requests and deliberately does NOT touch
@@ -9,18 +8,15 @@ package adminext
 // themselves straight onto the app's most prominent public surface. This file
 // is the other half: the operator queue that reads those requests and decides
 // them.
-//
 // RULE — approval is the ONLY path from a request to a placement, and it
 // re-checks the campaign is still ACTIVE under lock. A campaign can sit in the
 // queue for days; if it was frozen for fraud or rejected in the meantime,
 // approving the stale request would put unreviewed content on a public rail.
 // This is the same ACTIVE-only promotion rule guardFlagPromotion enforces for
 // the direct flags PATCH in featured.go, applied at the other entry point.
-//
 // Rejection is NOT status-gated: any pending request can be rejected whatever
 // the campaign's state, because refusing a placement never publishes anything.
 // That mirrors featured.go's rule that DEMOTION is never status-gated.
-//
 // No migration: cf_feature_requests (with status, note, admin_note, decided_by,
 // decided_at) was added by
 // supabase/migrations/20270112000000_crowdfunding_owner_selfmanage.sql.
@@ -32,9 +28,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-)
 
-// ─── Errors ──────────────────────────────────────────────────────────────────
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/timeutil"
+)
 
 // ErrFeatureRequestNotFound is returned when the request id does not exist.
 var ErrFeatureRequestNotFound = errors.New("adminext: feature request not found")
@@ -48,16 +45,12 @@ var ErrFeatureRequestNotPending = errors.New("adminext: feature request is not p
 // featureRequestStatusPending is the only status a decision may act on.
 const featureRequestStatusPending = "PENDING"
 
-// ─── DTO ─────────────────────────────────────────────────────────────────────
-
 // AdminFeatureRequest is the queue row rendered by the admin console.
-//
 // Note carries the ADMIN's decision note (cf_feature_requests.admin_note), not
 // the owner's original request note — the console renders it as the reason a
 // request was rejected. Both it and DecidedAt are pointers so an undecided
 // request emits an explicit null rather than an empty string or a zero date,
 // which the console distinguishes.
-//
 // All money is BIGINT kobo; RaisedKobo is DERIVED from contributions on every
 // read, never a stored balance.
 type AdminFeatureRequest struct {
@@ -74,8 +67,6 @@ type AdminFeatureRequest struct {
 	Note             *string `json:"note"`
 	DecidedAt        *string `json:"decidedAt"`
 }
-
-// ─── Queries ─────────────────────────────────────────────────────────────────
 
 // featureRequestCols is the shared projection. raised_kobo is derived from the
 // contributions ledger on every read.
@@ -107,9 +98,9 @@ func scanFeatureRequest(scan func(dest ...any) error) (AdminFeatureRequest, erro
 	if err != nil {
 		return f, err
 	}
-	f.RequestedAt = rfc3339(createdAt)
+	f.RequestedAt = timeutil.RFC3339(createdAt)
 	if decidedAt != nil {
-		s := rfc3339(*decidedAt)
+		s := timeutil.RFC3339(*decidedAt)
 		f.DecidedAt = &s
 	}
 	return f, nil
@@ -157,10 +148,7 @@ func getFeatureRequest(ctx context.Context, q interface {
 	return &f, nil
 }
 
-// ─── Pure helpers (unit-tested without a database) ───────────────────────────
-
 // guardFeatureDecision enforces the two rules a decision must satisfy.
-//
 // A decision may only act on a PENDING request. Approval additionally requires
 // the campaign to STILL be ACTIVE — the request may have been sitting in the
 // queue while a moderator froze or rejected the campaign, and approving it then
@@ -196,23 +184,16 @@ func decisionAction(approve bool) string {
 // NULL rather than the empty string, which would abort the statement on the
 // uuid cast.
 func nullableActor(adminID string) any {
-	if strings.TrimSpace(adminID) == "" {
-		return nil
-	}
-	return adminID
+	return dbutil.NullStr(strings.TrimSpace(adminID))
 }
 
-// ─── Decision ────────────────────────────────────────────────────────────────
-
 // DecideFeatureRequest approves or rejects a pending feature request.
-//
 // ATOMICITY: setting campaigns.featured and marking the request APPROVED happen
 // in ONE transaction, together with the audit row. A half-applied decision is
 // the failure that matters here — a campaign flagged featured with its request
 // still PENDING would be re-approved by the next operator, and a request marked
 // APPROVED without the flag would never reach the rail with nothing in the queue
 // to show it.
-//
 // LOCK ORDER — campaigns BEFORE cf_feature_requests, matching every creator-side
 // path (RequestFeature, WithdrawFeatureRequest, Unfeature and DeleteCampaign all
 // lock the campaign first, then touch the request). Taking them in the natural

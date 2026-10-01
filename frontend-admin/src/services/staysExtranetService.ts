@@ -1,6 +1,4 @@
-// ── Hotelier Extranet — Paymax Stays service (Booking.com Extranet/Pulse) ─────
 // Mock by default (mirrors staysAdminService). Flip with
-// NEXT_PUBLIC_STAYS_USE_MOCK=false to hit the live Go backend at
 // /api/stays/extranet/*. RBAC: stays.hotelier.* + staff roles.
 // OBJECT-SCOPED: every call resolves to the signed-in hotelier's OWN property.
 // Money is BIGINT kobo (minor units) and settled in Naira (NGN).
@@ -44,7 +42,6 @@ import type {
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_STAYS_USE_MOCK);
 
 // apiBaseUrl is the same-origin admin-proxy path (<origin>/api/admin-proxy),
-// not a plain API root — the old `apiBaseUrl.replace(/\/api\/v1\/?$/, ...)`
 // here matched nothing once the proxy migration landed (apiBaseUrl stopped
 // ending in /api/v1), silently forwarding every "live" call here to
 // <ADMIN_API_BASE_URL>/properties/... instead of .../api/stays/extranet/...
@@ -116,7 +113,6 @@ async function activePropertyId(): Promise<string> {
   return cachedPropertyId;
 }
 
-// ── Display helpers: kobo → ₦ ────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -132,9 +128,7 @@ const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).to
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 const dateAhead = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
-// ════════════════════════════════════════════════════════════════════════════
 // DEMO PROPERTY (object-scoped to one Nigerian hotel)
-// ════════════════════════════════════════════════════════════════════════════
 const PROPERTY_ID = 'prop_lekki_grand_001';
 
 const PROFILE: PropertyProfile = {
@@ -173,7 +167,6 @@ const RATE_PLANS: RatePlan[] = [
   { id: 'rp_suite_hb', room_type_id: 'rt_suite', name: 'Suite — Half Board', board: 'half_board', refundable: true, cancellation_window_hours: 72, mobile_rate: false, derived_from: null, derived_adjustment_pct: null, loyalty_opt_in: false, base_rate_kobo: 240_000_00, currency: 'NGN', status: 'active' },
 ];
 
-// ── A · Onboarding & verification ────────────────────────────────────────────
 const VERIFICATION: VerificationStatus = {
   property_id: PROPERTY_ID,
   property_name: PROFILE.name,
@@ -215,7 +208,6 @@ const BANK_SETTINGS: BankSettings = {
   next_payout_date: dateAhead(3),
 };
 
-// ── B · Content & inventory ──────────────────────────────────────────────────
 const PHOTOS: PhotoAsset[] = [
   { id: 'ph1', url: 'https://images.unsplash.com/photo-hotel-exterior', caption: 'Hotel exterior at dusk', tag: 'exterior', is_cover: true, order: 1 },
   { id: 'ph2', url: 'https://images.unsplash.com/photo-deluxe-king', caption: 'Deluxe King room', tag: 'room', is_cover: false, order: 2 },
@@ -289,7 +281,6 @@ const RESTRICTIONS: Restriction[] = ROOM_TYPES.map((rt) => ({
   stop_sell: false,
 }));
 
-// ── C · Promotions & visibility ──────────────────────────────────────────────
 const PROMOTIONS: Promotion[] = [
   { id: 'promo_eb', name: 'Book 30 Days Ahead', type: 'early_bird', discount_pct: 0.15, date_from: dateStr(5), date_to: dateAhead(120), advance_days: 30, min_los: null, last_minute_hours: null, applies_to_rate_plans: ['rp_std_flex', 'rp_dlx_flex'], status: 'active', redemptions: 42 },
   { id: 'promo_los', name: 'Stay 3 Pay 2', type: 'los', discount_pct: 0.20, date_from: dateStr(10), date_to: dateAhead(90), min_los: 3, advance_days: null, last_minute_hours: null, applies_to_rate_plans: ['rp_dlx_flex', 'rp_suite_hb'], status: 'active', redemptions: 18 },
@@ -319,7 +310,6 @@ const OPPORTUNITIES: Opportunity[] = [
   { id: 'op4', title: 'Respond to 2 pending reviews', category: 'reviews', impact: 'low', description: 'Responding to reviews improves guest trust and ranking.', cta_label: 'Open reviews', cta_href: '/extranet/reviews' },
 ];
 
-// ── D · Reservations & guests ────────────────────────────────────────────────
 const RESERVATIONS: ReservationDetail[] = [
   { id: 'res_1', ref: 'PMX-STY-7741', guest_name: 'Chioma Eze', room_type_name: 'Deluxe King', rate_plan_name: 'Deluxe — Flexible', check_in: dateStr(0), check_out: dateAhead(2), nights: 2, guests: 2, status: 'confirmed', payment_status: 'paid', total_kobo: 240_000_00, currency: 'NGN', channel: 'paymax_app', created_at: iso(50), guest_email: 'chioma.eze@example.ng', guest_phone: '+234 802 111 2222', guest_country: 'Nigeria', special_requests: 'High floor, late check-in ~22:00', board: 'breakfast', deposit_kobo: 0, balance_due_kobo: 0, commission_kobo: 28_800_00, net_to_hotel_kobo: 211_200_00, loyalty_member: true, timeline: [ { at: iso(50), label: 'Reservation confirmed', kind: 'confirmed' }, { at: iso(50), label: 'Payment captured (₦240,000.00)', kind: 'paid' } ] },
   { id: 'res_2', ref: 'PMX-STY-7738', guest_name: 'Tunde Bakare', room_type_name: 'Standard Queen', rate_plan_name: 'Standard — Non-refundable', check_in: dateStr(0), check_out: dateAhead(1), nights: 1, guests: 1, status: 'in_house', payment_status: 'paid', total_kobo: 74_800_00, currency: 'NGN', channel: 'agent', created_at: iso(72), guest_email: 'tunde.b@example.ng', guest_phone: '+234 803 222 3333', guest_country: 'Nigeria', special_requests: null, board: 'breakfast', deposit_kobo: 0, balance_due_kobo: 0, commission_kobo: 8_976_00, net_to_hotel_kobo: 65_824_00, loyalty_member: false, timeline: [ { at: iso(72), label: 'Reservation confirmed (agent-assisted)', kind: 'confirmed' }, { at: iso(2), label: 'Guest checked in', kind: 'in_house' } ] },
@@ -341,7 +331,6 @@ const REVIEWS: Review[] = [
   { id: 'rev_3', guest_name: 'Kemi Lawal', reservation_ref: 'PMX-STY-7580', rating: 10, title: 'Perfect anniversary stay', body: 'The suite was beautiful and the staff went above and beyond. Highly recommend.', created_at: iso(150), response: 'Thank you so much, Kemi! We were delighted to host your anniversary and hope to welcome you back soon.', responded_at: iso(140), status: 'published' },
 ];
 
-// ── E · Finance ──────────────────────────────────────────────────────────────
 const PAYOUTS: Payout[] = [
   { id: 'po_1', period: `${dateStr(13)} → ${dateStr(7)}`, gross_kobo: 4_820_000_00, commission_kobo: 578_400_00, net_kobo: 4_241_600_00, currency: 'NGN', status: 'paid', paid_at: iso(120), reference: 'PMX-PAYOUT-00231' },
   { id: 'po_2', period: `${dateStr(6)} → ${dateStr(0)}`, gross_kobo: 5_310_000_00, commission_kobo: 637_200_00, net_kobo: 4_672_800_00, currency: 'NGN', status: 'scheduled', paid_at: null, reference: null },
@@ -375,7 +364,6 @@ const DEPOSIT_RECON: DepositReconRow[] = [
   { reservation_ref: 'PMX-STY-7588', guest_name: 'Ngozi Obi', check_in: dateStr(8), deposit_kobo: 60_000_00, collected_at_property_kobo: 40_000_00, status: 'flagged', currency: 'NGN' },
 ];
 
-// ── F · Analytics ────────────────────────────────────────────────────────────
 const PERFORMANCE: PerformanceAnalytics = {
   currency: 'NGN',
   occupancy_pct: 0.74,
@@ -431,7 +419,6 @@ const MARKET: MarketContext = {
   note: 'Market context is anonymised and aggregated from comparable Paymax Stays properties in your area.',
 };
 
-// ── G · Account & staff ──────────────────────────────────────────────────────
 const STAFF: StaffMember[] = [
   { id: 'st_1', name: 'Adebayo Okonkwo', email: 'adebayo@lekkigrand.ng', role: 'owner', status: 'active', last_active: iso(2) },
   { id: 'st_2', name: 'Grace Eberechi', email: 'grace@lekkigrand.ng', role: 'revenue_manager', status: 'active', last_active: iso(8) },
@@ -447,9 +434,7 @@ const SETTINGS: ExtranetSettings = {
   default_currency: 'NGN',
 };
 
-// ════════════════════════════════════════════════════════════════════════════
 // Public API — mock-backed with live fallthrough
-// ════════════════════════════════════════════════════════════════════════════
 
 // A · Onboarding & verification
 export async function getVerificationStatus(): Promise<VerificationStatus> {
@@ -618,9 +603,7 @@ export async function listReviews(): Promise<Review[]> {
 }
 export async function respondReview(reviewId: string, response: string): Promise<Review> {
   if (USE_MOCK) throw new Error(`Responding to a review ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /reviews/:reviewId/response (reviews.Handler.Respond) — no
   // property id needed (reviewId alone is enough to resolve authorization).
-  // The old "/respond" here was a one-word path typo; this is the ONE write
   // in this file whose fix is a mechanical path correction rather than a
   // property-scoping redesign — see the file-level comment above.
   return sendJson<Review>('POST', `/reviews/${reviewId}/response`, { response });
@@ -692,7 +675,6 @@ const STAFF_ROLE_TO_BACKEND: Record<Exclude<StaffMember['role'], 'owner'>, strin
 
 // Invites via POST /properties/:propertyId/staff/invite {name, email, role}. If
 // a Paymax platform user already owns that email the grant lands immediately
-// (status 'active'); otherwise the backend emails a signup/accept link and the
 // grant lands once they accept (status 'invited' here in the meantime).
 export async function inviteStaff(name: string, email: string, role: Exclude<StaffMember['role'], 'owner'>): Promise<StaffMember> {
   if (USE_MOCK) throw new Error(`Inviting a staff member ${NOT_IN_FIXTURE_MODE}`);

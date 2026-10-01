@@ -24,8 +24,6 @@ const GENDERS = ['Female', 'Male'];
 const STATES = ['Enugu', 'FCT - Abuja', 'Lagos', 'Rivers'];
 const LISTS = { days: DAYS, months: MONTHS, years: YEARS, genders: GENDERS, states: STATES };
 
-// ── name ────────────────────────────────────────────────────────────────────
-
 test('prefers a first name — Connect shows a chosen name, not a legal one', () => {
   assert.equal(prefillName({ firstName: 'Amara', displayName: 'Amara Okafor' }), 'Amara');
 });
@@ -42,8 +40,6 @@ test('missing name yields a blank to fill in', () => {
   assert.equal(prefillName({}), '');
   assert.equal(prefillName({ displayName: '   ' }), '');
 });
-
-// ── date of birth ───────────────────────────────────────────────────────────
 
 test('splits a stored date into the three pickers, without a leading zero', () => {
   // The day list is '1'…'31', so '05' would match no option.
@@ -63,8 +59,6 @@ test('rejects malformed or missing dates', () => {
   assert.deepEqual(prefillDob('10/06/1995', LISTS), { day: '', month: '', year: '' });
   assert.deepEqual(prefillDob(undefined, LISTS), { day: '', month: '', year: '' });
 });
-
-// ── state ───────────────────────────────────────────────────────────────────
 
 test('matches a state case-insensitively', () => {
   assert.equal(prefillState('lagos', STATES), 'Lagos');
@@ -86,15 +80,11 @@ test('an unknown state prefills nothing rather than an unshowable value', () => 
   assert.equal(prefillState('', STATES), '');
 });
 
-// ── gender ──────────────────────────────────────────────────────────────────
-
 test('only uses a gender the two-option picker can display', () => {
   assert.equal(matchOption('female', GENDERS), 'Female');
   assert.equal(matchOption('Non-binary', GENDERS), '');
   assert.equal(matchOption('prefer_not_to_say', GENDERS), '');
 });
-
-// ── precedence ──────────────────────────────────────────────────────────────
 
 test('what the user already chose beats what the account holds', () => {
   const out = buildBasicsPrefill(

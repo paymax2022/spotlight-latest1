@@ -6,33 +6,26 @@ import (
 	"testing"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // service_test.go — money-path unit tests for the doctor (provider) module.
-//
 // TESTABILITY NOTE (read first):
-//
 //	doctor.Service holds CONCRETE dependencies (*Repository, *ledger.Service,
 //	*tiers.Service, *goredis.Client) — there is no interface seam, so the deep
 //	money path (ledger Debit + repo InsertPayout + audit) cannot be exercised
 //	with in-memory fakes without either (a) a live Postgres/Redis or (b) a small
 //	interface refactor. Per the QA brief we do NOT refactor the implementation.
-//
 //	What IS deterministically unit-testable with nil dependencies are the guard
 //	clauses that run BEFORE any dependency is dereferenced:
 //	  RequestPayout: idemKey=="" -> ErrIdempotencyRequired ; amount<=0 -> ErrInvalidAmount
 //	  SaveNote / CreatePrescription / CreateLabOrder / ReviewLabResult:
 //	    idemKey=="" -> ErrIdempotencyRequired
-//
 //	The full success/replay/tier/insufficient-funds/earnings cases are covered by
 //	the build-tagged integration suite in service_integration_test.go (runs only
 //	with -tags doctor_integration against a real DB) and are documented in
 //	docs/QA_DOCTOR_BACKEND_REPORT.md with the minimal interface seam they need.
-//
 // These tests mirror the canonical style of the sibling modules:
 //   - in-package value/guard tests like telemedicine/block13_test.go and
 //     finance/ledger/service_test.go (sentinel + invariant smoke tests, no DB),
 //   - table-driven assertions with t.Errorf, no testify.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // newServiceNoDeps builds a Service whose dependencies are nil. This is SAFE only
 // for exercising the early guard clauses (idempotency / amount validation) that
@@ -43,8 +36,6 @@ func newServiceNoDeps() *Service {
 	// explicitly supported configuration (see NewService doc comment).
 	return NewService(nil, nil, nil, nil)
 }
-
-// ── (5) Missing Idempotency-Key on the payout money path ────────────────────
 
 // TestRequestPayout_MissingIdempotencyKey verifies the FIRST iron-rule guard:
 // a payout without an Idempotency-Key is rejected with ErrIdempotencyRequired
@@ -97,8 +88,6 @@ func TestRequestPayout_GuardOrdering(t *testing.T) {
 	}
 }
 
-// ── Idempotency-Key required on the other write mutations ───────────────────
-
 // TestMutations_RequireIdempotencyKey verifies that every write that carries a
 // UNIQUE(idempotency_key) column in the migration enforces the key at the service
 // boundary (fail-closed) before touching the repository.
@@ -148,8 +137,6 @@ func TestMutations_RequireIdempotencyKey(t *testing.T) {
 	}
 }
 
-// ── Sentinel-error contract (mirrors ledger/service_test.go) ────────────────
-
 // TestSentinelErrorsDistinct verifies the doctor sentinel errors are non-nil and
 // distinct so the handler's errors.Is mapping cannot collapse two cases together.
 func TestSentinelErrorsDistinct(t *testing.T) {
@@ -174,8 +161,6 @@ func TestSentinelErrorsDistinct(t *testing.T) {
 	}
 }
 
-// ── (4) Insufficient-funds mapping contract ─────────────────────────────────
-
 // TestInsufficientFundsMapsToLedgerSentinel documents that the service surfaces
 // ledger.ErrInsufficientFunds verbatim (RequestPayout returns the ledger error
 // unwrapped) so the handler can map it to HTTP 422. The deep path is exercised in
@@ -192,8 +177,6 @@ func TestInsufficientFundsMapsToLedgerSentinel(t *testing.T) {
 		t.Fatal("unreachable")
 	}
 }
-
-// ── Kobo / minor-unit type contract ─────────────────────────────────────────
 
 // TestKoboAmountsAreInt64 verifies the money carrier types are integer minor units
 // (kobo), never floats or strings — the project's first iron rule.

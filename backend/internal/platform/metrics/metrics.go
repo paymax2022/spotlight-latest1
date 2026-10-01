@@ -1,11 +1,9 @@
 // Package metrics exposes drop-in business metrics for the money path, emitted via
 // OpenTelemetry to Cloud Monitoring (wired in internal/platform/observability).
-//
 // These are safe to call from anywhere: when no MeterProvider is configured (local
 // dev), OTel's global no-op meter makes every call a cheap no-op. Instruments are
 // created lazily and route to the real provider once observability.Init sets it
 // (OTel's global meter delegates), so import order never matters.
-//
 // Recommended call sites (add where the money path already makes these decisions):
 //   - RecordPaymentResult      → after a Paystack charge/verify resolves
 //   - RecordMoneyMovement      → on wallet fund / transfer / payout completion

@@ -1,8 +1,6 @@
 package crypto_test
 
-// ---------------------------------------------------------------------------
 // Crypto swap money-path invariants (go-live gate) — DB-FREE subset.
-//
 // crypto.Service takes a concrete *pgxpool.Pool + *ledger.Service (see
 // backend/internal/crypto/service.go: NewService(db *pgxpool.Pool, led
 // *ledger.Service, price PriceProvider) *Service), so Swap/priceSwap's DB-
@@ -13,11 +11,9 @@ package crypto_test
 // inline) and asserting the net-zero/spread/idempotency invariants against
 // them. Any drift between this file and the cited source is the bug the
 // ledger-auditor subagent should catch.
-//
 // Live-DB tests that actually call *crypto.Service against a migrated Postgres
 // live in live_db_integration_test.go (skip-gated on
 // TEST_DATABASE_URL — see that file's bring-up note).
-// ---------------------------------------------------------------------------
 
 import (
 	"testing"
@@ -25,22 +21,14 @@ import (
 	"spotlight/backend/internal/crypto"
 )
 
-// ---------------------------------------------------------------------------
 // unitsForCash / cashForUnits — the exported-via-behavior integer conversion
 // helpers used by both Buy/Sell and Swap. Both functions are unexported
 // (model.go:76-92); this file transcribes the exact formulas so the
 // truncation behavior (never over-credit) is locked without package-internal
 // access.
-//
-//	func unitsForCash(cashKobo, priceKobo, scale int64) int64 {
-//	    if priceKobo <= 0 || scale <= 0 { return 0 }
-//	    return cashKobo * scale / priceKobo
 //	}
 //	func cashForUnits(units, priceKobo, scale int64) int64 {
-//	    if scale <= 0 { return 0 }
-//	    return units * priceKobo / scale
 //	}
-// ---------------------------------------------------------------------------
 
 func unitsForCashMirror(cashKobo, priceKobo, scale int64) int64 {
 	if priceKobo <= 0 || scale <= 0 {
@@ -62,9 +50,9 @@ func TestUnitsForCash_TruncatesNeverOverCredits(t *testing.T) {
 		cashKobo, priceKobo, scale int64
 		wantUnits                  int64
 	}{
-		{"exact division", 1000, 100, 1, 10},                           // 1000*1/100 = 10
-		{"truncates remainder down (never rounds up)", 999, 100, 1, 9}, // 999*1/100 = 9.99 -> 9
-		{"exact division with larger scale", 1000, 100, 1000, 10_000},  // 1000*1000/100 = 10000
+		{"exact division", 1000, 100, 1, 10},
+		{"truncates remainder down (never rounds up)", 999, 100, 1, 9},
+		{"exact division with larger scale", 1000, 100, 1000, 10_000},
 		{"zero price is guarded", 1_000_00, 0, 1, 0},
 		{"zero scale is guarded", 1_000_00, 100, 0, 0},
 		{"negative price is guarded", 1_000_00, -100, 1, 0},
@@ -91,8 +79,8 @@ func TestCashForUnits_TruncatesAndGuardsZeroScale(t *testing.T) {
 		units, priceKobo, scale int64
 		wantCash                int64
 	}{
-		{"exact division", 10, 100, 1, 1000},                 // 10*100/1 = 1000
-		{"truncates remainder down", 3, 100, 2, 150},         // 3*100/2 = 150 exact
+		{"exact division", 10, 100, 1, 1000},
+		{"truncates remainder down", 3, 100, 2, 150},
 		{"truncates a non-exact result down", 3, 100, 7, 42}, // 300/7 = 42.86 -> 42
 		{"zero scale is guarded", 1000, 100, 0, 0},
 	}
@@ -106,16 +94,9 @@ func TestCashForUnits_TruncatesAndGuardsZeroScale(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // priceSwap / Swap economics — transcribed from service_ext.go priceSwap
 // (L28-78) and Swap (L90-170).
-//
 // Production logic (cited):
-//   cashKobo   := cashForUnits(fromUnits, fromPrice, from.MinorUnitScale)
-//   spreadKobo := cashKobo * int64(DefaultSwapSpreadBps) / 10_000   // 50 bps = 0.50%
-//   netCash    := cashKobo - spreadKobo
-//   toUnits    := unitsForCash(netCash, toPrice, to.MinorUnitScale)
-//
 // Two-leg atomic settlement (service_ext.go:117-152):
 //   1) holdings: fromUnits DEBIT, toUnits CREDIT — one DB tx (RecordSwapFill).
 //   2) cash legs on the finance ledger:
@@ -125,7 +106,6 @@ func TestCashForUnits_TruncatesAndGuardsZeroScale(t *testing.T) {
 //   Net wallet delta = cashKobo - netCash - spreadKobo = 0 (NEVER minted); the
 //   spread is the only leg that is NOT returned to the wallet — it is
 //   retained as paymax_revenue.
-// ---------------------------------------------------------------------------
 
 // DefaultSwapSpreadBps is asserted against the exported constant so this
 // file's derived math tracks the real production spread if it ever changes.
@@ -290,10 +270,8 @@ func TestSwap_RequiresIdempotencyKey(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Swap idempotency — RecordSwapFill's ON CONFLICT dedup + the three
 // ledger legs each keyed on idemKey+suffix (service_ext.go:117-152).
-// ---------------------------------------------------------------------------
 
 // fakeSwapLedger models ledger.Service.Credit/Debit's duplicate-tolerant
 // contract for each of the three swap legs (sell/buy/spread), each keyed on

@@ -7,15 +7,15 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/strutil"
 )
 
 // Admin organisation management.
-//
 // Authorization model: every call resolves the target organisation first and
 // then requires ManageMembers IN THAT ORG (requireCapInOrg, which already grants
 // platform super-admins). Fail-closed — an admin of another organisation gets
 // ErrForbidden, never a partial write.
-//
 // Money note: registration fees and dues tiers are integers in kobo. Mutating a
 // dues tier does not move money by itself (it re-prices future invoices), but it
 // is audited and requires an Idempotency-Key so a retried repricing cannot be
@@ -41,7 +41,6 @@ func (s *Service) requireOrgAdmin(ctx context.Context, adminID, orgID string) er
 }
 
 // requireCommitteeAdmin gates the committee LIFECYCLE — create, rename, delete.
-//
 // Separate from requireOrgAdmin on purpose. All three used to sit behind
 // ManageMembers, which meant a CHAPTER_ADMIN could delete any committee in the
 // organisation — and deleting one takes every assoc_committee_members row with
@@ -410,8 +409,6 @@ func (s *Service) UpdateOrganisationSettings(ctx context.Context, adminID, orgID
 	return current, nil
 }
 
-// ── Sub-entities: chapters, committees, dues categories, rules ───────────────
-
 // orgOfChild resolves the owning organisation of a sub-entity so the caller can
 // be authorized against it. `table` is always an internal constant.
 func (s *Service) orgOfChild(ctx context.Context, table, id string) (string, error) {
@@ -427,7 +424,7 @@ func (s *Service) CreateChapter(ctx context.Context, adminID, orgID string, req 
 	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
 		return "", err
 	}
-	level := nz(req.Level, "STATE")
+	level := strutil.OrBlank(req.Level, "STATE")
 	if !validChapterLevels[level] {
 		return "", fmt.Errorf("%w: association: invalid chapter level %q", ErrInvalidInput, level)
 	}
@@ -457,7 +454,7 @@ func (s *Service) UpdateChapter(ctx context.Context, adminID, chapterID string, 
 	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
 		return err
 	}
-	level := nz(req.Level, "STATE")
+	level := strutil.OrBlank(req.Level, "STATE")
 	if !validChapterLevels[level] {
 		return fmt.Errorf("%w: association: invalid chapter level %q", ErrInvalidInput, level)
 	}
@@ -598,7 +595,7 @@ func (s *Service) CreateCategory(ctx context.Context, adminID, orgID string, req
 	if req.DuesKobo < 0 {
 		return "", fmt.Errorf("%w: association: duesKobo must not be negative", ErrInvalidInput)
 	}
-	cadence := nz(req.Cadence, "ANNUAL")
+	cadence := strutil.OrBlank(req.Cadence, "ANNUAL")
 	if !validCadences[cadence] {
 		return "", fmt.Errorf("%w: association: invalid cadence %q", ErrInvalidInput, cadence)
 	}
@@ -639,7 +636,7 @@ func (s *Service) UpdateCategory(ctx context.Context, adminID, categoryID string
 	if req.DuesKobo < 0 {
 		return fmt.Errorf("%w: association: duesKobo must not be negative", ErrInvalidInput)
 	}
-	cadence := nz(req.Cadence, "ANNUAL")
+	cadence := strutil.OrBlank(req.Cadence, "ANNUAL")
 	if !validCadences[cadence] {
 		return fmt.Errorf("%w: association: invalid cadence %q", ErrInvalidInput, cadence)
 	}

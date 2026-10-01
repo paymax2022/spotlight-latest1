@@ -13,6 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/timeutil"
 )
 
 // Handler exposes referral vanity-link endpoints on the finance member group.
@@ -48,7 +51,7 @@ const vanityBaseURL = "https://spot.ng/r/"
 // ListVanity handles GET /api/finance/referral/invite/vanity — the caller's
 // vanity links, newest first, as a bare JSON array.
 func (h *Handler) ListVanity(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -85,7 +88,7 @@ func (h *Handler) ListVanity(c *gin.Context) {
 // return the existing) vanity link for {alias, source?, campaign?}. Alias is
 // normalized (lowercase, spaces → '-'). Idempotent per (user_id, alias).
 func (h *Handler) CreateVanity(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -143,7 +146,7 @@ func scanVanity(s rowScanner) (vanityRow, error) {
 	vr.Source = source
 	vr.Campaign = campaign
 	vr.URL = vanityBaseURL + vr.Alias
-	vr.CreatedAt = createdAt.UTC().Format(time.RFC3339)
+	vr.CreatedAt = timeutil.RFC3339(createdAt)
 	return vr, nil
 }
 

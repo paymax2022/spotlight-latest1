@@ -17,7 +17,6 @@ import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@
 // assigned / refunded / no_rider — five values `orders.status` cannot hold, so
 // five chips could never match a row — while pending, confirmed, rejected,
 // dispatch_failed and delivery_failed, which do occur, had no chip at all.
-// ORDER_STATUSES is the CHECK-constraint vocabulary; the feed 400s on anything
 // outside it, so drift here is loud rather than silently empty.
 const STATUS_FILTERS: (OrderStatus | '')[] = ['', ...ORDER_STATUSES];
 
@@ -34,7 +33,6 @@ const STATUS_COLOR: Record<string, string> = {
   delivery_failed: colors.danger,
 };
 
-// `dispatch_failed` reads as a column name; the chips and badges show
 // "dispatch failed". The VALUE sent to the server is never touched.
 const prettyStatus = (s: string) => s.replace(/_/g, ' ');
 
@@ -61,7 +59,6 @@ const AVAILABILITY: { key: NonNullable<AdminRestaurantQuery['status']>; label: s
 ];
 
 // listing_review_status values on `restaurants`. A shop sitting in any state but
-// APPROVED is one moderation has not let through — the register exists so those
 // are visible at all.
 const REVIEW_STATES = ['', 'DRAFT', 'PENDING_REVIEW', 'APPROVED', 'CHANGES_REQUESTED', 'REJECTED'];
 
@@ -76,7 +73,6 @@ const REVIEW_COLOR: Record<string, string> = {
 export default function RestaurantAdminPage() {
   const router = useRouter();
 
-  // ── Restaurant register (paged, server-filtered) ──────────────────────────
   const [restaurants, setRestaurants] = useState<AdminRestaurantRow[]>([]);
   const [total, setTotal] = useState(0);
   const [openTotal, setOpenTotal] = useState(0);
@@ -87,7 +83,6 @@ export default function RestaurantAdminPage() {
   const [rLoading, setRLoading] = useState(true);
   const [rError, setRError] = useState<string | null>(null);
 
-  // ── Order queue (paged, server-filtered, server-aggregated) ───────────────
   const [orderPage, setOrderPage] = useState<AdminOrderPage | null>(null);
   const [status, setStatus] = useState<OrderStatus | ''>('');
   const [orderSearch, setOrderSearch] = useState('');

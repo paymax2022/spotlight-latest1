@@ -1,11 +1,9 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for restaurant discovery search (Phase 6): text,
 // cuisine, min-rating, near-me (via the merchant_locations geo sync), and open_now
 // (via business hours) against real rows. Skipped unless TEST_DATABASE_URL is
 // set. Requires the restaurant, maps_core, business-hours, and search migrations.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

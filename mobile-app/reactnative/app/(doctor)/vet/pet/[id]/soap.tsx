@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidi
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Plus, X, Lock, ClipboardList, ShoppingBag } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SoapSection, SectionCard, StateView, StatusBadge } from '@/features/doctor/components';
@@ -15,7 +15,6 @@ import { CLINICAL_NOTE_STATUS_LABELS, PET_SPECIES_LABELS } from '@/features/doct
 import type { ClinicalNote } from '@/types/doctor.batch5';
 
 // Vet SOAP note (S.15) + pet diagnosis (S.16) + treatment plan (S.17). REUSES
-// the Batch 2 ClinicalNote via the VetClinicalNote wrapper; diagnosis &
 // treatmentPlan are the wrapper fields. Draft/finalized/locked = note.status.
 export default function VetSoapScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();

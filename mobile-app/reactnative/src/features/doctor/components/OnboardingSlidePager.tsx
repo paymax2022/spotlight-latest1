@@ -2,10 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 import type { NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import CarouselDots from './CarouselDots';
 
 export interface PagerSlide {
@@ -18,11 +18,10 @@ export interface PagerSlide {
 interface Props {
   slides:        PagerSlide[];
   onIndexChange?: (index: number) => void;
-  activeIndex?:  number;   // host-controlled page (e.g. a "Next" button); scrolls when changed
+  activeIndex?:  number;
 }
 
 // New component (Section A · entry 2): a horizontally-paged intro carousel over
-// OnboardingSlide[]. No existing component does paged horizontal slides; reuses
 // CarouselDots for the position indicator. Exposes the active index via
 // onIndexChange so the host screen can swap the skip/next/get-started CTA.
 export default function OnboardingSlidePager({ slides, onIndexChange, activeIndex }: Props) {

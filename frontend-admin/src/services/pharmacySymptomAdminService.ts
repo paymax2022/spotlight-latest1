@@ -1,32 +1,27 @@
-// ── Admin — Paymax Health · Pharmacy Symptom-Based Medication Search ──────────
 // Pharmacist console service for the symptom-search addon (PRD
 // docs/health/Pharmacy_Symptom_Search_Addon_PRD.md §4 suggest-approve, §8
 // console screens, §9 SLA). Mirrors healthPharmacyAdminService: mock by
-// default, flip with NEXT_PUBLIC_HEALTH_USE_MOCK=false to hit the live Go
 // backend. Every mutation sends an Idempotency-Key (contracts/openapi.yaml
 // /admin/pharmacy/* ~5262-5342). RBAC: health.pharmacy.symptom.* wired on the
 // sidebar; server enforcement is authoritative.
-//
 // Suggest-approve gravity: nothing AI_SUGGESTED is user-visible until a
 // licensed pharmacist approves it here — approvals go live immediately.
 
 import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 
-// ── URL constants (single place to fix if backend paths differ) ──────────────
 // Base mirrors healthPharmacyAdminService: env.apiBaseUrl ends with /api/v1 and
 // pharmacy admin routes hang off /api/health/pharmacy/admin/*.
 const ADMIN_BASE_SUFFIX = '/api/health/pharmacy/admin';
-export const URL_REVIEW_QUEUE = '/symptom/reviews'; // GET ?state=&tier=
+export const URL_REVIEW_QUEUE = '/symptom/reviews';
 export const URL_REVIEW_CASE = (id: string) => `/symptom/reviews/${encodeURIComponent(id)}`; // GET detail
 export const URL_REVIEW_DECISION = (id: string) => `/symptom/reviews/${encodeURIComponent(id)}/decision`; // POST {decision, note}
-export const URL_MAPPINGS = '/symptom/mappings'; // GET ?entity=term|cluster · POST {entity, action, payload}
+export const URL_MAPPINGS = '/symptom/mappings';
 export const URL_METRICS = '/symptom/metrics'; // GET — safety-KPI strip (PRD §9)
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_HEALTH_USE_MOCK);
 
 // apiBaseUrl is the same-origin admin-proxy path (<origin>/api/admin-proxy),
-// not a plain API root — the old `env.apiBaseUrl.replace(/\/api\/v1\/?$/, ...)`
 // here stopped matching once the proxy migration landed (apiBaseUrl stopped
 // ending in /api/v1), silently no-op'ing this replace and leaving every call
 // pointed at the bare proxy root instead of .../api/health/pharmacy/admin/... —
@@ -69,8 +64,6 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   const j = await res.json().catch(() => null);
   return (j?.data ?? j) as T;
 }
-
-// ── Types (match contracts/openapi.yaml components — PharmacyReviewCase et al.) ──
 
 export type TriageTier = 'T1' | 'T2' | 'T3' | 'T4';
 export type ReviewState = 'SUBMITTED' | 'AUTO_CLEARED' | 'PHARMACIST_REVIEW' | 'NEEDS_INFO' | 'APPROVED' | 'REJECTED';
@@ -137,9 +130,7 @@ export interface ClusterRule {
 }
 
 // NOTE: the cluster_class_map join table has no surrogate key and NO approval
-// lifecycle of its own — the backend sets id = therapeutic_class_id and
 // projects status/approved_* from the therapeutic CLASS row. Approving a row
-// here therefore approves the CLASS entity (live in EVERY cluster mapping it);
 // retiring removes just this cluster's mapping row.
 export interface ClusterClassMap {
   id: string; // = therapeutic_class_id (see NOTE above)
@@ -176,10 +167,9 @@ export interface SymptomSafetyMetrics {
   open_overdue: number;
   median_decision_seconds: number | null; // null until enough decided cases
   searches_24h: number;
-  gated_share_7d: number | null; // 0..1 share of searches landing T2+; null = no searches
+  gated_share_7d: number | null;
 }
 
-// ── Display helper: kobo → ₦ (money is integer minor units, never floats) ────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -187,8 +177,6 @@ export function formatNaira(kobo: number): string {
 
 const isoIn = (mins: number) => new Date(Date.now() + mins * 60_000).toISOString();
 const isoAgo = (mins: number) => new Date(Date.now() - mins * 60_000).toISOString();
-
-// ── Fixtures (mock mode) ──────────────────────────────────────────────────────
 
 const REVIEW_CASES: PharmacyReviewCase[] = [
   { id: 'prc_9001', order_id: 'ord_8814', tier: 'T2', state: 'PHARMACIST_REVIEW', pharmacist_id: null, decision_note: null, sla_deadline: isoAgo(14), created_at: isoAgo(38), updated_at: isoAgo(38) },
@@ -305,7 +293,6 @@ const CLUSTERS: ConditionClusterMapping[] = [
 
 const OPEN_STATES: ReviewState[] = ['SUBMITTED', 'PHARMACIST_REVIEW', 'NEEDS_INFO'];
 
-// Mock: derived from the live REVIEW_CASES fixtures so the strip always agrees
 // with the queue table underneath it (decisions in mock mode update both).
 function mockMetrics(): SymptomSafetyMetrics {
   const by_state: Partial<Record<ReviewState, number>> = {};
@@ -343,8 +330,6 @@ export async function getSafetyMetrics(): Promise<SymptomSafetyMetrics | null> {
     return null;
   }
 }
-
-// ── Review queue ──────────────────────────────────────────────────────────────
 
 export async function listReviewCases(opts?: { state?: ReviewState | ''; tier?: TriageTier | '' }): Promise<PharmacyReviewCase[]> {
   let rows: PharmacyReviewCase[];
@@ -396,8 +381,6 @@ export async function decideReviewCase(id: string, decision: ReviewDecision, not
   return postJson<PharmacyReviewCase>(URL_REVIEW_DECISION(id), { decision, note: trimmed || undefined });
 }
 
-// ── Mapping workbench (suggest-approve) ───────────────────────────────────────
-
 export async function listSymptomTerms(opts?: { status?: MappingStatus | ''; language?: SymptomLanguage | '' }): Promise<SymptomTermMapping[]> {
   let rows: SymptomTermMapping[];
   if (USE_MOCK) {
@@ -428,7 +411,6 @@ export async function listClusters(): Promise<ConditionClusterMapping[]> {
   return Array.isArray(rows) ? rows : [];
 }
 
-// approve makes an AI_SUGGESTED mapping user-visible IMMEDIATELY; retire (never
 // delete) removes it from the user surface. Both record approver + timestamp
 // server-side and write to the immutable audit log.
 export async function actOnTerm(id: string, action: 'approve' | 'retire'): Promise<MutationResult> {
@@ -450,7 +432,6 @@ export async function actOnTerm(id: string, action: 'approve' | 'retire'): Promi
 // {entity: 'cluster_class_map', action: 'approve'}): status is projected from
 // the therapeutic CLASS row, so approve sends the therapeutic_class entity —
 // which makes the class live in EVERY cluster that maps to it. Retire stays on
-// cluster_class_map: it removes this cluster's mapping row (the one taxonomy
 // row that IS hard-deleted — the join carries no status column).
 export async function actOnClassMap(clusterId: string, therapeuticClassId: string, action: 'approve' | 'retire'): Promise<MutationResult> {
   if (USE_MOCK) {
@@ -482,8 +463,6 @@ export async function actOnClassMap(clusterId: string, therapeuticClassId: strin
   await postJson(URL_MAPPINGS, { entity: 'cluster_class_map', action: 'retire', payload: { cluster_id: clusterId, class_id: therapeuticClassId } });
   return { ok: true, message: 'Mapping removed from this cluster.' };
 }
-
-// ── SLA helpers (PRD §9: median review <10 min) ───────────────────────────────
 
 export function slaStatus(deadlineIso: string): { overdue: boolean; label: string } {
   const diffMs = new Date(deadlineIso).getTime() - Date.now();

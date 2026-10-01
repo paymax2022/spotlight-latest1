@@ -2,15 +2,14 @@ package social
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"time"
-
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
 	"spotlight/backend/internal/cashtag"
 	"spotlight/backend/internal/finance/ledger"
+	"time"
 )
 
 // Auditor is the immutable-audit slice the social module needs (NL-12). nil-safe.
@@ -34,8 +33,6 @@ type Service struct {
 func NewService(db *pgxpool.Pool, led *ledger.Service, tags *cashtag.Service, aml *AML, audit Auditor) *Service {
 	return &Service{db: db, led: led, tags: tags, aml: aml, audit: audit}
 }
-
-// ───────────────────────── P2P send ─────────────────────────
 
 // Send transfers amountKobo from senderID to the user behind recipientHandle.
 // Wallet→wallet via the ledger (commission account is NOT used — this is a pure
@@ -86,8 +83,6 @@ func (s *Service) Send(ctx context.Context, senderID, recipientHandle, note, ide
 	s.log(senderID, recipientID, "social.p2p.send", "social_payment", p.ID, nil, map[string]any{"amount_kobo": amountKobo})
 	return p, nil
 }
-
-// ───────────────────────── Requests ─────────────────────────
 
 // CreateRequest creates a money request. Object-level authZ: requesterID is the
 // CALLER (set by the handler from the session) — a user can never request as
@@ -189,8 +184,6 @@ func (s *Service) resolveRequest(ctx context.Context, requestID, actorID string,
 	return nil
 }
 
-// ───────────────────────── Split bill ─────────────────────────
-
 // ShareInput is one participant's cashtag + (custom) amount.
 type ShareInput struct {
 	Handle     string `json:"handle"`
@@ -210,45 +203,9 @@ func (s *Service) CreateSplit(ctx context.Context, organiserID, title string, to
 	}
 
 	// Resolve participants.
-	type resolved struct {
-		userID string
-		amount int64
-	}
-	parts := make([]resolved, 0, len(shares))
-	switch mode {
-	case SplitEqual:
-		n := int64(len(shares))
-		base := totalKobo / n
-		rem := totalKobo - base*n
-		for i, sh := range shares {
-			uid, err := s.tags.Resolve(ctx, sh.Handle)
-			if err != nil {
-				return nil, nil, err
-			}
-			amt := base
-			if int64(i) == n-1 {
-				amt += rem // remainder absorbed by last share — kobo always balances
-			}
-			parts = append(parts, resolved{userID: uid, amount: amt})
-		}
-	case SplitCustom:
-		var sum int64
-		for _, sh := range shares {
-			uid, err := s.tags.Resolve(ctx, sh.Handle)
-			if err != nil {
-				return nil, nil, err
-			}
-			if sh.AmountKobo <= 0 {
-				return nil, nil, fmt.Errorf("social: custom share must be positive")
-			}
-			sum += sh.AmountKobo
-			parts = append(parts, resolved{userID: uid, amount: sh.AmountKobo})
-		}
-		if sum != totalKobo {
-			return nil, nil, fmt.Errorf("social: custom shares must sum to total (%d != %d)", sum, totalKobo)
-		}
-	default:
-		return nil, nil, fmt.Errorf("social: unknown split mode")
+	parts, err := s.resolveShares(ctx, mode, totalKobo, shares)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -291,6 +248,56 @@ func (s *Service) CreateSplit(ctx context.Context, organiserID, title string, to
 	}
 	s.log(organiserID, "", "social.split.create", "split_bill", bill.ID, nil, map[string]any{"total_kobo": totalKobo, "mode": mode})
 	return bill, out, nil
+}
+
+// resolvedShare is a participant handle resolved to a user id plus the
+// minor-unit amount that share owes.
+type resolvedShare struct {
+	userID string
+	amount int64
+}
+
+// resolveShares resolves share handles to user ids and assigns minor-unit
+// amounts per the split mode. Equal splits absorb any division remainder in the
+// last share — kobo always balances.
+func (s *Service) resolveShares(ctx context.Context, mode SplitMode, totalKobo int64, shares []ShareInput) ([]resolvedShare, error) {
+	parts := make([]resolvedShare, 0, len(shares))
+	switch mode {
+	case SplitEqual:
+		n := int64(len(shares))
+		base := totalKobo / n
+		rem := totalKobo - base*n
+		for i, sh := range shares {
+			uid, err := s.tags.Resolve(ctx, sh.Handle)
+			if err != nil {
+				return nil, err
+			}
+			amt := base
+			if int64(i) == n-1 {
+				amt += rem // remainder absorbed by last share — kobo always balances
+			}
+			parts = append(parts, resolvedShare{userID: uid, amount: amt})
+		}
+	case SplitCustom:
+		var sum int64
+		for _, sh := range shares {
+			uid, err := s.tags.Resolve(ctx, sh.Handle)
+			if err != nil {
+				return nil, err
+			}
+			if sh.AmountKobo <= 0 {
+				return nil, errors.New("social: custom share must be positive")
+			}
+			sum += sh.AmountKobo
+			parts = append(parts, resolvedShare{userID: uid, amount: sh.AmountKobo})
+		}
+		if sum != totalKobo {
+			return nil, fmt.Errorf("social: custom shares must sum to total (%d != %d)", sum, totalKobo)
+		}
+	default:
+		return nil, errors.New("social: unknown split mode")
+	}
+	return parts, nil
 }
 
 // PayShare settles a participant's split share (object-level: only that
@@ -391,8 +398,6 @@ func (s *Service) IsSplitParticipant(ctx context.Context, splitID, userID string
 	}
 	return b.OrganiserID == userID, nil
 }
-
-// ───────────────────────── Group pool ─────────────────────────
 
 // CreatePool opens a group pool. Beneficiary defaults to the organiser.
 func (s *Service) CreatePool(ctx context.Context, organiserID, title string, beneficiaryID *string) (*GroupPool, error) {
@@ -500,8 +505,6 @@ func (s *Service) GetPool(ctx context.Context, poolID string) (*GroupPool, error
 	return s.getPool(ctx, poolID)
 }
 
-// ───────────────────────── helpers ─────────────────────────
-
 func (s *Service) paymentByIdem(ctx context.Context, idemKey string) (*Payment, error) {
 	const q = `SELECT id, sender_id, recipient_id, amount_kobo, note, idempotency_key, created_at FROM social_payments WHERE idempotency_key=$1`
 	var p Payment
@@ -569,3 +572,196 @@ var (
 	ErrForbidden = fmt.Errorf("social: forbidden")
 	ErrNotFound  = fmt.Errorf("social: not found")
 )
+
+// AMLConfig is versioned velocity policy for P2P sends (NL-10). Defaults are
+// conservative; admin tooling can override per-tier in later phases.
+type AMLConfig struct {
+	MaxSendsPerDay  int   // count cap in a rolling 24h window
+	MaxAmountPerDay int64 // total kobo cap in a rolling 24h window
+	MaxSingleKobo   int64 // single-transfer cap
+}
+
+// DefaultAMLConfig is the closed-loop default applied when none is supplied.
+func DefaultAMLConfig() AMLConfig {
+	return AMLConfig{
+		MaxSendsPerDay:  50,
+		MaxAmountPerDay: 50000000, // ₦500,000 / day
+		MaxSingleKobo:   20000000, // ₦200,000 single
+	}
+}
+
+// AML enforces send velocity / structuring limits against the recorded P2P
+// payment history (NL-10). It fails CLOSED: a DB error blocks the transfer.
+type AML struct {
+	db  *pgxpool.Pool
+	cfg AMLConfig
+}
+
+func NewAML(db *pgxpool.Pool, cfg AMLConfig) *AML {
+	if cfg.MaxSendsPerDay == 0 {
+		cfg = DefaultAMLConfig()
+	}
+	return &AML{db: db, cfg: cfg}
+}
+
+// Check verifies a proposed send of amountKobo by senderID is within limits.
+func (a *AML) Check(ctx context.Context, senderID string, amountKobo int64) error {
+	if amountKobo <= 0 {
+		return errors.New("social: amount must be positive")
+	}
+	if amountKobo > a.cfg.MaxSingleKobo {
+		return ErrAMLSingleLimit
+	}
+	const q = `
+		SELECT COALESCE(COUNT(*),0), COALESCE(SUM(amount_kobo),0)
+		FROM social_payments
+		WHERE sender_id=$1 AND created_at > now() - interval '24 hours'`
+	var cnt int
+	var sum int64
+	if err := a.db.QueryRow(ctx, q, senderID).Scan(&cnt, &sum); err != nil {
+		return fmt.Errorf("social: aml check failed (fail-closed): %w", err)
+	}
+	if cnt+1 > a.cfg.MaxSendsPerDay {
+		return ErrAMLCountLimit
+	}
+	if sum+amountKobo > a.cfg.MaxAmountPerDay {
+		return ErrAMLAmountLimit
+	}
+	return nil
+}
+
+var (
+	ErrAMLSingleLimit = errors.New("social: transfer exceeds single-send limit")
+	ErrAMLCountLimit  = errors.New("social: daily transfer count limit reached")
+	ErrAMLAmountLimit = errors.New("social: daily transfer amount limit reached")
+)
+
+// P2P PAYMENT — an in-chat send. Sender -> recipient (resolved via cashtag).
+// Money moves wallet→wallet through the finance ledger (NL-8), idempotent (NL-9).
+// AML velocity limits applied per sender (NL-10).
+
+type Payment struct {
+	ID             string    `json:"id"`
+	SenderID       string    `json:"sender_id"`
+	RecipientID    string    `json:"recipient_id"`
+	AmountKobo     int64     `json:"amount_kobo"`
+	Note           string    `json:"note"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// PAYMENT REQUEST — "request N from @handle". The REQUESTER asks the PAYER.
+// Object-level authZ: a user can only create a request as THEMSELVES (requester
+// State: PENDING → PAID | DECLINED | CANCELLED.
+
+type RequestState string
+
+const (
+	RequestPending   RequestState = "PENDING"
+	RequestPaid      RequestState = "PAID"
+	RequestDeclined  RequestState = "DECLINED"
+	RequestCancelled RequestState = "CANCELLED"
+)
+
+var requestTransitions = map[RequestState]map[RequestState]bool{
+	RequestPending:   {RequestPaid: true, RequestDeclined: true, RequestCancelled: true},
+	RequestPaid:      {},
+	RequestDeclined:  {},
+	RequestCancelled: {},
+}
+
+type Request struct {
+	ID          string       `json:"id"`
+	RequesterID string       `json:"requester_id"` // who is owed
+	PayerID     string       `json:"payer_id"`     // who must pay
+	AmountKobo  int64        `json:"amount_kobo"`
+	Note        string       `json:"note"`
+	State       RequestState `json:"state"`
+	CreatedAt   time.Time    `json:"created_at"`
+	ResolvedAt  *time.Time   `json:"resolved_at,omitempty"`
+}
+
+// SPLIT BILL — one organiser splits a total across participants (EQUAL or
+// CUSTOM per-share). Each share is itself a payment request that the participant
+// settles; the engine tracks paid/outstanding.
+
+type SplitMode string
+
+const (
+	SplitEqual  SplitMode = "EQUAL"
+	SplitCustom SplitMode = "CUSTOM"
+)
+
+type SplitState string
+
+const (
+	SplitOpen     SplitState = "OPEN"
+	SplitSettled  SplitState = "SETTLED"
+	SplitCanceled SplitState = "CANCELLED"
+)
+
+type SplitBill struct {
+	ID          string     `json:"id"`
+	OrganiserID string     `json:"organiser_id"`
+	Title       string     `json:"title"`
+	TotalKobo   int64      `json:"total_kobo"`
+	Mode        SplitMode  `json:"mode"`
+	State       SplitState `json:"state"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type ShareState string
+
+const (
+	SharePending ShareState = "PENDING"
+	SharePaid    ShareState = "PAID"
+)
+
+type SplitShare struct {
+	ID         string     `json:"id"`
+	SplitID    string     `json:"split_id"`
+	UserID     string     `json:"user_id"`
+	AmountKobo int64      `json:"amount_kobo"`
+	State      ShareState `json:"state"`
+	PaidAt     *time.Time `json:"paid_at,omitempty"`
+}
+
+// GROUP POOL — many contributors fund one pot; organiser pays it out. Balance
+// is ledger-derived (NL-8). NL-2: no yield.
+// State: OPEN → PAID_OUT | CLOSED.
+
+type PoolState string
+
+const (
+	PoolOpen    PoolState = "OPEN"
+	PoolPaidOut PoolState = "PAID_OUT"
+	PoolClosed  PoolState = "CLOSED"
+)
+
+var poolTransitions = map[PoolState]map[PoolState]bool{
+	PoolOpen:    {PoolPaidOut: true, PoolClosed: true},
+	PoolPaidOut: {PoolClosed: true},
+	PoolClosed:  {},
+}
+
+type GroupPool struct {
+	ID            string    `json:"id"`
+	OrganiserID   string    `json:"organiser_id"`
+	Title         string    `json:"title"`
+	BeneficiaryID *string   `json:"beneficiary_id,omitempty"` // defaults to organiser at payout
+	State         PoolState `json:"state"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type PoolContribution struct {
+	ID         string    `json:"id"`
+	PoolID     string    `json:"pool_id"`
+	UserID     string    `json:"user_id"`
+	AmountKobo int64     `json:"amount_kobo"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+func canRequest(from, to RequestState) bool { return requestTransitions[from][to] }
+func canPool(from, to PoolState) bool       { return poolTransitions[from][to] }

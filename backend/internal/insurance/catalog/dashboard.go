@@ -8,18 +8,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ════════════════════════════════════════════════════════════════════════════
 // ADMIN DASHBOARD
-// ════════════════════════════════════════════════════════════════════════════
-//
 // KPIs for the insurance admin console.
-//
 // ⚠️ NULL IS NOT ZERO, and the console renders them differently. A figure we did
 // not or could not compute is emitted as null; 0 means "computed, and it is
 // zero". Sending 0 for an unknown would tell an operator the module earned no
 // commission when in fact nobody asked the question — the two are worlds apart
 // on a money screen, and the more confident-looking answer is the wrong one.
-//
 // Every amount is INTEGER KOBO, summed in the database. No float ever touches a
 // money figure on this path.
 
@@ -100,7 +95,6 @@ func (s *Service) DashboardStats(ctx context.Context) (*Dashboard, error) {
 		ByUnderwriter:   []UnderwriterStat{},
 	}
 
-	// --- Policies by state ---
 	rows, err := s.db.Query(ctx, `
 		SELECT state, count(*) FROM public.insurance_policy GROUP BY state`)
 	if err != nil {
@@ -124,7 +118,6 @@ func (s *Service) DashboardStats(ctx context.Context) (*Dashboard, error) {
 		return nil, err
 	}
 
-	// --- Money on BOUND policies only ---
 	if err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(sum(premium_amount_kobo),0), COALESCE(sum(commission_kobo),0)
 		FROM public.insurance_policy
@@ -132,7 +125,6 @@ func (s *Service) DashboardStats(ctx context.Context) (*Dashboard, error) {
 		return nil, fmt.Errorf("catalog: dashboard premium: %w", err)
 	}
 
-	// --- Claims ---
 	if err := s.db.QueryRow(ctx, `
 		SELECT count(*),
 		       count(*) FILTER (WHERE state IN ('FNOL_SUBMITTED','UNDER_ASSESSMENT','NEEDS_MORE_INFO','APPROVED','PAYOUT_PENDING')),
@@ -144,7 +136,6 @@ func (s *Service) DashboardStats(ctx context.Context) (*Dashboard, error) {
 		return nil, fmt.Errorf("catalog: dashboard claims: %w", err)
 	}
 
-	// --- Loss ratio: undefined with no premium, NOT zero ---
 	if d.GrossPremiumKobo > 0 {
 		// Integer kobo in, one ratio out. The division is the only float on this
 		// path and it is a DISPLAY ratio, never an amount.
@@ -152,7 +143,6 @@ func (s *Service) DashboardStats(ctx context.Context) (*Dashboard, error) {
 		d.LossRatio = &ratio
 	}
 
-	// --- Catalog health ---
 	if err := s.db.QueryRow(ctx, `
 		SELECT count(*),
 		       count(*) FILTER (WHERE active),
@@ -165,7 +155,6 @@ func (s *Service) DashboardStats(ctx context.Context) (*Dashboard, error) {
 		return nil, fmt.Errorf("catalog: dashboard products: %w", err)
 	}
 
-	// --- By product line ---
 	catRows, err := s.db.Query(ctx, `
 		SELECT COALESCE(p.product_line,'other'), count(*),
 		       COALESCE(sum(pol.premium_amount_kobo),0), COALESCE(sum(pol.commission_kobo),0)
@@ -189,7 +178,6 @@ func (s *Service) DashboardStats(ctx context.Context) (*Dashboard, error) {
 		return nil, err
 	}
 
-	// --- By underwriter ---
 	uwRows, err := s.db.Query(ctx, `
 		SELECT COALESCE(NULLIF(pol.underwriter,''),'(undisclosed)'), count(*),
 		       COALESCE(sum(pol.premium_amount_kobo),0), COALESCE(sum(pol.commission_kobo),0)
@@ -212,14 +200,12 @@ func (s *Service) DashboardStats(ctx context.Context) (*Dashboard, error) {
 		return nil, err
 	}
 
-	// --- Provider float: the launch gate ---
 	var pausedCount int
 	if err := s.db.QueryRow(ctx, `
 		SELECT count(*) FROM public.insurance_provider_float WHERE state = 'exhausted'`).Scan(&pausedCount); err == nil {
 		d.BindingPaused = pausedCount > 0
 	}
 
-	// --- Outbound binds with an unknown outcome ---
 	var unresolved int
 	if err := s.db.QueryRow(ctx, `
 		SELECT count(*) FROM public.insurance_provider_bind WHERE state = 'unknown'`).Scan(&unresolved); err == nil {

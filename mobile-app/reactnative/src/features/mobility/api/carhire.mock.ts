@@ -1,4 +1,3 @@
-// ── Car hire — mock seed data + deterministic engine ─────────────────────────
 // All money is integer kobo. Fare + deposit pricing mimics the SERVER.
 
 import type {

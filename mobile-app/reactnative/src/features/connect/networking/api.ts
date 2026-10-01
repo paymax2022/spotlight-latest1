@@ -27,7 +27,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
 
 const PHOTO = (seed: string) => `https://images.unsplash.com/${seed}?auto=format&fit=crop&w=800&q=60`;
 
-// ── Mock professionals ───────────────────────────────────────────────────────
 const MOCK_PROFILES: NetworkProfile[] = [
   {
     id: 'n1',
@@ -105,7 +104,6 @@ const SKILL_OPTIONS = ['Go', 'Python', 'Product', 'Design', 'Growth', 'ML', 'Pay
 export const NETWORK_OPEN_TO_OPTIONS = OPEN_TO_OPTIONS;
 export const NETWORK_SKILL_OPTIONS = SKILL_OPTIONS;
 
-// ── Feed (NW-01) ─────────────────────────────────────────────────────────────
 export async function getNetworkFeed(filters: NetworkFilters): Promise<NetworkProfile[]> {
   if (USE_MOCK) {
     await delay();
@@ -141,7 +139,6 @@ export async function sendConnectRequest(profileId: string, note: string): Promi
   return unwrap<ConnectRequestResult>(res);
 }
 
-// ── Endorsements (NW-11) ─────────────────────────────────────────────────────
 export async function getEndorsements(profileId: string): Promise<{ skills: EndorsableSkill[]; recent: Endorsement[] }> {
   if (USE_MOCK) {
     await delay();
@@ -170,7 +167,6 @@ export async function endorseSkill(profileId: string, skill: string): Promise<{ 
   return unwrap<{ ok: true; skill: string; count: number }>(res);
 }
 
-// ── Communities (NW-05..NW-07) ───────────────────────────────────────────────
 const MOCK_COMMUNITIES: Community[] = [
   { id: 'c1', name: 'Lagos Fintech Builders', description: 'Engineers, PMs and founders shipping African payments.', coverUrl: PHOTO('photo-1521737604893-d14cc237f11d'), category: 'Fintech', memberCount: 2480, isPrivate: false, joined: true },
   { id: 'c2', name: 'Women in Product NG', description: 'A supportive space for women building product across Nigeria.', coverUrl: PHOTO('photo-1573164713988-8665fc963095'), category: 'Product', memberCount: 1310, isPrivate: true, joined: false },
@@ -220,7 +216,6 @@ export async function createCommunity(input: CreateCommunityInput): Promise<Comm
   return unwrap<Community>(res);
 }
 
-// ── Events (NW-08..NW-10) ────────────────────────────────────────────────────
 const MOCK_EVENTS: NetworkEvent[] = [
   { id: 'ev1', title: 'Fintech Founders Mixer', description: 'Casual evening of intros, drinks and demos for fintech builders.', coverUrl: PHOTO('photo-1511795409834-ef04bbd61622'), startsAt: new Date(Date.now() + 3 * 86400000).toISOString(), venue: 'The Zone, Gbagada', city: 'Lagos', isOnline: false, hostName: 'Lagos Fintech Builders', attendeeCount: 142, capacity: 200, priceKobo: 0, rsvp: 'going', tags: ['Fintech', 'Networking'] },
   { id: 'ev2', title: 'Product Discovery Masterclass', description: 'Hands-on session on running effective product discovery.', coverUrl: PHOTO('photo-1540575467063-178a50c2df87'), startsAt: new Date(Date.now() + 7 * 86400000).toISOString(), venue: 'Online (Zoom)', city: 'Online', isOnline: true, hostName: 'Women in Product NG', attendeeCount: 310, priceKobo: 500000, rsvp: 'interested', tags: ['Product', 'Workshop'] },

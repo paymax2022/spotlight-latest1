@@ -4,7 +4,6 @@ import Link from 'next/link';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { colors, tint } from '@/components/ui/vuexy';
 
-// ── Shared presentational helpers for the Spotlight ACADEMY admin console ─────
 // Local mirror of app/admin/health/_ui.tsx (same light-card inline-style
 // convention, #340075 brand accent). Every Academy page imports these primitives
 // + AcademyTabs from this single file. Kept self-contained so the Academy slice
@@ -60,7 +59,6 @@ const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
   cce: { fg: colors.info, bg: tint(colors.info, 0.12) }, bece: { fg: colors.info, bg: tint(colors.info, 0.12) },
   wassce: { fg: colors.info, bg: tint(colors.info, 0.12) }, neco: { fg: colors.info, bg: tint(colors.info, 0.12) },
   utme: { fg: colors.info, bg: tint(colors.info, 0.12) }, nabteb: { fg: colors.info, bg: tint(colors.info, 0.12) },
-  // ── Phase 3 — credentials / live / moderation ──
   issued: { fg: colors.success, bg: tint(colors.success, 0.12) }, routed: { fg: colors.success, bg: tint(colors.success, 0.12) },
   ready: { fg: colors.success, bg: tint(colors.success, 0.12) }, eligible: { fg: colors.success, bg: tint(colors.success, 0.12) },
   revoked: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, retired: { fg: colors.secondary, bg: tint(colors.secondary, 0.12) },
@@ -73,7 +71,6 @@ const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
   // severity
   low: { fg: colors.success, bg: tint(colors.success, 0.12) }, high: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
   critical: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
-  // ── Phase 4 — schools / tutor ops / BI ──
   trial: { fg: colors.info, bg: tint(colors.info, 0.12) }, requested: { fg: colors.info, bg: tint(colors.info, 0.12) },
   investigating: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, overdue: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
   resolved: { fg: colors.success, bg: tint(colors.success, 0.12) }, void: { fg: colors.secondary, bg: tint(colors.secondary, 0.12) },
@@ -161,7 +158,6 @@ export function AcademyTabs({ active }: { active: string }) {
     { href: '/admin/academy/schools', label: 'Schools', key: 'schools' },
     { href: '/admin/academy/tutors', label: 'Tutor Ops', key: 'tutors' },
     { href: '/admin/academy/analytics', label: 'Analytics & BI', key: 'analytics' },
-    // Film Academy is a separate programme from the EdTech academy above; it is
     // grouped here because both are 'Academy' to an operator, not because they
     // share a backend.
     { href: '/admin/academy/film', label: 'Film Academy', key: 'film' },

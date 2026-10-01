@@ -1,8 +1,12 @@
 package config
 
 import (
+	"encoding/base64"
+	"fmt"
+	"log"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -25,7 +29,6 @@ type Config struct {
 	MaxFailedLoginAttempts int
 	AccountLockMinutes     int
 
-	// ── Session / refresh-token hardening (#19) ──────────────────────────────
 	// Feature-flagged surface (default OFF). When OFF, the new self/admin session
 	// endpoints return 503 feature-disabled and the middleware session check is a
 	// no-op (existing behaviour preserved). When ON, refresh rotation + reuse
@@ -41,7 +44,6 @@ type Config struct {
 	SuspiciousEscalationPolicy string
 
 	// Direct Postgres connection (pgx) for money-path operations.
-	// Format: postgres://user:pass@host:port/db?sslmode=require
 	DatabaseURL string
 
 	// Redis URL for cache, Redlock, asynq, and WS pub/sub.
@@ -66,7 +68,7 @@ type Config struct {
 	// Maplerad credentials (FX + alternative VA provider).
 	MapleradSecretKey     string
 	MapleradPublicKey     string
-	MapleradProd          bool // false = sandbox
+	MapleradProd          bool
 	MapleradWebhookSecret string
 	// FeatureMapleradEnabled gates the Maplerad WaaS DOMAIN money path (ADR-012):
 	// member /api/finance/maplerad/* routes, the /api/webhooks/maplerad/go webhook,
@@ -90,7 +92,7 @@ type Config struct {
 	MonnifyAPIKey        string
 	MonnifySecretKey     string
 	MonnifyContractCode  string
-	MonnifyProd          bool // false = sandbox
+	MonnifyProd          bool
 	MonnifyWebhookSecret string
 
 	// Multi-provider bank-transfer routing.
@@ -323,7 +325,6 @@ type Config struct {
 	// customer for a purchase that is then refused at escrow. Default OFF.
 	FeatureCheckoutTopupTier0 bool
 
-	// ── Business Registry (CAC business-name verification + registration) ─────
 	// Gates the member /api/finance/business/* + admin /api/business/admin/*
 	// surface (internal/business). The CAC registration fee is a real idempotent
 	// wallet debit → paymax_revenue. DEFAULT OFF — no flag, no registration path.
@@ -335,7 +336,6 @@ type Config struct {
 	CACVASApiKey         string // Bearer / consumer key
 	CACVASConsumerSecret string // HMAC request-signing secret
 
-	// ── Internal service-authenticated Ledger API (Stage 1.5c) ───────────────
 	// Lets the separate trading service post cash legs through the AUTHORITATIVE
 	// double-entry ledger (it does not run its own money ledger). DEFAULT OFF.
 	// Gates POST /internal/finance/ledger/journal + GET /internal/finance/ledger/balance.
@@ -428,11 +428,9 @@ type Config struct {
 	InfermedicaBaseURL   string
 	TriageWhatsAppSecret string
 
-	// ── MapService (provider-agnostic maps abstraction) ──────────────────────
 	// Provider selection is config-driven via MapsConfigPath (a {primitive ->
 	// provider} map per surface). Keys below are SERVER-SIDE ONLY and are never
 	// shipped to the mobile/web client — all provider calls are proxied.
-	//
 	// Single legitimate key per provider. We never rotate keys/accounts to evade
 	// free-tier limits (provider-terms violation). Cost control is via caching,
 	// PostGIS, quotas, and graceful degradation only.
@@ -466,18 +464,15 @@ type Config struct {
 	MapsRateLimitPerMin    int    // per-user requests/min on /api/finance/maps/* (default 120)
 	MapsBudgetAlertWebhook string // POST budget alerts (50/75/90%) here; "" = log only
 
-	// ── MapService v2 (MAPSERVICE.md) ──
 	MapsHereKey      string // HERE API key (accuracy fallback); mock when empty
 	MapsGazetteerKey string // 32-byte AES key for gazetteer PII (NDPA); Noop when empty
 	MapsV2ConfigPath string // optional JSON override for v2 thresholds/order/budgets
 
-	// ── AI assist (server-side LLM) ──────────────────────────────────────────
 	// SERVER-SIDE ONLY. Read from ANTHROPIC_API_KEY; default "" disables AI assist
 	// (endpoints return a clearly-marked "not configured" envelope, never fabricated
 	// medical content). This key is NEVER shipped to a client — all calls are proxied.
 	AnthropicAPIKey string
 
-	// ── Doctor AI per-doctor rate / cost guard ───────────────────────────────
 	// A fixed-window guard (Redis INCR + EXPIRE) applied BEFORE each paid LLM call
 	// in the doctor AI service, keyed by the authenticated doctor's user id. It
 	// caps both per-minute burst and per-day spend. When Redis is unavailable the
@@ -487,7 +482,6 @@ type Config struct {
 	DoctorAIRatePerMin int
 	DoctorAIRatePerDay int
 
-	// ── Doctor RTC (real-time call) credentials ──────────────────────────────
 	// SERVER-SIDE ONLY. The VideoSDK secret is used to SIGN short-lived join
 	// tokens and is NEVER shipped to a client. Empty creds disable the provider:
 	// the call session returns an empty token + a "not configured" flag (never a
@@ -495,14 +489,12 @@ type Config struct {
 	VideoSDKAPIKey string
 	VideoSDKSecret string
 
-	// ── Paymax Connect ───────────────────────────────────────────────────────
 	// Server-side pepper for hashing verification identifiers (HMAC-SHA256).
 	// Raw documents / biometric payloads are NEVER stored or logged — only the
 	// hash + a provider reference (mirrors the KYC bvn_hash/nin_hash pattern).
 	// NEVER shipped to a client. Empty disables verification hashing (fail-closed).
 	ConnectVerificationPepper string
 
-	// ── Cloudflare R2 (S3-compatible object storage) ─────────────────────────
 	// SERVER-SIDE ONLY. Used to mint short-lived presigned PUT/GET URLs for the
 	// doctor module's binary uploads (profile photo, documents, licence renewal,
 	// chat attachments, dispute evidence). The client uploads directly to the
@@ -515,7 +507,6 @@ type Config struct {
 	R2SecretAccessKey string
 	R2Region          string
 
-	// ── Academy rails seam (RAILS_MODE) ──────────────────────────────────────
 	// The four unbacked academy money rails (BNPL, payout, disbursement, billing)
 	// each sit behind their EXISTING provider-agnostic gateway interface. RailsMode
 	// selects the adapter WITHOUT changing the code path:
@@ -547,7 +538,6 @@ type Config struct {
 	BillingAPIKey        string
 	BillingWebhookSecret string
 
-	// ── Notification providers ────────────────────────────────────────────────
 	// Resend: email delivery. Key from resend.com dashboard.
 	// Per-IP, per-route auth throttles. See middleware.AuthRateLimit.
 	AuthRateLimitPerMin       int
@@ -556,11 +546,9 @@ type Config struct {
 	ResendAPIKey    string
 	ResendFromEmail string // must be @spotlightng.com — the only domain verified on the Resend account
 
-	// ── Brevo: server-issued email OTP ───────────────────────────────────────
 	// Brevo joins Resend rather than replacing it. Resend is the fire-and-forget
 	// notification path where a silent failure is tolerable; an undelivered OTP
 	// is a failed login, so that path reports and classifies its failures.
-	//
 	// FeatureOTPEmailEnabled defaults OFF and the routes 503 until it is on. No
 	// Brevo credentials exist in this repo or any .env today — the account,
 	// sender domain and template have to be provisioned before this can be
@@ -570,7 +558,6 @@ type Config struct {
 	// instead of a session. SEPARATE from FeatureOTPEmailEnabled on purpose:
 	// enabling server-issued OTP should not silently add a second factor to
 	// every login.
-	//
 	// ⚠️ It fails CLOSED, which is the point of a second factor and also means an
 	// email outage is a TOTAL LOGIN OUTAGE for everyone. There is no enrolment,
 	// no opt-out and no recovery code: a user who loses access to their mailbox
@@ -916,4 +903,142 @@ func Load() Config {
 		TermiiSenderID:           getEnv("TERMII_SENDER_ID", "Paymax"),
 		ExpoPushToken:            getEnv("EXPO_PUSH_TOKEN", ""),
 	}
+}
+
+// Fail-fast secret validation. Best practice: a service must not boot in
+// production with missing or placeholder secrets, and must never run with a
+// swapped key (e.g. a secret key in a public slot). In non-production
+// environments the same checks emit warnings so local/dev keeps working with
+// placeholders.
+// Wire this in main(): `if err := cfg.Validate(); err != nil { log.Fatal(err) }`.
+
+// IsProd reports whether this is a production deployment.
+func (c Config) IsProd() bool {
+	e := strings.ToLower(strings.TrimSpace(c.AppEnv))
+	return e == "production" || e == "prod"
+}
+
+// isPlaceholder treats empty values and the common template markers as "unset"
+// so a copied-but-unfilled .env fails validation instead of silently running.
+func isPlaceholder(v string) bool {
+	s := strings.TrimSpace(strings.ToLower(v))
+	if s == "" {
+		return true
+	}
+	for _, marker := range []string{"xxxx", "change_me", "changeme", "your_", "your-", "redacted", "placeholder", "todo"} {
+		if strings.Contains(s, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// Validate checks that required secrets are present (and shaped correctly) for
+// the features that are enabled. Returns a combined error in production; returns
+// nil (after logging warnings) elsewhere.
+func (c Config) Validate() error {
+	var problems []string
+
+	// require: the value must be a real, non-placeholder secret.
+	require := func(cond bool, name, value string) {
+		if cond && isPlaceholder(value) {
+			problems = append(problems, name+" is required but missing/placeholder")
+		}
+	}
+	// prefix: guard against swapped keys (e.g. a public key in the secret slot).
+	prefix := func(value, want, name string) {
+		if !isPlaceholder(value) && !strings.HasPrefix(value, want) {
+			problems = append(problems, fmt.Sprintf("%s does not start with %q — looks like the wrong/swapped key", name, want))
+		}
+	}
+
+	// Core infrastructure — always required to serve real traffic.
+	require(true, "DATABASE_URL", c.DatabaseURL)
+	require(true, "SUPABASE_SERVICE_ROLE_KEY", c.SupabaseServiceRoleKey)
+
+	// Payment providers — required only when their money path is enabled.
+	paymentsOn := c.FeatureWalletEnabled || c.FeatureBankTransfersEnabled
+	require(paymentsOn, "PAYSTACK_SECRET_KEY", c.PaystackSecretKey)
+	prefix(c.PaystackSecretKey, "sk_", "PAYSTACK_SECRET_KEY")
+
+	require(c.FeatureBankTransfersEnabled, "MONNIFY_SECRET_KEY", c.MonnifySecretKey)
+
+	require(c.FeatureMapleradEnabled, "MAPLERAD_SECRET_KEY", c.MapleradSecretKey)
+	prefix(c.MapleradSecretKey, "mpr_", "MAPLERAD_SECRET_KEY")
+	// In production Maplerad must use a live (non-sandbox) key.
+	if c.IsProd() && c.FeatureMapleradEnabled && c.MapleradProd && strings.Contains(c.MapleradSecretKey, "sandbox") {
+		problems = append(problems, "MAPLERAD_SECRET_KEY is a sandbox key but MAPLERAD_PROD=true")
+	}
+
+	// Multi-provider KYC verification (ADR-013): when enabled, at least one
+	// provider must be configured and the PII encryption key is mandatory
+	// (photos + government bio-data are stored encrypted at rest).
+	if c.FeatureKYCVerifyEnabled {
+		anyProvider := !isPlaceholder(c.DojahSecretKey) ||
+			(!isPlaceholder(c.SmileIDPartnerID) && !isPlaceholder(c.SmileIDAPIKey)) ||
+			!isPlaceholder(c.YouverifyToken)
+		if !anyProvider {
+			problems = append(problems, "FEATURE_KYC_VERIFY_ENABLED=true but no KYC provider is configured (need Dojah, Smile ID, or Youverify)")
+		}
+		require(true, "KYC_PII_ENC_KEY", c.KYCPIIEncKey)
+		// The PII key must be a base64-encoded 32-byte (AES-256) key.
+		if !isPlaceholder(c.KYCPIIEncKey) {
+			if raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(c.KYCPIIEncKey)); err != nil || len(raw) != 32 {
+				problems = append(problems, "KYC_PII_ENC_KEY must be base64 of exactly 32 bytes (AES-256)")
+			}
+		}
+	}
+
+	// Arena (ADR-014): merit entries must be signable — require at least one valid
+	// Ed25519 signing seed (base64 32 bytes) when enabled. Any provided seed must
+	// be well-formed.
+	if c.FeatureArenaEnabled {
+		seeds := map[string]string{
+			"ARENA_SIGNING_SEED_THEORY":    c.ArenaSigningSeedTheory,
+			"ARENA_SIGNING_SEED_PRACTICAL": c.ArenaSigningSeedPractical,
+			"ARENA_SIGNING_SEED_FIRSTAID":  c.ArenaSigningSeedFirstAid,
+		}
+		anySeed := false
+		for name, v := range seeds {
+			if isPlaceholder(v) {
+				continue
+			}
+			anySeed = true
+			if raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(v)); err != nil || len(raw) != 32 {
+				problems = append(problems, name+" must be base64 of exactly 32 bytes (Ed25519 seed)")
+			}
+		}
+		if !anySeed {
+			problems = append(problems, "FEATURE_ARENA_ENABLED=true but no ARENA_SIGNING_SEED_* is set — merit entries cannot be signed")
+		}
+		// Dedicated crown-award key (NDC-1 defense-in-depth). Optional — falls back to
+		// the practical signer — but must be well-formed when provided.
+		if !isPlaceholder(c.ArenaAwardSigningSeed) {
+			if raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(c.ArenaAwardSigningSeed)); err != nil || len(raw) != 32 {
+				problems = append(problems, "ARENA_AWARD_SIGNING_SEED must be base64 of exactly 32 bytes (Ed25519 seed)")
+			}
+		}
+	}
+
+	// Maps: required when the MapService is enabled. Address lookup degrades to a
+	// mock/offline fallback if this is missing, so it is advisory (warn) — but in
+	// production a missing Google key means no real geocoding.
+	if c.FeatureMapsEnabled && isPlaceholder(c.MapsGoogleKey) {
+		problems = append(problems, "MAPS_GOOGLE_KEY is missing while FEATURE_MAPS_ENABLED=true — address lookup will fall back to mock/offline")
+	}
+
+	if len(problems) == 0 {
+		return nil
+	}
+
+	if c.IsProd() {
+		return fmt.Errorf("config validation failed (%d problem(s)):\n  - %s",
+			len(problems), strings.Join(problems, "\n  - "))
+	}
+	// Non-production: advisory only, never block local/dev boot.
+	log.Printf("[config] %d configuration warning(s) (non-fatal in %s):", len(problems), c.AppEnv)
+	for _, p := range problems {
+		log.Printf("[config]   - %s", p)
+	}
+	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -24,18 +25,14 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated user. finance/connect groups mirror the auth user
 // into c.Set("user_id", ...); fall back to the auth context if absent.
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
 	return ""
 }
-
-// idemKey reads the Idempotency-Key header (required for money-path mutations).
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
 
 // fail maps sentinel errors to stable snake_case codes + HTTP statuses.
 func (h *Handler) fail(c *gin.Context, err error) {
@@ -68,7 +65,7 @@ func (h *Handler) fail(c *gin.Context, err error) {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -126,8 +123,6 @@ func RegisterAcademyCommerce(member, admin *gin.RouterGroup, pool *pgxpool.Pool,
 		ag.GET("/bundles", h.ListBundles)
 	}
 }
-
-// ── Member handlers ─────────────────────────────────────────────────────────────
 
 func (h *Handler) ListPlans(c *gin.Context) {
 	out, err := h.svc.ListPlans(c.Request.Context())
@@ -190,7 +185,7 @@ func (h *Handler) PayNow(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := h.svc.PayNow(c.Request.Context(), u, c.Param("id"), idemKey(c))
+	out, err := h.svc.PayNow(c.Request.Context(), u, c.Param("id"), ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -203,7 +198,7 @@ func (h *Handler) StartBNPL(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := h.svc.StartBNPL(c.Request.Context(), u, c.Param("id"), idemKey(c))
+	out, err := h.svc.StartBNPL(c.Request.Context(), u, c.Param("id"), ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -221,7 +216,7 @@ func (h *Handler) ActivateCard(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	ent, err := h.svc.Activate(c.Request.Context(), u, req.Serial, req.PIN, idemKey(c))
+	ent, err := h.svc.Activate(c.Request.Context(), u, req.Serial, req.PIN, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -239,7 +234,7 @@ func (h *Handler) Subscribe(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.Subscribe(c.Request.Context(), u, req.PlanID, idemKey(c))
+	out, err := h.svc.Subscribe(c.Request.Context(), u, req.PlanID, ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -265,10 +260,8 @@ func (h *Handler) Sync(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── Admin handlers (RBAC academy.commerce) ──────────────────────────────────────
-
 func (h *Handler) AdminRefund(c *gin.Context) {
-	out, err := h.svc.Refund(c.Request.Context(), uid(c), c.Param("id"), idemKey(c))
+	out, err := h.svc.Refund(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -282,7 +275,7 @@ func (h *Handler) AdminGenerateCards(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.GenerateBatch(c.Request.Context(), uid(c), req)
+	out, err := h.svc.GenerateBatch(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -318,7 +311,7 @@ func (h *Handler) AdminAllocateCards(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	n, err := h.svc.AllocateToAgent(c.Request.Context(), uid(c), req)
+	n, err := h.svc.AllocateToAgent(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return

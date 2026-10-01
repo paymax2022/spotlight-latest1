@@ -2,10 +2,10 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { ArrowDown, ArrowUp, Minus, AlertTriangle } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import { RESULT_FLAG_LABELS } from '@/features/doctor/constants';
 import type { LabResultValueRich } from '@/types/doctor.batch3';
 
@@ -16,7 +16,6 @@ interface Props {
 
 // New component: a structured lab result value row (test name + value/unit +
 // reference range + normal/low/high flag + abnormal/critical emphasis). The
-// Phase 1 lab screen had an inline flag block; this extracts the richer
 // abnormal/critical-aware row so it can render reference ranges consistently.
 const FLAG_ICON: Record<LabResultValueRich['base']['flag'], LucideIcon> = {
   normal: Minus,

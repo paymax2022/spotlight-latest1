@@ -1,7 +1,6 @@
 package tuition
 
 // service.go is the Film Academy tuition payment money path.
-//
 // PAYMENT RAIL: tuition is paid by card via Paystack — NOT a Paymax wallet debit.
 // This mirrors the existing product behavior (frontend-web/app/api/academy/installments/pay,
 // now superseded by this package) rather than introducing a new payment method. The
@@ -10,7 +9,6 @@ package tuition
 // wallet touched, matching ledger.Service.PostJournal's documented non-wallet-posting
 // use case) plus the payment row. This is what closes the ledger gap: today's Next.js
 // path verifies the charge and marks the row paid, but posts nothing to the ledger at all.
-//
 // Idempotency is guarded at TWO layers: a Redis key claim (fast path) plus a conditional
 // UPDATE on the payment row itself (durable fallback — see RecordPaymentWithReference).
 // Audit trail is via the Auditor interface (fire-and-forget, nil-safe).
@@ -24,12 +22,12 @@ import (
 	"strings"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/provider"
 )
-
-// ── Service-layer errors ────────────────────────────────────────────────────
 
 var (
 	ErrDuplicate            = errors.New("tuition: duplicate idempotency key")
@@ -76,15 +74,15 @@ type PaymentResult struct {
 
 // TuitionStatus is the query response for enrollment gating.
 type TuitionStatus struct {
-	ApplicationID    string                `json:"applicationId"`
-	UserID           string                `json:"userId"`
-	BatchID          string                `json:"batchId"`
-	TuitionTotalNGN  int64                 `json:"tuitionTotalNgn"`
-	PaymentStatus    string                `json:"paymentStatus"`
-	Plan             *InstallmentPlan      `json:"plan,omitempty"`
-	Payments         []InstallmentPayment  `json:"payments,omitempty"`
-	TotalPaidNGN     int64                 `json:"totalPaidNgn"`
-	IsReadyForAccess bool                  `json:"isReadyForAccess"`
+	ApplicationID    string               `json:"applicationId"`
+	UserID           string               `json:"userId"`
+	BatchID          string               `json:"batchId"`
+	TuitionTotalNGN  int64                `json:"tuitionTotalNgn"`
+	PaymentStatus    string               `json:"paymentStatus"`
+	Plan             *InstallmentPlan     `json:"plan,omitempty"`
+	Payments         []InstallmentPayment `json:"payments,omitempty"`
+	TotalPaidNGN     int64                `json:"totalPaidNgn"`
+	IsReadyForAccess bool                 `json:"isReadyForAccess"`
 }
 
 // Service owns tuition payment logic.
@@ -112,7 +110,6 @@ func NewService(repo *Repository, ledgerSvc *ledger.Service, paymentProvider pro
 // records it: a balanced ledger journal (provider_clearing DR / settlement CR — no user
 // wallet involved) plus the payment row itself. Mirrors (and replaces) the Next.js path
 // at app/api/academy/installments/pay/route.ts.
-//
 // Steps:
 //  1. Idempotency Layer 1 (redis key claim, if configured)
 //  2. Fetch + ownership check (payment must belong to userID and to planID)
@@ -166,8 +163,8 @@ func (s *Service) ConfirmPayment(ctx context.Context, idempotencyKey, planID, pa
 			PaymentID:       payment.ID,
 			PlanID:          planID,
 			AmountPaidNGN:   payment.AmountNGN,
-			LedgerReference: derefStr(payment.PaymentReference),
-			PaidAt:          derefTime(payment.PaidAt),
+			LedgerReference: ptr.DerefZero(payment.PaymentReference),
+			PaidAt:          dbutil.DerefTime(payment.PaidAt),
 		}, nil
 	}
 	if IsTerminalStatus(payment.Status) {
@@ -302,20 +299,6 @@ func (s *Service) ConfirmPayment(ctx context.Context, idempotencyKey, planID, pa
 		NextDueDate:     nextDueDate,
 		IsPlanCompleted: isCompleted,
 	}, nil
-}
-
-func derefStr(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
-func derefTime(t *time.Time) time.Time {
-	if t == nil {
-		return time.Time{}
-	}
-	return *t
 }
 
 // GetTuitionStatus returns the full payment and plan status for an application.

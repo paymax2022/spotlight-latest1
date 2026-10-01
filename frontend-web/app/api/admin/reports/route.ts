@@ -2,12 +2,9 @@ import { handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 // ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047): registration/store is
 // the in-memory version nothing real ever writes to — real applications live
-// in Supabase (registration/supabase-store), same fix as the openmic import
-// above. listRegistrationApplications here is async and its filter argument
 // is required (not optional), unlike the memory version.
 import { listRegistrationApplications } from '@/src/server/registration/supabase-store';
 // ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047): the in-memory openmic/store
-// import is never written to by any real flow; every open-mic admin page and API
 // route reads openmic/persistence (Supabase-backed) instead. persistence.ts is
 // async where store.ts was sync — both calls below are awaited accordingly.
 import { listSubmissions, listContests as listOpenMicContests } from '@/src/server/openmic/persistence';

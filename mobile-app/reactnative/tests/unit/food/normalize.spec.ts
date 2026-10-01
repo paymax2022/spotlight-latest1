@@ -1,12 +1,8 @@
 // Pure-logic unit tests for the Restaurant & Delivery live-payload normalizer.
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "tests/unit/food/*.spec.ts"
-// (node:test + assert — this app has no vitest; matches the other unit suites.)
-//
 // The fixtures below are the LITERAL shapes emitted by
 // backend/internal/restaurant/model.go (Restaurant, MenuCategory, MenuItem) and
 // delivery.go (RestaurantDetail), so these fail if the client and the Go handler
 // drift apart again.
-//
 // They exist because the previous code CAST the Go rows to `Restaurant` instead
 // of mapping them. A cast is compile-time only and the interface declares `tags`
 // required, so tsc happily believed a field the server never sends — and
@@ -54,7 +50,7 @@ describe('mapRestaurant — fields the screens read without guarding', () => {
     assert.equal(typeof r.icon, 'string');
     assert.equal(typeof r.iconColor, 'string');
     assert.equal(typeof r.iconBg, 'string');
-    assert.equal(typeof r.rating, 'number'); // StarRow calls .toFixed(1)
+    assert.equal(typeof r.rating, 'number');
   });
 
   it('survives a payload with every optional field missing', () => {
@@ -92,7 +88,6 @@ describe('mapRestaurant — fields the screens read without guarding', () => {
   });
 
   it('honours an explicit closed flag but defaults to open', () => {
-    // Discovery serves ListOpenRestaurants; defaulting closed would stamp
     // "Closed" across a working storefront whenever the payload shifts.
     assert.equal(mapRestaurant({ ...GO_ROW, is_open: false }).isOpen, false);
     assert.equal(mapRestaurant({ id: 'x', name: 'n' }).isOpen, true);

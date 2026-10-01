@@ -2,19 +2,17 @@ package doctor
 
 import (
 	"net/http"
+	"spotlight/backend/go-common/ginutil"
 
 	"github.com/gin-gonic/gin"
 )
 
 // handler_vet.go — Wave 3b (VETERINARY / PET-side) Gin handlers.
-//
 // One handler per service_vet.go method. Reuses the shared helpers from handler.go /
-// handler_account.go (h.userID, h.fail, h.idemKey, h.rawBody) and mirrors the established
+// handler_account.go (h.userID, h.fail, h.rawBody) and mirrors the established
 // handler_clinical.go style: reads return 200 with the projection; creates return 201;
 // state transitions / sends require an Idempotency-Key (the service enforces it) and
 // return 200/201. Everything is scoped to the authed vet (user_id).
-
-// ══ VET CONSULT ═════════════════════════════════════════════════════════════
 
 func (h *Handler) GetVetDashboard(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -38,7 +36,7 @@ func (h *Handler) ToggleVetMode(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.ToggleVetMode(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.ToggleVetMode(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -81,7 +79,7 @@ func (h *Handler) RespondToOwnerRequest(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.RespondToOwnerRequest(c.Request.Context(), uid, c.Param("requestId"), h.idemKey(c), raw)
+	res, err := h.svc.RespondToOwnerRequest(c.Request.Context(), uid, c.Param("requestId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -137,7 +135,7 @@ func (h *Handler) SaveVetSoapNote(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SaveVetSoapNote(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.SaveVetSoapNote(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -193,7 +191,7 @@ func (h *Handler) CreateVetReferral(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.CreateVetReferral(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.CreateVetReferral(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -226,8 +224,6 @@ func (h *Handler) ListVetConsultHistory(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, res)
 }
-
-// ══ PET PROFILE ═════════════════════════════════════════════════════════════
 
 func (h *Handler) GetPet(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -290,15 +286,13 @@ func (h *Handler) RecordPetGrowth(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.RecordPetGrowth(c.Request.Context(), uid, c.Param("petId"), h.idemKey(c), raw)
+	res, err := h.svc.RecordPetGrowth(c.Request.Context(), uid, c.Param("petId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, res)
 }
-
-// ══ PET E-PRESCRIPTION ══════════════════════════════════════════════════════
 
 func (h *Handler) GetPetPrescriptionForPet(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -348,7 +342,7 @@ func (h *Handler) CreatePetPrescription(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.CreatePetPrescription(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.CreatePetPrescription(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -365,7 +359,7 @@ func (h *Handler) IssuePetPrescription(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.IssuePetPrescription(c.Request.Context(), uid, c.Param("prescriptionId"), h.idemKey(c), raw)
+	res, err := h.svc.IssuePetPrescription(c.Request.Context(), uid, c.Param("prescriptionId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -382,7 +376,7 @@ func (h *Handler) SendPetPrescription(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SendPetPrescription(c.Request.Context(), uid, c.Param("prescriptionId"), h.idemKey(c), raw)
+	res, err := h.svc.SendPetPrescription(c.Request.Context(), uid, c.Param("prescriptionId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -412,7 +406,7 @@ func (h *Handler) RequestPetRefill(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.RequestPetRefill(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.RequestPetRefill(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -429,7 +423,7 @@ func (h *Handler) ReviewPetRefill(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.ReviewPetRefill(c.Request.Context(), uid, c.Param("refillId"), h.idemKey(c), raw)
+	res, err := h.svc.ReviewPetRefill(c.Request.Context(), uid, c.Param("refillId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -449,8 +443,6 @@ func (h *Handler) ListPetPharmacies(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, res)
 }
-
-// ══ PET LABS ════════════════════════════════════════════════════════════════
 
 func (h *Handler) ListPetLabOrders(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -474,7 +466,7 @@ func (h *Handler) CreatePetLabOrder(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.CreatePetLabOrder(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.CreatePetLabOrder(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -526,7 +518,7 @@ func (h *Handler) ReviewPetLabResult(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.ReviewPetLabResult(c.Request.Context(), uid, c.Param("resultId"), h.idemKey(c))
+	res, err := h.svc.ReviewPetLabResult(c.Request.Context(), uid, c.Param("resultId"), ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -543,7 +535,7 @@ func (h *Handler) AddPetLabInterpretation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.AddPetLabInterpretation(c.Request.Context(), uid, c.Param("resultId"), h.idemKey(c), raw)
+	res, err := h.svc.AddPetLabInterpretation(c.Request.Context(), uid, c.Param("resultId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -586,7 +578,7 @@ func (h *Handler) SetPetVaccinationReminder(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SetPetVaccinationReminder(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.SetPetVaccinationReminder(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -616,15 +608,13 @@ func (h *Handler) SavePetChronicMonitoring(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SavePetChronicMonitoring(c.Request.Context(), uid, c.Param("petId"), h.idemKey(c), raw)
+	res, err := h.svc.SavePetChronicMonitoring(c.Request.Context(), uid, c.Param("petId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, res)
 }
-
-// ══ PET STORE ═══════════════════════════════════════════════════════════════
 
 func (h *Handler) ListPetProducts(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -687,7 +677,7 @@ func (h *Handler) RecommendPetProducts(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.RecommendPetProducts(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.RecommendPetProducts(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -704,7 +694,7 @@ func (h *Handler) SharePetRecommendation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SharePetRecommendation(c.Request.Context(), uid, c.Param("recommendationId"), h.idemKey(c), raw)
+	res, err := h.svc.SharePetRecommendation(c.Request.Context(), uid, c.Param("recommendationId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -731,6 +721,91 @@ func (h *Handler) GetPetFulfilment(c *gin.Context) {
 		return
 	}
 	res, err := h.svc.GetPetFulfilment(c.Request.Context(), uid, c.Param("id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// Gin handlers for the VET licence / verification /
+// profile-publish / profile-draft "tail" endpoints. Additive (separate file to avoid
+// colliding with concurrent edits to handler_vet.go). Routes are wired by the parent in
+// finance_routes.go under /api/v1/doctor:
+//	POST /vet/licence/renew   -> RenewVetLicence
+//	POST /vet/verification    -> SubmitVetVerification
+//	POST /vet/profile/publish -> PublishVetProfile
+//	PUT  /vet/profile/draft   -> SaveVetProfileDraft
+// Each handler reuses the shared helpers from handler.go (h.userID, h.fail)
+// and handler_account.go (h.rawBody), scopes to the authenticated vet, and mirrors the
+// human-side account handlers. Mutations forward the Idempotency-Key; the service rejects
+// a missing key with ErrIdempotencyRequired (→ 400). Creates return 201, the draft
+// upsert returns 200.
+
+// RenewVetLicence records / renews the vet licence (re-enters verification). 201.
+func (h *Handler) RenewVetLicence(c *gin.Context) {
+	uid, ok := h.userID(c)
+	if !ok {
+		return
+	}
+	var req SubmitVerificationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	res, err := h.svc.RenewVetLicence(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, res)
+}
+
+// SubmitVetVerification submits the vet's verification. 201.
+func (h *Handler) SubmitVetVerification(c *gin.Context) {
+	uid, ok := h.userID(c)
+	if !ok {
+		return
+	}
+	var req SubmitVerificationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	res, err := h.svc.SubmitVetVerification(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, res)
+}
+
+// PublishVetProfile marks the vet profile live (fail-closed on verification). 201
+// would imply a new resource; publishing transitions the existing row, so 200.
+func (h *Handler) PublishVetProfile(c *gin.Context) {
+	uid, ok := h.userID(c)
+	if !ok {
+		return
+	}
+	res, err := h.svc.PublishVetProfile(c.Request.Context(), uid, ginutil.IdempotencyKey(c))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// SaveVetProfileDraft upserts (patch-merges) the vet profile draft. 200.
+func (h *Handler) SaveVetProfileDraft(c *gin.Context) {
+	uid, ok := h.userID(c)
+	if !ok {
+		return
+	}
+	patch, ok := h.rawBody(c)
+	if !ok {
+		return
+	}
+	res, err := h.svc.SaveVetProfileDraft(c.Request.Context(), uid, ginutil.IdempotencyKey(c), patch)
 	if err != nil {
 		h.fail(c, err)
 		return

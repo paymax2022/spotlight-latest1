@@ -14,8 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ── adminListBounds ──────────────────────────────────────────────────────────
-
 func TestAdminListBounds(t *testing.T) {
 	cases := []struct {
 		name                  string
@@ -41,8 +39,6 @@ func TestAdminListBounds(t *testing.T) {
 		})
 	}
 }
-
-// ── setBuilder ───────────────────────────────────────────────────────────────
 
 func TestSetBuilder_SkipsNilFieldsAndNumbersPlaceholders(t *testing.T) {
 	name := "Eko Prepaid"
@@ -106,8 +102,6 @@ func TestSetBuilder_ClearTakesPrecedenceOverAValue(t *testing.T) {
 }
 
 func name2ptr(s string) *string { return &s }
-
-// ── patchBody: absent vs null vs value ───────────────────────────────────────
 
 func decodePatch(t *testing.T, body string) patchBody {
 	t.Helper()
@@ -217,8 +211,6 @@ func TestPatchBody_StrSliceAndRawJSON(t *testing.T) {
 		t.Errorf("rawJSON of an absent key = %s, want nil", raw)
 	}
 }
-
-// ── Value validation ─────────────────────────────────────────────────────────
 
 func TestValidateStatus(t *testing.T) {
 	// A blank value means "unset" and is always allowed — the DB default applies.
@@ -370,8 +362,6 @@ func TestRequireNonBlank_TrimsAndRejectsWhitespace(t *testing.T) {
 	}
 }
 
-// ── Audit hook ───────────────────────────────────────────────────────────────
-
 // recordingAuditor captures LogAction calls for assertion.
 type recordingAuditor struct{ calls []auditCall }
 
@@ -479,8 +469,6 @@ func TestCredentialFieldNames_NamesKeysOnly(t *testing.T) {
 	}
 }
 
-// ── CSV export ───────────────────────────────────────────────────────────────
-
 func TestJSONObjectKeys_PreservesDocumentOrderAndSkipsNesting(t *testing.T) {
 	raw := json.RawMessage(`{"id":"a","nested":{"inner":1,"deeper":{"x":2}},"list":[{"y":3}],"last":true}`)
 	got := jsonObjectKeys(raw)
@@ -518,10 +506,10 @@ func TestCSVCell(t *testing.T) {
 		in   any
 		want string
 	}{
-		{nil, ""},          // a NULL column is an empty cell
-		{"plain", "plain"}, //
+		{nil, ""}, // a NULL column is an empty cell
+		{"plain", "plain"},
 		{json.Number("9007199254740993"), "9007199254740993"}, // exact, never via float
-		{true, "true"},                          //
+		{true, "true"},
 		{map[string]any{"k": "v"}, `{"k":"v"}`}, // a nested object becomes JSON text
 	}
 	for _, tc := range cases {

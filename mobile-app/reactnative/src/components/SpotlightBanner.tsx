@@ -1,27 +1,20 @@
-// ── SpotlightBanner ───────────────────────────────────────────────────────────
 // Reusable, responsive, Cloudinary-backed marketing banner. The one component
 // every screen with a promo/hero banner should render through, so the rules
 // below live in exactly one place instead of being re-solved per screen:
-//
 //  • Responsive width — requests the bucketed width for the CURRENT viewport
 //    (see src/lib/cloudinary.ts), never a fixed size like 900px for everyone.
 //    Re-evaluates on rotation / window resize.
 //  • Priority vs lazy — pass `priority` on the ONE banner that's visible the
-//    instant its screen/section opens; it loads immediately at high request
 //    priority. Leave every other instance (e.g. later cards in a carousel)
 //    at the default — expo-image schedules those at low priority, and inside
-//    a virtualized list (FlatList/FlashList) they don't even mount, let alone
 //    fetch, until they're about to scroll into view. RN has no real
 //    IntersectionObserver equivalent outside virtualization, so "lazy" here
-//    means: don't compete with the priority banner, and rely on the list to
 //    not mount what isn't visible.
 //  • Placeholder — a tiny, heavily-blurred Cloudinary variant of the SAME
 //    asset shows immediately and cross-fades into the full image once it
 //    decodes, so there's never a blank flash.
-//  • Caching — expo-image persists decoded bytes to disk; Cloudinary already
 //    serves long-lived, immutable responses for a given public ID. A
 //    returning user pays the download cost once.
-//
 // Images are NEVER bundled into the app binary. The backend hands the client
 // a Cloudinary public ID (see src/features/media/banners), and the actual
 // pixels are always fetched from the CDN at render time — a redesigned
@@ -29,8 +22,8 @@
 import React from 'react';
 import { StyleSheet, Pressable, type StyleProp, type ImageStyle } from 'react-native';
 import { Image } from 'expo-image';
-import { Radius } from '@/constants/radius';
-import { Colors } from '@/constants/colors';
+import { Radius } from '@/constants/tokens';
+import { Colors } from '@/constants/tokens';
 import { cloudinaryBannerUrl, cloudinaryBannerPlaceholderUrl, useBannerWidth } from '@/lib/cloudinary';
 
 interface Props {

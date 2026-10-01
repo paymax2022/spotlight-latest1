@@ -1,15 +1,13 @@
 // Package circuitbreaker provides a simple, stdlib-only circuit breaker.
-//
 // The breaker has three states:
-//
 //   - closed:    calls pass through; consecutive failures are counted and
-//                trip the breaker to open once FailureThreshold is reached.
+//     trip the breaker to open once FailureThreshold is reached.
 //   - open:      calls fail fast with ErrOpen until OpenTimeout elapses, after
-//                which the breaker transitions to half-open.
+//     which the breaker transitions to half-open.
 //   - half-open: a limited number of trial calls (HalfOpenMax) are allowed
-//                through. A single trial success closes the breaker; a single
-//                trial failure re-opens it. While trials are exhausted but no
-//                result has come back, further calls fail fast with ErrOpen.
+//     through. A single trial success closes the breaker; a single
+//     trial failure re-opens it. While trials are exhausted but no
+//     result has come back, further calls fail fast with ErrOpen.
 package circuitbreaker
 
 import (
@@ -74,7 +72,6 @@ func New(cfg Config) *Breaker {
 }
 
 // Do executes fn under the protection of the breaker.
-//
 // Concurrency note: the mutex is held while inspecting/updating breaker state
 // to decide whether the call may proceed, then released around the fn() call
 // (so long-running work does not serialize on the breaker), then re-acquired

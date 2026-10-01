@@ -3,7 +3,6 @@ package association_test
 // Regression tests for the defects fixed in the association module hardening
 // pass. Each test names the defect it locks down; every one of these failed
 // before the corresponding fix.
-//
 // Live-DB, same harness as live_db_integration_test.go: skipped without
 // TEST_DATABASE_URL. Every row is created by the test with a fresh uuid.
 

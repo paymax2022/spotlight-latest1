@@ -57,8 +57,6 @@ func (r *Repository) UpsertProfile(ctx context.Context, p *Profile) error {
 	return nil
 }
 
-// ── Badges ──────────────────────────────────────────────────────────────────────
-
 func (r *Repository) ListBadges(ctx context.Context) ([]Badge, error) {
 	const q = `SELECT id, code, name, criteria, icon FROM academy_badges ORDER BY code`
 	rows, err := r.db.Query(ctx, q)
@@ -155,8 +153,6 @@ func (r *Repository) GrantBadge(ctx context.Context, userID, badgeID string) (bo
 	return tag.RowsAffected() == 1, nil
 }
 
-// ── Challenges ──────────────────────────────────────────────────────────────────
-
 // InsertBadgeNotification writes a "you earned a badge" notification for the
 // learner (best-effort engagement signal; the learner surface reads it). Kept
 // here so the write happens transactionally close to the grant.
@@ -167,8 +163,6 @@ func (r *Repository) InsertBadgeNotification(ctx context.Context, userID, badgeN
 	_, err := r.db.Exec(ctx, q, userID, "Badge unlocked: "+badgeName, "You earned the "+badgeName+" badge. Keep it up!")
 	return err
 }
-
-// ── Class leaderboard ───────────────────────────────────────────────────────
 
 // UserClassID returns the learner's class id from their academy profile (the
 // first profile that has one). ok=false when the user has no class yet.
@@ -328,8 +322,6 @@ func (r *Repository) UpsertChallenge(ctx context.Context, in UpsertChallengeRequ
 	}
 	return c, nil
 }
-
-// ── Leaderboards ────────────────────────────────────────────────────────────────
 
 func (r *Repository) GetLeaderboard(ctx context.Context, id string) (*Leaderboard, error) {
 	const q = `SELECT id, scope, scope_ref, period, reset_policy FROM academy_leaderboards WHERE id=$1`

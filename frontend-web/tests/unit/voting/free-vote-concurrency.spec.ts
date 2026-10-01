@@ -8,20 +8,19 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { bridgedCastFreeVote } from '@/server/voting-bridge/bridge';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient } from '@/lib/supabase/server';
 import { assertKycTier, KycGateError } from '@/server/voting-bridge/kyc-gate';
 import { castFreeVoteAtomic } from '@/server/voting-bridge/free-vote-atomic';
 import { fakeIdempotencyTable } from './_idempotency-fake';
 import { enableBridge } from '@/server/voting-bridge/feature-flag';
 
 // Mock Supabase client
-vi.mock('@/lib/supabase/admin');
+vi.mock('@/lib/supabase/server');
 
 // The KYC tier gate is mocked at the module boundary rather than choreographed
 // through the Supabase stub below. bridgedCastFreeVote gained the
 // assertKycTier() call (bridge.ts step 2) in the same commit that added these
 // specs, so their stubs never arranged its three-query chain
-// (profiles -> contestants -> competitions); single() returned undefined, the
 // gate fail-closed on the TypeError, and every vote in this file was refused.
 // Mocking the gate keeps each test on its actual subject — idempotency, caching
 // and outbox behaviour — while the gate's own logic stays covered by
@@ -81,7 +80,6 @@ describe('Free Vote Concurrency', () => {
     const { client } = fakeIdempotencyTable();
     (createAdminClient as any).mockReturnValue(client);
 
-    // Send two identical requests concurrently
     const request1 = bridgedCastFreeVote(
       mockVoteRequest,
       userId,
@@ -102,7 +100,6 @@ describe('Free Vote Concurrency', () => {
     expect(result1.success).toBe(true);
     expect(result2.success).toBe(true);
 
-    // ...but only ONE of them voted. This is the whole point of the file, and it
     // is only expressible now that the vote is a single mockable call: before,
     // the vote was an INSERT indistinguishable from the idempotency INSERT in
     // the same stub.
@@ -162,7 +159,6 @@ describe('Free Vote Concurrency', () => {
       return mockSupabase;
     });
 
-    // Fetch existing key
     mockSupabase.select.mockImplementationOnce(() => {
       mockSupabase.eq.mockReturnThis();
       mockSupabase.single.mockResolvedValueOnce({
@@ -179,7 +175,6 @@ describe('Free Vote Concurrency', () => {
       mockContext
     );
 
-    // Should return cached response
     expect(result.success).toBe(true);
     expect(result.voteId).toBe(cachedResponse.voteId);
     expect(result.totalVotes).toBe(42);

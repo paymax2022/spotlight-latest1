@@ -33,7 +33,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
 }
 
 // Several Connect read endpoints (the whole /me/* family, catalogs, settings) are
-// not yet implemented on the Go backend and return 404. For DISPLAY-ONLY data we
 // degrade gracefully to a safe default instead of throwing, so a missing endpoint
 // never breaks the screen. Real auth failures (401/403) and server errors (5xx)
 // still surface. Money/write paths never use this.
@@ -90,9 +89,7 @@ export async function getConnectConfig(): Promise<ConnectConfig> {
   return (res.data?.data ?? res.data) as ConnectConfig;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tier / KYC
-// ─────────────────────────────────────────────────────────────────────────────
 
 const MOCK_TIER_STATUS: TierStatus = {
   tier: 1,
@@ -146,9 +143,7 @@ export async function getWalletSummary(): Promise<WalletSummary> {
   }, { ...DEFAULT_WALLET, tier: { ...DEFAULT_TIER_STATUS } });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Onboarding & verification (ON-01..ON-15)
-// ─────────────────────────────────────────────────────────────────────────────
 
 function emptyDraft(): OnboardingDraft {
   return {
@@ -166,7 +161,6 @@ function emptyDraft(): OnboardingDraft {
 // /onboarding/draft store (only age-gate/consent/status + the profile endpoints),
 // so we collect the wizard's answers here and materialise them into the real
 // Connect profile in completeOnboarding() via PATCH /profile (+ modes + media).
-// This is per-session state; a reload restarts the wizard (acceptable — a partial
 // draft was never persisted server-side).
 let draft: OnboardingDraft = emptyDraft();
 
@@ -225,7 +219,7 @@ export async function submitDob(dobIso: string): Promise<AgeCheckResult> {
       draft = { ...draft, dob: dobIso, underageFlagged: true };
       return { ok: false, age, underage: true };
     }
-    throw e; // 400 invalid DOB (or transport error) → let the screen prompt a retry
+    throw e;
   }
 }
 
@@ -244,7 +238,6 @@ export async function recordConsent(kind: string, version: string = CONSENT_VERS
 }
 
 // Records ALL required consents. Best-effort per kind so one failure doesn't wedge
-// onboarding; the accept action gates progress but a transient error is logged, not
 // fatal (the backend re-checks missing_consents in /onboarding/status).
 export async function acceptOnboardingConsents(): Promise<void> {
   if (USE_MOCK) {
@@ -286,7 +279,6 @@ const INTENT_TO_MODE: Record<ConnectIntent, string> = {
 };
 
 // Finalise onboarding by materialising the client-side draft into the real Connect
-// profile. PATCH /profile creates the connect_profiles row discovery reads; the
 // per-mode + media calls are best-effort and never block completion.
 export async function completeOnboarding(): Promise<OnboardingDraft> {
   if (USE_MOCK) {
@@ -324,9 +316,7 @@ export async function completeOnboarding(): Promise<OnboardingDraft> {
   return { ...draft };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Me hub
-// ─────────────────────────────────────────────────────────────────────────────
 
 const MOCK_ME: MeProfileSummary = {
   id: 'me',
@@ -356,9 +346,7 @@ export async function getMeSummary(): Promise<MeProfileSummary> {
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Notifications settings (ST-05)
-// ─────────────────────────────────────────────────────────────────────────────
 
 let mockNotifPrefs: NotificationPrefs = {
   push: true,
@@ -396,9 +384,7 @@ export async function updateNotificationPrefs(
   return unwrap<NotificationPrefs>(res);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Privacy & visibility (ST-04)
-// ─────────────────────────────────────────────────────────────────────────────
 
 let mockPrivacy: PrivacyPrefs = {
   dateVisible: true,
@@ -451,10 +437,8 @@ export async function unblockUser(id: string): Promise<void> {
   await api.delete(`${CONNECT_API_BASE}/me/blocked/${id}`);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Safety: reports & appeals (ST-06, ST-07, ST-09). Reports MUST create a case
 // and never fail silently (SAFETY INVARIANT §7).
-// ─────────────────────────────────────────────────────────────────────────────
 
 export const REPORT_REASONS: ReportReason[] = [
   { code: 'fake', label: 'Fake profile or impersonation' },
@@ -540,9 +524,7 @@ export async function submitAppeal(input: {
   return unwrap<SafetyCase>(res);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Date safety / SOS (ST-10)
-// ─────────────────────────────────────────────────────────────────────────────
 
 let mockSafety: DateSafetyState = {
   contacts: [{ id: 'c1', name: 'Mum', phone: '0803 000 0000' }],
@@ -586,9 +568,7 @@ export async function addSosContact(contact: Omit<SosContact, 'id'>): Promise<Da
   return unwrap<DateSafetyState>(res);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Language / Data saver / Premium / Help / Legal
-// ─────────────────────────────────────────────────────────────────────────────
 
 export const LANGUAGES: LanguageOption[] = [
   { code: 'en', label: 'English' },
@@ -662,7 +642,6 @@ export const PREMIUM_PLANS: PremiumPlan[] = [
 ];
 
 // Mock-only subscription state so subscribe/manage reflect in the UI. The real
-// backend owns this; the wallet charge itself runs through the shared checkout
 // (usePurchasePayment) which carries the Idempotency-Key.
 let MOCK_PREMIUM: PremiumStatus = { active: false };
 

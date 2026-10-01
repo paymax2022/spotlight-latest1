@@ -189,8 +189,6 @@ type ScheduledAppt struct {
 	Status      string `json:"status"`
 }
 
-// ─── Request types ───────────────────────────────────────────────────────────
-
 // RegisterDoctorRequest is the body for POST /telemedicine/doctors (legacy).
 type RegisterDoctorRequest struct {
 	Name           string          `json:"name" binding:"required,min=2,max=200"`

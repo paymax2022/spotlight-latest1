@@ -11,7 +11,6 @@ import (
 )
 
 // Titles shorter than ten characters are legitimate and must publish.
-//
 // Publishing failed with 400 "title must be 10–100 characters" on a title the
 // compose screen had already accepted: compose.tsx gated on >= 6 characters while
 // both the service and the mkt_listings_title_check CHECK required >= 10, so the

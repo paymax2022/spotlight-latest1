@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Admin: listing moderation (V3, slice) ────────────────
 // Mock-flagged. The operations control plane lives in the admin web portal in
 // production; this is a lightweight mobile moderation queue for on-call admins.
 

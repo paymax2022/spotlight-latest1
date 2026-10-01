@@ -1,4 +1,3 @@
-// ── Paymax Health — Shared utilities ─────────────────────────────────────────
 // Intake validation lives here so the renderer screen + verticals share one
 // implementation of field-level validation (HEALTH-BUILD: map field errors).
 
@@ -80,8 +79,6 @@ export function validateIntake(schema: IntakeSchema, values: IntakeResponseValue
 export function firstErrorFieldId(errors: IntakeErrors): string | undefined {
   return Object.keys(errors)[0];
 }
-
-// ── Pre-Consult wizard: conditional steps + step-scoped validation ────────────
 
 /** Whether a step's `when` predicate is satisfied by the current answers. */
 export function isStepVisible(step: IntakeStep, values: IntakeResponseValues): boolean {

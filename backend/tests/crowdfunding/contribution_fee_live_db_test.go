@@ -1,35 +1,23 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test: a contribution reports the money that actually MOVED.
-//
 // WHY THIS EXISTS
-// ---------------
 // The contribution read used to derive its own fee/total breakdown from a local
 // `platformFeeBps = 250` constant:
-//
-//	fee   := amount * 250 / 10000   // 2.5%
-//	total := amount + fee           // fee added on top
-//
 // Both halves contradicted the settlement that moved the money. The platform's
 // cut is crowdfunding.PlatformFeePct (10%), and it is DEDUCTED from the
 // creator's payout rather than added to the contributor's bill. A ₦1,000
 // contribution debits ₦1,000 and pays the creator ₦900 — but rendered on the
 // receipt as "₦1,025 total paid".
-//
 // The breakdown is now read from the settlement row. This test pins the
 // arithmetic of the deducted model, which the derived version violated in both
 // directions: total == amount (not amount + fee), and amount - fee == net.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL, which the root .env
 // points at the production pooler and this test INSERTs (see
 // scripts/ci/check-live-db-gate.sh).
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_ContributionReportsSettled -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

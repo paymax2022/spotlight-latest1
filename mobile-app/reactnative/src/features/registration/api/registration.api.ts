@@ -1,6 +1,4 @@
-// ── Registration — typed API layer the screens code against ──────────────────
 // Mock-flagged (REGISTRATION_USE_MOCK). Flip with
-// EXPO_PUBLIC_REGISTRATION_USE_MOCK=false to hit the Next.js web app:
 //   GET  /api/registration/contests
 //   GET|POST /api/registration/applications
 //   GET  /api/registration/applications/{id}
@@ -40,7 +38,6 @@ import type {
 
 const REG_BASE = '/api/registration';
 
-// ── Mock draft store ──────────────────────────────────────────────────────────
 // BUG FIX: this used to be a plain module-scoped `Map`, which only lives as
 // long as the current JS runtime. On Expo web that runtime is thrown away on
 // every full page reload (browser refresh, or opening a `/registration/{id}/…`
@@ -51,8 +48,6 @@ const REG_BASE = '/api/registration';
 // even though nothing was wrong with the submit logic itself. Bills-service
 // payment doesn't have this failure mode because it reads/writes real Supabase
 // rows (`src/api/transactions.api.ts`), not client-only mock state.
-//
-// Fix: persist the mock store to localStorage on web (guarded — no-op on
 // native/SSR where `window` doesn't exist) so a reload rehydrates the same
 // drafts instead of losing them. This only affects REGISTRATION_USE_MOCK
 // (dev-default) behaviour; the LIVE branch below is untouched.
@@ -109,15 +104,11 @@ function recomputeCompletion(steps: RegistrationStep[], formData: Record<string,
   return Math.round((filled.length / required.length) * 100);
 }
 
-// ── Contests ──────────────────────────────────────────────────────────────────
-
 export async function listContests(): Promise<ContestRegistrationDefinition[]> {
   if (REGISTRATION_USE_MOCK) return waitMock(MOCK_CONTESTS);
   const res = await regGet<ContestsResponse>(`${REG_BASE}/contests`);
   return res.contests ?? [];
 }
-
-// ── Applications ────────────────────────────────────────────────────────────
 
 export async function listApplications(): Promise<RegistrationDraft[]> {
   if (REGISTRATION_USE_MOCK) {
@@ -267,7 +258,6 @@ export async function getStatus(id: string): Promise<{ draft: RegistrationDraft;
  */
 export async function getRegistrationVoting(id: string): Promise<RegistrationVoting> {
   if (REGISTRATION_USE_MOCK) {
-    // No roster exists in mock mode; report the honest reason rather than
     // inventing a votable contest the tester cannot actually vote in.
     return waitMock<RegistrationVoting>({
       votable: false,
@@ -297,8 +287,6 @@ export async function withdrawApplication(id: string, note?: string): Promise<Re
   const res = await regPost<DraftResponse>(`${REG_BASE}/applications/${id}/withdraw`, { note });
   return res.draft;
 }
-
-// ── Payment ───────────────────────────────────────────────────────────────────
 
 export async function initiateRegistrationPayment(params: {
   id: string;
@@ -335,12 +323,10 @@ export async function initiateRegistrationPayment(params: {
     // with a reference Paystack's servers never actually issued, so opening
     // it always landed on Paystack's own "We could not start this
     // transaction" error page. There is no real hosted-checkout step to
-    // simulate: the payment-processing screen already polls
     // verifyRegistrationPayment on its own timer and that mock settles to
     // SUCCESSFUL without any external redirect (mirrors the WALLET branch
     // above, which never had a URL either). The caller
     // (`app/registration/[id]/payment.tsx`) only calls `Linking.openURL`
-    // `if (result.authorizationUrl)`, so simply omitting the field here is
     // enough to skip the broken redirect — the LIVE branch below (real
     // backend-issued Paystack URL) is unaffected.
     return waitMock({
@@ -396,8 +382,6 @@ export async function verifyRegistrationPayment(params: {
   );
 }
 
-// ── Uploads ───────────────────────────────────────────────────────────────────
-
 export async function uploadFile(file: PickedUpload): Promise<UploadedFileValue> {
   if (REGISTRATION_USE_MOCK) {
     return waitMock({ previewUrl: file.uri, fileName: file.name }, 500);
@@ -406,12 +390,9 @@ export async function uploadFile(file: PickedUpload): Promise<UploadedFileValue>
   return { previewUrl: res.upload.previewUrl, fileName: res.upload.fileName, storageKey: res.upload.storageKey };
 }
 
-// ── "Have I already applied here?" ───────────────────────────────────────────
 // Backs the contest screen's decision between "Apply" and "Manage application".
-// The voting app knows a contest by its connect_contests id; registrations key
 // on contest_slug, so the resolution happens server-side
 // (GET /api/registration/for-contest).
-//
 // Returns null for "no live application", which includes a withdrawn or rejected
 // one — those free the user to apply again.
 

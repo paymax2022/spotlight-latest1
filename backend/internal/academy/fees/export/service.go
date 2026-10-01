@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/ptr"
 )
 
 // Service owns ComplianceExport (SF-11) and the school self-service data export (SF-10).
-//
 // SF-11 invariants enforced here:
 //   - Opt-in is PER school PER data_category. TriggerExport validates the school has opted in
 //     for EVERY requested category BEFORE anything is written (fail-closed): a single
@@ -21,7 +21,6 @@ import (
 // reuses academy_schools.verification_tier via the SchoolVerifier port; unverified schools are
 // rejected with ErrSchoolNotVerified. The self-export is audited but is NOT a regulator
 // disclosure, so it is not written to the compliance log.
-//
 // This service moves NO money.
 type Service struct {
 	store    Store
@@ -48,12 +47,9 @@ func NewServiceWithDeps(store Store, optIn OptInStore, verifier SchoolVerifier) 
 	return &Service{store: store, optIn: optIn, verifier: verifier}
 }
 
-// ── SF-11: TriggerExport (regulator compliance export) ──────────────────────────
-
 // TriggerExport validates opt-in for every requested data category, then APPENDS one immutable
 // row to the compliance log and audits it. Fail-closed: any non-opted-in category rejects the
 // export and NOTHING is written.
-//
 // Opt-in resolution:
 //   - If an OptInStore is configured, it is AUTHORITATIVE: a category is allowed only if
 //     HasOptedIn returns true.
@@ -75,7 +71,10 @@ func (s *Service) TriggerExport(ctx context.Context, actorID string, req Trigger
 		return nil, ErrNoCategories
 	}
 
-	explicit := categorySet(req.OptInCategories)
+	explicit := make(map[DataCategory]bool, len(req.OptInCategories))
+	for _, c := range req.OptInCategories {
+		explicit[c] = true
+	}
 	for _, cat := range req.DataCategories {
 		ok, err := s.categoryAllowed(ctx, req.SchoolID, cat, explicit)
 		if err != nil {
@@ -93,10 +92,10 @@ func (s *Service) TriggerExport(ctx context.Context, actorID string, req Trigger
 	rec := ComplianceExport{
 		SchoolID:       req.SchoolID,
 		ReportType:     req.ReportType,
-		Period:         ptrOrNil(req.Period),
+		Period:         ptr.OrNil(req.Period),
 		DataCategories: req.DataCategories,
 		RequestedBy:    actorID,
-		PayloadRef:     ptrOrNil(req.PayloadRef),
+		PayloadRef:     ptr.OrNil(req.PayloadRef),
 	}
 	out, err := s.store.AppendExport(ctx, rec)
 	if err != nil {
@@ -123,8 +122,6 @@ func (s *Service) categoryAllowed(ctx context.Context, schoolID string, cat Data
 	return explicit[cat], nil
 }
 
-// ── SF-11: ListExports (immutable audit history) ────────────────────────────────
-
 // ListExports returns a school's compliance-export history (audit trail), newest first.
 func (s *Service) ListExports(ctx context.Context, schoolID string) ([]ComplianceExport, error) {
 	if strings.TrimSpace(schoolID) == "" {
@@ -132,8 +129,6 @@ func (s *Service) ListExports(ctx context.Context, schoolID string) ([]Complianc
 	}
 	return s.store.ListExports(ctx, schoolID)
 }
-
-// ── SF-10: school self-service full data export (verified schools only) ─────────
 
 // TriggerSchoolDataExport lets a VERIFIED school export its own roster/fees/results. Eligibility
 // reuses academy_schools.verification_tier (SchoolVerifier). Fail-closed: no verifier configured
@@ -166,28 +161,10 @@ func (s *Service) TriggerSchoolDataExport(ctx context.Context, actorID string, r
 	out := &SchoolDataExport{
 		SchoolID:    req.SchoolID,
 		Sections:    sections,
-		PayloadRef:  ptrOrNil(req.PayloadRef),
+		PayloadRef:  ptr.OrNil(req.PayloadRef),
 		GeneratedAt: time.Now(),
 	}
 	_ = s.store.WriteAudit(ctx, actorID, "school_data_export_generated", "",
 		map[string]any{"schoolId": req.SchoolID, "sections": sections, "tier": tier})
 	return out, nil
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────────────
-
-func categorySet(cs []DataCategory) map[DataCategory]bool {
-	m := make(map[DataCategory]bool, len(cs))
-	for _, c := range cs {
-		m[c] = true
-	}
-	return m
-}
-
-func ptrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	v := s
-	return &v
 }

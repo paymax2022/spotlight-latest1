@@ -15,8 +15,8 @@ import type {
   RegistrationStatusEvent,
   RegistrationStep,
 } from '@/src/features/registration/types';
-import { getOptionalEnv } from '@/src/lib/config/env';
-import { loadPaystackClient } from '@/src/lib/payments/paystack-client';
+import { getOptionalEnv } from '@/src/lib/config';
+import { loadPaystackClient } from '@/src/lib/payments';
 import { createClient } from '@/src/lib/supabase/client';
 import { authFetch, isUnauthorized, redirectToLogin } from '@/src/lib/auth/flow';
 

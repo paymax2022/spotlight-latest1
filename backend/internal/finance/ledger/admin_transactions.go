@@ -11,7 +11,6 @@ import (
 )
 
 // AdminTransactionFilter narrows the centralized admin transactions list.
-//
 // This is a READ-ONLY reporting surface over ledger_entries — the only source
 // of truth for money movement across every module (there is no per-module
 // transactions table). It never writes to ledger_entries.
@@ -30,7 +29,6 @@ type AdminTransactionFilter struct {
 
 // AdminTransactionRow is one ledger_entries row joined to its owning account
 // and (when the account has one) the human user, for back-office display.
-//
 // SourcePrefix is a BEST-EFFORT guess at which module produced this entry,
 // derived from SPLIT_PART(reference, ':', 1). There is no module/source column
 // on ledger_entries and reference-naming conventions are inconsistent across
@@ -72,7 +70,6 @@ type AdminTransactionsPage struct {
 // movement (a balanced post is usually >=2 rows: e.g. a DEBIT off the user's
 // wallet and the matching CREDIT into a standing account, both posted under
 // one reference).
-//
 // CAVEAT, found live while building this: reference is NOT guaranteed unique
 // per transaction across this codebase — some code paths (an admin
 // wallet-funding seed helper, confirmed live) reuse one literal constant
@@ -99,7 +96,7 @@ type AdminTransactionDetail struct {
 	// ModuleDetail is the REAL per-module detail (service, category, what was
 	// bought, payment method, real status, provider) resolved from this
 	// transaction's reference by whichever TransactionDetailResolver (see
-	// admin_transaction_resolver.go) recognizes its naming pattern first, or
+	// this file) recognizes its naming pattern first, or
 	// nil when no wired resolver's pattern matches this reference (most
 	// module/reference combinations — resolvers exist for a growing subset
 	// only). A resolver query failure is logged, not fatal: the rest of this
@@ -109,7 +106,7 @@ type AdminTransactionDetail struct {
 
 // revenueAccountTypes are the standing account types this codebase's
 // commission-adjacent flows post platform revenue into — confirmed by reading
-// backend/internal/finance/ledger/model.go's AccountType constants across
+// backend/internal/finance/service.go's AccountType constants across
 // every module. There is no single generic "is this a commission account?"
 // flag on ledger_accounts; this list is a best-effort but CONCRETE (not
 // inferred from free text) classification of the accounts that ARE revenue,
@@ -253,7 +250,6 @@ func (r *Repository) AdminGetTransaction(ctx context.Context, id string) (*Admin
 // standing/system accounts (commission pots, clearing accounts, etc.) — they
 // are returned, never filtered out; callers display them as
 // "System: <account type>".
-//
 // Total is computed via a COUNT(*) OVER() window function so it always
 // reflects the SAME filter predicate as the page (no separate query to drift).
 func (s *Service) AdminListTransactions(ctx context.Context, f AdminTransactionFilter) (*AdminTransactionsPage, error) {
@@ -348,3 +344,53 @@ func (r *Repository) AdminListTransactions(ctx context.Context, f AdminTransacti
 	}
 	return out, nil
 }
+
+// ModuleTransactionDetail is the REAL, per-module view of a ledger_entries
+// row — the concrete "what was this money for" answer that the generic
+// ledger fields (amount, reference, account type) cannot give on their own.
+// It is produced by a TransactionDetailResolver (see below) that knows how
+// to look up ONE module's domain tables from the entry's reference string.
+type ModuleTransactionDetail struct {
+	Module        string  `json:"module"`        // e.g. "marketplace_boost", "insurance_premium", "fx_conversion", "utility_bill"
+	ServiceLabel  string  `json:"service_label"` // human label, e.g. "Marketplace — Listing Boost"
+	Category      *string `json:"category"`
+	ServiceBought string  `json:"service_bought"` // specific description of what was bought
+	PaymentMethod string  `json:"payment_method"` // real value if the module tracks it, else honestly "wallet" (never invent "card" etc. without a real column backing it)
+	Status        string  `json:"status"`         // the REAL per-module status, not the generic ledger Posted/Reversed
+	Provider      *string `json:"provider"`       // aggregator/underwriter/provider name, when applicable
+	Merchant      *string `json:"merchant"`       // a real peer merchant/seller, ONLY when the module genuinely has one
+}
+
+// TransactionDetailResolver knows how to resolve ONE module's real
+// transaction detail from a ledger_entries reference string. Multiple
+// resolvers are tried in order by AdminGetTransaction; each resolver decides
+// for itself (cheaply, before running any query) whether the reference
+// matches its module's naming pattern.
+type TransactionDetailResolver interface {
+	// Resolve returns (detail, true, nil) on a match, (nil, false, nil) when
+	// this resolver's reference pattern doesn't match (not an error — try
+	// the next resolver), or (nil, false, err) on a real query failure.
+	Resolve(ctx context.Context, reference string) (*ModuleTransactionDetail, bool, error)
+}
+
+// AdminTransactionModules — AdminTransactionModule describes one module tab on the centralized admin
+// Transactions console. Keys match ModuleTransactionDetail.Module — the same
+// value a TransactionDetailResolver returns — so a row's resolved module and
+// the tab it belongs to are always the same classification, never two
+// separate guesses that can drift apart.
+// This list is DELIBERATELY the same four modules wired in
+// backend/internal/app/admin_transaction_resolvers.go. Adding a resolver for
+// a fifth module means adding its entry here too — moduleReferenceFilter
+// below is what makes a tab's table/chart actually SQL-filter to just that
+// module, ahead of running any resolver.
+var AdminTransactionModules = []struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+}{
+	{"marketplace_boost", "Marketplace"},
+	{"insurance_premium", "Insurance"},
+	{"fx_conversion", "FX"},
+	{"utility_bill", "Utility Bills"},
+}
+
+

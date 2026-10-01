@@ -1,6 +1,4 @@
 // Pure-logic unit tests for the standing "Recent addresses" chips.
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "tests/unit/location/*.spec.ts"
-//
 // Saved addresses were previously reachable ONLY by focusing an empty address
 // field, which surfaced them as a dropdown — invisible unless you knew it was
 // there. The chips make that discoverable. The interesting part is not the
@@ -41,7 +39,6 @@ describe('shouldShowRecentChips', () => {
   });
 
   it('never renders alongside the dropdown', () => {
-    // The dropdown lists these same addresses; two copies on screen reads as a
     // bug, and the user cannot tell which one is authoritative.
     assert.equal(shouldShowRecentChips({ ...base, dropdownVisible: true }), false);
   });

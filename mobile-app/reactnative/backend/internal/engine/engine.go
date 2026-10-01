@@ -14,8 +14,6 @@ import (
 	"paymax/crypto-backend/internal/domain"
 )
 
-// ── Fee / spread config (server-authoritative; never sent by the client) ─────
-
 const (
 	PaymaxFeeBps   = 90 // 0.90%
 	ProviderFeeBps = 20 // 0.20%
@@ -48,8 +46,6 @@ func riskScore(risk string) int {
 	}
 }
 
-// ── Time + id helpers ─────────────────────────────────────────────────────────
-
 var seq uint64
 
 // Now returns an RFC3339 UTC timestamp (parses cleanly as a JS Date).
@@ -81,8 +77,6 @@ func charSum(s string) int {
 	}
 	return sum
 }
-
-// ── Eligibility gate ──────────────────────────────────────────────────────────
 
 // EvaluateEligibility maps a user's compliance facts to a trading-gate decision.
 // It is the single source of truth for the gate (Rule 2: server-authoritative)
@@ -130,8 +124,6 @@ func EvaluateEligibility(f domain.EligibilityFacts) domain.Eligibility {
 	}
 	return base
 }
-
-// ── Buy / sell quote ──────────────────────────────────────────────────────────
 
 // BuildQuote builds a buy/sell quote. Buys cost a touch more, sells pay a touch
 // less; every fee is itemised in settlement fiat.
@@ -201,8 +193,6 @@ func BuildQuote(a domain.Asset, side, basis string, amount int64, currency strin
 	}
 }
 
-// ── Swap quote ────────────────────────────────────────────────────────────────
-
 // BuildSwapQuote prices a crypto-to-crypto swap via fiat triangulation.
 func BuildSwapQuote(from, to domain.Asset, fromAmount int64) domain.SwapQuote {
 	fromUnit := math.Pow(10, float64(from.Decimals))
@@ -237,8 +227,6 @@ func BuildSwapQuote(from, to domain.Asset, fromAmount int64) domain.SwapQuote {
 	}
 }
 
-// ── Withdrawal quote ──────────────────────────────────────────────────────────
-
 // WithdrawalQuoteFor estimates the network fee and builds a withdrawal preview.
 func WithdrawalQuoteFor(a domain.Asset, n domain.Network, amount int64) domain.WithdrawalQuote {
 	unit := math.Pow(10, float64(a.Decimals))
@@ -259,8 +247,6 @@ func WithdrawalQuoteFor(a domain.Asset, n domain.Network, amount int64) domain.W
 		ExpiresAt:            Expiry(QuoteExpirySeconds),
 	}
 }
-
-// ── Deposit address ───────────────────────────────────────────────────────────
 
 // DepositAddressFor returns a deterministic custody deposit address.
 func DepositAddressFor(a domain.Asset, n domain.Network) domain.DepositAddress {
@@ -299,8 +285,6 @@ func DepositAddressFor(a domain.Asset, n domain.Network) domain.DepositAddress {
 		CustodyProvider: "mock-custody",
 	}
 }
-
-// ── Price chart ───────────────────────────────────────────────────────────────
 
 // Chart returns a deterministic price series for a range (1H/1D/1W/1M/1Y).
 func Chart(a domain.Asset, rng string) []domain.CandlePoint {

@@ -1,4 +1,3 @@
-// ── Spotlight Academy — Mock dataset (Phase 0 + Phase 1) ─────────────────────
 // Self-contained fixtures backing the learner app while USE_MOCK is true.
 // Two arenas (UTME + BECE), a full blueprint with bundled offline questions,
 // subjects/topics/objectives, a reward pool, plans + bundles, wallet.
@@ -33,7 +32,6 @@ const now = Date.now();
 const daysAgo = (d: number) => new Date(now - d * 86_400_000).toISOString();
 const daysAhead = (d: number) => new Date(now + d * 86_400_000).toISOString();
 
-// ── Identity (default: a 16-year-old learner, minor → consent pending) ────────
 export const MOCK_PROFILE: AcademyProfile = {
   id: 'usr_self',
   displayName: 'Chidera A.',
@@ -49,7 +47,6 @@ export const MOCK_PROFILE: AcademyProfile = {
   onboardingComplete: false,
 };
 
-// ── Curriculum ────────────────────────────────────────────────────────────────
 export const MOCK_CURRICULUM_VERSIONS: CurriculumVersion[] = [
   { id: 'cv_2024', label: 'NERDC 2024 (new)', effectiveYear: 2024, isLegacy: false },
   { id: 'cv_2014', label: 'NERDC 2014 (legacy)', effectiveYear: 2014, isLegacy: true },
@@ -108,7 +105,6 @@ export const MOCK_LESSONS: Lesson[] = [
   },
 ];
 
-// ── Question bank (practice + bundled into the offline mock) ──────────────────
 export const MOCK_QUESTIONS: Question[] = [
   {
     id: 'q_trig_1', objectiveId: 'obj_trig_1', subjectId: 'sub_math', type: 'mcq',
@@ -163,7 +159,6 @@ export const MOCK_QUESTIONS: Question[] = [
   },
 ];
 
-// ── Exam arenas (the Crown) ──────────────────────────────────────────────────
 export const MOCK_ARENAS: ExamArena[] = [
   {
     id: 'arena_utme', slug: 'utme', name: 'JAMB UTME',
@@ -213,7 +208,6 @@ export const MOCK_UTME_COMBINATIONS: UtmeCombination[] = [
   { course: 'Accounting', subjects: ['English', 'Mathematics', 'Economics', 'Commerce'], note: 'Mathematics + Economics required.' },
 ];
 
-// ── Gamification ─────────────────────────────────────────────────────────────
 export const MOCK_GAMIFICATION: GamificationProfile = {
   level: 7, xp: 3420, xpToNext: 580, streakDays: 12, freezeTokens: 2, rank: 18,
 };
@@ -240,7 +234,6 @@ export const MOCK_LEADERBOARD: LeaderboardEntry[] = [
   { rank: 19, name: 'Fatima L.', xp: 3380, isMe: false },
 ];
 
-// ── Rewards (learn-to-earn) ──────────────────────────────────────────────────
 export const MOCK_REWARD_BALANCE: RewardBalance = {
   points: 4250, pendingPoints: 150, lifetimeEarned: 9800,
 };
@@ -259,7 +252,6 @@ export const MOCK_REWARD_CATALOG: RewardCatalogItem[] = [
   { id: 'rw_mockpass', name: 'Mock Exam Pass', description: 'Unlock one premium full mock', icon: 'Ticket', pointsCost: 1500, category: 'exam' },
 ];
 
-// ── Commerce ─────────────────────────────────────────────────────────────────
 export const MOCK_PLANS: Plan[] = [
   {
     id: 'plan_free', name: 'Starter', tagline: 'Learn the basics free', priceKobo: 0, period: 'monthly',
@@ -304,7 +296,6 @@ export const MOCK_BUNDLE_MANIFEST: Record<string, BundleManifestItem[]> = {
   ],
 };
 
-// ── Wallet ───────────────────────────────────────────────────────────────────
 export const MOCK_WALLET: AcademyWallet = {
   spendableKobo: 125000,
   rewardPoints: 4250,

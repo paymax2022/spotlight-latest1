@@ -30,9 +30,7 @@ import { assertAdminPermission } from '@/src/server/admin/auth';
 import { executeVoteReversal } from '@/src/server/voting/sensitive-actions.service';
 import { ApiError } from '@/src/lib/api/responses';
 
-// ---------------------------------------------------------------------------
 // In-memory fake for contest_admin_approvals
-// ---------------------------------------------------------------------------
 
 function makeApprovalsClient() {
   const rows = new Map<string, Record<string, unknown>>();

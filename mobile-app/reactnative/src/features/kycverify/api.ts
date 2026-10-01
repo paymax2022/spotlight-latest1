@@ -1,9 +1,6 @@
-// ── Multi-provider KYC step-up — API wrapper ─────────────────────────────────
 // Talks to the Go backend at EXPO_PUBLIC_API_BASE_URL → /api/finance/kyc via the
 // shared axios `api` client (bearer auth injected by the request interceptor).
-//
 // Iron rule: every check POST carries a fresh Idempotency-Key header so a retried
-// capture never double-runs a provider check. No provider secret lives in the app;
 // SDK capture flows use the server-issued token from /sdk-token.
 
 import { api } from '@/api/client';
@@ -23,7 +20,6 @@ import type {
 
 const BASE = '/api/finance/kyc';
 
-// ─── Mock/offline mode (dev; no backend) ────────────────────────────────────
 // Deterministic PASSED results so the whole step-up flow is walkable without the
 // Go gateway. Flip EXPO_PUBLIC_KYC_VERIFY_USE_MOCK=false for the real backend.
 const mockDelay = (ms = 900) => new Promise((r) => setTimeout(r, ms));
@@ -62,8 +58,6 @@ export function newIdempotencyKey(): string {
 
 const idem = () => ({ headers: { 'Idempotency-Key': newIdempotencyKey() } });
 
-// ─── Session ──────────────────────────────────────────────────────────────
-
 /** POST /session — start a step-up session for a target tier. */
 export async function createSession(targetTier: KycTier): Promise<VerificationSession> {
   if (USE_MOCK) {
@@ -84,8 +78,6 @@ export async function getSession(id: string): Promise<VerificationSession> {
   return unwrap<VerificationSession>(await api.get(`${BASE}/session/${id}`));
 }
 
-// ─── Consent (MUST run before any check) ────────────────────────────────────
-
 /** POST /consent — record explicit NDPA/CBN consent for a scope + version. */
 export async function postConsent(scope: ConsentScope, version: string): Promise<{ ok: true }> {
   if (USE_MOCK) {
@@ -95,8 +87,6 @@ export async function postConsent(scope: ConsentScope, version: string): Promise
   await api.post(`${BASE}/consent`, { scope, version });
   return { ok: true };
 }
-
-// ─── Checks (each carries an Idempotency-Key) ───────────────────────────────
 
 export interface IdNumberCheckInput {
   sessionId: string;
@@ -209,8 +199,6 @@ export async function checkAml(sessionId: string): Promise<VerificationCheck> {
   );
 }
 
-// ─── SDK token (server-issued; no provider secret in the app) ───────────────
-
 /** POST /sdk-token — short-lived token for embedding a provider capture SDK. */
 export async function getSdkToken(provider: string): Promise<SdkToken> {
   if (USE_MOCK) {
@@ -222,8 +210,6 @@ export async function getSdkToken(provider: string): Promise<SdkToken> {
   );
   return { token: raw.token, expiresAt: raw.expires_at, provider };
 }
-
-// ─── Terminal-state helpers (shared branching logic) ────────────────────────
 
 export const CHECK_TERMINAL: CheckStatus[] = ['PASSED', 'FAILED', 'REVIEW'];
 export const SESSION_TERMINAL: SessionStatus[] = [

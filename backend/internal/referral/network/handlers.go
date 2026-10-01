@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -42,10 +43,8 @@ func Register(member, admin *gin.RouterGroup, svc *Service, rbac services.RBACSe
 	ag.POST("/overrides/accrue", guard("referral.amb.manage"), h.AccrueOverride)
 }
 
-// --- member ---
-
 func (h *Handler) MyAmbassador(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -59,7 +58,7 @@ func (h *Handler) MyAmbassador(c *gin.Context) {
 }
 
 func (h *Handler) Apply(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -78,7 +77,7 @@ func (h *Handler) Apply(c *gin.Context) {
 }
 
 func (h *Handler) MyNetworks(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -92,7 +91,7 @@ func (h *Handler) MyNetworks(c *gin.Context) {
 }
 
 func (h *Handler) NetworkMembers(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -106,7 +105,7 @@ func (h *Handler) NetworkMembers(c *gin.Context) {
 }
 
 func (h *Handler) MyOverrides(c *gin.Context) {
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -118,8 +117,6 @@ func (h *Handler) MyOverrides(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"overrides": rows})
 }
-
-// --- admin ---
 
 func (h *Handler) Directory(c *gin.Context) {
 	list, err := h.svc.Directory(c.Request.Context(), c.Query("status"))
@@ -138,7 +135,7 @@ func (h *Handler) SetStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	if err := h.svc.SetStatus(c.Request.Context(), c.Param("id"), body.Status, c.GetString("user_id")); err != nil {
+	if err := h.svc.SetStatus(c.Request.Context(), c.Param("id"), body.Status, ginutil.UserID(c)); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -188,7 +185,7 @@ func (h *Handler) AccrueOverride(c *gin.Context) {
 		return
 	}
 	if in.IdempotencyKey == "" {
-		in.IdempotencyKey = c.GetHeader("Idempotency-Key")
+		in.IdempotencyKey = ginutil.IdempotencyKey(c)
 	}
 	o, err := h.svc.AccrueOverride(c.Request.Context(), in)
 	if err != nil {

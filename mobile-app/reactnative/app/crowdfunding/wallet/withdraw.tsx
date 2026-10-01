@@ -3,10 +3,10 @@ import { ScrollView, View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoid
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Check, Landmark, FileUp, Clock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
@@ -17,7 +17,6 @@ import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 import { resolveWithdrawalCampaignId } from '@/features/crowdfunding/utils/withdrawalTarget';
 
 export default function WithdrawScreen() {
-  // Opened from the owner management screen with the campaign to withdraw from;
   // opened bare from the wallet it keeps the previous default. Without this the
   // screen always read the default campaign wallet, so an owner who reached it
   // from a specific campaign could be shown — and could withdraw against — a
@@ -25,7 +24,6 @@ export default function WithdrawScreen() {
   const { campaign } = useLocalSearchParams<{ campaign?: string }>();
   // Opened bare (no route campaign) — resolve a real campaign to FETCH the
   // wallet against, same fallback the wallet screen uses. This only feeds the
-  // wallet lookup; resolveWithdrawalCampaignId below still decides the
   // SUBMISSION target on its own terms (route, else the wallet's own echoed
   // campaignId — never this default directly), so the money-safety guarantee
   // that a withdrawal never fires against a client-invented id is unchanged.

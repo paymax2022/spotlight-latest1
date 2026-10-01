@@ -10,14 +10,12 @@ import (
 
 // Regression tests for two grading defects found live on 2026-08-12 against
 // the seeded mock-exam content (P4-MOCK-V1):
-//
 //  1. gradeExam distributed marks with integer division (100 / n questions),
 //     so any exam whose question count does not divide 100 could never reach
 //     100% — a perfect 60-question exam scored 60/100 (grade D).
 //  2. The results read-back hydrated top-level score/score_percent/total_time
 //     from performance keys that were never written (score/score_percent
 //     instead of the persisted score_raw/score_pct), returning zeros.
-//
 // Both are pure logic and are covered here DB-free per TEST_STRATEGY.md.
 
 // mockInstance builds an exam instance whose marking scheme has n questions,
@@ -116,10 +114,10 @@ func TestBuildMockExamResultHydratesFromPerformance(t *testing.T) {
 	started := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
 	submitted := started.Add(30 * time.Minute)
 	attempt := &MockExamAttempt{
-		ID:         "attempt-1",
-		TemplateID: "template-1",
-		Status:     "graded",
-		StartedAt:  started,
+		ID:          "attempt-1",
+		TemplateID:  "template-1",
+		Status:      "graded",
+		StartedAt:   started,
 		SubmittedAt: &submitted,
 		Performance: json.RawMessage(
 			`{"score_raw":75,"score_pct":75,"grade":"C","correct_answers":45,"total_answered":60}`),

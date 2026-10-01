@@ -16,8 +16,6 @@ import (
 	"spotlight/backend/internal/integrations"
 )
 
-// ── validateLoginStatus ──────────────────────────────────────────────────
-//
 // AUTH-005: this logic was extensively live-tested during UAT (account
 // lockout, expired-lock retry) with no direct unit coverage — these pin the
 // behaviour so a regression is caught by `go test`, not only another live
@@ -90,8 +88,6 @@ func TestValidateLoginStatus_UnknownOrMissingStatusIsNotRefused(t *testing.T) {
 	}
 }
 
-// ── bumpFailedLogin ──────────────────────────────────────────────────────
-//
 // AUD-BE-007: the increment + lockout decision moved into the
 // bump_failed_login_attempts RPC so it is one atomic UPDATE — the read-
 // then-PATCH undercounted concurrent failures. The stub therefore asserts the
@@ -172,8 +168,6 @@ func TestBumpFailedLogin_RPCErrorPropagates(t *testing.T) {
 	}
 }
 
-// ── successful-login PATCH (the post-auth cleanup write) ─────────────────
-//
 // AUD-BE-009: the success PATCH cleared failed_login_attempts and
 // locked_until but never status, so an expired auto-lockout left the row as
 // status=locked + locked_until=nil — which validateLoginStatus reads as an
@@ -252,8 +246,6 @@ func TestLoginUser_NonLockedLoginDoesNotTouchStatus(t *testing.T) {
 		t.Fatalf("status must not be written for a non-locked login (would flip e.g. pending→active), got: %v", patch["status"])
 	}
 }
-
-// ── resolveLoginEmail / phoneToEmail ─────────────────────────────────────
 
 func newAuthServiceWithProfiles(t *testing.T, rows []map[string]any) *authService {
 	t.Helper()
@@ -339,8 +331,6 @@ func TestPhoneToEmail_DiscardsRowsThatDoNotActuallyMatchAfterNormalisation(t *te
 	}
 }
 
-// ── AUTH-014: a missing platform_users row must refuse, not skip the gate ──
-//
 // findPlatformUserByEmail returns (nil, nil) — no error — when the email has
 // zero platform_users rows. LoginUser used to read that as "the gate does not
 // apply" and fall straight through to GoTrue, so a suspended/locked account

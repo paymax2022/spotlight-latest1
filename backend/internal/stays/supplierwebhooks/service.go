@@ -3,15 +3,22 @@ package supplierwebhooks
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/internal/stays/ari"
+)
+
+const (
+	keyError = "error"
 )
 
 // Sentinel errors.
@@ -50,9 +57,7 @@ func (s *Service) VerifySignature(body []byte, signature string) error {
 		return ErrBadSignature // fail-closed when no secret configured
 	}
 	sig := strings.TrimPrefix(strings.TrimSpace(signature), "sha256=")
-	mac := hmac.New(sha256.New, []byte(s.secret))
-	mac.Write(body)
-	want := hex.EncodeToString(mac.Sum(nil))
+	want := cryptox.HMACSHA256Hex(s.secret, string(body))
 	if !hmac.Equal([]byte(sig), []byte(want)) {
 		return ErrBadSignature
 	}
@@ -223,8 +228,6 @@ func (s *Service) applyReservation(ctx context.Context, ev Event) error {
 	return err
 }
 
-// --- payload helpers ---
-
 func orMap(m map[string]any) map[string]any {
 	if m == nil {
 		return map[string]any{}
@@ -279,4 +282,51 @@ func toBool(v any) bool {
 		return b
 	}
 	return false
+}
+
+// Handler exposes the Rail-B supplier webhook endpoint. The raw body is read for
+// HMAC verification BEFORE JSON parsing, then the event is ingested idempotently.
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler constructs the webhooks handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Register wires the webhook route onto the webhooks group. The route is unauthen-
+// ticated (no member JWT) and verified by HMAC signature instead.
+//
+//	POST /internal/webhooks/stays-supplier   (header: X-Stays-Signature)
+func (h *Handler) Register(g *gin.RouterGroup) {
+	g.POST("/stays-supplier", h.Receive)
+}
+
+// Receive verifies the signature, parses the event, and ingests it idempotently.
+func (h *Handler) Receive(c *gin.Context) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "cannot read body"})
+		return
+	}
+	// Signature verification (fail-closed: no secret configured → reject).
+	sig := c.GetHeader("X-Stays-Signature")
+	if verr := h.svc.VerifySignature(body, sig); verr != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "invalid signature"})
+		return
+	}
+	var ev Event
+	if err := json.Unmarshal(body, &ev); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid json"})
+		return
+	}
+	if err := h.svc.Ingest(c.Request.Context(), ev); err != nil {
+		if errors.Is(err, ErrDuplicate) {
+			// Idempotent replay — acknowledge so the supplier stops retrying.
+			c.JSON(http.StatusOK, gin.H{"data": gin.H{"status": "duplicate"}})
+			return
+		}
+		c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"status": "applied"}})
 }

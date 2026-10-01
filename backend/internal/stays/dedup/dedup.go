@@ -16,7 +16,6 @@ import (
 // conflicts route to an admin mapping queue (stays_mapping_record). This is a
 // fuzzy name+geo+address mapping skeleton — the production-grade matcher (Vervotech
 // style, PRD §5.3) plugs in here without changing the gateway or service.
-//
 // best-bookable-rate selection: after dedup groups offers by mapped_property_id,
 // the cheapest total (incl. tax, after the pricing engine) per group is kept and
 // the winning rail is recorded.
@@ -134,8 +133,6 @@ func (s *Service) EnqueueConflicts(ctx context.Context, offers []gateway.Propert
 	}
 	return nil
 }
-
-// --- fuzzy matching primitives (skeleton; swap for a production matcher) ---
 
 // fingerprint builds a deterministic mapped id from normalised name + coarse geo so
 // near-identical hotels across rails collapse to the same group.

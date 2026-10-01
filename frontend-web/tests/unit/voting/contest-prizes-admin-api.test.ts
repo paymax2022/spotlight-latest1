@@ -27,7 +27,7 @@ function jsonReq(method: string, body?: unknown, url = 'https://x.test/api/admin
 
 function makeSupabase(opts: {
   existingByPosition?: any; // returned by the duplicate-position pre-check in POST
-  prizeRow?: any; // returned by .maybeSingle() in PATCH/DELETE lookups
+  prizeRow?: any;
   insertedPrize?: any;
   updatedPrize?: any;
   insertErrorCode?: string;

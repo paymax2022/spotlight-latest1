@@ -1,4 +1,3 @@
-// ── Doctor — App & Account Status hooks (Batch 7, Section AD) ─────────────────
 // Query keys under ['doctor', 'app-status'] / ['doctor', 'account-status']. These
 // drive the maintenance / forced-update banners and the pending/rejected/
 // suspended/under-review account gates. Edge states themselves are pure
@@ -15,8 +14,6 @@ import {
   DEMO_ACCOUNT_STATUS,
 } from '@/api/doctor.batch7.api';
 import type { EdgeStateKind, EdgeStateDescriptor } from '@/types/doctor.batch7';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function useAppStatus() {
   return useQuery({
@@ -37,7 +34,6 @@ export function useAccountStatus() {
   });
 }
 
-// ─── Pure helper wrapper ──────────────────────────────────────────────────────
 // Not a query — resolves synchronously from the descriptor map so screens can
 // render a consistent empty/error/edge state without a network round-trip.
 export function useEdgeState(kind: EdgeStateKind): EdgeStateDescriptor {

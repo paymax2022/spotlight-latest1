@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -22,10 +23,9 @@ type Handler struct {
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated caller from gin context (set by auth middleware).
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -51,7 +51,7 @@ func (h *Handler) fail(c *gin.Context, err error) {
 
 // requireUID resolves the guardian or aborts 401.
 func (h *Handler) requireUID(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication_required"})
 		return "", false
@@ -80,7 +80,6 @@ func RegisterAcademyParent(member, admin *gin.RouterGroup, pool *pgxpool.Pool, r
 	svc := NewService(pool)
 	h := NewHandler(svc)
 
-	// ── Member (guardian) ──
 	if member != nil {
 		pg := member.Group("/parent")
 		pg.GET("/children", h.GetChildren)
@@ -93,7 +92,6 @@ func RegisterAcademyParent(member, admin *gin.RouterGroup, pool *pgxpool.Pool, r
 		pg.POST("/approvals/:id/decide", h.DecideApproval)
 	}
 
-	// ── Admin — academy.notifications capability ──
 	if admin != nil {
 		guard := func(p string) gin.HandlerFunc { return middleware.RequirePermission(rbac, p) }
 		ag := admin.Group("/notification-templates", guard("academy.notifications"))
@@ -104,8 +102,6 @@ func RegisterAcademyParent(member, admin *gin.RouterGroup, pool *pgxpool.Pool, r
 		ag.DELETE("/:key", h.AdminDeleteTemplate)
 	}
 }
-
-// ── Member handlers (guardian) ──────────────────────────────────────────────────
 
 func (h *Handler) GetChildren(c *gin.Context) {
 	u, ok := h.requireUID(c)
@@ -226,15 +222,13 @@ func (h *Handler) DecideApproval(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── Admin handlers: notification templates ──────────────────────────────────────
-
 func (h *Handler) AdminUpsertTemplate(c *gin.Context) {
 	var req UpsertTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.UpsertTemplate(c.Request.Context(), uid(c), req)
+	out, err := h.svc.UpsertTemplate(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -261,7 +255,7 @@ func (h *Handler) AdminGetTemplate(c *gin.Context) {
 }
 
 func (h *Handler) AdminDeleteTemplate(c *gin.Context) {
-	if err := h.svc.DeleteTemplate(c.Request.Context(), uid(c), c.Param("key")); err != nil {
+	if err := h.svc.DeleteTemplate(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("key")); err != nil {
 		h.fail(c, err)
 		return
 	}

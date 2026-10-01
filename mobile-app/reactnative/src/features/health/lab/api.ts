@@ -1,4 +1,3 @@
-// ── Paymax Health — Laboratory API layer (Phase 2) ───────────────────────────
 // Self-contained, mock-first data layer for the Lab vertical. Reuses the shared
 // USE_MOCK flag + HEALTH_API_BASE; live endpoints live under /lab.
 // IRON RULES: kobo only · HL-2 MLSCN gating · HL-6 chain-of-custody · HL-7 critical
@@ -8,7 +7,7 @@
 import { api } from '@/api/client';
 import { USE_MOCK, HEALTH_API_BASE } from '../constants/health.constants';
 import { uploadProviderCredential, addProviderCredential } from '../api';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   LabTest,
   TestPackage,
@@ -42,7 +41,6 @@ const LAB_API = `${HEALTH_API_BASE}/lab`;
 const PROVIDERS_API = `${HEALTH_API_BASE}/providers`;
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
-// ── Mock data ─────────────────────────────────────────────────────────────────
 const MOCK_TESTS: LabTest[] = [
   {
     id: 'test_fbc',
@@ -440,7 +438,6 @@ function tatLabel(hours: number): string {
   return `${Math.ceil(hours / 24)} days`;
 }
 
-// Maps the backend's minimal money-path Test row (snake_case; see Go
 // healthlab.Test) onto the richer mobile LabTest display shape. The backend
 // carries no category, free-text description, home-collection flag, or
 // fasting flag — category/homeCollection default to the least presumptive
@@ -482,7 +479,6 @@ function mapPackage(raw: any): TestPackage {
   };
 }
 
-// ── Catalog ───────────────────────────────────────────────────────────────────
 export async function getTests(query?: CatalogQuery): Promise<LabTest[]> {
   if (USE_MOCK) {
     await delay();
@@ -529,7 +525,6 @@ export async function getPackage(id: string): Promise<TestPackage> {
   return data;
 }
 
-// ── Labs & phlebotomist ─────────────────────────────────────────────────────
 export async function getLabs(opts?: { homeCollection?: boolean }): Promise<Lab[]> {
   if (USE_MOCK) {
     await delay();
@@ -566,7 +561,6 @@ const COLLECTION_MODE_FROM_METHOD: Record<string, LabOrder['collectionMode']> = 
 };
 const HELD_STATES = new Set(['CREATED', 'SCHEDULED', 'SAMPLE_COLLECTED', 'IN_TRANSIT', 'ACCESSIONED', 'PROCESSING', 'RESULT_READY', 'ESCALATED']);
 
-// Maps the backend's Order row (snake_case; see Go healthlab.Order) onto the
 // richer mobile LabOrder shape. labName/location/scheduledFor/custody are not
 // on this row (they live on the Lab/Sample entities behind their own reads),
 // so they default to empty/absent rather than being invented — the home
@@ -592,7 +586,6 @@ function mapOrder(raw: any): LabOrder {
   };
 }
 
-// ── Orders ──────────────────────────────────────────────────────────────────
 export async function getOrders(): Promise<LabOrder[]> {
   if (USE_MOCK) {
     await delay();
@@ -714,7 +707,6 @@ export async function shareResult(input: ShareResultInput): Promise<{ ok: true }
   return { ok: true };
 }
 
-// ── Reviews ──────────────────────────────────────────────────────────────────
 export async function getReviews(labId: string): Promise<LabReview[]> {
   if (USE_MOCK) {
     await delay();
@@ -733,14 +725,12 @@ export async function submitReview(input: SubmitReviewInput): Promise<LabReview>
   return data;
 }
 
-// ── Provider (lab) ───────────────────────────────────────────────────────────
 // `${LAB_API}/provider/onboarding` was never implemented backend side —
 // backend/internal/app/health_lab_routes.go has no /provider group at all
 // (only /tests, /orders, /samples), so both calls 404'd on every non-mock
 // request. Same root cause and same fix as pharmacy's identical bug: the
 // generic provider-application backend (backend/internal/health/providers/*,
 // mounted at /api/finance/health/providers/applications*) already supports
-// domain=LAB (service.go validType accepts 'lab'/'lab_scientist'/
 // 'phlebotomist') and was simply never called. Repointed here instead of
 // building a duplicate lab-specific onboarding backend.
 interface ProviderApplicationWire {
@@ -754,7 +744,6 @@ interface ProviderApplicationWire {
 
 // The lab-scoped reads/writes below (catalog, provider orders, accession,
 // results) all need "which lab_provider_id am I" — only known once an
-// application is APPROVED (Application.ProviderID is set at that point; see
 // backend/internal/health/providers/model.go). Resolved via the same
 // applications list already wired for onboarding above, not a separate call.
 async function resolveMyLabProviderId(): Promise<string | undefined> {
@@ -795,7 +784,6 @@ export async function getProviderOnboarding(): Promise<ProviderOnboardingState> 
   };
 }
 
-// licenceFile: previously flagged as a real gap (same as pharmacy/vet had) —
 // this screen only ever collected the MLSCN licence NUMBER as a text field,
 // with no upload step, so AddCredential (which requires a real uploaded
 // file's storage_key) could never be called. Now uses the same shared
@@ -895,14 +883,11 @@ export async function getProviderOrders(): Promise<ProviderOrderRow[]> {
 
 // `${LAB_API}/provider/orders/:id/accession` was also never implemented — the
 // real endpoint is `POST /samples/:id/accession` (a SAMPLE id, not an order
-// id — see handler.go Accession, which reads c.Param("id") as sampleID and
-// calls Service.Accession(scientistID, sampleID, ...)), and it binds
 // {scanned_barcode, note}, not this screen's {orderId, barcode, conditionOk}.
 // The sample id is resolved via the order's custody trail: Collect() creates
 // the sample row AND its first custody event in the same transaction
 // (service.go), so by the time accession is reachable (only after
 // SAMPLE_COLLECTED), the trail always has at least one entry naming it.
-//
 // `conditionOk` has no equivalent on Accession itself — a barcode mismatch is
 // what the real endpoint treats as a breach (verifyBarcodeScan), not a
 // separate flag. A scientist judging the physical sample unacceptable despite
@@ -944,14 +929,10 @@ export async function accessionSample(input: AccessionInput): Promise<{ ok: true
 // analyte.testId, which the screen now populates from the order's real lines
 // (getOrder().lines[].refId) instead of letting the scientist type a name.
 // `scanned_barcode` is LR-001: the backend verifies it against the
-// accessioned sample and rejects a mismatch; an empty scan is explicitly
 // permitted (verifyBarcodeScan) for flows that don't scan.
-//
 // The response is the bare order (no per-result echo, no distinct "result
-// id" — this schema doesn't have one; results are keyed by order_id+test_id),
 // so the returned LabResult is synthesized from what was just entered rather
 // than parsed from a response shape this endpoint doesn't provide. This is
-// safe: hasCritical here only drives UI copy on the next screen, not the
 // actual escalation decision — Release (below) independently recomputes
 // criticality from the persisted results, including any server-side
 // deriveEffectiveStatus upgrade, so a client-side estimate here can never
@@ -1011,7 +992,6 @@ export async function enterResult(input: ResultEntryInput): Promise<LabResult> {
 // escalation-then-release sequence itself in one call — a client-supplied
 // "I acknowledge this is critical" flag would be redundant, and dangerous to
 // trust over the server's own recomputation, so it's intentionally never
-// sent. This screen's confirmation UI still gates the tap; it just isn't
 // wire data.
 export async function releaseResult(input: ResultReleaseInput): Promise<{ ok: true; releasedAt: string }> {
   if (USE_MOCK) {
@@ -1051,7 +1031,6 @@ export async function getProviderReviews(): Promise<LabReview[]> {
   return data;
 }
 
-// ── Phlebotomist ─────────────────────────────────────────────────────────────
 export async function getAssignments(): Promise<CollectionAssignment[]> {
   if (USE_MOCK) {
     await delay();

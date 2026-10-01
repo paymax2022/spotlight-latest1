@@ -4,7 +4,6 @@ import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // POST /api/v1/crowdfunding/comments/:commentId/reply → Go equivalent.
-// Go enforces that only the campaign's creator may reply; this hop only proves
 // there IS a caller, so an anonymous request fails here rather than deeper.
 export async function POST(request: Request, ctx: { params: Promise<{ commentId: string }> }) {
   if (!featureFlags.crowdfunding()) return errorResponse('Crowdfunding is not available.', 503);

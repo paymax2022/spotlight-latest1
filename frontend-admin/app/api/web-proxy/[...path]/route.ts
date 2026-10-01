@@ -51,16 +51,13 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
   // Not a secret — a per-request dedup key the CALLER generates and frontend-web
   // requires for money mutations (see app/api/admin/payments-finance/wallet/
   // adjust/route.ts). Every route proxied here until payments-finance only
-  // needed Authorization + Content-Type, so this was never forwarded; without
   // it, any money-mutation route reached through this proxy 400s unconditionally.
   const idempotencyKey = request.headers.get('idempotency-key');
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
 
   const method = request.method;
-  // Read as BYTES, not text. request.text() decodes as UTF-8, which silently
   // corrupts any binary body — a multipart image upload arrives with its bytes
   // replaced by U+FFFD and the file lands unopenable. Every route proxied here
-  // was JSON until contest banner uploads, so text() was harmless; it is not
   // harmless now. An ArrayBuffer forwards JSON and multipart alike, verbatim,
   // and the Content-Type (including the multipart boundary) is already
   // forwarded above.

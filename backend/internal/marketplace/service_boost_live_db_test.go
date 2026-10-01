@@ -1,12 +1,10 @@
 package marketplace
 
-// ---------------------------------------------------------------------------
 // LIVE-DB UAT for the Marketplace Boost money path (docs/qa/modules/marketplace.md
 // §4 P0 cases MKT-INT-001, MKT-INV-001/002/003/004, MKT-SEC-001) plus a new case
 // proving the tier-limit gate added to close the §6 "Tier/KYC gate" FINDING
 // (PurchaseBoost previously called s.ledger.Debit directly with no tier-limit/KYC
 // gate at all).
-//
 // service_boost_test.go already covers the ledger EFFECT (postBoostCharge /
 // postBoostRefund) against an in-memory fake boostLedger — real, but not a
 // live-DB money-path UAT case: it never exercises the real Postgres ledger
@@ -17,12 +15,9 @@ package marketplace
 // ledger.NewService(ledger.NewRepository(pool), nil), wallets funded through
 // the ledger (never a direct balance UPDATE — wallet balances are a ledger
 // projection, never mutated directly, per CLAUDE.md).
-//
 // Run:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/marketplace/... -run TestLiveDB -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -39,8 +34,6 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/testsupport"
 )
-
-// ── pool / service wiring ─────────────────────────────────────────────────
 
 func boostTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -68,8 +61,6 @@ func newBoostTestService(pool *pgxpool.Pool) (*Service, *ledger.Service) {
 	svc := NewService(pool, led, nil).WithTiers(tiers.NewService(pool))
 	return svc, led
 }
-
-// ── fixture helpers ─────────────────────────────────────────────────────────
 
 // seedBoostSeller inserts a throwaway auth.users + user_profiles row at the
 // given KYC tier and registers cleanup. Tier3 ("full KYC") carries an
@@ -155,7 +146,6 @@ func boostWalletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, u
 // the standing commission account, read from that posting's own leg: the CREDIT side
 // written by postBoostCharge (":credit"), or the REVERSAL_CREDIT side written by
 // postBoostRefund's PostReversalPair (":rev_credit"). 0 means the leg was never posted.
-//
 // Deliberately NOT a before/after read of the account's BALANCE. commission is a single
 // global standing account also moved by stays, insurance, creators, finance commissions
 // and the admin-txn suites, and `go test ./...` runs packages concurrently against one
@@ -217,8 +207,6 @@ func ledgerEntryCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ref
 // trips the tier gate in the six cases that are not the tier-gate case itself.
 const startTierPriceKobo int64 = 50000
 
-// ── MKT-INT-001 ──────────────────────────────────────────────────────────────
-
 // TestLiveDB_PurchaseBoost_DebitsWalletActivatesBoost_BalancedLedger covers
 // MKT-INT-001: boost purchase debits the seller wallet, activates the boost,
 // and posts a balanced ledger debit into AccountCommission.
@@ -260,8 +248,6 @@ func TestLiveDB_PurchaseBoost_DebitsWalletActivatesBoost_BalancedLedger(t *testi
 		t.Errorf("mkt_boosts rows for listing = %d, want 1", n)
 	}
 }
-
-// ── MKT-INV-001 ──────────────────────────────────────────────────────────────
 
 // TestLiveDB_PurchaseBoost_ReplaySameIdempotencyKey_SingleCharge covers
 // MKT-INV-001: replaying the same Idempotency-Key returns the cached 201 body
@@ -307,8 +293,6 @@ func TestLiveDB_PurchaseBoost_ReplaySameIdempotencyKey_SingleCharge(t *testing.T
 	}
 }
 
-// ── MKT-INV-002 ──────────────────────────────────────────────────────────────
-
 // TestLiveDB_PurchaseBoost_MissingIdempotencyKey covers MKT-INV-002: a missing
 // Idempotency-Key is rejected before any ledger posting.
 func TestLiveDB_PurchaseBoost_MissingIdempotencyKey(t *testing.T) {
@@ -335,8 +319,6 @@ func TestLiveDB_PurchaseBoost_MissingIdempotencyKey(t *testing.T) {
 		t.Errorf("commission moved by %d, want 0 (no ledger posting)", got)
 	}
 }
-
-// ── MKT-INV-003 ──────────────────────────────────────────────────────────────
 
 // TestLiveDB_RejectBoost_AutoRefundBalancedReversal covers MKT-INV-003: admin
 // reject reverses the exact kobo via a balanced reversal, stamps refund_ref,
@@ -390,14 +372,11 @@ func TestLiveDB_RejectBoost_AutoRefundBalancedReversal(t *testing.T) {
 	}
 }
 
-// ── Coordinator-flagged RejectBoost fixes (UAT follow-up) ───────────────────
-//
 // Three sibling agents independently found RejectBoost's OLD two-UPDATE
 // sequence (status -> rejected_with_reason, committed; THEN post the refund;
 // THEN status -> auto_refunded) was not atomic/resumable. The three tests
 // below reproduce each finding against the FIXED RejectBoost and prove it
 // closed:
-//
 //  1. seller with no ledger_accounts row -> refund fails -> boost must stay
 //     at its ORIGINAL status (never stranded at rejected_with_reason).
 //  2. a boost already stranded at rejected_with_reason with no refund posted
@@ -528,8 +507,6 @@ func TestLiveDB_RejectBoost_ResumesFromStrandedRejectedWithReasonRow(t *testing.
 	}
 }
 
-// ── MKT-FSM-015 ──────────────────────────────────────────────────────────────
-
 // TestLiveDB_RejectBoost_AlreadyAutoRefunded_IsIdempotentNoOp covers the AUTHZ
 // agent's lower-severity finding: re-rejecting an already-auto_refunded boost
 // must return the existing 200 receipt (idempotent no-op) per
@@ -586,8 +563,6 @@ func TestLiveDB_RejectBoost_AlreadyAutoRefunded_IsIdempotentNoOp(t *testing.T) {
 	}
 }
 
-// ── MKT-INV-004 ──────────────────────────────────────────────────────────────
-
 // TestLiveDB_PurchaseBoost_InsufficientBalance_FailsClosed covers MKT-INV-004:
 // insufficient wallet balance fails closed — no boost row, no partial ledger entry.
 func TestLiveDB_PurchaseBoost_InsufficientBalance_FailsClosed(t *testing.T) {
@@ -617,8 +592,6 @@ func TestLiveDB_PurchaseBoost_InsufficientBalance_FailsClosed(t *testing.T) {
 		t.Errorf("commission moved by %d, want 0 (no partial ledger entry)", got)
 	}
 }
-
-// ── MKT-SEC-001 ──────────────────────────────────────────────────────────────
 
 // TestLiveDB_PurchaseBoost_ConcurrentDuplicate_SingleCharge covers MKT-SEC-001:
 // two GENUINELY concurrent PurchaseBoost calls (real goroutines + sync.WaitGroup)
@@ -670,8 +643,6 @@ func TestLiveDB_PurchaseBoost_ConcurrentDuplicate_SingleCharge(t *testing.T) {
 		t.Fatalf("mkt_boosts rows = %d, want at least 1 (the winner's row)", n)
 	}
 }
-
-// ── NEW: tier-limit gate (Task 1 of this UAT pass) ──────────────────────────
 
 // TestLiveDB_PurchaseBoost_TierGateRefusesTier0Seller proves the fail-closed
 // tier-limit gate added to close §6's "Tier/KYC gate (FINDING)" actually
@@ -749,8 +720,6 @@ func TestLiveDB_PurchaseBoost_NilTierEnforcer_FailsClosed(t *testing.T) {
 	}
 }
 
-// ── CancelBoost: same atomicity/resumability fix as RejectBoost ────────────
-//
 // The coordinator independently spotted that CancelBoost (the seller-initiated
 // counterpart to RejectBoost) had the IDENTICAL non-atomic two-UPDATE pattern:
 // status -> cancelled_by_seller committed standalone, THEN the refund posted,

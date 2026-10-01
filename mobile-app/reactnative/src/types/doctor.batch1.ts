@@ -1,13 +1,9 @@
-// ── Doctor (Telemedicine, provider-side) — Batch 1 Domain Types ──────────────
-// Batch 1 = spec sections C, D, E, F. ADDITIVE to `@/types/doctor`,
 // `@/types/doctor.phase2`, `@/types/doctor.profile` and `@/types/doctor.phase3`
 // — those shapes are imported/reused, never duplicated. Money amounts are
 // integers in minor units (kobo). Use `import type` for type-only imports.
-//
 // APPROACH IS CONSOLIDATED: action/state variants (accept/reject, empty/error,
 // confirmation steps, countdown) are modelled as states/data, not as separate
 // entities, so the Frontend can render variants from the same shapes.
-//
 // Sections:
 //   C — Veterinary Doctor Profile & Verification (vet equivalent of Section B).
 //   D — Doctor Dashboard (aggregate + alerts + announcements).
@@ -39,7 +35,6 @@ import type {
 } from '@/types/doctor.profile';
 import type { PetSpecies } from '@/types/doctor.phase3';
 
-// Re-export the primitives Batch 1 screens lean on, so a screen can pull
 // everything it needs from one import site.
 export type {
   VerificationStatus,
@@ -66,9 +61,7 @@ export type {
 } from '@/types/doctor.profile';
 export type { PetSpecies } from '@/types/doctor.phase3';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION C — VETERINARY DOCTOR PROFILE & VERIFICATION (17)
-// ═══════════════════════════════════════════════════════════════════════════
 // Vet equivalent of Section B's profile builder + verification lifecycle. Reuses
 // the Section B builder primitives (PersonalInfo, ClinicAffiliation,
 // WorkExperienceEntry, ConsultationPricing, ProfileLicenceInfo, UploadedFile,
@@ -143,9 +136,7 @@ export interface VetVerificationSubmission {
   notes?:       string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION D — DOCTOR DASHBOARD (21)
-// ═══════════════════════════════════════════════════════════════════════════
 // Consolidated as one `DoctorDashboardData` aggregate (counts + small lists) +
 // a `DashboardAlert` union (severity, kind, cta) + `PlatformAnnouncement`.
 // Reuses Phase 1 `DoctorAppointment` / `EarningsSummary`.
@@ -169,7 +160,6 @@ export type DashboardAlertKind =
 
 export type DashboardAlertSeverity = 'info' | 'warning' | 'critical';
 
-// A single call-to-action attached to an alert (route is a logical hint; the
 // Frontend owns the actual navigation target).
 export interface DashboardAlertCta {
   label: string;                 // "Review", "Renew now"
@@ -266,9 +256,7 @@ export interface DoctorDashboardData {
   satisfactionPct:    number;               // patient satisfaction rating, 0–100
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION E — AVAILABILITY & SCHEDULE MANAGEMENT (17)
-// ═══════════════════════════════════════════════════════════════════════════
 // Extends `AvailabilitySchedule` ADDITIVELY via a new `ScheduleSettings` shape
 // so the existing type (and `updateAvailability`) stays untouched. Adds blocked
 // dates, vacation mode, reminders, recurring rules, timezone + an overbooking
@@ -313,7 +301,7 @@ export interface RecurringRule {
   startTime:  string;            // "09:00"
   endTime:    string;            // "17:00"
   startsOn:   string;            // ISO date the rule takes effect
-  endsOn?:    string;            // ISO date the rule stops (undefined = open)
+  endsOn?:    string;
   active:     boolean;
 }
 
@@ -349,9 +337,7 @@ export interface OverbookingCheck {
   message:       string;         // human-readable warning copy
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION F — APPOINTMENT & CONSULTATION QUEUE (18)
-// ═══════════════════════════════════════════════════════════════════════════
 // Reuses Phase 1 `DoctorAppointment` + `ConsultStatus`. Accept/reject, missed/
 // no-show, doctor-late and the countdown are modelled as states/data on top of
 // the appointment, not as separate entities. Adds the queue item, the pending
@@ -404,20 +390,16 @@ export interface AppointmentRequest {
 export interface ConsultCountdown {
   appointmentId: string;
   slotAt:        string;         // ISO datetime of the slot
-  minsUntil:     number;         // minutes until the slot (negative = overdue)
+  minsUntil:     number;
   isStartingSoon: boolean;       // within the "starting soon" window
   isOverdue:     boolean;        // slot time has passed and consult not started
   isDoctorLate:  boolean;        // overdue beyond the grace window (late warning)
   label:         string;         // "Starts in 5 min", "Overdue by 3 min"
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // MUTATION INPUTS / RESULTS
-// ═══════════════════════════════════════════════════════════════════════════
 // `idempotencyKey` is required on every state-changing mutation. Hooks generate
 // it; callers pass `Omit<Input, 'idempotencyKey'>`.
-
-// ─── Section C — vet profile & verification ──────────────────────────────────
 
 export interface SaveVetProfileDraftInput {
   draft:          Partial<VetProfileDraft>; // patch — merged into the draft
@@ -465,8 +447,6 @@ export interface PublishVetProfileResult {
   publishedAt: string;           // ISO datetime
 }
 
-// ─── Section D — dashboard ───────────────────────────────────────────────────
-
 export interface SetPresenceInput {
   presence:       DoctorPresence;
   idempotencyKey: string;
@@ -485,8 +465,6 @@ export interface DismissAnnouncementResult {
   announcementId: string;
   dismissed:      boolean;
 }
-
-// ─── Section E — availability & schedule ─────────────────────────────────────
 
 export interface BlockDateInput {
   date:           string;        // ISO date
@@ -532,7 +510,7 @@ export interface SaveReminderSettingsResult {
 }
 
 export interface SaveRecurringRuleInput {
-  rule:           Omit<RecurringRule, 'id'> & { id?: string }; // id absent = create
+  rule:           Omit<RecurringRule, 'id'> & { id?: string };
   idempotencyKey: string;
 }
 
@@ -548,8 +526,6 @@ export interface SetTimezoneInput {
 export interface SetTimezoneResult {
   timezone: string;
 }
-
-// ─── Section F — appointment & consultation queue ────────────────────────────
 
 export interface AcceptAppointmentInput {
   appointmentId:  string;

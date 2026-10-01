@@ -1,11 +1,8 @@
 'use client';
 
 // Pharmacist review queue — symptom-search gated orders (PRD §8 console
-// screens, §9 SLA). SLA-sorted (soonest deadline first, overdue highlighted);
-// case drawer with symptoms context, cart, cohort flags, state history;
 // APPROVE / REJECT / NEEDS_INFO decisions (note required for the latter two)
 // with optimistic update + rollback. RBAC: health.pharmacy.symptom.reviews —
-// UI gate is convenience only; the Go backend enforces object-level authz
 // (a pharmacist only sees/decides cases for their premises tenant).
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -43,8 +40,6 @@ function useSymptomPermissions() {
   }, []);
   return { user, can: (perms: string[]) => hasAnyPermission(user, perms) };
 }
-
-// ── Tier + state badges (T1–T4 colour-coded by severity) ─────────────────────
 
 const TIER_COLORS: Record<TriageTier, { fg: string; bg: string; label: string }> = {
   T1: { fg: '#15803d', bg: '#dcfce7', label: 'T1 · self-care' },

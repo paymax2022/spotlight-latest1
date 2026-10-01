@@ -1,7 +1,6 @@
 // Package fractionalre implements the Fractional Real Estate / Land
 // Crowd-Investing module for the Paymax super app. It reuses the shared finance
 // primitives (ledger, settlement, kyc, tiers, rbac) and never duplicates them.
-//
 // Iron rules honoured throughout this package:
 //   - All money is integer kobo (int64). Never floats for math, never strings.
 //   - Every money mutation requires an Idempotency-Key, posts a balanced
@@ -17,7 +16,6 @@ import (
 	"time"
 )
 
-// ── RBAC permission slugs (mirror 20260705000100_fractionalre_rbac.sql) ───────
 const (
 	PermManage              = "fractionalre.manage"               // umbrella
 	PermCompliance          = "fractionalre.compliance"           // compliance queues + cap overrides
@@ -30,7 +28,6 @@ const (
 	PermAudit               = "fractionalre.audit"                // read audit log
 )
 
-// ── Asset lifecycle states (role-gated transitions) ───────────────────────────
 type AssetStatus string
 
 const (
@@ -109,7 +106,6 @@ const (
 	DistFailed    DistributionStatus = "failed"
 )
 
-// ── Window / cap constants ────────────────────────────────────────────────────
 const (
 	// MaxOfferWindow is the SEC-aligned maximum offer window.
 	MaxOfferWindow = 60 * 24 * time.Hour
@@ -120,8 +116,6 @@ const (
 	// SoftWarnBps is the headroom-usage threshold at which a soft warning fires (80%).
 	SoftWarnBps = 8000
 )
-
-// ── Domain models ─────────────────────────────────────────────────────────────
 
 type Sponsor struct {
 	ID          string    `json:"id"`
@@ -386,12 +380,11 @@ type LimitCheck struct {
 	YTDInvestedKobo  int64          `json:"ytd_invested_kobo"`
 	RemainingKobo    int64          `json:"remaining_kobo"` // cap - ytd (>= 0)
 	RequestedKobo    int64          `json:"requested_kobo"`
-	Allowed          bool           `json:"allowed"`   // requested <= remaining
+	Allowed          bool           `json:"allowed"`
 	SoftWarn         bool           `json:"soft_warn"` // >= 80% of cap after this investment
 	Reason           string         `json:"reason,omitempty"`
 }
 
-// ── Sentinel errors ───────────────────────────────────────────────────────────
 var (
 	ErrFeatureDisabled    = errors.New("fractionalre: feature disabled")
 	ErrIdempotencyKey     = errors.New("fractionalre: Idempotency-Key header required")

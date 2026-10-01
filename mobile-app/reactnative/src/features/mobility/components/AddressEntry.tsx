@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import MapView from './MapView';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 // Same lazy-require pattern as MapView.tsx — @maplibre throws at module-init
 // time when the native binary is absent (Expo Go / JS-only builds).
@@ -97,7 +97,6 @@ export default function AddressEntry({
   // Place/move the pin and refresh Plus Code + label from the reverse geocoder
   // (proxy 'default' surface; offline fallback keeps the pin usable).
   // `keepLabel` preserves a label the user just chose from a suggestion — the
-  // reverse-geocode label must never clobber it (React state is async, so the
   // `label` state var read here is stale on the selectSuggestion path).
   const placePin = async (lat: number, lng: number, opts: { keepLabel?: boolean } = {}) => {
     setPin({ lat, lng });

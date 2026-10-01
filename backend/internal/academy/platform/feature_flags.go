@@ -4,7 +4,6 @@ package platform
 // (SU-10). Replaces the documented NO-OP placeholder: flag state is now persisted in
 // public.academy_feature_flags and consulted at startup by the composition root
 // (RegisterAcademy) with the compile-time boolean as a FAIL-CLOSED fallback.
-//
 // Authorization + audit: the admin toggle is RBAC-gated (platform_edtech_admin, at the
 // route group) and every SetFlag appends an immutable academy_commerce_audit row in the
 // same transaction — the same append-only trail SU-11 reads. No money path; no ledger.
@@ -43,8 +42,6 @@ type FeatureFlag struct {
 	UpdatedAt   time.Time
 	CreatedAt   time.Time
 }
-
-// ── Repo data access ──────────────────────────────────────────────────────────
 
 // GetFlag returns the stored enabled value for key, or (nil, nil) when no row exists
 // (the caller falls back to the compile-time default — fail-closed).
@@ -132,8 +129,6 @@ VALUES ($1, $2, 'academy_feature_flag', NULL, $3)`
 	return f, nil
 }
 
-// ── Service ───────────────────────────────────────────────────────────────────
-
 // FlagService is the platform runtime feature-flag service (SU-10). It wraps the repo so
 // the handlers and the composition-root resolver share one code path.
 type FlagService struct{ repo *Repo }
@@ -155,8 +150,6 @@ func (s *FlagService) ListFlags(ctx context.Context) ([]FeatureFlag, error) {
 func (s *FlagService) SetFlag(ctx context.Context, key string, enabled bool, actorID string) (FeatureFlag, error) {
 	return s.repo.SetFlag(ctx, key, enabled, actorID)
 }
-
-// ── Composition-root resolver ───────────────────────────────────────────────────
 
 // FlagResolver reads the store ONCE at startup and resolves effective values against the
 // compile-time defaults. If the store read fails, overrides is nil and every Resolve

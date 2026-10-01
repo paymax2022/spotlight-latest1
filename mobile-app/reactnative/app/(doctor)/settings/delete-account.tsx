@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { AlertTriangle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
@@ -15,7 +15,6 @@ import { SectionCard } from '@/features/doctor/components';
 import { useRequestAccountDeletion } from '@/features/doctor/hooks';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 
-// ── Section AC — Delete account request (AC.16) ───────────────────────────────
 // NEW screen: a gated account-deletion request. Imports the SINGLE shared
 // useRequestAccountDeletion (declared in useComplianceCenter / Section AB) — not
 // re-declared here. Gated by typing DELETE + a destructive confirm.

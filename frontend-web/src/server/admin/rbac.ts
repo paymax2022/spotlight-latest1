@@ -90,7 +90,6 @@ const rolePermissions: Record<AdminRole, AdminPermission[]> = {
   // WAL-010: deliberately empty. See the AdminRole comment above — this is
   // the fail-closed fallback for input that isn't a real admin role (plain
   // customer 'user', null/empty, typos, garbage). Never add a permission
-  // here; doing so silently reopens WAL-010 for every route gated on that
   // permission.
   no_access: [],
 };
@@ -126,7 +125,6 @@ export function hasPermission(role: AdminRole, permission: AdminPermission) {
 }
 
 // roleIsSubset reports whether every permission `role` holds is also held by
-// `ceiling` — used to let a caller narrow an authenticated identity (JWT, or
 // the shared API key) down to a weaker role without ever elevating past it.
 // NOTE: finance_admin is NOT a subset of super_admin (the finance:adjust:*
 // perms exist only on the finance_* ladder) — subset is about permission

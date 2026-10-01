@@ -1,14 +1,13 @@
-// ── Paymax · Admin — ListCard ────────────────────────────────────────────────
 // Card wrapper used to compose tables/lists. An optional title renders a small
 // header row; children are the rows (e.g. DataRow). Level-1 elevation card.
 
 import React from 'react';
 import { View, Text, StyleSheet, ViewStyle } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 
 interface Props {
   title?: string;

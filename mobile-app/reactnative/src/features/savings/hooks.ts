@@ -14,7 +14,6 @@ const KEYS = {
   target:   (id: string) => ['savings', 'target', id] as const,
 };
 
-// ── Reads ────────────────────────────────────────────────────────────────────
 export const useSavingsSummary = () =>
   useQuery({ queryKey: KEYS.summary, queryFn: api.getSummary });
 
@@ -42,7 +41,6 @@ export const useTargets = () =>
 export const useTarget = (id: string) =>
   useQuery({ queryKey: KEYS.target(id), queryFn: () => api.getTarget(id), enabled: !!id });
 
-// ── Mutations ────────────────────────────────────────────────────────────────
 export function useCreateVault() {
   const qc = useQueryClient();
   return useMutation({

@@ -1,12 +1,10 @@
 package voting_test
 
 // One live application per contest — guards migration 20270125000000.
-//
 // The defect: a user could hold several live applications for the same open mic,
 // so the admin list showed the same person registered twice and approving one
 // left the other live. The index is PARTIAL — terminal statuses are excluded —
 // so a rejected or withdrawn applicant can still apply again.
-//
 // The review RPC is here too, because the two belong to the same seam: the
 // admin route calls review_registration_application so it cannot drift from the
 // Go RegistrationAdminStore.SetStatus path.

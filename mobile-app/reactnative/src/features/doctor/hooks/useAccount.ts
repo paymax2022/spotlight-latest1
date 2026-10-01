@@ -1,4 +1,3 @@
-// ── Doctor — notifications, support & settings hooks ──────────────────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {

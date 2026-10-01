@@ -27,14 +27,14 @@ var ErrForbidden = errors.New("association: forbidden")
 // ErrNoMembership means the caller holds no association membership at all.
 // Distinct from ErrForbidden: it is a 404-shaped "nothing here for you yet"
 // that the client should render as an onboarding empty state, not an error.
-// Previously every such case fell through statusFor's default branch to a 500,
+// Previously every such case fell through errMap's default branch to a 500,
 // which made the mobile home screen show "Couldn't load / Please try again"
 // and retry forever.
 var ErrNoMembership = errors.New("association: no membership")
 
 // ErrInvalidInput marks a caller-supplied value the server rejects — an
 // incoherent event price, a bad enum, a malformed timestamp. These were plain
-// fmt.Errorf values, so statusFor's default branch mapped them to 500 and a
+// fmt.Errorf values, so errMap's default branch mapped them to 500 and a
 // user's typo looked like a server fault.
 var ErrInvalidInput = errors.New("association: invalid input")
 
@@ -335,8 +335,6 @@ func (s *Service) DecideApplication(ctx context.Context, adminID, appID string, 
 	return tx.Commit(ctx)
 }
 
-// ── Discovery ────────────────────────────────────────────────────────────────
-
 // GetOrganisations lists published organisations, optionally filtered by search
 // term. Ordered newest-first so a freshly published organisation is immediately
 // discoverable; `id` breaks created_at ties (a bare created_at sort makes
@@ -507,8 +505,6 @@ func (s *Service) GetOrganisation(ctx context.Context, viewerID, orgID string) (
 	return &org, nil
 }
 
-// ── Member identity & dashboard ───────────────────────────────────────────────
-
 // GetDashboard returns the authenticated member's overview dashboard.
 func (s *Service) GetDashboard(ctx context.Context, userID string) (*MemberDashboard, error) {
 	card, err := s.GetCard(ctx, userID)
@@ -669,8 +665,6 @@ func (s *Service) GetActivity(ctx context.Context, userID string) ([]ActivityEnt
 	}
 	return out, rows.Err()
 }
-
-// ── RBAC ──────────────────────────────────────────────────────────────────────
 
 // GetAdminAccess reads the caller's assoc_member_roles entry and maps it to capabilities.
 func (s *Service) GetAdminAccess(ctx context.Context, userID string) (*AdminAccess, error) {
@@ -888,8 +882,6 @@ func (s *Service) membershipOrg(ctx context.Context, membershipID string) (strin
 	return orgID, nil
 }
 
-// ── Directory ─────────────────────────────────────────────────────────────────
-
 // GetDirectory returns the member directory, optionally filtered.
 func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirectoryQuery) ([]MemberProfileSummary, error) {
 	// full_name is nullable and FullName is not a pointer, so an incomplete
@@ -929,7 +921,6 @@ func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirec
 	}
 	// Cross-group isolation (DR-004 / GR-010): restrict to organisations where the
 	// caller holds an ACTIVE membership — a viewer never sees a foreign org's roll.
-	//
 	// The admin console's org picker overrides this with an explicit org_id
 	// instead — a platform admin has no ACTIVE membership of their own, so the
 	// default clause would always return empty for them. requireCapInOrg
@@ -978,10 +969,9 @@ func (s *Service) GetMember(ctx context.Context, viewerID, targetID string) (*Me
 	// Viewer scoping. The co-membership EXISTS clause is the correct rule for a
 	// member-to-member lookup, but it locked out the admin console entirely: a
 	// platform admin holds no association membership of their own, so this
-	// always missed and statusFor mapped the generic error to a 500 — and the
+	// always missed and errMap mapped the generic error to a 500 — and the
 	// member detail page is the ONLY page hosting suspend/restore/transfer/role,
 	// so every member action was behind a page that could not load.
-	//
 	// An authorized admin of the target's organisation now bypasses the
 	// co-membership requirement (and sees non-ACTIVE members, which is required
 	// for Restore to be reachable at all). Everyone else keeps the old rule.
@@ -1035,8 +1025,6 @@ func (s *Service) GetMember(ctx context.Context, viewerID, targetID string) (*Me
 	}
 	return &mp, nil
 }
-
-// ── Announcements & notifications ─────────────────────────────────────────────
 
 // GetAnnouncements returns announcements for the caller's organisations.
 func (s *Service) GetAnnouncements(ctx context.Context, userID string) ([]AnnouncementSummary, error) {
@@ -1098,8 +1086,6 @@ func (s *Service) GetNotifications(ctx context.Context, userID string) ([]AppNot
 	return out, rows.Err()
 }
 
-// ── Meetings ──────────────────────────────────────────────────────────────────
-
 // GetMeetings returns upcoming and recent meetings for the caller's organisations.
 func (s *Service) GetMeetings(ctx context.Context, userID string) ([]MeetingSummary, error) {
 	rows, err := s.db.Query(ctx, `
@@ -1140,18 +1126,13 @@ func (s *Service) GetMeetings(ctx context.Context, userID string) ([]MeetingSumm
 	return out, rows.Err()
 }
 
-// ── Tasks ─────────────────────────────────────────────────────────────────────
-
-// GetTasks returns tasks assigned to or created by the caller.
 // GetTasks returns the caller's tasks, or — for scope "org" — every task in
 // their organisation.
-//
 // The "org" scope is what makes tracking possible at all: every other scope is
 // filtered to tasks ASSIGNED to the caller, so nobody could see whether the
 // organisation's work was actually getting done. It is admin-only, because a
 // list of who has been given what and who is late is a management view, not a
 // member one.
-//
 // `overdue` is DERIVED, never read from the status column. assoc_tasks has an
 // OVERDUE status value but nothing ever writes it, so a task past its due date
 // still reads ASSIGNED — trusting the column would report every late task as on
@@ -1214,8 +1195,6 @@ func (s *Service) GetTasks(ctx context.Context, userID, scope string) ([]TaskSum
 	return out, rows.Err()
 }
 
-// ── Documents ─────────────────────────────────────────────────────────────────
-
 // GetDocuments returns accessible documents for the caller's organisations.
 func (s *Service) GetDocuments(ctx context.Context, userID string) ([]DocumentSummary, error) {
 	rows, err := s.db.Query(ctx, `
@@ -1247,8 +1226,6 @@ func (s *Service) GetDocuments(ctx context.Context, userID string) ([]DocumentSu
 	}
 	return out, rows.Err()
 }
-
-// ── Community ─────────────────────────────────────────────────────────────────
 
 // GetCommittees returns committees for the caller's organisations.
 func (s *Service) GetCommittees(ctx context.Context, userID string) ([]CommitteeSummary, error) {
@@ -1328,15 +1305,12 @@ func (s *Service) GetEvents(ctx context.Context, userID string) ([]EventSummary,
 	return out, rows.Err()
 }
 
-// ── Admin reads ───────────────────────────────────────────────────────────────
-
 // resolveOrgID authorizes and resolves the organisation an admin console call
 // is scoped to. An explicit orgID (the frontend's org picker — see
 // ListAdminOrganisations) wins, after verifying the caller may act on it:
 // a platform super-admin may pick any org, and a real per-org officer may
 // only pick an org they hold a role in (requireCapInOrg, org-scoped, closes
 // the cross-org IDOR the same way every other admin mutation already does).
-//
 // An empty orgID falls back to the caller's own primary admin-org
 // membership — unchanged behavior for a real association officer using the
 // mobile in-app admin surface, which has no org picker in front of it and

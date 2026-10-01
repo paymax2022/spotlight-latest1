@@ -1,14 +1,9 @@
-// ── Paymax Stays (SM2) — Trips / bookings data layer ─────────────────────────
 // Self-contained, mock-first data layer for the confirmation + trip-management
 // surface (PRD §13 cancel/modify/no-show, §17 E). ADDS to SM1 — never edits
 // SM1's api.ts / hooks.ts / types.ts.
-//
 // IRON RULES honoured here:
 //  • Money is integer minor units (kobo). Currency always explicit on display.
-//  • Modify = re-prebook for the delta; the price difference is charged/refunded
-//    via the WALLET (PRD §13). Cancel within the free-cancel window = instant
 //    reversing credit to the wallet. Both carry an Idempotency-Key (money-path).
-//  • Policy snapshot is captured on the reservation; later policy changes never
 //    alter an existing booking.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -70,7 +65,6 @@ interface BEReservation {
 
 /** Map the backend UPPERCASE state onto the local ReservationState union. */
 function mapState(state: string): ReservationState {
-  // SEARCHING has no backend equivalent; otherwise the backend uses the same
   // UPPERCASE tokens as the local ReservationState union, so cast through.
   if (state === 'SEARCHING') return 'OFFER_SELECTED';
   return state as ReservationState;
@@ -133,12 +127,11 @@ function mapReservationToTrip(r: BEReservation): Trip {
   };
 }
 
-// ── Domain types (SM2-owned, additive) ───────────────────────────────────────
 export type TripBucket = 'upcoming' | 'past' | 'cancelled';
 
 export interface RefundLeg {
   label: string;
-  amountKobo: number; // negative = penalty/fee, positive = credit to wallet
+  amountKobo: number;
 }
 
 export interface CancellationPreview {
@@ -216,7 +209,6 @@ export interface Trip {
   checkOutTime: string;
 }
 
-// ── Mock data ────────────────────────────────────────────────────────────────
 const COVER_A = 'https://images.unsplash.com/photo-1566073771259-6a8506099945';
 const COVER_B = 'https://images.unsplash.com/photo-1551882547-ff40c63fe5fa';
 const COVER_C = 'https://images.unsplash.com/photo-1582719478250-c89cae4dc85b';
@@ -404,7 +396,6 @@ function findTrip(id: string): Trip | undefined {
   return trips.find((t) => t.id === id);
 }
 
-// ── API ──────────────────────────────────────────────────────────────────────
 export async function listTrips(bucket?: TripBucket): Promise<Trip[]> {
   if (USE_MOCK) {
     await delay();
@@ -627,7 +618,6 @@ export async function getRefundStatus(id: string): Promise<RefundStatus> {
   };
 }
 
-// ── Hooks ──────────────────────────────────────────────────────────────────--
 export function useTrips(bucket?: TripBucket) {
   return useQuery({
     queryKey: [KEY, 'trips', bucket ?? 'all'],

@@ -5,12 +5,10 @@ package app
 // console (GET /api/finance/admin/transactions/:id) can show REAL per-module
 // detail — Service, Category, Service bought, Payment method, Status,
 // Provider — instead of only the generic ledger_entries fields.
-//
 // Each resolver is scoped to exactly one module's reference-naming
 // convention and checks that pattern (cheaply, no query) before running any
 // SQL — so trying all of them in sequence on every reference is cheap for the
 // ~3 modules per request that don't match.
-//
 // Read-only. None of these resolvers write anything.
 
 import (
@@ -21,18 +19,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/ledger"
 )
 
-func strPtr(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-// ── Marketplace — listing boost purchases ───────────────────────────────────
-//
 // The marketplace's sole live revenue posting after ADR-023 retired escrow
 // settlement is the boost charge (mkt_orders/regular P2P escrow posts NO
 // ledger_entries rows today — see service_boost.go comment — so it has NO
@@ -78,8 +68,6 @@ func (r *MarketplaceBoostResolver) Resolve(ctx context.Context, reference string
 	}, true, nil
 }
 
-// ── Insurance — premium debits ───────────────────────────────────────────────
-//
 // BindFromQuote posts the premium debit with Reference: "insurance:premium:" + policy.ID.
 // Joined via insurance_premium_transaction.wallet_ledger_ref = reference (more
 // robust than string-splitting the reference), then to insurance_policy and
@@ -126,14 +114,12 @@ func (r *InsurancePremiumResolver) Resolve(ctx context.Context, reference string
 		Category:      &category,
 		ServiceBought: serviceBought,
 		PaymentMethod: "wallet", // no payment_method column on insurance tables — wallet-only
-		Status:        state,   // real lifecycle state, not the generic ledger Posted/Reversed
-		Provider:      strPtr(providerStr),
+		Status:        state,    // real lifecycle state, not the generic ledger Posted/Reversed
+		Provider:      ptr.OrNil(providerStr),
 		Merchant:      nil, // no merchant concept — Provider/Underwriter cover this module
 	}, true, nil
 }
 
-// ── FX — currency conversions ────────────────────────────────────────────────
-//
 // fx.Service.Convert posts with reference := "fx:" + uuid.New().String() and
 // stores that SAME reference on the fx_conversions row. Excludes
 // "fx:reversal:" references, which are a different posting shape.
@@ -174,8 +160,6 @@ func (r *FXConversionResolver) Resolve(ctx context.Context, reference string) (*
 	}, true, nil
 }
 
-// ── Utility Bills — airtime/data/electricity/cable/internet/education ───────
-//
 // utilitybills service posts the debit with reference := receipt, where
 // receipt is utility_transactions.receipt_number (format
 // "UTL-YYYYMMDD-XXXXXXXX"). This is the ONE module of the four with a real

@@ -2,7 +2,6 @@
 // Go standard library — no aws-sdk dependency. It implements AWS Signature V4
 // query-string presigning (the "X-Amz-*" query params form), which R2 accepts on
 // its S3 API endpoint.
-//
 // Security model:
 //   - Credentials (access key / secret) are SERVER-SIDE ONLY and never shipped to
 //     a client. The presigner mints a short-lived URL the client uses for a single
@@ -145,8 +144,6 @@ func (p *Presigner) presign(method, key, contentType string, expiry time.Duratio
 	q.Set("X-Amz-Signature", signature)
 	return p.cfg.AccountEndpoint + canonicalURI + "?" + encodeQuery(q), nil
 }
-
-// ── SigV4 primitives ─────────────────────────────────────────────────────────
 
 func hmacSHA256(key, data []byte) []byte {
 	h := hmac.New(sha256.New, key)

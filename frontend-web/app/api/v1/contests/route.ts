@@ -30,7 +30,6 @@ export async function GET(request: Request) {
 
     const ids = contests.map((c: any) => c.id);
 
-    // Fetch voting settings and vote totals in parallel
     const [{ data: settingsRows }, { data: totalsRows }] = await Promise.all([
       supabase
         .from('voting_settings')

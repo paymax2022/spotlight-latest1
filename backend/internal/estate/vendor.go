@@ -272,7 +272,6 @@ func (s *Service) UploadCompletionEvidence(ctx context.Context, estateID, userID
 }
 
 // RequestPayout pays a completed job to the vendor's wallet (idempotent).
-//
 // Iron rules: Idempotency-Key required (fail-closed); balanced double-entry
 // (DEBIT estate settlement → CREDIT vendor wallet) via the ledger; idempotent on
 // the key (ledger + payout_idempotency_key unique index); audited.

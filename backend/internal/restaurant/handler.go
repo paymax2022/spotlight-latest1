@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/platform/ws"
@@ -25,7 +26,7 @@ func (h *Handler) WithRealtime(hub *ws.Hub) *Handler {
 }
 
 func (h *Handler) Create(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req CreateRestaurantRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -40,7 +41,7 @@ func (h *Handler) Create(c *gin.Context) {
 }
 
 func (h *Handler) PlaceOrder(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req PlaceOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -48,7 +49,7 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 	}
 	// Idempotency-Key is a HEADER by client convention (every money route). Prefer
 	// the header; fall back to the body field for any legacy caller. Fail closed.
-	if hk := c.GetHeader("Idempotency-Key"); hk != "" {
+	if hk := ginutil.IdempotencyKey(c); hk != "" {
 		req.IdempotencyKey = hk
 	}
 	if req.IdempotencyKey == "" {
@@ -102,7 +103,6 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 // escrowErrStatus maps the fail-closed money-path refusals a wallet-escrowing order
 // placement can return to their HTTP status. It reports ok=false for anything else so
 // each caller keeps its own default (PlaceOrder → 500, group finalize → statusCodeFor).
-//
 // Mirrors withdrawalErrStatus (handler_withdrawal.go) — the two money paths in this
 // module must answer the same refusal with the same code.
 func escrowErrStatus(err error) (int, bool) {
@@ -189,7 +189,7 @@ func (h *Handler) PutDeliveryConfig(c *gin.Context) {
 }
 
 func (h *Handler) UpdateStatus(c *gin.Context) {
-	actorID := c.GetString("user_id")
+	actorID := ginutil.UserID(c)
 	var body struct {
 		Status string `json:"status" binding:"required"`
 	}
@@ -205,7 +205,7 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 }
 
 func (h *Handler) CancelOrder(c *gin.Context) {
-	actorID := c.GetString("user_id")
+	actorID := ginutil.UserID(c)
 	if err := h.svc.CancelOrder(c.Request.Context(), c.Param("orderId"), actorID); err != nil {
 		c.JSON(statusCodeFor(err), gin.H{"error": err.Error()})
 		return

@@ -1,4 +1,3 @@
-// ── Paymax · Admin Console — Mock seed data ──────────────────────────────────
 // Rich, deterministic seed data the mock API returns so every admin screen
 // renders real-looking content with EXPO_PUBLIC_ADMIN_USE_MOCK=true (default).
 // All money is integer minor units.
@@ -25,8 +24,6 @@ const ngn = (major: number) => Math.round(major * 100);
 const ago = (mins: number) => new Date(Date.now() - mins * 60_000).toISOString();
 const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
 
-// ─── Dashboard ──────────────────────────────────────────────────────────────--
-
 export const MOCK_DASHBOARD: Dashboard = {
   users: 184_206,
   openKyc: 37,
@@ -43,8 +40,6 @@ export const MOCK_DASHBOARD: Dashboard = {
     { name: 'Alpaca', kind: 'liquidity', status: 'healthy', latencyMs: 121 },
   ],
 };
-
-// ─── Users ──────────────────────────────────────────────────────────────────--
 
 export const MOCK_USERS: UserSummary[] = [
   { id: 'usr_1001', name: 'Adaeze Okafor',   email: 'adaeze@example.com',  status: 'active',    kycTier: 2, createdAt: daysAgo(120) },
@@ -72,16 +67,12 @@ export const MOCK_USER_DETAILS: Record<string, UserDetail> = {
   },
 };
 
-// ─── KYC queue ────────────────────────────────────────────────────────────────
-
 export const MOCK_KYC: KycCase[] = [
   { id: 'kyc_5001', userId: 'usr_1004', name: 'Femi Adeyemi',   status: 'pending',   tier: 2, submittedAt: ago(40),  riskFlags: ['new_account'] },
   { id: 'kyc_5002', userId: 'usr_1003', name: 'Ngozi Eze',      status: 'escalated', tier: 2, submittedAt: ago(180), riskFlags: ['pep', 'address_mismatch'] },
   { id: 'kyc_5003', userId: 'usr_1007', name: 'Bola Akintola',  status: 'pending',   tier: 3, submittedAt: ago(310), riskFlags: [] },
   { id: 'kyc_5004', userId: 'usr_1008', name: 'Ibrahim Sani',   status: 'pending',   tier: 1, submittedAt: ago(620), riskFlags: ['document_blurry'] },
 ];
-
-// ─── Asset controls ─────────────────────────────────────────────────────────--
 
 export const MOCK_ASSET_CONTROLS: AssetControl[] = [
   { id: 'ac_btc',  symbol: 'BTC',  kind: 'crypto', buyEnabled: true,  sellEnabled: true,  withdrawalEnabled: true,  status: 'active', feeBps: 90,  minOrder: { amount: ngn(1_000), currency: 'NGN' }, maxOrder: { amount: ngn(5_000_000), currency: 'NGN' } },
@@ -92,8 +83,6 @@ export const MOCK_ASSET_CONTROLS: AssetControl[] = [
   { id: 'ac_tsla', symbol: 'TSLA', kind: 'stock',  buyEnabled: true,  sellEnabled: true,  withdrawalEnabled: false, status: 'active', feeBps: 25,  minOrder: { amount: ngn(2_000), currency: 'NGN' }, maxOrder: { amount: ngn(8_000_000), currency: 'NGN' } },
 ];
 
-// ─── Orders ───────────────────────────────────────────────────────────────────
-
 export const MOCK_ORDERS: AdminOrder[] = [
   { ref: 'PMX-CR-100231', user: 'Adaeze Okafor',  kind: 'crypto', side: 'buy',  symbol: 'BTC',  status: 'Filled',         amount: { amount: ngn(120_000), currency: 'NGN' }, createdAt: ago(12),  providerRef: 'B2C2-AX91' },
   { ref: 'PMX-CR-100232', user: 'Tunde Bakare',   kind: 'crypto', side: 'sell', symbol: 'ETH',  status: 'Processing',     amount: { amount: ngn(54_000),  currency: 'NGN' }, createdAt: ago(8),   providerRef: 'B2C2-AX92' },
@@ -103,15 +92,11 @@ export const MOCK_ORDERS: AdminOrder[] = [
   { ref: 'PMX-ST-100236', user: 'Femi Adeyemi',   kind: 'stock',  side: 'buy',  symbol: 'TSLA', status: 'Pending',        amount: { amount: ngn(45_000),  currency: 'NGN' }, createdAt: ago(5),   providerRef: 'ALP-7742' },
 ];
 
-// ─── Withdrawal review queue ──────────────────────────────────────────────────
-
 export const MOCK_WITHDRAWALS: WithdrawalReviewItem[] = [
   { reference: 'PMX-WD-200441', user: 'Adaeze Okafor',  symbol: 'BTC',  amount: { amount: 1_250_000, currency: 'BTC' },  address: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', network: 'Bitcoin',      riskScore: 18, status: 'pending',   createdAt: ago(22) },
   { reference: 'PMX-WD-200442', user: 'Ngozi Eze',      symbol: 'USDT', amount: { amount: 500_000_000, currency: 'USDT' }, address: 'TJ8s3sB1kY7Yb9aQ2cZx4pN6mWvL1rGq5d',          network: 'Tron (TRC-20)', riskScore: 76, status: 'escalated', createdAt: ago(110) },
   { reference: 'PMX-WD-200443', user: 'Tunde Bakare',   symbol: 'ETH',  amount: { amount: 850_000_000_000_000_000, currency: 'ETH' }, address: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F', network: 'Ethereum',  riskScore: 42, status: 'pending',   createdAt: ago(58) },
 ];
-
-// ─── Reconciliation ───────────────────────────────────────────────────────────
 
 export const MOCK_RECON: ReconReport = {
   generatedAt: ago(15),
@@ -122,8 +107,6 @@ export const MOCK_RECON: ReconReport = {
   ],
 };
 
-// ─── Providers ─────────────────────────────────────────────────────────────────
-
 export const MOCK_PROVIDERS: ProviderHealth[] = [
   { name: 'FireBlocks', kind: 'custody',     status: 'healthy',  latencyMs: 142, lastCheck: ago(1) },
   { name: 'B2C2',       kind: 'liquidity',   status: 'healthy',  latencyMs: 88,  lastCheck: ago(1) },
@@ -132,8 +115,6 @@ export const MOCK_PROVIDERS: ProviderHealth[] = [
   { name: 'Chainalysis', kind: 'market-data', status: 'down',    latencyMs: 0,   lastCheck: ago(6) },
 ];
 
-// ─── Risk limits ───────────────────────────────────────────────────────────────
-
 export const MOCK_RISK_LIMITS: RiskLimit[] = [
   { id: 'rl_1', label: 'Per-user daily withdrawal', scope: 'per_user_daily', valueMinor: ngn(5_000_000),  currency: 'NGN' },
   { id: 'rl_2', label: 'Single transaction cap',    scope: 'per_txn',        valueMinor: ngn(2_000_000),  currency: 'NGN' },
@@ -141,16 +122,12 @@ export const MOCK_RISK_LIMITS: RiskLimit[] = [
   { id: 'rl_4', label: 'Manual review threshold',   scope: 'per_txn',        valueMinor: ngn(500_000),    currency: 'NGN' },
 ];
 
-// ─── Fees ───────────────────────────────────────────────────────────────────--
-
 export const MOCK_FEES: FeeConfigItem[] = [
   { id: 'fee_1', label: 'Crypto trade fee',  kind: 'crypto_trade', bps: 90 },
   { id: 'fee_2', label: 'Stock trade fee',   kind: 'stock_trade',  bps: 25 },
   { id: 'fee_3', label: 'Crypto withdrawal', kind: 'withdrawal',   bps: 50 },
   { id: 'fee_4', label: 'Swap fee',          kind: 'swap',         bps: 30 },
 ];
-
-// ─── Feature flags ───────────────────────────────────────────────────────────-
 
 export const MOCK_FLAGS: FeatureFlag[] = [
   { key: 'invest_crypto',     label: 'Crypto trading',     enabled: true },
@@ -160,15 +137,11 @@ export const MOCK_FLAGS: FeatureFlag[] = [
   { key: 'referrals',         label: 'Referral programme', enabled: true },
 ];
 
-// ─── Approvals (maker-checker) ─────────────────────────────────────────────────
-
 export const MOCK_APPROVALS: Approval[] = [
   { id: 'ap_1', type: 'asset.update', summary: 'Pause SOL trading (sell + withdrawal)',           requestedBy: 'Trading Ops', status: 'pending', createdAt: ago(25),  maker: 'tunde.ops@paymax.co' },
   { id: 'ap_2', type: 'risk.update',  summary: 'Raise per-user daily limit to ₦7.5M',             requestedBy: 'Risk',        status: 'pending', createdAt: ago(70),  maker: 'risk.lead@paymax.co' },
   { id: 'ap_3', type: 'fee.update',   summary: 'Reduce crypto trade fee 0.90% → 0.75%',           requestedBy: 'Finance',     status: 'pending', createdAt: ago(160), maker: 'fin.ops@paymax.co' },
 ];
-
-// ─── Audit log ─────────────────────────────────────────────────────────────────
 
 export const MOCK_AUDIT: AuditEntry[] = [
   { id: 'au_1', actor: 'compliance.lead@paymax.co', action: 'kyc.approve',     entityType: 'kyc_case',   entityId: 'kyc_4990', reason: 'Documents verified', at: ago(18) },
@@ -176,8 +149,6 @@ export const MOCK_AUDIT: AuditEntry[] = [
   { id: 'au_3', actor: 'risk.lead@paymax.co',       action: 'withdrawal.reject', entityType: 'withdrawal', entityId: 'PMX-WD-200399', reason: 'Sanctions screening hit', at: ago(130) },
   { id: 'au_4', actor: 'super.admin@paymax.co',     action: 'admin.create',    entityType: 'admin_user', entityId: 'adm_12',   reason: 'New compliance analyst onboarded', at: daysAgo(2) },
 ];
-
-// ─── Admin directory ─────────────────────────────────────────────────────────-
 
 export const MOCK_ADMINS: AdminUser[] = [
   { id: 'adm_1',  name: 'Sade Coker',       email: 'super.admin@paymax.co',    role: 'SuperAdmin',      status: 'active' },

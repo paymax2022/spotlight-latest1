@@ -10,12 +10,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/dbutil"
 )
 
 // Store is the data-access contract for the promotion engine. Defined as an
 // in-package interface so promotion_test.go can substitute an in-memory fake (no
 // live DB) — the same isolation feessession/feesfeeschedule use.
-//
 // Every promotion STATE change is a GUARDED update: SetPromotionState re-asserts the
 // `from` state at the DB (WHERE state=$from) so concurrent transitions cannot race,
 // exactly like feessession.SetSessionStatus. No caller sets state directly.
@@ -67,8 +67,6 @@ type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
-
-// ── Scores / roster ───────────────────────────────────────────────────────────
 
 // ListClassStudentIDs returns the ids of all active-roster students in a class.
 func (r *Repository) ListClassStudentIDs(ctx context.Context, schoolID, classID string) ([]string, error) {
@@ -140,8 +138,6 @@ func (r *Repository) ListScores(ctx context.Context, schoolID, classID, sessionI
 	}
 	return out, rows.Err()
 }
-
-// ── Promotion records ─────────────────────────────────────────────────────────
 
 const promoCols = `id, student_id, from_class_id, to_class_id, session_id, exam_score,
 	decision, state, teacher_approved_by, teacher_approved_at,
@@ -302,8 +298,6 @@ func (r *Repository) SetProposal(ctx context.Context, id string, decision Decisi
 	return nil
 }
 
-// ── Student rollover ──────────────────────────────────────────────────────────
-
 func (r *Repository) GetStudent(ctx context.Context, id string) (*Student, error) {
 	const q = `SELECT id, school_id, class_id, status FROM academy_students WHERE id = $1`
 	var s Student
@@ -352,14 +346,12 @@ func (r *Repository) ReassignFeeSchedule(ctx context.Context, schoolID, studentI
 	return nil
 }
 
-// ── Audit ─────────────────────────────────────────────────────────────────────
-
 func (r *Repository) WriteAudit(ctx context.Context, actorID, action, entityType, entityID, from, to string, detail any) error {
 	const ins = `INSERT INTO public.academy_commerce_audit
 	             (actor_id, action, entity_type, entity_id, from_state, to_state, detail)
 	             VALUES ($1,$2,$3,$4,$5,$6,$7)`
-	_, err := r.db.Exec(ctx, ins, nullStr(actorID), action, entityType, nullUUID(entityID),
-		nullStr(from), nullStr(to), toJSON(detail))
+	_, err := r.db.Exec(ctx, ins, dbutil.NullStr(actorID), action, entityType, dbutil.NullUUID(entityID),
+		dbutil.NullStr(from), dbutil.NullStr(to), toJSON(detail))
 	return err
 }
 
@@ -373,22 +365,6 @@ func (r *Repository) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-// ── small helpers ─────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func nullUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 func ptrOrNil(s string) *string {

@@ -1,7 +1,5 @@
-// ── Doctor — Medical Records hooks (Batch 6, Section W) ──────────────────────
 // Query keys under ['doctor', 'records', …]. Mutations auto-generate the
 // idempotencyKey. REUSES the Phase 2 record-hub hook (usePatientRecordHub in
-// useRecords.ts) for the full aggregated record; this file adds the records
 // dashboard, per-patient category index, restriction warnings and the
 // download / share / access-request flows.
 
@@ -27,8 +25,6 @@ import type {
   SharePatientRecordInput,
   RequestRecordAccessInput,
 } from '@/types/doctor.batch6';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function useRecordsDashboard() {
   return useQuery({
@@ -77,8 +73,6 @@ export function useRecordShares() {
     staleTime:       30_000,
   });
 }
-
-// ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useDownloadPatientRecord() {
   return useMutation({

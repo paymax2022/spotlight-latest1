@@ -1,6 +1,5 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression (SEC-007): adminext.ApproveWithdrawal — the admin
 // payout leg for a PENDING withdrawal row — never checked the campaign's
 // frozen state at all. wallet.SubmitWithdrawal (the live creator-facing
@@ -9,13 +8,10 @@ package crowdfunding_test
 // tool, or any future code path that leaves a row PENDING) with no
 // equivalent check. A freeze issued AFTER a withdrawal was filed but BEFORE
 // an admin approved it did not block the payout.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL. See
 // campaign_analytics_live_db_test.go in this package for the pattern.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_AdminApproveWithdrawal_Frozen -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/services"
 )
 
@@ -38,7 +40,7 @@ func (h *RegistrationHandler) ListContests(c *gin.Context) {
 // ListApplications — GET /api/registration/applications
 // List user's own registration applications (paginated).
 func (h *RegistrationHandler) ListApplications(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -59,7 +61,7 @@ func (h *RegistrationHandler) ListApplications(c *gin.Context) {
 // CreateApplication — POST /api/registration/applications
 // Start a new registration draft (creates empty application).
 func (h *RegistrationHandler) CreateApplication(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -81,15 +83,13 @@ func (h *RegistrationHandler) CreateApplication(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create application"})
 		return
 	}
-
-	// Emit audit event
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "create_application", "registration", "application",
 			app.ID, nil, map[string]interface{}{
 				"reference": app.Reference,
 				"contest":   app.ContestSlug,
 				"status":    "draft",
-			}, getIPAddress(c), c.Request.UserAgent(), "info")
+			}, ginutil.ClientIP(c), c.Request.UserAgent(), "info")
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
@@ -101,7 +101,7 @@ func (h *RegistrationHandler) CreateApplication(c *gin.Context) {
 // GetApplication — GET /api/registration/applications/:id
 // Retrieve application draft and schema.
 func (h *RegistrationHandler) GetApplication(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -128,7 +128,7 @@ func (h *RegistrationHandler) GetApplication(c *gin.Context) {
 // SaveStep — PATCH /api/registration/applications/:id
 // Save one step's answers (client-side validation returned).
 func (h *RegistrationHandler) SaveStep(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -160,14 +160,12 @@ func (h *RegistrationHandler) SaveStep(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save step"})
 		return
 	}
-
-	// Emit audit event
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "save_step", "registration", "application",
 			id, nil, map[string]interface{}{
 				"step":     body.StepKey,
 				"progress": newPercent,
-			}, getIPAddress(c), c.Request.UserAgent(), "info")
+			}, ginutil.ClientIP(c), c.Request.UserAgent(), "info")
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
@@ -184,7 +182,7 @@ func (h *RegistrationHandler) SaveStep(c *gin.Context) {
 // SubmitApplication — POST /api/registration/applications/:id/submit
 // Submit application for review (no more edits).
 func (h *RegistrationHandler) SubmitApplication(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -204,12 +202,10 @@ func (h *RegistrationHandler) SubmitApplication(c *gin.Context) {
 		// Log but don't fail the request
 		fmt.Printf("failed to record status change: %v\n", err)
 	}
-
-	// Emit audit event
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "submit_application", "registration", "application",
 			id, map[string]interface{}{"status": "draft"},
-			map[string]interface{}{"status": "submitted"}, getIPAddress(c), c.Request.UserAgent(), "info")
+			map[string]any{"status": "submitted"}, ginutil.ClientIP(c), c.Request.UserAgent(), "info")
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
@@ -222,7 +218,7 @@ func (h *RegistrationHandler) SubmitApplication(c *gin.Context) {
 // GetStatus — GET /api/registration/applications/:id/status
 // Get application status and timeline of state changes.
 func (h *RegistrationHandler) GetStatus(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -259,7 +255,7 @@ func (h *RegistrationHandler) GetStatus(c *gin.Context) {
 // WithdrawApplication — POST /api/registration/applications/:id/withdraw
 // Withdraw application (cannot be re-submitted).
 func (h *RegistrationHandler) WithdrawApplication(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -283,13 +279,11 @@ func (h *RegistrationHandler) WithdrawApplication(c *gin.Context) {
 		body.Note, "public_user"); err != nil {
 		fmt.Printf("failed to record status change: %v\n", err)
 	}
-
-	// Emit audit event
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "withdraw_application", "registration", "application",
 			id, map[string]interface{}{"status": "submitted"},
 			map[string]interface{}{"status": "withdrawn", "note": body.Note},
-			getIPAddress(c), c.Request.UserAgent(), "info")
+			ginutil.ClientIP(c), c.Request.UserAgent(), "info")
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
@@ -303,8 +297,8 @@ func (h *RegistrationHandler) WithdrawApplication(c *gin.Context) {
 // InitiatePayment — POST /api/registration/applications/:id/payment/initiate
 // Start payment (Idempotency-Key required).
 func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
-	userID := c.GetString("user_id")
-	idemKey := c.GetHeader("Idempotency-Key")
+	userID := ginutil.UserID(c)
+	idemKey := ginutil.IdempotencyKey(c)
 
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -334,7 +328,6 @@ func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
 	if body.Method == "WALLET" {
 		// WALLET: Charge from wallet (requires ledger entry)
 		// Phase 2: Post double-entry ledger entry
-		// ledger.Debit(ctx, userID, ref, idemKey, registrationFeesAcct, amountKobo)
 
 		pt, err := h.store.CreatePaymentTransaction(c.Request.Context(), appID, reference, body.AmountKobo, "WALLET", idemKey)
 		if err != nil {
@@ -347,15 +340,13 @@ func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update payment"})
 			return
 		}
-
-		// Emit audit event
 		if h.auditSvc != nil {
 			h.auditSvc.LogAction(userID, "", "initiate_payment", "registration", "payment",
 				pt.ID, nil, map[string]interface{}{
 					"method":    "WALLET",
 					"amount":    body.AmountKobo,
 					"reference": reference,
-				}, getIPAddress(c), c.Request.UserAgent(), "warning")
+				}, ginutil.ClientIP(c), c.Request.UserAgent(), "warning")
 		}
 
 		c.JSON(http.StatusCreated, gin.H{"data": gin.H{
@@ -373,15 +364,13 @@ func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create payment"})
 			return
 		}
-
-		// Emit audit event
 		if h.auditSvc != nil {
 			h.auditSvc.LogAction(userID, "", "initiate_payment", "registration", "payment",
 				pt.ID, nil, map[string]interface{}{
 					"method":    "PAYSTACK",
 					"amount":    body.AmountKobo,
 					"reference": reference,
-				}, getIPAddress(c), c.Request.UserAgent(), "warning")
+				}, ginutil.ClientIP(c), c.Request.UserAgent(), "warning")
 		}
 
 		c.JSON(http.StatusCreated, gin.H{"data": gin.H{
@@ -399,7 +388,7 @@ func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
 // VerifyPayment — POST /api/registration/applications/:id/payment/verify
 // Verify payment after redirect from Paystack.
 func (h *RegistrationHandler) VerifyPayment(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -416,7 +405,6 @@ func (h *RegistrationHandler) VerifyPayment(c *gin.Context) {
 	}
 
 	// Phase 2: Call Paystack to verify payment status
-	// paystack.VerifyTransaction(body.Reference)
 	// For now: assume verified if reference provided
 	if body.Reference == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "reference required"})
@@ -434,14 +422,12 @@ func (h *RegistrationHandler) VerifyPayment(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load application"})
 		return
 	}
-
-	// Emit audit event
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "verify_payment", "registration", "payment",
 			appID, nil, map[string]interface{}{
 				"reference": body.Reference,
 				"status":    "verified",
-			}, getIPAddress(c), c.Request.UserAgent(), "warning")
+			}, ginutil.ClientIP(c), c.Request.UserAgent(), "warning")
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
@@ -459,8 +445,6 @@ func (h *RegistrationHandler) VerifyPayment(c *gin.Context) {
 	}})
 }
 
-// Helper functions
-
 // generateShortID creates a short random ID for references (e.g., "ABC1")
 func generateShortID() string {
 	const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -477,5 +461,5 @@ func generateShortID() string {
 // Reading the header directly here would accept a client-controlled leftmost
 // entry verbatim (AUD-SEC-001).
 func getIPAddress(c *gin.Context) string {
-	return c.ClientIP()
+	return ginutil.ClientIP(c)
 }

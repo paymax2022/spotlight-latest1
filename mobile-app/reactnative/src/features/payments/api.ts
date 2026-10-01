@@ -4,7 +4,6 @@
 //   • Pay with card    → top up the exact amount via Paystack, wait for the
 //                        webhook to credit the wallet, then run the module's
 //                        existing wallet charge (net wallet change = 0).
-//
 // This keeps a single money rail (the wallet ledger) while exposing a real
 // payment-gateway option at the point of sale in any module.
 
@@ -30,7 +29,6 @@ export async function startCardTopup(
 ): Promise<{ authorizationUrl: string; reference: string }> {
   // purpose: 'checkout' — this funds the purchase in flight, not the wallet as an
   // end in itself, and the server gates the two differently (ADR-042).
-  //
   // `domain` says WHAT is being bought. Without it the card rail files every
   // module checkout as an indistinguishable wallet top-up, and neither the
   // customer's statement nor the ledger can say where the money went.

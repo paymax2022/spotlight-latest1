@@ -1,8 +1,6 @@
-// ── Admin — Estate control-plane service ─────────────────────────────────────
 // Mock by default (mirrors realtorAdminService / investAdminService). Flip with
 // NEXT_PUBLIC_ESTATE_ADMIN_USE_MOCK=false to hit the live Go backend endpoints.
 // All money is integer minor units (kobo).
-//
 // Live endpoints (canonical, served by the Go backend under /api/finance):
 //   GET  /api/finance/estate/:id/admin/dashboard
 //   GET  /api/finance/estate/:id/admin/residents
@@ -30,7 +28,6 @@ import type {
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ESTATE_ADMIN_USE_MOCK);
 
 // The canonical Go backend mounts finance verticals under /api/finance. This
-// used to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance'), which
 // stopped matching once apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) instead of ending in /api/v1 —
 // every live call 404'd against <proxy>/estate/... instead of
@@ -39,7 +36,6 @@ const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ESTATE_ADMIN_USE_MOCK);
 function financeBase(): string {
   return `${apiRoot()}/api/finance`;
 }
-// Active estate is resolved server-side from membership; the admin console pins
 // the demo estate id. Override with NEXT_PUBLIC_ESTATE_ADMIN_ESTATE_ID.
 function estateId(): string {
   return process.env.NEXT_PUBLIC_ESTATE_ADMIN_ESTATE_ID || 'demo-estate';
@@ -71,7 +67,6 @@ async function postJson<T>(path: string, payload: unknown): Promise<T> {
 const hrs = (n: number) => new Date(Date.now() - n * 3_600_000).toISOString();
 const days = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
 
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 const KPIS: EstateKpis = {
   residents: 318, bannedResidents: 3, openRepairs: 6,
   openIncidents: 4, defaulters: 22, activeVendors: 27,
@@ -142,15 +137,12 @@ const CONTEXT: PropertyContext = {
   permissions: ['estate.manage', 'estate.admin', 'property.manage'],
 };
 
-// ─── API ──────────────────────────────────────────────────────────────────────
-// getEstateKpis: the live handler (backend/internal/estate/admin.go
 // GetAdminDashboard) returns AdminDashboard {estate_id, residents,
 // banned_residents, open_repairs, open_incidents, defaulters,
 // outstanding_dues_kobo, verified_vendors, pending_transfers} — NOT the
 // {units, collectionsThisCycleKobo, expectedThisCycleKobo, arrearsKobo,
 // activeVendors} shape this used to declare and fetch with raw getJson (no
 // snake->camel mapping at all). That mismatch meant every KPI tile silently
-// rendered undefined/NaN in live mode. Mapped to the real fields below;
 // `units`/`collectionsThisCycleKobo`/`expectedThisCycleKobo` have no backend
 // source (no billing-cycle concept in this endpoint) and are UNAVAILABLE —
 // flagged as a backend gap, not fabricated here.
@@ -170,12 +162,10 @@ export async function getEstateKpis(): Promise<EstateKpis> {
   };
 }
 
-// getEstateActivity: NO backend route exists for
 // /estate/:id/admin/dashboard/activity (grepped finance_routes.go and
 // handler.go/admin.go — not registered anywhere). This always 404s live,
 // which — via Promise.all in app/admin/estate/page.tsx — used to fail the
 // WHOLE dashboard load (KPIs included) because one rejected promise sinks
-// Promise.all. Fails soft to [] so the KPI tiles still render; the missing
 // endpoint itself is a backend gap (see UAT report), not fixable here.
 export async function getEstateActivity(): Promise<EstateActivity[]> {
   if (USE_MOCK) { await delay(); return [...ACTIVITY]; }
@@ -186,7 +176,6 @@ export async function getEstateActivity(): Promise<EstateActivity[]> {
   }
 }
 
-// listResidents: the live handler (estate.Service.ListResidents) returns
 // AdminResident {id, user_id, unit, role, banned, deleted, created_at} — it
 // has NO name/phone/arrearsKobo fields at all, and this call used raw
 // getJson (no camel mapping) typed as the mock AdminResident shape
@@ -194,7 +183,6 @@ export async function getEstateActivity(): Promise<EstateActivity[]> {
 // id/unit/role silently rendered undefined, and critically `status` was
 // always undefined so the ban/restore button never reflected real state
 // (see app/admin/estate/residents/page.tsx `r.status === 'banned'`). Mapped
-// to the real fields; name/phone/arrears are UNAVAILABLE from this endpoint
 // (backend gap — flagged, not invented here).
 export async function listResidents(): Promise<AdminResident[]> {
   if (USE_MOCK) { await delay(); return [...RESIDENTS]; }
@@ -204,7 +192,6 @@ export async function listResidents(): Promise<AdminResident[]> {
     // IMPORTANT: id is set to user_id, not the estate_residents row PK. The
     // ban/restore routes are POST .../admin/residents/:uid/ban|restore and
     // the backend resolves :uid as targetUserID (BanResident/RestoreResident
-    // scan WHERE estate_id=$1 AND user_id=$2 — see handler.go BanResident /
     // service admin.go). Using the row's own `id` here (as the previous
     // getJson<AdminResident[]> pass-through effectively did once compiled)
     // would 400 every ban/restore with "resident not found in this estate".
@@ -233,16 +220,13 @@ export async function restoreResident(id: string): Promise<{ id: string; status:
   return postJson<{ id: string; status: ResidentStatus }>(`/estate/${estateId()}/admin/residents/${id}/restore`, {});
 }
 
-// listDuesInvoices: live DuesInvoice rows are {id, estate_id, property_id,
 // resident_id, category, amount_kobo, due_date, status, created_at} — raw
 // getJson (no camel mapping) typed as the mock AdminDuesInvoice shape
 // {reference, unit, residentName, description, amountKobo, paidKobo, dueAt,
 // restricted} broke every one of those: amountKobo was undefined (backend
 // key is amount_kobo) so totals/arrears math (`amountKobo - paidKobo`)
-// silently NaN'd the whole page. Mapped to real fields; reference/unit/
 // residentName/paidKobo/restricted have NO backend source on this endpoint
 // (backend gap, flagged) — paidKobo/restricted are derived from the real
-// `status` field (paid ⇒ fully paid; restricted status ⇒ restricted=true),
 // which is a safe derivation of data the backend DID send, not fabrication.
 export async function listDuesInvoices(): Promise<AdminDuesInvoice[]> {
   if (USE_MOCK) { await delay(); return [...INVOICES]; }
@@ -266,10 +250,8 @@ export async function listDuesInvoices(): Promise<AdminDuesInvoice[]> {
   });
 }
 
-// listGates: live Gate rows are {id, estate_id, name, gate_type, active,
 // created_at} — raw getJson typed as AdminGate {location, status,
 // guardsOnDuty, lastHeartbeat} left all four fields undefined. Mapped
-// `status` from the real `active` boolean; location/guardsOnDuty/
 // lastHeartbeat have NO backend source (backend gap, flagged).
 export async function listGates(): Promise<AdminGate[]> {
   if (USE_MOCK) { await delay(); return [...GATES]; }
@@ -287,14 +269,12 @@ export async function listGates(): Promise<AdminGate[]> {
   });
 }
 
-// listGuardShifts: NO backend route exists for GET /estate/:id/guard/shifts
 // (finance_routes.go only registers POST .../guard/shift-handover — a
 // one-shot handover action, not a listable shift roster). This call always
 // 404s live. Previously it was awaited inside a Promise.all alongside
 // listGates/listIncidents in app/admin/estate/gates/page.tsx, so the 404
 // sank the ENTIRE page (gates + incidents tables both went blank behind an
 // error banner) even though those two endpoints work. Fails soft to [] so
-// the rest of the page still renders; the missing endpoint is a backend gap
 // (see UAT report), not fixable from this file.
 export async function listGuardShifts(): Promise<AdminGuardShift[]> {
   if (USE_MOCK) { await delay(); return [...SHIFTS]; }
@@ -305,7 +285,6 @@ export async function listGuardShifts(): Promise<AdminGuardShift[]> {
   }
 }
 
-// listIncidents: live IncidentReport rows are {id, estate_id, guard_id,
 // gate_id, incident_type, description, evidence_url, escalated,
 // created_at} — raw getJson typed as AdminIncident {title, severity,
 // status, reportedBy, reportedAt} left all of those undefined. Mapped
@@ -331,12 +310,10 @@ export async function listIncidents(): Promise<AdminIncident[]> {
   });
 }
 
-// listVendors: live Vendor rows are {id, estate_id, user_id, name,
 // category, phone, status, rating, created_at} — raw getJson typed as
 // AdminVendor {trade, jobsCompleted, submittedAt}. name/phone/rating/status
 // happen to render (single-word keys, no snake_case to lose in translation)
 // but trade/jobsCompleted/submittedAt were silently undefined. Mapped
-// trade←category, submittedAt←created_at; jobsCompleted has NO backend
 // source on this endpoint (backend gap, flagged).
 export async function listVendors(): Promise<AdminVendor[]> {
   if (USE_MOCK) { await delay(); return [...VENDORS]; }
@@ -356,10 +333,8 @@ export async function listVendors(): Promise<AdminVendor[]> {
   });
 }
 
-// verifyVendor: the live handler (Handler.VerifyVendor) requires a JSON body
 // {"status": "verified"|"suspended"|"pending"} — `binding:"required"` on
 // body.Status. This used to POST an empty body ({}), which 400s
-// ("Key: 'Status' Error:Field validation...") on every real click; the
 // vendors page's optimistic UI made it LOOK like it worked because the row
 // was already patched client-side before the request's error was surfaced.
 export async function verifyVendor(id: string): Promise<{ id: string; status: VendorStatus }> {
@@ -368,8 +343,6 @@ export async function verifyVendor(id: string): Promise<{ id: string; status: Ve
   return { id, status: res.status };
 }
 
-// ─── Property management (Block 29 — backend/internal/estate/property_mgmt.go) ─
-// Estate-admin scoped (assertEstateAdmin: estate_residents.role='estate_admin'
 // for the pinned estateId()), NOT the cross-estate /estate-admin/* oversight
 // namespace above. Same pinned-estate pattern as listResidents/listVendors.
 const MOCK_PROPERTIES: AdminProperty[] = [
@@ -474,9 +447,7 @@ export async function getPropertyContext(): Promise<PropertyContext> {
   return getJson<PropertyContext>('/property/context');
 }
 
-// ─── Platform estate oversight (backend /api/finance/estate-admin/*) ──────────
 // Read-only cross-estate oversight. The Go backend returns snake_case rows under
-// {data:[...]}; getJson already unwraps {data}. We map snake→camel here so the
 // admin console types stay camelCase. Optional `estateId` scopes to one estate.
 
 function toCamel<T>(row: Record<string, unknown>): T {
@@ -629,10 +600,8 @@ export async function listOversightFacilities(estateId?: string): Promise<Oversi
   return getRows<OversightFacility>(`/estate-admin/ops/facilities${qs(estateId)}`);
 }
 
-// createFacility: the oversight surface (/estate-admin/ops/facilities) is
 // READ-ONLY (see estate_admin_routes.go — only GET verbs are registered).
 // Facility creation is a resident-role-gated write (assertEstateAdmin:
-// estate_residents.role='estate_admin'), same pattern already used by
 // banResident/verifyVendor/etc. above: POST /estate/:id/facilities against
 // the pinned console estate id. Body keys are snake_case to match
 // CreateFacilityRequest's binding tags (name, kind, capacity, fee_kobo) —

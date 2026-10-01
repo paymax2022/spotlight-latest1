@@ -3,7 +3,6 @@ import { summariseAcademyRevenue, formatNaira, tuitionByApplicant } from '@/src/
 
 // The live row that exposed the gap: Patrick Chig, ₦5,000 application fee plus a
 // settled ₦50,000 instalment. Both correct in the database, neither visible in the
-// admin console.
 const NOW = new Date('2026-08-25T00:00:00Z');
 
 describe('summariseAcademyRevenue', () => {

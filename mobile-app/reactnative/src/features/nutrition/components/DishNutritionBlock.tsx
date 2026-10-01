@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
-import { Spacing } from '@/constants/spacing';
+import { Spacing } from '@/constants/tokens';
 import { useDishNutrition } from '../hooks';
 import NutritionCard from './NutritionCard';
 import AllergenNotice from './AllergenNotice';

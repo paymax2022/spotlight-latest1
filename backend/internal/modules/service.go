@@ -155,12 +155,10 @@ func (s *Service) get(ctx context.Context, key string) (Module, error) {
 }
 
 // SetVisibility publishes or hides a module in one environment.
-//
 // Guarded transition: the module must exist, the environment must be known, and
 // an archived module cannot be published. The state change and its audit row
 // commit in ONE transaction, so there is no way to change what users see without
 // a record of who did it.
-//
 // Idempotent: setting the status it already has re-writes the same value and
 // records the no-op, rather than erroring on a double-click.
 func (s *Service) SetVisibility(ctx context.Context, key string, env Environment, status Status, note, actorID string) (Module, error) {
@@ -212,7 +210,6 @@ func (s *Service) upsertEnv(ctx context.Context, tx pgx.Tx, key string, env Envi
 }
 
 // SetLifecycle archives or restores a module.
-//
 // Archiving does NOT clear per-environment rows. Restoring therefore returns the
 // module to exactly the publication state it had before, instead of silently
 // re-publishing it everywhere or dropping the operator's earlier decisions.

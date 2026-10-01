@@ -1,4 +1,4 @@
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 // Extended color tokens for voting module
 export const VotingColors = {

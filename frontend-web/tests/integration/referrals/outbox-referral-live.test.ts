@@ -142,7 +142,6 @@ describe.skipIf(!live)('REF-001: referral.triggered outbox — live DB', () => {
 
     // Drain via the generic worker...
     await processPendingOutboxEvents();
-    // ...and via the dedicated referral drain, in case anything is still pending.
     await processReferralOutbox();
 
     const { data: account } = await db()

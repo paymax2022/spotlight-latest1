@@ -1,5 +1,4 @@
 // Is this contest accepting votes right now?
-//
 // Mirrors the server's gate in backend/internal/connect/voting/service.go
 // (`votingOpen`): status must be open AND now must fall inside
 // [opens_at, closes_at]. The client used to check the STATUS ALONE, which meant a
@@ -8,9 +7,7 @@
 // only there met "Voting is closed for this contest". Nothing flips
 // contests.status to 'ended' when the end date passes, so this is not a rare edge:
 // it is the normal state of every contest after its deadline.
-//
 // This is a UX gate, not a security one. The server is the authority and already
-// refuses a late vote; this exists so the app stops offering an action it knows
 // will fail.
 
 import type { Contest } from '../types/voting.types';

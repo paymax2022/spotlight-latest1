@@ -1,10 +1,8 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for the restaurant pickup code: generated when an
 // order goes `ready`, required (distinct from the customer delivery_code) for
 // the assigned rider to confirm pickup. Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

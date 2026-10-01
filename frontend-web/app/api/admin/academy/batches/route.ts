@@ -2,7 +2,7 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { saveAcademyBatch, getAcademyAdminDashboard } from '@/src/server/services/academy/service';
 import { createAdminClient } from '@/lib/supabase/server';
-import { replaceBatchAreas } from '@/src/server/services/academy/batchAreas';
+import { replaceBatchAreas } from '@/src/server/services/academy';
 import type { AcademyBatchMutationInput } from '@/src/lib/validation/academy';
 
 function getBatchFeeFields(body: Record<string, unknown>) {

@@ -6,6 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
+
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/platform/r2"
@@ -88,12 +90,6 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
 }
-
-func (h *Handler) idemKey(c *gin.Context) string {
-	return c.GetHeader("Idempotency-Key")
-}
-
-// ── Reads ───────────────────────────────────────────────────────────────────
 
 func (h *Handler) GetProfile(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -277,8 +273,6 @@ func (h *Handler) GetSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
-// ── Mutations ───────────────────────────────────────────────────────────────
-
 func (h *Handler) SubmitVerification(c *gin.Context) {
 	uid, ok := h.userID(c)
 	if !ok {
@@ -343,7 +337,7 @@ func (h *Handler) SaveNote(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.SaveNote(c.Request.Context(), uid, c.Param("appointmentId"), h.idemKey(c), req)
+	res, err := h.svc.SaveNote(c.Request.Context(), uid, c.Param("appointmentId"), ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -361,7 +355,7 @@ func (h *Handler) CreatePrescription(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.CreatePrescription(c.Request.Context(), uid, h.idemKey(c), req)
+	res, err := h.svc.CreatePrescription(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -379,7 +373,7 @@ func (h *Handler) CreateLabOrder(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.CreateLabOrder(c.Request.Context(), uid, h.idemKey(c), req)
+	res, err := h.svc.CreateLabOrder(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -397,7 +391,7 @@ func (h *Handler) ReviewLabResult(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.ReviewLabResult(c.Request.Context(), uid, c.Param("resultId"), h.idemKey(c), req)
+	res, err := h.svc.ReviewLabResult(c.Request.Context(), uid, c.Param("resultId"), ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -447,7 +441,7 @@ func (h *Handler) RequestPayout(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.RequestPayout(c.Request.Context(), uid, h.idemKey(c), req)
+	res, err := h.svc.RequestPayout(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		// Idempotency replay returns the prior result alongside the 409.
 		if errors.Is(err, ErrDuplicateRequest) && res != nil {

@@ -1,9 +1,7 @@
 package cryptoaml_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the crypto WITHDRAWAL AML gate (the P0
 // "money-must-not-leave-before-approval" fix).
-//
 // crypto.Service (crypto.NewService(pool, ledgerSvc, priceProvider)) drives the
 // withdrawal state machine against a concrete *pgxpool.Pool and the real
 // ledger.Service. The provider broadcast seam is the default MockWithdrawalProvider
@@ -11,12 +9,10 @@ package cryptoaml_test
 // which performs NO network call — it deterministically returns Accepted=true so
 // the approve→broadcast STATE TRANSITION is exercisable end-to-end without a real
 // dispatch. We therefore assert the STATE, not a real network side effect.
-//
 // This file is SKIPPED whenever TEST_DATABASE_URL is unset — the SAME
 // env-var gate as backend/tests/crypto/live_db_integration_test.go and
 // backend/tests/association/live_db_integration_test.go. The skip is NOT a stub;
 // every step drives the real Service against real tables.
-//
 // ── Bring-up note (read before running) ───────────────────────────────────
 //  1. Apply the crypto migrations, in particular:
 //       supabase/migrations/20260815001600_crypto.sql       (crypto_* tables)
@@ -31,11 +27,9 @@ package cryptoaml_test
 //       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  3. Run:
 //       cd backend && go test ./tests/cryptoaml/... -run LiveDB -v
-//
 // Every row this file touches is created by the test itself with a fresh
 // uuid.New() id; assets are upserted via AdminConfigAsset (keyed on a random
 // symbol), so re-running is safe. No truncation, no shared fixtures.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -150,12 +144,10 @@ func holdingUnits(t *testing.T, ctx context.Context, svc *crypto.Service, userID
 	return 0
 }
 
-// ---------------------------------------------------------------------------
 // AML GATE: member Withdraw parks + STOPS at pending_review (no broadcast);
 // admin approve advances past pending_review (broadcast fires via mock);
 // admin reject returns the parked units. Regression-guards the P0 fix: money
 // must not leave before an approve.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_Withdraw_ParksAtPendingReview_NoBroadcast proves the member create
 // path parks the units and STOPS at pending_review — the provider is NEVER

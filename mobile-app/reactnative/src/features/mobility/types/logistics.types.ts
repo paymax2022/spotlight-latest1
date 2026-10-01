@@ -1,8 +1,5 @@
-// ── Paymax Mobility — Business Logistics types ───────────────────────────────
 // Types for the business-logistics mode: registered business accounts ship
-// single deliveries or bulk batches; billing is prepaid wallet or monthly
 // invoice. Mirrors docs/prd/transportation/BUILD-CONTRACT-LOGISTICS-EVENT.md.
-//
 // IRON RULES: all money is integer minor units (kobo). Never floats for money.
 // Fares/COD/invoice amounts are server-computed — the client only *displays* them.
 
@@ -11,9 +8,7 @@ import type { Kobo, Place } from './mobility.types';
 // Re-exported so logistics screens can import shared geo/money types from one place.
 export type { Kobo, Place } from './mobility.types';
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // BUSINESS ACCOUNT
-// ═══════════════════════════════════════════════════════════════════════════════
 export type BillingMode = 'prepaid' | 'invoice';
 export type BusinessAccountType = 'merchant' | 'enterprise' | 'sme';
 
@@ -35,9 +30,7 @@ export interface AccountCreateRequest {
   codEnabled: boolean;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // DELIVERY
-// ═══════════════════════════════════════════════════════════════════════════════
 export type DeliveryStatus =
   | 'created'
   | 'assigned'
@@ -88,9 +81,7 @@ export interface Delivery {
   deliveredAt: string | null;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // BATCH (bulk dispatch)
-// ═══════════════════════════════════════════════════════════════════════════════
 export type BatchStatus =
   | 'created'
   | 'dispatched'
@@ -120,9 +111,7 @@ export interface BatchDetail extends Batch {
   deliveries: Delivery[];
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // INVOICES + ANALYTICS
-// ═══════════════════════════════════════════════════════════════════════════════
 export type InvoiceStatus = 'open' | 'issued' | 'paid' | 'overdue';
 
 export interface BusinessInvoice {

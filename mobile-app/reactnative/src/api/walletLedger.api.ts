@@ -57,7 +57,6 @@ function mapEntry(r: Row): WalletLedgerEntry {
   };
 }
 
-// The spendable-wallet account type. Seeds/backend use 'user_wallet'; the
 // frontend-web money service uses 'wallet'. Accept both so the lookup is correct
 // across environments.
 const WALLET_ACCOUNT_TYPES = ['user_wallet', 'wallet'];

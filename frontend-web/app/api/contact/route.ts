@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOptionalEnv } from '@/lib/config/env';
-import { sendTransactionalEmail } from '@/lib/email/transactional';
+import { getOptionalEnv } from '@/lib/config';
+import { sendTransactionalEmail } from '@/lib/email';
 
 type ContactPayload = {
   fullName?: string;

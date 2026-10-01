@@ -72,8 +72,8 @@ export interface NotificationPreference {
   };
   quiet_hours?: {
     enabled: boolean;
-    start: string; // HH:mm
-    end: string;   // HH:mm
+    start: string;
+    end: string;
   };
   digest_frequency: 'immediate' | 'hourly' | 'daily' | 'weekly';
   escalation_enabled: boolean;
@@ -130,7 +130,6 @@ export class NotificationEngine {
    * Initialize default templates
    */
   private initializeDefaultTemplates(): void {
-    // Incident templates
     this.templates.set('incident-critical', {
       id: 'incident-critical',
       name: 'Critical Incident Alert',
@@ -152,7 +151,6 @@ Action: {{action_url}}`,
       throttleMinutes: 0, // No throttling for critical
     });
 
-    // Prediction templates
     this.templates.set('prediction-alert', {
       id: 'prediction-alert',
       name: 'Compliance Risk Alert',
@@ -177,7 +175,6 @@ Review: {{dashboard_url}}`,
       throttleMinutes: 60,
     });
 
-    // Escalation templates
     this.templates.set('escalation-notice', {
       id: 'escalation-notice',
       name: 'Incident Escalation Notice',
@@ -201,7 +198,6 @@ Action: {{action_url}}`,
       throttleMinutes: 0,
     });
 
-    // Resolution templates
     this.templates.set('resolution-confirmed', {
       id: 'resolution-confirmed',
       name: 'Resolution Confirmed',
@@ -223,7 +219,6 @@ Summary: {{resolution_summary}}`,
       throttleMinutes: 0,
     });
 
-    // Report templates
     this.templates.set('report-ready', {
       id: 'report-ready',
       name: 'Report Generated',
@@ -266,7 +261,6 @@ Download: {{download_url}}`,
       throw new Error(`Template not found: ${templateId}`);
     }
 
-    // Check throttle
     const throttleKey = `${recipient}:${templateId}`;
     if (this.isThrottled(throttleKey, template.throttleMinutes || 0)) {
       console.log(`Notification throttled: ${throttleKey}`);
@@ -280,7 +274,6 @@ Download: {{download_url}}`,
     const body = this.interpolateTemplate(template.body, variables);
     const subject = template.subject ? this.interpolateTemplate(template.subject, variables) : undefined;
 
-    // Create notifications for each channel
     const notifications: Notification[] = [];
 
     for (const channel of targetChannels) {
@@ -303,11 +296,9 @@ Download: {{download_url}}`,
       this.notifications.set(notification.id, notification);
       notifications.push(notification);
 
-      // Send asynchronously
       this.deliverNotification(notification);
     }
 
-    // Update throttle
     if (template.throttleMinutes && template.throttleMinutes > 0) {
       this.throttleMap.set(throttleKey, Date.now());
     }

@@ -1,6 +1,5 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB pin: requireElectionOfficer (service_elections.go) gates election
 // administration on "holds ANY admin role != NONE in this org" — it does NOT
 // go through the capabilities model (AdminCapabilities) every other admin
@@ -9,7 +8,6 @@ package association_test
 // manage members, manage finance, import members, or manage committees
 // anywhere else in this module — yet can fully administer an election:
 // create it, add candidates, open/close voting, and publish results.
-//
 // This may well be intentional (the secretary is the traditional election
 // clerk/minute-taker in many real associations), but nothing in the codebase
 // — no comment on requireElectionOfficer itself, no test — records that as a
@@ -19,13 +17,10 @@ package association_test
 // code read, and (b) make any FUTURE change to this boundary a deliberate,
 // visible diff instead of an accidental one. Flagged in the UAT bug tracker
 // for an explicit product decision — not treated as a bug to silently patch.
-//
 // Gated on TEST_DATABASE_URL alone — see live_db_integration_test.go's
 // bring-up note for this package.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/association/... -run LiveDB_Election_SecretaryIsAFullOfficer -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

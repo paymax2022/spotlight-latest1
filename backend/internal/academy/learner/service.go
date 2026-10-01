@@ -29,8 +29,6 @@ func NewService(db *pgxpool.Pool) *Service {
 // WithClock overrides the clock (tests).
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
 
-// ── Bookmarks / notes passthroughs ──────────────────────────────────────────
-
 func (s *Service) ListBookmarks(ctx context.Context, userID string) ([]Bookmark, error) {
 	return s.repo.ListBookmarks(ctx, userID)
 }

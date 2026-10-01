@@ -18,8 +18,8 @@ export interface NetworkStatus {
   downlink?: number; // Mbps
   rtt?: number; // Round-trip time in ms
   saveData: boolean; // User has enabled data saver mode
-  isSlow: boolean; // Derived: 3g or slower
-  isFast: boolean; // Derived: 4g
+  isSlow: boolean;
+  isFast: boolean;
 }
 
 /**
@@ -42,11 +42,9 @@ export function useNetworkStatus(): NetworkStatus {
   });
 
   useEffect(() => {
-    // Get initial network status
     const updateNetworkStatus = () => {
       const isOnline = navigator.onLine;
 
-      // Check if browser supports Network Information API
       const connection = (navigator as any).connection || (navigator as any).mozConnection;
 
       let type: NetworkType = 'unknown';
@@ -141,7 +139,6 @@ export function useMeteredConnection(): boolean {
       return;
     }
 
-    // Android: check if on mobile data
     if (connection) {
       const isMobileData = ['cellular', 'bluetooth', 'wifi'].includes(connection.type);
       setIsMetered(connection.type === 'cellular');
@@ -154,7 +151,6 @@ export function useMeteredConnection(): boolean {
       return () => connection.removeEventListener('change', handleChange);
     }
 
-    // Fallback: assume desktop is not metered
     setIsMetered(false);
   }, []);
 

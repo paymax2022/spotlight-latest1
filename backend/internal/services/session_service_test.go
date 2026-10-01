@@ -7,8 +7,6 @@ import (
 	"spotlight/backend/internal/config"
 )
 
-// ── In-memory fake store ─────────────────────────────────────────────────────
-
 type fakeSessionStore struct {
 	sessions       map[string]*Session // id -> session
 	seq            int
@@ -197,8 +195,6 @@ func testCfg() config.Config {
 		SuspiciousEscalationPolicy:     "notify",
 	}
 }
-
-// ── Tests ────────────────────────────────────────────────────────────────────
 
 func TestRefreshRotationIssuesNewTokenAndInvalidatesPrior(t *testing.T) {
 	store := newFakeStore()

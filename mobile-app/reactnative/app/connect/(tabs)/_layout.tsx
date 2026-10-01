@@ -2,12 +2,11 @@ import React from 'react';
 import { Tabs } from 'expo-router';
 import { View, Platform, StyleSheet } from 'react-native';
 import { Compass, Radio, PlusCircle, MessageCircle, UserRound } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 
 // Connect 5-tab nav (PRD §5): Discover · Live · Create · Inbox · Me.
-// Discover/Live/Create/Inbox are placeholder roots that other agents fill;
 // Me is fully built. This nested (tabs) group lives under the connect stack.
 
 function TabIcon({

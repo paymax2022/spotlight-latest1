@@ -2,16 +2,12 @@ package vtpass
 
 import "testing"
 
-// ════════════════════════════════════════════════════════════════════════════
 // THE SEAM: kobo (Paymax's internal unit, everywhere else) vs naira (VTpass's
 // wire unit, here and ONLY here)
-// ════════════════════════════════════════════════════════════════════════════
-//
 // This mirrors provider/mycover/money_seam_test.go's rigor: a dedicated,
 // table-driven test for the money-unit conversion function alone, covering the
 // rounding boundaries explicitly rather than folding it into a purchase test
 // where a wrong answer could pass unnoticed.
-//
 // asNaira(kobo) = max(1, round(kobo / 100)), ported from the TS source's
 // `Math.max(1, Math.round(kobo / 100))` using ONLY integer arithmetic (see
 // vtpass.go's doc comment on asNaira for why: this repo's iron rule is that

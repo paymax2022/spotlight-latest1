@@ -6,13 +6,13 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
-
-// ─── Specialties ─────────────────────────────────────────────────────────────
 
 func (h *Handler) ListSpecialties(c *gin.Context) {
 	specialties, err := h.svc.ListSpecialties(c.Request.Context())
@@ -23,10 +23,8 @@ func (h *Handler) ListSpecialties(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": specialties})
 }
 
-// ─── Doctors ─────────────────────────────────────────────────────────────────
-
 func (h *Handler) RegisterDoctor(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req RegisterDoctorRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -41,7 +39,7 @@ func (h *Handler) RegisterDoctor(c *gin.Context) {
 }
 
 func (h *Handler) RegisterDoctorV2(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req RegisterDoctorV2Request
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -72,12 +70,7 @@ func (h *Handler) ListDoctors(c *gin.Context) {
 		q.MinRating = mr
 	}
 	q.Featured = c.Query("featured") == "true"
-	if l, err := strconv.Atoi(c.DefaultQuery("limit", "20")); err == nil {
-		q.Limit = l
-	}
-	if o, err := strconv.Atoi(c.DefaultQuery("offset", "0")); err == nil {
-		q.Offset = o
-	}
+	q.Limit, q.Offset = ginutil.PageParams(c, 20, 0)
 
 	doctors, err := h.svc.ListDoctors(c.Request.Context(), q)
 	if err != nil {
@@ -97,7 +90,7 @@ func (h *Handler) GetDoctor(c *gin.Context) {
 }
 
 func (h *Handler) ToggleAvailability(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req ToggleAvailabilityRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -111,7 +104,7 @@ func (h *Handler) ToggleAvailability(c *gin.Context) {
 }
 
 func (h *Handler) GetDoctorDashboard(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	dash, err := h.svc.GetDoctorDashboard(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -120,10 +113,8 @@ func (h *Handler) GetDoctorDashboard(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": dash})
 }
 
-// ─── Appointments ────────────────────────────────────────────────────────────
-
 func (h *Handler) BookAppointment(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req BookAppointmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -131,7 +122,7 @@ func (h *Handler) BookAppointment(c *gin.Context) {
 	}
 	// Accept Idempotency-Key from header OR body.
 	if req.IdempotencyKey == "" {
-		req.IdempotencyKey = c.GetHeader("Idempotency-Key")
+		req.IdempotencyKey = ginutil.IdempotencyKey(c)
 	}
 	appt, err := h.svc.BookAppointment(c.Request.Context(), userID, req)
 	if err != nil {
@@ -149,7 +140,7 @@ func (h *Handler) BookAppointment(c *gin.Context) {
 }
 
 func (h *Handler) ListMyAppointments(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	filter := c.Query("filter") // "upcoming" | "past" | ""
 	appts, err := h.svc.ListMyAppointments(c.Request.Context(), userID, filter)
 	if err != nil {
@@ -160,7 +151,7 @@ func (h *Handler) ListMyAppointments(c *gin.Context) {
 }
 
 func (h *Handler) GetAppointment(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	appt, err := h.svc.GetAppointment(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -170,7 +161,7 @@ func (h *Handler) GetAppointment(c *gin.Context) {
 }
 
 func (h *Handler) CompleteAppointment(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if err := h.svc.CompleteAppointment(c.Request.Context(), c.Param("id"), userID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -179,7 +170,7 @@ func (h *Handler) CompleteAppointment(c *gin.Context) {
 }
 
 func (h *Handler) CancelAppointment(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if err := h.svc.CancelAppointment(c.Request.Context(), c.Param("id"), userID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -188,7 +179,7 @@ func (h *Handler) CancelAppointment(c *gin.Context) {
 }
 
 func (h *Handler) IssuePrescription(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req IssuePrescriptionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -206,7 +197,7 @@ func (h *Handler) IssuePrescription(c *gin.Context) {
 // (GET /appointments/:id/prescription). Object-level authZ enforced in the
 // service layer (patient or assigned doctor only).
 func (h *Handler) GetPrescription(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	p, err := h.svc.GetPrescription(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -215,10 +206,8 @@ func (h *Handler) GetPrescription(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": p})
 }
 
-// ─── SOAP Notes ──────────────────────────────────────────────────────────────
-
 func (h *Handler) SubmitSOAPNote(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req SubmitSOAPNoteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -232,17 +221,15 @@ func (h *Handler) SubmitSOAPNote(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"data": note})
 }
 
-// ─── Licence Documents ───────────────────────────────────────────────────────
-
 func (h *Handler) UploadLicenceDoc(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req UploadLicenceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	if req.IdempotencyKey == "" {
-		req.IdempotencyKey = c.GetHeader("Idempotency-Key")
+		req.IdempotencyKey = ginutil.IdempotencyKey(c)
 	}
 	doc, err := h.svc.UploadLicenceDoc(c.Request.Context(), userID, req)
 	if err != nil {

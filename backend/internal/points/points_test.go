@@ -15,8 +15,8 @@ type fakeAuditor struct {
 	calls int
 	last  struct {
 		actor, target, action, module, resourceType, resourceID string
-		oldValues, newValues                                     map[string]any
-		ip, ua, severity                                         string
+		oldValues, newValues                                    map[string]any
+		ip, ua, severity                                        string
 	}
 }
 
@@ -34,8 +34,6 @@ func (f *fakeAuditor) LogAction(actorUserID, targetUserID, action, module, resou
 	f.last.ua = userAgent
 	f.last.severity = severity
 }
-
-// --- Earn input validation (reached before any DB access) ---
 
 // Earn rejects an empty userID / ruleKey before touching the (nil here) pool, so
 // the guard is exercised purely. A regression that reorders the DB call ahead of
@@ -69,8 +67,6 @@ func TestEarn_RejectsEmptyIdentifiers(t *testing.T) {
 		})
 	}
 }
-
-// --- Audit forwarding (Service.log) ---
 
 // log must forward the caller's identifiers and stamp the fixed points-module audit
 // fields: actor=userID, target="", module="points", resourceType="points_ledger",
@@ -127,8 +123,6 @@ func TestServiceLog_NilAuditorIsNoOp(t *testing.T) {
 	s.log("user-1", "points.earn", "entry-1", map[string]any{"x": 1})
 }
 
-// --- Sentinel errors ---
-
 // The two redemption sentinels must stay distinct (handler maps them to different
 // HTTP statuses: 402 vs 403) and carry stable, non-empty messages.
 func TestSentinelErrors_DistinctAndStable(t *testing.T) {
@@ -146,8 +140,6 @@ func TestSentinelErrors_DistinctAndStable(t *testing.T) {
 	}
 }
 
-// --- Constructors ---
-
 func TestConstructors_ReturnWired(t *testing.T) {
 	svc := NewService(nil, nil)
 	if svc == nil {
@@ -161,8 +153,6 @@ func TestConstructors_ReturnWired(t *testing.T) {
 		t.Fatal("NewHandler did not wire the service")
 	}
 }
-
-// --- Model / EntryType constants ---
 
 // The ledger direction constants are the wire values persisted in points_ledger.type
 // and matched verbatim in the balance SQL (type='EARN' etc). Pin them so a rename

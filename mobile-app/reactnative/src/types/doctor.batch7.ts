@@ -1,10 +1,7 @@
-// ── Doctor (Telemedicine, provider-side) — Batch 7 Domain Types ──────────────
-// Batch 7 = spec sections AA · AB · AC · AD — Support & Dispute · Compliance,
 // Privacy & Audit · Settings · Empty/Error/Edge-State. This is the FINAL C–AD
 // batch and is CONSOLIDATED + heavy REUSE. Phase 1 / Phase 2 / Section B /
 // Batch 6 shapes are imported and re-exported, NEVER duplicated. Money amounts
 // are integers in minor units (kobo). Use `import type` for type-only imports.
-//
 // Sections:
 //   AA — Support & Dispute: REUSE SupportTicket / SupportTicketStatus (Phase 1)
 //        for the help-centre ticket list / status / resolved screens, and the
@@ -23,12 +20,10 @@
 //        password input and a two-factor setup descriptor.
 //   AD — Empty / Error / Edge-State: a small data layer of edge-state
 //        descriptors, an app-status read and account-status reads. Most of these
-//        are StateView variants already handled on existing screens; this batch
 //        only adds the descriptor map + a pure `getEdgeState` helper (in the api
 //        file) so screens render consistent edge content.
 
 import type {
-  // ── REUSE: Phase 1 primitives ──
   SupportTicket,
   SupportTicketStatus,
   ChatMessage,
@@ -36,7 +31,6 @@ import type {
   DoctorSettings,
   VerificationStatus,
 } from '@/types/doctor';
-// ── REUSE: Phase 2 compliance shapes ──
 import type {
   ComplianceDashboard,
   LicenceInfo,
@@ -48,15 +42,12 @@ import type {
   ComplianceAlertSeverity,
   PolicyAcknowledgement,
 } from '@/types/doctor.phase2';
-// ── REUSE: Batch 6 notification preference rows ──
 import type {
   NotificationPreference,
   NotificationCategory,
 } from '@/types/doctor.batch6';
-// ── REUSE: Section B bank account (do NOT redeclare) ──
 import type { BankAccount } from '@/types/doctor.profile';
 
-// Re-export the primitives Batch 7 screens lean on, so a screen can pull
 // everything it needs from one import site.
 export type {
   SupportTicket,
@@ -83,9 +74,7 @@ export type {
 } from '@/types/doctor.batch6';
 export type { BankAccount } from '@/types/doctor.profile';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION AA — SUPPORT & DISPUTE (18)
-// ═══════════════════════════════════════════════════════════════════════════
 // REUSES SupportTicket / SupportTicketStatus for the ticket list / ticket
 // status / resolved-ticket screens, and the Phase 1 ChatMessage shape for the
 // support chat thread. The eight dispute sub-screens (consultation / payment /
@@ -93,7 +82,6 @@ export type { BankAccount } from '@/types/doctor.profile';
 // KINDS of one `Dispute`, not eight shapes. ADD: FAQs, help articles, the
 // dispute union, evidence attachments and a lightweight support message.
 
-// ─── AA.1 Help centre — FAQ categories & items ───────────────────────────────
 export type FaqCategory =
   | 'getting_started'
   | 'consultations'
@@ -111,7 +99,6 @@ export interface FaqItem {
   helpful?:  number;             // upvote count (display only)
 }
 
-// ─── AA.2 Help article (richer than an FAQ; "help center" landing cards) ──────
 export interface HelpArticle {
   id:        string;
   category:  FaqCategory;
@@ -122,7 +109,6 @@ export interface HelpArticle {
   updatedAt: string;             // ISO datetime
 }
 
-// ─── AA.3 Dispute (the 8 dispute sub-screens collapse to one union) ──────────
 export type DisputeKind =
   | 'consultation'
   | 'payment'
@@ -176,7 +162,6 @@ export interface Dispute {
   resolutionNote?: string;
 }
 
-// ─── AA.4 Support message thread (lightweight; reuses ChatAuthor + adds agent) ─
 export type SupportMessageAuthor = ChatAuthor | 'agent' | 'system';
 
 export interface SupportMessage {
@@ -188,9 +173,7 @@ export interface SupportMessage {
   attachment?: EvidenceAttachment;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION AB — COMPLIANCE, PRIVACY & AUDIT (16)
-// ═══════════════════════════════════════════════════════════════════════════
 // REUSES ComplianceDashboard / LicenceInfo / ConsentRecord /
 // ComplianceAuditEntry / ComplianceAlert / PolicyAcknowledgement (Phase 2). The
 // compliance-dashboard, medical-/vet-licence-status, patient-consent-history,
@@ -199,13 +182,11 @@ export interface SupportMessage {
 // audit trails, mandatory training, a safety-issue report and an account-review
 // notice.
 
-// ─── AB.1 Vet licence (medical licence reuses LicenceInfo; vet adds a council) ─
 export interface VetLicenceInfo extends LicenceInfo {
   councilName:   string;         // e.g. "Veterinary Council of Nigeria (VCN)"
   vcnNumber:     string;         // vet registration number
 }
 
-// ─── AB.2 Data-privacy settings (export / delete / sharing prefs) ────────────
 export interface DataSharingPreference {
   key:       string;             // "research", "analytics", "partner_hmo"
   label:     string;
@@ -224,7 +205,6 @@ export interface DataPrivacySettings {
   deletionRequestedAt?: string;  // ISO datetime
 }
 
-// ─── AB.3 Scoped audit trails (prescription / consultation / lab / HMO) ──────
 export type AuditScope = 'prescription' | 'consultation' | 'lab' | 'hmo';
 
 // An audit-trail row composes the Phase 2 ComplianceAuditEntry with a scope and
@@ -242,7 +222,6 @@ export interface AuditTrail {
   updatedAt:  string;            // ISO datetime
 }
 
-// ─── AB.4 Mandatory training ─────────────────────────────────────────────────
 export type TrainingStatus = 'not_started' | 'in_progress' | 'completed' | 'overdue';
 
 export interface TrainingModule {
@@ -285,7 +264,6 @@ export interface SafetyIssueReport {
   reportedAt:  string;           // ISO datetime
 }
 
-// ─── AB.6 Account-review notice (account under review banner / screen) ────────
 export type AccountReviewReason =
   | 'routine_audit'
   | 'licence_verification'
@@ -298,15 +276,13 @@ export interface AccountReviewNotice {
   reason:          AccountReviewReason;
   title:           string;
   message:         string;
-  restrictsPractice: boolean;    // true => doctor cannot take new consults
+  restrictsPractice: boolean;
   openedAt:        string;       // ISO datetime
   expectedBy?:     string;       // ISO date
   contactRoute?:   string;       // expo-router path to support / appeal
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION AC — SETTINGS (16)
-// ═══════════════════════════════════════════════════════════════════════════
 // REUSES DoctorSettings (Phase 1) for the profile/notification/availability
 // toggles, the Batch 6 NotificationPreference rows for the notification-settings
 // screen and the Section B BankAccount for the edit-bank-account screen. The
@@ -326,7 +302,6 @@ export interface SecuritySettings {
   pinEnabled:          boolean;  // app-open PIN lock
 }
 
-// ─── AC.2 Two-factor setup descriptor (enrolment payload) ────────────────────
 export interface TwoFactorSetup {
   method:       TwoFactorMethod;
   secret?:      string;          // authenticator shared secret (otpauth)
@@ -335,7 +310,6 @@ export interface TwoFactorSetup {
   recoveryCodes?: string[];      // shown once at enrolment
 }
 
-// ─── AC.3 Device / session management ────────────────────────────────────────
 export type DevicePlatform = 'ios' | 'android' | 'web';
 
 export interface Device {
@@ -351,7 +325,6 @@ export interface Device {
 // Alias kept for screens that prefer the "session" vocabulary; identical shape.
 export type DeviceSession = Device;
 
-// ─── AC.4 App preferences (language, theme) ──────────────────────────────────
 export type AppLanguage = 'en' | 'fr' | 'ha' | 'yo' | 'ig' | 'pcm';
 export type AppTheme = 'system' | 'light' | 'dark';
 
@@ -362,16 +335,13 @@ export interface AppPreferences {
   hapticsEnabled:  boolean;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // SECTION AD — EMPTY, ERROR & EDGE-STATE (26)
-// ═══════════════════════════════════════════════════════════════════════════
 // MOSTLY StateView variants already handled across existing screens. This batch
 // adds a small data layer only: an `EdgeStateKind` enum, an `EDGE_STATES`
 // descriptor map (title/message/icon/cta/tone per kind), an `AppStatus`
 // (maintenance / app-update-required / min-version) read and `AccountStatus`
 // reads. A pure `getEdgeState(kind)` helper lives in the api file.
 
-// ─── AD.1 Edge-state kinds (covers all 26 empty/error/edge screens) ──────────
 export type EdgeStateKind =
   // empty states
   | 'no_appointments'
@@ -429,7 +399,6 @@ export interface EdgeStateDescriptor {
   secondaryCta?: EdgeStateCta;
 }
 
-// ─── AD.2 App status (maintenance / forced-update / min-version) ─────────────
 export type AppStatusMode = 'ok' | 'maintenance' | 'app_update_required';
 
 export interface AppStatus {
@@ -441,7 +410,6 @@ export interface AppStatus {
   maintenanceUntil?: string;     // ISO datetime
 }
 
-// ─── AD.3 Account status (pending / rejected / suspended / under review) ─────
 // REUSES the Phase 1 VerificationStatus vocabulary and extends it with the
 // post-approval review/suspension states the signup/pending + account screens
 // need.
@@ -456,13 +424,10 @@ export interface AccountStatus {
   updatedAt:    string;          // ISO datetime
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // MUTATION INPUTS / RESULTS
-// ═══════════════════════════════════════════════════════════════════════════
 // `idempotencyKey` is required on every state-changing mutation. Hooks generate
 // it; callers pass `Omit<Input, 'idempotencyKey'>`.
 
-// ─── Section AA ────────────────────────────────────────────────────────────────
 export interface CreateDisputeInput {
   kind:           DisputeKind;
   subject:        string;
@@ -507,7 +472,6 @@ export interface SendSupportMessageResult {
   message: SupportMessage;
 }
 
-// ─── Section AB ────────────────────────────────────────────────────────────────
 export interface UpdatePrivacySettingsInput {
   sharingPreferences: DataSharingPreference[];
   idempotencyKey:     string;
@@ -558,7 +522,6 @@ export interface RequestAccountDeletionResult {
   status: DataRequestStatus;
 }
 
-// ─── Section AC ────────────────────────────────────────────────────────────────
 export interface ChangePasswordInput {
   currentPassword: string;
   newPassword:     string;
@@ -620,6 +583,4 @@ export interface LogoutResult {
   loggedOut: boolean;
 }
 
-// ─── Section AD ────────────────────────────────────────────────────────────────
-// Edge states are pure descriptors; the only "mutation" surface is a refresh of
 // the app/account status reads, handled by query invalidation in the hooks.

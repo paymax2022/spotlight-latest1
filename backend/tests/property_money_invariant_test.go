@@ -1,18 +1,14 @@
 package tests
 
-// ---------------------------------------------------------------------------
 // Property Management suite — money-invariant tests (INV) for
 // backend/internal/property/rentpassport.go GetRentPassport.
-//
 // PROPERTY-INV-011 (docs/qa/modules/property.md §4): TotalPaidKobo must be an
 // EXACT integer-kobo sum across BOTH the estate dues path (estate_payments)
 // and the realtor lease path (realtor_payments) — no float coercion, no
 // rounding, no drift. PROPERTY-INT-012: recentPayments caps at 20,
 // most-recent-first, while paymentsCount stays uncapped.
-//
 // Live-DB only: GetRentPassport takes a concrete *pgxpool.Pool
 // (property.NewService(db *pgxpool.Pool)) and cannot run without one.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

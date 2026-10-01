@@ -2,7 +2,6 @@
 // configured sandbox credentials. It calls the real provider clients directly
 // (bypassing the orchestrator's deterministic fallback) so auth / shape /
 // network failures surface clearly. Run with: `make fxsmoke` (sources .env).
-//
 // Exit code 0 = all configured providers responded; 1 = at least one failed.
 package main
 
@@ -23,7 +22,6 @@ func main() {
 	failed := false
 	any := false
 
-	// --- Maplerad ---
 	if key := os.Getenv("MAPLERAD_SECRET_KEY"); key != "" {
 		any = true
 		fmt.Println("→ Maplerad: requesting USD→NGN quote for $1,000…")
@@ -39,7 +37,6 @@ func main() {
 		fmt.Println("• Maplerad: MAPLERAD_SECRET_KEY not set — skipped")
 	}
 
-	// --- Eversend ---
 	if id, sec := os.Getenv("EVERSEND_CLIENT_ID"), os.Getenv("EVERSEND_CLIENT_SECRET"); id != "" && sec != "" {
 		any = true
 		fmt.Println("→ Eversend: requesting USD→KES quotation for $1,000…")

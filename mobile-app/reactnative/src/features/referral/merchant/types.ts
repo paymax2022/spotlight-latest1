@@ -1,9 +1,6 @@
-// ── Referral Merchant Zone (lite) types (M-MER-01..03) ───────────────────────
 // Merchant dashboard, create/fund campaign (wallet), performance. Money is
-// ALWAYS integer kobo. Campaigns are funded from the merchant's wallet; the
 // funding mutation is a money-path call (idempotency key on the live path).
 
-// ── Dashboard (M-MER-01) ─────────────────────────────────────────────────────
 export type MerchantCampaignStatus = 'active' | 'paused' | 'draft' | 'ended' | 'out_of_budget';
 
 export interface MerchantCampaignSummary {
@@ -28,7 +25,6 @@ export interface MerchantDashboard {
   campaigns: MerchantCampaignSummary[];
 }
 
-// ── Create / fund campaign (M-MER-02) ────────────────────────────────────────
 export interface CreateCampaignInput {
   name: string;
   /** Reward per verified conversion, integer kobo. */
@@ -48,7 +44,6 @@ export interface FundCampaignResult {
   error?: 'insufficient_funds' | 'invalid_amount' | 'failed';
 }
 
-// ── Performance (M-MER-03) ───────────────────────────────────────────────────
 export interface PerformancePoint {
   label: string;
   conversions: number;

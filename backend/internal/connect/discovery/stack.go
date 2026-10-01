@@ -334,7 +334,6 @@ func (s *Service) deletePass(ctx context.Context, fromProfile, toProfile string)
 // had created a mutual match — voids that match too, all inside one transaction so
 // a partially-undone state is impossible. Idempotent-safe: if there is nothing to
 // undo it returns ErrNothingToUndo without side effects.
-//
 // PREMIUM: gating (entitlement / boost tier) is intentionally left to the caller;
 // this method performs the undo unconditionally so it stays reusable.
 func (s *Service) Rewind(ctx context.Context, userID string) (undone string, err error) {

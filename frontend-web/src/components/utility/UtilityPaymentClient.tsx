@@ -61,7 +61,6 @@ function buildIdempotencyKey(category: string, reference: string) {
 const NIGERIAN_PHONE = /^(?:\+?234|0)[789][01]\d{8}$/;
 
 // Sanitizes and validates the customer-facing reference field. Airtime/data
-// take a phone number (format-checked); everything else is a provider-issued
 // meter/smartcard/customer ID, so we only guard against obviously-wrong input
 // (empty, too short/long, or characters no provider reference actually uses).
 function validateCustomerReference(category: UtilityCategory, rawValue: string): string | null {

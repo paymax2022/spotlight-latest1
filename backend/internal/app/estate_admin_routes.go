@@ -9,12 +9,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
 
 // estate_admin_routes.go — Paymax Estate super-app PLATFORM admin oversight.
-//
 // WHY THIS FILE EXISTS
 // The estate module (backend/internal/estate) ships ~58 resident/guard/vendor
 // mobile surfaces and a per-estate admin panel, but every existing estate
@@ -23,14 +23,12 @@ import (
 // service.go assertEstateAdmin / roleIn). A PLATFORM operator working the admin
 // console (super-admin / estate-admin RBAC role) is NOT a resident of any
 // estate, so calling those methods directly fails "not a member of this estate".
-//
 // This registrar therefore exposes a NEW, read-only PLATFORM-oversight surface,
 // authorized purely by the `estate.admin.*` RBAC slugs (seeded in
 // supabase/migrations/<ts>_estate_admin_rbac.sql), that lets HQ observe estate
 // operations ACROSS estates (or scoped to one via ?estate_id=). It REUSES the
 // estate data model and the shared pgx pool; it does NOT rebuild any estate
 // business logic and does NOT modify any existing estate service/handler.
-//
 // SCOPE — READ + OVERSIGHT ONLY. Nothing here moves money, mutates the ledger,
 // or writes estate state. Money mutations (dues collection, vendor payouts)
 // stay in the estate service money-path (service_dues.go / vendor.go) behind the
@@ -38,13 +36,11 @@ import (
 // Where a genuine oversight ACTION (e.g. force-resolve an incident, reconcile a
 // disputed payment) would require new estate service methods, we expose the READ
 // and leave an explicit TODO rather than inventing a mutation here.
-//
 // ROUTING NOTE — mounted at /api/finance/estate-admin, NOT /api/finance/estate/
 // admin. Gin's radix router forbids a static "admin" segment at the same tree
 // position as the existing "/estate/:id/..." param routes (registered in
 // finance_routes.go) — it would panic at startup. A sibling group side-steps the
 // conflict (same technique marketplace_routes.go uses for /media/presign).
-//
 // AUTH — the parent `finance` group already applies RequireAuthContext +
 // requireUserID, so the sub-group only adds RequireAuthContext again (idempotent,
 // cheap; keeps this registrar self-contained if the parent wiring changes) plus a
@@ -90,23 +86,19 @@ func RegisterEstateAdmin(
 	a.GET("/security/visitor-logs", guard("estate.admin.security"), h.ListVisitorLogs)
 	a.GET("/security/emergencies", guard("estate.admin.security"), h.ListEmergencies)
 
-	// ── Dues reconciliation (collections vs ledger) ──
 	a.GET("/dues/reconciliation", guard("estate.admin.dues"), h.DuesReconciliation)
 	a.GET("/dues/invoices", guard("estate.admin.dues"), h.ListInvoices)
 	a.GET("/dues/payments", guard("estate.admin.dues"), h.ListPayments)
 	a.GET("/dues/restrictions", guard("estate.admin.dues"), h.ListRestrictions)
 
-	// ── Ops queues (repairs / tasks / meetings / facilities) ──
 	a.GET("/ops/repairs", guard("estate.admin.ops"), h.ListRepairs)
 	a.GET("/ops/tasks", guard("estate.admin.ops"), h.ListTasks)
 	a.GET("/ops/meetings", guard("estate.admin.ops"), h.ListMeetings)
 	a.GET("/ops/facilities", guard("estate.admin.ops"), h.ListFacilities)
 
-	// ── Content (announcements / documents) ──
 	a.GET("/content/announcements", guard("estate.admin.content"), h.ListAnnouncements)
 	a.GET("/content/documents", guard("estate.admin.content"), h.ListDocuments)
 
-	// ── Election integrity (results / audit) ──
 	a.GET("/elections", guard("estate.admin.election"), h.ListElections)
 	a.GET("/elections/:electionId/results", guard("estate.admin.election"), h.ElectionResults)
 	a.GET("/elections/:electionId/audit", guard("estate.admin.election"), h.ElectionAudit)
@@ -133,13 +125,10 @@ func estateFilter(c *gin.Context, args []any, n int) (string, []any) {
 	return "", args
 }
 
+// limitOf reads ?limit capped at 500 (0 < n <= 500), else def.
 func limitOf(c *gin.Context, def int) int {
-	if v := c.Query("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
-			return n
-		}
-	}
-	return def
+	n, _ := ginutil.PageParams(c, def, 500)
+	return n
 }
 
 // jsonRows runs a query and streams each row through scan into a map builder,
@@ -288,15 +277,12 @@ func (h *estateAdminHandler) ListEmergencies(c *gin.Context) {
 	})
 }
 
-// ── Dues reconciliation ───────────────────────────────────────────────────────
-
 // DuesReconciliation compares billed-vs-collected per estate. The "collected"
 // figure is the sum of estate_payments.status='successful'; each such payment is
 // posted as a balanced double-entry journal by the estate dues money-path
 // (service_dues.go PayDues → ledger DEBIT payer wallet / CREDIT estate
 // settlement). This read reconciles the estate_payments PROJECTION against the
 // invoice ledger of record.
-//
 // TODO (ledger-auditor): a full collections-vs-LEDGER tie-out (payments
 // projection vs finance ledger AccountEstateSettlement balance) needs a
 // cross-module read into the finance ledger service, which this oversight
@@ -408,8 +394,6 @@ func (h *estateAdminHandler) ListRestrictions(c *gin.Context) {
 	})
 }
 
-// ── Ops queues ────────────────────────────────────────────────────────────────
-
 func (h *estateAdminHandler) ListRepairs(c *gin.Context) {
 	args := []any{}
 	filter, args := estateFilter(c, args, 1)
@@ -506,8 +490,6 @@ func (h *estateAdminHandler) ListFacilities(c *gin.Context) {
 	})
 }
 
-// ── Content ───────────────────────────────────────────────────────────────────
-
 func (h *estateAdminHandler) ListAnnouncements(c *gin.Context) {
 	args := []any{}
 	filter, args := estateFilter(c, args, 1)
@@ -544,8 +526,6 @@ func (h *estateAdminHandler) ListDocuments(c *gin.Context) {
 		}, nil
 	})
 }
-
-// ── Election integrity ────────────────────────────────────────────────────────
 
 func (h *estateAdminHandler) ListElections(c *gin.Context) {
 	args := []any{}

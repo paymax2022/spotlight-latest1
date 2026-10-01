@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -14,7 +15,6 @@ import (
 // Handler exposes the Promotion engine routes over Gin. Router registration into
 // RegisterAcademy is owned by the QA/integration task — see RegisterFeesPromotion for
 // the groups this package expects and the permission slugs to gate them with.
-//
 // SF-3 note: the two approval endpoints are DISTINCT and must be gated with DIFFERENT
 // permission slugs (teacher vs head-teacher/admin) so the two-approval requirement is
 // enforced at the authz layer as well as the state machine + service.
@@ -25,10 +25,9 @@ type Handler struct {
 // NewHandler builds the promotion handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -36,7 +35,7 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -115,8 +114,6 @@ func RegisterFeesPromotion(member, admin *gin.RouterGroup, pool *pgxpool.Pool, r
 	_ = admin
 	return h
 }
-
-// ── Handlers ──────────────────────────────────────────────────────────────────
 
 func (h *Handler) ImportScores(c *gin.Context) {
 	u, ok := h.requireUser(c)

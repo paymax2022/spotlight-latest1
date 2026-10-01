@@ -1,7 +1,4 @@
 // Pure-logic unit tests for the owner's packaging-price input.
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "tests/unit/merchant2/*.spec.ts"
-//
-// The owner types NAIRA; the column, the wire and every calculation are integer
 // KOBO. This is the conversion, and it sets a price every future customer pays,
 // so it is tested rather than trusted to an inline Number(x) * 100.
 
@@ -108,7 +105,6 @@ describe('packagingPriceInput', () => {
 
 describe('buildUpdateStoreBody', () => {
   it('sends a zero packaging price instead of dropping it', () => {
-    // The trap this function exists for: with a truthiness check, an owner
     // switching packaging to free taps Save, sees success, and keeps charging.
     const body = buildUpdateStoreBody({ packagingFeeKobo: 0 });
     assert.equal(body.packaging_fee_kobo, 0);

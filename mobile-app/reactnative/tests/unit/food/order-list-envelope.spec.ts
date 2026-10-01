@@ -1,12 +1,8 @@
 // The merchant order queue must not report an error when there are no orders.
-//
 // GET /api/v1/restaurant/orders answers `{"orders": [...]}`, and for a merchant
 // with none it answers `{"orders": null}` with HTTP 200. `unwrap` only peels a
-// `data` envelope, so it handed that OBJECT to `.map()` — which threw a
 // TypeError on null, rejected the query, and made app/food/restaurant render
-// "Couldn't load orders". The screen's empty state was already good; it was
 // simply never reached.
-//
 //   npm run test:food
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

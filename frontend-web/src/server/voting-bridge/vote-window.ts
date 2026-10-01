@@ -1,12 +1,10 @@
 // Timezone-correct day-bucket + reset math for free voting.
-//
 // The protected free-vote.service.ts computes its daily bucket in UTC
 // (getVoteDateUTC), which rolls the "day" at 00:00 UTC and therefore resets
 // free votes at the wrong wall-clock time for any non-UTC contest (defect
 // D-001 → FV-003, EC-001, EC-002). The voting-bridge computes the day bucket
 // HERE, in the contest's configured timezone, and passes it into the atomic
 // claim RPC so both the cap check and the reset boundary are correct.
-//
 // Uses the Intl timezone database, so DST transitions are handled correctly.
 
 /** Local calendar date ('YYYY-MM-DD') for `at` in `timeZone`. Falls back to UTC

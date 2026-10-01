@@ -1,11 +1,9 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for merchant KYB onboarding (Phase 8): the owner
 // save→document→submit flow (with validation), the admin decision driving the KYB
 // state machine + go-live, and the needs_more_info bounce. Skipped unless
 // TEST_DATABASE_URL is set. Requires the restaurant + KYB migrations.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

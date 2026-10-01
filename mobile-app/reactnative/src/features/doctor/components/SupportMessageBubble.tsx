@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Paperclip } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import type { SupportMessage } from '@/types/doctor.batch7';
 
 interface Props {
@@ -12,7 +12,6 @@ interface Props {
 }
 
 // New component: a support-thread bubble. The Phase 1 MessageBubble is typed to
-// the doctor/patient ChatMessage union; the support thread adds `agent` and a
 // centered `system` notice, so a dedicated bubble that understands the
 // SupportMessageAuthor union is justified (reuses the same bubble layout tokens).
 export default function SupportMessageBubble({ message }: Props) {

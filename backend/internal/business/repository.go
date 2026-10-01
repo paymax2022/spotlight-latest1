@@ -8,8 +8,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // ErrNotFound is returned when a business profile does not exist.
@@ -20,11 +21,6 @@ var ErrNotFound = errors.New("business: not found")
 type Repository struct{ db *pgxpool.Pool }
 
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
-
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
 
 const profileCols = `
 	id, user_id, entity_type, mode, COALESCE(legal_name,''), COALESCE(proposed_name,''),
@@ -69,7 +65,7 @@ func (r *Repository) InsertProfile(ctx context.Context, userID string, entityTyp
 	var id string
 	err := r.db.QueryRow(ctx, q, userID, string(entityType), string(mode), proposedName, legalName, lineOfBusiness, string(status), raw).Scan(&id)
 	if err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return "", ErrDuplicate
 		}
 		return "", err
@@ -173,7 +169,7 @@ func (r *Repository) transition(ctx context.Context, id string, to Status, from 
 	}
 	args = append(args, id)
 	if _, err := tx.Exec(ctx, `UPDATE business_profiles SET `+setSQL+` WHERE id = $`+strconv.Itoa(i), args...); err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return ErrDuplicate
 		}
 		return err
@@ -229,8 +225,6 @@ func (r *Repository) updateFields(ctx context.Context, id, actor, event string, 
 	return tx.Commit(ctx)
 }
 
-// ── Proprietors ───────────────────────────────────────────────────────────────
-
 func (r *Repository) InsertProprietors(ctx context.Context, businessID string, props []Proprietor) error {
 	if len(props) == 0 {
 		return nil
@@ -272,8 +266,6 @@ func (r *Repository) ListProprietors(ctx context.Context, businessID string) ([]
 	return out, rows.Err()
 }
 
-// ── Events (append-only) ──────────────────────────────────────────────────────
-
 func (r *Repository) insertEvent(ctx context.Context, businessID, event, from, to, actor string, detail map[string]any) error {
 	if detail == nil {
 		detail = map[string]any{}
@@ -297,8 +289,6 @@ func insertEventTx(ctx context.Context, tx pgx.Tx, businessID, event, from, to, 
 	_, err := tx.Exec(ctx, q, businessID, event, from, to, actor, raw)
 	return err
 }
-
-// ── Admin queries ─────────────────────────────────────────────────────────────
 
 func (r *Repository) AdminList(ctx context.Context, status, mode string, limit int) ([]BusinessProfile, error) {
 	q := `SELECT ` + profileCols + ` FROM business_profiles WHERE 1=1`

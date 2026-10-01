@@ -4,7 +4,6 @@
 // money is collected directly by Paystack, verified server-side, and posted
 // DR provider-clearing / CR settlement (no wallet leg), not via a wallet
 // debit.
-//
 // Structurally the simplest of the three Paystack-checkout ports (see
 // restaurant/paystackcheckout for the fully-commented reference this
 // mirrors, and transport/paystackcheckout for the second port): a dues
@@ -64,6 +63,6 @@ var (
 	// payment stuck oscillating between "processing" and "unavailable" on
 	// every self-heal poll that happened to race a momentary verify failure.
 	ErrVerifyUnavailable = errors.New("verify_unavailable")
-	ErrAmountMismatch      = errors.New("amount_mismatch")
-	ErrUnknownReference    = errors.New("unknown_reference")
+	ErrAmountMismatch    = errors.New("amount_mismatch")
+	ErrUnknownReference  = errors.New("unknown_reference")
 )

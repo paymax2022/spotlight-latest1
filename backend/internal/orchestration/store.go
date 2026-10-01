@@ -73,8 +73,6 @@ type Store interface {
 	ApplyCollection(ctx context.Context, c *CollectionCredit) (applied bool, err error)
 }
 
-// --- in-memory implementation (dev/test; production uses the pgx store) ---
-
 type memStore struct {
 	mu          sync.Mutex
 	balances    map[string]map[string]int64 // customer -> currency -> minor
@@ -302,8 +300,6 @@ func (m *memStore) Transaction(ctx context.Context, customer, id string) (*TxVie
 	}
 	return nil, false, nil
 }
-
-// --- view mappers (shared by mem + sql stores) ---
 
 func conversionView(c *Conversion) TxView {
 	return TxView{

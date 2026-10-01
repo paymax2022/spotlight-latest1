@@ -72,7 +72,7 @@ describe('Voting CSV export & revenue routes — RBAC gate runs before any read 
     const res = await exportGet(
       request('/api/admin/voting/contest-1/export?type=leaderboard', {
         'x-admin-key': 'test-admin-key',
-        'x-admin-role': 'judge', // judge has no reports:export permission
+        'x-admin-role': 'judge',
       }),
       ctx(),
     );
@@ -111,9 +111,7 @@ describe('Voting CSV export & revenue routes — RBAC gate runs before any read 
   });
 
   it('revenue: an authorized finance_admin can read revenue figures', async () => {
-    // The revenue route awaits chains that terminate on `.eq(...)` directly
     // (no maybeSingle/range) — build a minimal thenable builder where every
-    // chain method (including a second/third `.eq()`) stays chainable AND
     // resolves to an empty result when finally awaited.
     function builder(): any {
       const b: any = { then: (res: any) => Promise.resolve({ data: [], error: null }).then(res) };

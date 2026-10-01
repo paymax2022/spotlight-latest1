@@ -15,7 +15,6 @@ import type {
 
 const delay = (ms = 650) => new Promise<void>((r) => setTimeout(r, ms));
 
-// ── Mock PIN store — persisted on web so it survives a page refresh ──────────
 // Dev-only: the real backend owns the PIN. On web we stash it in localStorage
 // (guarded) so the app-wide transaction-PIN gate doesn't re-prompt after every
 // reload; on native (no localStorage) it stays in-memory for the session.

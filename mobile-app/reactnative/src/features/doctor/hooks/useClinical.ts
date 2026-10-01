@@ -1,4 +1,3 @@
-// ── Doctor — prescriptions, lab orders/results & HMO eligibility hooks ────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {

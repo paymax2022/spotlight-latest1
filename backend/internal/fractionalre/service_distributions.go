@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/ledger"
 )
 
@@ -56,7 +57,7 @@ func (s *Service) ScheduleDistribution(ctx context.Context, makerID, idempotency
 	dist := &Distribution{
 		AssetID:         req.AssetID,
 		OfferingID:      req.OfferingID,
-		PeriodLabel:     ptrIfNotEmpty(req.PeriodLabel),
+		PeriodLabel:     ptr.OrNil(req.PeriodLabel),
 		GrossKobo:       req.GrossKobo,
 		FeeKobo:         req.FeeKobo,
 		WithholdingKobo: req.WithholdingKobo,
@@ -105,7 +106,7 @@ func (s *Service) ScheduleDistribution(ctx context.Context, makerID, idempotency
 		}
 	}
 
-	_ = s.audit.log(ctx, makerID, "distribution.schedule", "distribution", dist.ID, derefOr(dist.PeriodLabel, ""),
+	_ = s.audit.log(ctx, makerID, "distribution.schedule", "distribution", dist.ID, ptr.Deref(dist.PeriodLabel, ""),
 		nil, map[string]any{"gross_kobo": req.GrossKobo, "net_kobo": netPool, "holders": len(caps)})
 	return dist, nil
 }

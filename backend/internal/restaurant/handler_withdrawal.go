@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 )
@@ -27,7 +28,7 @@ func ownerErrStatusWithdraw(err error) int {
 }
 
 func (h *Handler) AddBankAccount(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req AddBankAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -42,7 +43,7 @@ func (h *Handler) AddBankAccount(c *gin.Context) {
 }
 
 func (h *Handler) ListBankAccounts(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	list, err := h.svc.ListBankAccounts(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -52,7 +53,7 @@ func (h *Handler) ListBankAccounts(c *gin.Context) {
 }
 
 func (h *Handler) SetDefaultBankAccount(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if err := h.svc.SetDefaultBankAccount(c.Request.Context(), userID, c.Param("accountId")); err != nil {
 		c.JSON(ownerErrStatusWithdraw(err), gin.H{"error": err.Error()})
 		return
@@ -61,7 +62,7 @@ func (h *Handler) SetDefaultBankAccount(c *gin.Context) {
 }
 
 func (h *Handler) DeleteBankAccount(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if err := h.svc.DeleteBankAccount(c.Request.Context(), userID, c.Param("accountId")); err != nil {
 		c.JSON(ownerErrStatusWithdraw(err), gin.H{"error": err.Error()})
 		return
@@ -72,7 +73,7 @@ func (h *Handler) DeleteBankAccount(c *gin.Context) {
 // VerifyBankAccount performs real-time account verification via the disbursement provider
 // (Paystack, etc.). Returns the verified account details.
 func (h *Handler) VerifyBankAccount(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req AddBankAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -107,8 +108,8 @@ func withdrawalErrStatus(err error) int {
 }
 
 func (h *Handler) RequestWithdrawal(c *gin.Context) {
-	userID := c.GetString("user_id")
-	idem := c.GetHeader("Idempotency-Key")
+	userID := ginutil.UserID(c)
+	idem := ginutil.IdempotencyKey(c)
 	if idem == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key is required"})
 		return
@@ -139,7 +140,7 @@ func (h *Handler) RequestWithdrawal(c *gin.Context) {
 }
 
 func (h *Handler) ListWithdrawals(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	list, err := h.svc.ListWithdrawals(c.Request.Context(), userID, 50)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -149,7 +150,7 @@ func (h *Handler) ListWithdrawals(c *gin.Context) {
 }
 
 func (h *Handler) GetWithdrawal(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	w, err := h.svc.GetWithdrawal(c.Request.Context(), userID, c.Param("withdrawalId"))
 	if err != nil {
 		c.JSON(withdrawalErrStatus(err), gin.H{"error": err.Error()})
@@ -185,7 +186,7 @@ func (h *Handler) AdminSettleWithdrawal(c *gin.Context) {
 		ProviderReference string `json:"provider_reference"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	w, err := h.svc.MarkWithdrawalPaid(c.Request.Context(), c.Param("withdrawalId"), body.ProviderReference, c.GetHeader("Idempotency-Key"))
+	w, err := h.svc.MarkWithdrawalPaid(c.Request.Context(), c.Param("withdrawalId"), body.ProviderReference, ginutil.IdempotencyKey(c))
 	if err != nil {
 		c.JSON(withdrawalErrStatus(err), gin.H{"error": err.Error()})
 		return
@@ -198,7 +199,7 @@ func (h *Handler) AdminReverseWithdrawal(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	w, err := h.svc.MarkWithdrawalFailed(c.Request.Context(), c.Param("withdrawalId"), body.Reason, c.GetHeader("Idempotency-Key"))
+	w, err := h.svc.MarkWithdrawalFailed(c.Request.Context(), c.Param("withdrawalId"), body.Reason, ginutil.IdempotencyKey(c))
 	if err != nil {
 		c.JSON(withdrawalErrStatus(err), gin.H{"error": err.Error()})
 		return

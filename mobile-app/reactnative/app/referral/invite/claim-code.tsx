@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { CircleCheck, CircleAlert, House } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import StateView from '@/components/StateView';
@@ -15,7 +15,6 @@ import { useAttribution, useClaimCode } from '@/features/referral/foundation/hoo
 import type { ClaimCodeResult } from '@/features/referral/foundation/types';
 
 // M-INV-10 — Claim a referral code (late). Enter a forgotten code within the
-// grace window; on a valid claim attribution reassigns from the house to the
 // real referrer (§7A.3). After the window closes, attribution is locked.
 export default function ClaimCode() {
   const { data, isLoading, isError, refetch } = useAttribution();

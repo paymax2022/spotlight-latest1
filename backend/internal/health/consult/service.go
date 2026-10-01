@@ -2,12 +2,15 @@ package healthconsult
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/go-common/ginutil"
+	"strconv"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -42,20 +45,16 @@ const (
 	StateCompleted       State = "COMPLETED"
 )
 
-var allowedTransitions = map[State]map[State]bool{
-	StateScheduled:       {StateIntakePending: true, StateInProgress: true},
-	StateIntakePending:   {StateReadyForConsult: true},
-	StateReadyForConsult: {StateInProgress: true},
-	StateInProgress:      {StateCompleted: true},
-	StateCompleted:       {},
+var allowedTransitions = fsm.Table[State]{
+	StateScheduled:       fsm.Set(StateIntakePending, StateInProgress),
+	StateIntakePending:   fsm.Set(StateReadyForConsult),
+	StateReadyForConsult: fsm.Set(StateInProgress),
+	StateInProgress:      fsm.Set(StateCompleted),
+	StateCompleted:       fsm.Set[State](),
 }
 
 func canTransition(from, to State) bool {
-	next, ok := allowedTransitions[from]
-	if !ok {
-		return false
-	}
-	return next[to]
+	return allowedTransitions.Can(from, to)
 }
 
 type Consult struct {
@@ -143,12 +142,10 @@ func (s *Service) IssueLobbyToken(ctx context.Context, userID, consultID string)
 	}
 	exp := time.Now().Add(15 * time.Minute).Unix()
 	room := "consult-" + consultID
-	mac := hmac.New(sha256.New, s.avKey)
-	mac.Write([]byte(fmt.Sprintf("%s|%s|%s|%d", consultID, room, userID, exp)))
 	return &AVToken{
 		ConsultID: consultID,
 		Room:      room,
-		Token:     hex.EncodeToString(mac.Sum(nil)),
+		Token:     cryptox.HMACSHA256Hex(string(s.avKey), consultID, room, userID, strconv.FormatInt(exp, 10)),
 		ExpiresAt: exp,
 		Recording: c.RecordingEnabled, // false by default
 	}, nil
@@ -270,8 +267,6 @@ func (s *Service) LoadByAppointment(ctx context.Context, appointmentID string) (
 	return &c, providerOwner, nil
 }
 
-// --- internals ---
-
 func (s *Service) transition(ctx context.Context, actorID, consultID string, to State, side func(pgx.Tx) error) (*Consult, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -351,4 +346,73 @@ func (s *Service) audited(actor, target, action, resourceID string, oldV, newV m
 		return
 	}
 	s.audit.LogAction(actor, target, action, "health", "health_consult", resourceID, oldV, newV, "", "", "info")
+}
+
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// AddNote — Notes — POST /consults/:id/notes  (in-call clinical note while in progress)
+func (h *Handler) AddNote(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var n ClinicalNote
+	if err := c.ShouldBindJSON(&n); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	out, err := h.svc.AddNote(c.Request.Context(), id, c.Param("id"), n)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"success": true, "note": out})
+}
+
+// Lobby — GET /consults/:id/lobby  (AV join token; provider/patient only)
+func (h *Handler) Lobby(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	tok, err := h.svc.IssueLobbyToken(c.Request.Context(), id, c.Param("id"))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "av": tok})
+}
+
+// Start — POST /consults/:id/start
+func (h *Handler) Start(c *gin.Context) {
+	out, err := h.svc.Start(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "consult": out})
+}
+
+// Complete — POST /consults/:id/complete  (persists clinical note)
+func (h *Handler) Complete(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var n ClinicalNote
+	if err := c.ShouldBindJSON(&n); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	cs, note, err := h.svc.Complete(c.Request.Context(), id, c.Param("id"), n)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "consult": cs, "note": note})
 }

@@ -1,10 +1,8 @@
 package healthlab
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression coverage for two defects found live during Laboratory
 // (Module 16) UAT, both in Handover (chain-of-custody phlebotomist → courier
 // handoff, HL-6):
-//
 //   - allowedSampleTransitions had no SampleCollected -> SampleHandedOver
 //     edge, even though Handover's own switch treats SampleCollected as a
 //     valid starting state. Every handover call failed with "illegal sample
@@ -14,9 +12,7 @@ package healthlab
 //     custody-mutating action in this package (Collect, Accession): any
 //     authenticated caller, including the order's own patient, could
 //     reassign chain-of-custody to an arbitrary custodian.
-//
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

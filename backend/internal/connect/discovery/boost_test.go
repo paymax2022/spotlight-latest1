@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-// ── Money-path test doubles ───────────────────────────────────────────────────
-
 // fakeWallet records every debit and returns a preset error. Crucially it also
 // enforces idempotency the way the real ledger does: a repeated idempotency key is
 // a no-op (does NOT double-charge). This lets us prove the boost charge is
@@ -107,8 +105,6 @@ func newBoostServiceWithFakes(w *fakeWallet, tg *fakeTiers) (*BoostService, *fak
 	svc := NewBoostService(store, w, &fakeRevenue{id: "paymax-revenue-1"}, tg, au, nil, &configReader{db: nil})
 	return svc, store, au
 }
-
-// ── Tests ──────────────────────────────────────────────────────────────────────
 
 func TestBoost_RequiresIdempotencyKey(t *testing.T) {
 	w := newFakeWallet()

@@ -1,4 +1,3 @@
-// ── Telemedicine — Domain Types ──────────────────────────────────────────────
 // Phase A (mobile UI/UX). Money amounts are integers in minor units (kobo).
 
 export type ConsultType = 'video' | 'audio' | 'chat';
@@ -27,7 +26,7 @@ export interface Specialty {
  */
 export interface BookingQuote {
   consultFeeKobo:  number;
-  platformFeeBp:   number;   // basis points, e.g. 500 = 5%
+  platformFeeBp:   number;
   platformFeeKobo: number;
   totalKobo:       number;   // consultFeeKobo + platformFeeKobo
 }

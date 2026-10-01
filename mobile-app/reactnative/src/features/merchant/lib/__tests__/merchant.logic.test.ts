@@ -20,7 +20,6 @@ const step: FormStep = {
   ],
 };
 
-// ── Validation ────────────────────────────────────────────────────────────────
 test('required field missing fails', () => {
   const r = validateStep(step, { modes: ['video'] });
   assert.equal(r.ok, false);
@@ -53,7 +52,6 @@ test('conditional field hidden -> not required; shown -> required', () => {
   assert.ok(r.errors.clinic_address);
 });
 
-// ── State machine (PRD §7.2) ──────────────────────────────────────────────────
 test('legal happy path transitions', () => {
   assert.equal(applyEvent('DRAFT', 'submit'), 'SUBMITTED');
   assert.equal(applyEvent('SUBMITTED', 'pick_up'), 'UNDER_REVIEW');

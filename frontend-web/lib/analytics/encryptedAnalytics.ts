@@ -130,7 +130,6 @@ function sanitizeEventData(data: Record<string, any>): Record<string, any> {
   const sanitized: Record<string, any> = {};
 
   for (const [key, value] of Object.entries(data)) {
-    // Check if key matches sensitive patterns
     const isSensitive = SENSITIVE_FIELD_PATTERNS.some((pattern) =>
       pattern.test(key)
     );
@@ -224,7 +223,6 @@ export class EncryptedAnalyticsService {
       return false;
     }
 
-    // Check marketing consent for marketing events
     if (
       MARKETING_EVENTS.has(event.eventType) &&
       !this.consentPreferences.marketing
@@ -232,7 +230,6 @@ export class EncryptedAnalyticsService {
       return false;
     }
 
-    // Check analytics consent
     if (
       !this.consentPreferences.analytics &&
       event.consentLevel !== 'necessary'
@@ -313,7 +310,6 @@ export class EncryptedAnalyticsService {
       },
     };
 
-    // Check consent before collecting
     if (!this.shouldCollectEvent(event)) {
       console.debug(`Event ${eventType} skipped (no consent)`);
       return;
@@ -361,7 +357,6 @@ export class EncryptedAnalyticsService {
         });
       }
 
-      // Send to server
       const response = await fetch('/api/analytics/events', {
         method: 'POST',
         headers: {

@@ -4,17 +4,16 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // handler_ops.go — Wave 4 (operational) Gin handlers.
-//
 // One handler per service_ops.go method. Reuses the shared helpers from handler.go /
-// handler_account.go (h.userID, h.fail, h.idemKey, h.rawBody) and mirrors the established
+// handler_account.go (h.userID, h.fail, h.rawBody) and mirrors the established
 // style: reads return 200 with the projection; creates return 201; state transitions /
 // upserts require an Idempotency-Key (the service enforces it) and return 200/201.
 // Everything is scoped to the authed doctor.
-
-// ══ CHAT ════════════════════════════════════════════════════════════════════
 
 func (h *Handler) ListChatThreads(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -52,15 +51,13 @@ func (h *Handler) SendChatMessage(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.SendChatMessage(c.Request.Context(), uid, c.Param("threadId"), h.idemKey(c), req)
+	res, err := h.svc.SendChatMessage(c.Request.Context(), uid, c.Param("threadId"), ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, res)
 }
-
-// ══ CALL SESSIONS ═══════════════════════════════════════════════════════════
 
 func (h *Handler) GetCallSession(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -84,7 +81,7 @@ func (h *Handler) StartCallSession(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.StartCallSession(c.Request.Context(), uid, c.Param("appointmentId"), h.idemKey(c), raw)
+	res, err := h.svc.StartCallSession(c.Request.Context(), uid, c.Param("appointmentId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -117,15 +114,13 @@ func (h *Handler) EndCallSession(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.EndCallSession(c.Request.Context(), uid, c.Param("appointmentId"), h.idemKey(c), raw)
+	res, err := h.svc.EndCallSession(c.Request.Context(), uid, c.Param("appointmentId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
 }
-
-// ══ SCHEDULE MANAGEMENT (Section E) ═════════════════════════════════════════
 
 func (h *Handler) ListBlockedDates(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -149,7 +144,7 @@ func (h *Handler) CreateBlockedDate(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.CreateBlockedDate(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.CreateBlockedDate(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -179,7 +174,7 @@ func (h *Handler) SetVacation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SetVacation(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.SetVacation(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -209,7 +204,7 @@ func (h *Handler) SaveRecurringRule(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SaveRecurringRule(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.SaveRecurringRule(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -239,7 +234,7 @@ func (h *Handler) SaveReminderSettings(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SaveReminderSettings(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.SaveReminderSettings(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -256,15 +251,13 @@ func (h *Handler) SetTimezone(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SetTimezone(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.SetTimezone(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
 }
-
-// ══ APPOINTMENT QUEUE (Section F) ═══════════════════════════════════════════
 
 func (h *Handler) ListConsultQueue(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -314,7 +307,7 @@ func (h *Handler) AcceptAppointment(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.AcceptAppointment(c.Request.Context(), uid, c.Param("appointmentId"), h.idemKey(c), raw)
+	res, err := h.svc.AcceptAppointment(c.Request.Context(), uid, c.Param("appointmentId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -331,7 +324,7 @@ func (h *Handler) RejectAppointment(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.RejectAppointment(c.Request.Context(), uid, c.Param("appointmentId"), h.idemKey(c), raw)
+	res, err := h.svc.RejectAppointment(c.Request.Context(), uid, c.Param("appointmentId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -348,15 +341,13 @@ func (h *Handler) RescheduleAppointment(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.RescheduleAppointment(c.Request.Context(), uid, c.Param("appointmentId"), h.idemKey(c), raw)
+	res, err := h.svc.RescheduleAppointment(c.Request.Context(), uid, c.Param("appointmentId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
 }
-
-// ══ HMO CLAIMS (submit / dispute) ═══════════════════════════════════════════
 
 func (h *Handler) SubmitHMOClaim(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -367,7 +358,7 @@ func (h *Handler) SubmitHMOClaim(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SubmitHMOClaim(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.SubmitHMOClaim(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -387,15 +378,13 @@ func (h *Handler) DisputeHMOClaim(c *gin.Context) {
 	// NOTE: the gin route param is :id (must match the existing GET /hmo/claims/:id —
 	// gin forbids two different param names at the same path position). The OpenAPI
 	// spells this {claimId}; the value is identical.
-	res, err := h.svc.DisputeHMOClaim(c.Request.Context(), uid, c.Param("id"), h.idemKey(c), raw)
+	res, err := h.svc.DisputeHMOClaim(c.Request.Context(), uid, c.Param("id"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
 }
-
-// ══ MULTI-CLINIC PORTFOLIO ══════════════════════════════════════════════════
 
 func (h *Handler) GetClinicPortfolio(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -419,7 +408,7 @@ func (h *Handler) SetActiveClinic(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SetActiveClinic(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.SetActiveClinic(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -436,7 +425,7 @@ func (h *Handler) UpdateClinicSchedule(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.UpdateClinicSchedule(c.Request.Context(), uid, c.Param("clinicId"), h.idemKey(c), raw)
+	res, err := h.svc.UpdateClinicSchedule(c.Request.Context(), uid, c.Param("clinicId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return

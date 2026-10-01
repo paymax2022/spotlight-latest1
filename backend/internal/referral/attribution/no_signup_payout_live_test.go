@@ -8,7 +8,6 @@ package attribution_test
 // EVERY signup, human-referrer or house; that accrual was removed from
 // attributeToReferrer/attributeToHouseAccount and this pins its absence so it
 // can never silently come back.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset.
 
 import (

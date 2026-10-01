@@ -3,17 +3,17 @@ import { View, Text, ScrollView, StyleSheet, Share, Platform, Linking } from 're
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { FileText, Sparkles, History, CheckCheck, Lock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useDocument, useAcknowledgeDocument } from '@/features/association/hooks/useEngagement';
-import { formatDate } from '@/features/association/utils/associationFormatters';
-import { DOC_CATEGORY_LABEL } from '@/features/association/constants/engagement.constants';
+import { useDocument, useAcknowledgeDocument } from '@/features/association/hooks';
+import { formatDate } from '@/features/association/utils';
+import { DOC_CATEGORY_LABEL } from '@/features/association/constants';
 import { getDocumentDownloadUrl } from '@/features/association/api/authoring.api';
 
 export default function DocumentDetailScreen() {
@@ -81,7 +81,6 @@ export default function DocumentDetailScreen() {
 
   const onShare = async () => {
     // DELIBERATELY SHARES NO LINK. The download URL is a signed, bearer
-    // capability: anyone holding it can read the document for the next hour,
     // including people outside the organisation and past any admins-only flag.
     // Share what the document IS so a colleague can find it in their own vault,
     // where their own access is checked.

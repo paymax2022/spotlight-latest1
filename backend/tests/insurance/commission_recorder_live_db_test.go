@@ -1,6 +1,5 @@
 package insurance_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression test for the insurance commission-workbench gap found
 // during the 2026-09-17 UAT pass (INSURANCE-INT-011 / admin commission
 // route). A real premium bind (INSURANCE-INT-001, verified live against the
@@ -11,7 +10,6 @@ package insurance_test
 // actually read. Every confirm/reverse call 404'd for every real policy ever
 // bound, and the commission list showed a false zero while real commission
 // money had moved.
-//
 // This pins the fix: RegisterInsurance now wires policy.Deps.Commission to a
 // commissionRecorder adapter over reconciliation.Repository, and
 // policy/service.go calls it right after the ledger commission post. Since
@@ -21,7 +19,6 @@ package insurance_test
 // asserts the workbench read paths (GetCommissionByPolicy, ListCommission)
 // that were previously guaranteed to 404 / come back empty now find the row.
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

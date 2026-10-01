@@ -28,7 +28,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
     }
 
-    // ── the emailed code ──
     if (email && code) {
       const go = await callGo('/api/auth/reset-password', {
         email: String(email).trim().toLowerCase(),
@@ -53,7 +52,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // ── the emailed link ──
     // The client sends the recovery access token as the Bearer header after
     // following the link (deep-linked back into the app on mobile).
     const token = extractBearerToken(request);

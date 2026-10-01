@@ -7,7 +7,7 @@ import {
   CablePackage,
   SmartCardValidation,
 } from '@/types/billing';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 type ApiRecord = Record<string, unknown>;
 

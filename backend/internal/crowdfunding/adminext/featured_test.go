@@ -16,8 +16,6 @@ import (
 
 func boolPtr(b bool) *bool { return &b }
 
-// ─── ACTIVE-only rule ────────────────────────────────────────────────────────
-
 // TestGuardFlagPromotion_ActiveOnly is the core rule: a campaign may only be
 // PROMOTED onto a public discovery rail while it is ACTIVE.
 func TestGuardFlagPromotion_ActiveOnly(t *testing.T) {
@@ -91,8 +89,6 @@ func TestGuardFlagPromotion_EmptyBodyIsNotAPromotion(t *testing.T) {
 		t.Fatalf("empty body must not trip the ACTIVE gate, got %v", err)
 	}
 }
-
-// ─── Partial-update semantics ────────────────────────────────────────────────
 
 // TestFlagAssignments_OnlySuppliedKeys is the partial-update contract: an ABSENT
 // key (nil pointer) produces no write at all. If this ever regressed to plain
@@ -189,8 +185,6 @@ func TestSetCampaignFlags_BlankIDRejected(t *testing.T) {
 	}
 }
 
-// ─── Audit trail ─────────────────────────────────────────────────────────────
-
 // TestAuditFlagsTarget records exactly which flags moved and to what, so the
 // cf_audit_logs row is self-explanatory without re-reading the campaign.
 func TestAuditFlagsTarget(t *testing.T) {
@@ -203,8 +197,6 @@ func TestAuditFlagsTarget(t *testing.T) {
 		t.Fatalf("audit target = %q", got)
 	}
 }
-
-// ─── Discovery coupling ──────────────────────────────────────────────────────
 
 // TestFlagColumnsMatchDiscoveryFilters pins the column names this module writes to
 // the ones public discovery reads (internal/crowdfunding/query.go filters on

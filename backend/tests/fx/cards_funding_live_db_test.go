@@ -1,9 +1,7 @@
 package fx_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for the FX virtual-card FUNDING money path
 // (orchestration.sqlCardStore.FundCard / TerminateCard).
-//
 // Proves, against a real database, that funding a card:
 //   - debits the customer's orch_balances wallet by exactly the amount,
 //   - credits orch_fx_cards.balance_minor by exactly the amount,
@@ -13,17 +11,13 @@ package fx_test
 //     double-credit, or post extra ledger legs (dedupe via orch_fx_card_txns), and
 //   - FAILS CLOSED: a fund exceeding the wallet returns ErrInsufficientCardBalance
 //     and leaves every balance untouched.
-//
 // The issuer is nil here (no provider calls) — this isolates the ledger money path.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (reuses liveDBPool from
 // convert_live_db_test.go), so `go test ./...` without a DB stays green.
-//
 // Bring-up: apply migrations incl. 20260621000000_fx_orchestration.sql and
 // 20261003000000_fx_cards_collections.sql, then:
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run CardFunding -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -112,7 +106,6 @@ func TestCardFunding_LiveDB(t *testing.T) {
 		t.Fatalf("create card: %v", err)
 	}
 
-	// ── Fund once ──────────────────────────────────────────────────────────────
 	if _, err := store.FundCard(ctx, cust, card.ID, fund, "idem-fund-1"); err != nil {
 		t.Fatalf("fund: %v", err)
 	}
@@ -133,7 +126,6 @@ func TestCardFunding_LiveDB(t *testing.T) {
 		t.Fatalf("expected exactly 2 ledger legs after one fund, got %d", legs)
 	}
 
-	// ── Replay same idempotency key: must be a no-op ─────────────────────────────
 	if _, err := store.FundCard(ctx, cust, card.ID, fund, "idem-fund-1"); err != nil {
 		t.Fatalf("replay fund: %v", err)
 	}
@@ -150,7 +142,6 @@ func TestCardFunding_LiveDB(t *testing.T) {
 		t.Fatalf("replay must not create a second funding txn, got %d", n)
 	}
 
-	// ── Fail closed: fund beyond wallet balance ─────────────────────────────────
 	_, err = store.FundCard(ctx, cust, card.ID, opening*10, "idem-fund-2")
 	if !errors.Is(err, orchestration.ErrInsufficientCardBalance) {
 		t.Fatalf("over-fund: want ErrInsufficientCardBalance, got %v", err)
@@ -159,7 +150,6 @@ func TestCardFunding_LiveDB(t *testing.T) {
 		t.Fatalf("failed fund must not move wallet: got %d want %d", got, opening-fund)
 	}
 
-	// ── Terminate refunds the residual card balance to the wallet ───────────────
 	if err := store.TerminateCard(ctx, cust, card.ID); err != nil {
 		t.Fatalf("terminate: %v", err)
 	}

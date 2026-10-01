@@ -1,4 +1,3 @@
-// ── Spotlight Academy — EdTech School-Fees module · React Query hooks (v5) ───
 // Declarative data hooks the PA-/SA- screens reuse. Mirrors the sibling academy
 // hooks module. Money mutations invalidate the affected reads so the derived
 // invoice balance (SF-2) always reflects the latest settled payment events.
@@ -14,9 +13,7 @@ import type { PayMethod, LeaderboardScope, AutoSaveRule } from './types';
 
 const KEY = 'academy-fees';
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PARENT
-// ═══════════════════════════════════════════════════════════════════════════════
 export function useFeesChildren() {
   return useQuery({ queryKey: [KEY, 'children'], queryFn: Api.getChildren, staleTime: 30_000 });
 }
@@ -93,7 +90,6 @@ export function useReceipts() {
   return useQuery({ queryKey: [KEY, 'receipts'], queryFn: Api.getReceipts, staleTime: 15_000 });
 }
 
-// ── Fees Vault + auto-save ────────────────────────────────────────────────────
 export function useVaults() {
   return useQuery({ queryKey: [KEY, 'vaults'], queryFn: Api.getVaults, staleTime: 30_000 });
 }
@@ -123,7 +119,6 @@ export function useUpdateAutoSave() {
   });
 }
 
-// ── Hardship ──────────────────────────────────────────────────────────────────
 export function useHardshipRequests() {
   return useQuery({ queryKey: [KEY, 'hardship'], queryFn: Api.getHardshipRequests, staleTime: 30_000 });
 }
@@ -136,7 +131,6 @@ export function useSubmitHardship() {
   });
 }
 
-// ── Sponsor-a-student ─────────────────────────────────────────────────────────
 export function useSponsorships() {
   return useQuery({ queryKey: [KEY, 'sponsorships'], queryFn: Api.getSponsorships, staleTime: 60_000 });
 }
@@ -149,14 +143,11 @@ export function usePledgeSponsorship() {
   });
 }
 
-// ── School directory ──────────────────────────────────────────────────────────
 export function useDirectory(query?: string) {
   return useQuery({ queryKey: [KEY, 'directory', query ?? 'all'], queryFn: () => Api.getDirectory(query), staleTime: 60_000 });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // STUDENT — competition
-// ═══════════════════════════════════════════════════════════════════════════════
 export function useCompetitionProfile() {
   return useQuery({ queryKey: [KEY, 'comp', 'me'], queryFn: Api.getCompetitionProfile, staleTime: 30_000 });
 }

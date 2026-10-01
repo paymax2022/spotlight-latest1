@@ -1,16 +1,11 @@
-// ─────────────────────────────────────────────────────────────────────────────
 // Registration field catalog.
-//
 // This is the curated palette of inputs an admin can map onto a contest. Every
 // entry has a known, validated key so downstream validation, admin review and
 // analytics keep working. Admins toggle entries on/off and mark them required
-// (see the admin "Form builder"); the contestant then sees EXACTLY the enabled
 // entries (plus any custom questions and the fixed platform steps below).
-//
 // Only the `personal_information` and `category_specific` steps are configurable.
 // Account login, contest selection, and the legal/consent + submit steps are
 // fixed by the platform and defined here as `buildFixed*Step`.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NIGERIA_STATES, TALENT_SKILL_OPTIONS, MEDICAL_CONDITION_OPTIONS, ALLERGY_OPTIONS, HEALTH_STATUS_OPTIONS } from './reference-data';
 import type {
   ConfigurableStepKey,
@@ -38,7 +33,6 @@ export interface CatalogField {
 
 // Ordered so the admin UI and the wizard render groups in a sensible sequence.
 export const FIELD_CATALOG: CatalogField[] = [
-  // ── personal_information ──────────────────────────────────────────────────
   { key: 'personal.firstName', label: 'First name', type: 'text', step: 'personal_information', group: 'Personal details', defaultRequired: true },
   { key: 'personal.middleName', label: 'Middle name', type: 'text', step: 'personal_information', group: 'Personal details' },
   { key: 'personal.lastName', label: 'Last name', type: 'text', step: 'personal_information', group: 'Personal details', defaultRequired: true },
@@ -79,7 +73,6 @@ export const FIELD_CATALOG: CatalogField[] = [
   { key: 'guardian.digitalSignature', label: 'Guardian digital signature (typed name)', type: 'text', step: 'personal_information', group: 'Guardian consent (minors)', minorOnly: true, defaultRequired: true },
   { key: 'guardian.consentGranted', label: 'Guardian authorizes participation', type: 'checkbox', step: 'personal_information', group: 'Guardian consent (minors)', minorOnly: true, defaultRequired: true },
 
-  // ── category_specific ─────────────────────────────────────────────────────
   { key: 'identity.idType', label: 'Government-issued ID type', type: 'select', step: 'category_specific', group: 'Identity', options: ['National ID', 'International passport', 'Voter card', 'Driver’s license', 'School ID', 'Birth certificate', 'Other approved ID'], defaultRequired: true },
   { key: 'identity.idNumber', label: 'ID number', type: 'text', step: 'category_specific', group: 'Identity' },
   { key: 'identity.idUpload', label: 'ID upload', type: 'file', step: 'category_specific', group: 'Identity', accept: '.jpg,.jpeg,.png,.pdf', defaultRequired: true },
@@ -274,9 +267,7 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
   ],
   // SEC-010: publicProfile.publicVotingConsent was missing here (the only
   // category preset missing it) — fixed. This preset seeds a NEW
-  // schema-driven contest an admin creates with category=film_production via
   // the admin console (RegistrationContestManager -> from-schema.ts render
-  // path); it is UNRELATED to the hand-tailored slug 'film-academy' template
   // (forms/film-academy.ts), which deliberately has no public-voting step at
   // all ("Does NOT support public voting" per that file's own header comment)
   // and is left untouched by this batch — adding a public-voting consent
@@ -312,8 +303,6 @@ export function getCategoryFieldPreset(category: ContestCategory | string): stri
   return CATEGORY_FIELD_PRESETS[String(category)] || GENERAL_PRESET;
 }
 
-// ── Fixed platform steps (not admin-configurable) ────────────────────────────
-
 const fixedLegalFields: RegistrationField[] = [
   { key: 'legal.accuracyDeclaration', label: 'I confirm all information submitted is true, complete, and accurate', type: 'checkbox', required: true },
   { key: 'legal.termsConsent', label: 'I agree to official rules, terms, and eligibility requirements', type: 'checkbox', required: true },
@@ -337,8 +326,6 @@ export function buildFixedContestSelectionStep(): RegistrationStep {
 export function buildFixedReviewSubmitStep(): RegistrationStep {
   return { key: 'review_submit', title: 'Consent and Submit', description: 'Confirm legal declarations and submit your application.', fields: fixedLegalFields };
 }
-
-// ── Schema sanitisation (server-side, used by the admin contest API) ─────────
 
 const ALLOWED_CUSTOM_FIELD_TYPES: FieldType[] = [
   'text', 'textarea', 'email', 'tel', 'url', 'number', 'date', 'select', 'multi_select', 'checkbox', 'file',

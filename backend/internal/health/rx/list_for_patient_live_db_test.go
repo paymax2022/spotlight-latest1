@@ -7,7 +7,6 @@ package healthrx
 // service method the new route calls through the pharmacy RxLister seam
 // (see healthpharmacy.RxLister / internal/app/health_pharmacy_routes.go's
 // rxListerAdapter).
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (

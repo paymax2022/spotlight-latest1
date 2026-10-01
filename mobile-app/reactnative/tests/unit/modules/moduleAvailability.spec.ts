@@ -1,6 +1,4 @@
 // Pure-logic unit tests for "this module is not available here".
-// Run: npm run test:modules
-//
 // A feature flag gates ROUTE REGISTRATION server-side, so a disabled module 404s
 // every path under it. React Query's defaults then turn one absent module into a
 // request on every window focus — which is how a cached /property/context query

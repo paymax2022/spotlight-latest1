@@ -37,7 +37,6 @@ type Hub struct {
 // New creates a new Hub. originAllowed reports whether a browser-sent Origin
 // header is trusted; pass nil to allow every origin (only appropriate for a
 // hub no browser client ever reaches).
-//
 // nhooyr's default Origin check only accepts an Origin that is byte-identical
 // to the request's own Host — i.e. "the frontend page and this WS endpoint are
 // the exact same origin". That is never true here: the browser/RN-web client

@@ -203,10 +203,8 @@ export async function updateUserProfile(user: RequestUser, patch: Partial<Spotli
   const fullName = [patch.firstName, patch.lastName].filter(Boolean).join(' ').trim() || patch.displayName;
 
   // A PATCH must only carry the fields it was actually given.
-  //
   // This payload used to spell out every column with `patch.x || null`, which
   // broke updates twice over:
-  //
   //   1. full_name is NOT NULL. `PUT /api/me/profile {"phone":"…"}` carries no
   //      name, so full_name became null, the upsert failed 23502, and the
   //      fallback below quietly persisted only id/email/role — a 200 response
@@ -215,7 +213,6 @@ export async function updateUserProfile(user: RequestUser, patch: Partial<Spotli
   //   2. Had it succeeded it would have been destructive: sending only a phone
   //      also nulled first_name, city, address and everything else the caller
   //      never mentioned.
-  //
   // Omitting undefined keys fixes both — an absent field is left exactly as it
   // is, and a NOT NULL column is never handed a null it did not ask for.
   const optional: Record<string, unknown> = {
@@ -238,7 +235,6 @@ export async function updateUserProfile(user: RequestUser, patch: Partial<Spotli
   };
 
   const widePayload: Record<string, unknown> = {
-    // id and email are the row's identity; email is NOT NULL with no default, so
     // it has to be present for the insert half of the upsert.
     id: user.id,
     email: patch.email || user.email || null,

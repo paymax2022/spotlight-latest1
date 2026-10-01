@@ -4,16 +4,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { Home, KeyRound, BedDouble, Check, ShieldCheck } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SectionHeader from '@/components/SectionHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import type { PropertyRole } from '@/features/property/types';
 
-// M-ONB-02/04 — role picker. Explains entitlements per role; adding a role that
 // raises the user's exposure (landlord/host) triggers step-up KYC (M-ONB-05),
 // which routes to the existing identity-verification flow at /kyc.
 interface RoleOption {

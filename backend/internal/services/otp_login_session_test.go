@@ -19,7 +19,6 @@ import (
 // every bearer token up in SessionService and fails closed on a miss, so a
 // step-up login succeeded at GoTrue and then 401'd "session revoked" on the
 // very next request, including GET /api/auth/me.
-//
 // These tests exercise MintSession end to end against a fake Supabase (GoTrue +
 // PostgREST) server and a real sessionService backed by an in-memory store —
 // the same fakeSessionStore session_service_test.go already uses — so the

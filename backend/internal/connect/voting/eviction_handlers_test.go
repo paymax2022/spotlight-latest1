@@ -7,8 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/config"
+
+	"github.com/gin-gonic/gin"
 )
 
 // TestEvictionHandlersParameterBinding verifies request parameter binding

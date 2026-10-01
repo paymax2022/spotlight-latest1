@@ -1,8 +1,6 @@
-// ── Doctor — Ratings, Reviews & Reputation hooks (Batch 6, Section Z) ────────
 // Query keys under ['doctor', 'reputation', …]. Mutations auto-generate the
 // idempotencyKey. REUSES the Phase 2 useReputation / useReportReview
 // (useReputation.ts) for the rating dashboard + report-review flow and the
-// Phase 3 useQualityAnalytics for the trend tiles; this file adds per-consult
 // feedback, the composite quality score, ranking insight, improvement
 // recommendations and the review-dispute / removal flows. Hook names are distinct
 // from useReputation to avoid a barrel collision.
@@ -27,8 +25,6 @@ import type {
   DisputeReviewInput,
   RequestReviewRemovalInput,
 } from '@/types/doctor.batch6';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function useConsultationFeedback() {
   return useQuery({
@@ -74,8 +70,6 @@ export function useReviewDisputes() {
     staleTime:       30_000,
   });
 }
-
-// ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useDisputeReview() {
   const qc = useQueryClient();

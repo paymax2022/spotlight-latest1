@@ -1,37 +1,28 @@
 package tuition
 
-// ── Installment Payment state machine ────────────────────────────────────
-//
+import "spotlight/backend/go-common/fsm"
+
 // States: pending → paid | overdue (→ waived)
-//
 //   - pending : installment created, not yet paid.
 //   - paid    : payment received and confirmed (terminal).
 //   - overdue : past due date and still unpaid (non-terminal; can transition to paid/waived).
 //   - waived  : admin forgave the payment (terminal; e.g., scholarship).
-//
 // Legal transitions:
 //   - pending → paid    (payment received)
 //   - pending → overdue (time-based, detected at check time, not a direct transition)
 //   - overdue → paid    (late payment received)
 //   - overdue → waived  (admin forgiveness)
 //   - paid / waived     (terminal; no further transitions)
-//
 // Only the transitions below are legal. Illegal transitions are rejected
 // with ErrIllegalTransition. canPay is PURE so it is unit-testable with
 // no DB (tuition_test.go).
 
 // paymentTransitions is the legal adjacency set for the payment SM.
-var paymentTransitions = map[string]map[string]bool{
-	PaymentStatusPending: {
-		PaymentStatusPaid:   true,
-		PaymentStatusWaived: true,
-	},
-	PaymentStatusOverdue: {
-		PaymentStatusPaid:   true,
-		PaymentStatusWaived: true,
-	},
-	PaymentStatusPaid:   {}, // terminal
-	PaymentStatusWaived: {}, // terminal
+var paymentTransitions = fsm.Table[string]{
+	PaymentStatusPending: fsm.Set(PaymentStatusPaid, PaymentStatusWaived),
+	PaymentStatusOverdue: fsm.Set(PaymentStatusPaid, PaymentStatusWaived),
+	PaymentStatusPaid:    {}, // terminal
+	PaymentStatusWaived:  {}, // terminal
 }
 
 // CanPayInstallment reports whether the current payment status allows
@@ -71,14 +62,8 @@ func NextStatusAfterWaiver(currentStatus string) string {
 // CanTransition reports whether from→to is a legal payment-SM transition.
 // Pure. Used by repository/service to guard updates.
 func CanTransition(from, to string) bool {
-	targets, ok := paymentTransitions[from]
-	if !ok {
-		return false
-	}
-	return targets[to]
+	return paymentTransitions.Can(from, to)
 }
-
-// ── Plan status transitions ──────────────────────────────────────────────
 
 // InstallmentPlan transitions: active → completed | cancelled
 // A plan is marked completed when all installments are paid or waived.

@@ -1,4 +1,3 @@
-// ── Paymax Stays — Search & booking-draft store ──────────────────────────────
 // Lightweight zustand store (matches realtor/searchStore) so the search/results/
 // filter screens AND the multi-step booking flow share one source of truth
 // without threading complex objects through router params.

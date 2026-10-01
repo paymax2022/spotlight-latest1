@@ -5,9 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	strAuthenticationRequired = "authentication required"
+	keyData                   = "data"
 )
 
 // BadgeChecker is the (additive) verification surface the profile service depends
@@ -202,4 +211,161 @@ func (s *Service) AddMedia(ctx context.Context, userID, url, kind string) (strin
 		return "", "", fmt.Errorf("connect: add media: %w", err)
 	}
 	return id, status, nil
+}
+
+// Valid profile modes — MUST match the connect_profile_modes.mode CHECK constraint.
+var validModes = map[string]bool{
+	"dating": true, "friendship": true, "professional": true, "creator": true, "event": true,
+}
+
+// ValidMode reports whether m is a known profile mode.
+func ValidMode(m string) bool { return validModes[m] }
+
+// Profile is the identity-level record. dob is NEVER serialised to peers; it is
+// only used for the age gate. The omitted json tag keeps it off the wire entirely.
+type Profile struct {
+	ID          string  `json:"id"`
+	UserID      string  `json:"user_id"`
+	DisplayName *string `json:"display_name,omitempty"`
+	Bio         *string `json:"bio,omitempty"`
+	City        *string `json:"city,omitempty"`
+	dob         *time.Time
+	geoLat      *float64
+	geoLng      *float64
+	Badge       bool      `json:"verified_badge"` // surfaced from connect_verification
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// Mode is a per-mode visibility/privacy/intent record.
+type Mode struct {
+	Mode       string         `json:"mode"`
+	Visible    bool           `json:"visible"`
+	IntentTags []string       `json:"intent_tags"`
+	Privacy    map[string]any `json:"privacy"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+}
+
+// UpsertProfileInput is the member body for PATCH /profile. Nil fields are left
+// unchanged; the user/dob are never settable here (dob is owned by the age gate).
+type UpsertProfileInput struct {
+	DisplayName *string  `json:"display_name"`
+	Bio         *string  `json:"bio"`
+	City        *string  `json:"city"`
+	GeoLat      *float64 `json:"geo_lat"` // approximate centroid only
+	GeoLng      *float64 `json:"geo_lng"`
+}
+
+// UpsertModeInput is the body for PATCH /profile/modes/:mode.
+type UpsertModeInput struct {
+	Visible    *bool          `json:"visible"`
+	IntentTags []string       `json:"intent_tags"`
+	Privacy    map[string]any `json:"privacy"`
+}
+
+// Handler exposes the Phase-1 profile + per-mode visibility endpoints.
+type Handler struct{ svc *Service }
+
+// NewHandler builds the profile HTTP handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Get — GET /api/v1/connect/profile (authenticated member).
+func (h *Handler) Get(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": strAuthenticationRequired})
+		return
+	}
+	p, err := h.svc.GetOrCreate(c.Request.Context(), uid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load profile"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: p})
+}
+
+// Update — PATCH /api/v1/connect/profile (authenticated member).
+func (h *Handler) Update(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": strAuthenticationRequired})
+		return
+	}
+	var in UpsertProfileInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	p, err := h.svc.Update(c.Request.Context(), uid, in)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update profile"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: p})
+}
+
+// GetModes — GET /api/v1/connect/profile/modes (authenticated member).
+func (h *Handler) GetModes(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": strAuthenticationRequired})
+		return
+	}
+	modes, err := h.svc.GetModes(c.Request.Context(), uid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load modes"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: modes})
+}
+
+// UpsertMode — PATCH /api/v1/connect/profile/modes/:mode (authenticated member).
+func (h *Handler) UpsertMode(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": strAuthenticationRequired})
+		return
+	}
+	mode := c.Param("mode")
+	if !ValidMode(mode) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mode"})
+		return
+	}
+	var in UpsertModeInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	m, err := h.svc.UpsertMode(c.Request.Context(), uid, mode, in)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: m})
+}
+
+type mediaRequest struct {
+	URL  string `json:"url" binding:"required"`
+	Kind string `json:"kind"`
+}
+
+// AddMedia — POST /api/v1/connect/profile/media (authenticated member).
+// Returns moderation_status=pending; media is NOT public until moderated.
+func (h *Handler) AddMedia(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": strAuthenticationRequired})
+		return
+	}
+	var req mediaRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	id, status, err := h.svc.AddMedia(c.Request.Context(), uid, req.URL, req.Kind)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{keyData: gin.H{"id": id, "moderation_status": status}})
 }

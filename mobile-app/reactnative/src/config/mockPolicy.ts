@@ -1,11 +1,8 @@
 // Where mock data is permitted at all.
-//
-// Rule: staging and production NEVER serve mock data, whatever a per-module flag
 // says. Fake data that appears silently is worse than an empty screen or an
 // error — nobody goes looking for a bug they cannot see, and a voter shown
 // invented vote packages can be walked into a checkout for a price that does
 // not exist.
-//
 // Local development keeps its existing per-module defaults, because several
 // modules genuinely have no live endpoint yet and mocking them is deliberate.
 // This only removes the possibility of that leaking into a deployed environment.

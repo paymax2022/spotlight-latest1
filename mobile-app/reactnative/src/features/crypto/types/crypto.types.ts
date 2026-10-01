@@ -1,24 +1,19 @@
-// ── Paymax Invest · Crypto — Type Contract ───────────────────────────────────
 // Source of truth the crypto screens code against (Backend role owns this file).
 // Mirrors docs/crypto/data-model.md (Asset · CryptoQuote · Order · Position ·
 // Transaction) and the Phase-3 (Crypto Buy/Sell MVP) surface in docs/crypto.
-//
 // IRON RULES honoured here (docs/crypto/architecture.md):
 //  • Money is integer MINOR UNITS — fiat in kobo/cents, crypto in the asset's
 //    base unit (8dp → we carry 1e8 "satoshi-style" minor units). Never floats.
 //  • Fees, spreads, limits, availability are server-config — the client only
 //    renders what the quote/asset payload says (never hard-coded here).
-//  • Every money mutation carries an Idempotency-Key; a buy/sell executes
 //    against a quoteId (price is never assumed stable).
-
-// ─── Money primitives ─────────────────────────────────────────────────────────
 
 /** Fiat currencies the invest wallet funds crypto from (NGN-first, USD where enabled). */
 export type FiatCurrency = 'NGN' | 'USD';
 
 /** Canonical fiat money object — integer minor units (kobo/cents) + ISO-4217. */
 export interface FiatMoney {
-  amount: number;        // integer, minor units (e.g. 105000 = ₦1,050.00)
+  amount: number;
   currency: FiatCurrency;
 }
 
@@ -27,8 +22,6 @@ export interface CryptoAmount {
   amount: number;        // integer, minor units (10 ** asset.decimals per whole coin)
   symbol: string;        // 'BTC' | 'ETH' | 'USDT' …
 }
-
-// ─── Asset (docs/crypto/data-model.md → Asset, admin-whitelisted) ─────────────
 
 export type AssetType = 'crypto';
 export type RiskRating = 'low' | 'medium' | 'high';
@@ -79,8 +72,6 @@ export interface CandlePoint {
 
 export type ChartRange = '1H' | '1D' | '1W' | '1M' | '1Y';
 
-// ─── Quote (docs/crypto/data-model.md → CryptoQuote) ──────────────────────────
-
 export type OrderSide = 'buy' | 'sell';
 
 /** A history row's kind: trades (buy/sell) plus on-chain movements. */
@@ -108,13 +99,13 @@ export interface CryptoQuote {
   status: QuoteStatus;
   basis: AmountBasis;
   // Resolved both sides of the trade.
-  fiat: FiatMoney;             // gross fiat (buy: debited incl. fees; sell: credited net)
+  fiat: FiatMoney;
   crypto: CryptoAmount;        // crypto bought/sold
   rate: FiatMoney;             // indicative price per 1 coin
   allInRate: FiatMoney;        // effective price per 1 coin after spread + fees
   spreadPct: number;           // spread applied, for transparency copy
   fees: CryptoFee[];
-  totalFiat: FiatMoney;        // buy: total debit; sell: total credit (after fees)
+  totalFiat: FiatMoney;
   liquidityProvider: string;   // opaque provider label (adapter pattern)
   custodyProvider: string;
   riskScore: number;           // 0–100, server pre-trade risk score
@@ -129,8 +120,6 @@ export interface QuoteRequest {
   currency: FiatCurrency;
   lock?: boolean;
 }
-
-// ─── Order / Transaction (docs/crypto/data-model.md → Order, Crypto Tx status) ─
 
 /** Subset of the crypto transaction state machine used by the buy/sell MVP. */
 export type CryptoTxStatus =
@@ -203,8 +192,6 @@ export interface CryptoTransactionDetail extends CryptoTransactionSummary {
   failureReason?: string;
 }
 
-// ─── Portfolio / Positions (docs/crypto/data-model.md → Position) ─────────────
-
 export interface Position {
   assetId: string;
   symbol: string;
@@ -233,8 +220,6 @@ export interface CryptoPortfolio {
   positions: Position[];
 }
 
-// ─── Eligibility gate (docs/crypto/compliance.md → pre-trade checks) ──────────
-
 /** Why trading might be blocked — drives the restricted/KYC-pending states. */
 export type EligibilityState =
   | 'eligible'
@@ -253,15 +238,11 @@ export interface CryptoEligibility {
   ctaRoute?: string;           // where the resolve-CTA sends the user
 }
 
-// ─── Watchlist (docs/crypto/data-model.md → Watchlist) ────────────────────────
-
 /** A single user watchlist entry — the asset id plus when it was added. */
 export interface WatchlistEntry {
   assetId: string;
   addedAt: string;
 }
-
-// ─── Price alerts (docs/crypto/data-model.md → PriceAlert) ────────────────────
 
 export type AlertCondition = 'above' | 'below';
 export type AlertStatus = 'active' | 'triggered' | 'paused';
@@ -284,8 +265,6 @@ export interface NewPriceAlertDraft {
   targetPrice: number;          // fiat minor units
   currency: FiatCurrency;
 }
-
-// ─── Swap (crypto-to-crypto; docs/crypto/screens.md → swap entry/quote/success)
 
 export interface SwapDraft {
   fromAssetId: string;
@@ -327,8 +306,6 @@ export interface SwapResult {
   createdAt: string;
 }
 
-// ─── On-chain deposit (docs/crypto/screens.md → deposit address/network/pending)
-
 /** A custody-provider deposit address for one asset on one network. */
 export interface DepositAddress {
   symbol: string;
@@ -340,8 +317,6 @@ export interface DepositAddress {
   confirmations: number;     // confirmations before the deposit is credited
   custodyProvider: string;
 }
-
-// ─── Withdrawal address book (docs/crypto/screens.md → address book / whitelist)
 
 /** A saved, whitelisted destination address (Phase-4 withdrawal control). */
 export interface CryptoAddress {
@@ -369,8 +344,6 @@ export interface AddressScreening {
   reason?: string;
 }
 
-// ─── Withdrawal eligibility + controls (docs/crypto/compliance.md) ────────────
-
 /** Why a withdrawal might be blocked — drives the restricted/cooling states. */
 export type WithdrawalGate =
   | 'eligible'
@@ -382,7 +355,7 @@ export type WithdrawalGate =
 export interface WithdrawalEligibility {
   gate: WithdrawalGate;
   kycTier: number;
-  manualReviewOnly: boolean;   // MVP: all crypto withdrawals go to manual review
+  manualReviewOnly: boolean;
   dailyLimit: FiatMoney;
   dailyUsed: FiatMoney;
   manualReviewThreshold: FiatMoney;
@@ -437,8 +410,6 @@ export interface WithdrawalResult {
   createdAt: string;
   failureReason?: string;
 }
-
-// ─── Drafts the screens build up before hitting a mutation ────────────────────
 
 export interface TradeDraft {
   assetId: string;

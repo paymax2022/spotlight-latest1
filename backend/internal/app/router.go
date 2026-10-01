@@ -2,22 +2,23 @@ package app
 
 import (
 	"context"
-	"log"
-	"strings"
-	"time"
-
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
+	"log"
+	"os"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/handlers"
 	"spotlight/backend/internal/integrations"
+	"spotlight/backend/internal/marketplace/search"
 	"spotlight/backend/internal/middleware"
 	platformDB "spotlight/backend/internal/platform/db"
 	"spotlight/backend/internal/platform/realtime"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/services"
+	"strings"
+	"time"
 )
 
 func NewRouter(cfg config.Config) *gin.Engine {
@@ -251,7 +252,6 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		// real, RBAC-verified admin identity on top of RequireAdmin (see
 		// RequireAdminConsoleRole); this group gets the same layering now, for
 		// the same reason.
-		//
 		// STEM routes (stemRead/stemManage) are deliberately NOT sub-groups of
 		// this one — see ADR-057. consoleAdminRoleSlugs (super-admin/
 		// system-admin only) is the right gate for this group's PII-bearing
@@ -399,7 +399,6 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	// here (was previously opened twice — finance + connect each called
 	// platformDB.New). nil when DATABASE_URL is unset or the connection fails;
 	// each aggregator skips its routes on a nil pool.
-	//
 	// Outside development a nil pool is FATAL, not a warning. A degraded boot
 	// still binds :8080 and answers /api/v1/public/health with 200, so Railway
 	// marks the deployment SUCCESS, replaces the previous (working) one, and
@@ -475,7 +474,6 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	// 503-with-a-reason rather than 404; the service inside is nil unless
 	// FEATURE_OTP_EMAIL_ENABLED is on AND the pool, pepper and Brevo credentials
 	// are all present. See otp_routes.go.
-	//
 	// The returned issuer is what makes Register send a code. It is nil when the
 	// feature is closed, and WithOTPIssuer(nil) leaves Register exactly as it
 	// shipped — verification stays entirely with Supabase Auth.
@@ -527,7 +525,6 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		// frontend-admin's server-side proxy attaches) rather than the
 		// X-Admin-Role header the mobile admin console uses — the browser
 		// never holds the key, and the proxy is what supplies it.
-		//
 		// AUTH-003: RequireAdmin alone let this leak real financial/
 		// operational data to fully anonymous requests whenever ADMIN_API_KEY
 		// is unset with APP_ENV=development (the documented local-dev
@@ -590,7 +587,6 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		// the entry onto the voting roster in one transaction (see
 		// promote_registration_to_contestant), which is the seam that connects the
 		// mobile entry flow to what voters actually see.
-		//
 		// contestant.view gates the whole group; UpdateStatus additionally checks
 		// contestant.approve or contestant.reject per target status.
 		registrationAdminStore := handlers.NewRegistrationAdminStore(sharedPool)
@@ -639,4 +635,35 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	}
 
 	return r
+}
+
+// startInProcessWorkers launches background worker loops INSIDE the API process when
+// RUN_WORKERS_INPROCESS is on. This lets a single-instance / free-tier deploy (e.g.
+// Render free, which has no always-on worker dynos — see ADR-026) run the marketplace
+// search indexer without a separate `cmd/marketplace-indexer` process.
+// It is NOT a substitute for dedicated worker processes at scale: a second API replica
+// would run a second indexer. That is safe for the outbox drain (idempotent) but
+// wasteful, so this stays OFF by default — promote to real worker processes off free
+// tier. The goroutine lives for the process lifetime and stops when the process exits
+// (SIGTERM); the outbox drain is idempotent, so an abrupt stop re-processes on restart.
+func startInProcessWorkers(cfg config.Config, pool *pgxpool.Pool) {
+	if !cfg.RunWorkersInProcess {
+		return
+	}
+	if pool == nil {
+		log.Println("[workers] RUN_WORKERS_INPROCESS set but no DB pool — in-process workers disabled")
+		return
+	}
+
+	// Marketplace search indexer — only useful when a search cluster is configured.
+	// With Elasticsearch disabled (the free-tier default) there is nowhere to index,
+	// so skip cleanly rather than spin a loop that logs ES errors every tick.
+	if cfg.ElasticsearchURL == "" {
+		log.Println("[workers] RUN_WORKERS_INPROCESS on, but ELASTICSEARCH_URL is empty — marketplace indexer skipped (search disabled)")
+		return
+	}
+
+	interval := search.ResolveInterval(os.Getenv("MARKETPLACE_INDEXER_INTERVAL_MS"), search.DefaultIndexerInterval)
+	log.Printf("[workers] starting in-process marketplace indexer (interval=%s, es=%s)", interval, cfg.ElasticsearchURL)
+	go search.RunIndexerLoop(context.Background(), pool, cfg.ElasticsearchURL, interval)
 }

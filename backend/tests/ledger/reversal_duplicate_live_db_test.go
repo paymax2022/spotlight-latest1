@@ -1,6 +1,5 @@
 package ledger_test
 
-// ---------------------------------------------------------------------------
 // PostReversalPair (backend/internal/finance/ledger/repository.go) is the ONLY
 // correction primitive callers like marketplace CancelBoost/RejectBoost use to
 // auto-refund. PostJournal translates a Postgres unique-violation (23505) on
@@ -11,11 +10,9 @@ package ledger_test
 // reversal (double-click, client retry, at-least-once webhook) hits the
 // unique index and returns a generic wrapped error instead of ErrDuplicate,
 // UNLESS Redis is up and its lock happens to catch the replay first.
-//
 // Found by a peer session's ledger audit (new-6f), confirmed by reading
 // repository.go directly: PostJournal checks isUniqueViolation on both
 // inserts; PostReversalPair checks neither.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

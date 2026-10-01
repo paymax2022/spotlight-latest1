@@ -24,7 +24,7 @@ func TestFSM_LegalHappyPath(t *testing.T) {
 
 func TestFSM_IllegalTransitionsRejected(t *testing.T) {
 	illegal := [][2]Status{
-		{StatusNotStarted, StatusApproved},   // cannot approve without review
+		{StatusNotStarted, StatusApproved},    // cannot approve without review
 		{StatusNotStarted, StatusUnderReview}, // must submit first
 		{StatusSubmitted, StatusApproved},     // must go through review
 		{StatusApproved, StatusRejected},      // approved is terminal-good (only expires)

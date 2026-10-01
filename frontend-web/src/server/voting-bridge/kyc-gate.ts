@@ -3,7 +3,7 @@
  * Ensures users meet tier requirements before voting
  */
 
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient } from '@/lib/supabase/server';
 
 export class KycGateError extends Error {
   constructor(
@@ -22,7 +22,6 @@ export async function assertKycTier(userId: string, contestantId: string) {
   const supabase = createAdminClient();
 
   try {
-    // Step 1: Fetch user KYC tier
     const { data: user, error: userErr } = await supabase
       .from('profiles')
       .select('kyc_tier')
@@ -33,7 +32,6 @@ export async function assertKycTier(userId: string, contestantId: string) {
       throw new KycGateError('User not found', 404);
     }
 
-    // Step 2: Fetch contest requirements
     const { data: contestant, error: contestErr } = await supabase
       .from('contestants')
       .select('competition_id')
@@ -55,7 +53,6 @@ export async function assertKycTier(userId: string, contestantId: string) {
       return true;
     }
 
-    // Step 3: Validate tier
     const requiredTier = competition.required_kyc_tier || 0;
     const userTier = user.kyc_tier || 0;
 

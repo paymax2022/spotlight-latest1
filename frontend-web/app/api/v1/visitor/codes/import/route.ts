@@ -21,7 +21,6 @@ export async function POST(request: Request) {
     const lines = text.split(/\r?\n/).filter(Boolean);
     if (lines.length < 2) throw new ApiError('CSV must have a header row and at least one data row', 400);
 
-    // Parse header.
     const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
     const idx = {
       visitor_name: headers.indexOf('visitor_name'),

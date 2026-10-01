@@ -7,37 +7,30 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/fsm"
 )
 
-// ─── Business logistics ──────────────────────────────────────────────────────
-//
 // Business owner = a Paymax user with a business_accounts row (UNIQUE owner_id).
 // Billing modes:
 //   - prepaid_wallet: escrow per delivery on create; settle the courier split on
 //     proof-of-delivery (dropoff PIN and/or proof_url required).
 //   - monthly_invoice: no escrow; the delivery fare accrues to an open invoice on
 //     create and is rolled up at delivery time. Admin issues / marks-paid invoices.
-//
 // Delivery state: created → assigned → picked_up → delivered · (failed/cancelled).
 // Batch state:    created → dispatched → in_progress → completed/partially_failed
 //                 · (cancelled).
 
 // deliveryTransitions is the guarded delivery state machine.
-var deliveryTransitions = map[string]map[string]bool{
+var deliveryTransitions = fsm.Table[string]{
 	"created":   {"assigned": true, "cancelled": true},
 	"assigned":  {"picked_up": true, "failed": true, "cancelled": true},
 	"picked_up": {"delivered": true, "failed": true},
 }
 
 func canTransitionDelivery(from, to string) bool {
-	if from == to {
-		return false
-	}
-	m, ok := deliveryTransitions[from]
-	if !ok {
-		return false
-	}
-	return m[to]
+	return deliveryTransitions.Can(from, to)
 }
 
 // deliverySizeMultiplier scales fare by declared parcel size.
@@ -75,8 +68,6 @@ type businessDeliveryRow struct {
 	DropoffPin   *string
 	SettlementID *string
 }
-
-// ─── Request bodies ──────────────────────────────────────────────────────────
 
 // BusinessAccountRequest is POST /mobility/business/accounts.
 type BusinessAccountRequest struct {
@@ -124,8 +115,6 @@ type DeliverRequest struct {
 type FailRequest struct {
 	Reason string `json:"reason" binding:"required"`
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 // deliveryFare computes a delivery fare from distance × duration × size, floored.
 func deliveryFare(distanceM, durationS int, size string, cfg *PricingConfig) int64 {
@@ -185,8 +174,6 @@ func (s *Service) accrueInvoice(ctx context.Context, businessID string, fareKobo
 	return err
 }
 
-// ─── Business account ────────────────────────────────────────────────────────
-
 // CreateBusinessAccount registers a business account for the owner (one per user).
 func (s *Service) CreateBusinessAccount(ctx context.Context, ownerID string, req BusinessAccountRequest) (map[string]any, error) {
 	accountType := req.AccountType
@@ -221,8 +208,6 @@ func (s *Service) BusinessAccountMe(ctx context.Context, ownerID string) (map[st
 		"billingMode": b.BillingMode, "codEnabled": b.CODEnabled, "status": b.Status,
 	}, nil
 }
-
-// ─── Single delivery ─────────────────────────────────────────────────────────
 
 // insertDelivery inserts one delivery row and applies the billing-mode rule:
 // prepaid_wallet → escrow (caller passes idemKey); monthly_invoice → accrue.
@@ -280,7 +265,7 @@ func (s *Service) insertDelivery(ctx context.Context, b *businessAccountRow, sto
 	if _, err := s.db.Exec(ctx, q,
 		deliveryID, batchID, b.ID, sequence, stop.Pickup.Address, stop.Pickup.Lat, stop.Pickup.Lng,
 		stop.Dropoff.Address, stop.Dropoff.Lat, stop.Dropoff.Lng, stop.ReceiverName, stop.ReceiverPhone, size,
-		stop.CODKobo, fare, dropoffPin, settlementID, nullStr(idempotencyKey),
+		stop.CODKobo, fare, dropoffPin, settlementID, dbutil.NullStr(idempotencyKey),
 	); err != nil {
 		if settlementID != nil {
 			s.settlement.Refund(ctx, settlementID.(string), "delivery_insert_failed")
@@ -359,8 +344,6 @@ func (s *Service) CreateBatch(ctx context.Context, ownerID string, req BusinessB
 		map[string]any{"business_id": b.ID, "total_stops": len(req.Deliveries)})
 	return s.BatchDetail(ctx, batchID, ownerID)
 }
-
-// ─── Reads (owner-scoped) ────────────────────────────────────────────────────
 
 // DeliveryDetail returns a delivery; owner sees PIN, assigned courier does not.
 func (s *Service) DeliveryDetail(ctx context.Context, id, callerID string) (map[string]any, error) {
@@ -591,8 +574,6 @@ func (s *Service) BusinessAnalytics(ctx context.Context, ownerID string) (map[st
 	}, nil
 }
 
-// ─── Cancel (owner) ──────────────────────────────────────────────────────────
-
 // CancelDelivery refunds escrow (prepaid) or voids accrual (invoice), then
 // moves the delivery to cancelled. Owner only.
 func (s *Service) CancelDelivery(ctx context.Context, id, ownerID, reason string) error {
@@ -663,8 +644,6 @@ func (s *Service) deliverySetStatus(ctx context.Context, id, from, to string) er
 	}
 	return nil
 }
-
-// ─── Courier (driver) flows ──────────────────────────────────────────────────
 
 // OpenDeliveryRequests returns unassigned, created deliveries for couriers.
 func (s *Service) OpenDeliveryRequests(ctx context.Context, driverUserID string) ([]map[string]any, error) {

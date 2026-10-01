@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -13,7 +14,6 @@ import (
 )
 
 // OTPHandler exposes the server-issued email OTP surface.
-//
 // The service is nil whenever the feature is off OR its configuration is
 // incomplete (no pepper, no Brevo key). Both cases answer 503 rather than
 // degrading: an OTP endpoint that half-works is a login system that half-works.
@@ -78,14 +78,12 @@ type otpRequestBody struct {
 }
 
 // RequestOTP — POST /api/auth/otp/request
-//
 // The response is IDENTICAL whether or not an account exists for the address,
 // and the work done is identical too. Answering differently — or faster — for an
 // unregistered address turns this endpoint into a user-enumeration oracle that
 // hands over the whole user list to anyone willing to iterate. That is the most
 // commonly shipped defect in OTP endpoints, and it is why this handler never
 // looks the user up.
-//
 // The same reasoning covers errors: a rate-limited caller is told to wait
 // (they need that, and they already know they asked), but a send failure
 // returns the same 200 as a success. Reporting "delivery failed" would confirm
@@ -108,13 +106,11 @@ func (h *OTPHandler) RequestOTP(c *gin.Context) {
 
 	// login codes are NOT self-issuable, and this is the control the whole
 	// step-up design rests on.
-	//
 	// Redeeming a login code mints a session. If anyone could ask for one here,
 	// that would be passwordless login wearing a second factor's clothes: an
 	// attacker who can read a mailbox would need no password at all. A login code
 	// exists only because POST /api/auth/login already accepted the password, so
 	// it is issued from there and nowhere else.
-	//
 	// The cost is that "resend my login code" means submitting the password
 	// again. That is the correct trade.
 	if purpose == otp.PurposeLogin {
@@ -148,7 +144,6 @@ type otpVerifyBody struct {
 }
 
 // VerifyOTP — POST /api/auth/otp/verify
-//
 // A successful verification here proves control of the mailbox. It does NOT by
 // itself sign anyone in: this endpoint reports the proof and nothing more.
 // Session issue, email confirmation and password reset all live behind their own
@@ -229,7 +224,6 @@ func (h *OTPHandler) VerifyOTP(c *gin.Context) {
 }
 
 // completeStepUpLogin issues the session for a redeemed login code.
-//
 // The code is already consumed. Everything below therefore has to either produce
 // a session or say plainly that it could not — a cheerful 200 with no tokens
 // would leave a client that has spent both factors with nothing to show and no
@@ -277,4 +271,16 @@ func (h *OTPHandler) completeStepUpLogin(c *gin.Context, email string) {
 		"access_token":  access,
 		"refresh_token": refresh,
 	})
+}
+
+// logOTPFailure records an OTP failure WITHOUT the address or the code.
+// The code never appears in a log line, an error string or a span — not at debug
+// either. A code in a log is a credential in a log, readable by everyone with
+// log access for as long as retention lasts, and log pipelines are not built to
+// hold credentials.
+// The address is omitted for the same reason the endpoint refuses to confirm
+// account existence: an access log full of "otp issue failed for x@y.com" is a
+// user list.
+func logOTPFailure(op, purpose string, err error) {
+	log.Printf("[otp] %s failed (purpose=%s): %v", op, purpose, err)
 }

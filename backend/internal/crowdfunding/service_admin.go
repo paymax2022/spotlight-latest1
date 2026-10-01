@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
+
+	"spotlight/backend/go-common/timeutil"
 )
 
 // categoryLabels mirrors the seeded crowdfunding_categories (avoids a join per row).
@@ -53,7 +54,6 @@ func reviewTransition(current, decision string) (string, bool) {
 // AdminCampaignSummary is the review-queue shape: everything the public list
 // carries, plus the two fields the moderation console needs and the public one
 // must never expose.
-//
 // submittedAt and riskLevel were already SELECTed by the discovery query and
 // then dropped by toSummary, so the admin console rendered blanks for both —
 // including the queue's sort key. They are added here rather than on
@@ -99,7 +99,7 @@ func (s *Service) AdminListPending(ctx context.Context, status string) ([]AdminC
 		name, typ, verif := s.creatorMeta(ctx, r.creatorID)
 		out = append(out, AdminCampaignSummary{
 			CampaignSummary: r.toSummary(name, typ, verif),
-			SubmittedAt:     r.submittedAt.UTC().Format(time.RFC3339),
+			SubmittedAt:     timeutil.RFC3339(r.submittedAt),
 			RiskLevel:       r.riskLevel,
 		})
 	}

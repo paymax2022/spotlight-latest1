@@ -1,31 +1,29 @@
 package feesschool
 
-// ── Verification-tier state machine (build-spec §2 School.verification_tier) ─────
-//
+import "spotlight/backend/go-common/fsm"
+
 // The verification tier is the school's trust level. It is advanced ONLY by an admin
 // action (Verify); a school owner can never move their own tier. The guard below is
 // PURE (no DB, unit-testable in school_test.go), mirroring the shared feesstatemachine
 // package's per-machine `CanTransition` style — kept in-package because the shared
 // statemachine package (T0.3) does not define a verification-tier machine and MUST NOT
 // be modified by this task.
-//
 //	unverified → pending      (school submits docs / admin starts review)
 //	pending    → verified     (admin approves CAC / reference checks)
 //	verified   → premium      (admin promotes to premium tier)
 //	premium    → verified     (admin demotes)
 //	verified   → pending      (admin re-opens review, e.g. dispute)
 //	pending    → unverified   (admin rejects, back to start)
-//
 // No transition may SKIP a step forward (e.g. unverified→verified is illegal): review
 // must pass through `pending` first. Backward/demotion moves are allowed for admins so
 // a disputed school can be re-reviewed or demoted.
 
 // tierTransitions is the legal adjacency for the verification-tier SM.
-var tierTransitions = map[VerificationTier]map[VerificationTier]bool{
-	TierUnverified: {TierPending: true},
-	TierPending:    {TierVerified: true, TierUnverified: true},
-	TierVerified:   {TierPremium: true, TierPending: true},
-	TierPremium:    {TierVerified: true},
+var tierTransitions = fsm.Table[VerificationTier]{
+	TierUnverified: fsm.Set(TierPending),
+	TierPending:    fsm.Set(TierVerified, TierUnverified),
+	TierVerified:   fsm.Set(TierPremium, TierPending),
+	TierPremium:    fsm.Set(TierVerified),
 }
 
 // validTier reports whether t is a known verification tier (matches the DB CHECK).
@@ -40,11 +38,7 @@ func validTier(t VerificationTier) bool {
 
 // CanVerifyTransition reports whether from→to is a legal verification-tier move. Pure.
 func CanVerifyTransition(from, to VerificationTier) bool {
-	targets, ok := tierTransitions[from]
-	if !ok {
-		return false
-	}
-	return targets[to]
+	return tierTransitions.Can(from, to)
 }
 
 // VerifyTransition validates from→to and returns the target tier or a typed error.

@@ -1,6 +1,4 @@
-// ── Admin — Paymax Loyalty (Points, Tiers, Catalog) ops console types ─────────
 // Field names mirror the Go JSON (snake_case) from /api/loyalty/admin/*.
-// Points are an append-only ledger — NON-CASH. They are NOT money in kobo; they
 // are integer point balances. Any cash figure (catalog cost, liability valuation)
 // is BIGINT kobo and rendered via formatNaira (kobo → ₦).
 // Invariants surfaced in the UI:
@@ -15,9 +13,7 @@ export type RedemptionKind = 'airtime' | 'bill_credit' | 'ticket_discount' | 'pe
 export type RedemptionStatus = 'completed' | 'pending' | 'reversed' | 'flagged' | 'failed';
 export type CatalogStatus = 'active' | 'draft' | 'disabled';
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Dashboard — points liability + tier distribution
-// ════════════════════════════════════════════════════════════════════════════
 export interface LoyaltyDashboardActivity {
   id: string;
   kind: string; // earn_rule_updated | tier_changed | catalog_published | redemption | liability_alert | fraud_flag …
@@ -47,16 +43,14 @@ export interface LoyaltyDashboard {
   activity: LoyaltyDashboardActivity[];
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // B · Earn rules — by action/module, versioned
-// ════════════════════════════════════════════════════════════════════════════
 export interface EarnRule {
   id: string;
   module: LoyaltyModule;
   action: string;             // e.g. 'ticket_purchase', 'auto_save', 'referral_signup'
   points_per_naira: number;   // points earned per ₦ spent/saved (0 for flat)
   flat_points: number;        // flat bonus on the action (0 if pts-per-₦)
-  cap_points_per_day: number; // anti-abuse cap (0 = uncapped)
+  cap_points_per_day: number;
   status: EarnRuleStatus;
   config_version: number;     // versioned config (NL-12)
   updated_at: string;
@@ -74,9 +68,7 @@ export interface EarnRuleResult {
   message: string;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Tiers — thresholds + benefits, config
-// ════════════════════════════════════════════════════════════════════════════
 export interface TierConfig {
   id: string;
   name: string;               // Tier 1 / Tier 2 / Tier 3 (Black added Phase 3)
@@ -102,16 +94,14 @@ export interface TierResult {
   message: string;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // D · Rewards catalog — CRUD
-// ════════════════════════════════════════════════════════════════════════════
 export interface CatalogItem {
   id: string;
   name: string;
   kind: RedemptionKind;
   cost_points: number;        // points to redeem
   cash_value_kobo: number;    // ₦ value delivered (airtime/bill/discount) — NL-4
-  stock: number;              // -1 = unlimited
+  stock: number;
   redeemed: number;
   status: CatalogStatus;
   updated_at: string;
@@ -131,9 +121,7 @@ export interface CatalogResult {
   message: string;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // E · Redemptions log + fraud
-// ════════════════════════════════════════════════════════════════════════════
 export interface RedemptionRecord {
   id: string;
   member_masked: string;
@@ -142,14 +130,12 @@ export interface RedemptionRecord {
   cost_points: number;
   cash_value_kobo: number;
   status: RedemptionStatus;
-  fraud_flag: boolean;        // anomaly: velocity / self-deal / reversal abuse
+  fraud_flag: boolean;
   fraud_reason: string | null;
   created_at: string;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // F · Liability + expiry dashboard (NL-4)
-// ════════════════════════════════════════════════════════════════════════════
 export interface PointsLiabilityBucket {
   bucket: string;             // e.g. '0-30d', '31-90d', '91-180d', '180d+'
   points: number;

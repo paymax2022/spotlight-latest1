@@ -1,34 +1,22 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test for creator campaign analytics.
-//
 // WHY THIS EXISTS
-// ---------------
 // GetCampaignAnalytics used to INVENT the headline numbers on the creator
 // performance screen:
-//
-//	views  := 1200 + idSeed(campaignID)%8000 + contributorCount*40
-//	shares := 40 + idSeed(campaignID)%400
-//
 // with the traffic-source breakdown a fixed 38/27/18/11/6 % split of that
 // invented view count. Because the figures shifted when contributors changed,
 // they read as real. They are now aggregated from cf_campaign_events.
-//
 // This test pins the properties that make them real, and would fail against the
 // old implementation: a campaign with NO recorded events must report zero (the
 // hash version reported >= 1200 views), and a contribution must be attributed
 // to the channel of the contributor's LAST view before giving.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL, which the root .env
 // points at the production pooler and this test INSERTs (see
 // scripts/ci/check-live-db-gate.sh).
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -72,7 +60,6 @@ func liveDBPool(t *testing.T) *pgxpool.Pool {
 
 // seedCampaign creates a creator and a campaign, and returns their ids plus a
 // trackUser hook for any additional user the test creates (e.g. a contributor).
-//
 // Everything is namespaced by a fresh uuid and removed on cleanup, so the test is
 // safe to re-run and cannot disturb existing data. Cleanup deletes in FK-safe
 // order — events and contributions reference the campaign, and contributions

@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // Handler exposes wallet-to-wallet (P2P) and wallet-to-bank transfer endpoints.
@@ -53,7 +55,7 @@ func (h *Handler) ResolvePaymax(c *gin.Context) {
 		unavailable(c, "wallet transfers")
 		return
 	}
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -73,7 +75,7 @@ func (h *Handler) InitiatePaymax(c *gin.Context) {
 		unavailable(c, "wallet transfers")
 		return
 	}
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -84,7 +86,7 @@ func (h *Handler) InitiatePaymax(c *gin.Context) {
 		return
 	}
 	// Header Idempotency-Key wins over a body field if present.
-	if k := c.GetHeader("Idempotency-Key"); k != "" {
+	if k := ginutil.IdempotencyKey(c); k != "" {
 		req.IdempotencyKey = k
 	}
 	if req.IdempotencyKey == "" {
@@ -109,7 +111,7 @@ func (h *Handler) InitiateBank(c *gin.Context) {
 		unavailable(c, "bank transfers")
 		return
 	}
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -119,7 +121,7 @@ func (h *Handler) InitiateBank(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "invalid_request"})
 		return
 	}
-	if k := c.GetHeader("Idempotency-Key"); k != "" {
+	if k := ginutil.IdempotencyKey(c); k != "" {
 		req.IdempotencyKey = k
 	}
 	if req.IdempotencyKey == "" {
@@ -144,7 +146,7 @@ func (h *Handler) InitiateBankToBank(c *gin.Context) {
 		unavailable(c, "bank transfers")
 		return
 	}
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -154,7 +156,7 @@ func (h *Handler) InitiateBankToBank(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "invalid_request"})
 		return
 	}
-	if k := c.GetHeader("Idempotency-Key"); k != "" {
+	if k := ginutil.IdempotencyKey(c); k != "" {
 		req.IdempotencyKey = k
 	}
 	if req.IdempotencyKey == "" {
@@ -193,7 +195,7 @@ func (h *Handler) ResolveAccount(c *gin.Context) {
 		unavailable(c, "bank transfers")
 		return
 	}
-	if c.GetString("user_id") == "" {
+	if ginutil.UserID(c) == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
@@ -216,7 +218,7 @@ func (h *Handler) ListBeneficiaries(c *gin.Context) {
 		unavailable(c, "bank transfers")
 		return
 	}
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -235,7 +237,7 @@ func (h *Handler) SaveBeneficiary(c *gin.Context) {
 		unavailable(c, "bank transfers")
 		return
 	}
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -259,7 +261,7 @@ func (h *Handler) DeleteBeneficiary(c *gin.Context) {
 		unavailable(c, "bank transfers")
 		return
 	}
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -273,7 +275,7 @@ func (h *Handler) DeleteBeneficiary(c *gin.Context) {
 
 // PinStatus handles GET /finance/transfers/pin/status.
 func (h *Handler) PinStatus(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -288,7 +290,7 @@ func (h *Handler) PinStatus(c *gin.Context) {
 
 // SetPin handles POST /finance/transfers/pin.
 func (h *Handler) SetPin(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -307,7 +309,7 @@ func (h *Handler) SetPin(c *gin.Context) {
 
 // VerifyPin handles POST /finance/transfers/pin/verify.
 func (h *Handler) VerifyPin(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return

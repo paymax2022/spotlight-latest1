@@ -1,4 +1,3 @@
-// ── Merchant Onboarding — wizard draft store ─────────────────────────────────
 // Holds the in-progress application data + current step for the dynamic wizard.
 // Zustand mirrors the app's existing store pattern (authStore, campaignDraftStore).
 

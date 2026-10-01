@@ -1,21 +1,19 @@
 // Paymax Connect — Assessed skill badge (PN-5 + PN-12).
-//
 // PN-5  An ASSESSED skill is structurally + visually distinct from a self-reported
 //       one. This component renders the assessed variant: a FILLED gold pill with a
 //       BadgeCheck glyph. Self-reported skills use plain outline chips elsewhere
 //       (e.g. DiscoveryChipRow) — never this treatment. Use <SelfReportedSkill/>
 //       for the contrast case so the two can sit side by side.
 // PN-12 The badge permanently records the question-bank version it was passed
-//       against. `showVersion` surfaces it inline; the `detail` variant always
 //       shows it (badge detail requirement).
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { BadgeCheck, ShieldCheck, Tag } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 
 interface PillProps {
   skill: string;

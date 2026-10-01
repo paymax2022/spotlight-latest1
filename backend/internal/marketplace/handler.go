@@ -1,17 +1,21 @@
 package marketplace
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
 	"net/http"
+	"path"
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/internal/platform/r2"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-
-	"spotlight/backend/internal/platform/r2"
 )
 
 // Handler exposes the member (auth) + public marketplace routes. Admin routes live
@@ -29,10 +33,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // WithWebhookSecret sets the shared inbound-webhook HMAC secret.
 func (h *Handler) WithWebhookSecret(secret string) *Handler { h.webhookSecret = secret; return h }
 
-func userID(c *gin.Context) string { return c.GetString("user_id") }
-
 // viewerIDForCounting returns the caller's user id for VIEW-COUNTING ONLY.
-//
 // ⚠️ NOT AUTHENTICATION. When no auth middleware has run it falls back to reading
 // the `sub` claim out of the bearer token WITHOUT verifying its signature, so the
 // value is attacker-controllable. It is deliberately never written into the gin
@@ -40,18 +41,16 @@ func userID(c *gin.Context) string { return c.GetString("user_id") }
 // this package trusts that key — putting an unverified id there would turn a
 // forged token into real access. Pass it straight to RecordListingView, nowhere
 // else.
-//
 // Why unverified is acceptable HERE: the value gates nothing but whether a
 // counter increments. GET /listings/:id is deliberately auth-optional
 // (tier0_browse) and runs no auth middleware, and the only proper alternative —
 // supabase.AuthUser() — is a GoTrue round trip per request on the module's
 // hottest public read. That is not a trade worth making for a view counter.
-//
 // Worst case from a forged token: the forger suppresses counting of views they
 // are themselves generating. They cannot inflate anyone's count beyond simply
 // fetching the page, and they gain no access.
 func viewerIDForCounting(c *gin.Context) string {
-	if id := userID(c); id != "" {
+	if id := ginutil.UserID(c); id != "" {
 		return id // a real middleware ran — trust that instead
 	}
 	h := strings.TrimSpace(c.GetHeader("Authorization"))
@@ -80,8 +79,6 @@ func viewerIDForCounting(c *gin.Context) string {
 	return claims.Sub
 }
 
-func idemKeyOf(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
-
 // respond writes the uniform success envelope.
 func respond(c *gin.Context, status int, data any) {
 	c.JSON(status, gin.H{"data": data})
@@ -91,24 +88,22 @@ func respond(c *gin.Context, status int, data any) {
 // {"error":{code,message,field,request_id}}. A replayError replays the original
 // cached 2xx body (§3: 409 IDEMPOTENCY_KEY_REPLAY returns the original response).
 func fail(c *gin.Context, err error) {
-	if stored, ok := asReplay(err); ok && stored != nil {
-		c.Data(stored.Status, "application/json; charset=utf-8", stored.Body)
+	var re replayError
+	if errors.As(err, &re) {
+		c.Data(re.Stored.Status, "application/json; charset=utf-8", re.Stored.Body)
 		return
 	}
 	ce := asCoded(err)
+	requestID := c.GetString("request_id")
+	if requestID == "" {
+		requestID = c.GetHeader("X-Request-Id")
+	}
 	c.JSON(ce.Status, gin.H{"error": gin.H{
 		"code":       ce.Code,
 		"message":    ce.Message,
 		"field":      ce.Field,
-		"request_id": requestID(c),
+		"request_id": requestID,
 	}})
-}
-
-func requestID(c *gin.Context) string {
-	if id := c.GetString("request_id"); id != "" {
-		return id
-	}
-	return c.GetHeader("X-Request-Id")
 }
 
 func pageParams(c *gin.Context) (limit, offset int) {
@@ -119,15 +114,13 @@ func pageParams(c *gin.Context) (limit, offset int) {
 
 // requireUser aborts with 401 when unauthenticated; returns the uid otherwise.
 func requireUser(c *gin.Context) (string, bool) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		fail(c, ErrUnauthenticated)
 		return "", false
 	}
 	return uid, true
 }
-
-// ─── Listings ────────────────────────────────────────────────────────────────
 
 // CreateListing POST /listings
 func (h *Handler) CreateListing(c *gin.Context) {
@@ -160,7 +153,6 @@ func (h *Handler) GetListing(c *gin.Context) {
 	// listing. Anonymous browsers (this route is tier0_browse) resolve to "" and
 	// still count — only the seller's own visits are excluded, inside the UPDATE.
 	// Called before respond so the request context is still live.
-	//
 	// viewerIDForCounting, NOT userID: no auth middleware runs on this route, so
 	// userID is always "". See its doc for why an unverified id is sound for a
 	// counter and why it must never reach the gin context.
@@ -361,13 +353,10 @@ func (h *Handler) PurgeListing(c *gin.Context) {
 	respond(c, http.StatusOK, gin.H{"purged": true, "listing_id": c.Param("id")})
 }
 
-// ─── Search + categories ─────────────────────────────────────────────────────
-
 // Search GET /search — calls the injected searcher; 501 when unwired.
 func (h *Handler) Search(c *gin.Context) {
 	// Build a provider-agnostic request map from the query (§3.2 params). Agent B's
 	// injected client adapts this to its own search.SearchRequest.
-	//
 	// limit only — offset used to be read here via pageParams and stuffed into
 	// this map under "offset", but NOTHING downstream ever reads that key: both
 	// consumers (app-wiring's toSearchRequest for the ES path, and
@@ -423,8 +412,6 @@ func (h *Handler) GetCategory(c *gin.Context) {
 	}
 	respond(c, http.StatusOK, cat)
 }
-
-// ─── Offers ──────────────────────────────────────────────────────────────────
 
 // CreateOffer POST /offers
 func (h *Handler) CreateOffer(c *gin.Context) {
@@ -518,8 +505,6 @@ func (h *Handler) ListOffers(c *gin.Context) {
 // logistics/payments webhooks have been deleted. mkt_orders/mkt_disputes tables are
 // retained (additive-only) but unused.
 
-// ─── Boosts ──────────────────────────────────────────────────────────────────
-
 // BoostTiers GET /boosts/tiers
 func (h *Handler) BoostTiers(c *gin.Context) {
 	tiers, err := h.svc.ListBoostTiers(c.Request.Context())
@@ -563,7 +548,7 @@ func (h *Handler) CreateBoost(c *gin.Context) {
 		fail(c, fieldErr(CodeValidation, err.Error(), ""))
 		return
 	}
-	b, err := h.svc.PurchaseBoost(c.Request.Context(), uid, idemKeyOf(c), in)
+	b, err := h.svc.PurchaseBoost(c.Request.Context(), uid, ginutil.IdempotencyKey(c), in)
 	if err != nil {
 		fail(c, err)
 		return
@@ -588,8 +573,6 @@ func (h *Handler) GetBoost(c *gin.Context) {
 	}
 	respond(c, http.StatusOK, b)
 }
-
-// ─── Saved searches ──────────────────────────────────────────────────────────
 
 // CreateSavedSearch POST /saved-searches
 func (h *Handler) CreateSavedSearch(c *gin.Context) {
@@ -658,8 +641,6 @@ func (h *Handler) ToggleSavedSearch(c *gin.Context) {
 	respond(c, http.StatusOK, gin.H{"ok": true})
 }
 
-// ─── Sellers ─────────────────────────────────────────────────────────────────
-
 // SellerProfile GET /sellers/:id/profile
 func (h *Handler) SellerProfile(c *gin.Context) {
 	p, err := h.svc.SellerProfile(c.Request.Context(), c.Param("id"))
@@ -726,8 +707,6 @@ func (h *Handler) SellerReviews(c *gin.Context) {
 	respond(c, http.StatusOK, rs)
 }
 
-// ─── Verification ────────────────────────────────────────────────────────────
-
 // VerifyID POST /verification/id
 func (h *Handler) VerifyID(c *gin.Context) {
 	uid, ok := requireUser(c)
@@ -752,4 +731,202 @@ func (h *Handler) VerifyBusiness(c *gin.Context) {
 		return
 	}
 	respond(c, http.StatusOK, gin.H{"verified_business_badge": true})
+}
+
+// idempotency implements the §5 `idem:{key}` 24h replay cache. On the first
+// request for a key we store the serialized response; a replay returns that exact
+// original response body (§3: 409 IDEMPOTENCY_KEY_REPLAY returns the original 201,
+// not an error).
+// Redis is the fast path; when Redis is nil (dev/CI) the durable correctness
+// backstop is the DB-side natural uniqueness — mkt_orders.idempotency_key UNIQUE
+// and the ledger's own unique idempotency_key. So a nil redis never means a double
+// money movement, only that we cannot cheaply replay the cached body.
+
+const idemTTL = 24 * time.Hour
+
+// storedResponse is the cached idempotent response envelope.
+type storedResponse struct {
+	Status int             `json:"status"`
+	Body   json.RawMessage `json:"body"`
+}
+
+// idemKeyRedis is the §5 key pattern.
+func idemKeyRedis(key string) string { return "idem:" + key }
+
+// checkIdempotent returns (stored, true, nil) when a prior response is cached for
+// the key. When nothing is cached (or Redis is nil) it returns (_, false, nil).
+func checkIdempotent(ctx context.Context, rdb *goredis.Client, key string) (*storedResponse, bool, error) {
+	if rdb == nil || key == "" {
+		return nil, false, nil
+	}
+	raw, err := rdb.Get(ctx, idemKeyRedis(key)).Result()
+	if errors.Is(err, goredis.Nil) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, nil // treat cache miss on error; DB unique is the backstop
+	}
+	var sr storedResponse
+	if err := json.Unmarshal([]byte(raw), &sr); err != nil {
+		return nil, false, nil
+	}
+	return &sr, true, nil
+}
+
+// saveIdempotent caches a response body under the key for 24h. Best-effort: a
+// Redis failure is swallowed (DB-unique remains the correctness backstop).
+func saveIdempotent(ctx context.Context, rdb *goredis.Client, key string, status int, body any) {
+	if rdb == nil || key == "" {
+		return
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		return
+	}
+	sr := storedResponse{Status: status, Body: b}
+	raw, err := json.Marshal(sr)
+	if err != nil {
+		return
+	}
+	// SetNX so a concurrent double-submit does not clobber the first stored body.
+	_ = rdb.SetNX(ctx, idemKeyRedis(key), raw, idemTTL).Err()
+}
+
+// replayError is returned by the service to signal the handler to replay the cached
+// body (HTTP 409 semantics but with the original 2xx payload).
+type replayError struct {
+	Stored *storedResponse
+}
+
+func (replayError) Error() string { return "idempotency replay" }
+
+// presign.go — backend-owned presigned Cloudflare R2 uploads for listing photos.
+// Gap endpoint the Sell agent's Smart Composer needs: the client cannot upload a
+// binary through our JSON API, so it asks for a short-lived presigned PUT URL and
+// PUTs the image straight to R2. This mirrors the estate module's presign pattern
+// (backend/internal/estate/presign.go) exactly — server-controlled object key,
+// Content-Type bound into the signature, fail-closed 503 when R2 is unconfigured
+// (NEVER a fabricated URL).
+// Object key is scoped to the authenticated seller:
+//   marketplace/<userID>/<rand>.<ext>
+// so a client can neither overwrite another seller's objects nor smuggle a path.
+
+// listingMediaPresignTTL bounds how long an issued upload URL is valid.
+const listingMediaPresignTTL = 10 * time.Minute
+
+// listingMediaContentTypes restricts what a presigned PUT may upload (bound into
+// the signature, so the client must send exactly this Content-Type).
+var listingMediaContentTypes = map[string]bool{
+	"image/png":  true,
+	"image/jpeg": true,
+	"image/webp": true,
+}
+
+// listingMediaExt restricts the file extension appended to the derived key. The
+// extension is inferred from either the client-declared MIME type or the file
+// name (whichever resolves) so the key always carries a safe, known suffix.
+var listingMediaExt = map[string]string{
+	"image/png":  ".png",
+	"image/jpeg": ".jpg",
+	"image/webp": ".webp",
+}
+
+var listingMediaAllowedExt = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true, ".webp": true,
+}
+
+// WithPresigner attaches an R2 presigner (+ bucket) so the listing-media upload
+// endpoint can mint presigned PUT URLs. A nil/unconfigured presigner makes the
+// endpoint fail closed with 503.
+func (h *Handler) WithPresigner(p *r2.Presigner, bucket string) *Handler {
+	h.presigner = p
+	h.presignBucket = bucket
+	return h
+}
+
+// PresignMediaRequest is the body for POST /listings/media/presign.
+type PresignMediaRequest struct {
+	FileName string `json:"file_name"`
+	MimeType string `json:"mime_type"`
+}
+
+// PresignMedia issues a presigned R2 PUT URL scoped to the authenticated seller.
+// POST /v1/marketplace/media/presign
+// Body:  { file_name, mime_type }
+// Reply: { upload_url, file_url, object_key, mime_type, expires_in, method }
+func (h *Handler) PresignMedia(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	if h.presigner == nil || !h.presigner.Configured() {
+		fail(c, newErr(http.StatusServiceUnavailable, CodeUploadsNotConfigured, "listing media uploads are not configured"))
+		return
+	}
+
+	var req PresignMediaRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, fieldErr(CodeValidation, err.Error(), ""))
+		return
+	}
+
+	mime := strings.ToLower(strings.TrimSpace(req.MimeType))
+	if !listingMediaContentTypes[mime] {
+		fail(c, fieldErr(CodeValidation, "unsupported mime_type (png, jpeg, webp only)", "mime_type"))
+		return
+	}
+
+	// Extension: prefer the MIME-derived one; fall back to the file name's ext.
+	ext := listingMediaExt[mime]
+	if ext == "" {
+		fnExt := strings.ToLower(path.Ext(req.FileName))
+		if listingMediaAllowedExt[fnExt] {
+			ext = fnExt
+		}
+	}
+	if ext == "" {
+		fail(c, fieldErr(CodeValidation, "unsupported file extension", "file_name"))
+		return
+	}
+
+	// Server-controlled key: the client cannot influence the path beyond its own
+	// scope; the random component prevents guessing/overwrite.
+	key := "marketplace/" + uid + "/" + cryptox.Token() + ext
+
+	url, err := h.presigner.PresignPut(key, mime, listingMediaPresignTTL)
+	if err != nil {
+		if errors.Is(err, r2.ErrNotConfigured) {
+			fail(c, newErr(http.StatusServiceUnavailable, CodeUploadsNotConfigured, "listing media uploads are not configured"))
+			return
+		}
+		fail(c, newErr(http.StatusInternalServerError, CodeInternal, "could not issue upload url"))
+		return
+	}
+
+	respond(c, http.StatusOK, gin.H{
+		"upload_url": url,
+		// file_url is the canonical object reference the client echoes back on
+		// listing create (media_ids). It is the object key, not a public URL —
+		// public delivery is served through the R2/CDN binding, not from here.
+		"file_url":   key,
+		"object_key": key,
+		"bucket":     h.presignBucket,
+		"mime_type":  mime,
+		"expires_in": int(listingMediaPresignTTL.Seconds()),
+		"method":     "PUT",
+	})
+}
+
+// VerifyHMAC reports whether sigHex is a valid HMAC-SHA512 (hex-encoded)
+// signature of body under secret. It is the gate that runs BEFORE any handler
+// logic on inbound logistics/payments webhooks.
+// Fail-closed by contract: an empty secret or empty signature returns false
+// even though the underlying comparison would already reject them — an empty
+// secret would make the MAC forgeable by anyone. The final comparison is
+// constant-time (subtle.ConstantTimeCompare) to avoid timing side channels.
+func VerifyHMAC(secret string, body []byte, sigHex string) bool {
+	if secret == "" || sigHex == "" {
+		return false
+	}
+	return cryptox.VerifyHMACSHA512(secret, body, sigHex)
 }

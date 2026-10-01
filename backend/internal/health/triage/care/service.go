@@ -10,8 +10,6 @@ import (
 	triage "spotlight/backend/internal/health/triage"
 )
 
-// ─── Injected ports (small, nil-safe) ────────────────────────────────────────
-//
 // Every external dependency is a narrow interface so the care loop is decoupled
 // from the concrete finance/maps/notifications/care modules (no tight coupling)
 // and runs in dev with nil-safe stubs.
@@ -46,8 +44,6 @@ type FollowUp interface {
 	Schedule(ctx context.Context, userID, referralID string, at time.Time) error
 }
 
-// ─── Service ─────────────────────────────────────────────────────────────────
-
 // CareService is the care-routing + escalation engine. It owns the CareReferral
 // and Escalation state machines (guarded via the parent `triage` package) and
 // orchestrates the injected ports. All ports are nil-safe.
@@ -67,7 +63,6 @@ func NewCareService(repo Repository, pay Payment, loc EmergencyLocator, notify N
 }
 
 // Refer turns a disposition level into a CareReferral and routes it.
-//
 //   - route = triage.RouteForLevel(level) (emergency | telemed | self_care).
 //     pharmacy/lab are booked through CareBooker as the "telemed"-class paid path —
 //     the route stored on the referral is the engine route; the booker decides the
@@ -292,8 +287,6 @@ func (s *CareService) ListReferrals(ctx context.Context, userID string) ([]CareR
 	return s.repo.ListReferralsByUser(ctx, userID)
 }
 
-// ─── Escalation state machine (SC-5 human-in-loop) ───────────────────────────
-
 // Raise opens a new escalation case in `raised` (SC-5). Always auditable.
 func (s *CareService) Raise(ctx context.Context, sessionID, userID, reason string) (*Escalation, error) {
 	if sessionID == "" || userID == "" {
@@ -394,8 +387,6 @@ func (s *CareService) ListEscalations(ctx context.Context, state string) ([]Esca
 func (s *CareService) NearestEmergency(ctx context.Context, lat, lng float64) (*EmergencyInfo, error) {
 	return s.emergencyInfo(ctx, lat, lng), nil
 }
-
-// ─── internals ───────────────────────────────────────────────────────────────
 
 // transitionReferral validates the edge against the parent SM then performs the
 // guarded compare-and-set in the repo (defence in depth: SM + WHERE state=$from).

@@ -27,8 +27,6 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("exam: not found")
 
-// ── helpers ────────────────────────────────────────────────────────────────────
-
 func toJSONB(v any) []byte {
 	if v == nil {
 		return []byte("{}")
@@ -87,8 +85,6 @@ func (r *Repository) insertAudit(ctx context.Context, actor, action, resourceTyp
 	_, err := r.db.Exec(ctx, q, actorArg, action, resourceType, resourceID, toJSONB(newValues), severity)
 	return err
 }
-
-// ── Arenas ──────────────────────────────────────────────────────────────────────
 
 const arenaCols = `id, code, name, subject_set, scoring_rules, calendar, countdown_at, status`
 
@@ -183,8 +179,6 @@ func (r *Repository) UpdateArena(ctx context.Context, actor, id string, req Upda
 	_ = r.insertAudit(ctx, actor, "exam_arena.updated", "academy_exam_arena", id, nil, "info")
 	return r.GetArena(ctx, id)
 }
-
-// ── Blueprints ────────────────────────────────────────────────────────────────
 
 const blueprintCols = `id, arena_id, name, variant, sections, total_items, total_seconds, navigation, tools, shuffle, pause_policy, status`
 
@@ -317,8 +311,6 @@ func (r *Repository) UpdateBlueprint(ctx context.Context, actor, id string, req 
 	return r.GetBlueprint(ctx, id)
 }
 
-// ── Subject-combination rules ────────────────────────────────────────────────────
-
 const combinationCols = `id, arena_id, course, required_subjects, guidance`
 
 func scanCombination(row rowScanner) (*SubjectCombinationRule, error) {
@@ -430,8 +422,6 @@ func (r *Repository) GetCombinations(ctx context.Context, arenaID, course string
 	}
 	return out, rows.Err()
 }
-
-// ── Attempts ──────────────────────────────────────────────────────────────────
 
 const attemptCols = `id, user_id, blueprint_id, arena_id, state, started_at, server_deadline,
 	paused_at, submitted_at, score, readiness, predicted, integrity, offline_origin,
@@ -551,8 +541,6 @@ func orderedFieldKeys(fields map[string]any) []string {
 	}
 	return out
 }
-
-// ── Responses ──────────────────────────────────────────────────────────────────
 
 // InsertResponses writes the frozen response set for an attempt in one tx. Called
 // exactly once at submit time; responses are immutable thereafter. correctByID

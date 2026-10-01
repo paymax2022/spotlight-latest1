@@ -1,6 +1,4 @@
-// ── Arena (Driver Contest) — data hooks ──────────────────────────────────────
 // React Query wrappers over the /api/arena contract. Reads are offline-tolerant
-// (cached + "last updated" derived from `updatedAt`); mutations invalidate the
 // queries they affect. Money/engagement mutations delegate idempotency to api.ts.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -8,8 +6,6 @@ import * as arena from './api';
 import type { PredictionPick } from './types';
 
 const KEY = 'arena';
-
-// ─── Public reads ────────────────────────────────────────────────────────────
 
 export function useCompetitions() {
   return useQuery({
@@ -75,8 +71,6 @@ export function useVerifyCredential(hash: string | null | undefined) {
   });
 }
 
-// ─── Member reads ────────────────────────────────────────────────────────────
-
 /** The signed-in user's contestant record — drives the Compete tab state machine. */
 export function useMe(competitionId: string | null | undefined, pollMs?: number) {
   return useQuery({
@@ -131,8 +125,6 @@ export function useExam(competitionId: string | null | undefined, enabled: boole
     retry: false,
   });
 }
-
-// ─── Mutations ───────────────────────────────────────────────────────────────
 
 export function useSubmitApplication() {
   const qc = useQueryClient();

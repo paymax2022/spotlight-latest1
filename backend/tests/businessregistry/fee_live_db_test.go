@@ -1,15 +1,12 @@
 package businessregistry_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB money-path test for the CAC business-registry FEE DEBIT (the funded
 // happy path the live-HTTP campaign couldn't reach without funding a wallet):
 // register_new → name-check → reserve → PAY FEE (real wallet debit) → submit.
-//
 // Asserts the money invariant: the fee is debited EXACTLY once (idempotent
 // replay posts no second debit), and — when the sandbox provider registers —
 // the profile reaches a verified/registered state that satisfies the
 // merchant-upgrade gate (HasVerifiedBusiness). Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

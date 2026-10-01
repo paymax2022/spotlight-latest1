@@ -1,5 +1,4 @@
 // Applicant: confirm a tuition installment payment.
-//
 // Cut over to the Go-native money path (backend/internal/academy/tuition) — Paystack
 // verification, amount/ownership checks, and the ledger journal now all happen in Go
 // (previously this route verified Paystack itself and wrote academy_installment_payments
@@ -10,8 +9,8 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { proxyToGoBackend } from '@/src/lib/go-backend';
-import { sendTransactionalEmail } from '@/src/lib/email/transactional';
-import { ensureEnrollment } from '@/src/server/services/academy/enrollment';
+import { sendTransactionalEmail } from '@/src/lib/email';
+import { ensureEnrollment } from '@/src/server/services/academy';
 
 export async function POST(request: Request) {
   try {
@@ -29,7 +28,6 @@ export async function POST(request: Request) {
     // The mobile/web clients don't send an Idempotency-Key for this call today.
     // Derive a deterministic one from (paymentId, reference) — a retry of the SAME
     // logical confirmation always maps to the same key, which is exactly what
-    // idempotency should mean here; a different reference against the same
     // installment (which would be a distinct attempt) gets a distinct key.
     const idempotencyKey =
       request.headers.get('Idempotency-Key') ||
@@ -63,7 +61,6 @@ export async function POST(request: Request) {
     const supabase = createAdminClient();
     if (applicationId) {
       await ensureEnrollment(supabase, applicationId).catch((e) => {
-        // The payment IS recorded (in Go); failing the response here would invite a
         // second charge for an instalment that is already paid.
         console.error('[academy/installments/pay] enrolment failed after payment', e);
       });

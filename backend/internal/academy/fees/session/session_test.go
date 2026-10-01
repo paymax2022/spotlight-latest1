@@ -118,8 +118,6 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
-// ── Session status machine (pure) ────────────────────────────────────────────────
-
 func TestSessionTransition_LegalAndIllegal(t *testing.T) {
 	legal := [][2]SessionStatus{
 		{SessionActive, SessionClosed},
@@ -172,8 +170,6 @@ func TestServiceSetSessionStatus_GuardedAndAudited(t *testing.T) {
 		t.Fatalf("status must remain closed after rejected reopen, got %s", cur.Status)
 	}
 }
-
-// ── Class: same-school session guard ─────────────────────────────────────────────
 
 func TestServiceCreateClass_SessionMustMatchSchool(t *testing.T) {
 	fs := newFakeStore()

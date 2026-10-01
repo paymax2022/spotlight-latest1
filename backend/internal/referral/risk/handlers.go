@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -50,7 +51,6 @@ func Register(member, admin *gin.RouterGroup, svc *Service, rbac services.RBACSe
 	ag.GET("/blocklist", guard("referral.risk.view"), h.ListBlocklist)
 	ag.POST("/blocklist", guard("referral.risk.blocklist"), h.AddBlocklist)
 	ag.POST("/blocklist/:id/deactivate", guard("referral.risk.blocklist"), h.DeactivateBlocklist)
-	// review queue
 	ag.GET("/review-queue", guard("referral.risk.view"), h.ListReviewQueue)
 	ag.POST("/review-queue/:id/approve", guard("referral.risk.manage"), h.ApproveReview)
 	ag.POST("/review-queue/:id/reject", guard("referral.risk.manage"), h.RejectReview)
@@ -63,10 +63,8 @@ func uid(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
-	return c.GetString("user_id")
+	return ginutil.UserID(c)
 }
-
-// --- member ---
 
 func (h *Handler) MyStatus(c *gin.Context) {
 	id := uid(c)
@@ -108,8 +106,6 @@ func (h *Handler) ReportAbuse(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"alert": a})
 }
 
-// --- admin: dashboard + alerts ---
-
 func (h *Handler) Dashboard(c *gin.Context) {
 	d, err := h.svc.Dashboard(c.Request.Context())
 	if err != nil {
@@ -143,8 +139,6 @@ func (h *Handler) SetAlertStatus(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
-
-// --- admin: rules ---
 
 func (h *Handler) ListRules(c *gin.Context) {
 	list, err := h.svc.ListRules(c.Request.Context())
@@ -184,8 +178,6 @@ func (h *Handler) SetRuleEnabled(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// --- admin: evaluate ---
-
 func (h *Handler) Evaluate(c *gin.Context) {
 	var in EvaluateInput
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -193,7 +185,7 @@ func (h *Handler) Evaluate(c *gin.Context) {
 		return
 	}
 	if in.IdempotencyKey == "" {
-		in.IdempotencyKey = c.GetHeader("Idempotency-Key")
+		in.IdempotencyKey = ginutil.IdempotencyKey(c)
 	}
 	res, err := h.svc.Evaluate(c.Request.Context(), in)
 	if err != nil {
@@ -202,8 +194,6 @@ func (h *Handler) Evaluate(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"result": res})
 }
-
-// --- admin: cases ---
 
 func (h *Handler) ListCases(c *gin.Context) {
 	list, err := h.svc.ListCases(c.Request.Context(), c.Query("status"), 200)
@@ -257,8 +247,6 @@ func (h *Handler) UpdateCaseStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// --- admin: blocklist ---
-
 func (h *Handler) ListBlocklist(c *gin.Context) {
 	list, err := h.svc.ListBlocklist(c.Request.Context(), c.Query("list_type"))
 	if err != nil {
@@ -290,8 +278,6 @@ func (h *Handler) DeactivateBlocklist(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// --- admin: review queue ---
-
 func (h *Handler) ListReviewQueue(c *gin.Context) {
 	list, err := h.svc.ListReviewQueue(c.Request.Context(), c.Query("status"))
 	if err != nil {
@@ -317,8 +303,6 @@ func (h *Handler) RejectReview(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// --- admin: clawback ---
-
 func (h *Handler) ExecuteClawback(c *gin.Context) {
 	var in ClawbackInput
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -326,7 +310,7 @@ func (h *Handler) ExecuteClawback(c *gin.Context) {
 		return
 	}
 	if in.IdempotencyKey == "" {
-		in.IdempotencyKey = c.GetHeader("Idempotency-Key")
+		in.IdempotencyKey = ginutil.IdempotencyKey(c)
 	}
 	if err := h.svc.ExecuteClawback(c.Request.Context(), in, uid(c)); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

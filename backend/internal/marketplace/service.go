@@ -2,23 +2,20 @@ package marketplace
 
 import (
 	"context"
+	"github.com/jackc/pgx/v5/pgxpool"
+	goredis "github.com/redis/go-redis/v9"
 	"log"
+	"regexp"
+	"spotlight/backend/internal/finance/ledger"
 	"strconv"
 	"strings"
 	"time"
-
-	goredis "github.com/redis/go-redis/v9"
-
-	"github.com/jackc/pgx/v5/pgxpool"
-
-	"spotlight/backend/internal/finance/ledger"
 )
 
 // Service is the single entry point for the marketplace domain. It owns the four
 // guarded FSMs (listing/order/dispute/boost) and REUSES the finance double-entry
 // ledger for every money movement (§ doctrine: the marketplace never stores a
 // balance; escrow is a ledger posting into ledger.AccountEscrow).
-//
 // Constructed in internal/app via NewService(pool, ledger, redis).
 type Service struct {
 	repo       *Repository
@@ -49,7 +46,6 @@ type Notifier interface {
 // marketplace never imports the commission package at compile time (mirrors the
 // Searcher/Notifier seams) — the adapter, which lives in app-wiring, discards the
 // returned earning row and surfaces only the error.
-//
 // This records realized profit ONLY; it never moves money. The marketplace's own
 // money movements (e.g. the boost wallet charge into ledger.AccountCommission) are
 // unchanged, and the injected recorder is deliberately constructed WITHOUT a ledger
@@ -104,7 +100,6 @@ type boostLedger interface {
 // fractionalre). Modeled as a LOCAL interface (mirrors boostLedger/Notifier/
 // Searcher/CommissionRecorder) so marketplace depends on the behaviour, not on
 // finance/tiers directly. Satisfied by *tiers.Service.
-//
 // A boost purchase is a direct wallet debit (not a checkout/escrow allowance
 // case), so it uses EnforceWalletDebitLimit — the same choice restaurant
 // withdrawals and doctor/fractionalre wallet debits make, never the relaxed
@@ -160,8 +155,6 @@ func (s *Service) notifySafe(ctx context.Context, userID, kind, message string) 
 	}
 }
 
-// ─── Search seam (§ integration contract) ────────────────────────────────────
-//
 // To avoid a compile cycle (`marketplace` must NOT import `search`), A defines this
 // tiny local interface and app-wiring injects Agent B's *search.Client, which must
 // satisfy Search(ctx, req) (results, error) with the documented signature:
@@ -177,8 +170,6 @@ type Searcher interface {
 
 // SetSearcher injects the search read-model client (app-wiring, post-construction).
 func (s *Service) SetSearcher(sr Searcher) { s.searcher = sr }
-
-// ─── Category + search read paths ────────────────────────────────────────────
 
 // ListCategories returns active categories for the market.
 func (s *Service) ListCategories(ctx context.Context, marketID string) ([]Category, error) {
@@ -198,7 +189,6 @@ func (s *Service) GetCategory(ctx context.Context, id string) (*Category, error)
 // fallback (ILIKE title + category/condition/state/price filters, newest-first,
 // LIMIT-bounded) so the mobile search screen still returns real active listings
 // instead of a 501 dead-end. Full facets/relevance/geo ranking only ship with ES.
-// ─── Listing thumbnails ──────────────────────────────────────────────────────
 
 // listingThumbTTL is how long a thumbnail URL stays valid. Long enough that a
 // browse session never sees an image expire mid-scroll, short enough that a
@@ -237,7 +227,6 @@ func (s *Service) presignThumb(key string) string {
 
 // attachThumbs fills ThumbURL for a page of listings in ONE media query plus a
 // local signature each (signing is HMAC, no network).
-//
 // The objects sit in a private R2 bucket, so the client cannot fetch a raw key —
 // it needs a signed URL, which is why this happens on read rather than being
 // stored. If a public bucket or CDN binding is configured later, this is the one
@@ -360,7 +349,6 @@ func (s *Service) Search(ctx context.Context, req any) (any, error) {
 	s.attachThumbs(ctx, ptrs)
 	// Shape a search-response-like envelope the mobile client already understands
 	// (results + empty facets + cursor). `degraded` flags the reduced mode.
-	//
 	// next_cursor used to be hardcoded nil, so the degraded path could only ever
 	// serve page 1 no matter how many active listings existed beyond the first
 	// LIMIT-bounded page (the repo query had no OFFSET at all — see
@@ -445,8 +433,6 @@ func parseSearchFallback(req any) SearchFallbackFilter {
 	return f
 }
 
-// ─── Seller profile read paths ───────────────────────────────────────────────
-
 // SellerProfile returns a seller's trust card.
 func (s *Service) SellerProfile(ctx context.Context, sellerID string) (*TrustProfile, error) {
 	return s.repo.GetTrustProfile(ctx, sellerID)
@@ -501,8 +487,6 @@ func (s *Service) SellerReviews(ctx context.Context, sellerID string, limit, off
 	return s.repo.ListRevieweeDealReviews(ctx, sellerID, limit, offset)
 }
 
-// ─── Verification (delegates to KYC provider elsewhere; badges are PERMANENT) ──
-
 // VerifyID marks the caller's verified_id_badge (§ trust_scores: permanent once true).
 // The real ID document check delegates to the existing SmileID/Dojah adapter; here we
 // record the badge grant. Idempotent (upsert).
@@ -515,13 +499,10 @@ func (s *Service) VerifyBusiness(ctx context.Context, userID string) error {
 	return s.repo.SetVerifiedBadge(ctx, userID, true)
 }
 
-// ─── Offers (§3.3; guards + status, extrapolated from exemplar) ──────────────
-
 // CreateOffer places a pending offer on a listing.
 func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, offerKobo int64, message string) (*Offer, error) {
 	// Guard before the fetch: an empty listingID reached the repository and
 	// surfaced as 500 "invalid input syntax for type uuid".
-	//
 	// This guard was originally added believing the caller was misspelling
 	// listingId as listing_id. That had it backwards — snake_case IS the wire
 	// name (contracts/openapi.yaml), and the mobile client cannot send anything
@@ -630,8 +611,6 @@ func (s *Service) transitionOffer(ctx context.Context, sellerID, offerID, status
 	return o, nil
 }
 
-// ─── Saved searches (§3.3) ───────────────────────────────────────────────────
-
 // CreateSavedSearch stores a saved search for the user.
 func (s *Service) CreateSavedSearch(ctx context.Context, userID string, in SavedSearch) (*SavedSearch, error) {
 	in.UserID = userID
@@ -669,10 +648,6 @@ func (s *Service) ToggleSavedSearchAlert(ctx context.Context, userID, id string,
 	}
 	return s.repo.SetSavedSearchAlert(ctx, id, enabled)
 }
-
-// ─── Reviews (§3.3; only after order released) ───────────────────────────────
-
-// ─── Admin: flags + aging (thin wrappers with audit) ────────────────────────
 
 // ActionFlag records an admin action on a moderation flag (audited).
 func (s *Service) ActionFlag(ctx context.Context, adminID, flagID, status, reasonCode string) error {
@@ -712,4 +687,78 @@ func (s *Service) SubmitReview(ctx context.Context, buyerID, orderID string, rat
 		return nil, err
 	}
 	return rev, nil
+}
+
+// Auto-moderation pre-filter (§2.1 submit). Risk-tier-0 categories auto-approve for
+// trusted sellers straight to `active` with no human review — so a content screen
+// MUST run first, or a trusted account can publish prohibited content instantly.
+// This is a conservative, dependency-free keyword screen: a hit does NOT auto-reject
+// (a human decides) — it only DENIES the auto-approve fast-path and routes the listing
+// to pending_review with a reason. The keyword set is a deliberately small,
+// high-precision starter list; admins extend the real policy list over time.
+
+// systemActorID is the nil-UUID actor recorded in the immutable audit trail for
+// automated (non-human) decisions such as the auto-moderation flag. admin_id is a
+// NOT-NULL uuid column, so automated writes attribute to the all-zeros UUID.
+const systemActorID = "00000000-0000-0000-0000-000000000000"
+
+// prohibitedPatterns maps a moderation reason code to the terms that trip it. Terms
+// are matched case-insensitively on word boundaries so "gun" does not match "began".
+var prohibitedPatterns = map[string][]string{
+	"weapons":             {"ak47", "ak-47", "handgun", "handguns", "firearm", "firearms", "ammunition", "ammo", "grenade", "grenades"},
+	"drugs":               {"cocaine", "heroin", "mdma", "meth", "methamphetamine", "tramadol", "codeine syrup"},
+	"counterfeit":         {"counterfeit", "fake currency", "cloned card", "cloned cards", "cvv dump", "cvv dumps"},
+	"human_harm":          {"human organ", "human organs", "kidney for sale"},
+	"payment_evasion":     {"pay outside", "cash only no escrow", "bypass escrow", "send to my account first"},
+	"prohibited_wildlife": {"ivory tusk", "pangolin scales", "elephant tusk"},
+}
+
+// compiledProhibited is prohibitedPatterns compiled once into word-boundary regexps.
+var compiledProhibited = func() map[string]*regexp.Regexp {
+	out := make(map[string]*regexp.Regexp, len(prohibitedPatterns))
+	for reason, terms := range prohibitedPatterns {
+		quoted := make([]string, len(terms))
+		for i, t := range terms {
+			quoted[i] = regexp.QuoteMeta(t)
+		}
+		// \b works for the alnum-boundary terms; phrases with spaces still match.
+		out[reason] = regexp.MustCompile(`(?i)\b(` + strings.Join(quoted, "|") + `)\b`)
+	}
+	return out
+}()
+
+// screenText reports the first prohibited-content reason found in text, or "" if clean.
+// Deterministic order is not guaranteed across reasons (map iteration), but any hit is
+// sufficient to route to review, so the exact reason among multiple hits is not
+// safety-critical.
+func screenText(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	for reason, re := range compiledProhibited {
+		if re.MatchString(text) {
+			return reason
+		}
+	}
+	return ""
+}
+
+// screenListingContent screens a listing's user-authored surface (title, description,
+// and string-valued attrs) and returns a reason code if anything trips the filter.
+// Pure and testable — no I/O.
+func screenListingContent(title, description string, attrs map[string]any) string {
+	if r := screenText(title); r != "" {
+		return r
+	}
+	if r := screenText(description); r != "" {
+		return r
+	}
+	for _, v := range attrs {
+		if sv, ok := v.(string); ok {
+			if r := screenText(sv); r != "" {
+				return r
+			}
+		}
+	}
+	return ""
 }

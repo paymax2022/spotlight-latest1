@@ -1,7 +1,6 @@
 'use client';
 
 // AK6 — Provider routing rules.
-// RBAC: finance.admin.kyc (role: Admin). Per check type: an ordered
 // primary→fallback provider list, a pass/review threshold, and an enable toggle.
 // Saving PUTs the rule so providers can be swapped with NO code change.
 

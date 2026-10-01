@@ -15,8 +15,6 @@ import (
 	"spotlight/backend/internal/services"
 )
 
-// ── doubles ─────────────────────────────────────────────────────────────────
-
 type stubAuthService struct {
 	result   *services.RegisterResult
 	err      error
@@ -97,8 +95,6 @@ func registerBody() map[string]string {
 		"firstName": "Ada", "lastName": "Lovelace",
 	}
 }
-
-// ── the wiring ──────────────────────────────────────────────────────────────
 
 // Signup with confirmations ON returns no session, which is what
 // NeedsVerification reports. That is exactly when a code has to go out.
@@ -199,8 +195,6 @@ func TestRegisterDoesNotIssueWhenRegistrationFails(t *testing.T) {
 	}
 }
 
-// ── the signup budget (GoTrue's sign_in_sign_ups, replaced) ─────────────────
-
 type recordingGate struct {
 	mu      sync.Mutex
 	ips     []string
@@ -283,7 +277,6 @@ func TestRegisterRefusedWhenTheSignupBudgetCannotBeEvaluated(t *testing.T) {
 }
 
 // An allowed registration consults the budget exactly once and proceeds.
-//
 // (The ORDERING — budget before creation — is asserted in the two refusal tests
 // above, by requiring that RegisterUser was never called. An earlier version of
 // this test claimed to check ordering while only counting gate calls, and a

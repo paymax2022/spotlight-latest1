@@ -1,15 +1,11 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // The chat-realtime RLS gate must agree with the API gate.
-//
 // WHY THIS EXISTS
-// ---------------
 // /association/chat could send and read messages but never received one live:
 // assoc_chat_messages was absent from the `supabase_realtime` publication, and
 // RLS was enabled on it with zero policies, so Realtime — which evaluates RLS as
 // the subscribing user — delivered nothing.
-//
 // Publishing the table means message rows now leave the database through a
 // second path, one the Go service does not mediate. Who may read a thread is NOT
 // simply "a member of the organisation": GetChatThreads / GetChatThread /
@@ -18,11 +14,9 @@ package association_test
 // A policy checking only organisation membership would be a SUPERSET of that,
 // and realtime payloads carry the message BODY — so an ordinary member would
 // receive the text of executive and committee messages the API hides.
-//
 // assoc_can_read_chat_thread() is that gate expressed once. These tests pin it
 // against the API for the same users and threads, so the two cannot drift apart
 // silently: a change to one that is not made in the other fails here.
-//
 // UPDATE (chat delivery moved off Realtime): live group chat now fans out over
 // the backend's own WebSocket hub (platform/ws) instead of Supabase Realtime, so
 // the delivering gate is Service.ChatThreadAudience. That list — who a committed
@@ -31,10 +25,8 @@ package association_test
 // superset pushes executive/committee bodies to members who cannot fetch them.
 // The policy remains published and is still checked, so nothing that ever
 // subscribes again can over-deliver.
-//
 // Live-DB, same harness as founder_and_scoping_test.go: skipped without
 // TEST_DATABASE_URL.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

@@ -1,16 +1,13 @@
 package restaurant
 
 // LIVE-DB tests for per-outlet staff resolution (foodhub A18).
-//
 // The property that matters most is NOT that staff work — it is that owners are
 // unaffected. Every owner-side guard in this package is assertOwner today; the
 // resolver replaces it, and if it disagrees for even one owner, a working
 // restaurant loses control of its own shop.
-//
 // The second property is per-outlet isolation: a manager at one branch must have
 // no authority at another. That is the whole reason authority moved off
 // restaurants.owner_id.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (
@@ -192,8 +189,6 @@ func TestLiveDB_ResolutionAgreesWithOwnerCheck(t *testing.T) {
 	}
 }
 
-// ─── The swap itself ────────────────────────────────────────────────────────
-//
 // The tests above exercise AssertStaffPermission directly. These go through the
 // real service methods, which is the only way to prove the guard swap actually
 // took effect at the call sites: a handler still calling assertOwner would pass

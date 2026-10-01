@@ -13,9 +13,7 @@ import (
 
 // TM-007 live-DB integration test: a clinician generates a referral from a consult;
 // only the provider may issue it; participants (not strangers) can read it.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset. Bring-up:
-//
 //	supabase start
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	go test ./internal/health/consult/ -run TestReferral_LiveDB

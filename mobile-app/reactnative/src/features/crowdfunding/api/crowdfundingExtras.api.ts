@@ -1,4 +1,3 @@
-// ── Crowdfunding — Wallet / support / notifications / rewards / settings API ──
 // Mock-backed; mirrors crowdfunding.api.ts conventions. Money in kobo.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -34,8 +33,6 @@ import {
 
 const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CF_USE_MOCK, true);
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
-
-// ─── Wallet & ledger ──────────────────────────────────────────────────────────
 
 export async function getCampaignWallet(campaignId?: string): Promise<CampaignWalletSummary> {
   if (USE_MOCK) { await delay(200); return MOCK_WALLET; }
@@ -82,8 +79,6 @@ export async function submitWithdrawal(input: WithdrawalRequestInput, idempotenc
   });
   return res.data?.data ?? res.data;
 }
-
-// ─── Support & help ───────────────────────────────────────────────────────────
 
 export async function getHelpArticles(): Promise<HelpArticle[]> {
   if (USE_MOCK) { await delay(160); return MOCK_HELP; }
@@ -139,8 +134,6 @@ export async function replyTicket(ticketId: string, body: string): Promise<Ticke
   return res.data?.data ?? res.data;
 }
 
-// ─── Notifications ────────────────────────────────────────────────────────────
-
 export async function getNotifications(): Promise<AppNotification[]> {
   if (USE_MOCK) { await delay(200); return MOCK_NOTIFICATIONS; }
   const res = await api.get('/api/v1/crowdfunding/notifications');
@@ -151,8 +144,6 @@ export async function markNotificationsRead(): Promise<void> {
   if (USE_MOCK) { await delay(120); MOCK_NOTIFICATIONS.forEach((n) => (n.read = true)); return; }
   await api.post('/api/v1/crowdfunding/notifications/read');
 }
-
-// ─── Reward fulfilment ────────────────────────────────────────────────────────
 
 export async function getRewardBackers(status?: string): Promise<RewardBacker[]> {
   if (USE_MOCK) {
@@ -173,8 +164,6 @@ export async function updateRewardStatus(backerId: string, status: RewardFulfilm
   await api.put(`/api/v1/crowdfunding/rewards/fulfilment/${backerId}`, { status });
 }
 
-// ─── Settings ─────────────────────────────────────────────────────────────────
-
 export async function getNotificationPrefs(): Promise<NotificationPrefs> {
   if (USE_MOCK) { await delay(160); return { ...MOCK_NOTIFICATION_PREFS }; }
   const res = await api.get('/api/v1/crowdfunding/settings/notifications');
@@ -186,8 +175,6 @@ export async function updateNotificationPrefs(prefs: NotificationPrefs): Promise
   const res = await api.put('/api/v1/crowdfunding/settings/notifications', prefs);
   return res.data?.data ?? res.data;
 }
-
-// ─── Updates & communication (Section H) ──────────────────────────────────────
 
 export async function getComments(campaignId: string): Promise<CampaignComment[]> {
   if (USE_MOCK) {

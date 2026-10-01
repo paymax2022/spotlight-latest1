@@ -1,6 +1,4 @@
 // Pure-logic unit tests for naming a cart section at checkout.
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "tests/unit/food/*.spec.ts"
-//
 // The defect: checkout groups packages by restaurantId but the store keeps only
 // ONE restaurantName, so a multi-restaurant cart showed the real name for the
 // first group and "Restaurant 2", "Restaurant 3"… for the rest — a positional
@@ -110,7 +108,6 @@ describe('groupPackagesByRestaurant', () => {
   });
 
   it('skips empty packages so they open no section', () => {
-    // The cart lets you add a pack before filling it; an empty one must not
     // render a restaurant heading of its own.
     const groups = groupPackagesByRestaurant([
       pkg('empty', []),
@@ -134,7 +131,6 @@ describe('groupPackagesByRestaurant', () => {
 
 describe('the closed-restaurant case that survived the first fix', () => {
   it('names a group once a by-id fetch supplies what discovery could not', () => {
-    // Discovery is `WHERE is_open = TRUE`, so a closed restaurant is absent
     // from it (31 of 697 in the dev DB). A hydrated cart line carries no name
     // either, so both earlier sources fail and only the by-id fetch can name it.
     const lines = [line({ restaurantId: 'rClosed' })];

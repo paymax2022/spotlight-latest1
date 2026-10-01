@@ -1,13 +1,12 @@
 package feesstatemachine
 
-// ── FeesVault state machine (build-spec §3.2, entity table §2) ────────────────
-//
+import "spotlight/backend/go-common/fsm"
+
 // The FeesVault is the guardian's goal-based savings pot for school fees. In the
 // real repo this is backed by academy_savings_pots (+ append-only
 // academy_pot_contributions); this machine governs the pot's STATUS only, never
 // its balance (balance is the projected SavedMinor, computed elsewhere — same
 // SF-2 discipline as invoices).
-//
 //	active → target_reached
 //	target_reached → applied_to_invoice   (single ledger transfer event, one-tap)
 //	active → withdrawn                     (early exit, no penalty by default)
@@ -15,7 +14,6 @@ package feesstatemachine
 //	active → locked                        (compliance / dispute hold)
 //	locked → active                        (hold released)
 //	Terminal: applied_to_invoice, withdrawn
-//
 // Legacy tolerance: some existing pot rows use the status value `closed` as a
 // terminal state. We accept `closed` as a known state and treat it as terminal
 // (an alias for a spent/exited pot) so this machine can be pointed at legacy
@@ -53,10 +51,10 @@ var vaultTerminal = map[VaultState]bool{
 }
 
 // vaultTransitions is the legal adjacency for the vault SM.
-var vaultTransitions = map[VaultState]map[VaultState]bool{
-	VaultActive:           {VaultTargetReached: true, VaultWithdrawn: true, VaultLocked: true},
-	VaultTargetReached:    {VaultAppliedToInvoice: true, VaultWithdrawn: true},
-	VaultLocked:           {VaultActive: true},
+var vaultTransitions = fsm.Table[VaultState]{
+	VaultActive:           fsm.Set(VaultTargetReached, VaultWithdrawn, VaultLocked),
+	VaultTargetReached:    fsm.Set(VaultAppliedToInvoice, VaultWithdrawn),
+	VaultLocked:           fsm.Set(VaultActive),
 	VaultAppliedToInvoice: {}, // terminal
 	VaultWithdrawn:        {}, // terminal
 	VaultClosed:           {}, // terminal (legacy alias)
@@ -93,11 +91,7 @@ func vaultTarget(event Event) VaultState {
 
 // VaultCanTransition reports whether from→to is a legal vault transition. Pure.
 func VaultCanTransition(from, to VaultState) bool {
-	targets, ok := vaultTransitions[from]
-	if !ok {
-		return false
-	}
-	return targets[to]
+	return vaultTransitions.Can(from, to)
 }
 
 // VaultTransition applies an event to the vault machine and returns the

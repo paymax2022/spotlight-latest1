@@ -4,7 +4,6 @@ package extranet
 // UpdateDetails) and property photo uploads (property_photos.go) — the gap
 // that made a self-listed (DIRECT-rail) property unable to carry a location
 // pin, amenities, house rules, cancellation policy, or a single photo.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (
@@ -84,8 +83,6 @@ func newMediaFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) medi
 }
 
 func ptr[T any](v T) *T { return &v }
-
-// --- UpdateDetails ---
 
 func TestLiveDB_UpdateDetailsAppliesLocationAmenitiesAndPolicies(t *testing.T) {
 	pool := mediaPool(t)
@@ -181,8 +178,6 @@ func TestLiveDB_UpdateDetailsRequiresAnActiveGrant(t *testing.T) {
 		t.Errorf("UpdateDetails by a non-staff caller = %v, want ErrForbidden", err)
 	}
 }
-
-// --- photos ---
 
 func TestLiveDB_PhotoUploadRoundTripAndCoverInvariant(t *testing.T) {
 	pool := mediaPool(t)
@@ -293,8 +288,6 @@ func TestLiveDB_PhotoUploadFailsClosedWithoutAPresigner(t *testing.T) {
 		t.Errorf("PresignPhotoUpload with no configured presigner = %v, want ErrUploadsNotConfigured", err)
 	}
 }
-
-// --- go-live checklist picks up photos + policies ---
 
 func TestLiveDB_VerificationChecklistReflectsRealPhotosAndPolicies(t *testing.T) {
 	pool := mediaPool(t)

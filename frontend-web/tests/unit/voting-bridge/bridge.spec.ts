@@ -114,7 +114,6 @@ describe('bridgedCastFreeVote — bridge off', () => {
 
     const result = await bridgedCastFreeVote(REQ, 'user-001', 'key-000', CTX);
 
-    // The legacy service throws; the bridge returns. Without the mapping this
     // would escape as an unhandled rejection and the route would answer 500.
     expect(result.success).toBe(false);
     expect(result.error).toBe('Free voting is not enabled');

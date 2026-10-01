@@ -145,7 +145,6 @@ export async function moderatePhoto(sourceUrl: string): Promise<ModerationResult
         moderation: 'aws_rek',
         // Explicit EXIF strip on the moderation upload too — see removeBackground
         // for the full D-006 rationale. Cloudinary does NOT strip metadata by
-        // default on the stored asset; `image_metadata=false` (the default,
         // omitted here) plus delivery without `fl_keep_iptc`/raw passthrough
         // keeps GPS/EXIF out of anything we read back from this call.
       },
@@ -172,7 +171,6 @@ export async function moderatePhoto(sourceUrl: string): Promise<ModerationResult
         : undefined;
       return { approved: false, reason: reasonDetail ? `Rejected: ${reasonDetail}` : 'Rejected by moderation' };
     }
-    // 'pending' (async moderation still processing) or any unrecognized
     // status is NOT a pass — fail closed rather than guessing.
     return { approved: false, reason: `Moderation status not final/recognized: ${status ?? 'unknown'}` };
   } catch (err) {
@@ -200,7 +198,6 @@ export async function removeBackground(sourceUrl: string): Promise<BackgroundRem
       {
         background_removal: 'cloudinary_ai',
         // IMG-010 / D-006 — EXIF/GPS stripping.
-        //
         // Conclusion (documented here since this determines whether D-006 can
         // be marked closed): Cloudinary's upload API does NOT strip
         // EXIF/GPS from the stored original by default — `image_metadata`

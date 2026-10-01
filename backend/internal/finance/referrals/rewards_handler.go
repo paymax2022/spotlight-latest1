@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // RewardHandler exposes the Direct Referral Rewards ENGINE HTTP surface: the user
@@ -26,16 +28,11 @@ func NewRewardHandler(svc *RewardService, internalSecret string) *RewardHandler 
 	return &RewardHandler{svc: svc, internalSecret: internalSecret}
 }
 
-// callerID returns the authenticated user id (mirrored by RequireAuthContext).
-func callerID(c *gin.Context) string { return c.GetString("user_id") }
-
-// ============================================================================
 // USER API — /v1/referrals (Bearer; object-level authZ = caller's own data).
-// ============================================================================
 
 // PostLink handles POST /v1/referrals/link — generate/fetch the caller's code.
 func (h *RewardHandler) PostLink(c *gin.Context) {
-	uid := callerID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -51,7 +48,7 @@ func (h *RewardHandler) PostLink(c *gin.Context) {
 // PostAttribute handles POST /v1/referrals/attribute — apply a code at signup.
 // Idempotent per user; rejects self-referral and unknown codes.
 func (h *RewardHandler) PostAttribute(c *gin.Context) {
-	uid := callerID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -73,7 +70,7 @@ func (h *RewardHandler) PostAttribute(c *gin.Context) {
 
 // GetDashboard handles GET /v1/referrals/me/dashboard.
 func (h *RewardHandler) GetDashboard(c *gin.Context) {
-	uid := callerID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -88,7 +85,7 @@ func (h *RewardHandler) GetDashboard(c *gin.Context) {
 
 // GetReferrals handles GET /v1/referrals/me/referrals.
 func (h *RewardHandler) GetReferrals(c *gin.Context) {
-	uid := callerID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -105,7 +102,7 @@ func (h *RewardHandler) GetReferrals(c *gin.Context) {
 
 // GetEarnings handles GET /v1/referrals/me/earnings (paginated).
 func (h *RewardHandler) GetEarnings(c *gin.Context) {
-	uid := callerID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -122,7 +119,7 @@ func (h *RewardHandler) GetEarnings(c *gin.Context) {
 
 // GetMilestones handles GET /v1/referrals/me/milestones (achieved + upcoming).
 func (h *RewardHandler) GetMilestones(c *gin.Context) {
-	uid := callerID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -135,9 +132,7 @@ func (h *RewardHandler) GetMilestones(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"achieved": achieved, "upcoming": upcoming})
 }
 
-// ============================================================================
 // INTERNAL — service-to-service purchase hooks (shared-secret guarded).
-// ============================================================================
 
 // requireInternalSecret fail-closes: no configured secret ⇒ 503; mismatch ⇒ 401.
 // The header is X-Internal-Secret; compared in constant time.
@@ -207,9 +202,7 @@ func (h *RewardHandler) PostRecalcTiers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-// ============================================================================
 // ADMIN API — /v1/admin/referrals (RBAC applied per-route in the router).
-// ============================================================================
 
 // AdminGetConfig handles GET /v1/admin/referrals/config (A1).
 func (h *RewardHandler) AdminGetConfig(c *gin.Context) {
@@ -237,7 +230,7 @@ func (h *RewardHandler) AdminPutConfig(c *gin.Context) {
 	if req.EffectiveFrom != nil {
 		eff = *req.EffectiveFrom
 	}
-	cfg, err := h.svc.PublishConfig(c.Request.Context(), req.TierTable, req.MilestoneTable, eff, callerID(c))
+	cfg, err := h.svc.PublishConfig(c.Request.Context(), req.TierTable, req.MilestoneTable, eff, ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -279,7 +272,7 @@ func (h *RewardHandler) AdminFraudAction(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	if err := h.svc.ActionFraudFlag(c.Request.Context(), req.FlagID, req.Action, req.Note, callerID(c)); err != nil {
+	if err := h.svc.ActionFraudFlag(c.Request.Context(), req.FlagID, req.Action, req.Note, ginutil.UserID(c)); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -313,7 +306,7 @@ func (h *RewardHandler) AdminGetCase(c *gin.Context) {
 // adjustment requires a logged reason and an Idempotency-Key header.
 func (h *RewardHandler) AdminAdjustCase(c *gin.Context) {
 	referrerID := c.Param("referrerId")
-	idem := c.GetHeader("Idempotency-Key")
+	idem := ginutil.IdempotencyKey(c)
 	if idem == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
@@ -326,7 +319,7 @@ func (h *RewardHandler) AdminAdjustCase(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	if err := h.svc.AdjustCase(c.Request.Context(), referrerID, req.AdjustKobo, req.Reason, callerID(c), idem); err != nil {
+	if err := h.svc.AdjustCase(c.Request.Context(), referrerID, req.AdjustKobo, req.Reason, ginutil.UserID(c), idem); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -334,7 +327,6 @@ func (h *RewardHandler) AdminAdjustCase(c *gin.Context) {
 }
 
 // AdminSetCode handles PUT /v1/admin/referrals/:referrerId/code.
-//
 // Lets an admin replace a referrer's generated code with a memorable one. The
 // 409 branch is the feature's whole safety story: codes are the key attribution
 // resolves on, so handing one person a code that already belongs to another

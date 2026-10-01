@@ -209,8 +209,6 @@ type CollectionCredit struct {
 	CreatedAt       time.Time
 }
 
-// --- Request bodies (normalized API) ---
-
 // QuoteRequest is POST /v1/quotes.
 type QuoteRequest struct {
 	Source          string     `json:"source" binding:"required"`       // ISO-4217

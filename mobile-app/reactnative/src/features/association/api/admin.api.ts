@@ -1,16 +1,15 @@
-// ── Association — Admin-lite API wrapper (Q/R/S/T) ────────────────────────────
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
 import type {
   AdminKpis, AdminApplication, AdminApplicationSummary, ApplicationJurisdiction, ApprovalDecision,
   FinanceSummary, OfflinePayment, ImportPreview, ImportResult, AuditEntry,
-} from '../types/admin.types';
+} from '../types';
 import {
   MOCK_KPIS, MOCK_APPLICATIONS, MOCK_FINANCE, MOCK_OFFLINE_PAYMENTS, MOCK_IMPORT_PREVIEW, MOCK_AUDIT,
-} from './admin.mock';
-import type { PickedFile } from '../utils/docPicker';
+} from './mocks';
+import type { PickedFile } from '../utils';
 
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 
@@ -64,8 +63,6 @@ export async function decideApplication(id: string, decision: ApprovalDecision, 
   return data;
 }
 
-// ─── Finance ──────────────────────────────────────────────────────────────────
-
 export async function getFinanceSummary(): Promise<FinanceSummary> {
   if (USE_MOCK) { await delay(); return MOCK_FINANCE; }
   const { data } = await api.get(`${BASE}/admin/finance`);
@@ -88,8 +85,6 @@ export async function decideOfflinePayment(id: string, approve: boolean): Promis
   return data;
 }
 
-// ─── Audit log ────────────────────────────────────────────────────────────────
-
 export async function getAuditLog(action?: string): Promise<AuditEntry[]> {
   if (USE_MOCK) {
     await delay();
@@ -98,8 +93,6 @@ export async function getAuditLog(action?: string): Promise<AuditEntry[]> {
   const { data } = await api.get(`${BASE}/admin/audit-log`, { params: { action } });
   return data;
 }
-
-// ─── Bulk import ──────────────────────────────────────────────────────────────
 
 /**
  * Upload the member spreadsheet and get the server's dry-run preview.

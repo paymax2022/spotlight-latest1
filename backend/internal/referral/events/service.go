@@ -6,10 +6,12 @@ package events
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/jsonx"
 )
 
 // Event type constants (subset of §12 analytics events relevant to §7A).
@@ -46,11 +48,7 @@ func NewService(db *pgxpool.Pool) *Service {
 
 // Record appends one event. Idempotent: a duplicate idempotency_key is ignored.
 func (s *Service) Record(ctx context.Context, in Input) error {
-	payload := in.Payload
-	if payload == nil {
-		payload = map[string]any{}
-	}
-	raw, err := json.Marshal(payload)
+	raw, err := jsonx.MarshalObject(in.Payload)
 	if err != nil {
 		return fmt.Errorf("referral/events: marshal payload: %w", err)
 	}
@@ -61,9 +59,9 @@ func (s *Service) Record(ctx context.Context, in Input) error {
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	if _, err := s.db.Exec(ctx, q,
 		in.EventType,
-		nullable(in.UserID),
-		nullable(in.ReferrerID),
-		nullable(in.CampaignID),
+		dbutil.NullStr(in.UserID),
+		dbutil.NullStr(in.ReferrerID),
+		dbutil.NullStr(in.CampaignID),
 		raw,
 		in.IdempotencyKey,
 	); err != nil {
@@ -73,9 +71,3 @@ func (s *Service) Record(ctx context.Context, in Input) error {
 }
 
 // nullable maps an empty string to a nil interface so pgx writes SQL NULL.
-func nullable(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}

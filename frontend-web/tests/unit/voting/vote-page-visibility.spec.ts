@@ -11,7 +11,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeSupabaseMock } from '../golden-path/_fixtures';
 
-// ── Module mocks (hoisted before imports) ─────────────────────────────────────
 vi.mock('next/server', () => ({
   NextResponse: {
     json: (body: unknown, init?: ResponseInit) =>
@@ -32,7 +31,6 @@ vi.mock('@/src/server/voting/share.service', () => ({ getOrCreateShareLink: vi.f
 vi.mock('@/src/server/voting/visibility.service', () => ({ getEffectiveVisibility: vi.fn() }));
 vi.mock('@/lib/supabase/server', () => ({ createAdminClient: vi.fn(), createClient: vi.fn() }));
 
-// ── Import after mocks ────────────────────────────────────────────────────────
 import { GET } from '../../../app/api/vote-page/route';
 import { getVotingSettings, getRemainingFreeVotes } from '@/src/server/voting/free-vote.service';
 import { getActiveVotePackages } from '@/src/server/voting/paid-vote.service';
@@ -41,7 +39,6 @@ import { getOrCreateShareLink } from '@/src/server/voting/share.service';
 import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
 import { createAdminClient } from '@/lib/supabase/server';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 const CONTEST_ROW = { id: 'contest-1', name: 'Star Search', slug: 'star-search', status: 'active' };
 const ENROLLMENT_ROW = {
   id: 'enr-1',
@@ -105,7 +102,6 @@ function request() {
   );
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
 describe('GET /api/vote-page — vote-count visibility gating (D-004)', () => {
   beforeEach(() => {
     vi.clearAllMocks();

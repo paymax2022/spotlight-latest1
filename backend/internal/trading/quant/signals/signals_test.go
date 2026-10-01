@@ -8,7 +8,7 @@ import (
 
 func TestIndicators(t *testing.T) {
 	xs := []float64{1, 2, 3, 4, 5}
-	if got := SMA(xs, 3); got != 4 { // (3+4+5)/3
+	if got := SMA(xs, 3); got != 4 {
 		t.Fatalf("SMA = %v, want 4", got)
 	}
 	if got := SMA(xs, 9); got != 0 { // insufficient
@@ -121,7 +121,6 @@ func TestGenerateCandidates_RegimeGating(t *testing.T) {
 	}
 }
 
-// ── fixtures ──────────────────────────────────────────────────────────────
 func rep(v float64, n int) []float64 {
 	out := make([]float64, n)
 	for i := range out {

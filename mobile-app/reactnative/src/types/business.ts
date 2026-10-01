@@ -65,8 +65,6 @@ export interface BusinessProfile {
   updatedAt: string;
 }
 
-// ── Request / response payloads ──────────────────────────────────────────────
-
 export interface NameCheckInput {
   proposedName: string;
   lineOfBusiness?: string;

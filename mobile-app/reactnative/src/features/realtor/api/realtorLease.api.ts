@@ -1,13 +1,10 @@
-// ── Spotlight Realtor — Lease / payment / move-in data layer (V2) ────────────
 // Mock by default (REALTOR_USE_MOCK). Real branch hits Supabase tables in
 // supabase/migrations/20260620010000 + the atomic RPC in 20260620020000:
 //   realtor_sign_lease.
-//
 // realtor_pay_invoice is NOT called directly from here anymore. It used to be
 // (SECURITY DEFINER, GRANTed to `authenticated`) and would finalize a lease
 // payment with zero verification that any money moved. It is now locked to
 // service_role (supabase/migrations/20270220000000_realtor_pay_invoice_
-// require_verified_debit.sql); payInvoice() below posts to frontend-web's
 // /api/v1/realtor/invoices/{id}/pay route instead, mirroring
 // mobile-app/reactnative/src/features/dues/api.ts — that route debits the
 // wallet via the shared ledger primitive FIRST, then calls the (now-hardened)
@@ -34,7 +31,6 @@ const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// ── Row mappers (snake → domain) ─────────────────────────────────────────────
 function mapLeaseRow(row: any, invoiceId?: string): Lease {
   return {
     id: row.id,
@@ -73,7 +69,6 @@ function mapInvoiceRow(row: any): RentInvoice {
   };
 }
 
-// area/city live on the property (via unit); the lease summary only needs the
 // title, so we keep the join shallow. A realtor_lease_view can denormalise
 // area/city in production if richer lease cards are needed.
 const LEASE_SELECT = `*, listing:realtor_listings!listing_id(title)`;
@@ -83,9 +78,7 @@ async function loadInvoiceId(supabase: any, leaseId: string): Promise<string | u
   return data?.id;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Mock store (default path)
-// ─────────────────────────────────────────────────────────────────────────────
 const leases: Record<string, Lease> = {};
 const invoices: Record<string, RentInvoice> = {};
 const escrows: Record<string, EscrowDeposit> = {};
@@ -118,8 +111,6 @@ function seedLease(applicationId: string): Lease {
   leases[id] = lease;
   return lease;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 export async function getLeaseByApplication(applicationId: string): Promise<Lease> {
   if (USE_MOCK) { await delay(); return seedLease(applicationId); }
@@ -310,7 +301,6 @@ export async function activateOccupancy(leaseId: string): Promise<MoveIn> {
   return mapMoveInRow(data);
 }
 
-// ── Move-out (PROPMGMT-002) ──────────────────────────────────────────────────
 // Non-monetary, tenant-facing, Supabase-direct — mirrors the move-in calls
 // above exactly. realtor_move_outs has no auto-seed row (unlike
 // realtor_move_ins, seeded by realtor_pay_invoice), so this is an upsert:

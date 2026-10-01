@@ -8,7 +8,6 @@ import (
 // These tests cover the pure, DB-free logic of the onboarding package: the form
 // submission validation engine (ValidateSubmission and its helpers), the reviewer
 // check derivation (buildChecks), and small pure utilities.
-//
 // NOTE ON SCOPE: The DRAFT->SUBMITTED->UNDER_REVIEW->APPROVED/REJECTED/NEEDS_MORE_INFO
 // state machine (including resubmit and escalate) is NOT enforced by any pure Go
 // function. Transition legality is enforced in SQL via Repository.TransitionStatus
@@ -16,8 +15,6 @@ import (
 // methods that require a *pgxpool.Pool. Repository wraps the pool with no interface
 // seam, so those transitions cannot be exercised without a live database. They are
 // intentionally not tested here (no fake DB is invented).
-
-// ── helpers ──────────────────────────────────────────────────────────────────
 
 func fptr(v float64) *float64 { return &v }
 func iptr(v int) *int         { return &v }
@@ -42,8 +39,6 @@ func asValidationError(t *testing.T, err error) *ValidationError {
 	}
 	return ve
 }
-
-// ── ValidateSubmission: schema-level behavior ────────────────────────────────
 
 func TestValidateSubmission_NilSchema(t *testing.T) {
 	err := ValidateSubmission(nil, map[string]interface{}{})
@@ -112,8 +107,6 @@ func TestValidateSubmission_MultipleFieldErrors(t *testing.T) {
 	}
 }
 
-// ── ValidateSubmission: conditional visibility ───────────────────────────────
-
 func TestValidateSubmission_HiddenRequiredFieldSkipped(t *testing.T) {
 	schema := oneStepSchema(
 		Field{Key: "hasBiz", Type: "boolean", Label: "Has business"},
@@ -156,8 +149,6 @@ func TestValidateSubmission_ControllerFieldAbsentHidesField(t *testing.T) {
 		t.Fatalf("absent controller should hide field, got %v", err)
 	}
 }
-
-// ── fieldVisible / looseEqual ────────────────────────────────────────────────
 
 func TestFieldVisible(t *testing.T) {
 	cases := []struct {
@@ -214,8 +205,6 @@ func TestLooseEqual(t *testing.T) {
 	}
 }
 
-// ── isEmpty ──────────────────────────────────────────────────────────────────
-
 func TestIsEmpty(t *testing.T) {
 	cases := []struct {
 		name string
@@ -240,8 +229,6 @@ func TestIsEmpty(t *testing.T) {
 		})
 	}
 }
-
-// ── validateField: per-type rules ───────────────────────────────────────────
 
 func TestValidateField(t *testing.T) {
 	cases := []struct {
@@ -362,8 +349,6 @@ func TestValidateField_Multiselect(t *testing.T) {
 	}
 }
 
-// ── optionExists / toNumber ──────────────────────────────────────────────────
-
 func TestOptionExists(t *testing.T) {
 	opts := []FieldOption{{Value: "a"}, {Value: "b"}}
 	if !optionExists(opts, "a") {
@@ -400,8 +385,6 @@ func TestToNumber(t *testing.T) {
 		})
 	}
 }
-
-// ── buildChecks ──────────────────────────────────────────────────────────────
 
 func TestBuildChecks(t *testing.T) {
 	schema := oneStepSchema(
@@ -458,8 +441,6 @@ func TestBuildChecks_NoDocumentsReturnsEmptyNonNil(t *testing.T) {
 		t.Fatalf("want 0 checks, got %d", len(checks))
 	}
 }
-
-// ── small utilities ──────────────────────────────────────────────────────────
 
 func TestValidationError_Error(t *testing.T) {
 	ve := &ValidationError{Fields: map[string]string{"x": "required"}}

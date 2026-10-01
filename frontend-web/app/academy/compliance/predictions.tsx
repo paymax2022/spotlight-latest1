@@ -159,14 +159,12 @@ export function TrendChart({ forecasts }: { forecasts: Forecast[] }) {
   const range = maxScore - minScore;
   const chartHeight = 200;
 
-  // Calculate Y positions
   const points = forecasts.map((f) => {
     const yPercent = ((f.predictedScore - minScore) / range) * 100;
     const y = chartHeight - (yPercent / 100) * chartHeight;
     return { ...f, y };
   });
 
-  // Create path
   const pathData = points
     .map((p, idx) => `${(idx / (points.length - 1)) * 100}% ${p.y}`)
     .join(' ');

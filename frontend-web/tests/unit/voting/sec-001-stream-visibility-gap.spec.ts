@@ -43,7 +43,6 @@ function visibility(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 function makeSupabaseVoteTotalsMock(rows: any[]) {
-  // The route chains .eq('contestant_id', ...) AFTER .limit(...) when a
   // contestantId filter is present, matching how the real Supabase query
   // builder stays chainable until actually awaited. So every method here
   // must return the same thenable chain object, not resolve early.

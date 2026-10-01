@@ -1,7 +1,6 @@
 package voting_test
 
 // UAT Batch 3 — TS-11 NF-004 (Service/DB failover without vote loss).
-//
 // HONESTY NOTE (see docs/qa/voting-contest-test-plan.md NF-004 status): true
 // infra failover — killing the DB connection or the process mid-transaction —
 // is not something this environment can safely simulate (no chaos-engineering
@@ -18,7 +17,6 @@ package voting_test
 // error immediately before commit are indistinguishable from the database's
 // point of view: both leave zero side effects. That equivalence is what these
 // tests exercise, not a literal kill -9 against the connection.
-//
 // Each test forces a real Postgres error partway through one of the three
 // atomic write paths and then asserts, by reading the database directly
 // (not through the function's return value), that NOTHING from that attempt

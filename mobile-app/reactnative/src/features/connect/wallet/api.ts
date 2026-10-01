@@ -1,9 +1,7 @@
 // Paymax Connect — Wallet / Gifting / Tier-KYC / Payout API (PRD §6.4, §7, §10.9).
-//
 // Mock-first (USE_MOCK). Live path hits `${CONNECT_API_BASE}/wallet/...` on the
 // Go backend. EVERY money mutation attaches an `Idempotency-Key` header on the
 // live path (generateIdempotencyKey). ALL amounts are kobo (BIGINT minor units).
-//
 // The server is the source of truth for tier limits, KYC state and ledger
 // balances — these mocks only mirror backend-owned config for display.
 
@@ -41,7 +39,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
 }
 
 // On the live path every mutation must carry an Idempotency-Key (iron rule).
-//
 // Callers on the money path MUST pass a key that is stable across retries of the
 // same logical operation (see useIdempotencyKey). Minting one per attempt means a
 // retry after a client-side timeout posts a SECOND debit instead of being deduped.
@@ -51,10 +48,8 @@ function idemConfig(idempotencyKey?: string) {
   return { headers: { 'Idempotency-Key': idempotencyKey ?? generateIdempotencyKey() } };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Mock state (single in-memory wallet — mutations advance it so the UI feels
 // real in mock mode; the live backend owns the canonical ledger).
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Current mock user sits at Tier 1, ₦18,500 of a ₦30,000 daily limit remaining.
 const MOCK_TIER: TierStatus = {
@@ -78,8 +73,6 @@ const mockState = {
 function cloneTier(): TierStatus {
   return { ...mockState.tier };
 }
-
-// ── Wallet summary / fund / history ──────────────────────────────────────────
 
 export async function getWalletSummary(): Promise<WalletSummary> {
   if (USE_MOCK) {
@@ -169,8 +162,6 @@ export async function fundWallet(amountKobo: number, idempotencyKey?: string): P
   const res = await api.post(`${CONNECT_API_BASE}/wallet/fund`, { amountKobo }, idemConfig(idempotencyKey));
   return unwrap<FundResult>(res);
 }
-
-// ── Gifting (PRD §6.4) ───────────────────────────────────────────────────────
 
 const MOCK_GIFTS: GiftProduct[] = [
   { id: 'g_rose',     name: 'Rose',     emoji: '🌹', priceKobo: 50_000,  description: 'A classic hello', tierMin: 1 },
@@ -331,8 +322,6 @@ export async function getGiftTransaction(id: string): Promise<GiftTransaction> {
   return unwrap<GiftTransaction>(res);
 }
 
-// ── Tier / KYC (PRD §7) ──────────────────────────────────────────────────────
-
 const MOCK_KYC: KycStatus = {
   tier: 1, label: 'Tier 1',
   bvn: 'passed', nin: 'not_started',
@@ -419,8 +408,6 @@ export async function submitTier3(input: Tier3Input): Promise<UpgradeResult> {
   const res = await api.post(`${CONNECT_API_BASE}/kyc/tier3`, input, idemConfig());
   return unwrap<UpgradeResult>(res);
 }
-
-// ── Creator payouts (PRD §10.9) — Tier2+ & KYC gated ─────────────────────────
 
 export async function getPayoutEligibility(): Promise<PayoutEligibility> {
   if (USE_MOCK) {

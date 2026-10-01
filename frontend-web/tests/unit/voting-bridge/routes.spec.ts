@@ -7,7 +7,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextRequest } from 'next/server';
 import { makeRequest } from '../golden-path/_fixtures';
 
-// Route handlers are typed against NextRequest; the fixture builds a plain
 // Request (sufficient at runtime — handlers only read headers/body/url).
 const makeNextRequest = (...args: Parameters<typeof makeRequest>) =>
   makeRequest(...args) as unknown as NextRequest;
@@ -32,7 +31,6 @@ vi.mock('@/src/lib/voting/rate-limit', () => ({
 
 // Both routes authenticate via validateRequest, which resolves
 // { user, error } rather than throwing. The mock previously supplied only
-// requireRequestUser, so the module threw "No validateRequest export" and every
 // paid-verify case became a 500.
 vi.mock('@/src/lib/auth/request', () => ({
   validateRequest: vi.fn(),
@@ -49,14 +47,14 @@ vi.mock('@/lib/supabase/server', () => ({
 // vote_transactions.payment_reference via the service-role client. Factory
 // mock is required: admin.ts re-exports createAdminClient from ./server,
 // which the factory above already replaces (automock sees no export).
-vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: vi.fn() }));
+vi.mock('@/lib/supabase/server', () => ({ createAdminClient: vi.fn() }));
 
 import { POST as postFreeVote } from '../../../app/api/v2/votes/free/route';
 import { POST as postPaidVerify } from '../../../app/api/v2/votes/paid/verify/route';
 import { bridgedCastFreeVote, bridgedVerifyPaidVote } from '@/src/server/voting-bridge/bridge';
 import { checkRateLimit } from '@/src/lib/voting/rate-limit';
 import { validateRequest } from '@/src/lib/auth/request';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient } from '@/lib/supabase/server';
 
 const FREE_VOTE_RESULT = {
   success: true,

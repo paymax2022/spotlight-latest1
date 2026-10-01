@@ -4,7 +4,6 @@ package paystackcheckout
 // public.restaurant_order_paystack_intents. Skipped unless TEST_DATABASE_URL
 // is set (mirrors every other live-DB test in this codebase — see
 // restaurant/tierlimit_live_db_test.go's tierPool).
-//
 // What these pin:
 //  1. PutIntent is idempotent on idempotency_key — a replay returns the
 //     EXISTING row rather than inserting a second one.

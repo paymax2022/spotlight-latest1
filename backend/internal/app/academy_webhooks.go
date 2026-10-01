@@ -2,9 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/finance/ledger"
 )
@@ -22,7 +20,6 @@ import (
 // academy_webhooks.go — inbound webhook ingestion for the four academy rails
 // (BNPL, payout, disbursement, billing). The fake/sandbox provider settles ASYNC:
 // after a create it POSTs a signed event back here, which:
-//
 //   1. VERIFIES the HMAC-SHA256 signature over the raw body using the per-rail
 //      webhook secret (header X-Fake-Signature: sha256=<hex>). Verified in EVERY
 //      mode (NL: webhooks signature-verified). Bad/missing signature ⇒ 401, no
@@ -32,7 +29,6 @@ import (
 //   3. Flips the relevant academy state and writes the ledger leg (NL-8 ledger is
 //      the source of truth): for payout/disburse the target is credited; for BNPL
 //      the order is marked entitled.
-//
 // The routes are UNAUTHENTICATED (the provider calls them directly) — the HMAC
 // signature IS the authentication. Secrets are never logged.
 
@@ -84,8 +80,6 @@ CREATE TABLE IF NOT EXISTS academy_rail_webhook_events (
 		},
 	}
 }
-
-// ── Route handlers (one per rail) ──────────────────────────────────────────────
 
 func (h *academyWebhookHandler) bnpl(c *gin.Context)     { h.ingest(c, "bnpl") }
 func (h *academyWebhookHandler) payout(c *gin.Context)   { h.ingest(c, "payout") }
@@ -177,7 +171,6 @@ var settleEvents = map[string]string{
 // edupay.setDisbState, schools.SetBillingPaid), so a committed row in the
 // terminal-success state IS the verified obligation — and raw UPDATEs here would
 // bypass the domain's side-effects (earnings flip, audit rows).
-//
 // NOTE: the per-rail ledger legs use the platform standing accounts. The funds
 // for these rails were held in escrow at create-time; on settle we release the
 // OWNING ROW's amount — never the wire's claimed amount_minor — into settlement.
@@ -265,23 +258,14 @@ func (h *academyWebhookHandler) releaseEscrowToSettlement(ctx context.Context, r
 	})
 }
 
-// ── HMAC verification ──────────────────────────────────────────────────────────
-
 // verifyHMAC checks header ("sha256=<hex>" or bare "<hex>") against
 // HMAC-SHA256(secret, body) using a constant-time compare.
 func verifyHMAC(secret string, body []byte, header string) bool {
+	header = strings.TrimPrefix(strings.TrimSpace(header), "sha256=")
 	if header == "" {
 		return false
 	}
-	header = strings.TrimSpace(header)
-	header = strings.TrimPrefix(header, "sha256=")
-	want, err := hex.DecodeString(header)
-	if err != nil {
-		return false
-	}
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	return hmac.Equal(want, mac.Sum(nil))
+	return cryptox.ConstantTimeEqual(header, cryptox.HMACSHA256Hex(secret, string(body)))
 }
 
 // registerAcademyWebhooks mounts the UNAUTHENTICATED, signature-verified rail

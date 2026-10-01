@@ -1,4 +1,3 @@
-// ── Registration — React Query data hooks ────────────────────────────────────
 // Keeps screens declarative and shares caching / loading / error contracts.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -7,13 +6,9 @@ import type { RegistrationStepKey, PickedUpload, RegistrationPaymentMethod } fro
 
 const KEY = 'registration';
 
-// ── Contests ──────────────────────────────────────────────────────────────────
-
 export function useContests() {
   return useQuery({ queryKey: [KEY, 'contests'], queryFn: reg.listContests, staleTime: 60_000 });
 }
-
-// ── Applications ────────────────────────────────────────────────────────────
 
 export function useMyApplications() {
   return useQuery({ queryKey: [KEY, 'applications'], queryFn: reg.listApplications });
@@ -91,8 +86,6 @@ export function useWithdraw(id: string) {
   });
 }
 
-// ── Payment ───────────────────────────────────────────────────────────────────
-
 export function useInitiateRegistrationPayment(id: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -117,8 +110,6 @@ export function useVerifyRegistrationPayment(id: string) {
     },
   });
 }
-
-// ── Uploads ───────────────────────────────────────────────────────────────────
 
 export function useUploadFile() {
   return useMutation({ mutationFn: (file: PickedUpload) => reg.uploadFile(file) });

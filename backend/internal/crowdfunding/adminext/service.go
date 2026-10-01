@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/timeutil"
 	financekyc "spotlight/backend/internal/finance/kyc"
 	financeledger "spotlight/backend/internal/finance/ledger"
 )
@@ -38,9 +39,6 @@ func (s *Service) WithLedger(l *financeledger.Service) *Service { s.ledger = l; 
 // ListKyc/DecideKyc below.
 func (s *Service) WithKYC(k *financekyc.Service) *Service { s.kyc = k; return s }
 
-// rfc3339 formats a timestamp the way the TS client expects.
-func rfc3339(t time.Time) string { return t.UTC().Format(time.RFC3339) }
-
 // audit writes an immutable audit row. Caller supplies the executing tx so the
 // audit is committed atomically with the mutation it records.
 func (s *Service) audit(ctx context.Context, tx pgx.Tx, actor, action, target string) error {
@@ -49,8 +47,6 @@ func (s *Service) audit(ctx context.Context, tx pgx.Tx, actor, action, target st
 		actor, action, target, "")
 	return err
 }
-
-// ─── Finance summary ─────────────────────────────────────────────────────────
 
 // The three derived finance queries are exported so the live-DB regression test
 // executes the SAME SQL the console serves rather than a copy of it. A copied
@@ -88,7 +84,6 @@ const (
 // GetFinanceSummary derives money figures live from campaigns/contributions, the
 // central commission registry, and the refunds/settlement admin tables. Never
 // reads a stored balance.
-//
 // Every query below is checked. They used to be `_ = s.db.QueryRow(...)`, which
 // meant a failed or timed-out query left the destination at its zero value and
 // the console rendered a clean ₦0 across the board — a broken database and a
@@ -107,7 +102,6 @@ func (s *Service) GetFinanceSummary(ctx context.Context) (*FinanceSummary, error
 	}
 
 	// Platform revenue: what was actually booked, not a percentage of GMV.
-	//
 	// This was `out.GmvKobo / 40` — an assumed 2.5%. The only authority for the
 	// crowdfunding split is crowdfunding.PlatformFeePct = 0.10, and the money path
 	// posts that 10% through settlement.Split and records the realized profit into
@@ -115,7 +109,6 @@ func (s *Service) GetFinanceSummary(ctx context.Context) (*FinanceSummary, error
 	// being a constant divided into GMV it would have kept doing so through any
 	// fee change. Reading the registry means the number is measured, and it is the
 	// same figure the central commission reporting shows.
-	//
 	// A module with no earnings rows now reads ₦0 rather than a plausible-looking
 	// fraction of GMV. That is the point: unbooked revenue is a real condition,
 	// and ReconciliationMismatches below names it instead of papering over it.
@@ -147,10 +140,8 @@ func (s *Service) GetFinanceSummary(ctx context.Context) (*FinanceSummary, error
 	}
 
 	// Reconciliation: released contributions whose revenue was never booked.
-	//
 	// This field was the literal 0. The card reads as the result of a check, so it
 	// told every operator the books balanced without ever looking.
-	//
 	// The condition it now checks is a real, known failure mode rather than a
 	// hypothetical one. Contribute() settles the 90/10 split and then calls
 	// recordCommissionSafe, which is best-effort by design: a registry failure is
@@ -159,7 +150,6 @@ func (s *Service) GetFinanceSummary(ctx context.Context) (*FinanceSummary, error
 	// leaves exactly this residue — the contributor was charged, the creator was
 	// paid, and Spotlight's cut exists in the ledger with no earnings row naming
 	// it. Nothing else in the system notices.
-	//
 	// Gross rather than the missing fee: computing the unbooked fee would mean
 	// assuming a rate, which is the habit this change is removing.
 	if err := s.db.QueryRow(ctx, SQLReconciliationGaps).Scan(&out.ReconciliationMismatches, &out.UnbookedGrossKobo); err != nil {
@@ -176,8 +166,6 @@ func (s *Service) GetFinanceSummary(ctx context.Context) (*FinanceSummary, error
 
 	return out, nil
 }
-
-// ─── Refunds ─────────────────────────────────────────────────────────────────
 
 // ListRefunds returns refund requests, optionally filtered by status.
 func (s *Service) ListRefunds(ctx context.Context, status string) ([]RefundRequest, error) {
@@ -202,7 +190,7 @@ func (s *Service) ListRefunds(ctx context.Context, status string) ([]RefundReque
 			&r.AmountKobo, &r.Reason, &r.Status, &requestedAt, &r.RefundEligible, &r.IsDemo); err != nil {
 			return nil, err
 		}
-		r.RequestedAt = rfc3339(requestedAt)
+		r.RequestedAt = timeutil.RFC3339(requestedAt)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -246,8 +234,6 @@ func (s *Service) DecideRefund(ctx context.Context, id, adminID string, approve 
 	return tx.Commit(ctx)
 }
 
-// ─── Settlements ─────────────────────────────────────────────────────────────
-
 // ListSettlements returns settlement batches, newest first.
 func (s *Service) ListSettlements(ctx context.Context) ([]SettlementBatch, error) {
 	rows, err := s.db.Query(ctx,
@@ -264,13 +250,11 @@ func (s *Service) ListSettlements(ctx context.Context) ([]SettlementBatch, error
 		if err := rows.Scan(&b.ID, &b.Reference, &b.PayoutCount, &b.GrossKobo, &b.FeeKobo, &b.NetKobo, &b.Status, &createdAt, &b.IsDemo); err != nil {
 			return nil, err
 		}
-		b.CreatedAt = rfc3339(createdAt)
+		b.CreatedAt = timeutil.RFC3339(createdAt)
 		out = append(out, b)
 	}
 	return out, rows.Err()
 }
-
-// ─── Disputes ────────────────────────────────────────────────────────────────
 
 // ListDisputes returns disputes, optionally filtered by status.
 func (s *Service) ListDisputes(ctx context.Context, status string) ([]Dispute, error) {
@@ -297,7 +281,7 @@ func (s *Service) ListDisputes(ctx context.Context, status string) ([]Dispute, e
 			&d.RaisedBy, &d.Description, &createdAt, &d.SlaHoursLeft, &d.Resolution, &d.AdminNote); err != nil {
 			return nil, err
 		}
-		d.CreatedAt = rfc3339(createdAt)
+		d.CreatedAt = timeutil.RFC3339(createdAt)
 		if campaignID != nil {
 			d.CampaignID = *campaignID
 		}
@@ -347,8 +331,6 @@ func validResolution(r string) bool {
 	return false
 }
 
-// ─── Withdrawals ─────────────────────────────────────────────────────────────
-
 // ListWithdrawals returns withdrawal requests, optionally filtered by status.
 // availableKobo is derived from the campaign's contributions ledger minus prior
 // withdrawals (never a stored balance).
@@ -384,7 +366,7 @@ func (s *Service) ListWithdrawals(ctx context.Context, status string) ([]Withdra
 			&reason, &requestedAt, &w.CampaignTitle, &w.AvailableKobo); err != nil {
 			return nil, err
 		}
-		w.RequestedAt = rfc3339(requestedAt)
+		w.RequestedAt = timeutil.RFC3339(requestedAt)
 		w.Note = reason
 		// Creator display fields are not stored on the withdrawal row; default safely.
 		w.CreatorName = "Campaign creator"
@@ -445,8 +427,6 @@ func (s *Service) DecideWithdrawal(ctx context.Context, id, adminID string, appr
 	return tx.Commit(ctx)
 }
 
-// ─── Fraud ───────────────────────────────────────────────────────────────────
-
 // ListFraudAlerts returns fraud alerts, newest first.
 func (s *Service) ListFraudAlerts(ctx context.Context) ([]FraudAlert, error) {
 	rows, err := s.db.Query(ctx,
@@ -465,7 +445,7 @@ func (s *Service) ListFraudAlerts(ctx context.Context) ([]FraudAlert, error) {
 			&a.Status, &a.Signals, &a.RaisedKobo, &createdAt); err != nil {
 			return nil, err
 		}
-		a.CreatedAt = rfc3339(createdAt)
+		a.CreatedAt = timeutil.RFC3339(createdAt)
 		if campaignID != nil {
 			a.CampaignID = *campaignID
 		}
@@ -489,7 +469,6 @@ func (s *Service) SetCampaignFreeze(ctx context.Context, campaignID, adminID str
 	}
 	defer tx.Rollback(ctx)
 
-	// Move the related fraud alert (if any) to FROZEN / INVESTIGATING.
 	alertStatus := "INVESTIGATING"
 	if freeze {
 		alertStatus = "FROZEN"
@@ -500,7 +479,6 @@ func (s *Service) SetCampaignFreeze(ctx context.Context, campaignID, adminID str
 		return err
 	}
 	// Best-effort: also flip the campaign review_status if the table/row exists.
-	//
 	// Freeze REMEMBERS the status it replaced, and unfreeze restores it. Writing
 	// ACTIVE unconditionally on unfreeze meant freezing a PENDING_REVIEW campaign
 	// and releasing it silently approved the campaign — live, with no review
@@ -539,8 +517,6 @@ func (s *Service) SetCampaignFreeze(ctx context.Context, campaignID, adminID str
 	}
 	return tx.Commit(ctx)
 }
-
-// ─── KYC / KYB ───────────────────────────────────────────────────────────────
 
 // ListKyc returns the pending-verification queue, sourced from the platform's
 // shared finance/kyc profiles (user_profiles.kyc_*) rather than a crowdfunding-
@@ -586,11 +562,11 @@ func (s *Service) ListKyc(ctx context.Context, status string) ([]KycCase, error)
 		}
 		var submittedAt string
 		if p.SubmittedAt != nil {
-			submittedAt = rfc3339(*p.SubmittedAt)
+			submittedAt = timeutil.RFC3339(*p.SubmittedAt)
 		}
 		var verifiedAt *string
 		if p.VerifiedAt != nil {
-			v := rfc3339(*p.VerifiedAt)
+			v := timeutil.RFC3339(*p.VerifiedAt)
 			verifiedAt = &v
 		}
 		out = append(out, KycCase{
@@ -646,8 +622,6 @@ func (s *Service) DecideKyc(ctx context.Context, id, adminID string, approve boo
 	return nil
 }
 
-// ─── Compliance ──────────────────────────────────────────────────────────────
-
 // GetComplianceSummary derives compliance counters from the cf_* tables.
 func (s *Service) GetComplianceSummary(ctx context.Context) (*ComplianceSummary, error) {
 	out := &ComplianceSummary{RetentionPolicyDays: 2555, LastRegulatoryExport: "2026-05-31T00:00:00Z"}
@@ -674,7 +648,7 @@ func (s *Service) ListAuditLogs(ctx context.Context) ([]AuditLog, error) {
 		if err := rows.Scan(&a.ID, &a.Actor, &a.Action, &a.Target, &a.IP, &createdAt); err != nil {
 			return nil, err
 		}
-		a.CreatedAt = rfc3339(createdAt)
+		a.CreatedAt = timeutil.RFC3339(createdAt)
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -695,8 +669,8 @@ func (s *Service) ListDataRequests(ctx context.Context) ([]DataRequest, error) {
 		if err := rows.Scan(&d.ID, &d.Type, &d.UserName, &d.Email, &d.Status, &requestedAt, &dueBy); err != nil {
 			return nil, err
 		}
-		d.RequestedAt = rfc3339(requestedAt)
-		d.DueBy = rfc3339(dueBy)
+		d.RequestedAt = timeutil.RFC3339(requestedAt)
+		d.DueBy = timeutil.RFC3339(dueBy)
 		out = append(out, d)
 	}
 	return out, rows.Err()
@@ -725,8 +699,6 @@ func (s *Service) FulfilDataRequest(ctx context.Context, id, adminID string) err
 	}
 	return tx.Commit(ctx)
 }
-
-// ─── Users ───────────────────────────────────────────────────────────────────
 
 // userBaseCTE derives every crowdfunding user (creator and/or contributor) live
 // from campaigns/contributions/platform_users — there is no standalone user
@@ -798,7 +770,6 @@ type UsersPage struct {
 }
 
 // ListUsers returns one page of crowdfunding users.
-//
 // There is no standalone user table: the population is derived from activity —
 // campaign creators unioned with contributors (see userBaseCTE). It used to
 // return a bare LIMIT 200 with no offset and no total, so beyond 200 active
@@ -850,8 +821,8 @@ func (s *Service) ListUsers(ctx context.Context, role, status, search string, pa
 			&u.CampaignsCreated, &u.TotalRaisedKobo, &u.TotalContributedKobo, &joinedAt, &lastActiveAt, &total); err != nil {
 			return UsersPage{}, err
 		}
-		u.JoinedAt = rfc3339(joinedAt)
-		u.LastActiveAt = rfc3339(lastActiveAt)
+		u.JoinedAt = timeutil.RFC3339(joinedAt)
+		u.LastActiveAt = timeutil.RFC3339(lastActiveAt)
 		u.Activity = []UserActivity{}
 		out = append(out, u)
 		ids = append(ids, u.ID)
@@ -902,7 +873,7 @@ func (s *Service) ListUsers(ctx context.Context, role, status, search string, pa
 		if len(byUser[userID]) >= 20 {
 			continue // cap per user; query is ordered globally so later rows are older
 		}
-		a.CreatedAt = rfc3339(createdAt)
+		a.CreatedAt = timeutil.RFC3339(createdAt)
 		byUser[userID] = append(byUser[userID], a)
 	}
 	for i := range out {

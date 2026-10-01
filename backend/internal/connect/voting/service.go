@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // WalletDebiter debits the voter's wallet and credits the given standing account
@@ -40,7 +41,6 @@ type SolicitationFlagger interface {
 // voting never imports the commission package at compile time (mirrors the
 // WalletDebiter / RevenueAccountResolver seams) — the adapter, which lives in
 // app-wiring, discards the returned earning row and surfaces only the error.
-//
 // This records realized profit ONLY; it never moves money. The paid-vote debit
 // above already posts the balanced double-entry into paymax_revenue, so the injected
 // recorder is deliberately constructed WITHOUT a ledger — RecordFor never re-posts to
@@ -164,7 +164,6 @@ func (s *Service) enforceVelocity(ctx context.Context, c *Contest, voterID strin
 var ErrNotOnRoster = errors.New("voting: option is not an active contestant in this contest")
 
 // checkRosterTarget validates the vote target against the contest's roster.
-//
 // Contests without a roster are plain polls whose option_ref is a free-form
 // label, so they are left alone. Once a contest has contestants, though, an
 // arbitrary option_ref would create a tally row no roster entry can account
@@ -240,7 +239,6 @@ func (s *Service) FreeVote(ctx context.Context, contestID, voterID string, req F
 
 // PaidVote is the money path: it charges the voter's wallet for `quantity` paid
 // vote units (price-per-unit from the contest) and records the votes.
-//
 // Ordering (correctness > convenience):
 //  1. validate input + load contest; paid voting must be enabled and open;
 //  2. require an Idempotency-Key;
@@ -388,8 +386,6 @@ func (s *Service) GetContestant(ctx context.Context, contestantID, viewerID stri
 	return e, nil
 }
 
-// ─── Likes + profile shares ──────────────────────────────────────────────────
-
 // LikeContestant records the caller's like. Idempotent — liking twice is not
 // an error. Returns the fresh entry (with the new LikeCount and
 // LikedByMe=true) so the client can render the result of its own action
@@ -473,8 +469,6 @@ func (s *Service) ResolveShare(ctx context.Context, token string) (*RosterEntry,
 	return e, nil
 }
 
-// ─── My votes / contestant supporters ────────────────────────────────────────
-
 // ErrNotContestant is returned when a caller asks for a contestant's supporters
 // and is not that contestant.
 var ErrNotContestant = errors.New("voting: only the contestant can see who voted for them")
@@ -488,7 +482,6 @@ func (s *Service) MyVotes(ctx context.Context, voterID, contestID string, paidOn
 }
 
 // Supporters returns who voted for a contestant — to that contestant only.
-//
 // The check is ownership, not membership or admin: a contestant may see their
 // own supporters and nobody else's. A contestant row with no user_id (imported,
 // or promoted from a registration that never linked an account) belongs to
@@ -530,8 +523,6 @@ func (s *Service) Notifications(ctx context.Context, userID string) ([]Notificat
 	return s.repo.Notifications(ctx, userID)
 }
 
-// ─── Support Ticket Methods (lowercase internal methods called by handlers) ───
-
 func (s *Service) createSupportTicket(ctx context.Context, ticket SupportTicket) (*SupportTicket, error) {
 	svc := NewSupportService(s.repo.db)
 	return svc.CreateSupportTicket(ctx, ticket)
@@ -560,4 +551,127 @@ func (s *Service) addTicketMessage(ctx context.Context, userID, ticketID, messag
 func (s *Service) listTicketMessages(ctx context.Context, userID, ticketID string) ([]TicketMessage, error) {
 	svc := NewSupportService(s.repo.db)
 	return svc.ListTicketMessages(ctx, userID, ticketID)
+}
+
+// Contest mirrors a row of public.connect_contests. Status is one of
+// draft|open|closed. PaidVoteKobo is the price of ONE paid vote unit in kobo
+// (0 = paid voting disabled for the contest).
+type Contest struct {
+	ID                string     `json:"id"`
+	Title             string     `json:"title"`
+	Description       *string    `json:"description,omitempty"`
+	Status            string     `json:"status"`
+	PaidVoteKobo      int64      `json:"paid_vote_kobo"`
+	FreeVotesPerUser  int        `json:"free_votes_per_user"`
+	VelocityPerMinute int        `json:"velocity_per_minute"`
+	OpensAt           *time.Time `json:"opens_at,omitempty"`
+	ClosesAt          *time.Time `json:"closes_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	RulesText         string     `json:"rules_text,omitempty"`
+	BannerImageURL    string     `json:"banner_image_url,omitempty"`
+
+	// Roster/tally summary, populated by the list + detail queries so a client
+	// rendering a contest card does not have to fetch the whole roster to show
+	// "N contestants / M votes" (which would be an N+1 across the list).
+	ContestantCount int   `json:"contestant_count"`
+	TotalVotes      int64 `json:"total_votes"`
+}
+
+// Vote mirrors a row of public.connect_votes (immutable). A free vote has
+// paid=false and amount_kobo=0; a paid vote carries the ledger ref.
+type Vote struct {
+	ID             string    `json:"id"`
+	ContestID      string    `json:"contest_id"`
+	VoterID        string    `json:"voter_id"`
+	OptionRef      string    `json:"option_ref"`
+	Paid           bool      `json:"paid"`
+	Quantity       int       `json:"quantity"`
+	AmountKobo     int64     `json:"amount_kobo"`
+	IdempotencyKey *string   `json:"-"`
+	LedgerRef      *string   `json:"ledger_ref,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// ResultRow is one tallied option in a contest's results.
+type ResultRow struct {
+	OptionRef  string `json:"option_ref"`
+	FreeVotes  int64  `json:"free_votes"`
+	PaidVotes  int64  `json:"paid_votes"`
+	TotalVotes int64  `json:"total_votes"`
+}
+
+// FreeVoteRequest is the body for POST /contests/:id/vote.
+type FreeVoteRequest struct {
+	OptionRef string `json:"optionRef" binding:"required"`
+}
+
+// PaidVoteRequest is the body for POST /contests/:id/paid-vote. Quantity is the
+// number of paid vote units; the price-per-unit comes from the contest, never
+// the client.
+type PaidVoteRequest struct {
+	OptionRef string `json:"optionRef" binding:"required"`
+	Quantity  int    `json:"quantity"`
+}
+
+// Contest expiry loop: closes contests whose voting deadline has passed.
+// Nothing ever moved a contest to 'ended'. A finished contest stayed 'active',
+// so /api/v1/contests kept listing it and the connect_contests mirror kept it
+// 'open' — ListContests then served it to the phone with a LIVE badge. Votes
+// were still refused correctly (votingOpen checks the closes_at window, not just
+// the status), so this was never a money bug, but every finished contest went on
+// advertising itself as running.
+// Scheduling decision: the repo has NO pg_cron (the one cron.schedule line in
+// supabase/migrations is commented out) and NO asynq periodic scheduler — the
+// house pattern for periodic work is a background ticker goroutine
+// (symptomsearch.StartRetentionPurge, orchestration.StartReconScheduler). This
+// mirrors that pattern.
+// The work itself is the SECURITY DEFINER SQL function
+// public.close_expired_contests() (migration 20261227000000), service_role-
+// executable only; this loop merely invokes it on a schedule.
+
+// DefaultExpiryInterval is how often expired contests are swept. Hourly rather
+// than daily: a contest that ends at 09:00 should not still read LIVE at 20:00,
+// and the statement is a cheap indexed no-op when nothing has expired.
+const DefaultExpiryInterval = time.Hour
+
+// StartExpiryCloser runs close_expired_contests once at startup and then every
+// `every` until ctx is cancelled.
+// Multi-instance safe: the UPDATE is guarded on status IN ('active','upcoming')
+// and a past deadline, so a row can only transition once. Concurrent runs are
+// redundant, never harmful — the second sees no matching rows.
+func StartExpiryCloser(ctx context.Context, db *pgxpool.Pool, every time.Duration) {
+	if db == nil {
+		return
+	}
+	if every <= 0 {
+		every = DefaultExpiryInterval
+	}
+	run := func() {
+		cctx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		var closed int
+		if err := db.QueryRow(cctx, `SELECT public.close_expired_contests()`).Scan(&closed); err != nil {
+			// Logged, never fatal: a failed sweep leaves contests reading LIVE for
+			// another interval, which is the status quo this fixes — not a reason to
+			// take the process down.
+			log.Printf("[connect.voting] contest expiry sweep failed: %v", err)
+			return
+		}
+		if closed > 0 {
+			log.Printf("[connect.voting] contest expiry sweep: %d contest(s) past their deadline closed", closed)
+		}
+	}
+	go func() {
+		run()
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				run()
+			}
+		}
+	}()
 }

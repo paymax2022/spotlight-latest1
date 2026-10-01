@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -49,7 +50,7 @@ func RegisterAcademyIdentity(member *gin.RouterGroup, admin *gin.RouterGroup, po
 
 // uid resolves the authenticated user from gin context; aborts 401 if absent.
 func (h *Handler) uid(c *gin.Context) (string, bool) {
-	id := c.GetString("user_id")
+	id := ginutil.UserID(c)
 	if id == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication_required"})
 		return "", false
@@ -70,8 +71,6 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
 }
-
-// ── Member handlers ───────────────────────────────────────────────────────────
 
 func (h *Handler) GetMe(c *gin.Context) {
 	uid, ok := h.uid(c)
@@ -160,8 +159,6 @@ func (h *Handler) RecordConsent(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"consent_id": consentID, "status": "active"})
 }
 
-// ── Admin handlers ────────────────────────────────────────────────────────────
-
 func (h *Handler) AdminLookup(c *gin.Context) {
 	me, err := h.svc.AdminLookup(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -172,7 +169,7 @@ func (h *Handler) AdminLookup(c *gin.Context) {
 }
 
 func (h *Handler) AdminRevokeGuardian(c *gin.Context) {
-	actorID := c.GetString("user_id")
+	actorID := ginutil.UserID(c)
 	gl, err := h.svc.RevokeGuardianLink(c.Request.Context(), c.Param("id"), actorID)
 	if err != nil {
 		h.fail(c, err)

@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { listMyOrders } from '@/src/lib/restaurant/api';
-import { formatNaira, orderStatusClass, orderStatusLabel } from '@/src/lib/restaurant/format';
+import { listMyOrders, formatNaira, orderStatusClass, orderStatusLabel } from '@/src/lib/restaurant';
 import type { Order } from '@/src/types/restaurant';
 
 export default function RestaurantOrdersClient() {

@@ -1,8 +1,7 @@
-// ── Association — Organisation creation draft store (U) ───────────────────────
 // Zustand draft store mirroring the crowdfunding campaign-draft pattern.
 
 import { create } from 'zustand';
-import type { OrgDraft, DraftChapter, DraftCategory, DraftCommittee, DraftStateLeader } from '../types/orgDraft.types';
+import type { OrgDraft, DraftChapter, DraftCategory, DraftCommittee, DraftStateLeader } from '../types';
 
 const emptyDraft: OrgDraft = {
   name: '',

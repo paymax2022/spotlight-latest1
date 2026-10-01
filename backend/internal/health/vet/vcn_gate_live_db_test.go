@@ -1,6 +1,5 @@
 package healthvet
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression coverage for a defect found live during Veterinary
 // (Module 17) UAT: unlike Accept/StartConsult (which correctly re-check
 // VerifiedVetOwner/HL-2), Confirm and CompleteConsult never re-verified the
@@ -11,9 +10,7 @@ package healthvet
 // exercise without the consult engine's SOAP-note dependency); the
 // CompleteConsult-side fix was live-verified via a full booking-lifecycle
 // curl sweep at fix time.
-//
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

@@ -2,21 +2,23 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 import { resolveUtilityCommission, type ResolvedCommission } from '@/src/server/commission/config';
 import { creditWallet, debitWallet, reverseWalletDebit } from '@/src/server/wallet/service';
-import { calculateUtilityPricing } from './pricing';
-import { getViableUtilityRoutes, selectUtilityProvider, type UtilityRouteCandidate } from './routing';
-import { canRequeryUtilityStatus, canReverseUtilityTransaction, nextStatusFromProvider } from './status';
-import { getUtilityAdapter } from './adapters/registry';
-import { fetchVtpassServices, type VtpassServiceInfo } from './adapters/vtpass';
-import type { UtilityValidationResult } from './adapters/types';
 import {
+  calculateUtilityPricing,
+  getViableUtilityRoutes,
+  selectUtilityProvider,
+  type UtilityRouteCandidate,
+  canRequeryUtilityStatus,
+  canReverseUtilityTransaction,
+  nextStatusFromProvider,
   protectProviderCredentialsPayload,
   providerCredentialsConfigured,
-} from './credentials';
-import {
   getUtilityProviderTimeoutMs,
   UtilityProviderTimeoutError,
   withUtilityProviderTimeout,
-} from './provider-timeout';
+} from './helpers';
+import { getUtilityAdapter } from './adapters/registry';
+import { fetchVtpassServices, type VtpassServiceInfo } from './adapters/vtpass';
+import type { UtilityValidationResult } from './adapters/types';
 import {
   notifyUtilityCustomer,
   notifyUtilityTransactionStatus,
@@ -43,8 +45,6 @@ function receiptNumber(id: string) {
 // Commission module integration (additive, guarded). When an active
 // commission_config row matches the resolved (service, subtype), prefer its
 // customer-facing convenience fee over the utility_products value. When the fee
-// is unchanged (the current seeded case for electricity/cable = 10000, and
-// airtime/data = 0) the pricing is returned untouched, so amounts do not move
 // unless a config row deliberately differs. Reversible: delete these two lines
 // in payUtility to fall fully back to utility_products pricing.
 function applyCommissionConvenienceFee(
@@ -86,7 +86,6 @@ async function recordUtilityCommissionEarning(params: {
     const convenienceFeeKobo = pricing.convenienceFeeKobo;
     const fixedFeeKobo = config ? config.fixed_fee_kobo : 0;
 
-    // Prefer the config-derived revenue; if there is no config (or it derives no
     // revenue) fall back to the per-transaction gross profit already computed.
     const derivedRevenue = commissionKobo + platformChargeKobo + convenienceFeeKobo + fixedFeeKobo;
     const spotlightRevenueKobo = config && derivedRevenue > 0 ? derivedRevenue : pricing.grossProfitKobo;
@@ -478,7 +477,6 @@ export async function validateUtilityCustomer(input: {
     // adapter's documented test-meter simulation EVEN IF no provider route is
     // seeded in this environment — so the documented test meters always validate
     // for testing. (serviceID is derived from the biller code, e.g.
-    // 'vtpass-eko-electric' -> 'eko-electric'; the sandbox stub keys off the meter.)
     if (process.env.VTPASS_ENVIRONMENT === 'sandbox' && biller.requires_validation) {
       const adapter = getUtilityAdapter('vtpass');
       const result = await adapter.validateCustomer({

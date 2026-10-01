@@ -1,4 +1,3 @@
-// ── Insurance — Data hooks (React Query v5) ──────────────────────────────────
 // Screens stay declarative and share caching/loading/error contracts.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -28,7 +27,6 @@ import type {
 
 const KEY = 'insurance';
 
-// ── Catalog ──────────────────────────────────────────────────────────────────
 export function useProducts(line?: ProductLine) {
   return useQuery({
     queryKey: [KEY, 'products', line ?? 'all'],
@@ -62,7 +60,6 @@ export function useCoverSummary() {
   });
 }
 
-// ── Quote ─────────────────────────────────────────────────────────────────────
 export function useCreateQuote() {
   return useMutation({
     mutationFn: (input: QuoteInput) => createQuote(input),
@@ -78,14 +75,12 @@ export function useQuote(id: string) {
   });
 }
 
-// ── Consent ─────────────────────────────────────────────────────────────────
 export function useRecordConsent() {
   return useMutation({
     mutationFn: (payload: ConsentPayload) => recordConsent(payload),
   });
 }
 
-// ── Bind ─────────────────────────────────────────────────────────────────────
 export function useBindPolicy() {
   const qc = useQueryClient();
   return useMutation({
@@ -99,7 +94,6 @@ export function useBindPolicy() {
   });
 }
 
-// ── Policy wallet ─────────────────────────────────────────────────────────────
 export function usePolicies() {
   return useQuery({
     queryKey: [KEY, 'policies'],
@@ -137,7 +131,6 @@ export function useSaveBeneficiaries(policyId: string) {
   });
 }
 
-// ── Lifecycle ─────────────────────────────────────────────────────────────────
 export function useRenewPolicy(policyId: string) {
   const qc = useQueryClient();
   return useMutation({

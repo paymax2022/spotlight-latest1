@@ -1,17 +1,13 @@
 package commission_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test proving commission.Service.ReferralHook fires exactly once per
 // GENUINELY NEW earning — never on an idempotent-replay duplicate — since the
 // referral purchase-commission-split engine (referral/commissionsplit) relies
 // on that guarantee to never double-increment a referral code's reward cap.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset.
-//
 // Bring-up:
 //   export TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 //   cd backend && go test ./internal/finance/commission/... -run TestReferralHook -v -count=1
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

@@ -1,6 +1,4 @@
-// ── Admin — Paymax Health · Pharmacy (HEALTH-BUILD Phase 1 ADM) ────────────────
 // Mock by default (mirrors stays / savings / events admin services). Flip with
-// NEXT_PUBLIC_HEALTH_USE_MOCK=false to hit the live Go backend at
 // /api/health/pharmacy/admin/*. RBAC: health.pharmacy.* gates wired on the sidebar.
 // Money is BIGINT kobo (minor units) throughout — formatNaira() converts kobo → ₦.
 // Surfaces HEALTH invariants: HL-2 credential-gated supply (PCN/premises),
@@ -37,7 +35,6 @@ export const USE_MOCK_ENV = 'NEXT_PUBLIC_HEALTH_USE_MOCK';
 
 // Verified against backend/internal/app/finance_routes.go:
 //   RegisterHealthPharmacy(finance, adminGroupTop5(r, "/api/health/pharmacy/admin"), ...)
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/pharmacy/admin')`,
 // which stopped matching the moment apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
 // the same regression. Every request 404'd against <proxy>/dashboard instead of
@@ -67,7 +64,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -80,9 +76,7 @@ const NO_BACKEND_YET =
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
-// ════════════════════════════════════════════════════════════════════════════
 // A · Dashboard
-// ════════════════════════════════════════════════════════════════════════════
 const DASHBOARD: PharmacyDashboard = {
   generated_at: iso(0.1),
   orders_today: 1_840,
@@ -180,9 +174,7 @@ export async function getPharmacyDashboard(): Promise<PharmacyDashboard> {
   };
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // B · PCN / premises verification audit queue (HL-2)
-// ════════════════════════════════════════════════════════════════════════════
 const PCN_APPS: PcnApplication[] = [
   { id: 'pcn_4471', pharmacy_name: 'HealthPlus Ikeja', superintendent_masked: 'Pharm. A. Okafor•••', pcn_premises_no: 'PCN/PR/LA/2024/03318', pcn_pharmacist_no: 'PCN/RP/2017/14820', cac_rc_no: 'RC-1442087', state: 'Lagos', lga: 'Ikeja', status: 'submitted', premises_verified: false, pharmacist_verified: true, licence_expires_at: dateStr(-330), docs: [{ kind: 'PCN_premises_licence', reference: 'PCN/PR/LA/2024/03318', expires_at: dateStr(-330), verified: false }, { kind: 'superintendent_pharmacist', reference: 'PCN/RP/2017/14820', expires_at: dateStr(-210), verified: true }, { kind: 'CAC', reference: 'RC-1442087', verified: true }], submitted_at: iso(6), created_at: iso(48) },
   { id: 'pcn_4472', pharmacy_name: 'MedPlus Wuse 2', superintendent_masked: 'Pharm. C. Bello•••', pcn_premises_no: 'PCN/PR/FC/2023/01190', pcn_pharmacist_no: 'PCN/RP/2015/09931', cac_rc_no: 'RC-0998120', state: 'FCT', lga: 'Abuja Municipal', status: 'under_review', premises_verified: true, pharmacist_verified: true, licence_expires_at: dateStr(-120), docs: [{ kind: 'PCN_premises_licence', reference: 'PCN/PR/FC/2023/01190', expires_at: dateStr(-120), verified: true }, { kind: 'superintendent_pharmacist', reference: 'PCN/RP/2015/09931', expires_at: dateStr(-90), verified: true }], submitted_at: iso(30), created_at: iso(96) },
@@ -215,9 +207,7 @@ export async function decidePcn(id: string, decision: PcnDecision, note?: string
   return sendJson<PcnDecisionResult>('POST', `/pcn/applications/${id}/decision`, { decision, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // C · Catalog / NAFDAC governance (HL-5)
-// ════════════════════════════════════════════════════════════════════════════
 const CATALOG: CatalogItem[] = [
   { id: 'cat_5501', product_name: 'Paracetamol 500mg', brand: 'Emzor', pharmacy_masked: 'HealthPlus Ikeja•••', nafdac_reg_no: 'A4-0100', nafdac_valid: true, form: 'tablet', strength: '500mg', pom: false, controlled: false, price_kobo: 350_00, stock: 4_200, status: 'approved', flagged_reason: null, created_at: dateStr(30) },
   { id: 'cat_5510', product_name: 'Amoxicillin 500mg', brand: 'Fidson', pharmacy_masked: 'MedPlus Wuse 2•••', nafdac_reg_no: 'A4-7782', nafdac_valid: true, form: 'capsule', strength: '500mg', pom: true, controlled: false, price_kobo: 1_800_00, stock: 980, status: 'pending', flagged_reason: null, created_at: dateStr(2) },
@@ -246,15 +236,12 @@ export async function listCatalog(opts?: { status?: string; pom?: string; q?: st
   return getJson<CatalogItem[]>(`/catalog${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function governCatalogItem(id: string, action: CatalogGovernanceAction, note?: string): Promise<CatalogGovernanceResult> {
-  // NAFDAC gating (HL-5) is enforced inline at write time in the backend;
   // there is no separate governance entity or /catalog/:id/govern route.
   if (USE_MOCK) throw new Error(`Governing a catalog item ${NO_BACKEND_YET}`);
   return sendJson<CatalogGovernanceResult>('POST', `/catalog/${id}/govern`, { action, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // D · Rx & controlled-substance audit (HL-3 / HL-4)
-// ════════════════════════════════════════════════════════════════════════════
 const RX_AUDIT: RxAuditItem[] = [
   { id: 'rx_9920', patient_masked: 'pt Chioma•••', prescriber_masked: 'Dr. K. Adeyemi•••', pharmacy_masked: 'HealthPlus Ikeja•••', pharmacist_masked: 'Pharm. A. Okafor•••', status: 'verified', pom_items: 2, controlled_items: 0, dispense_once_ok: true, verify_minutes: 9, order_ref: 'ord_8810', issued_at: iso(5), verified_at: iso(4.5), dispensed_at: null },
   { id: 'rx_9921', patient_masked: 'pt Emeka•••', prescriber_masked: 'Dr. F. Bello•••', pharmacy_masked: 'MedPlus Wuse 2•••', pharmacist_masked: 'Pharm. C. Bello•••', status: 'dispensed', pom_items: 1, controlled_items: 0, dispense_once_ok: true, verify_minutes: 12, order_ref: 'ord_8812', issued_at: iso(26), verified_at: iso(25), dispensed_at: iso(20) },
@@ -298,9 +285,7 @@ export async function listControlledLog(opts?: { q?: string }): Promise<Controll
   return getJson<ControlledLogEntry[]>(`/controlled-log${qs.toString() ? `?${qs}` : ''}`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // E · Order / delivery oversight
-// ════════════════════════════════════════════════════════════════════════════
 const ORDERS: PharmacyOrderSummary[] = [
   { id: 'ord_8810', patient_masked: 'pt Chioma•••', pharmacy_masked: 'HealthPlus Ikeja•••', status: 'in_delivery', fulfilment: 'delivery', has_pom: true, amount_kobo: 12_400_00, payment_status: 'held', delivery_ref: 'dsp_77120', created_at: iso(4) },
   { id: 'ord_8812', patient_masked: 'pt Emeka•••', pharmacy_masked: 'MedPlus Wuse 2•••', status: 'delivered', fulfilment: 'delivery', has_pom: true, amount_kobo: 8_800_00, payment_status: 'released', delivery_ref: 'dsp_77105', created_at: iso(20) },
@@ -421,7 +406,6 @@ export async function listOrders(opts?: { status?: string; fulfilment?: string; 
   // (AdminListOrders, admin.go) — it used to only read `state`/
   // `pharmacy_provider_id`, so these silently no-op'd. Backend was changed to
   // match this frontend's contract (see the PR description for why that side
-  // was picked); no param renaming needed here. `q` (free-text search) still
   // has no backend support — filtered client-side below, same as before.
   const qs = new URLSearchParams();
   if (opts?.status) qs.set('status', opts.status);
@@ -498,7 +482,6 @@ export async function getOrder(id: string): Promise<PharmacyOrderDetail> {
     total_kobo: raw.total_kobo,
     rx_ref: raw.prescription_id,
     // Always null from this endpoint — Get()'s admin-bypass path (service.go)
-    // redacts the pickup code for every non-patient reader; admin oversight
     // never needs the counter credential.
     pickup_code: raw.pickup_code,
     // No per-order audit timeline read exists yet on the backend — empty, not
@@ -507,9 +490,7 @@ export async function getOrder(id: string): Promise<PharmacyOrderDetail> {
   };
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // F · Pharmacovigilance / recall
-// ════════════════════════════════════════════════════════════════════════════
 const RECALLS: RecallRecord[] = [
   { id: 'rcl_2207', product_name: 'Cough Syrup (Batch X)', nafdac_reg_no: 'A4-3380', batch_no: 'BX-2026-014', pharmacy_masked: 'multiple•••', severity: 'high', status: 'open', reason: 'NAFDAC alert — possible contamination; batch quarantined', units_affected: 1_240, patients_notified: 318, created_at: iso(5) },
   { id: 'rcl_2208', product_name: 'Antihypertensive (Batch L)', nafdac_reg_no: 'A4-5521', batch_no: 'BL-2025-220', pharmacy_masked: 'Greenlife PH•••', severity: 'medium', status: 'investigating', reason: 'Reported sub-potency complaints under pharmacovigilance review', units_affected: 410, patients_notified: 96, created_at: iso(48) },
@@ -541,9 +522,7 @@ export async function createRecall(input: CreateRecallInput): Promise<CreateReca
   return sendJson<CreateRecallResult>('POST', '/recalls', input);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // G · Payouts (KYC-gated — HL-10)
-// ════════════════════════════════════════════════════════════════════════════
 const PAYOUTS: PayoutRecord[] = [
   { id: 'pay_5501', pharmacy_masked: 'HealthPlus Ikeja•••', kyc_tier: 'tier3', kyc_verified: true, collected_kobo: 18_400_000_00, fees_kobo: 1_288_000_00, net_payable_kobo: 17_112_000_00, payout_status: 'approved', aml_flag: false, created_at: dateStr(2) },
   { id: 'pay_5521', pharmacy_masked: 'QuickMeds•••', kyc_tier: 'tier0', kyc_verified: false, collected_kobo: 6_200_000_00, fees_kobo: 434_000_00, net_payable_kobo: 5_766_000_00, payout_status: 'kyc_hold', aml_flag: false, created_at: dateStr(1) },
@@ -567,16 +546,13 @@ export async function listPayouts(opts?: { payout_status?: string; q?: string })
   return getJson<PayoutRecord[]>(`/payouts${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decidePayout(id: string, decision: PayoutDecision, note?: string): Promise<PayoutDecisionResult> {
-  // No payout-decision route exists; payout is fully automatic on order
   // completion in backend/internal/health/pharmacy — there is no
   // admin-reviewable pending state to approve/reject.
   if (USE_MOCK) throw new Error(`Deciding a payout ${NO_BACKEND_YET}`);
   return sendJson<PayoutDecisionResult>('POST', `/payouts/${id}/decision`, { decision, note });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // H · Reporting
-// ════════════════════════════════════════════════════════════════════════════
 const REPORTING: ReportingData = {
   generated_at: iso(0.2),
   period_label: 'Last 30 days',

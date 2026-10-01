@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Check, AlertTriangle, MapPin, LocateFixed } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
@@ -116,7 +116,6 @@ export default function ScheduleNewTripScreen() {
     return { scheduleId: busScheduleId, seatNumber: busSeat } as BusModePayload;
   }, [mode, vehicleClass, dimensions, weightKg, flightNumber, arrivalTime, terminal, busScheduleId, busSeat]);
 
-  // Airport: when an arrival time is set, the pickup time is derived (+45m),
   // matching the backend rule, but stays adjustable here.
   useEffect(() => {
     if (mode === 'airport_pickup' && arrivalTime) {

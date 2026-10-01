@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/ptr"
 )
 
 // Store is the data-access contract for fee schedules. Defined as an in-package interface
@@ -56,8 +60,8 @@ func scanFeeSchedule(row pgx.Row) (*FeeSchedule, error) {
 	if err != nil {
 		return nil, err
 	}
-	f.FeeItems = rawOrEmptyArray(feeItems)
-	f.InstallmentPolicy = rawOrEmptyObject(installment)
+	f.FeeItems = jsonx.RawOrEmptyArray(feeItems)
+	f.InstallmentPolicy = jsonx.RawOrEmptyObject(installment)
 	return f, nil
 }
 
@@ -74,8 +78,8 @@ func (r *Repository) Insert(ctx context.Context, fs FeeSchedule, dueDate *time.T
 	    (id, school_id, session_id, class_id, class_code, term, name, amount_minor, currency,
 	     fee_items, installment_policy, locked, due_date, status, created_at)
 	    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false,$12,'active',$13)`
-	if _, err := r.db.Exec(ctx, q, id, fs.SchoolID, nullStr(deref(fs.SessionID)), nullStr(deref(fs.ClassID)),
-		nullStr(deref(fs.ClassCode)), nullStr(deref(fs.Term)), fs.Name, fs.AmountMinor, currency,
+	if _, err := r.db.Exec(ctx, q, id, fs.SchoolID, dbutil.NullStr(ptr.DerefZero(fs.SessionID)), dbutil.NullStr(ptr.DerefZero(fs.ClassID)),
+		dbutil.NullStr(ptr.DerefZero(fs.ClassCode)), dbutil.NullStr(ptr.DerefZero(fs.Term)), fs.Name, fs.AmountMinor, currency,
 		toJSONArray(fs.FeeItems), toJSONObject(fs.InstallmentPolicy), dueDate, now); err != nil {
 		return nil, err
 	}
@@ -146,7 +150,7 @@ func (r *Repository) UpdateMutable(ctx context.Context, id, name string, dueDate
 		return nil, ErrFeeScheduleImmutable
 	}
 	q := `UPDATE academy_fee_schedules SET name = COALESCE($2, name)`
-	args := []any{id, nullStr(name)}
+	args := []any{id, dbutil.NullStr(name)}
 	if touchDueDate {
 		args = append(args, dueDate)
 		q += ", due_date = $" + itoa(len(args))
@@ -185,53 +189,8 @@ func writeAudit(ctx context.Context, q querier, actorID, action, entityID, from,
 	const ins = `INSERT INTO public.academy_commerce_audit
 	             (actor_id, action, entity_type, entity_id, from_state, to_state, detail)
 	             VALUES ($1,$2,'academy_fee_schedule',$3,$4,$5,$6)`
-	_, err := q.Exec(ctx, ins, nullStr(actorID), action, nullUUID(entityID), nullStr(from), nullStr(to), toJSONObject(nil, detail))
+	_, err := q.Exec(ctx, ins, dbutil.NullStr(actorID), action, dbutil.NullUUID(entityID), dbutil.NullStr(from), dbutil.NullStr(to), toJSONObject(nil, detail))
 	return err
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func nullUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
-}
-
-func ptrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	v := s
-	return &v
-}
-
-func rawOrEmptyObject(b []byte) json.RawMessage {
-	if len(b) == 0 {
-		return json.RawMessage("{}")
-	}
-	return json.RawMessage(b)
-}
-
-func rawOrEmptyArray(b []byte) json.RawMessage {
-	if len(b) == 0 {
-		return json.RawMessage("[]")
-	}
-	return json.RawMessage(b)
 }
 
 // toJSONArray marshals fee_items, defaulting to a JSON array literal.
@@ -261,17 +220,5 @@ func toJSONObject(rm json.RawMessage, detail ...any) []byte {
 	return rm
 }
 
-// itoa is a tiny dependency-free int→string for positional placeholders.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
-}
+// itoa is a tiny local strconv.Itoa kept for test compatibility.
+func itoa(n int) string { return strconv.Itoa(n) }

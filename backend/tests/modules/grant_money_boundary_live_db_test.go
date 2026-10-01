@@ -1,6 +1,5 @@
 // The load-bearing invariant of per-user module grants: a grant opens a MODULE, it
 // never opens the WALLET.
-//
 // This test lives outside both packages on purpose. It is the only place that imports
 // modules AND finance/tiers together — the production code must not, and that
 // separation is what keeps an admin grant from becoming an AML decision. If someone

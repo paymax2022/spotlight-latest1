@@ -7,8 +7,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/config"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Handler exposes contests + free/paid voting over HTTP.
@@ -16,9 +18,6 @@ type Handler struct{ svc *Service }
 
 // NewHandler builds a voting handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
-
-func userID(c *gin.Context) string  { return c.GetString("user_id") }
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
 
 func mapError(c *gin.Context, err error) {
 	switch {
@@ -79,7 +78,7 @@ func (h *Handler) GetContest(c *gin.Context) {
 
 // FreeVote — POST /api/v1/connect/contests/:id/vote (member). No money.
 func (h *Handler) FreeVote(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -106,7 +105,7 @@ func (h *Handler) FreeVote(c *gin.Context) {
 
 // PaidVote — POST /api/v1/connect/contests/:id/paid-vote (member, Idempotency-Key).
 func (h *Handler) PaidVote(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -116,7 +115,7 @@ func (h *Handler) PaidVote(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	v, err := h.svc.PaidVote(c.Request.Context(), c.Param("id"), uid, idemKey(c), req)
+	v, err := h.svc.PaidVote(c.Request.Context(), c.Param("id"), uid, ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		mapError(c, err)
 		return
@@ -139,7 +138,7 @@ func (h *Handler) Results(c *gin.Context) {
 // mobile app renders as the contestant list and the leaderboard: both views
 // are the same ranked roster, so a vote cast moves both consistently.
 func (h *Handler) ListRoster(c *gin.Context) {
-	roster, err := h.svc.ListRoster(c.Request.Context(), c.Param("id"), false, userID(c))
+	roster, err := h.svc.ListRoster(c.Request.Context(), c.Param("id"), false, ginutil.UserID(c))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "contest not found"})
@@ -156,7 +155,7 @@ func (h *Handler) ListRoster(c *gin.Context) {
 // the client must not derive it, or two surfaces will disagree about how many
 // votes a user really has.
 func (h *Handler) FreeVoteAllowance(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -172,7 +171,7 @@ func (h *Handler) FreeVoteAllowance(c *gin.Context) {
 // GetContestant — GET /api/v1/connect/contestants/:id (member).
 // One contestant with its live tally and rank, keyed on the contestant id alone.
 func (h *Handler) GetContestant(c *gin.Context) {
-	e, err := h.svc.GetContestant(c.Request.Context(), c.Param("id"), userID(c))
+	e, err := h.svc.GetContestant(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "contestant not found"})
@@ -186,7 +185,7 @@ func (h *Handler) GetContestant(c *gin.Context) {
 
 // LikeContestant — POST /api/v1/connect/contestants/:id/like (member).
 func (h *Handler) LikeContestant(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -205,7 +204,7 @@ func (h *Handler) LikeContestant(c *gin.Context) {
 
 // UnlikeContestant — DELETE /api/v1/connect/contestants/:id/like (member).
 func (h *Handler) UnlikeContestant(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -225,7 +224,7 @@ func (h *Handler) UnlikeContestant(c *gin.Context) {
 // money/vote-count consequence worth the client-side complexity of an
 // idempotency key, and the count is display-only.
 func (h *Handler) ShareContestant(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -273,11 +272,9 @@ func (h *Handler) GetStages(c *gin.Context) {
 // share token. It must live outside the member group (which requires a
 // bearer token) because the person following a shared link has no session
 // yet — that is the entire point of the link.
-//
 // Gated behind FEATURE_CONTESTANT_SOCIAL_ENABLED, same as the like/share
 // mutation routes in Register — a token could otherwise resolve before the
 // feature that issues tokens is even live anywhere else.
-//
 // A public GET /contests mirror (for logged-out web visitors) was tried here
 // and reverted 2026-09-28: adding it made the staging backend deploy crash-
 // loop and fail its healthcheck every time (Railway logs showed a
@@ -393,16 +390,13 @@ func RegisterAdmin(admin gin.IRouter, svc *Service, guard PermissionGuard, cfg c
 		h.GetContestantsByStage)
 }
 
-// ─── My votes / contestant supporters ────────────────────────────────────────
-
 // MyVotes — GET /connect/votes/mine?contestId=&voteType=FREE|PAID
-//
 // The screen that reads this used to call GET /voting/my-votes, a path nothing
 // served: it answered 404 with an HTML body, and with mock mode off the list
 // could never render a single row.
 func (h *Handler) MyVotes(c *gin.Context) {
 	vt := strings.ToUpper(strings.TrimSpace(c.Query("voteType")))
-	list, err := h.svc.MyVotes(c.Request.Context(), userID(c), c.Query("contestId"),
+	list, err := h.svc.MyVotes(c.Request.Context(), ginutil.UserID(c), c.Query("contestId"),
 		vt == "PAID", vt == "FREE")
 	if err != nil {
 		mapError(c, err)
@@ -412,11 +406,10 @@ func (h *Handler) MyVotes(c *gin.Context) {
 }
 
 // Supporters — GET /connect/contestants/:id/supporters
-//
 // Contestant-only: the service refuses anyone who does not own the contestant.
 // Votes cast under allow_anonymous_free_vote come back flagged with no name.
 func (h *Handler) Supporters(c *gin.Context) {
-	list, err := h.svc.Supporters(c.Request.Context(), userID(c), c.Param("id"))
+	list, err := h.svc.Supporters(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapError(c, err)
 		return
@@ -425,12 +418,11 @@ func (h *Handler) Supporters(c *gin.Context) {
 }
 
 // VoteReceipt — GET /connect/votes/:id
-//
 // The receipt screen called GET /voting/transactions/:id/receipt, another path
 // nothing served. My Votes rows are tappable and push straight here, so a
 // working list would otherwise have led to a dead screen.
 func (h *Handler) VoteReceipt(c *gin.Context) {
-	v, err := h.svc.MyVote(c.Request.Context(), userID(c), c.Param("id"))
+	v, err := h.svc.MyVote(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapError(c, err)
 		return
@@ -439,12 +431,11 @@ func (h *Handler) VoteReceipt(c *gin.Context) {
 }
 
 // Notifications — GET /connect/notifications
-//
 // The screen called GET /voting/notifications, which nothing served. The feed is
 // DERIVED: there is no notifications store in this module, so it reports the two
 // kinds the database can actually evidence. See Repository.Notifications.
 func (h *Handler) Notifications(c *gin.Context) {
-	list, err := h.svc.Notifications(c.Request.Context(), userID(c))
+	list, err := h.svc.Notifications(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		mapError(c, err)
 		return

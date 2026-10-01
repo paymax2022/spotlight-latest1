@@ -1,20 +1,15 @@
-// ── Admin — Business Registry (CAC business-name verify/register) service ──────
 // Copies the commissionService.ts / academyAdminService.ts request stack EXACTLY:
 //  • businessBase() is apiRoot() + /api/business (these admin routes live under
 //    /api/business/admin/*, NOT /api/finance or /api/academy — mirroring how
 //    sibling services target a non-v1 sub-path). apiRoot() strips a trailing
 //    /api/v1 from env.apiBaseUrl (if any) and nothing else — the old
-//    `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/business')` stopped
 //    matching once apiBaseUrl became the same-origin proxy path
 //    (<origin>/api/admin-proxy, no /api/v1 suffix), so every live call 404'd
 //    against <proxy>/admin/... instead of <proxy>/api/business/admin/....
 //  • authHeaders() attaches the admin Bearer token from localStorage.
 //  • getJson/sendJson unwrap the { data } envelope and throw on non-2xx.
-//
 // Backend (already built): admin endpoints under /api/business/admin, authed +
 // RBAC permission `business.registry.review` (super-admin / system-admin). All
-// responses are shaped { data: … }. Money is integer minor units (kobo); the UI
-// shows ₦ (feeKobo/100). Mock by default (NEXT_PUBLIC_BUSINESS_USE_MOCK); flip to
 // false to hit the live Go backend. Every state-change is audit-logged server-side.
 
 import { apiRoot } from '@/config/env';
@@ -22,7 +17,6 @@ import { resolveUseMock } from '@/config/useMock';
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_BUSINESS_USE_MOCK);
 
-// ── Domain types (mirror the backend JSON tags — camelCase) ───────────────────
 export type BusinessStatus =
   | 'draft' | 'name_check' | 'name_reserved' | 'registration_submitted'
   | 'under_review' | 'registered' | 'submitted' | 'verified' | 'rejected' | 'failed';
@@ -80,7 +74,6 @@ export interface ListOpts {
   limit?: number;
 }
 
-// ── Request stack ─────────────────────────────────────────────────────────────
 function businessBase(): string {
   return `${apiRoot()}/api/business`;
 }
@@ -113,12 +106,10 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Money helper (integer-safe; ₦ = kobo/100) ─────────────────────────────────
 export function formatNaira(kobo: number): string {
   return `₦${((Number(kobo) || 0) / 100).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-// ── Mock fixtures ─────────────────────────────────────────────────────────────
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 
 const MOCK_BUSINESSES: Business[] = [
@@ -208,8 +199,6 @@ function displayName(b: Business): string {
   return b.legalName?.trim() || b.proposedName?.trim() || '(unnamed)';
 }
 
-// ── API ───────────────────────────────────────────────────────────────────────
-// GET /api/business/admin?status=&mode=&limit= → { data: business[] }
 export async function list(opts?: ListOpts): Promise<Business[]> {
   if (USE_MOCK) {
     await delay();

@@ -1,9 +1,7 @@
-// ── Admin — Paymax Crypto service ────────────────────────────────────────────
 // Talks to the Go backend admin control plane at /api/v1/admin/crypto/* (RBAC:
 // requires the `crypto.admin` permission — see backend/internal/crypto/routes.go
 // + model.go PermAdmin). Mock-flagged for dev: flip with
 // NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK=false to hit the live endpoints.
-//
 // Money model (iron rule: integers, never floats): cash_kobo / price_kobo /
 // value_kobo are NGN kobo. units / minor_unit_scale are integer asset-minor-unit
 // fields — never rendered as money, only formatKobo() output is money-facing.
@@ -18,12 +16,10 @@ import type {
 } from '@/types/cryptoAdmin';
 
 // LIVE by default. Set NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK=true for fixtures.
-//
 // Verified before flipping: every path this service calls exists at
 // /api/v1/admin/crypto (internal/crypto/routes.go) with matching methods —
 // GET addresses/assets/orders/reconciliation/swaps/withdrawals, POST assets,
 // POST withdrawals/:id/decision, POST addresses/:id/decision.
-//
 // It mattered most for adminDecideWithdrawal: approving a crypto withdrawal
 // mutated an in-memory array and reported success, so the operator believed a
 // payout had been released.
@@ -68,8 +64,6 @@ async function parseErrorMessage(res: Response, fallback: string): Promise<strin
   }
 }
 
-// ─── Mock datasets ────────────────────────────────────────────────────────────
-
 const now = Date.now();
 const iso = (minsAgo: number) => new Date(now - minsAgo * 60_000).toISOString();
 
@@ -87,8 +81,6 @@ const MOCK_ORDERS: CryptoOrder[] = [
   { id: 'ord_c4', user_id: 'usr_4d8e', asset_id: 'ast_btc', symbol: 'BTC', side: 'sell', status: 'failed', cash_kobo: 0, units: 40_000, price_kobo: 65_100_000_00, reference: '', created_at: iso(600) },
 ];
 
-// ─── Admin — orders ───────────────────────────────────────────────────────────
-
 // GET /admin/crypto/orders — all users' fills, paginated.
 export async function adminListOrders(limit = 50, offset = 0): Promise<CryptoOrder[]> {
   if (USE_MOCK) return delay([...MOCK_ORDERS]);
@@ -97,8 +89,6 @@ export async function adminListOrders(limit = 50, offset = 0): Promise<CryptoOrd
   const body = await res.json();
   return body?.orders ?? [];
 }
-
-// ─── Admin — asset catalogue ──────────────────────────────────────────────────
 
 // GET /admin/crypto/assets — all assets, including inactive/delisted.
 export async function adminListAssets(): Promise<CryptoAsset[]> {
@@ -110,7 +100,6 @@ export async function adminListAssets(): Promise<CryptoAsset[]> {
 }
 
 // POST /admin/crypto/assets — create or update (upsert by symbol) a catalogue
-// asset. No dedicated reason/audit field on this endpoint server-side today;
 // the console still requires an operator note client-side for traceability and
 // surfaces it in the confirmation message (kept local — not sent unless the
 // backend contract adds an audit field).
@@ -127,10 +116,8 @@ export async function adminConfigAsset(input: CryptoAssetConfigRequest): Promise
   return body?.asset ?? body;
 }
 
-// ─── Admin — withdrawal / AML approval queue ─────────────────────────────────
 // NOTE: the admin withdrawal routes are NOT yet wired server-side (only member
 // /api/v1/crypto/withdrawals* exist). These fetch paths target the PLANNED admin
-// routes so the console goes live the moment the backend adds them; until then
 // USE_MOCK (default true) serves fixtures so the surface renders standalone.
 
 const MOCK_WITHDRAWALS: CryptoWithdrawal[] = [
@@ -169,7 +156,6 @@ const MOCK_WITHDRAWALS: CryptoWithdrawal[] = [
   },
 ];
 
-// GET /admin/crypto/withdrawals?status=&limit=&offset=
 export async function adminListWithdrawals(status = '', limit = 50, offset = 0): Promise<CryptoWithdrawal[]> {
   if (USE_MOCK) {
     await delay();
@@ -206,7 +192,6 @@ export async function adminDecideWithdrawal(id: string, input: CryptoWithdrawalD
   return body?.withdrawal ?? body;
 }
 
-// ─── Admin — swap monitoring ─────────────────────────────────────────────────
 // GET /admin/crypto/swaps — recent asset→asset swaps across all users.
 
 const MOCK_SWAPS: CryptoSwapOrder[] = [
@@ -224,7 +209,6 @@ export async function adminListSwaps(limit = 50, offset = 0): Promise<CryptoSwap
   return body?.swaps ?? [];
 }
 
-// ─── Admin — address allow-list review ───────────────────────────────────────
 // GET /admin/crypto/addresses — whitelisted withdrawal destinations pending or
 // completed review.
 
@@ -271,7 +255,6 @@ export async function adminDecideAddress(id: string, input: CryptoAddressDecisio
   return body?.address ?? body;
 }
 
-// ─── Admin — reconciliation (on-chain vs ledger) ─────────────────────────────
 // GET /admin/crypto/reconciliation — per-asset drift between the on-chain
 // custodial balance and the summed holding projections in the finance ledger.
 // Mirrors the FX SF-8 recon pattern: drift ≠ 0 is a break to investigate.

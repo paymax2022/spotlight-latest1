@@ -58,7 +58,6 @@ export function usePredictiveCompliance() {
 
       const data = await response.json();
 
-      // Parse data
       const gdprData: MetricDataPoint[] = data.gdprTrend || [];
       const securityData: MetricDataPoint[] = data.securityTrend || [];
       const performanceData: MetricDataPoint[] = data.performanceTrend || [];
@@ -68,7 +67,6 @@ export function usePredictiveCompliance() {
       const securityForecast = PredictiveCompliance.generateForecast('security', securityData, 30);
       const performanceForecast = PredictiveCompliance.generateForecast('performance', performanceData, 30);
 
-      // Calculate composite risk
       const compositeRisk = RiskCalculator.calculateCompositeRisk(
         gdprForecast.trend,
         securityForecast.trend,

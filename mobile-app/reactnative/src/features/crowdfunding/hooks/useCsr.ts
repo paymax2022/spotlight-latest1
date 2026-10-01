@@ -1,4 +1,3 @@
-// ── Crowdfunding — Corporate CSR (Section M) hooks ───────────────────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {

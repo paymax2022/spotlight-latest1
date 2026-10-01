@@ -10,12 +10,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ptr"
 )
 
 // Store is the data-access contract for the compliance-export log. It is defined as an
 // in-package interface so export_test.go can substitute an in-memory fake (no live DB),
 // mirroring feesinvoice / edupay isolation.
-//
 // APPEND-ONLY STRUCTURAL GUARANTEE (SF-11): this interface exposes ONLY AppendExport and
 // ListExports. There is DELIBERATELY no UpdateExport / DeleteExport method — the compliance
 // log is immutable. public.academy_compliance_exports has no UPDATE/DELETE path in this
@@ -30,11 +31,9 @@ type Store interface {
 }
 
 // OptInStore reads a school's per-category opt-in for regulator sharing (SF-11).
-//
 // NOTE (integration gap): the migration 20260918000000_academy_fees_edtech.sql records the
 // opted-in categories ON the export row (academy_compliance_exports.data_categories) but does
 // NOT provide a per-school opt-in configuration table. A dedicated per-school opt-in store
-// (e.g. academy_school_compliance_optins(school_id, data_category, opted_in_at, opted_in_by))
 // SHOULD be added so opt-in is a durable school setting rather than asserted per request. Until
 // then, the service falls back to the explicit OptInCategories passed on the trigger request
 // (recorded on the immutable export row for audit). This interface is the seam for that store.
@@ -72,8 +71,8 @@ func (r *Repository) AppendExport(ctx context.Context, e ComplianceExport) (*Com
 	const q = `INSERT INTO academy_compliance_exports
 	    (id, school_id, report_type, period, data_categories, requested_by, generated_at, payload_ref)
 	    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
-	if _, err := r.db.Exec(ctx, q, id, e.SchoolID, e.ReportType, nullStr(deref(e.Period)),
-		categoriesToText(e.DataCategories), nullUUID(e.RequestedBy), now, nullStr(deref(e.PayloadRef))); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, e.SchoolID, e.ReportType, dbutil.NullStr(ptr.DerefZero(e.Period)),
+		categoriesToText(e.DataCategories), dbutil.NullUUID(e.RequestedBy), now, dbutil.NullStr(ptr.DerefZero(e.PayloadRef))); err != nil {
 		return nil, err
 	}
 	out := e
@@ -104,7 +103,10 @@ func (r *Repository) ListExports(ctx context.Context, schoolID string) ([]Compli
 		if requestedBy != nil {
 			e.RequestedBy = *requestedBy
 		}
-		e.DataCategories = textToCategories(cats)
+		e.DataCategories = make([]DataCategory, 0, len(cats))
+		for _, s := range cats {
+			e.DataCategories = append(e.DataCategories, DataCategory(s))
+		}
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -117,7 +119,7 @@ func (r *Repository) ListExports(ctx context.Context, schoolID string) ([]Compli
 func (r *Repository) WriteAudit(ctx context.Context, actorID, action, entityID string, detail any) error {
 	const ins = `INSERT INTO public.audit_logs (actor_user_id, action, module, resource_type, resource_id, new_values)
 	             VALUES ($1,$2,'academy.fees','academy_compliance_export',$3,$4)`
-	_, err := r.db.Exec(ctx, ins, nullUUID(actorID), action, nullStr(entityID), toJSON(detail))
+	_, err := r.db.Exec(ctx, ins, dbutil.NullUUID(actorID), action, dbutil.NullStr(entityID), toJSON(detail))
 	return err
 }
 
@@ -169,43 +171,12 @@ func (s *PgxSchoolVerifier) VerificationTier(ctx context.Context, schoolID strin
 	return tier, nil
 }
 
-// ── helpers ─────────────────────────────────────────────────────────────────────
-
 func categoriesToText(cs []DataCategory) []string {
 	out := make([]string, 0, len(cs))
 	for _, c := range cs {
 		out = append(out, string(c))
 	}
 	return out
-}
-
-func textToCategories(ss []string) []DataCategory {
-	out := make([]DataCategory, 0, len(ss))
-	for _, s := range ss {
-		out = append(out, DataCategory(s))
-	}
-	return out
-}
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func nullUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
 }
 
 func toJSON(v any) []byte {

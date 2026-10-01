@@ -1,4 +1,3 @@
-// ── Admin — Fractional Real Estate control-plane service ─────────────────────
 // Mock by default (mirrors estateAdminService / investAdminService). Flip with
 // NEXT_PUBLIC_FRACTIONALRE_ADMIN_USE_MOCK=false to hit the live Go backend.
 // All money is integer minor units (kobo). Live admin base:
@@ -20,11 +19,8 @@ import type {
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_FRACTIONALRE_ADMIN_USE_MOCK);
 
 // /api/finance/fractionalre/admin is the real mount point — confirmed against
-// backend/internal/fractionalre/routes.go:119 (`admin := r.Group("/api/finance/fractionalre/admin")`)
 // and its Register() doc comment. apiRoot() strips any trailing /api/v1 from the
 // proxy base and nothing else.
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/fractionalre/admin')`,
 // which stopped matching once apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — the replace() was a no-op and
 // every request 404'd against <proxy>/dashboard instead of
@@ -70,7 +66,6 @@ const hrs = (n: number) => new Date(Date.now() - n * 3_600_000).toISOString();
 const days = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
 const fut = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString();
 
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 const DASHBOARD: FractionalReDashboard = {
   kpis: {
     aumKobo: 2_450_000_000_00,
@@ -265,7 +260,6 @@ const AUDIT: AuditEntry[] = [
   { id: 'au-3', actorId: 'u-admin-3', actorName: 'M. Asset', action: 'asset.transition', entityType: 'asset', entityId: 'ast-2', reason: 'Round opened', before: { status: 'Approved' }, after: { status: 'FundingOpen' }, at: days(40) },
 ];
 
-// ─── API ──────────────────────────────────────────────────────────────────────
 export async function getDashboard(): Promise<FractionalReDashboard> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(DASHBOARD)); }
   return req<FractionalReDashboard>('/dashboard');

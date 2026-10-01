@@ -1,13 +1,20 @@
 package maps
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
+	platformRedis "spotlight/backend/internal/platform/redis"
 )
 
 // Handler exposes MapService over HTTP. The client calls THESE endpoints, never
@@ -68,24 +75,17 @@ func badLatLng(c *gin.Context, reason string) {
 	c.JSON(http.StatusBadRequest, gin.H{"error": reason})
 }
 
-func status(err error) int {
-	switch {
-	case errors.Is(err, ErrEmptyQuery):
-		return http.StatusBadRequest
-	case errors.Is(err, ErrNoProvider):
-		return http.StatusServiceUnavailable
-	case errors.Is(err, ErrLicenseCoherence):
-		return http.StatusConflict
-	default:
-		return http.StatusInternalServerError
-	}
-}
+var errMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusBadRequest, ErrEmptyQuery),
+	httperr.R(http.StatusServiceUnavailable, ErrNoProvider),
+	httperr.R(http.StatusConflict, ErrLicenseCoherence),
+)
 
 // GET /basemap?surface=checkout
 func (h *Handler) GetBasemap(c *gin.Context) {
 	cfg, err := h.svc.GetBasemapConfig(c.Request.Context(), c.Query("surface"))
 	if err != nil {
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, cfg)
@@ -113,7 +113,7 @@ func (h *Handler) Autocomplete(c *gin.Context) {
 	}
 	out, err := h.svc.AutocompleteAddress(c.Request.Context(), in.Query, in.SessionToken, in.Surface, in.Near)
 	if err != nil {
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"suggestions": out})
@@ -136,7 +136,7 @@ func (h *Handler) Geocode(c *gin.Context) {
 		if respondNeedsPin(c, err) {
 			return
 		}
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -164,7 +164,7 @@ func (h *Handler) Reverse(c *gin.Context) {
 		if respondNeedsPin(c, err) {
 			return
 		}
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -190,7 +190,7 @@ func (h *Handler) Places(c *gin.Context) {
 	}
 	out, err := h.svc.SearchExternalPlaces(c.Request.Context(), in.Query, in.Near)
 	if err != nil {
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"places": out})
@@ -219,7 +219,7 @@ func (h *Handler) Route(c *gin.Context) {
 	}
 	res, err := h.svc.GetRoute(c.Request.Context(), in.Origin, in.Dest, RouteOptions{Profile: in.Profile})
 	if err != nil {
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -255,7 +255,7 @@ func (h *Handler) Matrix(c *gin.Context) {
 	}
 	res, err := h.svc.GetDistanceMatrix(c.Request.Context(), in.Origins, in.Dests)
 	if err != nil {
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -284,7 +284,7 @@ func (h *Handler) Match(c *gin.Context) {
 	}
 	res, err := h.svc.MatchToRoad(c.Request.Context(), in.Trace)
 	if err != nil {
-		c.JSON(status(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -376,7 +376,7 @@ func (h *Handler) UpsertLocation(c *gin.Context) {
 	}
 	// Idempotency: a repeated Idempotency-Key within the window is a no-op
 	// (the upsert is naturally idempotent; this also short-circuits retries).
-	if !h.svc.IdempotentFirst(c.Request.Context(), c.GetHeader("Idempotency-Key")) {
+	if !h.svc.IdempotentFirst(c.Request.Context(), ginutil.IdempotencyKey(c)) {
 		c.JSON(http.StatusOK, gin.H{"ok": true, "deduplicated": true})
 		return
 	}
@@ -402,11 +402,9 @@ var adminRoleSlugs = map[string]bool{"admin": true, "super_admin": true}
 // user that middleware.RequireAuthContext places in the gin context (key
 // "authUser") and checks its role slugs. The maps proxy is always mounted behind
 // RequireAuthContext (finance_routes.go mapsAuth()), so the context is populated.
-//
 // FAIL-CLOSED: if no authenticated user is present (context missing) OR the user
 // carries no admin role, the request is rejected 403 — provider cost/usage must
 // never leak to a non-admin caller. Returns true when the handler may proceed.
-//
 // NOTE: this is an in-handler defence-in-depth guard. The route-registration owner
 // (finance_routes.go / transport) SHOULD additionally wrap GET /metrics and
 // GET /usage with middleware.RequirePermission(rbac, "maps:metrics:read") so the
@@ -452,4 +450,79 @@ func (h *Handler) Usage(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"month": currentMonth(), "usage": rows})
+}
+
+// PerUserRateLimit protects the cost surface: every maps call can hit a paid
+// provider, so we cap per-user requests/minute. Redis-backed (fixed window via
+// INCR+EXPIRE) when available so the limit holds across instances; otherwise an
+// in-memory fallback. Keyed by user_id (the proxy is always authenticated).
+func PerUserRateLimit(redis *platformRedis.Client, perMinute int) gin.HandlerFunc {
+	if perMinute <= 0 {
+		perMinute = 120
+	}
+	mem := &memLimiter{store: map[string]*memBucket{}, limit: perMinute, window: time.Minute}
+
+	return func(c *gin.Context) {
+		uid := ginutil.UserID(c)
+		if uid == "" {
+			c.Next() // auth middleware will reject; nothing to meter
+			return
+		}
+		var count int
+		var ok bool
+		if redis != nil {
+			count, ok = redisAllow(c.Request.Context(), redis, uid, perMinute)
+		} else {
+			count, ok = mem.allow(uid)
+		}
+		c.Header("X-RateLimit-Limit", strconv.Itoa(perMinute))
+		remaining := max(perMinute-count, 0)
+		c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"error": "rate limit exceeded", "code": "rate_limited",
+			})
+			return
+		}
+		c.Next()
+	}
+}
+
+// redisAllow does a fixed-window counter keyed to the current UTC minute.
+func redisAllow(ctx context.Context, r *platformRedis.Client, uid string, limit int) (int, bool) {
+	bucket := time.Now().UTC().Format("200601021504") // yyyymmddHHMM
+	key := "maps:rl:" + uid + ":" + bucket
+	n, err := r.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, true // fail-open on cache error — never block users on infra
+	}
+	if n == 1 {
+		_ = r.Expire(ctx, key, 70*time.Second).Err()
+	}
+	return int(n), int(n) <= limit
+}
+
+type memBucket struct {
+	count       int
+	windowStart time.Time
+}
+
+type memLimiter struct {
+	mu     sync.Mutex
+	store  map[string]*memBucket
+	limit  int
+	window time.Duration
+}
+
+func (m *memLimiter) allow(uid string) (int, bool) {
+	now := time.Now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.store[uid]
+	if !ok || now.Sub(b.windowStart) >= m.window {
+		b = &memBucket{windowStart: now}
+		m.store[uid] = b
+	}
+	b.count++
+	return b.count, b.count <= m.limit
 }

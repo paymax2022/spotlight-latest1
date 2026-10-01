@@ -4,9 +4,9 @@
 import { ApiError, errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser, type RequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { getBatchAreaSlugs } from '@/src/server/services/academy/batchAreas';
+import { getBatchAreaSlugs } from '@/src/server/services/academy';
 import { getOrCreateUserProfile } from '@/src/server/user/profile';
-import { verifyPaystackTransaction } from '@/src/lib/payments/paystack';
+import { verifyPaystackTransaction } from '@/src/lib/payments';
 
 type AcademyBatchRow = {
   id: string;
@@ -251,7 +251,6 @@ export async function POST(request: Request) {
       return errorResponse('At least one area of interest is required', 400);
     }
     // Duplicates are collapsed BEFORE the cap is applied. Counting the raw list
-    // would let ['acting','acting','acting'] read as three selections, and — worse
     // — would price the same area three times in the tuition sum below.
     if (new Set(areasOfInterest).size !== areasOfInterest.length) {
       return errorResponse('The same area of interest was selected more than once', 400);
@@ -304,7 +303,6 @@ export async function POST(request: Request) {
     // cost of TAKING that area — payable on acceptance and refundable. It is
     // recorded against the application for later billing and is deliberately
     // NOT part of what is charged now.
-    //
     // This was previously added to the amount collected at submit, which would
     // have taken ~₦255,000 up front, non-refundably, for a Film Directing
     // application nobody had reviewed yet.
@@ -348,7 +346,6 @@ export async function POST(request: Request) {
     // status, so a pile of rejected applications would inflate it forever —
     // it is not "seats taken" and must not be read here. A seat is occupied by
     // a 'pending' application (awaiting review, might still be approved) or an
-    // 'approved' one; a 'rejected' application gave its seat back and must not
     // count against the cap. max_students === null means unlimited — skip the
     // check entirely rather than treating null as zero.
     const maxStudents = (batch as { max_students: number | null }).max_students;
@@ -578,7 +575,6 @@ export async function GET(request: Request) {
 
     // Admin-managed areas of interest, each carrying a NAIRA fee added to the
     // base application_fee. Returned so the client can show a running total —
-    // but the total it shows is never trusted; POST recomputes it from these
     // same rows.
     const { data: areaRows } = await supabase
       .from('academy_interest_areas')
@@ -586,7 +582,6 @@ export async function GET(request: Request) {
       .eq('is_active', true)
       .order('sort_order', { ascending: true });
 
-    // Which areas each batch offers. NO ROWS = unrestricted, so a batch absent
     // from this map offers everything — that is how batches created before the
     // feature keep working.
     const { data: batchAreaRows } = await supabase

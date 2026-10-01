@@ -8,6 +8,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/ptr"
+	"spotlight/backend/go-common/strutil"
+	"spotlight/backend/go-common/timeutil"
 )
 
 // selectCols is the shared projection for campaign list/detail queries.
@@ -37,14 +41,6 @@ func scanRow(scan func(dest ...any) error) (*reviewRow, error) {
 	return r, nil
 }
 
-func deadlinePtr(t time.Time) *string {
-	if t.IsZero() {
-		return nil
-	}
-	s := t.UTC().Format(time.RFC3339)
-	return &s
-}
-
 func (r *reviewRow) toSummary(creatorName, creatorType, creatorVerification string) CampaignSummary {
 	return CampaignSummary{
 		ID:                  r.id,
@@ -59,7 +55,7 @@ func (r *reviewRow) toSummary(creatorName, creatorType, creatorVerification stri
 		RaisedKobo:          r.raisedKobo,
 		Currency:            r.currency,
 		ContributorCount:    r.contributorCount,
-		Deadline:            deadlinePtr(r.deadline),
+		Deadline:            ptr.OrNil(timeutil.RFC3339(r.deadline)),
 		Verified:            r.verified,
 		Featured:            r.featured,
 		Trending:            r.trending,
@@ -112,11 +108,11 @@ func (s *Service) GetDetail(ctx context.Context, id string) (map[string]any, err
 		"type": sum.Type, "status": sum.Status, "category": sum.Category, "categoryLabel": sum.CategoryLabel,
 		"coverImage": sum.CoverImage, "media": []any{},
 		"goalKobo": sum.GoalKobo, "raisedKobo": sum.RaisedKobo, "currency": sum.Currency,
-		"contributorCount": sum.ContributorCount, "deadline": sum.Deadline, "createdAt": r.createdAt.UTC().Format(time.RFC3339),
+		"contributorCount": sum.ContributorCount, "deadline": sum.Deadline, "createdAt": timeutil.RFC3339(r.createdAt),
 		"creator": map[string]any{
 			"id": r.creatorID, "name": name, "type": typ, "avatarUrl": nil, "verification": verif,
 			"location": sum.Location, "campaignsCreated": 1, "totalRaisedKobo": sum.RaisedKobo, "bio": nil,
-			"joinedAt": r.createdAt.UTC().Format(time.RFC3339), "followed": false,
+			"joinedAt": timeutil.RFC3339(r.createdAt), "followed": false,
 		},
 		"beneficiary": s.campaignBeneficiary(ctx, id), "disbursementModel": r.disbursementModel, "refundPolicy": r.refundPolicy,
 		"riskDisclosure": nil, "verified": sum.Verified, "featured": sum.Featured, "trending": sum.Trending,
@@ -128,7 +124,6 @@ func (s *Service) GetDetail(ctx context.Context, id string) (map[string]any, err
 }
 
 // campaignDocuments returns the campaign's supporting evidence.
-//
 // sizeLabel is formatted here, next to the only other place that formats it, so
 // the list and the attach response cannot disagree about what a megabyte is.
 func (s *Service) campaignDocuments(ctx context.Context, campaignID string) []map[string]any {
@@ -171,7 +166,6 @@ func (s *Service) campaignDocuments(ctx context.Context, campaignID string) []ma
 // given — which is the honest answer for a campaign raising for its own creator,
 // and is what the client renders as "no beneficiary block" rather than an empty
 // card.
-//
 // This was a hardcoded nil, so "raising for my mother" and "raising for myself"
 // looked identical to everyone who visited the page.
 func (s *Service) campaignBeneficiary(ctx context.Context, campaignID string) any {
@@ -230,7 +224,6 @@ func (s *Service) campaignBudget(ctx context.Context, campaignID string) []map[s
 
 // campaignRewardTiers returns the tiers a backer can pledge into, cheapest first —
 // the order a backer scans them in.
-//
 // `claimed` is COUNTED from cf_reward_backers rather than read from the column of
 // the same name. The column is a stored counter nothing currently maintains, and a
 // count cannot drift: the number shown next to "12 claimed" is the number of
@@ -275,13 +268,11 @@ func (s *Service) campaignRewardTiers(ctx context.Context, campaignID string) []
 }
 
 // campaignMilestones returns the campaign's funding plan in display order.
-//
 // This was a literal empty array, so the Milestones screen showed "No milestones —
 // this campaign releases funds without milestone gating" for every campaign,
 // including ones whose creator had entered a full plan in the wizard. That message
 // is a statement about how the campaign disburses money, and it was being made on
 // no evidence.
-//
 // Degrades to an empty list on a read failure rather than failing the page: the
 // story, goal and Contribute button do not depend on the plan rendering.
 func (s *Service) campaignMilestones(ctx context.Context, campaignID string) []map[string]any {
@@ -306,7 +297,7 @@ func (s *Service) campaignMilestones(ctx context.Context, campaignID string) []m
 		}
 		var dueAt any
 		if due != nil {
-			dueAt = due.UTC().Format(time.RFC3339)
+			dueAt = timeutil.RFC3339(*due)
 		}
 		out = append(out, map[string]any{
 			"id": id, "title": title, "targetKobo": target, "status": status,
@@ -320,7 +311,6 @@ func (s *Service) campaignMilestones(ctx context.Context, campaignID string) []m
 // detail row can show a count instead of a static invitation. It counts exactly
 // what ListComments returns — questions and creator replies alike, minus
 // soft-deleted rows — so the number always matches the screen it links to.
-//
 // Read failures degrade to 0 rather than failing the whole campaign page, the
 // same bargain the other detail helpers make.
 func (s *Service) campaignCommentCount(ctx context.Context, campaignID string) int {
@@ -336,7 +326,6 @@ func (s *Service) campaignCommentCount(ctx context.Context, campaignID string) i
 // campaignUpdates returns the campaign's updates newest-first for the detail
 // payload. This used to be a literal empty array, which is why a published update
 // never appeared: the timeline and the detail block both read it from here.
-//
 // Read failures degrade to an empty list rather than failing the whole campaign
 // page — a campaign with an unreadable update feed should still render its story,
 // goal and Contribute button.
@@ -363,7 +352,7 @@ func (s *Service) campaignUpdates(ctx context.Context, campaignID string) []map[
 		}
 		out = append(out, map[string]any{
 			"id": id, "title": title, "body": body, "imageUrl": image,
-			"createdAt": created.UTC().Format(time.RFC3339), "likeCount": likes,
+			"createdAt": timeutil.RFC3339(created), "likeCount": likes,
 		})
 	}
 	return out
@@ -387,17 +376,7 @@ func (s *Service) creatorMeta(ctx context.Context, creatorID string) (name, typ,
 func (s *Service) creatorEmail(ctx context.Context, creatorID string) string {
 	var email *string
 	_ = s.db.QueryRow(ctx, `SELECT email FROM public.platform_users WHERE id = $1`, creatorID).Scan(&email)
-	if email != nil {
-		return *email
-	}
-	return ""
-}
-
-func strOr(p *string, fallback string) string {
-	if p != nil && *p != "" {
-		return *p
-	}
-	return fallback
+	return ptr.DerefZero(email)
 }
 
 // AdminCampaignDetail returns the review-console shape (frontend-admin
@@ -421,12 +400,12 @@ func (s *Service) AdminCampaignDetail(ctx context.Context, id string) (map[strin
 		"type": r.typ, "status": r.reviewStatus, "category": r.category,
 		"coverImage": r.coverURL, "goalKobo": r.goalKobo, "raisedKobo": r.raisedKobo,
 		"contributorCount": r.contributorCount,
-		"createdAt":        r.createdAt.UTC().Format(time.RFC3339),
-		"submittedAt":      r.submittedAt.UTC().Format(time.RFC3339),
+		"createdAt":        timeutil.RFC3339(r.createdAt),
+		"submittedAt":      timeutil.RFC3339(r.submittedAt),
 		"creatorName":      name, "creatorType": typ, "creatorVerification": verif, "creatorEmail": email,
 		"beneficiaryName": name, "beneficiaryRelationship": "Self",
 		"bankLabel":         "Not on file",
-		"location":          strOr(r.location, "Not specified"),
+		"location":          strutil.Or(ptr.DerefZero(r.location), "Not specified"),
 		"disbursementModel": r.disbursementModel, "refundPolicy": r.refundPolicy,
 		"budget": []any{}, "documents": []any{},
 		"riskLevel": r.riskLevel, "riskScore": r.riskScore, "riskSignals": []any{},
@@ -514,7 +493,7 @@ func (s *Service) SubmitForReview(ctx context.Context, creatorID string, req Sub
 
 	if _, err := tx.Exec(ctx, ins,
 		id, creatorID, req.Title, req.Summary, req.Story, req.Type, req.Category, req.GoalKobo,
-		req.Location, req.RefundPolicy, nz(req.DisbursementModel, "IMMEDIATE"), req.CoverImageURL,
+		req.Location, req.RefundPolicy, strutil.OrBlank(req.DisbursementModel, "IMMEDIATE"), req.CoverImageURL,
 		reviewStatus, deadline, submittedAt,
 	); err != nil {
 		return nil, err
@@ -640,13 +619,11 @@ func (s *Service) SubmitForReview(ctx context.Context, creatorID string, req Sub
 }
 
 // submitMilestoneStatus decides the status a NEW milestone may carry.
-//
 // Only LOCKED and ACTIVE are a creator's to set. RELEASED means money reached
 // them and PENDING_REVIEW means evidence is with a reviewer; both are earned
 // through the disbursement path, and accepting either here would let a campaign
 // show backers "Released" against a milestone no money ever moved for — the one
 // thing this screen exists to tell them the truth about.
-//
 // An empty status defaults the way the wizard already labels them: the first
 // milestone is what the campaign is working on now, the rest are locked behind it.
 func submitMilestoneStatus(raw string, index int) (string, error) {
@@ -667,9 +644,278 @@ func submitMilestoneStatus(raw string, index int) (string, error) {
 	}
 }
 
-func nz(v, fallback string) string {
-	if strings.TrimSpace(v) == "" {
-		return fallback
+// CampaignSummary is the list-card shape (mobile CampaignSummary).
+type CampaignSummary struct {
+	ID                  string  `json:"id"`
+	Title               string  `json:"title"`
+	Summary             string  `json:"summary"`
+	Type                string  `json:"type"`
+	Status              string  `json:"status"` // client CampaignStatus (review_status)
+	Category            string  `json:"category"`
+	CategoryLabel       string  `json:"categoryLabel"`
+	CoverImage          *string `json:"coverImage"`
+	GoalKobo            int64   `json:"goalKobo"`
+	RaisedKobo          int64   `json:"raisedKobo"`
+	Currency            string  `json:"currency"`
+	ContributorCount    int     `json:"contributorCount"`
+	Deadline            *string `json:"deadline"`
+	Verified            bool    `json:"verified"`
+	Featured            bool    `json:"featured"`
+	Trending            bool    `json:"trending"`
+	Urgent              bool    `json:"urgent"`
+	Saved               bool    `json:"saved"`
+	Location            *string `json:"location"`
+	CreatorName         string  `json:"creatorName"`
+	CreatorType         string  `json:"creatorType"`
+	CreatorVerification string  `json:"creatorVerification"`
+}
+
+// CategoryDTO matches the client CampaignCategory.
+type CategoryDTO struct {
+	ID            string `json:"id"`
+	Slug          string `json:"slug"`
+	Label         string `json:"label"`
+	Icon          string `json:"icon"`
+	Tint          string `json:"tint"`
+	CampaignCount int    `json:"campaignCount"`
+}
+
+// CategoryStat is one row of AdminStats.CategoryBreakdown.
+type CategoryStat struct {
+	Category   string `json:"category"`
+	Count      int    `json:"count"`
+	RaisedKobo int64  `json:"raisedKobo"`
+}
+
+// AdminStats matches the admin CfPlatformStats. Every field is derived live
+// from a real table; PaymentSuccessRate is the one exception — there is no
+// payment-attempt/failure log for crowdfunding contributions (only successful
+// contributions are ever inserted), so it stays 0 rather than being computed
+// from an unrelated proxy (e.g. refund rate) that would misrepresent it.
+type AdminStats struct {
+	TotalCampaigns         int            `json:"totalCampaigns"`
+	ActiveCampaigns        int            `json:"activeCampaigns"`
+	PendingReview          int            `json:"pendingReview"`
+	RejectedCampaigns      int            `json:"rejectedCampaigns"`
+	TotalRaisedKobo        int64          `json:"totalRaisedKobo"`
+	PlatformRevenueKobo    int64          `json:"platformRevenueKobo"`
+	EscrowKobo             int64          `json:"escrowKobo"`
+	WithdrawalsPending     int            `json:"withdrawalsPending"`
+	WithdrawalsPendingKobo int64          `json:"withdrawalsPendingKobo"`
+	RefundRequests         int            `json:"refundRequests"`
+	FraudAlerts            int            `json:"fraudAlerts"`
+	OpenTickets            int            `json:"openTickets"`
+	PaymentSuccessRate     float64        `json:"paymentSuccessRate"` // 0-100; see type comment
+	CategoryBreakdown      []CategoryStat `json:"categoryBreakdown"`
+}
+
+// reviewRow is the internal row scanned for list/detail queries.
+type reviewRow struct {
+	id, title, summary, story, typ, reviewStatus, category, currency string
+	disbursementModel, refundPolicy, riskLevel                       string
+	coverURL, location, adminNote                                    *string
+	goalKobo, raisedKobo                                             int64
+	contributorCount, riskScore                                      int
+	verified, featured, trending, urgent                             bool
+	deadline                                                         time.Time
+	submittedAt, createdAt                                           time.Time
+	creatorID                                                        string
+}
+
+// SubmitCampaignRequest is the body for the full create/submit flow.
+type SubmitCampaignRequest struct {
+	Type              string  `json:"type" binding:"required"`
+	Category          string  `json:"category" binding:"required"`
+	Title             string  `json:"title" binding:"required,min=2,max=200"`
+	Summary           string  `json:"summary"`
+	Story             string  `json:"story"`
+	GoalKobo          int64   `json:"goalKobo" binding:"required,min=100"`
+	Deadline          *string `json:"deadline"`
+	Location          string  `json:"location"`
+	RefundPolicy      string  `json:"refundPolicy"`
+	DisbursementModel string  `json:"disbursementModel"`
+	CoverImageURL     *string `json:"coverImageUrl"`
+	SubmitForReview   bool    `json:"submitForReview"`
+	// Milestones the wizard collected. Until now the DTO accepted none of them, so
+	// the creator filled in a funding plan and the server dropped it on the floor —
+	// the client's own comment in crowdfunding.api.ts says exactly that.
+	Milestones []SubmitMilestoneRequest `json:"milestones"`
+	// Budget lines and reward tiers, the other two things the wizard collected and
+	// the server used to discard.
+	Budget      []SubmitBudgetItemRequest `json:"budget"`
+	RewardTiers []SubmitRewardTierRequest `json:"rewardTiers"`
+	// Who the campaign is for. Optional — plenty of campaigns raise for the
+	// creator themselves and the wizard lets them say so explicitly.
+	Beneficiary *SubmitBeneficiaryRequest `json:"beneficiary"`
+}
+
+// SubmitBeneficiaryRequest is the wizard's beneficiary step.
+// `verified` is deliberately NOT a field. A backer reads that badge as "somebody
+// checked who this money is for"; it is granted by review, never asserted by the
+// person asking for the money — the same rule as a self-declared RELEASED
+// milestone or a self-declared reward claim count.
+type SubmitBeneficiaryRequest struct {
+	Name         string  `json:"name"`
+	Relationship string  `json:"relationship"`
+	Description  *string `json:"description"`
+}
+
+// SubmitBudgetItemRequest is one "use of funds" line from the create wizard.
+type SubmitBudgetItemRequest struct {
+	Label      string  `json:"label"`
+	AmountKobo int64   `json:"amountKobo"`
+	Note       *string `json:"note"`
+}
+
+// SubmitRewardTierRequest is one reward tier from the create wizard.
+// `claimed` is deliberately NOT a field. How many backers took a tier is a fact
+// about what happened, derived from cf_reward_backers; letting a campaign state it
+// at creation would let it advertise social proof it has not earned, the same way
+// a self-declared RELEASED milestone would advertise money that never moved.
+type SubmitRewardTierRequest struct {
+	Title             string  `json:"title"`
+	AmountKobo        int64   `json:"amountKobo"`
+	Description       string  `json:"description"`
+	EstimatedDelivery *string `json:"estimatedDelivery"`
+	Limit             *int    `json:"limit"`
+	RequiresShipping  bool    `json:"requiresShipping"`
+}
+
+// SubmitMilestoneRequest is one milestone from the create wizard.
+// Status is accepted but CONSTRAINED: see submitMilestoneStatus. RELEASED and
+// PENDING_REVIEW are states a milestone earns through review and disbursement,
+// never states a creator may declare about their own campaign.
+type SubmitMilestoneRequest struct {
+	Title      string  `json:"title"`
+	TargetKobo int64   `json:"targetKobo"`
+	Status     string  `json:"status"`
+	DueAt      *string `json:"dueAt"`
+}
+
+// ReviewDecisionRequest is the body for admin POST /campaigns/:id/decision.
+type ReviewDecisionRequest struct {
+	Decision string `json:"decision" binding:"required"` // APPROVE | REJECT | REQUEST_CHANGES | FREEZE | UNFREEZE
+	Note     string `json:"note"`
+}
+
+// CampaignQuery is the discovery filter parsed from request query params.
+type CampaignQuery struct {
+	Collection   string // featured | trending | urgent | verified | recommended | recent
+	Category     string
+	Type         string
+	VerifiedOnly bool
+	UrgentOnly   bool
+	Search       string
+	Sort         string // recommended | trending | newest | ending_soon | most_funded | least_funded
+	Status       string // review_status filter (admin)
+	// AllStatuses is the ADMIN "every status" listing. It exists because an empty
+	// Status cannot mean that: empty selects the public default below
+	// (review_status='ACTIVE' AND paused_at IS NULL), which is what stops public
+	// discovery returning drafts and pending submissions. Overloading empty to
+	// mean "no filter" would silently turn that guard off for every public
+	// caller, so the admin case gets its own flag instead.
+	AllStatuses bool
+}
+
+// buildDiscoveryWhere builds the WHERE clause + ordered args for a discovery query.
+// startIdx is the first positional placeholder number ($1, $2, ...).
+// Pure function — unit-tested without a database.
+func buildDiscoveryWhere(q CampaignQuery, startIdx int) (string, []any) {
+	var conds []string
+	var args []any
+	i := startIdx
+
+	add := func(cond string, val any) {
+		conds = append(conds, fmt.Sprintf(cond, i))
+		args = append(args, val)
+		i++
 	}
-	return v
+
+	switch q.Collection {
+	case "featured":
+		conds = append(conds, "c.featured = TRUE")
+	case "trending":
+		conds = append(conds, "c.trending = TRUE")
+	case "urgent":
+		conds = append(conds, "c.urgent = TRUE")
+	case "verified":
+		conds = append(conds, "c.verified = TRUE")
+	}
+
+	if q.Category != "" {
+		add("c.category = $%d", q.Category)
+	}
+	if q.Type != "" {
+		add("c.type = $%d", q.Type)
+	}
+	if q.VerifiedOnly {
+		conds = append(conds, "c.verified = TRUE")
+	}
+	if q.UrgentOnly {
+		conds = append(conds, "c.urgent = TRUE")
+	}
+	// A soft-deleted campaign is gone from EVERY surface, admin listings
+	// included — deleted_at is the owner's "this campaign no longer exists",
+	// and the row survives only to keep its contributions/review history and
+	// its ledger references resolvable.
+	conds = append(conds, "c.deleted_at IS NULL")
+
+	if q.Status != "" {
+		add("c.review_status = $%d", q.Status)
+	} else if q.AllStatuses {
+		// Admin, every status: no review_status predicate and no paused_at term,
+		// matching the explicit-status admin branch above (an operator must still
+		// see paused campaigns). deleted_at is still excluded, above.
+	} else {
+		// Public discovery only shows live campaigns — unconditionally, so an
+		// unfiltered call (no collection/category/search, i.e. "give me every
+		// active campaign") doesn't fall through with no review_status guard at
+		// all and return PENDING_REVIEW/DRAFT/etc. campaigns to the public.
+		// Owner-paused campaigns drop out here too. The pause lives in
+		// paused_at rather than review_status (see migration 20270112000000),
+		// so it needs its own term — without it, pause would hide nothing.
+		// The admin branch above deliberately does NOT filter on paused_at: an
+		// operator listing by status must still see a paused campaign.
+		conds = append(conds, "c.review_status = 'ACTIVE'", "c.paused_at IS NULL")
+	}
+	if q.Search != "" {
+		// Two placeholders reference the same positional arg ($i) — valid in Postgres.
+		conds = append(conds, fmt.Sprintf("(c.title ILIKE '%%' || $%d || '%%' OR c.summary ILIKE '%%' || $%d || '%%')", i, i))
+		args = append(args, q.Search)
+		i++
+	}
+	_ = i
+
+	where := ""
+	if len(conds) > 0 {
+		where = "WHERE " + strings.Join(conds, " AND ")
+	}
+	return where, args
+}
+
+// sortClause maps a sort key to an ORDER BY clause (no user input interpolated).
+func sortClause(sort string) string {
+	switch sort {
+	case "newest":
+		return "ORDER BY c.created_at DESC"
+	case "ending_soon":
+		return "ORDER BY c.deadline ASC NULLS LAST"
+	case "most_funded":
+		return "ORDER BY raised_kobo DESC"
+	case "least_funded":
+		// Output-column alias used as a standalone ORDER BY term (Postgres-allowed).
+		return "ORDER BY raised_kobo ASC"
+	case "trending":
+		return "ORDER BY c.trending DESC, c.contributor_count DESC"
+	default: // recommended
+		return "ORDER BY c.verified DESC, c.featured DESC, c.contributor_count DESC"
+	}
+}
+
+// mobileStatus maps the internal review_status to the mobile CampaignStatus enum.
+func mobileStatus(reviewStatus string) string {
+	if reviewStatus == "CHANGES_REQUESTED" {
+		return "PENDING_REVIEW"
+	}
+	return reviewStatus
 }

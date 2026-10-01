@@ -1,8 +1,6 @@
-// ── Brand font loader ────────────────────────────────────────────────────────
 // Loads Plus Jakarta Sans (the design-system font) via @expo-google-fonts.
 // Returns `true` once it's safe to render — including on load error, where we
 // proceed with the system-font fallback rather than blocking the whole app.
-//
 // Requires (run once): npx expo install @expo-google-fonts/plus-jakarta-sans expo-font
 
 import {

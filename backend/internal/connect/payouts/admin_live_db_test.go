@@ -4,7 +4,6 @@ package connectpayouts
 // list/detail/settle/reject routes, which did not exist at all before this
 // change (the member group only ever exposed creator-facing POST/GET
 // /payouts — the admin console's payout queue 404'd in production).
-//
 // Proves, against a REAL local Postgres:
 //  1. the admin list route returns real rows (seeded via the actual member
 //     Request() money path, not hand-inserted fixtures);
@@ -15,10 +14,8 @@ package connectpayouts
 //     creator's wallet (confirmed via ledger.GetBalance, a real DB read) and
 //     marks the row failed;
 //  5. reject is idempotent (retrying does not double-refund).
-//
 // ⚠️ GATED ON TEST_DATABASE_URL, DELIBERATELY WITH NO FALLBACK TO DATABASE_URL
 // (the root .env DATABASE_URL points at the PRODUCTION Supabase pooler).
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/connect/payouts/ -run TestLiveDB -v
 

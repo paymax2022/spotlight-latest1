@@ -2,17 +2,13 @@ package symptomsearch
 
 // Cluster-rule expression DSL — parsed and evaluated in Go, stored as text in
 // symptom_cluster_rules.expression. Grammar (migration header, verbatim):
-//
-//	rule        := or_expr
 //	or_expr     := and_expr { "OR" and_expr }
 //	and_expr    := unary { "AND" unary }
-//	unary       := [ "NOT" ] primary
 //	primary     := "(" or_expr ")" | predicate
 //	predicate   := "concept:" CODE                 -- CODE := [a-z][a-z0-9_]*
 //	             | "who:" COHORT                   -- COHORT ∈ ValidCohorts
 //	             | "duration_days" OP INT          -- OP ∈ { < , <= , = , >= , > }
 //	             | "term_count" OP INT
-//
 // Precedence: NOT > AND > OR. Keywords are case-sensitive UPPERCASE.
 // Semantics:
 //   - concept:X is true iff X is among the concepts the user's terms resolved to.
@@ -20,11 +16,9 @@ package symptomsearch
 //   - duration buckets map TODAY→1, D2_3→3, GT_3D→4 days; when NO duration
 //     refiner was provided (DurationDays <= 0) every duration_days predicate is
 //     false — a rule never fires on unknown data.
-//
 // FAIL-CLOSED: an APPROVED rule that fails to parse at evaluation time forces
 // escalation of the whole resolution to T3 (see Service.Resolve) — a broken
 // safety rule is never silently skipped.
-//
 // The parser is a dependency-free recursive descent over a whitespace/paren
 // lexer. Parsing is deterministic and pure — same input, same output.
 
@@ -41,8 +35,6 @@ type EvalContext struct {
 	DurationDays int             // 0 = not provided ⇒ duration predicates are false
 	TermCount    int             // count of normalised input terms
 }
-
-// ─── AST ─────────────────────────────────────────────────────────────────────
 
 type ruleNode interface {
 	eval(ctx *EvalContext) bool
@@ -71,7 +63,7 @@ func (n whoNode) eval(ctx *EvalContext) bool { return ctx.Who != "" && ctx.Who =
 
 type cmpNode struct {
 	field string // duration_days | term_count
-	op    string // < <= = >= >
+	op    string
 	value int
 }
 
@@ -102,8 +94,6 @@ func (n cmpNode) eval(ctx *EvalContext) bool {
 	}
 	return false
 }
-
-// ─── Public surface ──────────────────────────────────────────────────────────
 
 // CompiledRule is a parsed, immutable rule expression.
 type CompiledRule struct{ root ruleNode }
@@ -156,8 +146,6 @@ func EvaluateExpression(expr string, ctx *EvalContext) (bool, error) {
 	return r.Eval(ctx), nil
 }
 
-// ─── Lexer ───────────────────────────────────────────────────────────────────
-
 func isRuleWordChar(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
 		(c >= '0' && c <= '9') || c == '_' || c == ':'
@@ -198,8 +186,6 @@ func lexRule(s string) ([]string, error) {
 	}
 	return toks, nil
 }
-
-// ─── Parser (recursive descent; precedence NOT > AND > OR) ───────────────────
 
 type ruleParser struct {
 	toks []string

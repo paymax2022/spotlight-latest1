@@ -4,7 +4,6 @@ import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Message contributors → Go /api/finance/crowdfunding/campaigns/:id/broadcast.
-//
 // The mobile "Message contributors" screen (app/crowdfunding/creator/
 // performance/[id].tsx) has called POST here since it was written and nothing
 // served it — every real send 404'd (UAT finding CF-008).

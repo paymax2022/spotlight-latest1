@@ -1,35 +1,26 @@
 package otp_test
 
-// ---------------------------------------------------------------------------
 // LIVE test: redeeming a verify_email code actually confirms the account.
-//
 // WHY THIS EXISTS
-// ---------------
 // The unit tests drive a fake verifier, so they prove the handler CALLS
 // confirmation and nothing about whether confirmation works. The part that can
 // silently not work is the GoTrue call itself:
-//
 //   - PUT /auth/v1/admin/users/{id} with {"email_confirm": true} is the
 //     supported way to confirm, but GoTrue's admin surface has changed shape
 //     across versions, and a wrong body is accepted with a 200 that confirms
 //     nothing.
 //   - It needs the SERVICE ROLE key. With an anon key the call 401s, and the
 //     symptom is a user who redeems a valid code and still cannot log in.
-//
 // Both failures look like success from our side. This asserts the observable
 // outcome instead: auth.users.email_confirmed_at goes from NULL to set.
-//
 // Gated on TEST_DATABASE_URL (never DATABASE_URL — see
 // scripts/ci/check-live-db-gate.sh) AND on Supabase credentials, because it
 // needs a real GoTrue to talk to.
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	export SUPABASE_URL="http://127.0.0.1:54321"
 //	export SUPABASE_SERVICE_ROLE_KEY="<local service role key>"
 //	cd backend && go test ./tests/otp/... -run LiveDB_ConfirmEmail -v
-// ---------------------------------------------------------------------------
 
 import (
 	"bytes"

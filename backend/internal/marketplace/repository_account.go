@@ -4,16 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"time"
-
 	"github.com/jackc/pgx/v5"
+	"spotlight/backend/go-common/dbutil"
+	"strconv"
+	"time"
 )
 
 // repository_account.go — pgx data layer for the Trust & Account gap tables
 // (mkt_saved_items, mkt_reports, mkt_blocks, mkt_notification_prefs). All rows are
 // owner-scoped; the service enforces OLA before mutating. No ledger tables touched.
-
-// ─── Saved items ─────────────────────────────────────────────────────────────
 
 // InsertSavedItem adds a wishlist row. The UNIQUE(user_id, listing_id) constraint
 // makes a repeat save surface as ALREADY_SAVED rather than a duplicate.
@@ -25,7 +24,7 @@ func (r *Repository) InsertSavedItem(ctx context.Context, userID, listingID stri
 		userID, listingID, priceKobo)
 	var it SavedItem
 	if err := row.Scan(&it.ID, &it.UserID, &it.ListingID, &it.SavedPriceKobo, &it.CreatedAt); err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return nil, &CodedError{Status: 409, Code: CodeAlreadySaved, Message: "listing already saved"}
 		}
 		return nil, wrapInternal("insert saved item", err)
@@ -73,15 +72,13 @@ func (r *Repository) ListSavedItems(ctx context.Context, userID string, limit, o
 	return out, rows.Err()
 }
 
-// ─── Reports ─────────────────────────────────────────────────────────────────
-
 // InsertReport records a safety report in `open` status.
 func (r *Repository) InsertReport(ctx context.Context, rep *Report) (*Report, error) {
 	row := r.db.QueryRow(ctx, `
 		INSERT INTO public.mkt_reports (reporter_id, target_type, target_id, reason, evidence_url, note, status)
 		VALUES ($1,$2,$3,$4,$5,$6,'open')
 		RETURNING id, reporter_id, target_type, target_id, reason, evidence_url, note, status, created_at`,
-		rep.ReporterID, rep.TargetType, rep.TargetID, rep.Reason, nullStr(rep.EvidenceURL), nullStr(rep.Note))
+		rep.ReporterID, rep.TargetType, rep.TargetID, rep.Reason, dbutil.NullStrP(rep.EvidenceURL), dbutil.NullStrP(rep.Note))
 	var out Report
 	if err := row.Scan(&out.ID, &out.ReporterID, &out.TargetType, &out.TargetID, &out.Reason,
 		&out.EvidenceURL, &out.Note, &out.Status, &out.CreatedAt); err != nil {
@@ -89,8 +86,6 @@ func (r *Repository) InsertReport(ctx context.Context, rep *Report) (*Report, er
 	}
 	return &out, nil
 }
-
-// ─── Blocks ──────────────────────────────────────────────────────────────────
 
 // InsertBlock records a directed block. UNIQUE(user_id, blocked_user_id) makes a
 // repeat block surface as ALREADY_BLOCKED.
@@ -101,7 +96,7 @@ func (r *Repository) InsertBlock(ctx context.Context, userID, blockedUserID stri
 		RETURNING id, user_id, blocked_user_id, created_at`, userID, blockedUserID)
 	var b Block
 	if err := row.Scan(&b.ID, &b.UserID, &b.BlockedUserID, &b.CreatedAt); err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return nil, &CodedError{Status: 409, Code: CodeAlreadyBlocked, Message: "user already blocked"}
 		}
 		return nil, wrapInternal("insert block", err)
@@ -138,7 +133,7 @@ func (r *Repository) InsertFollow(ctx context.Context, followerID, sellerID stri
 		INSERT INTO public.mkt_seller_follows (follower_id, seller_id)
 		VALUES ($1,$2)`, followerID, sellerID)
 	if err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return nil // already following — idempotent, not an error
 		}
 		return wrapInternal("insert follow", err)
@@ -214,8 +209,6 @@ func (r *Repository) ListBlocks(ctx context.Context, userID string) ([]Block, er
 	return out, rows.Err()
 }
 
-// ─── Notification preferences ────────────────────────────────────────────────
-
 // GetNotificationPrefs returns the caller's toggles, or in-code defaults (all-on
 // except promotional) when no row exists yet.
 func (r *Repository) GetNotificationPrefs(ctx context.Context, userID string) (*NotificationPrefs, error) {
@@ -257,8 +250,6 @@ func (r *Repository) UpsertNotificationPrefs(ctx context.Context, userID string,
 	return &p, nil
 }
 
-// ─── Postgres search fallback (no Elasticsearch) ─────────────────────────────
-
 // SearchListingsFallback is a minimal Postgres search over active listings: an
 // ILIKE title match plus category/condition/state/price filters, newest-first,
 // LIMIT-bounded. Used by GET /search when no Elasticsearch searcher is wired, so
@@ -269,7 +260,7 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 	args := []any{}
 	add := func(cond string, val any) {
 		args = append(args, val)
-		q += cond + "$" + itoa(len(args))
+		q += cond + "$" + strconv.Itoa(len(args))
 	}
 	// Market scope. Every other filter here is optional and caller-supplied; this one
 	// is a boundary. Without it the fallback answered a market-scoped browse with
@@ -289,7 +280,6 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 		// category with an empty page while its children held the stock. That
 		// became reachable the moment the flat category list was grouped into
 		// mains with subcategories.
-		//
 		// The recursive walk degrades to a single row for a leaf, so browsing a
 		// subcategory behaves exactly as it did before.
 		add(` AND category_id IN (
@@ -327,7 +317,7 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 	// overlap. Proven live: before this, id 6dc32e34... and fa061aab...
 	// (tied created_at) appeared on both page 2 (offset 5) and page 4
 	// (offset 15) of the same result set.
-	q += " ORDER BY created_at DESC, id DESC LIMIT $" + itoa(len(args))
+	q += " ORDER BY created_at DESC, id DESC LIMIT $" + strconv.Itoa(len(args))
 	// Offset-based paging. Previously absent entirely — the fallback had no
 	// OFFSET clause and service.go always returned next_cursor: nil, so the
 	// degraded (no-ES) search path could serve page 1 only; there was no way
@@ -335,7 +325,7 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 	// client's cursor being defined but never read.
 	if f.Offset > 0 {
 		args = append(args, f.Offset)
-		q += " OFFSET $" + itoa(len(args))
+		q += " OFFSET $" + strconv.Itoa(len(args))
 	}
 
 	rows, err := r.db.Query(ctx, q, args...)
@@ -363,8 +353,6 @@ type SearchFallbackFilter struct {
 	// (plain base-10 integer) cursor the ES client uses.
 	Offset int
 }
-
-// ─── join helpers ────────────────────────────────────────────────────────────
 
 // prefixCols rewrites a comma+newline column list ("a, b, c") into "alias.a, ...".
 func prefixCols(alias, cols string) string {
@@ -431,27 +419,9 @@ func scanSavedItemJoin(rows pgx.Rows, it *SavedItem) (*Listing, error) {
 	return &l, nil
 }
 
-// itoa is a tiny int→string helper (avoids importing strconv into this file's hot path).
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
-}
-
-// ─── Permanent deletion ──────────────────────────────────────────────────────
-
 // PurgeListing PERMANENTLY removes a listing and the rows that exist only to
 // describe it. Unlike DeleteListing (a soft status change to removed_user) this
 // is irreversible.
-//
 // It refuses whenever the listing carries commercial history — orders, boosts,
 // offers or buyer threads. That is not a policy invented here: those four are the
 // exact FKs the schema declares ON DELETE NO ACTION, while media, saved-items and
@@ -459,10 +429,8 @@ func itoa(n int) string {
 // erased with a listing and what must outlive it; this function reads the same
 // line, and checks up front only so the seller gets "this listing has 2 offers"
 // instead of an opaque foreign-key 500.
-//
 // Orders and boosts both carry ledger references, so erasing either would orphan
 // a money record — the strongest reason the refusal must stay.
-//
 // mkt_listings_outbox is deleted rather than blocking: it is our own search-index
 // event queue, internal plumbing rather than a record of anything a person did.
 func (r *Repository) PurgeListing(ctx context.Context, sellerID, listingID string) error {
@@ -528,7 +496,6 @@ func (r *Repository) PurgeListing(ctx context.Context, sellerID, listingID strin
 	// because mkt_admin_audit_log carries no foreign key to mkt_listings — a FK
 	// would either cascade the record away with the listing or block the delete
 	// outright. An audit trail for a deletion has to outlive the thing deleted.
-	//
 	// Reusing the admin table for a SELLER action is a deliberate stretch of its
 	// name: it is append-only, has the right shape (text target_id, jsonb
 	// before_state), and the admin audit viewer filters by target rather than by
@@ -570,14 +537,10 @@ func purgeBlockedBy(orders, boosts, offers, threads int64) string {
 	return ""
 }
 
-// ─── Listing insights ────────────────────────────────────────────────────────
-
 // GetListingInsights returns the performance summary for one listing.
-//
 // Owner-scoped in the WHERE clause (seller_id = $2), not just in the service:
 // a listing's offer count and best standing offer are commercially sensitive, so
 // a wrong id must return "not found" rather than another seller's numbers.
-//
 // Counts come from the event tables, never from mkt_listings.save_count — that
 // column has no writer in this backend, so reading it would report 0 saves for
 // every listing forever. view_count is the one denormalised figure used, because
@@ -621,16 +584,13 @@ func (r *Repository) GetListingInsights(ctx context.Context, sellerID, listingID
 }
 
 // IncrementListingView bumps the view counter, skipping the seller's own visits.
-//
 // This is the ONLY writer of mkt_listings.view_count. Without it the column stays
 // at its default and every listing reports "0 views" forever, which is what the
 // seller dashboard was showing.
-//
 // viewerID is "" for anonymous browsers (the calling route is tier0_browse) and
 // those still count — the empty check below is what lets them through. When it is
 // set it comes from handler.viewerIDForCounting, which is attribution-only and
 // explicitly not authentication; see its doc.
-//
 // Deliberately fire-and-forget at the call site and never part of the read's
 // error path: a failed counter bump must not fail loading a listing.
 func (r *Repository) IncrementListingView(ctx context.Context, listingID, viewerID string) error {
@@ -640,4 +600,75 @@ func (r *Repository) IncrementListingView(ctx context.Context, listingID, viewer
 		 WHERE id = $1 AND ($2 = '' OR seller_id <> $2::uuid)`
 	_, err := r.db.Exec(ctx, q, listingID, viewerID)
 	return err
+}
+
+// SellerContact is what a reveal returns: the number and who it belongs to.
+type SellerContact struct {
+	SellerID string `json:"seller_id"`
+	Phone    string `json:"phone"`
+}
+
+// sellerPhoneForListing reads the listing owner's phone from user_profiles.
+// user_profiles is the only place a phone actually lives — auth.users.phone is
+// empty for every row on this deployment, and handle_new_user() has never copied
+// the number across. An empty string is a legitimate answer (most sellers have
+// no number on file) and the service turns it into a typed error rather than
+// revealing a blank.
+func (r *Repository) sellerPhoneForListing(ctx context.Context, listingID string) (SellerContact, error) {
+	var c SellerContact
+	err := r.db.QueryRow(ctx, `
+		SELECT l.seller_id::text, COALESCE(NULLIF(btrim(p.phone), ''), '')
+		  FROM public.mkt_listings l
+		  LEFT JOIN public.user_profiles p ON p.id = l.seller_id
+		 WHERE l.id = $1`, listingID).Scan(&c.SellerID, &c.Phone)
+	if err != nil {
+		return SellerContact{}, wrapInternal("seller contact", err)
+	}
+	return c, nil
+}
+
+// countDistinctRevealsSince counts how many DIFFERENT listings a viewer has
+// revealed since `since`.
+// DISTINCT is the point: re-opening a listing you already revealed must not
+// spend budget, or a user who backgrounds the app loses their quota to the same
+// number they have already seen. Charging per listing keeps the limit aimed at
+// breadth — a scraper harvesting many sellers — rather than at ordinary use.
+func (r *Repository) countDistinctRevealsSince(ctx context.Context, viewerID string, since time.Time) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx, `
+		SELECT count(DISTINCT listing_id)
+		  FROM public.mkt_contact_reveals
+		 WHERE viewer_id = $1 AND revealed_at >= $2`, viewerID, since).Scan(&n)
+	if err != nil {
+		return 0, wrapInternal("reveal count", err)
+	}
+	return n, nil
+}
+
+// hasRevealedListing reports whether this viewer already revealed this listing
+// inside the window, so a repeat look can skip the budget check.
+func (r *Repository) hasRevealedListing(ctx context.Context, viewerID, listingID string, since time.Time) (bool, error) {
+	var ok bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM public.mkt_contact_reveals
+			 WHERE viewer_id = $1 AND listing_id = $2 AND revealed_at >= $3)`,
+		viewerID, listingID, since).Scan(&ok)
+	if err != nil {
+		return false, wrapInternal("reveal lookup", err)
+	}
+	return ok, nil
+}
+
+// recordReveal writes the audit row. Repeat reveals are recorded too — the
+// second look is a separate event and belongs in the answer to "who was given
+// my number".
+func (r *Repository) recordReveal(ctx context.Context, listingID, viewerID, sellerID string) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO public.mkt_contact_reveals (listing_id, viewer_id, seller_id)
+		VALUES ($1, $2, $3)`, listingID, viewerID, sellerID)
+	if err != nil {
+		return wrapInternal("record reveal", err)
+	}
+	return nil
 }

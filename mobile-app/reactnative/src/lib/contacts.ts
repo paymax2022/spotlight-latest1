@@ -1,4 +1,3 @@
-// ── Device phonebook (expo-contacts) ─────────────────────────────────────────
 // Reads the device address book with permission. Returns null when the package
 // is unavailable, permission is denied, or there are no contacts, so callers can
 // fall back to the seed list. Requires: npx expo install expo-contacts

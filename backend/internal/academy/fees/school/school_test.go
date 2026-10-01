@@ -11,8 +11,6 @@ import (
 // verification-tier guard, ownership fail-closed checks, and SF-10 export gate are all
 // exercised without a live DB.
 
-// ── in-memory fake Store ─────────────────────────────────────────────────────────
-
 type fakeStore struct {
 	schools map[string]*School
 	roster  map[string][]ExportStudent
@@ -108,8 +106,6 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
-// ── Verification-tier state machine: legal + illegal (pure) ──────────────────────
-
 func TestVerifyTransition_LegalMoves(t *testing.T) {
 	legal := [][2]VerificationTier{
 		{TierUnverified, TierPending},
@@ -148,8 +144,6 @@ func TestVerifyTransition_IllegalSkipsAndUnknown(t *testing.T) {
 		t.Errorf("expected ErrInvalidTier for unknown tier, got %v", err)
 	}
 }
-
-// ── Service.Verify: legal transition succeeds; invalid rejected ──────────────────
 
 func TestServiceVerify_LegalTransitionSucceeds(t *testing.T) {
 	fs := newFakeStore()
@@ -204,8 +198,6 @@ func TestServiceVerify_MissingActorRejected(t *testing.T) {
 	}
 }
 
-// ── Create sets owner = caller and requires a name ───────────────────────────────
-
 func TestServiceCreate_OwnerIsCaller(t *testing.T) {
 	svc := NewServiceWithStore(newFakeStore())
 	ctx := context.Background()
@@ -227,8 +219,6 @@ func TestServiceCreate_RejectsEmptyName(t *testing.T) {
 		t.Fatalf("expected unauthenticated for empty owner, got %v", err)
 	}
 }
-
-// ── SF-10 export: verified-only + owner-only, fail-closed ────────────────────────
 
 func TestServiceExport_RequiresVerifiedAndOwner(t *testing.T) {
 	fs := newFakeStore()

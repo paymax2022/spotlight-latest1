@@ -3,7 +3,7 @@ import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View 
 import { Wallet, CreditCard, X, ShieldCheck, ShieldAlert } from 'lucide-react-native';
 import { router } from 'expo-router';
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { PurchaseController } from './usePurchasePayment';
 // Shared formatter. This screen carried its own copy with minimumFractionDigits:0,
 // which trimmed the trailing zero — ₦13,645.20 rendered as "₦13,645.2" on the very

@@ -1,24 +1,24 @@
 package progression
 
-import "sort"
+import (
+	"sort"
+	"spotlight/backend/go-common/fsm"
+)
 
 // statemachine.go holds the PURE guard + selection logic for the progression
 // sub-package. No DB, no ctx — trivially unit-testable and reusable from both the
 // service and the tests.
-//
 // Pattern (state-machines.md "guarded transitions"): a transition is legal only if
 // it appears in the table; the service then applies the change, emits a
 // ProgressEvent and audits. Illegal transitions are rejected + audited.
 
-// ── Path-step lifecycle: locked → available → in_progress → done ────────────────
-
 // stepTransitions is the legal forward adjacency for a path step. The remediation
 // regression (done → in_progress) is handled in canStep so a failed re-check can
 // pull a completed objective back into progress.
-var stepTransitions = map[PathStepState]map[PathStepState]bool{
-	StepLocked:     {StepAvailable: true},
-	StepAvailable:  {StepInProgress: true},
-	StepInProgress: {StepDone: true},
+var stepTransitions = fsm.Table[PathStepState]{
+	StepLocked:     fsm.Set(StepAvailable),
+	StepAvailable:  fsm.Set(StepInProgress),
+	StepInProgress: fsm.Set(StepDone),
 	StepDone:       {}, // forward-terminal; remediation handled below
 }
 
@@ -35,11 +35,7 @@ func canStep(from, to PathStepState) bool {
 	if from == StepDone && to == StepInProgress {
 		return true
 	}
-	targets, ok := stepTransitions[from]
-	if !ok {
-		return false
-	}
-	return targets[to]
+	return stepTransitions.Can(from, to)
 }
 
 // validStepState reports whether s is a known path-step state.
@@ -67,8 +63,6 @@ func stepEventTypeFor(from, to PathStepState) string {
 		return ""
 	}
 }
-
-// ── Adaptive selection (pure) ───────────────────────────────────────────────────
 
 // masteredState is the mastery state that counts as "no longer weak".
 const masteredState = "mastered"
@@ -183,8 +177,6 @@ func pickItems(items []QuestionItemRef, objectiveIDs []string, limit int) []stri
 	}
 	return out
 }
-
-// ── Recommendation scoring (pure) ───────────────────────────────────────────────
 
 // recommendationScore ranks a candidate next objective. Higher = more urgent.
 // Heuristic (reco_rules-overridable via config in a later iteration):

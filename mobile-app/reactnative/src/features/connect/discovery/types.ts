@@ -1,13 +1,10 @@
 // Paymax Connect — Discovery & Matching types (PRD §10.2 DC-*).
-//
 // Self-contained discovery slice. Reuses ConnectColors / USE_MOCK /
 // CONNECT_API_BASE from ../constants/connect.constants and the shared
 // ConnectIntent / TierStatus shapes are mirrored locally so this slice never
 // imports the agent-owned connect.types beyond what is necessary.
-//
 // SAFETY INVARIANTS upheld here (docs/prd/dating/CLAUDE.md):
 //  §3 location approximate-by-default — Profile.distanceLabel is fuzzed text.
-//  §4 no messaging before a mutual match — a swipe/like never opens a thread;
 //     only an `it's-a-match` result unlocks chat.
 
 import type { ConnectTier } from '../types/connect.types';
@@ -37,7 +34,7 @@ export interface DiscoveryProfile {
   age: number;
   headline?: string;          // networking / discover headline
   bio?: string;
-  photos: string[];           // remote URIs (primary = index 0)
+  photos: string[];
   interests: string[];
   prompts: ProfilePrompt[];
   // Approximate distance copy only (e.g. "~3 km away"). Never exact.
@@ -74,7 +71,6 @@ export type SwipeAction = 'like' | 'pass' | 'super';
 export type SwipeDirection = 'like' | 'pass' | 'superlike';
 
 // Result of a swipe. `matched` is the ONLY way a Date-mode chat is unlocked (§4).
-// Backend returns { match: boolean, matchId?: string }; the client re-attaches
 // the swiped `profile` (from the local stack) for the it's-a-match modal, and
 // derives `threadId` from `matchId` when matched (the thread opens on the match).
 export interface SwipeResult {

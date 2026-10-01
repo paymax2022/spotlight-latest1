@@ -165,7 +165,6 @@ function makeFakeSupabase() {
       update: vi.fn((payload: any) => {
         if (table === 'utility_transactions') {
           const id = payload.id ?? state.filters.id;
-          // .update() precedes the matching .eq('id', ...): defer the merge to eq(),
           // but also support the payload carrying its own id defensively.
           builder.__pendingUpdate = payload;
         }
@@ -181,7 +180,6 @@ function makeFakeSupabase() {
       then: (onFulfilled: any) => resolve().then(onFulfilled),
     };
 
-    // Re-wrap eq() so an update()'s .eq('id', X) actually applies the pending patch —
     // payUtility always calls .update(patch).eq('id', transactionId) in that order.
     const originalEq = builder.eq;
     builder.eq = vi.fn((col: string, val: unknown) => {

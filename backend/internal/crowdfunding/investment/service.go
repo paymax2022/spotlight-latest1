@@ -4,12 +4,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/go-common/timeutil"
+)
+
+const (
+	keyError = "error"
+	keyData  = "data"
 )
 
 // Sentinel errors let the handler map failures to HTTP status codes.
@@ -34,8 +45,6 @@ func NewService(db *pgxpool.Pool) *Service {
 	return &Service{db: db}
 }
 
-// ─── Offers ──────────────────────────────────────────────────────────────────
-
 const offerCols = `id, title, issuer_name, issuer_verified, model, summary, cover_image,
 	target_kobo, raised_kobo, min_ticket_kobo, investor_count, status, closes_at,
 	projected_return_pct, term_months, risk_level, lock_in_months, cooling_off_days,
@@ -54,7 +63,7 @@ func scanOffer(scan func(dest ...any) error) (InvestmentOffer, error) {
 		return o, err
 	}
 	if closesAt != nil {
-		o.ClosesAt = closesAt.UTC().Format(time.RFC3339)
+		o.ClosesAt = timeutil.RFC3339Ptr(closesAt)
 	}
 	// Static disclosures the client renders; derived rather than stored.
 	o.RiskWarnings = []string{
@@ -102,8 +111,6 @@ func (s *Service) GetOffer(ctx context.Context, id string) (InvestmentOffer, err
 	}
 	return o, err
 }
-
-// ─── Profile / onboarding ────────────────────────────────────────────────────
 
 // GetProfile returns the caller's investor profile, materialising a default row
 // (all gates false, default annual limit) if none exists yet.
@@ -166,7 +173,6 @@ func (s *Service) CompleteOnboardingStep(ctx context.Context, userID, step, risk
 	}
 	defer tx.Rollback(ctx)
 
-	// Ensure a row exists (default row if first touch).
 	if _, err := tx.Exec(ctx, `INSERT INTO cf_investor_profiles (user_id) VALUES ($1)
 		ON CONFLICT (user_id) DO NOTHING`, userID); err != nil {
 		return InvestorProfile{}, err
@@ -191,7 +197,6 @@ func (s *Service) CompleteOnboardingStep(ctx context.Context, userID, step, risk
 		}
 	}
 
-	// Recompute the onboarded flag from the gates.
 	if _, err := tx.Exec(ctx, `
 		UPDATE cf_investor_profiles
 		SET onboarded = (kyc_complete AND education_complete AND quiz_passed AND risk_profile IS NOT NULL),
@@ -209,8 +214,6 @@ func (s *Service) CompleteOnboardingStep(ctx context.Context, userID, step, risk
 	}
 	return p, nil
 }
-
-// ─── Education / quiz ─────────────────────────────────────────────────────────
 
 // GetEducation returns the seeded education modules in order.
 func (s *Service) GetEducation(ctx context.Context) ([]EducationModule, error) {
@@ -250,8 +253,6 @@ func (s *Service) GetQuiz(ctx context.Context) ([]QuizQuestion, error) {
 	return out, rows.Err()
 }
 
-// ─── Subscribe (money mutation) ──────────────────────────────────────────────
-
 // Subscribe creates an investment subscription. It is fail-closed:
 //   - the investor must have completed onboarding,
 //   - the amount must meet the offer's minimum ticket,
@@ -287,7 +288,6 @@ func (s *Service) Subscribe(ctx context.Context, userID string, in InvestmentSub
 		return cert, nil
 	}
 
-	// Load + lock the offer.
 	var (
 		offerTitle, issuerName, riskLevel string
 		model                             InvestmentModel
@@ -332,12 +332,10 @@ func (s *Service) Subscribe(ctx context.Context, userID string, in InvestmentSub
 	if !onboarded {
 		return InvestmentCertificate{}, ErrNotOnboarded
 	}
-	// Fail-closed annual limit check.
 	if investedThisYear+in.AmountKobo > annualLimit {
 		return InvestmentCertificate{}, ErrAnnualLimit
 	}
 
-	// Compute the certificate display string per model.
 	unitsOrPct := computeUnitsOrPct(model, in.AmountKobo, targetKobo, projectedReturnPct)
 
 	subID := uuid.New().String()
@@ -355,7 +353,6 @@ func (s *Service) Subscribe(ctx context.Context, userID string, in InvestmentSub
 		return InvestmentCertificate{}, err
 	}
 
-	// Update the investor's annual running total.
 	if _, err := tx.Exec(ctx, `
 		UPDATE cf_investor_profiles
 		SET invested_this_year_kobo = invested_this_year_kobo + $1, updated_at = NOW()
@@ -380,8 +377,8 @@ func (s *Service) Subscribe(ctx context.Context, userID string, in InvestmentSub
 		AmountKobo:  in.AmountKobo,
 		Model:       model,
 		UnitsOrPct:  unitsOrPct,
-		IssuedAt:    now.Format(time.RFC3339),
-		LockInUntil: lockInUntil.Format(time.RFC3339),
+		IssuedAt:    timeutil.RFC3339(now),
+		LockInUntil: timeutil.RFC3339(lockInUntil),
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return InvestmentCertificate{}, err
@@ -415,12 +412,8 @@ func (s *Service) certByIdemKey(ctx context.Context, tx pgx.Tx, idemKey string) 
 	cert.OfferTitle = offerTitle
 	cert.IssuerName = issuerName
 	cert.Model = model
-	if investedAt != nil {
-		cert.IssuedAt = investedAt.UTC().Format(time.RFC3339)
-	}
-	if lockInUntil != nil {
-		cert.LockInUntil = lockInUntil.UTC().Format(time.RFC3339)
-	}
+	cert.IssuedAt = timeutil.RFC3339Ptr(investedAt)
+	cert.LockInUntil = timeutil.RFC3339Ptr(lockInUntil)
 	return cert, true, nil
 }
 
@@ -446,7 +439,6 @@ func computeUnitsOrPct(model InvestmentModel, amountKobo, targetKobo int64, proj
 func formatNaira(kobo int64) string {
 	naira := kobo / 100
 	s := fmt.Sprintf("%d", naira)
-	// Insert thousands separators.
 	n := len(s)
 	if n <= 3 {
 		return "₦" + s
@@ -467,8 +459,6 @@ func formatNaira(kobo int64) string {
 	}
 	return "₦" + b.String()
 }
-
-// ─── Portfolio ────────────────────────────────────────────────────────────────
 
 // GetPortfolio returns the caller's holdings. current_value is a simple mark using
 // the offer's projected return prorated over elapsed lock-in time.
@@ -496,7 +486,7 @@ func (s *Service) GetPortfolio(ctx context.Context, userID string) ([]PortfolioH
 			&h.InvestedKobo, &h.Status, &investedAt, &returnPct, &termMonths); err != nil {
 			return nil, err
 		}
-		h.InvestedAt = investedAt.UTC().Format(time.RFC3339)
+		h.InvestedAt = timeutil.RFC3339(investedAt)
 		h.CurrentValueKobo = markToValue(h.InvestedKobo, returnPct, termMonths, investedAt)
 		out = append(out, h)
 	}
@@ -519,4 +509,256 @@ func markToValue(invested int64, returnPct, termMonths int, investedAt time.Time
 	}
 	accrued := float64(invested) * float64(returnPct) / 100 * frac
 	return invested + int64(accrued)
+}
+
+// Register wires the crowdfunding investment routes onto the supplied router
+// group. The caller mounts `rg` under the crowdfunding prefix (so routes resolve
+// to /api/finance/crowdfunding/investment/...) and applies auth middleware that
+// sets `user_id`.
+// Routes (relative to rg):
+//
+//	GET  /investment/profile      → caller's investor onboarding profile
+//	POST /investment/onboarding   → advance one onboarding gate
+//	GET  /investment/offers       → list investment offers
+//	GET  /investment/offers/:id   → single offer detail
+//	GET  /investment/education    → investor education modules
+//	GET  /investment/quiz         → suitability quiz questions
+//	POST /investment/subscribe    → subscribe (money mutation, Idempotency-Key)
+//	GET  /investment/portfolio    → caller's holdings
+func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
+	h := NewHandler(NewService(db))
+
+	inv := rg.Group("/investment")
+	inv.GET("/profile", h.GetProfile)
+	inv.POST("/onboarding", h.CompleteOnboarding)
+	inv.GET("/offers", h.GetOffers)
+	inv.GET("/offers/:id", h.GetOffer)
+	inv.GET("/education", h.GetEducation)
+	inv.GET("/quiz", h.GetQuiz)
+	inv.POST("/subscribe", h.Subscribe)
+	inv.GET("/portfolio", h.GetPortfolio)
+}
+
+// InvestmentModel mirrors the client union 'EQUITY' | 'DEBT' | 'REVENUE_SHARE'.
+type InvestmentModel string
+
+// InvestorRiskProfile mirrors 'CONSERVATIVE' | 'BALANCED' | 'AGGRESSIVE'.
+type InvestorRiskProfile string
+
+// OfferStatus mirrors 'OPEN' | 'CLOSING_SOON' | 'CLOSED' | 'FUNDED'.
+type OfferStatus string
+
+// UseOfProceedsLine is one row of an offer's use-of-proceeds breakdown.
+type UseOfProceedsLine struct {
+	Label      string `json:"label"`
+	AmountKobo int64  `json:"amountKobo"`
+}
+
+// InvestmentOffer matches the client InvestmentOffer interface (camelCase).
+type InvestmentOffer struct {
+	ID                 string              `json:"id"`
+	Title              string              `json:"title"`
+	IssuerName         string              `json:"issuerName"`
+	IssuerVerified     bool                `json:"issuerVerified"`
+	Model              InvestmentModel     `json:"model"`
+	Summary            string              `json:"summary"`
+	CoverImage         *string             `json:"coverImage"`
+	TargetKobo         int64               `json:"targetKobo"`
+	RaisedKobo         int64               `json:"raisedKobo"`
+	MinTicketKobo      int64               `json:"minTicketKobo"`
+	InvestorCount      int                 `json:"investorCount"`
+	Status             OfferStatus         `json:"status"`
+	ClosesAt           string              `json:"closesAt"`
+	ProjectedReturnPct int                 `json:"projectedReturnPct"`
+	TermMonths         int                 `json:"termMonths"`
+	RiskLevel          string              `json:"riskLevel"` // 'MEDIUM' | 'HIGH'
+	LockInMonths       int                 `json:"lockInMonths"`
+	CoolingOffDays     int                 `json:"coolingOffDays"`
+	Sector             string              `json:"sector"`
+	Location           string              `json:"location"`
+	OfferDocumentLabel string              `json:"offerDocumentLabel"`
+	RiskWarnings       []string            `json:"riskWarnings"`
+	UseOfProceeds      []UseOfProceedsLine `json:"useOfProceeds"`
+}
+
+// InvestorProfile matches the client InvestorProfile interface.
+type InvestorProfile struct {
+	Onboarded            bool                 `json:"onboarded"`
+	KycComplete          bool                 `json:"kycComplete"`
+	EducationComplete    bool                 `json:"educationComplete"`
+	QuizPassed           bool                 `json:"quizPassed"`
+	RiskProfile          *InvestorRiskProfile `json:"riskProfile"`
+	AnnualLimitKobo      int64                `json:"annualLimitKobo"`
+	InvestedThisYearKobo int64                `json:"investedThisYearKobo"`
+}
+
+// EducationModule matches the client EducationModule interface.
+type EducationModule struct {
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Body    string `json:"body"`
+	Minutes int    `json:"minutes"`
+}
+
+// QuizQuestion matches the client QuizQuestion interface.
+type QuizQuestion struct {
+	ID           string   `json:"id"`
+	Question     string   `json:"question"`
+	Options      []string `json:"options"`
+	CorrectIndex int      `json:"correctIndex"`
+}
+
+// InvestmentSubscriptionInput matches the client InvestmentSubscriptionInput interface.
+type InvestmentSubscriptionInput struct {
+	OfferID           string `json:"offerId" binding:"required"`
+	AmountKobo        int64  `json:"amountKobo" binding:"required,min=1"`
+	AcceptedRisk      bool   `json:"acceptedRisk"`
+	AcceptedAgreement bool   `json:"acceptedAgreement"`
+}
+
+// InvestmentCertificate matches the client InvestmentCertificate interface.
+type InvestmentCertificate struct {
+	ID          string          `json:"id"`
+	Reference   string          `json:"reference"`
+	OfferTitle  string          `json:"offerTitle"`
+	IssuerName  string          `json:"issuerName"`
+	AmountKobo  int64           `json:"amountKobo"`
+	Model       InvestmentModel `json:"model"`
+	UnitsOrPct  string          `json:"unitsOrPct"`
+	IssuedAt    string          `json:"issuedAt"`
+	LockInUntil string          `json:"lockInUntil"`
+}
+
+// PortfolioHolding matches the client PortfolioHolding interface.
+type PortfolioHolding struct {
+	ID               string          `json:"id"`
+	OfferID          string          `json:"offerId"`
+	OfferTitle       string          `json:"offerTitle"`
+	IssuerName       string          `json:"issuerName"`
+	Model            InvestmentModel `json:"model"`
+	InvestedKobo     int64           `json:"investedKobo"`
+	CurrentValueKobo int64           `json:"currentValueKobo"`
+	Status           string          `json:"status"` // 'ACTIVE' | 'EXITED' | 'DEFAULTED'
+	InvestedAt       string          `json:"investedAt"`
+}
+
+// OnboardingRequest is the POST /investment/onboarding body. `step` advances one
+// onboarding gate at a time; `riskProfile` is required when step == "riskProfile".
+type OnboardingRequest struct {
+	Step        string `json:"step" binding:"required"` // kyc | education | quiz | riskProfile
+	RiskProfile string `json:"riskProfile"`
+}
+
+// Handler adapts the investment Service to gin. List endpoints wrap results in
+// gin.H{keyData: ...}; single-object endpoints return the object directly.
+type Handler struct {
+	svc *Service
+}
+
+var errMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusBadRequest, ErrBadStep, ErrBadRiskProfile),
+	httperr.R(http.StatusNotFound, ErrOfferNotFound),
+	// 422: the request is well-formed but fails a business/regulatory rule.
+	httperr.R(http.StatusUnprocessableEntity, ErrNotOnboarded, ErrAnnualLimit, ErrBelowMinTicket, ErrOfferClosed, ErrAgreement),
+)
+
+// NewHandler constructs an investment Handler.
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// GetProfile — GET /investment/profile.
+func (h *Handler) GetProfile(c *gin.Context) {
+	p, err := h.svc.GetProfile(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, p)
+}
+
+// CompleteOnboarding — POST /investment/onboarding.
+func (h *Handler) CompleteOnboarding(c *gin.Context) {
+	var req OnboardingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		return
+	}
+	p, err := h.svc.CompleteOnboardingStep(c.Request.Context(), ginutil.UserID(c), req.Step, req.RiskProfile)
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, p)
+}
+
+// GetOffers — GET /investment/offers.
+func (h *Handler) GetOffers(c *gin.Context) {
+	items, err := h.svc.GetOffers(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: items})
+}
+
+// GetOffer — GET /investment/offers/:id.
+func (h *Handler) GetOffer(c *gin.Context) {
+	o, err := h.svc.GetOffer(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{keyError: "offer not found"})
+		return
+	}
+	c.JSON(http.StatusOK, o)
+}
+
+// GetEducation — GET /investment/education.
+func (h *Handler) GetEducation(c *gin.Context) {
+	items, err := h.svc.GetEducation(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: items})
+}
+
+// GetQuiz — GET /investment/quiz.
+func (h *Handler) GetQuiz(c *gin.Context) {
+	items, err := h.svc.GetQuiz(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: items})
+}
+
+// Subscribe — POST /investment/subscribe. Money mutation: requires an
+// Idempotency-Key header and enforces onboarding + annual-limit fail-closed.
+func (h *Handler) Subscribe(c *gin.Context) {
+	idemKey := ginutil.IdempotencyKey(c)
+	if idemKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "Idempotency-Key header is required"})
+		return
+	}
+	var in InvestmentSubscriptionInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		return
+	}
+	cert, err := h.svc.Subscribe(c.Request.Context(), ginutil.UserID(c), in, idemKey)
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, cert)
+}
+
+// GetPortfolio — GET /investment/portfolio.
+func (h *Handler) GetPortfolio(c *gin.Context) {
+	items, err := h.svc.GetPortfolio(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: items})
 }

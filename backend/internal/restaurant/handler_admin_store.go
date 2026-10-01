@@ -5,28 +5,25 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Admin store & menu management for /api/restaurant/admin/restaurants/*.
-//
 // WHY THESE EXIST
 // The member-facing store/menu routes (/api/finance/restaurant/:id/...) are
 // owner-only: Service.assertOwner compares the caller against restaurants.owner_id
 // with no operator exemption. So a platform admin could VIEW a merchant's store in
 // the ops console but could not fix a wrong price, hide an unavailable dish, or
 // force a misbehaving store closed — every mutation answered 403.
-//
 // These handlers call the SAME service methods (no duplicated SQL, no second code
 // path to drift) but run them under WithAdminOverride, which relaxes the ownership
 // check. Every route is fail-closed behind RequirePermission(restaurant.manage) in
 // internal/app/finance_routes.go — RBAC is the security boundary here, not
 // ownership. The `restaurant: not found` existence check still applies, so a bad
 // id is a 404 for operators too.
-//
 // The admin's own user id is still passed through, so anything that attributes an
 // actor records the operator rather than the merchant.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // adminCtx returns the request context marked as an admin-authenticated call.
 // Grep `adminCtx(` to find every ownership-bypassing call in this file.
@@ -38,7 +35,6 @@ func adminCtx(c *gin.Context) context.Context {
 // (restaurant.manage). The operator's register: EVERY restaurant row, open or
 // closed, approved or not — see admin_register.go for why the console cannot use
 // the customer discovery list for this.
-//
 // Params: ?q, ?status=open|closed|all, ?review=<listing_review_status>,
 // ?sort=newest|name|rating|updated, ?limit (default 25, max 200), ?offset.
 // Read-only, so no ownership override is needed.
@@ -59,14 +55,11 @@ func (h *Handler) AdminListRestaurants(c *gin.Context) {
 }
 
 // AdminListOrders → GET /api/restaurant/admin/orders (restaurant.manage).
-//
 // The platform-wide order feed. The console previously read the owner-scoped
 // member route and therefore saw none of the 2,174 orders — see admin_orders.go.
-//
 // Params: ?status, ?dispatch, ?q, ?restaurant_id, ?rider_id, ?unassigned=1,
 // ?sort=newest|oldest|total|updated, ?limit (default 25, max 200), ?offset.
 // Read-only, so no ownership override and no Idempotency-Key.
-//
 // An unknown ?status is a 400 rather than a silently empty page: the console
 // used to filter on five statuses this column cannot hold, and a quiet empty
 // result is indistinguishable from "no orders in that state".
@@ -117,7 +110,7 @@ func (h *Handler) AdminUpdateRestaurant(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	r, err := h.svc.UpdateRestaurant(adminCtx(c), c.Param("id"), c.GetString("user_id"), req)
+	r, err := h.svc.UpdateRestaurant(adminCtx(c), c.Param("id"), ginutil.UserID(c), req)
 	if err != nil {
 		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
 		return
@@ -126,7 +119,6 @@ func (h *Handler) AdminUpdateRestaurant(c *gin.Context) {
 }
 
 // AdminModerationQueue → GET /admin/restaurant/listings/pending
-//
 // Listings awaiting review, oldest first — a moderation queue is worked in the
 // order people have been waiting.
 func (h *Handler) AdminModerationQueue(c *gin.Context) {
@@ -139,7 +131,6 @@ func (h *Handler) AdminModerationQueue(c *gin.Context) {
 }
 
 // AdminDecideListing → POST /admin/restaurant/listings/:id/decision
-//
 // Body {decision: approve|reject|changes, reason}. Rejecting or requesting
 // changes without a reason is refused by the service — the owner needs something
 // to act on.
@@ -164,7 +155,7 @@ func (h *Handler) AdminDecideListing(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "decision must be approve|reject|changes"})
 		return
 	}
-	if err := h.svc.DecideListing(adminCtx(c), c.Param("id"), c.GetString("user_id"), to, body.Reason); err != nil {
+	if err := h.svc.DecideListing(adminCtx(c), c.Param("id"), ginutil.UserID(c), to, body.Reason); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 		return
 	}
@@ -172,7 +163,6 @@ func (h *Handler) AdminDecideListing(c *gin.Context) {
 }
 
 // AdminUnclaimedRestaurants → GET /admin/restaurants/unclaimed
-//
 // Shops with no identifiable merchant: no owner, or an owner with no active
 // merchant profile. Empty today (the linking migration resolved all 1539 legacy
 // owners); it exists so an imported or admin-seeded row cannot sit unmanaged and
@@ -197,7 +187,7 @@ func (h *Handler) AdminSetAvailability(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "is_open is required"})
 		return
 	}
-	r, err := h.svc.SetAvailability(adminCtx(c), c.Param("id"), c.GetString("user_id"), *body.IsOpen)
+	r, err := h.svc.SetAvailability(adminCtx(c), c.Param("id"), ginutil.UserID(c), *body.IsOpen)
 	if err != nil {
 		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
 		return
@@ -214,7 +204,7 @@ func (h *Handler) AdminCreateCategory(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	cat, err := h.svc.CreateCategory(adminCtx(c), c.Param("id"), c.GetString("user_id"), body.Name)
+	cat, err := h.svc.CreateCategory(adminCtx(c), c.Param("id"), ginutil.UserID(c), body.Name)
 	if err != nil {
 		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
 		return
@@ -224,7 +214,7 @@ func (h *Handler) AdminCreateCategory(c *gin.Context) {
 
 // AdminDeleteCategory → DELETE /api/restaurant/admin/restaurants/:id/menu/categories/:categoryId
 func (h *Handler) AdminDeleteCategory(c *gin.Context) {
-	if err := h.svc.DeleteCategory(adminCtx(c), c.Param("id"), c.GetString("user_id"), c.Param("categoryId")); err != nil {
+	if err := h.svc.DeleteCategory(adminCtx(c), c.Param("id"), ginutil.UserID(c), c.Param("categoryId")); err != nil {
 		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
 		return
 	}
@@ -238,7 +228,7 @@ func (h *Handler) AdminCreateItem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	it, err := h.svc.CreateItem(adminCtx(c), c.Param("id"), c.GetString("user_id"), req)
+	it, err := h.svc.CreateItem(adminCtx(c), c.Param("id"), ginutil.UserID(c), req)
 	if err != nil {
 		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
 		return
@@ -255,7 +245,7 @@ func (h *Handler) AdminUpdateItem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	it, err := h.svc.UpdateItem(adminCtx(c), c.Param("id"), c.GetString("user_id"), c.Param("itemId"), req)
+	it, err := h.svc.UpdateItem(adminCtx(c), c.Param("id"), ginutil.UserID(c), c.Param("itemId"), req)
 	if err != nil {
 		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
 		return
@@ -265,7 +255,7 @@ func (h *Handler) AdminUpdateItem(c *gin.Context) {
 
 // AdminDeleteItem → DELETE /api/restaurant/admin/restaurants/:id/menu/items/:itemId
 func (h *Handler) AdminDeleteItem(c *gin.Context) {
-	if err := h.svc.DeleteItem(adminCtx(c), c.Param("id"), c.GetString("user_id"), c.Param("itemId")); err != nil {
+	if err := h.svc.DeleteItem(adminCtx(c), c.Param("id"), ginutil.UserID(c), c.Param("itemId")); err != nil {
 		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
 		return
 	}

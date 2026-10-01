@@ -84,7 +84,6 @@ function validateSlots(raw: unknown): { ok: true; slots: SlotInput[] } | { ok: f
 // PUT /api/admin/voting/contest-templates/[templateId]/slots
 // Replaces the full slot list for this template in one call. Deletes existing
 // slots then inserts the new set (two calls — not a money path, no DB
-// function needed). If the template's CURRENT status is 'active', the new
 // set must include at least one 'contestant' slot — replacing slots on a
 // live template must not be able to silently strip its last contestant slot.
 export async function PUT(request: Request, ctx: RouteContext) {

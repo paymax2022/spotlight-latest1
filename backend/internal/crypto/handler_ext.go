@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"net/http"
+	"spotlight/backend/go-common/ginutil"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -12,27 +13,9 @@ import (
 // state machine. Every money mutation requires an Idempotency-Key and enforces
 // object-level authZ (the session id is always the acting identity).
 
-func httpErrExt(c *gin.Context, err error) {
-	switch err {
-	case ErrForbidden:
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": err.Error()})
-	case ErrNotFound, ErrAddressNotFound:
-		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": err.Error()})
-	case ErrInsufficient, ErrAssetInactive, ErrAmountTooSmall, ErrSameAsset,
-		ErrInvalidTransition, ErrWithdrawTooSmall, ErrAddressExists:
-		c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
-	case ErrInvalidAddress:
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
-	}
-}
-
-// ── Swap ────────────────────────────────────────────────────────────────────
-
 // SwapQuote POST /swap/quote (pre-trade estimate; no money moved).
 func (h *Handler) SwapQuote(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
 		return
@@ -48,7 +31,7 @@ func (h *Handler) SwapQuote(c *gin.Context) {
 	}
 	q, err := h.svc.SwapQuote(c.Request.Context(), uid, req.FromAssetID, req.ToAssetID, req.FromUnits)
 	if err != nil {
-		httpErrExt(c, err)
+		errMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "quote": q})
@@ -56,11 +39,11 @@ func (h *Handler) SwapQuote(c *gin.Context) {
 
 // Swap POST /swap (execute the two-leg atomic order; Idempotency-Key required).
 func (h *Handler) Swap(c *gin.Context) {
-	key, ok := requireIdem(c)
+	key, ok := ginutil.RequireIdempotencyKeyOK(c)
 	if !ok {
 		return
 	}
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
 		return
@@ -76,7 +59,7 @@ func (h *Handler) Swap(c *gin.Context) {
 	}
 	o, err := h.svc.Swap(c.Request.Context(), uid, req.FromAssetID, req.ToAssetID, req.FromUnits, key)
 	if err != nil {
-		httpErrExt(c, err)
+		errMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "swap": o})
@@ -84,16 +67,14 @@ func (h *Handler) Swap(c *gin.Context) {
 
 // SwapOrders GET /swap/orders (own swap history).
 func (h *Handler) SwapOrders(c *gin.Context) {
-	limit, offset := pageParams(c)
-	os, err := h.svc.SwapOrders(c.Request.Context(), userID(c), limit, offset)
+	limit, offset := ginutil.LimitOffset(c)
+	os, err := h.svc.SwapOrders(c.Request.Context(), ginutil.UserID(c), limit, offset)
 	if err != nil {
-		httpErrExt(c, err)
+		errMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "orders": os})
 }
-
-// ── Address allow-list ──────────────────────────────────────────────────────
 
 // ListAddresses GET /addresses (optional ?asset=<id|symbol>).
 func (h *Handler) ListAddresses(c *gin.Context) {
@@ -101,9 +82,9 @@ func (h *Handler) ListAddresses(c *gin.Context) {
 	if asset == "" {
 		asset = strings.TrimSpace(c.Query("symbol"))
 	}
-	list, err := h.svc.ListAddresses(c.Request.Context(), userID(c), asset)
+	list, err := h.svc.ListAddresses(c.Request.Context(), ginutil.UserID(c), asset)
 	if err != nil {
-		httpErrExt(c, err)
+		errMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "addresses": list})
@@ -111,7 +92,7 @@ func (h *Handler) ListAddresses(c *gin.Context) {
 
 // AddAddress POST /addresses (whitelist a destination).
 func (h *Handler) AddAddress(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
 		return
@@ -133,7 +114,7 @@ func (h *Handler) AddAddress(c *gin.Context) {
 	}
 	a, err := h.svc.AddAddress(c.Request.Context(), uid, resolveAsset(h, c, assetRef), req.Label, req.Network, req.Address)
 	if err != nil {
-		httpErrExt(c, err)
+		errMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "address": a})
@@ -141,18 +122,16 @@ func (h *Handler) AddAddress(c *gin.Context) {
 
 // DeleteAddress DELETE /addresses/:id.
 func (h *Handler) DeleteAddress(c *gin.Context) {
-	if err := h.svc.DeleteAddress(c.Request.Context(), userID(c), c.Param("id")); err != nil {
-		httpErrExt(c, err)
+	if err := h.svc.DeleteAddress(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
+		errMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
-// ── Deposit address ─────────────────────────────────────────────────────────
-
 // DepositAddress GET /deposit-address?asset=<id|symbol>&network=<net>.
 func (h *Handler) DepositAddress(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
 		return
@@ -164,7 +143,7 @@ func (h *Handler) DepositAddress(c *gin.Context) {
 	network := strings.TrimSpace(c.Query("network"))
 	d, err := h.svc.DepositAddress(c.Request.Context(), uid, resolveAsset(h, c, assetRef), network)
 	if err != nil {
-		httpErrExt(c, err)
+		errMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "deposit_address": d})
@@ -172,7 +151,7 @@ func (h *Handler) DepositAddress(c *gin.Context) {
 
 // ScreenAddress POST /addresses/screen (pre-save validation; no persistence).
 func (h *Handler) ScreenAddress(c *gin.Context) {
-	if userID(c) == "" {
+	if ginutil.UserID(c) == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
 		return
 	}
@@ -187,18 +166,16 @@ func (h *Handler) ScreenAddress(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "screening": gin.H{"risk": risk, "reason": reason}})
 }
 
-// ── Withdrawal state machine ────────────────────────────────────────────────
-
 // WithdrawalEligibility GET /withdrawals/eligibility (read-only gate summary).
 func (h *Handler) WithdrawalEligibility(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
 		return
 	}
 	e, err := h.svc.WithdrawalEligibilityFor(c.Request.Context(), uid)
 	if err != nil {
-		httpErrExt(c, err)
+		errMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "eligibility": e})
@@ -206,7 +183,7 @@ func (h *Handler) WithdrawalEligibility(c *gin.Context) {
 
 // WithdrawalQuote POST /withdrawals/quote (fee/receive preview; no money moved).
 func (h *Handler) WithdrawalQuote(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
 		return
@@ -227,7 +204,7 @@ func (h *Handler) WithdrawalQuote(c *gin.Context) {
 	}
 	q, err := h.svc.QuoteWithdrawal(c.Request.Context(), uid, resolveAsset(h, c, assetRef), req.Network, req.Units)
 	if err != nil {
-		httpErrExt(c, err)
+		errMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "quote": q})
@@ -235,11 +212,11 @@ func (h *Handler) WithdrawalQuote(c *gin.Context) {
 
 // Withdraw POST /withdrawals (open + drive to broadcast; Idempotency-Key required).
 func (h *Handler) Withdraw(c *gin.Context) {
-	key, ok := requireIdem(c)
+	key, ok := ginutil.RequireIdempotencyKeyOK(c)
 	if !ok {
 		return
 	}
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
 		return
@@ -261,7 +238,7 @@ func (h *Handler) Withdraw(c *gin.Context) {
 	}
 	w, err := h.svc.Withdraw(c.Request.Context(), uid, resolveAsset(h, c, assetRef), req.AddressID, req.Units, req.FeeKobo, key)
 	if err != nil {
-		httpErrExt(c, err)
+		errMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "withdrawal": w})
@@ -269,10 +246,10 @@ func (h *Handler) Withdraw(c *gin.Context) {
 
 // Withdrawals GET /withdrawals (own history).
 func (h *Handler) Withdrawals(c *gin.Context) {
-	limit, offset := pageParams(c)
-	ws, err := h.svc.Withdrawals(c.Request.Context(), userID(c), limit, offset)
+	limit, offset := ginutil.LimitOffset(c)
+	ws, err := h.svc.Withdrawals(c.Request.Context(), ginutil.UserID(c), limit, offset)
 	if err != nil {
-		httpErrExt(c, err)
+		errMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "withdrawals": ws})
@@ -280,9 +257,9 @@ func (h *Handler) Withdrawals(c *gin.Context) {
 
 // Withdrawal GET /withdrawals/:id (single owned withdrawal detail).
 func (h *Handler) Withdrawal(c *gin.Context) {
-	w, err := h.svc.GetWithdrawal(c.Request.Context(), userID(c), c.Param("id"))
+	w, err := h.svc.GetWithdrawal(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
-		httpErrExt(c, err)
+		errMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "withdrawal": w})
@@ -296,9 +273,9 @@ func (h *Handler) ConfirmWithdrawal(c *gin.Context) {
 		TxHash string `json:"tx_hash"`
 	}
 	_ = c.ShouldBindJSON(&req)
-	w, err := h.svc.ConfirmWithdrawal(c.Request.Context(), userID(c), c.Param("id"), req.TxHash)
+	w, err := h.svc.ConfirmWithdrawal(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req.TxHash)
 	if err != nil {
-		httpErrExt(c, err)
+		errMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "withdrawal": w})

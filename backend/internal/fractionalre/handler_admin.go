@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // AdminHandler is the admin control-plane HTTP surface. Every route is gated by
@@ -22,8 +24,6 @@ func (h *AdminHandler) Dashboard(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"asset_count": len(assets), "offering_count": len(offerings)})
 }
 
-// ── Sponsors ──────────────────────────────────────────────────────────────────
-
 func (h *AdminHandler) ListSponsors(c *gin.Context) {
 	out, err := h.svc.ListSponsors(c.Request.Context())
 	if err != nil {
@@ -39,7 +39,7 @@ func (h *AdminHandler) CreateSponsor(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	out, err := h.svc.CreateSponsor(c.Request.Context(), uid(c), &sp)
+	out, err := h.svc.CreateSponsor(c.Request.Context(), ginutil.UserID(c), &sp)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -47,10 +47,8 @@ func (h *AdminHandler) CreateSponsor(c *gin.Context) {
 	c.JSON(http.StatusCreated, out)
 }
 
-// ── Assets ────────────────────────────────────────────────────────────────────
-
 func (h *AdminHandler) ListAssets(c *gin.Context) {
-	limit, offset := pageParams(c, 50)
+	limit, offset := ginutil.PageParams(c, 50, 200)
 	out, err := h.svc.ListAssets(c.Request.Context(), c.Query("status"), limit, offset)
 	if err != nil {
 		httpErr(c, err)
@@ -65,7 +63,7 @@ func (h *AdminHandler) CreateAsset(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	out, err := h.svc.CreateAsset(c.Request.Context(), uid(c), &a)
+	out, err := h.svc.CreateAsset(c.Request.Context(), ginutil.UserID(c), &a)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -92,7 +90,7 @@ func (h *AdminHandler) PatchAsset(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.PatchAsset(c.Request.Context(), uid(c), c.Param("id"), body.NAVKobo, body.Description, body.Location); err != nil {
+	if err := h.svc.PatchAsset(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.NAVKobo, body.Description, body.Location); err != nil {
 		httpErr(c, err)
 		return
 	}
@@ -110,7 +108,7 @@ func (h *AdminHandler) TitleVerify(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	a, err := h.svc.TitleVerify(c.Request.Context(), uid(c), c.Param("id"), body.Clear, body.Ref)
+	a, err := h.svc.TitleVerify(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Clear, body.Ref)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -126,7 +124,7 @@ func (h *AdminHandler) Transition(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	a, err := h.svc.Transition(c.Request.Context(), uid(c), c.Param("id"), AssetStatus(body.To))
+	a, err := h.svc.Transition(c.Request.Context(), ginutil.UserID(c), c.Param("id"), AssetStatus(body.To))
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -154,14 +152,12 @@ func (h *AdminHandler) CapTableTransfer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.TransferCapTable(c.Request.Context(), uid(c), body.AssetID, body.FromUser, body.ToUser, body.Units); err != nil {
+	if err := h.svc.TransferCapTable(c.Request.Context(), ginutil.UserID(c), body.AssetID, body.FromUser, body.ToUser, body.Units); err != nil {
 		httpErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
-
-// ── Rounds / offerings ────────────────────────────────────────────────────────
 
 func (h *AdminHandler) CreateRound(c *gin.Context) {
 	var o Offering
@@ -170,7 +166,7 @@ func (h *AdminHandler) CreateRound(c *gin.Context) {
 		return
 	}
 	o.AssetID = c.Param("id")
-	out, err := h.svc.CreateOffering(c.Request.Context(), uid(c), &o)
+	out, err := h.svc.CreateOffering(c.Request.Context(), ginutil.UserID(c), &o)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -179,7 +175,7 @@ func (h *AdminHandler) CreateRound(c *gin.Context) {
 }
 
 func (h *AdminHandler) ListRounds(c *gin.Context) {
-	limit, offset := pageParams(c, 50)
+	limit, offset := ginutil.PageParams(c, 50, 200)
 	out, err := h.svc.ListOfferings(c.Request.Context(), c.Query("status"), limit, offset)
 	if err != nil {
 		httpErr(c, err)
@@ -198,7 +194,7 @@ func (h *AdminHandler) GetRound(c *gin.Context) {
 }
 
 func (h *AdminHandler) OpenRound(c *gin.Context) {
-	if err := h.svc.OpenOffering(c.Request.Context(), uid(c), c.Param("id")); err != nil {
+	if err := h.svc.OpenOffering(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 		httpErr(c, err)
 		return
 	}
@@ -213,7 +209,7 @@ func (h *AdminHandler) ExtendRound(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	o, err := h.svc.ExtendOffering(c.Request.Context(), uid(c), c.Param("id"), body.ExtraDays)
+	o, err := h.svc.ExtendOffering(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.ExtraDays)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -231,14 +227,14 @@ func (h *AdminHandler) CloseRound(c *gin.Context) {
 	_ = c.ShouldBindJSON(&body)
 	ctx := c.Request.Context()
 	if body.Propose {
-		if err := h.svc.ProposeClose(ctx, uid(c), c.Param("id")); err != nil {
+		if err := h.svc.ProposeClose(ctx, ginutil.UserID(c), c.Param("id")); err != nil {
 			httpErr(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true, "stage": "proposed"})
 		return
 	}
-	o, err := h.svc.CloseAndSettle(ctx, uid(c), c.Param("id"))
+	o, err := h.svc.CloseAndSettle(ctx, ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -247,7 +243,7 @@ func (h *AdminHandler) CloseRound(c *gin.Context) {
 }
 
 func (h *AdminHandler) RefundRound(c *gin.Context) {
-	o, err := h.svc.RefundRound(c.Request.Context(), uid(c), c.Param("id"))
+	o, err := h.svc.RefundRound(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -257,7 +253,7 @@ func (h *AdminHandler) RefundRound(c *gin.Context) {
 
 // AllocateRound is an explicit allocation trigger (checker, threshold met).
 func (h *AdminHandler) AllocateRound(c *gin.Context) {
-	o, err := h.svc.CloseAndSettle(c.Request.Context(), uid(c), c.Param("id"))
+	o, err := h.svc.CloseAndSettle(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -267,15 +263,13 @@ func (h *AdminHandler) AllocateRound(c *gin.Context) {
 
 // FinanceRefund is the admin finance escape hatch keyed by roundId.
 func (h *AdminHandler) FinanceRefund(c *gin.Context) {
-	o, err := h.svc.RefundRound(c.Request.Context(), uid(c), c.Param("roundId"))
+	o, err := h.svc.RefundRound(c.Request.Context(), ginutil.UserID(c), c.Param("roundId"))
 	if err != nil {
 		httpErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, o)
 }
-
-// ── Investors / compliance ────────────────────────────────────────────────────
 
 func (h *AdminHandler) ListInvestors(c *gin.Context) {
 	// Read from the audit/holdings surface — minimal list via holdings is out of
@@ -319,7 +313,7 @@ func (h *AdminHandler) LimitOverride(c *gin.Context) {
 			exp = &t
 		}
 	}
-	if err := h.svc.OverrideLimit(c.Request.Context(), uid(c), c.Param("id"), body.OverrideKobo, body.Reason, body.ReasonCode, exp); err != nil {
+	if err := h.svc.OverrideLimit(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.OverrideKobo, body.Reason, body.ReasonCode, exp); err != nil {
 		httpErr(c, err)
 		return
 	}
@@ -335,7 +329,7 @@ func (h *AdminHandler) Classify(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.ClassifyInvestor(c.Request.Context(), uid(c), c.Param("id"), Classification(body.Classification), body.IncomeKobo); err != nil {
+	if err := h.svc.ClassifyInvestor(c.Request.Context(), ginutil.UserID(c), c.Param("id"), Classification(body.Classification), body.IncomeKobo); err != nil {
 		httpErr(c, err)
 		return
 	}
@@ -354,10 +348,8 @@ func (h *AdminHandler) ComplianceDashboard(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// ── Distributions (maker-checker) ─────────────────────────────────────────────
-
 func (h *AdminHandler) ScheduleDistribution(c *gin.Context) {
-	if idemKey(c) == "" {
+	if ginutil.IdempotencyKey(c) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": ErrIdempotencyKey.Error()})
 		return
 	}
@@ -366,7 +358,7 @@ func (h *AdminHandler) ScheduleDistribution(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	d, err := h.svc.ScheduleDistribution(c.Request.Context(), uid(c), idemKey(c), req)
+	d, err := h.svc.ScheduleDistribution(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -375,7 +367,7 @@ func (h *AdminHandler) ScheduleDistribution(c *gin.Context) {
 }
 
 func (h *AdminHandler) ListDistributions(c *gin.Context) {
-	limit, offset := pageParams(c, 50)
+	limit, offset := ginutil.PageParams(c, 50, 200)
 	out, err := h.svc.ListDistributions(c.Request.Context(), limit, offset)
 	if err != nil {
 		httpErr(c, err)
@@ -394,7 +386,7 @@ func (h *AdminHandler) PreviewDistribution(c *gin.Context) {
 }
 
 func (h *AdminHandler) SubmitDistribution(c *gin.Context) {
-	d, err := h.svc.SubmitDistribution(c.Request.Context(), uid(c), c.Param("id"))
+	d, err := h.svc.SubmitDistribution(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -405,7 +397,7 @@ func (h *AdminHandler) SubmitDistribution(c *gin.Context) {
 // ApproveDistribution is gated by fractionalre.distribution_approve; the
 // maker!=checker SoD invariant is enforced in the service.
 func (h *AdminHandler) ApproveDistribution(c *gin.Context) {
-	d, err := h.svc.ApproveDistribution(c.Request.Context(), uid(c), c.Param("id"))
+	d, err := h.svc.ApproveDistribution(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -413,10 +405,8 @@ func (h *AdminHandler) ApproveDistribution(c *gin.Context) {
 	c.JSON(http.StatusOK, d)
 }
 
-// ── Secondary market (admin) ──────────────────────────────────────────────────
-
 func (h *AdminHandler) ListMarketListings(c *gin.Context) {
-	limit, offset := pageParams(c, 50)
+	limit, offset := ginutil.PageParams(c, 50, 200)
 	out, err := h.svc.ListActiveListings(c.Request.Context(), limit, offset)
 	if err != nil {
 		httpErr(c, err)
@@ -430,7 +420,7 @@ func (h *AdminHandler) HaltListing(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	if err := h.svc.HaltListing(c.Request.Context(), uid(c), c.Param("id"), body.Reason); err != nil {
+	if err := h.svc.HaltListing(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Reason); err != nil {
 		httpErr(c, err)
 		return
 	}
@@ -446,14 +436,12 @@ func (h *AdminHandler) MarketControls(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.UpdateMarketControls(c.Request.Context(), uid(c), body.TradingEnabled, body.FeeBps); err != nil {
+	if err := h.svc.UpdateMarketControls(c.Request.Context(), ginutil.UserID(c), body.TradingEnabled, body.FeeBps); err != nil {
 		httpErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
-
-// ── Finance ───────────────────────────────────────────────────────────────────
 
 func (h *AdminHandler) Escrow(c *gin.Context) {
 	bal, err := h.svc.EscrowBalance(c.Request.Context())
@@ -473,10 +461,8 @@ func (h *AdminHandler) Fees(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"secondary_fee_bps": mc.FeeBps})
 }
 
-// ── Documents ─────────────────────────────────────────────────────────────────
-
 func (h *AdminHandler) Documents(c *gin.Context) {
-	out, err := h.svc.ListDocuments(c.Request.Context(), uid(c))
+	out, err := h.svc.ListDocuments(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -497,7 +483,7 @@ func (h *AdminHandler) PresignDocument(c *gin.Context) {
 	if body.ContentType == "" {
 		body.ContentType = "application/pdf"
 	}
-	url, key, err := h.svc.PresignDocument(c.Request.Context(), uid(c), body.AssetID, body.DocType, body.ContentType)
+	url, key, err := h.svc.PresignDocument(c.Request.Context(), ginutil.UserID(c), body.AssetID, body.DocType, body.ContentType)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -505,10 +491,8 @@ func (h *AdminHandler) PresignDocument(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"upload_url": url, "object_key": key})
 }
 
-// ── Audit ─────────────────────────────────────────────────────────────────────
-
 func (h *AdminHandler) Audit(c *gin.Context) {
-	limit, offset := pageParams(c, 100)
+	limit, offset := ginutil.PageParams(c, 100, 200)
 	out, err := h.svc.ListAudit(c.Request.Context(), limit, offset)
 	if err != nil {
 		httpErr(c, err)

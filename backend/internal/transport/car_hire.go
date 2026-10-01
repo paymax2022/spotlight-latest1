@@ -6,21 +6,22 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/go-common/ginutil"
 )
 
-// ─── Car hire / chauffeur ────────────────────────────────────────────────────
-//
 // State machine:
 //   requested → quoted → confirmed → active → (extended) → completed
-//   (cancelled)
-//
 // Quote returns fare + deposit from the car_hire pricing config.
 // Book escrows fare + deposit (two settlements under one reference prefix).
 // Extend escrows the delta. Complete settles the driver split (fare + extends)
 // and refunds the deposit. Cancel refunds everything.
 
-var carHireTransitions = map[string]map[string]bool{
+var carHireTransitions = fsm.Table[string]{
 	"requested": {"quoted": true, "confirmed": true, "cancelled": true},
 	"quoted":    {"confirmed": true, "cancelled": true},
 	"confirmed": {"active": true, "cancelled": true},
@@ -33,14 +34,8 @@ func canTransitionCarHire(from, to string) bool {
 		// Allow extended → extended (repeat extensions).
 		return from == "extended" && to == "extended"
 	}
-	m, ok := carHireTransitions[from]
-	if !ok {
-		return false
-	}
-	return m[to]
+	return carHireTransitions.Can(from, to)
 }
-
-// ─── Request bodies ──────────────────────────────────────────────────────────
 
 // CarHireQuoteRequest is POST /mobility/car-hire/quote.
 type CarHireQuoteRequest struct {
@@ -171,7 +166,7 @@ func (s *Service) BookCarHire(ctx context.Context, userID string, req CarHireBoo
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'confirmed',$12,$13)`
 	if _, err := s.db.Exec(ctx, q,
 		bookingID, userID, hireType, vehicleClass, req.Chauffeur, startAt, req.DurationHours,
-		nullStr(req.PickupAddress), nullStr(req.SpecialRequest), deposit, fare, fareSett.ID, idempotencyKey,
+		dbutil.NullStr(req.PickupAddress), dbutil.NullStr(req.SpecialRequest), deposit, fare, fareSett.ID, idempotencyKey,
 	); err != nil {
 		return nil, fmt.Errorf("transport: insert car-hire booking: %w", err)
 	}
@@ -455,4 +450,109 @@ func (s *Service) ListCarHire(ctx context.Context, userID string) ([]map[string]
 		})
 	}
 	return out, nil
+}
+
+// CarHireQuote returns fare + deposit.
+func (h *Handler) CarHireQuote(c *gin.Context) {
+	var req CarHireQuoteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	q, err := h.svc.QuoteCarHire(c.Request.Context(), req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, q)
+}
+
+// CarHireBook escrows fare + deposit.
+func (h *Handler) CarHireBook(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req CarHireBookRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	b, err := h.svc.BookCarHire(c.Request.Context(), userID, req, ginutil.IdempotencyKey(c))
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, b)
+}
+
+// CarHireGet returns a booking detail.
+func (h *Handler) CarHireGet(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	b, err := h.svc.CarHireDetail(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, b)
+}
+
+// CarHireList returns the user's bookings.
+func (h *Handler) CarHireList(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	bs, err := h.svc.ListCarHire(c.Request.Context(), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"bookings": bs})
+}
+
+// CarHireActivate moves a confirmed booking to active.
+func (h *Handler) CarHireActivate(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if err := h.svc.ActivateCarHire(c.Request.Context(), c.Param("id"), userID); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "active"})
+}
+
+// CarHireExtend escrows the delta for extra hours.
+func (h *Handler) CarHireExtend(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req CarHireExtendRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	key := ginutil.IdempotencyKey(c)
+	if key == "" {
+		key = req.IdempotencyKey
+	}
+	b, err := h.svc.ExtendCarHire(c.Request.Context(), c.Param("id"), userID, req.ExtraHours, key)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, b)
+}
+
+// CarHireComplete settles driver split + releases deposit.
+func (h *Handler) CarHireComplete(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if err := h.svc.CompleteCarHire(c.Request.Context(), c.Param("id"), userID); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "completed"})
+}
+
+// CarHireCancel refunds all escrow.
+func (h *Handler) CarHireCancel(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req CancelRequest
+	_ = c.ShouldBindJSON(&req)
+	if err := h.svc.CancelCarHire(c.Request.Context(), c.Param("id"), userID, req.Reason); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "cancelled"})
 }

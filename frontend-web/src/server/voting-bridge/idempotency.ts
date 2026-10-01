@@ -3,7 +3,7 @@
  * Prevents duplicate votes from concurrent requests
  */
 
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 
 /**
@@ -24,7 +24,6 @@ export async function checkAndClaimIdempotencyKey(key: string) {
 
   try {
     // Try to insert the key with an empty response
-    // If it already exists, return the existing result
     const { data, error } = await supabase
       .from('bridge_idempotency_keys')
       .insert({
@@ -39,7 +38,6 @@ export async function checkAndClaimIdempotencyKey(key: string) {
       if (error.code === '23505') {
         // The winner publishes its response only AFTER the vote completes, so a
         // duplicate arriving concurrently used to read the placeholder `{}`, fall
-        // through to `return null`, and cast a SECOND vote. The dedupe was real
         // for sequential retries and absent for concurrent ones — exactly the
         // case an idempotency key exists to cover. Wait for the winner instead.
         for (let attempt = 0; attempt < CLAIM_WAIT_ATTEMPTS; attempt++) {
@@ -68,11 +66,9 @@ export async function checkAndClaimIdempotencyKey(key: string) {
       return null;
     }
 
-    // Key was inserted successfully — continue to call the function
     return null;
   } catch (error) {
     // The 409 above is a DECISION, not a failure. This catch's fail-open policy
-    // (below) would swallow it back into `return null` and let the duplicate
     // vote — reinstating the exact hole the wait closes. Let it through.
     if (error instanceof ApiError) throw error;
     console.error('[Idempotency] checkAndClaimIdempotencyKey error:', error);

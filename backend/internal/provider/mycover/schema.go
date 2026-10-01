@@ -9,23 +9,19 @@ import (
 	"strconv"
 	"strings"
 
+	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/insurance/gateway"
 )
 
-// ════════════════════════════════════════════════════════════════════════════
 // FORM SCHEMA — fetched from the provider, never hand-maintained
-// ════════════════════════════════════════════════════════════════════════════
-//
 // GET /public-product-details/{product_id} returns the complete, machine-readable
 // field table for a product: name, label, type, required, description, the data
 // source (a literal enum or a utility URL), and full validation rules. It is what
 // docs.mycover.ai itself renders, and it needs NO AUTHENTICATION.
-//
 // This is the endpoint that makes "adding a product is a data change" true in the
 // strong sense: there is no table of fields in this repo to drift out of date.
 // The sync fetches the schema, translates it into the internal Field contract,
 // and stores it. A product MyCover adds tomorrow arrives with its own form.
-//
 // ⚠️ This endpoint is NOT enveloped. It returns a BARE JSON object with no
 // responseCode — unlike every other endpoint on the API.
 
@@ -104,8 +100,6 @@ type Utility struct {
 	URL  string `json:"url,omitempty"`
 }
 
-// --- provider JSON (never leaves this file) ---
-
 type publicProductDetails struct {
 	ID             string            `json:"id"`
 	Name           string            `json:"name"`
@@ -116,22 +110,22 @@ type publicProductDetails struct {
 }
 
 type rawSchemaField struct {
-	Name        string           `json:"name"`
-	Label       string           `json:"label"`
-	Type        string           `json:"type"`
-	Required    bool             `json:"required"`
-	Description string           `json:"description"`
-	DataSource  json.RawMessage  `json:"data_source"`
-	Validation  json.RawMessage  `json:"validation"`
+	Name        string          `json:"name"`
+	Label       string          `json:"label"`
+	Type        string          `json:"type"`
+	Required    bool            `json:"required"`
+	Description string          `json:"description"`
+	DataSource  json.RawMessage `json:"data_source"`
+	Validation  json.RawMessage `json:"validation"`
 	// ChildData is the key MyCover ACTUALLY ships nested shapes under. The three
 	// below are conventional JSON-Schema-ish names that this provider never uses;
 	// they are kept as tolerant fallbacks, but child_data is the live one. 64 of
 	// the 68 live products nest under it (a policy_holder object on 64, plus 17
 	// repeating arrays), so reading only the others dropped every nested field.
-	ChildData   []rawSchemaField `json:"child_data"`
-	Children    []rawSchemaField `json:"children"`
-	Properties  []rawSchemaField `json:"properties"`
-	Items       []rawSchemaField `json:"items"`
+	ChildData  []rawSchemaField `json:"child_data"`
+	Children   []rawSchemaField `json:"children"`
+	Properties []rawSchemaField `json:"properties"`
+	Items      []rawSchemaField `json:"items"`
 }
 
 type rawValidation struct {
@@ -152,7 +146,6 @@ type rawValidation struct {
 }
 
 // ProductSchemaFor fetches and normalises one product's form schema.
-//
 // It sends NO Authorization header: the endpoint is public, and not sending a
 // credential where none is required is the right default.
 func (c *Client) ProductSchemaFor(ctx context.Context, productID string) (*ProductSchema, error) {
@@ -193,7 +186,6 @@ func (c *Client) ProductSchemaFor(ctx context.Context, productID string) (*Produ
 // Purchasable reports whether a schema describes a product that can actually be
 // sold. MyCover ships 7 products (of 69) whose purchase configuration is broken;
 // four of them return a schema containing NOTHING but product_id.
-//
 // A form with no member-fillable field is the tell: there is nothing to collect,
 // so there is nothing to buy. Listing such a product is fine; selling it would
 // take money for cover that cannot be issued.
@@ -245,7 +237,7 @@ func convertField(rf rawSchemaField) Field {
 
 	f := Field{
 		Name:        rf.Name,
-		Label:       firstNonEmpty(rf.Label, humanise(rf.Name)),
+		Label:       strutil.FirstNonEmpty(rf.Label, humanise(rf.Name)),
 		Required:    rf.Required,
 		Help:        rf.Description,
 		MyCoverType: rf.Type,
@@ -307,9 +299,7 @@ func convertField(rf rawSchemaField) Field {
 // mapFieldType translates MyCover's coarse type vocabulary (string, number,
 // boolean, object, array, integer) into the richer internal contract type the
 // app renders a widget from.
-//
 // ⚠️ ONE OF THESE LABELS IS LOAD-BEARING, NOT PRESENTATIONAL.
-//
 // This comment used to claim the whole mapping "never changes what is sent or
 // what anything costs". That was false, and the falsehood was the root cause of
 // a live 100x pricing bug. `money` is the label that says a value is DENOMINATED:
@@ -317,7 +307,6 @@ func convertField(rf rawSchemaField) Field {
 // exactly those fields to the provider's naira because of it (see
 // gateway/form_money.go and money.go). Every other label here really is just a
 // keyboard and a control.
-//
 // A name-based heuristic remains acceptable for `money` for one reason only:
 // SYMMETRY. Both sides key off the SAME emitted label, so a field this function
 // misclassifies is multiplied by 100 by the client and divided by 100 by the
@@ -427,7 +416,7 @@ func parseOptions(candidates ...json.RawMessage) []Option {
 			out := make([]Option, 0, len(labelled))
 			for _, o := range labelled {
 				val := jsonNumberOrString(o.Value)
-				out = append(out, Option{Value: val, Label: firstNonEmpty(o.Label, val)})
+				out = append(out, Option{Value: val, Label: strutil.FirstNonEmpty(o.Label, val)})
 			}
 			return out
 		}
@@ -521,7 +510,6 @@ func humanise(name string) string {
 
 // boundToKobo rescales a money field's naira bound to the kobo the internal
 // contract publishes. Exact decimal arithmetic (NairaToKobo) — never float64.
-//
 // A bound we cannot scale exactly is DROPPED rather than published at the wrong
 // magnitude: no minimum is honest, and a 100x-lenient one is a money bug wearing
 // a validation rule's clothes.

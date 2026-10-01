@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/stays/gateway"
 )
 
@@ -80,8 +81,6 @@ func (h *Handler) enrich(ctx context.Context, res *Reservation) reservationView 
 	return view
 }
 
-func userID(c *gin.Context) string { return c.GetString("user_id") }
-
 // mapErr maps service sentinel errors to HTTP responses (PRD §28 error taxonomy).
 func mapErr(c *gin.Context, err error) {
 	switch {
@@ -102,7 +101,7 @@ func mapErr(c *gin.Context, err error) {
 
 // Prebook (member): POST /prebook — two-step gate; returns book_token + priced total.
 func (h *Handler) Prebook(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -165,12 +164,12 @@ func (h *Handler) Prebook(c *gin.Context) {
 // Book (member): POST /book {reservation_id, book_token, guest} — Idempotency-Key
 // header REQUIRED. Runs the hold→book→charge→release saga with mandatory auto-release.
 func (h *Handler) Book(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
 	}
-	idemKey := c.GetHeader("Idempotency-Key")
+	idemKey := ginutil.IdempotencyKey(c)
 	if idemKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
@@ -212,7 +211,7 @@ func (h *Handler) Book(c *gin.Context) {
 func (h *Handler) List(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	rs, err := h.svc.List(c.Request.Context(), userID(c), limit, offset)
+	rs, err := h.svc.List(c.Request.Context(), ginutil.UserID(c), limit, offset)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -226,7 +225,7 @@ func (h *Handler) List(c *gin.Context) {
 
 // Get (member): GET /reservations/:id
 func (h *Handler) Get(c *gin.Context) {
-	res, err := h.svc.Get(c.Request.Context(), userID(c), c.Param("id"))
+	res, err := h.svc.Get(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -236,7 +235,7 @@ func (h *Handler) Get(c *gin.Context) {
 
 // Voucher (member): GET /reservations/:id/voucher — signed URL.
 func (h *Handler) Voucher(c *gin.Context) {
-	ref, err := h.svc.Voucher(c.Request.Context(), userID(c), c.Param("id"))
+	ref, err := h.svc.Voucher(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -256,7 +255,7 @@ func (h *Handler) Cancel(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	res, err := h.svc.Cancel(c.Request.Context(), userID(c), c.Param("id"), body.Reason)
+	res, err := h.svc.Cancel(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Reason)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -268,7 +267,7 @@ func (h *Handler) Cancel(c *gin.Context) {
 // Idempotency-Key header REQUIRED (a modify re-prices and may charge/refund the
 // price delta; the key makes a retry replay-safe).
 func (h *Handler) Modify(c *gin.Context) {
-	idemKey := c.GetHeader("Idempotency-Key")
+	idemKey := ginutil.IdempotencyKey(c)
 	if idemKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
@@ -287,7 +286,7 @@ func (h *Handler) Modify(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid check_in/check_out"})
 		return
 	}
-	res, err := h.svc.Modify(c.Request.Context(), userID(c), c.Param("id"), idemKey, ci, co)
+	res, err := h.svc.Modify(c.Request.Context(), ginutil.UserID(c), c.Param("id"), idemKey, ci, co)
 	if err != nil {
 		mapErr(c, err)
 		return

@@ -1,4 +1,3 @@
-// ── Paymax Stays — Domain types ──────────────────────────────────────────────
 // Normalised models only (supplier JSON never leaks past the api layer — PRD §7).
 // Money is integer minor units: kobo for NGN, cents for USD. Currency is always
 // explicit (FX integrity — every rate carries its currency).
@@ -15,7 +14,6 @@ export type PropertyType = 'hotel' | 'apartment' | 'guesthouse' | 'resort';
 
 export type BoardBasis = 'room_only' | 'breakfast' | 'half_board' | 'full_board';
 
-// ── Search request ───────────────────────────────────────────────────────────
 export interface GuestConfig {
   adults: number;
   children: number;
@@ -45,7 +43,6 @@ export interface StaysFilter {
   sort?: SortKey;
 }
 
-// ── Destination autocomplete ─────────────────────────────────────────────────
 export interface DestinationSuggestion {
   id: string;
   name: string;
@@ -54,7 +51,6 @@ export interface DestinationSuggestion {
   propertyCount: number;
 }
 
-// ── Property ─────────────────────────────────────────────────────────────────
 export interface GeoPoint {
   lat: number;
   lng: number;
@@ -111,7 +107,6 @@ export interface HousePolicies {
   extraBeds: string;
 }
 
-// ── Rooms & rate plans ───────────────────────────────────────────────────────
 export interface RoomType {
   id: string;
   propertyId: string;
@@ -132,7 +127,7 @@ export interface RatePlan {
   name: string;
   board: BoardBasis;
   refundable: boolean;
-  freeCancelUntil?: string;   // ISO date; null/undefined = non-ref
+  freeCancelUntil?: string;
   mobileOnly: boolean;
   /** Per-night price in display currency. */
   pricePerNightMinor: number;
@@ -141,7 +136,6 @@ export interface RatePlan {
   loyaltyDiscountPct?: number;
 }
 
-// ── Reviews ──────────────────────────────────────────────────────────────────
 export interface Review {
   id: string;
   author: string;
@@ -154,7 +148,6 @@ export interface Review {
   hotelierResponse?: string;
 }
 
-// ── Booking lifecycle (PRD §11) ──────────────────────────────────────────────
 export type ReservationState =
   | 'OFFER_SELECTED'
   | 'PREBOOK_OK'
@@ -239,7 +232,6 @@ export interface PriceBreakdownData {
   displayTotalMinor: number;
 }
 
-// ── Prebook (two-step prebook → book; PRD §11) ───────────────────────────────
 export interface PrebookInput {
   draft: BookingDraft;
   addOnKeys: string[];
@@ -248,8 +240,8 @@ export interface PrebookInput {
 }
 
 export interface PrebookResult {
-  bookToken: string;         // short-lived; consumed by book
-  expiresAt: string;         // ISO; offer TTL
+  bookToken: string;
+  expiresAt: string;
   /** True if the live re-check moved the price (PREBOOK_PRICE_CHANGED). */
   priceChanged: boolean;
   /** Sold out on re-check (PREBOOK_SOLD_OUT). */
@@ -298,7 +290,6 @@ export interface BookResult {
   holdReleased?: boolean;
 }
 
-// ── Deals / loyalty ──────────────────────────────────────────────────────────
 export interface Deal {
   id: string;
   kind: 'mobile_rate' | 'last_minute' | 'loyalty';
@@ -314,7 +305,6 @@ export interface StaysHome {
   saved: PropertyCard[];
 }
 
-// ── Profile prefill (from KYC/profile mock) ──────────────────────────────────
 export interface GuestProfile {
   fullName: string;
   email: string;

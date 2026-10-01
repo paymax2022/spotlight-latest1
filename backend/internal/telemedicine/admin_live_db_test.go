@@ -1,12 +1,9 @@
 package telemedicine_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB coverage for TELEMEDICINE-004: the admin console backend (dashboard,
 // doctor roster, system-wide appointment list, MDCN verify decision + audit
 // trail). Styled after uat_fixes_live_db_test.go / doctors_nullable_live_db_test.go.
-//
 // Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

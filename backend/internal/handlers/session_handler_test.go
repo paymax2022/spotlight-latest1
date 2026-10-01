@@ -12,8 +12,6 @@ import (
 	"spotlight/backend/internal/services"
 )
 
-// ── fakes ────────────────────────────────────────────────────────────────────
-
 type fakeSessionService struct {
 	listed     []domain.Session
 	revokedOne bool

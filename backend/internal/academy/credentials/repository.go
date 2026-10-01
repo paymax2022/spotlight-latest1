@@ -29,8 +29,6 @@ var ErrNotFound = errors.New("credentials: not found")
 
 type rowScanner interface{ Scan(dest ...any) error }
 
-// ── helpers ────────────────────────────────────────────────────────────────────
-
 func toJSONB(v any) []byte {
 	if v == nil {
 		return []byte("{}")
@@ -90,8 +88,6 @@ func (r *Repository) HolderName(ctx context.Context, userID string) string {
 	}
 	return *name
 }
-
-// ── Credential scanning ──────────────────────────────────────────────────────────
 
 func scanCredential(row rowScanner) (*Credential, error) {
 	c := &Credential{}
@@ -279,8 +275,6 @@ func (r *Repository) RevokeCredential(ctx context.Context, actor, id, reason str
 	return r.GetCredential(ctx, id)
 }
 
-// ── Verification registry (public read) ──────────────────────────────────────────
-
 func (r *Repository) GetVerification(ctx context.Context, verificationID string) (*PublicVerification, error) {
 	const q = `
 		SELECT verification_id, holder_name, title, kind, status, issued_at
@@ -300,8 +294,6 @@ func (r *Repository) GetVerification(ctx context.Context, verificationID string)
 	}
 	return v, nil
 }
-
-// ── Earning opportunities (catalog) ──────────────────────────────────────────────
 
 func scanOpportunity(row rowScanner) (*EarningOpportunity, error) {
 	o := &EarningOpportunity{}
@@ -407,8 +399,6 @@ func (r *Repository) UpdateOpportunity(ctx context.Context, actor, id string, re
 	_ = r.insertAudit(ctx, actor, "earning_opportunity.updated", "academy_earning_opportunity", id, nil, "info")
 	return r.GetOpportunity(ctx, id)
 }
-
-// ── Earning applications (idempotent apply → route) ───────────────────────────────
 
 func scanApplication(row rowScanner) (*EarningApplication, error) {
 	a := &EarningApplication{}

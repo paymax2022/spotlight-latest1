@@ -1,8 +1,5 @@
-// ── Screen 31 — Report flow ──────────────────────────────────────────────────
 // Always-accessible safety valve (never buried). Reason selector + optional
 // evidence photo + optional "also block this user" toggle → POST /reports.
-//
-// Entry (route params): ?targetType=listing|seller|chat&targetId=<id>&targetName=<label>&sellerId=<id>
 // Reached from the flag icon on Listing Detail, Seller Profile, and Chat.
 // Submit → confirmation with the expected review timeframe, then back.
 import React, { useMemo, useState } from 'react';
@@ -12,10 +9,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import * as ImagePicker from 'expo-image-picker';
 import { Camera, ImagePlus, CircleCheck, Check } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import { MarketColors } from '@/features/marketplace';

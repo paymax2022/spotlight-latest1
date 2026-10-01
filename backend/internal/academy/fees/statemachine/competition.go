@@ -1,13 +1,9 @@
 package feesstatemachine
 
-// ── Competition state machine (build-spec §3.4) ──────────────────────────────
-//
 //	draft → open_registration → registration_closed → in_progress
 //	      → results_pending → completed → archived
-//
 // Strictly LINEAR and FORWARD-ONLY: no skips, no backward moves. Terminal:
 // archived.
-//
 // Scoring-lock rule (§3.4): "Scoring writes lock the instant a competition
 // enters results_pending — no LeaderboardEntry may be created or edited against
 // a competition in that state or later." ScoringLocked(s) encodes exactly that
@@ -80,12 +76,6 @@ func competitionEventTarget(event Event) CompetitionState {
 	}
 }
 
-// validCompetitionState reports whether s is a known competition state.
-func validCompetitionState(s CompetitionState) bool {
-	_, ok := competitionIndex[s]
-	return ok
-}
-
 // CompetitionCanTransition reports whether from→to is a legal competition
 // transition: to must be the immediate successor of from in the linear order.
 // Pure. No skips, no backward moves.
@@ -103,7 +93,7 @@ func CompetitionCanTransition(from, to CompetitionState) bool {
 // idempotent no-op ErrAlreadyInState; any non-adjacent (skip/backward) move is
 // ErrIllegalTransition; archived rejects everything as ErrTerminal.
 func CompetitionTransition(from CompetitionState, event Event) (CompetitionState, error) {
-	if !validCompetitionState(from) {
+	if _, ok := competitionIndex[from]; !ok {
 		return from, ErrIllegalTransition
 	}
 	if from == CompetitionArchived {

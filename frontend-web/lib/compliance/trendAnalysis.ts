@@ -228,7 +228,6 @@ export class TrendAnalyzer {
     const median = historicalScores[Math.floor(historicalScores.length / 2)];
     const average = historicalScores.reduce((a, b) => a + b, 0) / historicalScores.length;
 
-    // Calculate percentile rank
     const higherCount = historicalScores.filter((s) => s < currentScore).length;
     const percentilRank = (higherCount / historicalScores.length) * 100;
 

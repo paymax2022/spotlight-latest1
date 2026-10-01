@@ -2,14 +2,11 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 
-// ── Admin — Film Academy areas of interest ───────────────────────────────────
 // Each area carries a NAIRA fee that is ADDED to academy_settings.application_fee
 // when an applicant selects it. The applicant-facing total is computed
 // server-side in /api/academy/apply from these same rows, so editing a fee here
 // changes what the next applicant pays — nothing is cached client-side.
-//
 // `slug` is written into academy_applications.areas_of_interest, so it must stay
-// stable once applications reference it. Renaming an area's LABEL is safe;
 // changing its slug orphans historic rows, which is why slug is only accepted on
 // create and ignored on update.
 
@@ -48,7 +45,6 @@ function trimChar(s: string, ch: string): string {
 function slugify(v: string): string {
   return trimChar(v.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_'), '_');
 }
-
 
 /**
  * Log the underlying Postgres error, return a clean message to the client.

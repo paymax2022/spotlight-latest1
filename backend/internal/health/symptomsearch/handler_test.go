@@ -59,8 +59,6 @@ func doJSON(t *testing.T, r *gin.Engine, method, path, body string, header map[s
 	return w
 }
 
-// ─── POST /symptom-search ────────────────────────────────────────────────────
-
 func TestHTTP_SymptomSearch_HappyPath(t *testing.T) {
 	svc, _ := newTestService()
 	h := NewHandler(svc, nil)
@@ -120,7 +118,6 @@ func TestHTTP_SymptomSearch_Unauthenticated401(t *testing.T) {
 	}
 }
 
-// ─── Rate limit (in-memory fallback path; the Redis path shares the header
 //     and 429 plumbing and mirrors maps.redisAllow) ──────────────────────────
 
 func TestHTTP_SymptomSearch_RateLimited429(t *testing.T) {
@@ -158,8 +155,6 @@ func TestHTTP_SymptomSearch_RateLimited429(t *testing.T) {
 		t.Fatalf("different device must have its own window, got %d", w.Code)
 	}
 }
-
-// ─── GET /admin/symptom/metrics ──────────────────────────────────────────────
 
 func TestHTTP_AdminSymptomMetrics_ExactShape(t *testing.T) {
 	med := 421.5

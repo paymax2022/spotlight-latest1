@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
 	feesstatemachine "spotlight/backend/internal/academy/fees/statemachine"
 )
 
@@ -18,7 +19,6 @@ import (
 // so vault_test.go can substitute an in-memory fake and exercise the SF-5 segregation,
 // idempotency and state-machine invariants WITHOUT a live DB (mirrors
 // feeschedule_test.go / edupay isolation).
-//
 // It maps onto the SAME rows edupay uses (academy_savings_pots +
 // academy_pot_contributions) — the FeesVault does not own new tables.
 type Store interface {
@@ -68,7 +68,7 @@ func (r *Repository) InsertVault(ctx context.Context, userID, goalName string, t
 	now := time.Now()
 	const q = `INSERT INTO academy_savings_pots (id, user_id, goal_name, target_minor, saved_minor, fee_schedule_id, status, created_at)
 	           VALUES ($1,$2,$3,$4,0,$5,'active',$6)`
-	if _, err := r.db.Exec(ctx, q, id, userID, goalName, targetMinor, nullStr(feeScheduleID), now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, userID, goalName, targetMinor, dbutil.NullStr(feeScheduleID), now); err != nil {
 		return nil, err
 	}
 	return r.GetVault(ctx, userID, id)
@@ -133,7 +133,7 @@ func (r *Repository) AppendContribution(ctx context.Context, vaultID, userID str
 	const ins = `INSERT INTO academy_pot_contributions (id, pot_id, user_id, amount_minor, wallet_ref, idempotency_key, created_at)
 	             VALUES ($1,$2,$3,$4,$5,$6, now())
 	             ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, ins, id, vaultID, userID, amountMinor, nullStr(ledgerRef), idemKey)
+	tag, err := r.db.Exec(ctx, ins, id, vaultID, userID, amountMinor, dbutil.NullStr(ledgerRef), idemKey)
 	if err != nil {
 		return false, err
 	}
@@ -164,7 +164,7 @@ func (r *Repository) SetStatus(ctx context.Context, vaultID string, from, to fee
 // no new column is required (metadata only — money authority is the ledger transfer).
 func (r *Repository) SetInvoiceRef(ctx context.Context, vaultID, invoiceID string) error {
 	const upd = `UPDATE academy_savings_pots SET fee_schedule_id = COALESCE(fee_schedule_id, $2) WHERE id = $1`
-	_, err := r.db.Exec(ctx, upd, vaultID, nullStr(invoiceID))
+	_, err := r.db.Exec(ctx, upd, vaultID, dbutil.NullStr(invoiceID))
 	return err
 }
 
@@ -177,25 +177,9 @@ func writeAudit(ctx context.Context, q querier, actorID, action, entityID, from,
 	const ins = `INSERT INTO public.academy_commerce_audit
 	             (actor_id, action, entity_type, entity_id, from_state, to_state, detail, idempotency_key)
 	             VALUES ($1,$2,'academy_fees_vault',$3,$4,$5,$6,$7)`
-	_, err := q.Exec(ctx, ins, nullStr(actorID), action, nullUUID(entityID),
-		nullStr(from), nullStr(to), toJSON(detail), nullStr(idemKey))
+	_, err := q.Exec(ctx, ins, dbutil.NullStr(actorID), action, dbutil.NullUUID(entityID),
+		dbutil.NullStr(from), dbutil.NullStr(to), toJSON(detail), dbutil.NullStr(idemKey))
 	return err
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func nullUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 func toJSON(v any) []byte {

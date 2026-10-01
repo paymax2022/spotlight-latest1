@@ -11,7 +11,6 @@
  * which throws on a relative base.
  */
 function adminApiBase(): string {
-  // Browser: same origin, so the request carries the session cookie and the key
   // is attached on the server side of the proxy.
   if (typeof window !== 'undefined') return `${window.location.origin}/api/admin-proxy`;
   // Server render: still through the proxy, so there is exactly ONE place that

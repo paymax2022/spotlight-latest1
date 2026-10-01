@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 	platformRedis "spotlight/backend/internal/platform/redis"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // AddressGeocoder resolves a typed address to a pin + Plus Code. Satisfied by
@@ -296,8 +298,7 @@ func (s *Service) GetResults(ctx context.Context, estateID, electionID string) (
 	return out, rows.Err()
 }
 
-// ── Block 28: Security gate / guard app ───────────────────────────────────────
-
+// ListGates — Block 28: Security gate / guard app
 // ListGates returns all active gates for an estate.
 func (s *Service) ListGates(ctx context.Context, estateID string) ([]Gate, error) {
 	const q = `SELECT id, estate_id, name, gate_type, active, created_at FROM estate_gates WHERE estate_id=$1 AND active=TRUE ORDER BY name`
@@ -440,7 +441,7 @@ func (s *Service) SubmitIncidentReport(ctx context.Context, estateID, guardID st
 		Escalated: req.Escalated, CreatedAt: time.Now(),
 	}
 	const q = `INSERT INTO gate_incident_reports (id, estate_id, guard_id, gate_id, incident_type, description, evidence_url, escalated) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
-	_, err := s.db.Exec(ctx, q, rep.ID, rep.EstateID, rep.GuardID, nilIfEmpty(rep.GateID), rep.IncidentType, rep.Description, nilIfEmpty(rep.EvidenceURL), rep.Escalated)
+	_, err := s.db.Exec(ctx, q, rep.ID, rep.EstateID, rep.GuardID, dbutil.StrPtr(rep.GateID), rep.IncidentType, rep.Description, dbutil.StrPtr(rep.EvidenceURL), rep.Escalated)
 	return rep, err
 }
 
@@ -450,7 +451,7 @@ func (s *Service) HandoverShift(ctx context.Context, estateID, guardID string, r
 	_, _ = s.db.Exec(ctx,
 		`UPDATE guard_shifts SET ended_at=NOW(), handover_notes=$1, relieved_by=$2
 		WHERE estate_id=$3 AND guard_id=$4 AND ended_at IS NULL`,
-		req.HandoverNotes, nilIfEmpty(req.RelievedBy), estateID, guardID,
+		req.HandoverNotes, dbutil.StrPtr(req.RelievedBy), estateID, guardID,
 	)
 	// Open new shift.
 	shift := &GuardShift{
@@ -551,16 +552,6 @@ func denyReason(c *AccessCode) string {
 	}
 	return "code is not yet valid"
 }
-
-// nilIfEmpty returns nil if s is empty, otherwise returns &s.
-func nilIfEmpty(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-// ── Block 27: Extended visitor access codes ───────────────────────────────────
 
 // generateNumericCode produces a random 6-digit string, retrying on collision.
 func generateNumericCode() string {
@@ -735,8 +726,6 @@ func (s *Service) GetCheckinHistory(ctx context.Context, estateID, userID, codeI
 	return out, rows.Err()
 }
 
-// ── Block 26: Resident home dashboard ─────────────────────────────────────────
-
 // alertSeverity maps an emergency-alert kind to a dashboard severity bucket.
 // Pure (no DB) so the mapping is unit-testable.
 func alertSeverity(kind string) string {
@@ -850,8 +839,6 @@ SELECT
 	return dash, nil
 }
 
-// ── Block 25: Resident profiles ───────────────────────────────────────────────
-
 // getResidentID resolves the estate_residents.id for a given (estateID, userID) pair.
 // Fails closed on banned/deleted membership, mirroring assertRoles — this was
 // previously missing here, which let a banned or deleted member keep reading/
@@ -888,8 +875,8 @@ func (s *Service) UpsertProfile(ctx context.Context, estateID, userID string, re
 		req.OccupancyType = "resident"
 	}
 
-	ecJSON, _ := marshalJSON(req.EmergencyContact)
-	nokJSON, _ := marshalJSON(req.NextOfKin)
+	ecJSON, _ := json.Marshal(req.EmergencyContact)
+	nokJSON, _ := json.Marshal(req.NextOfKin)
 
 	p := &ResidentProfile{}
 	const q = `
@@ -1123,13 +1110,6 @@ func (s *Service) GetResidentCard(ctx context.Context, estateID, userID string) 
 	card.IssuedAt = time.Now().UTC().Format(time.RFC3339)
 	return &card, nil
 }
-
-// marshalJSON serialises a value to JSON bytes for JSONB columns.
-func marshalJSON(v any) ([]byte, error) {
-	return json.Marshal(v)
-}
-
-// ── Block 24: Onboarding & property selection ─────────────────────────────────
 
 // GenerateInviteCode creates a shareable join code (estate admin only).
 func (s *Service) GenerateInviteCode(ctx context.Context, estateID, adminID string, req GenerateInviteCodeRequest) (*InviteCode, error) {

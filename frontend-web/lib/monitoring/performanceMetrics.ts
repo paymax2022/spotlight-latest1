@@ -243,7 +243,6 @@ export class PerformanceMetricsCollector {
     if ((navigator as any).brightness) {
       return (navigator as any).brightness * 100;
     }
-    // Fallback: check if dark mode is enabled (proxy for brightness)
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 20 : 80;
   }
 

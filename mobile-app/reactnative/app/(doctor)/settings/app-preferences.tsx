@@ -2,9 +2,9 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Sparkles, Vibrate } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import SelectField from '@/components/SelectField';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, ToggleRow, StateView } from '@/features/doctor/components';
@@ -12,7 +12,6 @@ import { useAppPreferences, useUpdateAppPreferences } from '@/features/doctor/ho
 import { APP_LANGUAGE_OPTIONS, THEME_OPTIONS } from '@/features/doctor/constants';
 import type { AppLanguage, AppTheme, AppPreferences } from '@/types/doctor.batch7';
 
-// ── Section AC — App preferences: language & theme (AC.12 / AC.13) ─────────────
 // NEW screen: language + theme selectors and motion/haptics toggles share one
 // AppPreferences and one useUpdateAppPreferences mutation. Reuses SelectField /
 // ToggleRow.

@@ -5,26 +5,101 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/go-common/ginutil"
 )
 
-// ─── Scheduled logistics bookings ────────────────────────────────────────────
-//
 // A scheduling LAYER over the existing per-mode transport services. A user books
 // a future movement (ride/parcel/airport/bus); the transport-scheduler worker
 // materializes the REAL booking (trip / parcel job / bus ticket) a configurable
 // lead time before pickup and escrows funds AT DISPATCH (never at scheduling
 // time). See SWARM_INTEGRATION_CONTRACT.md for the frozen model + FSM.
-//
 // Money invariants (CLAUDE.md iron rules): kobo int64 everywhere; escrow/refund
 // go through `settlement` only (never ad-hoc ledger); an Idempotency-Key is
 // required on Create + Cancel (24h reuse is enforced by the DB-unique
 // idempotency_key column as the backstop — same approach as RequestRide/BookParcel);
 // a booking that ever escrowed funds must reach a terminal state that refunds or
 // settles them (no stranded escrow). OLA on every read/mutation.
+
+// FROZEN state machine (SWARM_INTEGRATION_CONTRACT.md §"FROZEN FSM"):
+//   scheduled        --(scheduler: pickup_at - lead_time ≤ now)--> dispatch_pending
+//   --(materialize via mode service + escrow OK)--> dispatched
+//   dispatch_pending --(no driver / mode error, attempts exhausted)--> failed_no_driver
+//   dispatched       --(underlying trip/parcel/bus completes)--> completed
+//   scheduled|dispatch_pending --(user or admin cancel)--> cancelled
+//   scheduled        --(pickup_at passed with no dispatch, safety net)--> expired
+// Illegal transitions return a typed CodedError (CodeInvalidState). There are NO
+// implicit transitions — every status change routes through guardScheduled first.
+
+// ScheduledStatus is the lifecycle status of a scheduled booking. Mirrors the
+// scheduled_booking_status Postgres enum exactly (migration
+// 20260906000000_transport_scheduled_bookings.sql).
+type ScheduledStatus string
+
+const (
+	SchedScheduled       ScheduledStatus = "scheduled"
+	SchedDispatchPending ScheduledStatus = "dispatch_pending"
+	SchedDispatched      ScheduledStatus = "dispatched"
+	SchedCompleted       ScheduledStatus = "completed"
+	SchedCancelled       ScheduledStatus = "cancelled"
+	SchedFailedNoDriver  ScheduledStatus = "failed_no_driver"
+	SchedExpired         ScheduledStatus = "expired"
+)
+
+// scheduledTransitions is the ONLY source of truth for legal moves. Any pair not
+// listed here is rejected. Terminal states (completed, cancelled,
+// failed_no_driver, expired) have no outgoing edges.
+var scheduledTransitions = fsm.Table[ScheduledStatus]{
+	SchedScheduled: {
+		SchedDispatchPending: true, // scheduler: due for dispatch
+		SchedCancelled:       true, // user/admin cancel
+		SchedExpired:         true, // safety-net: pickup_at passed, never dispatched
+	},
+	SchedDispatchPending: {
+		SchedDispatched:     true, // materialized + escrowed
+		SchedFailedNoDriver: true, // no driver / mode error, attempts exhausted
+		SchedCancelled:      true, // user/admin cancel mid-dispatch
+	},
+	SchedDispatched: {
+		SchedCompleted: true, // underlying trip/parcel/bus completed
+	},
+	// terminal — no outgoing transitions:
+	SchedCompleted:      {},
+	SchedCancelled:      {},
+	SchedFailedNoDriver: {},
+	SchedExpired:        {},
+}
+
+// canTransitionScheduled reports whether moving from→to is a legal FSM edge.
+// A self-transition (from == to) is never legal.
+func canTransitionScheduled(from, to ScheduledStatus) bool {
+	return scheduledTransitions.Can(from, to)
+}
+
+// isTerminalScheduled reports whether a status has no legal outgoing transition.
+func isTerminalScheduled(s ScheduledStatus) bool {
+	m, ok := scheduledTransitions[s]
+	return ok && len(m) == 0
+}
+
+// guardScheduled returns a typed CodedError (409 INVALID_STATE) when from→to is
+// not an allowed FSM edge, and nil when it is. Every scheduled-booking status
+// mutation MUST call this before writing — there are no implicit transitions.
+func guardScheduled(from, to ScheduledStatus) error {
+	if canTransitionScheduled(from, to) {
+		return nil
+	}
+	return codedErr(http.StatusConflict, CodeInvalidState,
+		fmt.Sprintf("illegal scheduled-booking transition %s → %s", from, to))
+}
 
 // scheduledModes is the frozen set of supported modes (mirrors the CHECK
 // constraint in the migration). ride_hail/ride_share/airport_pickup materialize
@@ -65,8 +140,6 @@ func defaultLeadMinutes(mode string) int {
 	}
 }
 
-// ─── Models ──────────────────────────────────────────────────────────────────
-
 // SchedPlace is a pickup/dropoff point on a scheduled booking. Coordinates are
 // optional (a bus booking has none); a label is human-readable.
 type SchedPlace struct {
@@ -106,8 +179,6 @@ type ScheduledBooking struct {
 	CancelledAt       *time.Time      `json:"cancelledAt,omitempty"`
 }
 
-// ─── Request bodies ──────────────────────────────────────────────────────────
-
 // ScheduledCreateRequest is POST /mobility/scheduled.
 type ScheduledCreateRequest struct {
 	Mode              string         `json:"mode" binding:"required"`
@@ -137,8 +208,6 @@ type ScheduledEstimateRequest struct {
 	Dropoff     Place          `json:"dropoff"`
 	ModePayload map[string]any `json:"mode_payload"`
 }
-
-// ─── Repository (pgx CRUD) ───────────────────────────────────────────────────
 
 // scheduledCols is the full column projection used by every SELECT so scanning
 // stays in one place.
@@ -182,8 +251,6 @@ func (s *Service) getScheduledRow(ctx context.Context, id string) (*ScheduledBoo
 	}
 	return b, nil
 }
-
-// ─── Service: member CRUD ────────────────────────────────────────────────────
 
 // CreateScheduled validates + persists a new scheduled booking in 'scheduled'
 // status. NO money moves here — escrow happens at dispatch. idempotencyKey is
@@ -256,8 +323,8 @@ func (s *Service) CreateScheduled(ctx context.Context, userID string, req Schedu
 		RETURNING ` + scheduledCols
 	row := s.db.QueryRow(ctx, q,
 		id, userID, req.Mode, pickupAt, lead, tz,
-		nullStr(req.Pickup.Label), req.Pickup.Lng, req.Pickup.Lat,
-		nullStr(req.Dropoff.Label), req.Dropoff.Lng, req.Dropoff.Lat,
+		dbutil.NullStr(req.Pickup.Label), req.Pickup.Lng, req.Pickup.Lat,
+		dbutil.NullStr(req.Dropoff.Label), req.Dropoff.Lng, req.Dropoff.Lat,
 		payloadJSON, estimate, payMethod, idempotencyKey,
 	)
 	b, err := scanScheduled(row)
@@ -370,13 +437,13 @@ func (s *Service) RescheduleScheduled(ctx context.Context, id, userID string, re
 		add("lead_time_minutes", *req.LeadTimeMinutes)
 	}
 	if req.Pickup != nil {
-		add("pickup_label", nullStr(req.Pickup.Label))
+		add("pickup_label", dbutil.NullStr(req.Pickup.Label))
 		// geo update via a dedicated expression (parameter order handled below).
 		args = append(args, req.Pickup.Lng, req.Pickup.Lat)
 		sets = append(sets, fmt.Sprintf("pickup_geo=%s", geogArgAt(len(args)-1, len(args))))
 	}
 	if req.Dropoff != nil {
-		add("dropoff_label", nullStr(req.Dropoff.Label))
+		add("dropoff_label", dbutil.NullStr(req.Dropoff.Label))
 		args = append(args, req.Dropoff.Lng, req.Dropoff.Lat)
 		sets = append(sets, fmt.Sprintf("dropoff_geo=%s", geogArgAt(len(args)-1, len(args))))
 	}
@@ -438,7 +505,7 @@ func (s *Service) cancelScheduledInternal(ctx context.Context, b *ScheduledBooki
 		SET status='cancelled', cancel_reason=$2, cancelled_at=NOW(), updated_at=NOW()
 		WHERE id=$1 AND status=$3
 		RETURNING ` + scheduledCols
-	nb, err := scanScheduled(s.db.QueryRow(ctx, q, b.ID, nullStr(reason), string(b.Status)))
+	nb, err := scanScheduled(s.db.QueryRow(ctx, q, b.ID, dbutil.NullStr(reason), string(b.Status)))
 	if err != nil {
 		return nil, codedErr(http.StatusConflict, CodeInvalidState, "booking changed concurrently")
 	}
@@ -514,8 +581,6 @@ func (s *Service) estimateForMode(ctx context.Context, mode string, pickup, drop
 	return nil
 }
 
-// ─── small helpers ───────────────────────────────────────────────────────────
-
 // airportPickupBuffer is added to a supplied flight arrival_time to derive the
 // scheduled pickup time (baggage claim + walk to pickup).
 const airportPickupBuffer = 45 * time.Minute
@@ -589,4 +654,100 @@ func joinComma(parts []string) string {
 		out += p
 	}
 	return out
+}
+
+// Mounted under the existing `mob` group → /api/finance/mobility/scheduled*.
+// Auth (user_id) is set by the group middleware; OLA to the owner is enforced in
+// the Service. Idempotency-Key is required on the two money-adjacent POSTs
+// (create, cancel) and read via the Idempotency-Key header.
+
+// ScheduledCreate handles POST /mobility/scheduled.
+func (h *Handler) ScheduledCreate(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req ScheduledCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	key := ginutil.IdempotencyKey(c)
+	b, err := h.svc.CreateScheduled(c.Request.Context(), userID, req, key)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, b)
+}
+
+// ScheduledList handles GET /mobility/scheduled?filter=upcoming|past|all&cursor&limit.
+func (h *Handler) ScheduledList(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	filter := c.DefaultQuery("filter", "all")
+	cursor := c.Query("cursor")
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	items, err := h.svc.ListScheduled(c.Request.Context(), userID, filter, cursor, limit)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	var nextCursor string
+	if n := len(items); n > 0 {
+		nextCursor = items[n-1].CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+	}
+	c.JSON(http.StatusOK, gin.H{"bookings": items, "nextCursor": nextCursor})
+}
+
+// ScheduledGet handles GET /mobility/scheduled/:id (OLA).
+func (h *Handler) ScheduledGet(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	b, err := h.svc.GetScheduled(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, b)
+}
+
+// ScheduledPatch handles PATCH /mobility/scheduled/:id (reschedule/edit).
+func (h *Handler) ScheduledPatch(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req ScheduledPatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	b, err := h.svc.RescheduleScheduled(c.Request.Context(), c.Param("id"), userID, req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, b)
+}
+
+// ScheduledCancel handles POST /mobility/scheduled/:id/cancel (Idempotency-Key).
+func (h *Handler) ScheduledCancel(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req CancelRequest
+	_ = c.ShouldBindJSON(&req)
+	key := ginutil.IdempotencyKey(c)
+	b, err := h.svc.CancelScheduled(c.Request.Context(), c.Param("id"), userID, req.Reason, key)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, b)
+}
+
+// ScheduledEstimate handles POST /mobility/scheduled/estimate (fare/ETA quote).
+func (h *Handler) ScheduledEstimate(c *gin.Context) {
+	var req ScheduledEstimateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	out, err := h.svc.EstimateScheduled(c.Request.Context(), req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
 }

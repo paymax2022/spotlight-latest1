@@ -24,7 +24,6 @@ function readableError(err: unknown, fallback: string): string {
   const message = err instanceof Error ? err.message : '';
   const lowered = message.toLowerCase();
   if (lowered.includes('failed to fetch')) return 'Verification service is unreachable. Please try again shortly.';
-  // Supabase reports an expired code and a wrong code identically; say so rather
   // than asserting which one it was.
   if (lowered.includes('expired') || lowered.includes('invalid')) {
     return 'That code is incorrect or has expired. Request a new one below.';
@@ -98,7 +97,6 @@ function VerifyEmailInner() {
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || 'Verification failed. Please try again.');
 
-      // The two backends differ here. Supabase's signup OTP signs the user in;
       // the server-issued one confirms the account and stops, because control of
       // a mailbox is not proof of the password. Continuing to `next` without a
       // session would land on a page that bounces straight back to sign-in.
@@ -126,7 +124,6 @@ function VerifyEmailInner() {
       });
       const body = await res.json().catch(() => null);
       // A 429 is the server's cooldown or hourly budget. Surfaced rather than
-      // swallowed: a user told "sent" who receives nothing cannot tell a throttle
       // from a delivery failure.
       if (!res.ok) throw new Error(body?.error || 'Could not resend the code. Please try again.');
       setInfo('A new code is on its way. It can take a minute to arrive.');

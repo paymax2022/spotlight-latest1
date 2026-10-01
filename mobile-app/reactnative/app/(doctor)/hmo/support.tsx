@@ -3,16 +3,15 @@ import { View, Text, FlatList, StyleSheet, Platform, KeyboardAvoidingView, Alert
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { MessageSquare } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { StateView, ChatComposer } from '@/features/doctor/components';
 import { useHmoSupportThread, useSendHmoSupportMessage } from '@/features/doctor/hooks';
 import type { HmoSupportMessage } from '@/types/doctor.batch4';
 
-// Section O (O18) — NEW screen: HMO support chat thread. Reuses ChatComposer;
 // bubble is inline because HmoSupportMessage uses the 'doctor' | 'patient' | 'hmo'
 // author union (MessageBubble expects the Phase 1 ChatMessage author shape).
 export default function HmoSupportScreen() {

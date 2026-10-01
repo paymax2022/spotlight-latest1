@@ -1,25 +1,20 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { MarketplaceMenuProvider } from '@/features/marketplace/components/MarketplaceMenu';
 import MarketTabBar from '@/features/marketplace/components/MarketTabBar';
 import { useMarketplaceRealtime } from '@/features/marketplace/realtime/useMarketplaceRealtime';
 
-// ── Marketplace nav shell ────────────────────────────────────────────────────
 // The 3-tab bottom nav inside the Marketplace tab (connect model):
 //   [ Discover ] [ Sell ] [ Deals ]
-//
 // The Deals tab is the conversation list (chat inbox). The old escrow "Orders"
 // tab is gone — the connect model has no orders, so active deals ARE the
 // conversations under Deals. Account + secondary pages live in the hamburger.
-//
 // Expo Router renders every route under app/marketplace/* through this layout.
-// The three entries below are the bottom-nav tabs; every other route (detail
 // screens like listing/[id], seller/[id], the Discover sub-screens search/
 // results/map/category, and boost/[listingId]) is registered with `href: null`
 // so it participates in this navigator (deep-linkable, stack-pushable) WITHOUT
 // showing a tab-bar button.
-//
 // The footer itself is a CUSTOM bar (MarketTabBar) that draws exactly the four
 // canonical tabs and ignores every other route in this navigator — so detail
 // and account sub-pages can never leak a broken button into the footer. The

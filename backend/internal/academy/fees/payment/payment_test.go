@@ -15,8 +15,6 @@ import (
 //     (the fake invoice exposes only RecordPayment — there is structurally no balance setter).
 // Tests actively attempt the violations they claim to guard.
 
-// ── fakeGateway ─────────────────────────────────────────────────────────────────────
-
 type fakeGateway struct {
 	initCalls   int
 	verifyCalls int
@@ -53,8 +51,6 @@ func (g *fakeGateway) VerifyPayment(_ context.Context, reference string) (*provi
 	return &provider.PaymentStatus{Reference: reference, Status: status, AmountKobo: g.verifyAmount}, nil
 }
 
-// ── fakeLedger: records the guardian→school moves; idempotent on key ─────────────────
-
 type ledgerMove struct {
 	guardian string
 	school   string
@@ -80,8 +76,6 @@ func (l *fakeLedger) MoveGuardianToSchool(_ context.Context, guardianUserID, sch
 	l.moves = append(l.moves, ledgerMove{guardian: guardianUserID, school: schoolID, amount: amountMinor, idem: idempotencyKey})
 	return ref, nil
 }
-
-// ── fakeInvoice: exposes ONLY RecordPayment (+ metadata) — NO balance setter (SF-2) ──
 
 type fakeInvoice struct {
 	// recorded is keyed by idempotency key → amount, enforcing one payment per key.
@@ -127,8 +121,6 @@ func (i *fakeInvoice) HasAnyPayment(_ context.Context, _ string) (bool, error) {
 	return i.priorPay || len(i.recorded) > 0, nil
 }
 
-// ── fakeIntentStore: in-memory, idempotent on idempotency key ────────────────────────
-
 type fakeIntentStore struct {
 	byRef  map[string]*intentRecord
 	byIdem map[string]*intentRecord
@@ -164,8 +156,6 @@ func (s *fakeIntentStore) MarkConfirmed(_ context.Context, reference string) err
 	return nil
 }
 
-// ── harness ───────────────────────────────────────────────────────────────────────
-
 func newTestService(t *testing.T, verifyAmount int64) (*Service, *fakeGateway, *fakeLedger, *fakeInvoice, *fakeIntentStore) {
 	t.Helper()
 	gw := &fakeGateway{verifyAmount: verifyAmount, verifyStatus: "success"}
@@ -175,9 +165,7 @@ func newTestService(t *testing.T, verifyAmount int64) (*Service, *fakeGateway, *
 	return NewService(gw, led, inv, store), gw, led, inv, store
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════
 // Intent creation.
-// ═══════════════════════════════════════════════════════════════════════════════════
 
 func TestCreateIntent_ReturnsAuthURL(t *testing.T) {
 	svc, gw, _, _, _ := newTestService(t, 50000)
@@ -229,9 +217,7 @@ func TestCreateIntent_IdempotentOnKey(t *testing.T) {
 	_ = gw
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════
 // Confirmation: confirm-and-record; end-to-end idempotent; SF-2 (record, never balance).
-// ═══════════════════════════════════════════════════════════════════════════════════
 
 func TestConfirm_PostsLedgerMoveAndRecordsInvoice(t *testing.T) {
 	svc, _, led, inv, _ := newTestService(t, 50000)
@@ -366,9 +352,7 @@ func TestConfirm_UnknownReferenceIsNoOp(t *testing.T) {
 	}
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════
 // Installments (SF-6).
-// ═══════════════════════════════════════════════════════════════════════════════════
 
 // First installment on a policy-bearing invoice without acknowledgement → DisclosureRequired,
 // and NO gateway session started (no money).

@@ -3,14 +3,14 @@ import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from 'react-
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Plus, ShieldCheck, ShieldAlert, Check, ChevronRight, Clock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
-import AssetIcon from '@/features/crypto/components/AssetIcon';
+import { AssetIcon } from '@/features/crypto/components';
 import {
   useCryptoPortfolio, useAssets, useAddresses, useWithdrawalEligibility,
 } from '@/features/crypto/hooks/useCrypto';
@@ -50,7 +50,6 @@ export default function WithdrawEntryScreen() {
   const heldMinor = position?.quantity.amount ?? 0;
   const amount = parseCryptoToMinor(input, decimals);
 
-  // ── Loading / gate states ──────────────────────────────────────────────────
   if (portfolio.isLoading || eligibility.isLoading || assets.isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>

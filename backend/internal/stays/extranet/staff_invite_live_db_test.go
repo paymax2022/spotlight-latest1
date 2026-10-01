@@ -1,13 +1,11 @@
 package extranet
 
 // LIVE-DB tests for the email-based hotelier staff invite (staff_invite.go).
-//
 // The property that matters most: the invite token is a credential. It must
 // never be recoverable from the database (only its hash is stored), and it
 // must bind to the invitee's own verified email — not a client-supplied one —
 // so a forwarded link is useless to anyone else and a mismatched accept is
 // rejected with the same error as an outright wrong token.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (
@@ -319,4 +317,3 @@ func TestLiveDB_InviteRequiresOwnerOrManager(t *testing.T) {
 		t.Errorf("invite by a non-staff caller = %v, want ErrForbidden", err)
 	}
 }
-

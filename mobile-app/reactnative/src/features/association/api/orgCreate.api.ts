@@ -1,9 +1,8 @@
-// ── Association — Organisation publish API (U) ────────────────────────────────
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
-import type { OrgDraft, PublishResult } from '../types/orgDraft.types';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
+import type { OrgDraft, PublishResult } from '../types';
 
 // Every write below has a real live endpoint (verified against
 // backend/internal/association/routes.go and a full green run of
@@ -15,7 +14,6 @@ const notInFixtureMode = (action: string) =>
 
 export async function publishOrganisation(draft: OrgDraft): Promise<PublishResult> {
   if (USE_MOCK) throw notInFixtureMode('Publishing an organisation');
-  // foundedYear is collected as text so the input can be partially typed; the
   // server's OrgDraft takes a nullable int, where null means "not supplied" and
   // is refused. Sending the raw string would fail JSON binding outright, and
   // sending Number('') would send 0 — a value that looks supplied and then

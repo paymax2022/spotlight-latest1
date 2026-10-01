@@ -2,11 +2,12 @@ package crypto
 
 import (
 	"context"
+	"encoding/json"
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/internal/finance/ledger"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"spotlight/backend/internal/finance/ledger"
 )
 
 // Service is the crypto money-path orchestrator. It REUSES the finance ledger:
@@ -51,8 +52,6 @@ func (s *Service) WithWithdrawalProvider(w WithdrawalProvider) *Service {
 	}
 	return s
 }
-
-// ── Read paths ────────────────────────────────────────────────────────────────
 
 // ListAssets returns the tradable catalogue (active only for members).
 func (s *Service) ListAssets(ctx context.Context, activeOnly bool) ([]Asset, error) {
@@ -145,8 +144,6 @@ func (s *Service) PriceHistory(ctx context.Context, assetID string, limit int) (
 func (s *Service) GetOrder(ctx context.Context, userID, orderID string) (*Order, error) {
 	return s.repo.GetOrder(ctx, userID, orderID)
 }
-
-// ── Money paths ───────────────────────────────────────────────────────────────
 
 // Buy spends cashKobo of the user's main wallet to acquire asset minor units at
 // the current quote. Money flow: wallet DEBIT → escrow standing account (cash
@@ -271,8 +268,6 @@ func (s *Service) Sell(ctx context.Context, userID, assetID string, units int64,
 	return &o, nil
 }
 
-// ── Admin paths ──────────────────────────────────────────────────────────────
-
 // AdminListOrders returns all orders (oversight).
 func (s *Service) AdminListOrders(ctx context.Context, limit, offset int) ([]Order, error) {
 	if limit <= 0 || limit > 200 {
@@ -296,4 +291,29 @@ func (s *Service) AdminConfigAsset(ctx context.Context, actorID, symbol, name st
 	_ = s.audit.log(ctx, actorID, "crypto.asset.config", "crypto_asset", a.ID, "",
 		nil, map[string]any{"symbol": symbol, "minor_unit_scale": minorUnitScale, "is_active": isActive})
 	return a, nil
+}
+
+// auditLogger writes immutable, append-only rows to crypto_audit_log. Every money
+// mutation emits one (iron rule: emit an audit event on every money mutation).
+type auditLogger struct {
+	db *pgxpool.Pool
+}
+
+func newAuditLogger(db *pgxpool.Pool) *auditLogger { return &auditLogger{db: db} }
+
+// log appends an audit row. oldVal/newVal may be nil. Returns the insert error so
+// money paths can treat audit failure as fatal for critical mutations.
+func (a *auditLogger) log(ctx context.Context, actorID, action, entityType, entityID, reason string, oldVal, newVal any) error {
+	var oldJSON, newJSON []byte
+	if oldVal != nil {
+		oldJSON, _ = json.Marshal(oldVal)
+	}
+	if newVal != nil {
+		newJSON, _ = json.Marshal(newVal)
+	}
+	const q = `
+		INSERT INTO crypto_audit_log (actor_id, action, entity_type, entity_id, old_value, new_value, reason)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)`
+	_, err := a.db.Exec(ctx, q, actorID, action, entityType, dbutil.NullStr(entityID), oldJSON, newJSON, dbutil.NullStr(reason))
+	return err
 }

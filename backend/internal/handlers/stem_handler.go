@@ -96,7 +96,6 @@ func (h *StemHandler) Overview(c *gin.Context) {
 // frontend-admin's stemAccess.ts used to derive the "current" STEM role from
 // a build-time env var; this endpoint lets it ask the real, signed-in-user
 // question instead.
-//
 // Deliberately sits behind RequireVerifiedIdentity ONLY (router.go's
 // stemGroup), not RequireStemRoles: the whole point is that ANY verified
 // admin can call this, including one who holds no STEM role at all — an

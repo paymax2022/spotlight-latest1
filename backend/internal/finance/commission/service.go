@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/ledger"
 )
 
@@ -24,7 +25,6 @@ type ledgerService interface {
 // ledger.TransactionDetailResolver / Service.SetResolvers late-binding pattern so
 // this package never imports referral/* (referral/commissionsplit imports THIS
 // package for the Earning type instead — a one-way dependency, no cycle).
-//
 // OnEarningRecorded must never be allowed to fail the caller's purchase — see
 // Service.SetReferralHook.
 type ReferralHook interface {
@@ -71,8 +71,6 @@ func (s *Service) notifyReferralHook(ctx context.Context, e *Earning) {
 	s.referralHook.OnEarningRecorded(ctx, *e)
 }
 
-// ── config reads ─────────────────────────────────────────────────────────────
-
 // ListConfig returns configs (optionally filtered) for the admin rate-card view.
 func (s *Service) ListConfig(ctx context.Context, category string, activeOnly bool) ([]Config, error) {
 	return s.repo.ListConfig(ctx, category, activeOnly)
@@ -82,8 +80,6 @@ func (s *Service) ListConfig(ctx context.Context, category string, activeOnly bo
 func (s *Service) GetConfig(ctx context.Context, id string) (*Config, error) {
 	return s.repo.GetByID(ctx, id)
 }
-
-// ── calculation ──────────────────────────────────────────────────────────────
 
 // Calculate resolves the active config (with subtype→service-level fallback) and
 // computes the full fee breakdown for grossKobo. All math is integer kobo/bps
@@ -136,8 +132,6 @@ func computeBreakdown(cfg *Config, grossKobo int64) *CalcResult {
 	}
 }
 
-// ── audited config mutation ──────────────────────────────────────────────────
-
 // CreateConfig upserts a config row and appends a create/update audit entry.
 func (s *Service) CreateConfig(ctx context.Context, in ConfigInput, changedBy string) (*Config, error) {
 	// Capture prior state (if this collides with an existing key) for the audit.
@@ -148,7 +142,7 @@ func (s *Service) CreateConfig(ctx context.Context, in ConfigInput, changedBy st
 		return nil, err
 	}
 
-	by := ptrOrNil(changedBy)
+	by := ptr.OrNil(changedBy)
 	saved, err := s.repo.UpsertConfig(ctx, in, by)
 	if err != nil {
 		return nil, err
@@ -167,7 +161,7 @@ func (s *Service) UpdateConfig(ctx context.Context, id string, in ConfigInput, c
 	if err != nil {
 		return nil, err
 	}
-	by := ptrOrNil(changedBy)
+	by := ptr.OrNil(changedBy)
 	saved, err := s.repo.UpdateConfigByID(ctx, id, in, by)
 	if err != nil {
 		return nil, err
@@ -182,7 +176,7 @@ func (s *Service) SetActive(ctx context.Context, id string, active bool, changed
 	if err != nil {
 		return nil, err
 	}
-	by := ptrOrNil(changedBy)
+	by := ptr.OrNil(changedBy)
 	saved, err := s.repo.SetActive(ctx, id, active, by)
 	if err != nil {
 		return nil, err
@@ -194,8 +188,6 @@ func (s *Service) SetActive(ctx context.Context, id string, active bool, changed
 	_ = s.repo.InsertAudit(ctx, saved.ID, action, configToMap(before), configToMap(saved), by)
 	return saved, nil
 }
-
-// ── earning recognition ──────────────────────────────────────────────────────
 
 // RecordEarning idempotently records realized Spotlight profit for one source
 // transaction. The fee breakdown is derived server-side from the active config
@@ -270,7 +262,6 @@ func (s *Service) RecordEarning(ctx context.Context, in EarningInput, idempotenc
 // is a FIXED-kobo fee or a provider spread — Money Transfer, FX, Jobs, Association,
 // and the Savings early-withdrawal penalty — where config% × gross would mis-state
 // profit. (%-take modules keep using RecordEarning/RecordFor.)
-//
 // The config is still resolved best-effort so config_id + currency are populated for
 // reporting joins, but the amount NEVER depends on the config %; a missing config is
 // not an error. recordedRevenueKobo is written verbatim to spotlight_revenue_kobo and
@@ -378,8 +369,6 @@ func (s *Service) postRevenue(ctx context.Context, reference, idempotencyKey str
 	return nil
 }
 
-// ── reports ──────────────────────────────────────────────────────────────────
-
 // ProfitReport aggregates realized earnings over [from,to) grouped by
 // "category", "service", or "day".
 func (s *Service) ProfitReport(ctx context.Context, from, to time.Time, groupBy string) ([]ReportRow, error) {
@@ -389,15 +378,6 @@ func (s *Service) ProfitReport(ctx context.Context, from, to time.Time, groupBy 
 // ListEarnings returns raw earning rows over [from,to) filtered by category.
 func (s *Service) ListEarnings(ctx context.Context, from, to time.Time, category string, limit int) ([]Earning, error) {
 	return s.repo.ListEarnings(ctx, from, to, category, limit)
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-func ptrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
 }
 
 // configToMap snapshots a config for the before/after jsonb audit payload.
@@ -420,4 +400,202 @@ func configToMap(c *Config) map[string]any {
 		"active":               c.Active,
 		"notes":                c.Notes,
 	}
+}
+
+// Recorder is the dependency-light seam other modules use to record realized
+// Spotlight profit into the central commission registry WITHOUT importing the
+// module's internals or DB types. The existing *Service satisfies it, so wiring is
+// a one-liner and the dependency can be injected nil-safe (a nil Recorder ⇒ no-op
+// on the caller's side; see each caller's recordCommissionSafe helper).
+// This is purely additive: it exposes the already-implemented idempotent
+// RecordEarning under a small, stable interface plus a convenience form that fills
+// the EarningInput for the common "category/service/subtype + gross + source" call.
+type Recorder interface {
+	// Record idempotently records realized profit for one source transaction. The
+	// fee breakdown is derived server-side from the active rate card (never trusted
+	// from the caller); a duplicate idempotencyKey is a safe no-op that returns the
+	// original row. This is a straight pass-through to RecordEarning.
+	Record(ctx context.Context, in EarningInput, idempotencyKey string) (*Earning, error)
+
+	// RecordFor is the convenience form: the caller passes the config coordinates
+	// (category/service/subtype), the gross amount in kobo, and provenance
+	// (sourceModule/sourceRef/userID) + an idempotency key. The breakdown is
+	// resolved and computed by the central config via RecordEarning → the recorded
+	// earning can never drift from the active rate card.
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) (*Earning, error)
+
+	// RecordExact is the exact-fee form: the caller passes BOTH the gross (principal,
+	// for context) and the ACTUAL realized fee it earned (recordedRevenueKobo). The
+	// recorded profit is the caller's fee verbatim — NOT config% × gross. This is the
+	// correct path for fixed-fee / spread modules (transfers, fx, jobs, association,
+	// savings) where a %-of-gross figure would mis-state profit. config_id is still
+	// resolved for reporting joins but never drives the amount. Idempotent like Record.
+	RecordExact(ctx context.Context, category, service, subtype string, grossKobo, recordedRevenueKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) (*Earning, error)
+}
+
+// Record satisfies Recorder. It delegates verbatim to RecordEarning — behavior is
+// unchanged (idempotent, server-side breakdown, optional ledger recognition).
+func (s *Service) Record(ctx context.Context, in EarningInput, idempotencyKey string) (*Earning, error) {
+	return s.RecordEarning(ctx, in, idempotencyKey)
+}
+
+// RecordFor builds the EarningInput from the caller's coordinates and delegates to
+// RecordEarning, which resolves the active config and computes the breakdown via the
+// shared computeBreakdown core (the same math the /calculate endpoint uses). Currency
+// defaults to the resolved config's currency inside RecordEarning when left empty.
+func (s *Service) RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceModule, sourceRef string, userID *string, idempotencyKey string) (*Earning, error) {
+	return s.RecordEarning(ctx, EarningInput{
+		ServiceCategory: category,
+		Service:         service,
+		ServiceSubtype:  subtype,
+		GrossAmountKobo: grossKobo,
+		SourceModule:    sourceModule,
+		SourceRef:       sourceRef,
+		UserID:          userID,
+	}, idempotencyKey)
+}
+
+// Compile-time assertion that *Service implements the Recorder seam.
+var _ Recorder = (*Service)(nil)
+
+// FeeModel enumerates the CHECK-constrained fee_model values in commission_config.
+type FeeModel string
+
+const (
+	FeeModelCommission        FeeModel = "commission"
+	FeeModelPlatformCharge    FeeModel = "platform_charge"
+	FeeModelFixed             FeeModel = "fixed"
+	FeeModelCommissionPlusFee FeeModel = "commission_plus_fee"
+	FeeModelNone              FeeModel = "none"
+)
+
+// fee_payer values (CHECK-constrained). Only 'customer' shifts the platform charge
+// onto the customer total; the others are borne by provider/merchant and never
+// increase what the customer pays.
+const (
+	FeePayerCustomer = "customer"
+	FeePayerProvider = "provider"
+	FeePayerMerchant = "merchant"
+	FeePayerNone     = "none"
+)
+
+// Config is one row of the commission rate registry (public.commission_config).
+// All money is integer minor units (kobo); all rates are basis points (bps).
+type Config struct {
+	ID                 string    `json:"id"`
+	ServiceCategory    string    `json:"serviceCategory"`
+	Service            string    `json:"service"`
+	ServiceSubtype     string    `json:"serviceSubtype"`
+	FeeModel           string    `json:"feeModel"`
+	CommissionBps      int64     `json:"commissionBps"`
+	PlatformChargeBps  int64     `json:"platformChargeBps"`
+	ConvenienceFeeKobo int64     `json:"convenienceFeeKobo"`
+	FixedFeeKobo       int64     `json:"fixedFeeKobo"`
+	FeePayer           string    `json:"feePayer"`
+	Currency           string    `json:"currency"`
+	Active             bool      `json:"active"`
+	Notes              string    `json:"notes,omitempty"`
+	UpdatedBy          *string   `json:"updatedBy,omitempty"`
+	UpdatedAt          time.Time `json:"updatedAt"`
+	CreatedAt          time.Time `json:"createdAt"`
+}
+
+// ConfigInput is the admin-supplied payload to create or update a config row.
+// Active is a pointer so "field omitted" (nil) can default to active on create.
+type ConfigInput struct {
+	ServiceCategory    string `json:"serviceCategory" binding:"required"`
+	Service            string `json:"service" binding:"required"`
+	ServiceSubtype     string `json:"serviceSubtype"`
+	FeeModel           string `json:"feeModel"`
+	CommissionBps      int64  `json:"commissionBps"`
+	PlatformChargeBps  int64  `json:"platformChargeBps"`
+	ConvenienceFeeKobo int64  `json:"convenienceFeeKobo"`
+	FixedFeeKobo       int64  `json:"fixedFeeKobo"`
+	FeePayer           string `json:"feePayer"`
+	Currency           string `json:"currency"`
+	Active             *bool  `json:"active"`
+	Notes              string `json:"notes"`
+}
+
+// CalcRequest is the body of POST /commission/calculate.
+type CalcRequest struct {
+	ServiceCategory string `json:"serviceCategory" binding:"required"`
+	Service         string `json:"service" binding:"required"`
+	ServiceSubtype  string `json:"serviceSubtype"`
+	AmountKobo      int64  `json:"amountKobo"`
+}
+
+// CalcResult is the full fee breakdown for a gross amount, resolved against a
+// config (with subtype→service-level fallback). Every field is integer kobo.
+type CalcResult struct {
+	ConfigID             string `json:"configId"`
+	ServiceCategory      string `json:"serviceCategory"`
+	Service              string `json:"service"`
+	ServiceSubtype       string `json:"serviceSubtype"`
+	FeeModel             string `json:"feeModel"`
+	FeePayer             string `json:"feePayer"`
+	Currency             string `json:"currency"`
+	GrossAmountKobo      int64  `json:"grossAmountKobo"`
+	CommissionKobo       int64  `json:"commissionKobo"`
+	PlatformChargeKobo   int64  `json:"platformChargeKobo"`
+	ConvenienceFeeKobo   int64  `json:"convenienceFeeKobo"`
+	FixedFeeKobo         int64  `json:"fixedFeeKobo"`
+	SpotlightRevenueKobo int64  `json:"spotlightRevenueKobo"`
+	CustomerTotalKobo    int64  `json:"customerTotalKobo"`
+}
+
+// EarningInput is what a source module hands to RecordEarning. The fee breakdown
+// is derived server-side from the resolved config (never trusted from the caller)
+// so realized earnings can never drift from the active rate card.
+type EarningInput struct {
+	ServiceCategory string  `json:"serviceCategory" binding:"required"`
+	Service         string  `json:"service" binding:"required"`
+	ServiceSubtype  string  `json:"serviceSubtype"`
+	GrossAmountKobo int64   `json:"grossAmountKobo"`
+	SourceModule    string  `json:"sourceModule" binding:"required"`
+	SourceRef       string  `json:"sourceRef" binding:"required"`
+	UserID          *string `json:"userId"`
+	Currency        string  `json:"currency"`
+}
+
+// Earning is one immutable row of realized Spotlight profit (public.commission_earnings).
+type Earning struct {
+	ID                   string    `json:"id"`
+	ConfigID             *string   `json:"configId,omitempty"`
+	ServiceCategory      string    `json:"serviceCategory"`
+	Service              string    `json:"service"`
+	ServiceSubtype       string    `json:"serviceSubtype"`
+	GrossAmountKobo      int64     `json:"grossAmountKobo"`
+	CommissionKobo       int64     `json:"commissionKobo"`
+	PlatformChargeKobo   int64     `json:"platformChargeKobo"`
+	ConvenienceFeeKobo   int64     `json:"convenienceFeeKobo"`
+	FixedFeeKobo         int64     `json:"fixedFeeKobo"`
+	SpotlightRevenueKobo int64     `json:"spotlightRevenueKobo"`
+	Currency             string    `json:"currency"`
+	SourceModule         string    `json:"sourceModule"`
+	SourceRef            string    `json:"sourceRef"`
+	LedgerRef            *string   `json:"ledgerRef,omitempty"`
+	UserID               *string   `json:"userId,omitempty"`
+	IdempotencyKey       *string   `json:"idempotencyKey,omitempty"`
+	CreatedAt            time.Time `json:"createdAt"`
+}
+
+// ReportRow is one aggregated bucket in a ProfitReport. GroupKey is the value of
+// the grouping dimension (category name, "category / service", or ISO day).
+type ReportRow struct {
+	GroupBy              string `json:"groupBy"`
+	GroupKey             string `json:"groupKey"`
+	ServiceCategory      string `json:"serviceCategory,omitempty"`
+	Service              string `json:"service,omitempty"`
+	Day                  string `json:"day,omitempty"`
+	Count                int64  `json:"count"`
+	GrossAmountKobo      int64  `json:"grossAmountKobo"`
+	CommissionKobo       int64  `json:"commissionKobo"`
+	PlatformChargeKobo   int64  `json:"platformChargeKobo"`
+	ConvenienceFeeKobo   int64  `json:"convenienceFeeKobo"`
+	FixedFeeKobo         int64  `json:"fixedFeeKobo"`
+	SpotlightRevenueKobo int64  `json:"spotlightRevenueKobo"`
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -23,10 +24,9 @@ type Handler struct {
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated caller from gin context (set by auth middleware).
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -61,14 +61,12 @@ func RegisterAcademyContent(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 	svc := NewService(pool)
 	h := NewHandler(svc)
 
-	// ── Member (learner) — live content only ──
 	if member != nil {
 		member.GET("/content/lessons/:objectiveId", h.GetLiveLessons)
 		member.GET("/content/bundles", h.GetLiveBundles)
 		member.GET("/content/bundles/:id/manifest", h.GetBundleManifest)
 	}
 
-	// ── Admin — academy.content capability ──
 	if admin != nil {
 		guard := func(p string) gin.HandlerFunc { return middleware.RequirePermission(rbac, p) }
 		ag := admin.Group("/content", guard("academy.content"))
@@ -94,8 +92,6 @@ func RegisterAcademyContent(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 		ag.DELETE("/localizations", h.AdminDeleteLocalization)
 	}
 }
-
-// ── Member handlers ───────────────────────────────────────────────────────────
 
 func (h *Handler) GetLiveLessons(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
@@ -131,8 +127,6 @@ func (h *Handler) GetBundleManifest(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": b.Manifest})
 }
 
-// ── Admin handlers: lessons list ────────────────────────────────────────────────
-
 // AdminListItems lists lessons admin-wide (all statuses). ?objective_id= / ?status=
 // filter; ?limit= / ?offset= paginate (newest first).
 func (h *Handler) AdminListItems(c *gin.Context) {
@@ -146,15 +140,13 @@ func (h *Handler) AdminListItems(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── Admin handlers: publish ─────────────────────────────────────────────────────
-
 func (h *Handler) AdminTransitionLesson(c *gin.Context) {
 	var req TransitionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.TransitionLesson(c.Request.Context(), uid(c), c.Param("id"), req.To)
+	out, err := h.svc.TransitionLesson(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req.To)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -168,7 +160,7 @@ func (h *Handler) AdminTransitionBundle(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.TransitionBundle(c.Request.Context(), uid(c), c.Param("id"), req.To)
+	out, err := h.svc.TransitionBundle(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req.To)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -176,15 +168,13 @@ func (h *Handler) AdminTransitionBundle(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── Admin handlers: productions ─────────────────────────────────────────────────
-
 func (h *Handler) AdminCreateProduction(c *gin.Context) {
 	var req CreateProductionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.CreateProduction(c.Request.Context(), uid(c), req)
+	out, err := h.svc.CreateProduction(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -198,7 +188,7 @@ func (h *Handler) AdminUpdateProduction(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.UpdateProduction(c.Request.Context(), uid(c), c.Param("id"), req)
+	out, err := h.svc.UpdateProduction(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -212,7 +202,7 @@ func (h *Handler) AdminAdvanceProduction(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.AdvanceProduction(c.Request.Context(), uid(c), c.Param("id"), req.To)
+	out, err := h.svc.AdvanceProduction(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req.To)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -223,7 +213,7 @@ func (h *Handler) AdminAdvanceProduction(c *gin.Context) {
 // AdminBlockProduction moves a production card to the blocked status (active→blocked).
 // Mirrors AdminAdvanceProduction but transitions status, not stage.
 func (h *Handler) AdminBlockProduction(c *gin.Context) {
-	out, err := h.svc.BlockProduction(c.Request.Context(), uid(c), c.Param("id"))
+	out, err := h.svc.BlockProduction(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -256,15 +246,13 @@ func (h *Handler) AdminListProductions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── Admin handlers: localizations ───────────────────────────────────────────────
-
 func (h *Handler) AdminUpsertLocalization(c *gin.Context) {
 	var req UpsertLocalizationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.UpsertLocalization(c.Request.Context(), uid(c), req)
+	out, err := h.svc.UpsertLocalization(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -285,7 +273,7 @@ func (h *Handler) AdminDeleteLocalization(c *gin.Context) {
 	entityType := c.Query("entity_type")
 	entityID := c.Query("entity_id")
 	lang := c.Query("lang")
-	if err := h.svc.DeleteLocalization(c.Request.Context(), uid(c), entityType, entityID, lang); err != nil {
+	if err := h.svc.DeleteLocalization(c.Request.Context(), ginutil.UserID(c, authUserID), entityType, entityID, lang); err != nil {
 		h.fail(c, err)
 		return
 	}

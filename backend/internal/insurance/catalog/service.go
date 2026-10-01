@@ -6,21 +6,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
-
 	"github.com/jackc/pgx/v5/pgxpool"
-
+	"log"
 	"spotlight/backend/internal/insurance/gateway"
+	"strings"
+	"time"
 )
 
 // Product is the normalised catalog row. The catalog is the SINGLE source of
 // truth for product → provider routing AND for the per-product provider route,
 // pricing model and form schema: no product is hard-coded in logic anywhere.
-//
 // MONEY: every *_kobo field is INTEGER MINOR UNITS. The naira→kobo conversion
 // happens once, in the provider adapter, before a value ever reaches this
 // struct. RateBps is basis points (0.5% = 50).
-//
 // Field names carry BOTH the historical admin shape (display_name, provider)
 // and the member contract shape (name, aggregator) so the admin console keeps
 // working while mobile codes to the published contract.
@@ -46,7 +44,6 @@ type Product struct {
 	PremiumModel       string `json:"premium_model"`
 	RequiredKYCTier    int    `json:"required_kyc_tier"`
 
-	// --- Pricing, integer minor units ---
 	IsPercentage          bool   `json:"is_percentage"`
 	BasePriceKobo         int64  `json:"base_price_kobo"`
 	RateBps               int64  `json:"rate_bps"`
@@ -57,7 +54,6 @@ type Product struct {
 	ProviderCommissionBps int64  `json:"provider_commission_bps"`
 	CommissionFrom        string `json:"commission_from,omitempty"`
 
-	// --- Cover terms ---
 	CoverPeriodDays   int    `json:"cover_period_days"`
 	IsRenewable       bool   `json:"is_renewable"`
 	IsClaimable       bool   `json:"is_claimable"`
@@ -65,18 +61,15 @@ type Product struct {
 	IsInspectable     bool   `json:"is_inspectable"`
 	Currency          string `json:"currency"`
 
-	// --- Provider copy (HTML — render SANITISED, it is third-party markup) ---
 	KeyBenefitsHTML  string `json:"key_benefits_html,omitempty"`
 	FullBenefitsHTML string `json:"full_benefits_html,omitempty"`
 	HowItWorksHTML   string `json:"how_it_works_html,omitempty"`
 	HowToClaimHTML   string `json:"how_to_claim_html,omitempty"`
 	DocumentURL      string `json:"document_url,omitempty"`
 
-	// --- Dynamic form ---
 	FormSchema       map[string]any `json:"form_schema"`
 	FormSchemaSource string         `json:"form_schema_source,omitempty"`
 
-	// --- Sellability (provider capability, NOT operator choice) ---
 	// Purchasable is whether the AGGREGATOR can actually sell this. It is
 	// separate from Active, which is whether Paymax offers it. The dangerous
 	// pairing the admin console must warn on is active && !purchasable: offered
@@ -144,11 +137,9 @@ var ErrOptionsUnavailable = errors.New("catalog: field options unavailable")
 var ErrNoSuchField = errors.New("catalog: unknown field or field has no remote options")
 
 // FieldOptions serves the list behind a schema field's options_url.
-//
 // The client names a PRODUCT and a FIELD, never a URL: the URL is read from our
 // own stored schema here. That is what keeps this from being an open proxy —
 // see the pin in mycover.FetchUtilityOptions for the second half of it.
-//
 // `query` forwards a dependent list's parent value (a state's LGAs, say). It is
 // passed through as an opaque string; the provider decides whether it matters.
 func (s *Service) FieldOptions(ctx context.Context, productCode, fieldName, query string) ([]FieldOption, error) {
@@ -159,7 +150,8 @@ func (s *Service) FieldOptions(ctx context.Context, productCode, fieldName, quer
 	if err != nil {
 		return nil, err
 	}
-	url := optionsURLFor(schema, fieldName)
+	fields, _ := schema["fields"].([]any)
+	url := findOptionsURL(fields, fieldName, 0)
 	if url == "" {
 		return nil, ErrNoSuchField
 	}
@@ -169,16 +161,10 @@ func (s *Service) FieldOptions(ctx context.Context, productCode, fieldName, quer
 	return s.options.FetchUtilityOptions(ctx, url, query)
 }
 
-// optionsURLFor finds a field by name and returns its options_url.
-//
+// findOptionsURL finds a field by name and returns its options_url.
 // Walks nested children too: ~65 products nest their fields under a
 // `policy_holder` object and 17 have repeating groups, so a top-level-only scan
 // would miss most of the form.
-func optionsURLFor(schema map[string]any, fieldName string) string {
-	fields, _ := schema["fields"].([]any)
-	return findOptionsURL(fields, fieldName, 0)
-}
-
 func findOptionsURL(fields []any, fieldName string, depth int) string {
 	// Bounded so a schema that somehow references itself cannot spin.
 	if depth > 6 {
@@ -207,7 +193,6 @@ func findOptionsURL(fields []any, fieldName string, depth int) string {
 
 // ResolveProduct implements gateway.ProductResolver: maps a Paymax product_code
 // to (aggregator, per-product routing descriptor). Only ACTIVE products resolve.
-//
 // The descriptor carries everything an adapter needs to reach the product — the
 // buy path, the pricing model, the cover terms — straight off the catalog row.
 // That is what keeps "add a product" a data change: nothing in the adapter or
@@ -265,7 +250,6 @@ func (s *Service) ResolveProduct(ctx context.Context, productCode string) (strin
 }
 
 // decodeStoredSchema reads a stored form_schema jsonb.
-//
 // UseNumber is NOT optional here: a money bound decoded as float64 could not be
 // scaled exactly, and float64 is banned from every money path.
 func decodeStoredSchema(raw []byte) map[string]any {
@@ -481,7 +465,6 @@ func (s *Service) FormSchema(ctx context.Context, productCode string) (map[strin
 // SetActive flips a product's visibility (admin catalog management) and stamps
 // active_overridden_at, which tells the sync a human has ruled and it should stop
 // managing visibility for this product.
-//
 // It CANNOT activate a product the provider cannot sell. That guard is not
 // negotiable by role: an unsellable product offered to members either wastes
 // their time or takes their money for cover that will never be issued, and no
@@ -515,7 +498,6 @@ func (s *Service) SetActive(ctx context.Context, productCode string, active bool
 // ActivateAllPurchasable turns on every product the provider CAN sell, skipping
 // any an admin has explicitly ruled on. It is the bulk counterpart to a sync's
 // own default, for a catalog that was synced before visibility was sync-managed.
-//
 // It never activates an unsellable or provider-missing product.
 func (s *Service) ActivateAllPurchasable(ctx context.Context, provider string) (int, error) {
 	if s.db == nil {
@@ -546,4 +528,176 @@ func (s *Service) SetProvider(ctx context.Context, productCode, provider, provid
 		SET provider = $2, provider_product_code = $3, version = version + 1, updated_at = now()
 		WHERE code = $1`, productCode, provider, providerProductCode)
 	return err
+}
+
+// PROVIDER FLOAT BREAKER
+// MyCover settles binds against a PREFUNDED DISTRIBUTOR WALLET, not a
+// per-transaction charge. Every purchase debits a float Paymax holds with them,
+// and when that float empties EVERY bind fails at once.
+// The bind saga debits the member's premium BEFORE calling the provider (and
+// auto-reverses on failure). That is correct for an isolated failure. It is the
+// wrong shape for a cliff: with an empty float, every member in the queue would
+// be debited and reversed in turn. One reversal is a working saga; a thousand is
+// an incident, and every one of them is a member who saw money leave their
+// wallet.
+// So the FIRST bind that hits an empty float trips this breaker, and every
+// subsequent bind is refused BEFORE any money moves. An operator tops up the
+// MyCover wallet and resets it.
+// What this is NOT: a balance, an account, or anything ledger-like. No money is
+// represented here and nothing is posted against it. We cannot read the real
+// balance at all — /wallet/balance is 403 for our key — so this records only
+// what we OBSERVED the provider do, never a figure we invented.
+
+// ErrProviderFloatExhausted is returned by Guard when binds are currently
+// refused because the provider's prefunded wallet was observed to be empty.
+var ErrProviderFloatExhausted = errors.New(
+	"insurance: the provider's prefunded wallet is empty — binding is paused so no member is charged for cover that cannot be issued")
+
+// FloatState is the recorded state of one aggregator's prefunded float.
+type FloatState struct {
+	Provider            string     `json:"provider"`
+	State               string     `json:"state"` // ok | exhausted | unknown
+	ConsecutiveFailures int        `json:"consecutive_failures"`
+	LastFailureAt       *time.Time `json:"last_failure_at,omitempty"`
+	LastSuccessAt       *time.Time `json:"last_success_at,omitempty"`
+	LastFailureText     string     `json:"last_failure_text,omitempty"`
+	LastTopupNote       string     `json:"last_topup_note,omitempty"`
+	LastResetAt         *time.Time `json:"last_reset_at,omitempty"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	// BindingPaused is the single field a caller needs: true means do not take
+	// the member's money.
+	BindingPaused bool `json:"binding_paused"`
+}
+
+// FloatService records and reports provider float state.
+type FloatService struct {
+	db *pgxpool.Pool
+}
+
+// NewFloatService constructs the float breaker over the pgx pool.
+func NewFloatService(db *pgxpool.Pool) *FloatService { return &FloatService{db: db} }
+
+// Guard is called BEFORE the member's premium is debited. It returns
+// ErrProviderFloatExhausted when the breaker is tripped.
+// FAIL OPEN, deliberately. If the breaker itself cannot be read (DB blip), the
+// bind proceeds: the saga's auto-reverse still protects the member, and refusing
+// every purchase because a status table was unreadable would be a worse outage
+// than the one being guarded against. The breaker is a stampede brake, not the
+// safety mechanism — the auto-reverse is.
+func (s *FloatService) Guard(ctx context.Context, provider string) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	var state string
+	err := s.db.QueryRow(ctx, `
+		SELECT state FROM public.insurance_provider_float WHERE provider = $1`, provider).Scan(&state)
+	if err != nil {
+		return nil // fail open — see doc comment
+	}
+	if state == "exhausted" {
+		return fmt.Errorf("%w (provider %s)", ErrProviderFloatExhausted, provider)
+	}
+	return nil
+}
+
+// RecordFloatExhausted trips the breaker after the provider refused a purchase
+// for want of float. providerText is the provider's verbatim message; it carries
+// no member PII and no credentials.
+func (s *FloatService) RecordFloatExhausted(ctx context.Context, provider, providerText string) {
+	if s == nil || s.db == nil {
+		return
+	}
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO public.insurance_provider_float
+			(provider, state, consecutive_failures, last_failure_at, last_failure_text, updated_at)
+		VALUES ($1, 'exhausted', 1, now(), $2, now())
+		ON CONFLICT (provider) DO UPDATE SET
+			state = 'exhausted',
+			consecutive_failures = public.insurance_provider_float.consecutive_failures + 1,
+			last_failure_at = now(),
+			last_failure_text = EXCLUDED.last_failure_text,
+			updated_at = now()`, provider, providerText)
+	if err != nil {
+		log.Printf("[insurance] WARN could not record float exhaustion for %s: %v", provider, err)
+		return
+	}
+	// Loud on purpose: this is a treasury outage, not a member error.
+	log.Printf("[insurance] ⛔ %s prefunded wallet is EMPTY — binding PAUSED. Top up the %s dashboard and reset the breaker.",
+		provider, provider)
+}
+
+// RecordBindSucceeded clears the breaker after a bind actually went through —
+// proof the float has money in it. This is the only automatic path back to "ok",
+// and it is evidence-based rather than time-based.
+func (s *FloatService) RecordBindSucceeded(ctx context.Context, provider string) {
+	if s == nil || s.db == nil {
+		return
+	}
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO public.insurance_provider_float
+			(provider, state, consecutive_failures, last_success_at, updated_at)
+		VALUES ($1, 'ok', 0, now(), now())
+		ON CONFLICT (provider) DO UPDATE SET
+			state = 'ok',
+			consecutive_failures = 0,
+			last_success_at = now(),
+			updated_at = now()`, provider)
+	if err != nil {
+		log.Printf("[insurance] WARN could not clear float state for %s: %v", provider, err)
+	}
+}
+
+// Reset re-arms binding after an operator has topped the provider wallet up.
+// note records what they say they funded — a human record, NOT an authority: the
+// real balance lives at the provider and we cannot read it.
+func (s *FloatService) Reset(ctx context.Context, provider, note, byUserID string) error {
+	if s == nil || s.db == nil {
+		return errors.New("insurance: nil pool")
+	}
+	var by any
+	if byUserID != "" {
+		by = byUserID
+	}
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO public.insurance_provider_float
+			(provider, state, consecutive_failures, last_topup_note, last_reset_at, last_reset_by, updated_at)
+		VALUES ($1, 'ok', 0, NULLIF($2,''), now(), $3, now())
+		ON CONFLICT (provider) DO UPDATE SET
+			state = 'ok',
+			consecutive_failures = 0,
+			last_topup_note = NULLIF(EXCLUDED.last_topup_note, ''),
+			last_reset_at = now(),
+			last_reset_by = EXCLUDED.last_reset_by,
+			updated_at = now()`, provider, note, by)
+	return err
+}
+
+// List returns every recorded float state, for the admin providers screen and
+// the low-float alarm.
+func (s *FloatService) List(ctx context.Context) ([]FloatState, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("insurance: nil pool")
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT provider, state, consecutive_failures, last_failure_at, last_success_at,
+		       COALESCE(last_failure_text,''), COALESCE(last_topup_note,''), last_reset_at, updated_at
+		FROM public.insurance_provider_float
+		ORDER BY provider`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []FloatState
+	for rows.Next() {
+		var f FloatState
+		if err := rows.Scan(&f.Provider, &f.State, &f.ConsecutiveFailures,
+			&f.LastFailureAt, &f.LastSuccessAt, &f.LastFailureText,
+			&f.LastTopupNote, &f.LastResetAt, &f.UpdatedAt); err != nil {
+			return nil, err
+		}
+		f.BindingPaused = f.State == "exhausted"
+		out = append(out, f)
+	}
+	return out, rows.Err()
 }

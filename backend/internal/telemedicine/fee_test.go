@@ -6,15 +6,10 @@ import (
 	"testing"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Server-authoritative 5% platform booking fee (additive to the patient).
-//
 // These are PURE tests — no DB, no clock, no settlement service. They pin the
 // quote arithmetic that every telemedicine booking is priced with:
-//
 //	platformFee = floor(consultFeeKobo × PlatformFeeBp / 10000)
-//	total       = consultFeeKobo + platformFee
-//
 // The money bugs this file exists to prevent:
 //   - a float-derived fee that rounds UP and over-charges the patient by a kobo,
 //   - a fee the CLIENT computes (a compromised/stale app could quote ₦0 fee and
@@ -22,10 +17,8 @@ import (
 //   - overflow / sign inversion on extreme amounts,
 //   - `FeeKobo` silently changing meaning (the doctor-earnings queries do
 //     SUM(fee_kobo * 0.85) and would over-pay if the platform fee leaked into it).
-//
 // package telemedicine (not telemedicine_test) so validateExpectedTotal, an
 // unexported guard, is reachable.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // exactFeeNumerator is the fee's exact rational numerator over 10000:
 // consultFeeKobo × PlatformFeeBp. Used to prove FLOOR semantics without floats.

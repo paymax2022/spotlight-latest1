@@ -1,4 +1,3 @@
-// ── Restaurant & Delivery — Mock data ────────────────────────────────────────
 // Lets the whole flow run offline (EXPO_PUBLIC_FOOD_USE_MOCK !== 'false').
 // A tiny in-memory store holds placed orders + chat so the customer, rider, and
 // restaurant screens see a shared, advancing state machine. State auto-advances
@@ -347,7 +346,6 @@ export function mockRestaurantDetail(id: string): RestaurantDetail {
   return { ...withMockLikeState(base), menu: MENU_BY_RESTAURANT[id] ?? defaultMenu() };
 }
 
-// ─── Likes (mock) ────────────────────────────────────────────────────────────
 // Mock mode has no caller identity — one Set stands in for "the current user's
 // likes", the same simplification the mock uses everywhere else (a single
 // customer/rider/restaurant role rather than per-account state).
@@ -364,7 +362,6 @@ export function withMockLikeState<T extends Restaurant>(r: T): T {
   return { ...r, likeCount: r.likeCount + (liked ? 1 : 0), liked };
 }
 
-// ─── In-memory order store ────────────────────────────────────────────────────
 interface MockState {
   orders: Record<string, Order>;
   messages: Record<string, ChatMessage[]>;
@@ -421,7 +418,6 @@ export function makeOrder(
     deliveryLocation: partial.deliveryLocation ?? { lat: 6.45, lng: 3.46 },
     restaurantLocation: r.location ?? LAGOS,
     rider: partial.rider ?? null,
-    // Dispatch starts idle; the customer's handoff code is issued at order time
     // (the backend escrows payment and returns delivery_code on the Order).
     dispatchStatus: partial.dispatchStatus ?? 'none',
     riderId: partial.riderId ?? null,
@@ -450,7 +446,6 @@ export function makeOrder(
 
 // State machine progression used by the mock auto-advance. The kitchen runs
 // itself (placed→accepted→preparing→ready). At 'ready' the server auto-dispatches
-// (dispatch_status='searching'), so the customer tracking screen pauses on "Finding
 // a rider" until a rider accepts — then the rider drives accept→pickup→handoff.
 // To keep the customer screen demoable solo, a mock rider auto-accepts a short
 // while after dispatch begins (ready→assigned), then en-route advances normally.

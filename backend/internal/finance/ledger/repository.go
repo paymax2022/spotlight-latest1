@@ -2,21 +2,13 @@ package ledger
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-)
 
-// isUniqueViolation reports whether err is a Postgres unique-constraint
-// violation (SQLSTATE 23505) — used to translate a duplicate idempotency_key
-// into the typed ErrDuplicate that callers catch via errors.Is.
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
+	"spotlight/backend/go-common/dbutil"
+)
 
 // Repository handles all ledger DB operations over a pgx pool.
 // All writes are INSERT-only — never UPDATE or DELETE.
@@ -84,7 +76,6 @@ const balanceProjectionSQL = `
 
 // GetBalance returns the current balance in kobo for an account by projecting
 // ledger entries. It never reads a balance column directly.
-//
 // NOTE: this reads on the pool (no lock). It is safe for display/read paths, but
 // MUST NOT be used as the sufficiency check that gates a debit — that check has a
 // TOCTOU race against concurrent debits and must run inside the debiting tx under
@@ -126,7 +117,6 @@ func getBalanceTx(ctx context.Context, tx pgx.Tx, accountID string) (int64, erro
 // debit/credit insert as ONE atomic, serialised unit — closing the balance TOCTOU
 // race where two concurrent debits both read the pre-debit balance, both pass the
 // check, and together overdraw the wallet.
-//
 // Concurrency design:
 //   - Open a tx and take pg_advisory_xact_lock(hashtext("wallet:"+userID)) FIRST.
 //     Two debits on the same wallet therefore serialise: the second blocks until
@@ -213,7 +203,7 @@ func (r *Repository) PostJournal(ctx context.Context, j JournalEntry) error {
 	_, err = tx.Exec(ctx, insertEntry,
 		j.DebitAccountID, string(EntryDebit), j.AmountKobo, j.Reference, j.IdempotencyKey+":debit")
 	if err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return ErrDuplicate
 		}
 		return fmt.Errorf("ledger: insert debit entry: %w", err)
@@ -222,7 +212,7 @@ func (r *Repository) PostJournal(ctx context.Context, j JournalEntry) error {
 	_, err = tx.Exec(ctx, insertEntry,
 		j.CreditAccountID, string(EntryCredit), j.AmountKobo, j.Reference, j.IdempotencyKey+":credit")
 	if err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return ErrDuplicate
 		}
 		return fmt.Errorf("ledger: insert credit entry: %w", err)
@@ -237,7 +227,6 @@ func (r *Repository) PostJournal(ctx context.Context, j JournalEntry) error {
 // (REVERSAL_DEBIT, counted as +balance) and drains debitAccountID
 // (REVERSAL_CREDIT). Idempotency keys are suffixed per side so a duplicate
 // webhook violates the unique constraint and is a no-op.
-//
 // creditAccountID is the account whose balance is restored (e.g. the user
 // wallet); debitAccountID is the account the hold is released from (e.g. the
 // failed-transfer suspense account).
@@ -265,7 +254,7 @@ func (r *Repository) PostReversalPair(ctx context.Context, creditAccountID, debi
 	// unreachable, or its TTL elapsed between two attempts).
 	if _, err := tx.Exec(ctx, insertEntry,
 		creditAccountID, string(EntryReversalDebit), amountKobo, reference, idempotencyKey+":rev_debit"); err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return ErrDuplicate
 		}
 		return fmt.Errorf("ledger: insert reversal debit: %w", err)
@@ -273,7 +262,7 @@ func (r *Repository) PostReversalPair(ctx context.Context, creditAccountID, debi
 	// Drain the suspense hold — REVERSAL_CREDIT reads as -balance.
 	if _, err := tx.Exec(ctx, insertEntry,
 		debitAccountID, string(EntryReversalCredit), amountKobo, reference, idempotencyKey+":rev_credit"); err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return ErrDuplicate
 		}
 		return fmt.Errorf("ledger: insert reversal credit: %w", err)

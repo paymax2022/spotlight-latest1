@@ -14,8 +14,6 @@ import (
 // all of which are faked here so we can assert exactly-once value movement, the
 // ordered eligibility gate, idempotent replay, and derived balances.
 
-// ── fakes ────────────────────────────────────────────────────────────────────────
-
 // stubTx is a no-op pgx.Tx. The fake store ignores the tx; the service only calls
 // Commit / Rollback on it, which are no-ops here.
 type stubTx struct{}
@@ -226,8 +224,6 @@ func activePool(id string, funded, spent int64) *RewardPool {
 	return &RewardPool{ID: id, Currency: "NGN", FundedMinor: funded, SpentMinor: spent, Status: PoolActive, ConversionRate: 1}
 }
 
-// ── eligibility gate (pure, ordered) ─────────────────────────────────────────────
-
 func TestEvaluateEligibility_Order(t *testing.T) {
 	cases := []struct {
 		name string
@@ -254,8 +250,6 @@ func TestEvaluateEligibility_Order(t *testing.T) {
 		t.Errorf("amount must be the first gate, got %q", got)
 	}
 }
-
-// ── IssueReward flows ────────────────────────────────────────────────────────────
 
 func TestIssueReward_Happy(t *testing.T) {
 	fs := newFakeStore(activePool("pool1", 1000, 0))
@@ -289,7 +283,7 @@ func TestIssueReward_Happy(t *testing.T) {
 }
 
 func TestIssueReward_PoolExhausted(t *testing.T) {
-	fs := newFakeStore(activePool("pool1", 100, 100)) // available = 0
+	fs := newFakeStore(activePool("pool1", 100, 100))
 	w := newFakeWallet()
 	svc := NewService(fs, w, nil, "acct")
 

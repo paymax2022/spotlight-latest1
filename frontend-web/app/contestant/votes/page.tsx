@@ -7,7 +7,7 @@ import ShareToolkit from '@/components/voting/ShareToolkit';
 import VoteCountDisplay from '@/components/voting/VoteCountDisplay';
 import CountdownTimer from '@/components/voting/CountdownTimer';
 import type { ContestantShareLink, VoteTotals } from '@/src/features/voting/types';
-import { FORMAT_NAIRA } from '@/src/features/voting/constants';
+import { FORMAT_NAIRA } from '@/src/features/voting/types';
 
 interface Summary {
   contestId: string;

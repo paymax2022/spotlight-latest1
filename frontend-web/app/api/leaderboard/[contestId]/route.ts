@@ -38,13 +38,11 @@ export async function GET(
       return errorResponse('Leaderboard is not public for this contest', 403);
     }
 
-    // Handle leaderboard freeze
     if (
       settings.leaderboardFreezeEnabled &&
       settings.leaderboardFreezeAt &&
       Date.now() >= Date.parse(settings.leaderboardFreezeAt)
     ) {
-      // Return last frozen snapshot instead of live totals
       const supabase = createAdminClient();
       const { data: snapshot } = await supabase
         .from('leaderboard_snapshots')

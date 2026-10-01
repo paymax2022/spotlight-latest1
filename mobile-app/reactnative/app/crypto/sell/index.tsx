@@ -3,15 +3,15 @@ import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from 'react-
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowDownUp } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import SegmentedControl from '@/components/SegmentedControl';
-import AssetIcon from '@/features/crypto/components/AssetIcon';
+import { AssetIcon } from '@/features/crypto/components';
 import { useAsset, useCryptoPortfolio } from '@/features/crypto/hooks/useCrypto';
 import {
   buildQuote, formatFiat, formatFiatObj, formatCrypto, formatPrice,

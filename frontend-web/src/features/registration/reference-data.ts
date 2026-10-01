@@ -1,9 +1,6 @@
 // Shared reference DATA for the registration engine.
-//
 // This module is intentionally a *leaf*: it imports nothing from the form
-// modules or from config.ts, so the per-contest form files can freely import
 // these constants without creating an import cycle.
-//
 // IMPORTANT: this file holds *data* that is legitimately shared across every
 // contest (the list of Nigerian states, cities, the contest catalog, etc.).
 // The *form structure* for each contest — which fields/steps appear and whether

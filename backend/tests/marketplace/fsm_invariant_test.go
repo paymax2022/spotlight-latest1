@@ -1,8 +1,6 @@
 package marketplace_test
 
-// ---------------------------------------------------------------------------
 // Agent F (QA) — Marketplace FSM invariant tests.
-//
 // WHY THIS FILE EXISTS AS A MIRROR, NOT A DIRECT CALL:
 // Agent A's guarded-transition tables (orderTransitions, listingTransitions,
 // disputeTransitions, boostTransitions) and their guard functions
@@ -16,10 +14,8 @@ package marketplace_test
 // from outside the package, and this directory must not contain a `package
 // marketplace` (internal) file, since backend/internal/marketplace/*.go is
 // Agent A's exclusive file-ownership boundary.
-//
 // So these tests do two things, mirroring the house pattern already used in
 // backend/internal/finance/settlement/split_invariant_test.go (splitLegsKobo):
-//
 //  1. They TRANSCRIBE the exact transition tables from
 //     Paymax_Marketplace_CLAUDE_BUILD_CONTRACT.md §2.1-2.4 (verified line-by-line
 //     against fsm_listing.go / fsm_order.go / fsm_dispute.go / fsm_boost.go source
@@ -32,14 +28,12 @@ package marketplace_test
 //  2. Where the guard's OBSERVABLE effect crosses into exported territory (the
 //     CodedError code + HTTP status a caller actually receives), the codes are
 //     asserted against the frozen §3 taxonomy in errors.go (which IS exported).
-//
 // A live Postgres would let us drive Service methods end-to-end and observe the
 // unexported guards indirectly (see sequence_flow_test.go's DB-required notes).
 // Absent that, these tests are correct-by-construction against the transcribed
 // tables and catch the class of bug the skill calls out: "test every allowed
 // transition produces the right next state... and every disallowed transition is
 // rejected."
-// ---------------------------------------------------------------------------
 
 import (
 	"testing"
@@ -48,7 +42,6 @@ import (
 )
 
 // ─── ADR-023 HISTORICAL NOTICE (order + dispute FSM) ─────────────────────────
-//
 // The escrow ORDER and DISPUTE money-paths were REMOVED in the listings-and-connect
 // pivot (ADR-023): the marketplace no longer holds funds, creates orders, or manages
 // disputes (parties transact off-platform via Meetup Mode). The order/dispute FSM
@@ -56,7 +49,6 @@ import (
 // their handlers/webhooks) has been DELETED. Per ADR-023 the residual enum values
 // and mkt_orders/mkt_disputes tables are retained-but-unused (additive-only; not
 // physically dropped).
-//
 // Consequently the order/dispute transition-table MIRRORS below (orderTransitionsMirror,
 // disputeTransitionsMirror) transcribe a spec that no live code implements. Their
 // TestOrderFSM_* / TestDisputeFSM_* assertions were passing while testing DELETED
@@ -257,8 +249,6 @@ func TestOrderFSM_EscrowHoldsFundsMirrorsReconciliationSet(t *testing.T) {
 	}
 }
 
-// ─── §2.1 Listing FSM ─────────────────────────────────────────────────────────
-
 var listingTransitionsMirror = map[mkt.ListingStatus]map[mkt.ListingStatus]bool{
 	mkt.ListingDraft: {
 		mkt.ListingPendingReview: true,
@@ -402,8 +392,6 @@ func TestListingFSM_OutboxOpMirrorsSearchVisibility(t *testing.T) {
 	}
 }
 
-// ─── §2.3 Dispute FSM ─────────────────────────────────────────────────────────
-
 var disputeTransitionsMirror = map[mkt.DisputeStatus]map[mkt.DisputeStatus]bool{
 	mkt.DisputeOpened: {
 		mkt.DisputeEvidenceWindow: true,
@@ -508,8 +496,6 @@ func TestDisputeFSM_EvidenceAndInspectionWindowDurations(t *testing.T) {
 	}
 }
 
-// ─── §2.4 Boost FSM ───────────────────────────────────────────────────────────
-
 var boostTransitionsMirror = map[mkt.BoostStatus]map[mkt.BoostStatus]bool{
 	mkt.BoostPurchased: {
 		mkt.BoostActive:             true,
@@ -591,8 +577,6 @@ func TestBoostFSM_IllegalTransitionsRejected(t *testing.T) {
 		})
 	}
 }
-
-// ─── Cross-cutting: CodedError shape + the §3 taxonomy strings other agents render ─
 
 // TestInvalidTransitionErrorCodesArePresentAndDistinct locks the frozen error code
 // strings each FSM's guard function returns (errors.go), which mobile/admin (D/E)

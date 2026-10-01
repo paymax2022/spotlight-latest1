@@ -12,8 +12,6 @@ import (
 	"testing"
 )
 
-// ─── fake repo ───────────────────────────────────────────────────────────────
-
 type fakeRepo struct {
 	terms          map[string]Term // key: normalised term text
 	concepts       map[string]Concept
@@ -231,8 +229,6 @@ func (f *fakeRepo) UpsertTaxonomyRow(_ context.Context, entity, action, actorID 
 	return map[string]any{"id": "fake", "entity": entity, "action": action}, nil
 }
 
-// ─── fixtures (mirror the migration seeds) ───────────────────────────────────
-
 func intPtr(v int) *int { return &v }
 
 func newFakeRepo() *fakeRepo {
@@ -339,8 +335,6 @@ func resolve(t *testing.T, s *Service, terms []string, who, duration string) *Sy
 	return res
 }
 
-// ─── tier escalation (seed rules) ────────────────────────────────────────────
-
 func TestResolve_FeverProlonged_EscalatesT3(t *testing.T) {
 	s, _ := newTestService()
 	res := resolve(t, s, []string{"fever"}, "", "GT_3D")
@@ -404,8 +398,6 @@ func TestResolve_MixedClusters_HighestTierWins(t *testing.T) {
 	}
 }
 
-// ─── T2 gate & multilingual match ────────────────────────────────────────────
-
 func TestResolve_FeverBase_T2RequiresConfirmation(t *testing.T) {
 	s, _ := newTestService()
 	res := resolve(t, s, []string{"body dey hot"}, "", "TODAY") // pidgin term → fever
@@ -419,8 +411,6 @@ func TestResolve_FeverBase_T2RequiresConfirmation(t *testing.T) {
 		t.Fatal("T2 shows options behind the pharmacist gate — class groups expected")
 	}
 }
-
-// ─── pregnancy suppression (suppressed, never shown-disabled) ────────────────
 
 func TestResolve_Pregnancy_SuppressesNSAIDGroup(t *testing.T) {
 	s, _ := newTestService()
@@ -455,8 +445,6 @@ func TestResolve_NoPregnancy_NSAIDPresent(t *testing.T) {
 	}
 }
 
-// ─── fail-closed rule parsing ────────────────────────────────────────────────
-
 func TestResolve_MalformedApprovedRule_FailsClosedToT3(t *testing.T) {
 	s, f := newTestService()
 	f.rules = append(f.rules, ClusterRule{
@@ -471,8 +459,6 @@ func TestResolve_MalformedApprovedRule_FailsClosedToT3(t *testing.T) {
 		t.Fatal("expected escalation card on fail-closed path")
 	}
 }
-
-// ─── never a dead end ────────────────────────────────────────────────────────
 
 func TestResolve_ConceptWithoutCluster_T3ConsultNotEmpty(t *testing.T) {
 	s, _ := newTestService()
@@ -523,8 +509,6 @@ func TestResolve_EventLoggedWithoutRawRefinerPII(t *testing.T) {
 		t.Fatalf("refiners must be recorded as structured values, got %v", ev.Refiners)
 	}
 }
-
-// ─── SKU surface gates ───────────────────────────────────────────────────────
 
 func TestListClassSkus_POMAndBlockedNeverSurface(t *testing.T) {
 	s, _ := newTestService()
@@ -591,8 +575,6 @@ func TestListClassSkus_UnknownClass404(t *testing.T) {
 		t.Fatalf("expected ErrNotFound for unknown class, got %v", err)
 	}
 }
-
-// ─── review-case state machine ───────────────────────────────────────────────
 
 func TestReviewStateMachine_EdgeMap(t *testing.T) {
 	legal := [][2]ReviewState{
@@ -740,8 +722,6 @@ func TestReviewCase_InvalidDecision(t *testing.T) {
 	}
 }
 
-// ─── search-event linking (order seam, PRD §10) ──────────────────────────────
-
 func TestResolve_ReturnsSearchEventID(t *testing.T) {
 	s, f := newTestService()
 	res := resolve(t, s, []string{"fever"}, "", "TODAY")
@@ -858,8 +838,6 @@ func TestOrderSeam_ForeignUsersSearchEvent_NotLinkedFailsClosed(t *testing.T) {
 	}
 }
 
-// ─── read-path tenant scoping (object-level authz on review reads) ───────────
-
 func TestGetReviewCaseDetail_ForeignTenantReadsNotFound(t *testing.T) {
 	s, _ := newTestService()
 	ctx := context.Background()
@@ -902,8 +880,6 @@ func TestListReviewCases_TenantScoped(t *testing.T) {
 		t.Fatalf("override queue read: %v, %d cases", err, len(all))
 	}
 }
-
-// ─── evented review-case history ─────────────────────────────────────────────
 
 func TestReviewCase_EventRowPerTransition(t *testing.T) {
 	s, f := newTestService()

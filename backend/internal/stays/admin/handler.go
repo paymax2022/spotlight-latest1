@@ -18,8 +18,6 @@ type Handler struct {
 // NewHandler constructs the admin handler.
 func NewHandler(db *pgxpool.Pool) *Handler { return &Handler{db: db} }
 
-// --- supplier connectivity config (stays.admin.supplier) ---
-
 // ListSuppliers (admin): GET /suppliers
 func (h *Handler) ListSuppliers(c *gin.Context) {
 	rows, err := h.db.Query(c.Request.Context(), `
@@ -68,8 +66,6 @@ func (h *Handler) UpsertSupplier(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
 }
-
-// --- dedup mapping queue (stays.admin.mapping) ---
 
 // ListMappingQueue (admin): GET /mapping-queue?status=
 func (h *Handler) ListMappingQueue(c *gin.Context) {
@@ -128,8 +124,6 @@ func (h *Handler) DecideMapping(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
 }
-
-// --- property moderation (stays.admin.moderation) ---
 
 // ModerateProperty (admin): POST /properties/:id/status {status}
 func (h *Handler) ModerateProperty(c *gin.Context) {

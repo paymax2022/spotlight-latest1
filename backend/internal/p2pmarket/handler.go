@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/escrow"
 )
 
@@ -40,24 +41,6 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	admin.POST("/p2p/orders/:orderId/arbitrate", guard("p2p.dispute.arbitrate"), h.Arbitrate)
 }
 
-func actor(c *gin.Context) (string, bool) {
-	uid := c.GetString("user_id")
-	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
-		return "", false
-	}
-	return uid, true
-}
-
-func idem(c *gin.Context) (string, bool) {
-	k := c.GetHeader("Idempotency-Key")
-	if k == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
-		return "", false
-	}
-	return k, true
-}
-
 type createListingRequest struct {
 	Title       string `json:"title" binding:"required"`
 	Description string `json:"description"`
@@ -65,7 +48,7 @@ type createListingRequest struct {
 }
 
 func (h *Handler) CreateListing(c *gin.Context) {
-	uid, ok := actor(c)
+	uid, ok := ginutil.RequireUser(c)
 	if !ok {
 		return
 	}
@@ -101,7 +84,7 @@ func (h *Handler) GetListing(c *gin.Context) {
 }
 
 func (h *Handler) CloseListing(c *gin.Context) {
-	uid, ok := actor(c)
+	uid, ok := ginutil.RequireUser(c)
 	if !ok {
 		return
 	}
@@ -113,11 +96,11 @@ func (h *Handler) CloseListing(c *gin.Context) {
 }
 
 func (h *Handler) Checkout(c *gin.Context) {
-	uid, ok := actor(c)
+	uid, ok := ginutil.RequireUser(c)
 	if !ok {
 		return
 	}
-	key, ok := idem(c)
+	key, ok := ginutil.RequireIdempotencyKey(c)
 	if !ok {
 		return
 	}
@@ -130,7 +113,7 @@ func (h *Handler) Checkout(c *gin.Context) {
 }
 
 func (h *Handler) Confirm(c *gin.Context) {
-	uid, ok := actor(c)
+	uid, ok := ginutil.RequireUser(c)
 	if !ok {
 		return
 	}
@@ -150,7 +133,7 @@ type disputeRequest struct {
 }
 
 func (h *Handler) Dispute(c *gin.Context) {
-	uid, ok := actor(c)
+	uid, ok := ginutil.RequireUser(c)
 	if !ok {
 		return
 	}
@@ -172,7 +155,7 @@ type arbitrateRequest struct {
 }
 
 func (h *Handler) Arbitrate(c *gin.Context) {
-	arbiterID := c.GetString("user_id")
+	arbiterID := ginutil.UserID(c)
 	var req arbitrateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -195,7 +178,7 @@ type rateRequest struct {
 }
 
 func (h *Handler) Rate(c *gin.Context) {
-	uid, ok := actor(c)
+	uid, ok := ginutil.RequireUser(c)
 	if !ok {
 		return
 	}

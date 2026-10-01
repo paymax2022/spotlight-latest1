@@ -9,14 +9,12 @@ export async function GET(request: Request) {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
 
-    // Get all roles
     const { data: rolesData, error: rolesError } = await supabase
       .from('roles')
       .select('id, name');
 
     if (rolesError) throw rolesError;
 
-    // Get role permissions
     const { data: rolePermsData, error: rolePermsError } = await supabase
       .from('role_permissions')
       .select(`
@@ -27,7 +25,6 @@ export async function GET(request: Request) {
 
     if (rolePermsError) throw rolePermsError;
 
-    // Build RBAC data
     const result = (rolesData ?? []).map((role: any) => {
       const rolePerms = (rolePermsData ?? [])
         .filter((rp: any) => rp.role_id === role.id)

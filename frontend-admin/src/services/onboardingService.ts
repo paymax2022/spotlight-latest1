@@ -37,13 +37,11 @@ function authHeaders(): Record<string, string> {
 
 // LIVE by default against the Go admin endpoints (/api/admin/onboarding/*).
 // Set NEXT_PUBLIC_ONBOARDING_ADMIN_USE_MOCK=true to render fixtures instead.
-//
 // It used to default the OTHER way, and the failure mode was quiet and severe:
 // in fixture mode postAction SIMULATES a decision — 350ms of latency, then an
 // application echoing APPROVED. The reviewer saw success and nothing happened
 // server-side. No role granted, no merchant profile activated, no workspace
 // route written; the real application sat in SUBMITTED forever.
-//
 // That was survivable while the mobile wizard was also mocked. It stopped being
 // survivable when the wizard went live, because real applications then arrived
 // in the Go engine while reviewers worked a fixture queue.
@@ -60,7 +58,6 @@ function toQuery(filters: OnboardingQueueFilters): string {
   return params.toString();
 }
 
-// GET /admin/onboarding/review-queue?module=&type=&status=&age=
 export async function listReviewQueue(
   filters: OnboardingQueueFilters,
 ): Promise<OnboardingQueueRow[]> {
@@ -91,7 +88,6 @@ export async function getApplication(id: string): Promise<OnboardingApplication>
   if (!res.ok) throw new Error(`Application fetch failed: ${res.status}`);
   const data = await res.json().catch(() => ({}));
   // The Go admin API wraps the payload in a {data: ...} envelope (same as the
-  // review-queue endpoint). Unwrap .data first; fall back to .application or the
   // bare body for other shapes.
   return (data.data ?? data.application ?? data) as OnboardingApplication;
 }

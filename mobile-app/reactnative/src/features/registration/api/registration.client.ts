@@ -1,6 +1,4 @@
-// ── Registration module — runtime MOCK ↔ LIVE switch ─────────────────────────
 // Thin helpers shared by registration.api.ts. Mirrors invest.client.ts.
-//
 //   - MOCK: resolves local demo data so the app runs with no backend.
 //   - LIVE (default): calls the Next.js web app under /api/registration using
 //     the shared authenticated `api` axios instance (Bearer token from
@@ -8,17 +6,14 @@
 //     a fully real implementation — contests, drafts, step validation, fraud
 //     checks, submit, uploads (real R2), and registration-fee payment via the
 //     real Paystack gateway (currently test-mode keys).
-//
 // Defaults to LIVE because payment cannot be mocked: the draft/application a
 // payment attaches to has to exist in the SAME store the payment routes read
 // from (`getRegistrationDraft`). A client-only mock draft (id `mock-<ts>`)
 // isn't visible to the Next.js server at all, so a "real" payment against a
 // mock draft always 404s — there is no coherent way to keep the rest of this
 // module mocked while making only payment real. Set
-// EXPO_PUBLIC_REGISTRATION_USE_MOCK=true to force the old fully-offline mock
 // mode back on (no backend required, but payment will not actually charge
 // anything — useful for pure UI iteration only).
-//
 // NOTE: registration endpoints live on the Next.js server (NOT the Go /api/v1),
 // so paths are passed through unprefixed (e.g. '/api/registration/contests').
 
@@ -87,9 +82,7 @@ export async function regUpload<T>(
     // it for FormData in a "standard browser" env. Under React Native (incl. Expo
     // web) axios sees navigator.product === 'ReactNative' and keeps the JSON
     // Content-Type, so the multipart body arrives mislabeled and the server's
-    // request.formData() rejects it ("Content-Type was not one of
     // multipart/form-data…"). Using the browser's own fetch (with no Content-Type
-    // header) lets it set 'multipart/form-data; boundary=…' correctly. We attach
     // the same Supabase bearer token the axios interceptor would.
     let authHeaders: Record<string, string> = {};
     try {
@@ -108,7 +101,6 @@ export async function regUpload<T>(
     return data as T;
   }
 
-  // Native: RN's FormData accepts the { uri, name, type } blob descriptor and adds
   // the multipart boundary itself. Cast through unknown for TS.
   form.append('file', {
     uri: file.uri,

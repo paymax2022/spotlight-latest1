@@ -1,4 +1,3 @@
-// ── Direct Referral Rewards — React Query hooks (v5) ─────────────────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as rewardsApi from './api';
@@ -13,7 +12,6 @@ export const rewardKeys = {
   milestones: () => [...rewardKeys.all, 'milestones'] as const,
 };
 
-// ── Reads ────────────────────────────────────────────────────────────────────
 export function useReferralLink() {
   return useQuery({ queryKey: rewardKeys.link(), queryFn: rewardsApi.getOrCreateLink, staleTime: 5 * 60_000 });
 }
@@ -34,7 +32,6 @@ export function useReferralMilestones() {
   return useQuery({ queryKey: rewardKeys.milestones(), queryFn: rewardsApi.getMilestones, staleTime: 60_000 });
 }
 
-// ── Mutations ────────────────────────────────────────────────────────────────
 // Apply a referral code at signup (referred-user side). Silent by design — the
 // screen swallows failures so a bad code never blocks the account creation.
 export function useAttributeReferral() {

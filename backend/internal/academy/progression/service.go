@@ -46,8 +46,6 @@ func (s *Service) masteryThreshold(ctx context.Context) float64 {
 	return DefaultMasteryThreshold
 }
 
-// ── Path build / read ───────────────────────────────────────────────────────────
-
 // BuildPath creates a learning path for (user, subject) from the subject's ordered
 // curriculum objectives. The first step is 'available', the rest 'locked'.
 // Idempotent: a UNIQUE (user_id, subject_id) means a re-call returns the existing
@@ -160,8 +158,6 @@ func (s *Service) StartStep(ctx context.Context, actor, userID, objectiveID stri
 	return s.repo.UpdatePathStepState(ctx, actor, userID, pathID, objectiveID, from, StepInProgress)
 }
 
-// ── Adaptive practice ───────────────────────────────────────────────────────────
-
 // AdaptivePractice selects the learner's WEAK objectives (mastery below threshold
 // or not yet started/in progress), picks difficulty-spread question items for them
 // and creates a practice session. Either an explicit objective set OR a subject is
@@ -238,8 +234,6 @@ func (s *Service) CompletePractice(ctx context.Context, userID, sessionID string
 	return s.repo.CompletePracticeSession(ctx, userID, sessionID, score)
 }
 
-// ── Recommendations ─────────────────────────────────────────────────────────────
-
 // Recommendations recomputes next-best objectives from the learner's mastery gaps,
 // boosting objectives that are the current available/in_progress frontier across
 // their paths. Persists (full replace) and returns the ranked set.
@@ -299,8 +293,6 @@ func (s *Service) Recommendations(ctx context.Context, userID string) ([]Recomme
 
 	return s.repo.ReplaceRecommendations(ctx, userID, recos)
 }
-
-// ── Admin: adaptive config ──────────────────────────────────────────────────────
 
 func (s *Service) ListAdaptiveConfig(ctx context.Context) ([]AdaptiveConfig, error) {
 	return s.repo.ListConfig(ctx)

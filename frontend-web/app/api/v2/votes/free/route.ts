@@ -11,8 +11,6 @@ import { getRequestIp } from '@/src/lib/rate-limit/client-ip';
 
 export async function POST(request: NextRequest) {
   try {
-    // --- Rate limit: 30 free-vote requests per IP per minute ---
-    // v1 (app/api/votes/free) has always had this; v2 shipped without it, so the
     // route the vote modal actually calls was unthrottled. Same key, limit and
     // window as v1 so the two cannot drift apart again.
     const rlIp = getRequestIp(request);
@@ -24,7 +22,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get idempotency key from headers
     const idempotencyKey = request.headers.get('X-Idempotency-Key');
     if (!idempotencyKey) {
       return NextResponse.json(
@@ -33,7 +30,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate authentication
     const { user, error: authError } = await validateRequest(request);
     if (authError) {
       return NextResponse.json(
@@ -42,7 +38,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse request body
     const body = await request.json();
     const { contestantId, contestId, shareCode, voteQuantity, voterIdentifier } = body;
 
@@ -66,7 +61,6 @@ export async function POST(request: NextRequest) {
         contestantId,
         contestId,
         shareCode,
-        // VoteModal has always sent voteQuantity; the route dropped it on the
         // floor, so every vote was silently a single vote regardless.
         voteQuantity,
         voterIdentifier,

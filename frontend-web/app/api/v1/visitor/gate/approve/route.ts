@@ -22,7 +22,6 @@ export async function POST(request: Request) {
 
     if (!accessCodeId) throw new ApiError('accessCodeId is required', 400);
 
-    // Load code to get estate scoping and issuer.
     const { data: code, error: codeErr } = await supabase
       .from('visitor_access_codes')
       .select(ACCESS_CODE_COLUMNS)

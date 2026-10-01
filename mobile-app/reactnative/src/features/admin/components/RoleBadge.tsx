@@ -1,11 +1,10 @@
-// ── Paymax · Admin — RoleBadge ───────────────────────────────────────────────
 // Colour-coded chip for an admin Role, driven by ROLE_STYLE / ROLE_LABEL.
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import { ROLE_LABEL, ROLE_STYLE } from '../constants/admin.constants';
 import type { Role } from '../types/admin.types';
 

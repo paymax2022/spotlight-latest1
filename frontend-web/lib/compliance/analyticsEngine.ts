@@ -86,7 +86,6 @@ export class ComplianceAnalyticsEngine {
    * Initialize default KPIs
    */
   private initializeDefaultKPIs(): void {
-    // GDPR KPIs
     this.kpis.set('gdpr-response-time', {
       id: 'gdpr-response-time',
       name: 'GDPR Response Time',
@@ -230,7 +229,6 @@ export class ComplianceAnalyticsEngine {
     const previous = this.metrics[Math.max(0, this.metrics.length - 8)][metric];
     const changePercent = ((current - previous) / previous) * 100;
 
-    // Calculate volatility
     const recentMetrics = this.metrics.slice(-30).map((m) => m[metric]);
     const mean = recentMetrics.reduce((a, b) => a + b, 0) / recentMetrics.length;
     const variance = recentMetrics.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / recentMetrics.length;

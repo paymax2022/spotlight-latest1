@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/jsonx"
 )
 
 // RegistrationStore provides data access for contest registration.
@@ -24,17 +25,17 @@ func NewRegistrationStore(db *pgxpool.Pool) *RegistrationStore {
 
 // Contest represents a contest for registration.
 type Contest struct {
-	ID                  string `json:"id"`
-	Title               string `json:"title"`
-	Slug                string `json:"slug"`
-	Description         string `json:"description"`
-	Category            string `json:"category"`
-	RegistrationFeeNgn  int64  `json:"registrationFeeNgn"`
-	IsPaid              bool   `json:"isPaid"`
-	StartDate           string `json:"startDate"`
-	EndDate             string `json:"endDate"`
-	MaxParticipants     int64  `json:"maxParticipants"`
-	RegisteredCount     int64  `json:"registeredCount"`
+	ID                 string `json:"id"`
+	Title              string `json:"title"`
+	Slug               string `json:"slug"`
+	Description        string `json:"description"`
+	Category           string `json:"category"`
+	RegistrationFeeNgn int64  `json:"registrationFeeNgn"`
+	IsPaid             bool   `json:"isPaid"`
+	StartDate          string `json:"startDate"`
+	EndDate            string `json:"endDate"`
+	MaxParticipants    int64  `json:"maxParticipants"`
+	RegisteredCount    int64  `json:"registeredCount"`
 }
 
 // ListContests retrieves all contests available for registration.
@@ -77,18 +78,18 @@ func (s *RegistrationStore) ListContests(ctx context.Context) ([]Contest, error)
 
 // Application represents a contest application.
 type Application struct {
-	ID               string                 `json:"id"`
-	Reference        string                 `json:"reference"`
-	ContestSlug      string                 `json:"contestSlug"`
-	Status           string                 `json:"status"`
-	Role             string                 `json:"role"`
-	CreatedAt        string                 `json:"createdAt"`
-	UpdatedAt        string                 `json:"updatedAt"`
-	SubmittedAt      sql.NullString         `json:"submittedAt"`
-	CompletionPercent int                   `json:"completionPercent"`
-	CurrentStep      string                 `json:"currentStep"`
-	FraudFlags       []string               `json:"fraudFlags"`
-	FormData         map[string]interface{} `json:"formData"`
+	ID                string         `json:"id"`
+	Reference         string         `json:"reference"`
+	ContestSlug       string         `json:"contestSlug"`
+	Status            string         `json:"status"`
+	Role              string         `json:"role"`
+	CreatedAt         string         `json:"createdAt"`
+	UpdatedAt         string         `json:"updatedAt"`
+	SubmittedAt       sql.NullString `json:"submittedAt"`
+	CompletionPercent int            `json:"completionPercent"`
+	CurrentStep       string         `json:"currentStep"`
+	FraudFlags        []string       `json:"fraudFlags"`
+	FormData          map[string]any `json:"formData"`
 }
 
 // ListApplications retrieves user's applications (paginated).
@@ -231,7 +232,7 @@ func (s *RegistrationStore) SaveStep(ctx context.Context, userID string, appID s
 		RETURNING id, reference, contest_slug, status, role,
 		          created_at::text, updated_at::text, completion_percent,
 		          current_step, fraud_flags, form_data
-	`, json.RawMessage(mustMarshal(values)), stepKey, newPercent, appID, userID)
+	`, json.RawMessage(jsonx.Marshal(values)), stepKey, newPercent, appID, userID)
 
 	var app Application
 	var fraudFlagsJSON []byte
@@ -392,16 +393,16 @@ func (s *RegistrationStore) RecordStatusChange(ctx context.Context, appID string
 
 // PaymentTransaction represents a payment for an application.
 type PaymentTransaction struct {
-	ID                 string `json:"id"`
-	ApplicationID      string `json:"applicationId"`
-	Reference          string `json:"reference"`
-	Amount             int64  `json:"amount"`
-	Currency           string `json:"currency"`
-	Method             string `json:"method"`
-	PaystackReference  string `json:"paystackReference"`
-	Status             string `json:"status"`
-	CreatedAt          string `json:"createdAt"`
-	UpdatedAt          string `json:"updatedAt"`
+	ID                string `json:"id"`
+	ApplicationID     string `json:"applicationId"`
+	Reference         string `json:"reference"`
+	Amount            int64  `json:"amount"`
+	Currency          string `json:"currency"`
+	Method            string `json:"method"`
+	PaystackReference string `json:"paystackReference"`
+	Status            string `json:"status"`
+	CreatedAt         string `json:"createdAt"`
+	UpdatedAt         string `json:"updatedAt"`
 }
 
 // CreatePaymentTransaction records a payment attempt.
@@ -442,10 +443,4 @@ func (s *RegistrationStore) UpdatePaymentStatus(ctx context.Context, appID strin
 		return fmt.Errorf("update payment status: %w", err)
 	}
 	return nil
-}
-
-// Helper to marshal to JSON bytes
-func mustMarshal(v interface{}) []byte {
-	b, _ := json.Marshal(v)
-	return b
 }

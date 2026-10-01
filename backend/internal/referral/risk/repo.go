@@ -2,12 +2,15 @@ package risk
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/ptr"
 )
 
 // Repository is the parameterized data layer for the risk tables. It also reads
@@ -21,15 +24,6 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
-func nullable(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-// --- rules ---
-
 const ruleCols = `id, code, name, rule_type, enabled, action, params, severity, created_at, updated_at`
 
 func scanRule(row pgx.Row) (*Rule, error) {
@@ -41,9 +35,7 @@ func scanRule(row pgx.Row) (*Rule, error) {
 		&r.Action, &raw, &r.Severity, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return nil, err
 	}
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &r.Params)
-	}
+	r.Params = jsonx.UnmarshalOr(raw, r.Params)
 	return &r, nil
 }
 
@@ -85,11 +77,7 @@ func (r *Repository) EnabledRules(ctx context.Context) ([]Rule, error) {
 
 // UpsertRule creates or updates a rule keyed by code.
 func (r *Repository) UpsertRule(ctx context.Context, in RuleInput) (*Rule, error) {
-	params := in.Params
-	if params == nil {
-		params = map[string]any{}
-	}
-	raw, err := json.Marshal(params)
+	raw, err := jsonx.MarshalObject(in.Params)
 	if err != nil {
 		return nil, fmt.Errorf("risk: marshal params: %w", err)
 	}
@@ -133,8 +121,6 @@ func (r *Repository) SetRuleEnabled(ctx context.Context, id string, enabled bool
 	return nil
 }
 
-// --- alerts ---
-
 const alertCols = `id, subject_id, rule_code, reason_code, severity, reward_id,
 	attribution_id, identity_hash, device_hash, window_count, status, case_id, created_at`
 
@@ -147,19 +133,13 @@ func scanAlert(row pgx.Row) (*Alert, error) {
 		&reward, &attrib, &ident, &dev, &a.WindowCount, &a.Status, &caseID, &a.CreatedAt); err != nil {
 		return nil, err
 	}
-	deref(&a.SubjectID, subj)
-	deref(&a.RewardID, reward)
-	deref(&a.AttributionID, attrib)
-	deref(&a.IdentityHash, ident)
-	deref(&a.DeviceHash, dev)
-	deref(&a.CaseID, caseID)
+	ptr.Assign(&a.SubjectID, subj)
+	ptr.Assign(&a.RewardID, reward)
+	ptr.Assign(&a.AttributionID, attrib)
+	ptr.Assign(&a.IdentityHash, ident)
+	ptr.Assign(&a.DeviceHash, dev)
+	ptr.Assign(&a.CaseID, caseID)
 	return &a, nil
-}
-
-func deref(dst *string, src *string) {
-	if src != nil {
-		*dst = *src
-	}
 }
 
 // InsertAlert appends a fraud alert (idempotent is not required — append-only).
@@ -171,9 +151,9 @@ func (r *Repository) InsertAlert(ctx context.Context, a Alert) (*Alert, error) {
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'open')
 		RETURNING ` + alertCols
 	return scanAlert(r.db.QueryRow(ctx, q,
-		nullable(a.SubjectID), a.RuleCode, a.ReasonCode, a.Severity,
-		nullable(a.RewardID), nullable(a.AttributionID),
-		nullable(a.IdentityHash), nullable(a.DeviceHash), a.WindowCount))
+		dbutil.NullStr(a.SubjectID), a.RuleCode, a.ReasonCode, a.Severity,
+		dbutil.NullStr(a.RewardID), dbutil.NullStr(a.AttributionID),
+		dbutil.NullStr(a.IdentityHash), dbutil.NullStr(a.DeviceHash), a.WindowCount))
 }
 
 // ListAlerts lists alerts, optional status filter.
@@ -230,7 +210,7 @@ func (r *Repository) AlertsBySubject(ctx context.Context, subjectID string) ([]A
 // SetAlertStatus updates an alert's status (and optional case link).
 func (r *Repository) SetAlertStatus(ctx context.Context, id, status, caseID string) error {
 	const q = `UPDATE referral_risk_alerts SET status = $2, case_id = COALESCE($3::uuid, case_id) WHERE id = $1`
-	tag, err := r.db.Exec(ctx, q, id, status, nullable(caseID))
+	tag, err := r.db.Exec(ctx, q, id, status, dbutil.NullStr(caseID))
 	if err != nil {
 		return fmt.Errorf("risk: set alert status: %w", err)
 	}
@@ -239,8 +219,6 @@ func (r *Repository) SetAlertStatus(ctx context.Context, id, status, caseID stri
 	}
 	return nil
 }
-
-// --- cases ---
 
 const caseCols = `id, subject_id, status, reason_codes, resolution, opened_by, resolved_by, notes, created_at, updated_at, resolved_at`
 
@@ -253,11 +231,11 @@ func scanCase(row pgx.Row) (*Case, error) {
 		&openBy, &resBy, &nt, &c.CreatedAt, &c.UpdatedAt, &c.ResolvedAt); err != nil {
 		return nil, err
 	}
-	deref(&c.SubjectID, subj)
-	deref(&c.Resolution, res)
-	deref(&c.OpenedBy, openBy)
-	deref(&c.ResolvedBy, resBy)
-	deref(&c.Notes, nt)
+	ptr.Assign(&c.SubjectID, subj)
+	ptr.Assign(&c.Resolution, res)
+	ptr.Assign(&c.OpenedBy, openBy)
+	ptr.Assign(&c.ResolvedBy, resBy)
+	ptr.Assign(&c.Notes, nt)
 	return &c, nil
 }
 
@@ -270,7 +248,7 @@ func (r *Repository) OpenCase(ctx context.Context, subjectID string, reasonCodes
 		INSERT INTO referral_cases (subject_id, status, reason_codes, opened_by, notes)
 		VALUES ($1,'open',$2,$3,$4)
 		RETURNING ` + caseCols
-	return scanCase(r.db.QueryRow(ctx, q, nullable(subjectID), reasonCodes, nullable(openedBy), nullable(notes)))
+	return scanCase(r.db.QueryRow(ctx, q, dbutil.NullStr(subjectID), reasonCodes, dbutil.NullStr(openedBy), dbutil.NullStr(notes)))
 }
 
 // ListCases lists cases, optional status filter.
@@ -326,7 +304,7 @@ func (r *Repository) UpdateCaseStatus(ctx context.Context, id, status, resolutio
 		    resolved_at = CASE WHEN $2 = 'resolved' THEN now() ELSE resolved_at END,
 		    updated_at = now()
 		WHERE id = $1`
-	tag, err := r.db.Exec(ctx, q, id, status, resolution, nullable(resolvedBy))
+	tag, err := r.db.Exec(ctx, q, id, status, resolution, dbutil.NullStr(resolvedBy))
 	if err != nil {
 		return fmt.Errorf("risk: update case status: %w", err)
 	}
@@ -355,8 +333,6 @@ func (r *Repository) CaseAlerts(ctx context.Context, caseID string) ([]Alert, er
 	return out, rows.Err()
 }
 
-// --- blocklist ---
-
 const blCols = `id, list_type, entry_type, entry_value, reason, added_by, active, created_at`
 
 func scanBlocklist(row pgx.Row) (*BlocklistEntry, error) {
@@ -367,8 +343,8 @@ func scanBlocklist(row pgx.Row) (*BlocklistEntry, error) {
 	if err := row.Scan(&b.ID, &b.ListType, &b.EntryType, &b.EntryValue, &reason, &addBy, &b.Active, &b.CreatedAt); err != nil {
 		return nil, err
 	}
-	deref(&b.Reason, reason)
-	deref(&b.AddedBy, addBy)
+	ptr.Assign(&b.Reason, reason)
+	ptr.Assign(&b.AddedBy, addBy)
 	return &b, nil
 }
 
@@ -386,7 +362,7 @@ func (r *Repository) AddBlocklist(ctx context.Context, in BlocklistInput, addedB
 			added_by = EXCLUDED.added_by,
 			active = true
 		RETURNING ` + blCols
-	return scanBlocklist(r.db.QueryRow(ctx, q, listType, in.EntryType, in.EntryValue, nullable(in.Reason), nullable(addedBy)))
+	return scanBlocklist(r.db.QueryRow(ctx, q, listType, in.EntryType, in.EntryValue, dbutil.NullStr(in.Reason), dbutil.NullStr(addedBy)))
 }
 
 // DeactivateBlocklist soft-removes an entry (active=false). Additive-only model.
@@ -442,8 +418,6 @@ func (r *Repository) IsListed(ctx context.Context, listType, entryType, entryVal
 	return exists, nil
 }
 
-// --- review queue ---
-
 const rqCols = `id, reward_id, subject_id, alert_id, reason_code, status, decided_by, decided_at, created_at`
 
 func scanReview(row pgx.Row) (*ReviewItem, error) {
@@ -454,10 +428,10 @@ func scanReview(row pgx.Row) (*ReviewItem, error) {
 	if err := row.Scan(&it.ID, &reward, &subj, &alert, &it.ReasonCode, &it.Status, &dby, &it.DecidedAt, &it.CreatedAt); err != nil {
 		return nil, err
 	}
-	deref(&it.RewardID, reward)
-	deref(&it.SubjectID, subj)
-	deref(&it.AlertID, alert)
-	deref(&it.DecidedBy, dby)
+	ptr.Assign(&it.RewardID, reward)
+	ptr.Assign(&it.SubjectID, subj)
+	ptr.Assign(&it.AlertID, alert)
+	ptr.Assign(&it.DecidedBy, dby)
 	return &it, nil
 }
 
@@ -467,7 +441,7 @@ func (r *Repository) Enqueue(ctx context.Context, rewardID, subjectID, alertID, 
 		INSERT INTO referral_review_queue (reward_id, subject_id, alert_id, reason_code, status)
 		VALUES ($1,$2,$3,$4,'queued')
 		RETURNING ` + rqCols
-	return scanReview(r.db.QueryRow(ctx, q, nullable(rewardID), nullable(subjectID), nullable(alertID), reasonCode))
+	return scanReview(r.db.QueryRow(ctx, q, dbutil.NullStr(rewardID), dbutil.NullStr(subjectID), dbutil.NullStr(alertID), reasonCode))
 }
 
 // ListReviewQueue lists items, optional status filter.
@@ -513,7 +487,7 @@ func (r *Repository) DecideReview(ctx context.Context, id, status, decidedBy str
 		UPDATE referral_review_queue
 		SET status = $2, decided_by = $3::uuid, decided_at = now()
 		WHERE id = $1 AND status = 'queued'`
-	tag, err := r.db.Exec(ctx, q, id, status, nullable(decidedBy))
+	tag, err := r.db.Exec(ctx, q, id, status, dbutil.NullStr(decidedBy))
 	if err != nil {
 		return fmt.Errorf("risk: decide review: %w", err)
 	}
@@ -533,8 +507,6 @@ func (r *Repository) HeldRewardCount(ctx context.Context, subjectID string) (int
 	}
 	return n, nil
 }
-
-// --- dedup / detection helpers (read RB0 + finance KYC) ---
 
 // IdentityHashOf returns a user's deterministic KYC identity hash derived from
 // the finance KYC bvn_hash/nin_hash columns on user_profiles. Empty when no KYC
@@ -645,7 +617,6 @@ func (r *Repository) Dashboard(ctx context.Context) (*DashboardCounts, error) {
 
 // ReferrerOf returns the user's currently attributed referrer, or "" when they
 // have no attribution or are attributed to the house.
-//
 // Used to resolve the target of a member abuse report: the report is about
 // whoever referred the reporter, and the client neither knows nor should send
 // that id — letting a client name an arbitrary target would make it trivial to

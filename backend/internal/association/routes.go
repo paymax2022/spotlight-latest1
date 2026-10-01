@@ -5,17 +5,14 @@ import "github.com/gin-gonic/gin"
 // RegisterRoutes mounts the association endpoints onto the provided (already
 // auth-guarded) router group. Mirrors the internal/groups wiring style; the
 // caller supplies the group base (e.g. /associations).
-//
 // NOTE on routing: org detail is served at GET /orgs/:id rather than a
 // root-level GET /:id — gin's tree conflicts a root param with the many static
 // siblings (/me, /members, /meetings, …). The mobile client's bare
 // GET /associations/:id maps here as part of the documented path reconciliation.
 func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
-	// ── Discovery ───────────────────────────────────────────────
 	rg.GET("", h.ListOrganisations)
 	rg.GET("/orgs/:id", h.GetOrganisation)
 
-	// ── Member self ─────────────────────────────────────────────
 	rg.GET("/me/dashboard", h.GetDashboard)
 	rg.GET("/me/card", h.GetCard)
 	rg.GET("/me/profile", h.GetProfile)
@@ -26,7 +23,6 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.GET("/me/admin-access", h.GetAdminAccess)
 	rg.GET("/me/dues", h.GetDues)
 
-	// ── Elections & voting (TS-13) ──────────────────────────────
 	rg.GET("/elections", h.ListElections)
 	rg.GET("/elections/:id", h.GetElection)
 	rg.POST("/elections", h.CreateElection)                      // officer
@@ -38,25 +34,20 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.GET("/elections/:id/tally", h.GetElectionTally)           // officer
 	rg.POST("/elections/:id/vote", h.CastVote)                   // eligible voter
 
-	// ── Membership card verification (MC-003/004/005) ───────────
 	rg.POST("/cards/verify", h.VerifyCard)
 
-	// ── Directory ───────────────────────────────────────────────
 	rg.GET("/members", h.ListMembers)
 	rg.GET("/members/:id", h.GetMember)
 
-	// ── Dues & payments ─────────────────────────────────────────
 	rg.POST("/dues/:invoiceId/pay", h.PayInvoice)
 	rg.GET("/receipts/:receiptId", h.GetReceipt)
 
-	// ── Engagement ──────────────────────────────────────────────
 	rg.GET("/announcements", h.ListAnnouncements)
 	rg.GET("/announcements/:id", h.GetAnnouncement)
 	rg.POST("/announcements/:id/acknowledge", h.AcknowledgeAnnouncement)
 	rg.GET("/notifications", h.ListNotifications)
 	rg.POST("/notifications/read", h.MarkNotificationsRead)
 
-	// ── Meetings ────────────────────────────────────────────────
 	rg.GET("/meetings", h.ListMeetings)
 	rg.GET("/meetings/:id", h.GetMeeting)
 	// Any active member may propose a meeting; an admin's goes straight onto the
@@ -65,17 +56,14 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.POST("/meetings/:id/rsvp", h.RsvpMeeting)
 	rg.POST("/meetings/:id/attendance", h.CheckInMeeting)
 
-	// ── Tasks ───────────────────────────────────────────────────
 	rg.GET("/tasks", h.ListTasks)
 	rg.GET("/tasks/:id", h.GetTask)
 	rg.PATCH("/tasks/:id", h.UpdateTaskStatus)
 
-	// ── Documents ───────────────────────────────────────────────
 	rg.GET("/documents", h.ListDocuments)
 	rg.GET("/documents/:id", h.GetDocument)
 	rg.POST("/documents/:id/acknowledge", h.AcknowledgeDocument)
 
-	// ── Community ───────────────────────────────────────────────
 	rg.GET("/committees", h.ListCommittees)
 	rg.GET("/committees/:id", h.GetCommittee)
 	rg.POST("/committees/:id/join", h.JoinCommittee)
@@ -85,7 +73,6 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.POST("/events/:id/register", h.RegisterEvent)
 	rg.POST("/events/:id/feedback", h.SubmitEventFeedback)
 
-	// ── Admin ───────────────────────────────────────────────────
 	rg.GET("/admin/organisations", h.GetAdminOrganisations)
 	rg.GET("/admin/kpis", h.GetAdminKpis)
 	rg.GET("/admin/audit-log", h.GetAuditLog)
@@ -106,7 +93,6 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	// param conflict with /admin/members/:id/*.
 	rg.POST("/admin/import/members", h.BulkImportMembers)
 
-	// ── Admin: organisation management ──────────────────────────
 	// assoc_organisations used to be write-once — no UPDATE or DELETE existed
 	// anywhere against it or its chapters/committees/dues tiers, so every field
 	// was immutable after creation and `verified` was dead schema. Child routes
@@ -135,7 +121,6 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.PATCH("/admin/rules/:childId", h.UpdateRule)
 	rg.DELETE("/admin/rules/:childId", h.DeleteRule)
 
-	// ── Admin: content authoring ────────────────────────────────
 	// assoc_announcements / meetings / documents / events / tasks / notifications
 	// / devices / dues_invoices all had READ endpoints and no writer anywhere in
 	// the repo, so they were permanently empty and content could only arrive by
@@ -191,7 +176,6 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.POST("/admin/organisations/:id/dues/run", h.RunDues)
 	rg.POST("/admin/invoices", h.CreateInvoice)
 
-	// ── Settings (V) ────────────────────────────────────────────
 	rg.GET("/me/notification-prefs", h.GetNotificationPrefs)
 	rg.PUT("/me/notification-prefs", h.UpdateNotificationPrefs)
 	rg.GET("/me/security", h.GetSecurity)
@@ -204,14 +188,12 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.POST("/me/devices", h.RegisterDevice)
 	rg.DELETE("/me/devices/:id", h.RevokeDevice)
 
-	// ── Support (W) ─────────────────────────────────────────────
 	rg.GET("/support/faqs", h.GetFaqs)
 	rg.GET("/support/tickets", h.ListTickets)
 	rg.POST("/support/tickets", h.CreateTicket)
 	rg.GET("/support/tickets/:id", h.GetTicket)
 	rg.POST("/support/tickets/:id/messages", h.ReplyTicket)
 
-	// ── Chat (I) ────────────────────────────────────────────────
 	// Live delivery: the caller's own realtime stream on the open-source WS hub
 	// (platform/ws). Authenticated by the group's RequireAuthContext, like the
 	// doctor stream. A static "/ws" segment — gin's tree would conflict a root
@@ -224,7 +206,6 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.POST("/chat/threads/:id/messages/:messageId/react", h.ReactToMessage)
 	rg.POST("/chat/threads/:id/mute", h.MuteChatThread)
 
-	// ── AI notes (L) ────────────────────────────────────────────
 	rg.GET("/ai-notes", h.ListAiNotes)
 	rg.POST("/ai-notes", h.CreateAiNote)
 	rg.GET("/ai-notes/:id", h.GetAiNote)
@@ -234,13 +215,11 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.POST("/ai-notes/:id/publish", h.PublishAiNote)
 	rg.POST("/ai-notes/:id/action-items/:itemId/convert", h.ConvertActionItem)
 
-	// ── Uploads (logo) ──────────────────────────────────────────
 	// Not scoped to an organisation: a logo is chosen while the org is still a
 	// draft on the founder's phone, so the key is namespaced by the caller's own
 	// user id instead. See presign.go.
 	rg.POST("/uploads/logo/presign", h.PresignLogoUpload)
 
-	// ── Join / publish (B, U) ───────────────────────────────────
 	rg.POST("", h.PublishOrganisation)
 	rg.POST("/apply", h.SubmitApplication)
 	rg.POST("/invites/validate", h.ValidateInvite)

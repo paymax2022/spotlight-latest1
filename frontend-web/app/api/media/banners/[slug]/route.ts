@@ -1,13 +1,10 @@
-// ── Marketing banner media resolver ───────────────────────────────────────────
 // GET /api/media/banners/:slug → a descriptor for one whitelisted marketing
 // banner, plus the intrinsic dimensions the client needs to reserve layout
 // space before the image loads.
-//
 // Two backing stores, both closed whitelists keyed by slug — a caller can
 // never steer this at an arbitrary object/public ID, which is what makes the
 // route safe to leave unauthenticated (banners are public marketing art, not
 // user data):
-//
 //  • Cloudinary (`cloudinaryPublicId`, preferred going forward) — the client
 //    (src/lib/cloudinary.ts) builds the actual delivery URL itself, picking
 //    the width bucket ITS viewport needs (f_auto,q_auto,w_<bucket>). Nothing
@@ -15,10 +12,8 @@
 //    design, so this route just returns the public ID and dimensions.
 //  • Cloudflare R2 (`key`, legacy) — `spotlight-openmic-songs` is the ONLY R2
 //    bucket in the account and also holds estate/insurance/marketplace
-//    files, so a public r2.dev domain isn't an option; this path still mints
 //    a short-lived presigned GET, same pattern every other R2 read in this
 //    repo uses.
-//
 // Either way: replacing artwork means a NEW public ID / object key here,
 // never overwriting one already cached on devices and at the edge.
 

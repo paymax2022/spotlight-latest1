@@ -2,9 +2,6 @@ package invest
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,16 +10,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/ptr"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Broker webhook — async fill / settlement / rejection events.
-//
 // A real broker confirms fills out-of-band. This endpoint verifies the provider
 // signature (HMAC-SHA256 over the raw body), then drives the order state machine
 // and ledger. It is idempotent: events for orders already past the relevant
 // state are ignored, and ledger postings carry unique idempotency keys.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // webhookSecretProvider is implemented by brokers that sign webhooks.
 type webhookSecretProvider interface{ WebhookSecret() string }
@@ -37,10 +34,7 @@ func NewWebhookHandler(svc *Service, secret string) *WebhookHandler {
 }
 
 func verifyHMAC(secret string, body []byte, sigHex string) bool {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	expected := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(expected), []byte(sigHex))
+	return cryptox.ConstantTimeEqual(sigHex, cryptox.HMACSHA256Hex(secret, string(body)))
 }
 
 // Handle processes a signed broker webhook.
@@ -92,8 +86,6 @@ func (h *WebhookHandler) Handle(c *gin.Context) {
 
 var errAlreadyHandled = errors.New("invest: event already handled")
 
-// ── Repository lookup ────────────────────────────────────────────────────────
-
 func (r *Repository) FindOrderByProviderRef(ctx context.Context, ref string) (*Order, error) {
 	var o Order
 	err := scanOrder(r.db.QueryRow(ctx, "SELECT "+orderCols+" FROM invest_orders WHERE provider_reference=$1 ORDER BY created_at DESC LIMIT 1", ref), &o)
@@ -105,8 +97,6 @@ func (r *Repository) FindOrderByProviderRef(ctx context.Context, ref string) (*O
 	}
 	return &o, nil
 }
-
-// ── Service handlers (async broker outcomes) ─────────────────────────────────
 
 // HandleBrokerFill applies an async fill: settles the ledger and moves the order
 // to PendingSettlement (buy → shares pending; sell → cash pending).
@@ -133,7 +123,7 @@ func (s *Service) HandleBrokerFill(ctx context.Context, providerRef string, exec
 	fees := s.feeSchedule(ctx)
 	o.ExecutedPriceKobo = execPriceKobo
 	o.FilledQuantity = filledQty
-	o.FilledAt = ptime(s.now())
+	o.FilledAt = ptr.Of(s.now())
 
 	if o.Side == SideBuy {
 		cost := int64(filledQty * float64(execPriceKobo))
@@ -189,7 +179,7 @@ func (s *Service) HandleBrokerSettled(ctx context.Context, providerRef string) e
 			return err
 		}
 	}
-	o.SettledAt = ptime(s.now())
+	o.SettledAt = ptr.Of(s.now())
 	return s.transition(ctx, o, StatusSettled, "settled (webhook)")
 }
 

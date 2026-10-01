@@ -71,8 +71,6 @@ var (
 	ErrAlreadyFinal      = errors.New("exam: attempt already submitted")
 )
 
-// ── Arena / blueprint / combination admin ───────────────────────────────────────
-
 func (s *Service) CreateArena(ctx context.Context, actor string, req CreateArenaRequest) (*Arena, error) {
 	if req.Code == "" || req.Name == "" {
 		return nil, ErrInvalidInput
@@ -134,8 +132,6 @@ func (s *Service) DeleteCombination(ctx context.Context, actor, id string) error
 func (s *Service) GetCombinations(ctx context.Context, arenaID, course string) ([]SubjectCombinationRule, error) {
 	return s.repo.GetCombinations(ctx, arenaID, course)
 }
-
-// ── CBT attempt engine ───────────────────────────────────────────────────────────
 
 // Begin runs created→started: entitlement check, then create a started attempt with
 // a SERVER-AUTHORITATIVE deadline = now + blueprint.total_seconds. Idempotent on
@@ -530,10 +526,7 @@ func (s *Service) attachSubjectNames(ctx context.Context, subjects []SubjectScor
 	}
 }
 
-// ── Pure scoring core ────────────────────────────────────────────────────────────
-
 // score is the PURE scoring + readiness function. No DB, no ctx → unit-testable.
-//
 //   - Per-subject raw = correct count; total = items in subject.
 //   - Overall: when scoring_rules.scale == "400" (UTME/JAMB), overall is mapped onto
 //     the 400-point scale (fraction-correct × 400). Otherwise grade-band scoring:

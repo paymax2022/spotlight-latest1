@@ -3,7 +3,6 @@
 // matches the mobile contract in src/features/stocks/* exactly: camelCase JSON,
 // integer minor-unit money, and the same buildEstimate fee math + chartFor
 // generator so the client's preview and the server's executed numbers agree.
-//
 // IRON RULES (same as crypto):
 //   - Money is integer MINOR UNITS (kobo/cents). Never floats on the wire.
 //   - Fees, limits and availability are server-config — the client renders what
@@ -11,27 +10,23 @@
 //   - Every order mutation carries an Idempotency-Key.
 package stocks
 
-// ── Money primitives ───────────────────────────────────────────────────────────
-
 // Money is the canonical fiat money object — integer minor units + ISO-4217.
 type Money struct {
 	Amount   int64  `json:"amount"`   // integer, minor units (e.g. 105000 = ₦1,050.00)
 	Currency string `json:"currency"` // "NGN" | "USD"
 }
 
-// ── Asset (admin-whitelisted, server-driven config) ─────────────────────────────
-
 // Stock is a tradable stock / ETF. Every control is admin-set / server-driven;
 // the client treats it as read-only config. Mirrors StockAsset.
 type Stock struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"` // always "stock"
-	Symbol   string `json:"symbol"`
-	Name     string `json:"name"`
-	Exchange string `json:"exchange"` // "NGX" | "NASDAQ" | "NYSE"
-	Sector   string `json:"sector"`
-	Currency string `json:"currency"` // "NGN" | "USD"
-	IconColor string `json:"iconColor"`
+	ID         string `json:"id"`
+	Type       string `json:"type"` // always "stock"
+	Symbol     string `json:"symbol"`
+	Name       string `json:"name"`
+	Exchange   string `json:"exchange"` // "NGX" | "NASDAQ" | "NYSE"
+	Sector     string `json:"sector"`
+	Currency   string `json:"currency"` // "NGN" | "USD"
+	IconColor  string `json:"iconColor"`
 	RiskRating string `json:"riskRating"` // "low" | "medium" | "high"
 	Status     string `json:"status"`     // "active" | "paused" | "delisted"
 	// Capability flags.
@@ -39,21 +34,21 @@ type Stock struct {
 	SellEnabled  bool   `json:"sellEnabled"`
 	MarketStatus string `json:"marketStatus"` // "open" | "closed" | "pre" | "post"
 	// Pricing snapshot (display only; execution price comes from estimate/fill).
-	Price        Money   `json:"price"`
-	Change24hPct float64 `json:"change24hPct"`
-	DayChange    Money   `json:"dayChange"`
-	Week52High   Money   `json:"week52High"`
-	Week52Low    Money   `json:"week52Low"`
-	MarketCap    Money   `json:"marketCap"`
-	Volume       int64   `json:"volume"`
-	Bid          Money   `json:"bid"`
-	Ask          Money   `json:"ask"`
-	Summary        string `json:"summary"`
-	RiskDisclosure string `json:"riskDisclosure"`
+	Price          Money   `json:"price"`
+	Change24hPct   float64 `json:"change24hPct"`
+	DayChange      Money   `json:"dayChange"`
+	Week52High     Money   `json:"week52High"`
+	Week52Low      Money   `json:"week52Low"`
+	MarketCap      Money   `json:"marketCap"`
+	Volume         int64   `json:"volume"`
+	Bid            Money   `json:"bid"`
+	Ask            Money   `json:"ask"`
+	Summary        string  `json:"summary"`
+	RiskDisclosure string  `json:"riskDisclosure"`
 	// Fees / settlement / limits — server-config.
-	FeeBps          int64  `json:"feeBps"`          // commission in basis points
-	SettlementCycle string `json:"settlementCycle"` // "T+3" (NGX) / "T+2" (US)
-	MinOrderAmount  int64  `json:"minOrderAmount"`  // minor units of the settlement fiat
+	FeeBps          int64  `json:"feeBps"` // commission in basis points
+	SettlementCycle string `json:"settlementCycle"`
+	MinOrderAmount  int64  `json:"minOrderAmount"` // minor units of the settlement fiat
 	MaxOrderAmount  int64  `json:"maxOrderAmount"`
 	KycTierRequired int64  `json:"kycTierRequired"`
 }
@@ -63,8 +58,6 @@ type Candle struct {
 	T     string `json:"t"`     // ISO timestamp
 	Price int64  `json:"price"` // indicative price (settlement fiat, minor units)
 }
-
-// ── News / dividends / corporate actions ────────────────────────────────────────
 
 // News is a market headline tied to the equities surface (mirrors StockNews).
 type News struct {
@@ -96,8 +89,6 @@ type CorporateAction struct {
 	Status      string `json:"status"`
 }
 
-// ── Fees / order estimate ───────────────────────────────────────────────────────
-
 // Fee is one itemised line of an estimate/order, in settlement fiat.
 type Fee struct {
 	Type   string `json:"type"`
@@ -106,20 +97,18 @@ type Fee struct {
 
 // OrderEstimate is the pre-trade preview; the API executes the same math.
 type OrderEstimate struct {
-	Side       string `json:"side"`
-	OrderType  string `json:"orderType"`
-	Symbol     string `json:"symbol"`
-	AssetID    string `json:"assetId"`
-	Quantity   int64  `json:"quantity"` // whole shares
-	EstPrice   Money  `json:"estPrice"` // indicative price per share
-	LimitPrice *Money `json:"limitPrice,omitempty"`
-	Gross      Money  `json:"gross"` // qty * (limit ?? est) price
-	Fees       []Fee  `json:"fees"`
-	Total      Money  `json:"total"` // buy: gross + fees / sell: gross - fees
+	Side            string `json:"side"`
+	OrderType       string `json:"orderType"`
+	Symbol          string `json:"symbol"`
+	AssetID         string `json:"assetId"`
+	Quantity        int64  `json:"quantity"` // whole shares
+	EstPrice        Money  `json:"estPrice"` // indicative price per share
+	LimitPrice      *Money `json:"limitPrice,omitempty"`
+	Gross           Money  `json:"gross"` // qty * (limit ?? est) price
+	Fees            []Fee  `json:"fees"`
+	Total           Money  `json:"total"` // buy: gross + fees / sell: gross - fees
 	SettlementCycle string `json:"settlementCycle"`
 }
-
-// ── Order (server-authoritative result) ─────────────────────────────────────────
 
 // StatusEvent is one transition in an order's lifecycle.
 type StatusEvent struct {
@@ -153,8 +142,6 @@ type StockOrder struct {
 	StatusHistory     []StatusEvent `json:"statusHistory"`
 }
 
-// ── Portfolio / positions ───────────────────────────────────────────────────────
-
 // StockPosition is one computed holding.
 type StockPosition struct {
 	AssetID            string  `json:"assetId"`
@@ -185,8 +172,6 @@ type StockPortfolio struct {
 	Positions         []StockPosition `json:"positions"`
 }
 
-// ── Public offers (IPO / rights issues) ──────────────────────────────────────────
-
 // PublicOffer is an IPO or rights issue the user can apply to.
 type PublicOffer struct {
 	ID        string `json:"id"`
@@ -202,8 +187,6 @@ type PublicOffer struct {
 	Summary   string `json:"summary"`
 }
 
-// ── Draft the screens build before hitting a mutation ────────────────────────────
-
 // OrderDraft is the client-built request for placing an order.
 type OrderDraft struct {
 	AssetID    string `json:"assetId"`
@@ -213,8 +196,6 @@ type OrderDraft struct {
 	Quantity   int64  `json:"quantity"`             // whole shares
 	LimitPrice int64  `json:"limitPrice,omitempty"` // fiat minor units per share (limit orders)
 }
-
-// ── Typed errors ─────────────────────────────────────────────────────────────────
 
 // StockError is a typed pre-trade/execution failure. It maps to the client error
 // envelope `{ type, message }`; the mobile layer surfaces `message` and keys

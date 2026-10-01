@@ -4,7 +4,6 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { payInvoice } from '@/src/server/estate/dues';
 
 // POST /api/v1/estate/dues/[id]/pay — pay a dues invoice from the wallet.
-// Money mutation: requires an Idempotency-Key; posts a balanced ledger debit
 // (tier-checked, atomic) and records an estate_payments audit row.
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;

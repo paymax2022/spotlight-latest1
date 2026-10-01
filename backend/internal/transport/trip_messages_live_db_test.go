@@ -1,10 +1,8 @@
 package transport
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for trip chat: object-level authz (only the rider
 // and the assigned driver may read/post), role derivation, and a stranger
 // being rejected. Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

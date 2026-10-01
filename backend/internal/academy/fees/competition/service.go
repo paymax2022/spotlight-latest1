@@ -11,7 +11,6 @@ import (
 // this service never mutates status directly. Registration is only permitted while
 // the competition is in open_registration. Scoring writes route through the
 // LeaderboardManager, which enforces the ScoringLocked boundary.
-//
 // Money-free: no ledger, no wallet. Rewards (if any) are academy/rewards' job.
 
 // ErrScoringLocked signals an attempt to create/edit a leaderboard entry once the

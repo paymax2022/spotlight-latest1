@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/ginutil"
 )
 
 // Handler exposes the per-learner surface over Gin. All routes are member-scoped
@@ -13,8 +14,6 @@ import (
 type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
-
-func uid(c *gin.Context) string { return c.GetString("user_id") }
 
 // RegisterAcademyLearner mounts the /learner routes on the academy member group
 // (→ /api/finance/academy/learner/...). Always-on: personal data + curriculum
@@ -40,7 +39,7 @@ func RegisterAcademyLearner(member *gin.RouterGroup, pool *pgxpool.Pool) {
 }
 
 func (h *Handler) unauth(c *gin.Context) bool {
-	if uid(c) == "" {
+	if ginutil.UserID(c) == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return true
 	}
@@ -65,7 +64,7 @@ func (h *Handler) ListBookmarks(c *gin.Context) {
 	if h.unauth(c) {
 		return
 	}
-	out, err := h.svc.ListBookmarks(c.Request.Context(), uid(c))
+	out, err := h.svc.ListBookmarks(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -82,7 +81,7 @@ func (h *Handler) CreateBookmark(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.CreateBookmark(c.Request.Context(), uid(c), req)
+	out, err := h.svc.CreateBookmark(c.Request.Context(), ginutil.UserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -94,7 +93,7 @@ func (h *Handler) DeleteBookmark(c *gin.Context) {
 	if h.unauth(c) {
 		return
 	}
-	if err := h.svc.DeleteBookmark(c.Request.Context(), uid(c), c.Param("id")); err != nil {
+	if err := h.svc.DeleteBookmark(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 		h.failDelete(c, err)
 		return
 	}
@@ -105,7 +104,7 @@ func (h *Handler) ListNotes(c *gin.Context) {
 	if h.unauth(c) {
 		return
 	}
-	out, err := h.svc.ListNotes(c.Request.Context(), uid(c))
+	out, err := h.svc.ListNotes(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -122,7 +121,7 @@ func (h *Handler) CreateNote(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.CreateNote(c.Request.Context(), uid(c), req)
+	out, err := h.svc.CreateNote(c.Request.Context(), ginutil.UserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -134,7 +133,7 @@ func (h *Handler) DeleteNote(c *gin.Context) {
 	if h.unauth(c) {
 		return
 	}
-	if err := h.svc.DeleteNote(c.Request.Context(), uid(c), c.Param("id")); err != nil {
+	if err := h.svc.DeleteNote(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 		h.failDelete(c, err)
 		return
 	}
@@ -145,7 +144,7 @@ func (h *Handler) DailyGoal(c *gin.Context) {
 	if h.unauth(c) {
 		return
 	}
-	out, err := h.svc.DailyGoal(c.Request.Context(), uid(c))
+	out, err := h.svc.DailyGoal(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -157,7 +156,7 @@ func (h *Handler) ListNotifications(c *gin.Context) {
 	if h.unauth(c) {
 		return
 	}
-	out, err := h.svc.ListNotifications(c.Request.Context(), uid(c))
+	out, err := h.svc.ListNotifications(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -169,7 +168,7 @@ func (h *Handler) MarkNotificationRead(c *gin.Context) {
 	if h.unauth(c) {
 		return
 	}
-	out, err := h.svc.MarkNotificationRead(c.Request.Context(), uid(c), c.Param("id"))
+	out, err := h.svc.MarkNotificationRead(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -181,7 +180,7 @@ func (h *Handler) MarkAllNotificationsRead(c *gin.Context) {
 	if h.unauth(c) {
 		return
 	}
-	out, err := h.svc.MarkAllNotificationsRead(c.Request.Context(), uid(c))
+	out, err := h.svc.MarkAllNotificationsRead(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return

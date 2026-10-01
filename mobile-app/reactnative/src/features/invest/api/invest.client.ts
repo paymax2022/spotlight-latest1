@@ -1,12 +1,7 @@
-// ── Invest module — runtime MOCK ↔ LIVE switch ───────────────────────────────
 // Thin helpers shared by invest.api.ts. Mirrors doctor.client.ts.
-//
 //   - MOCK (default): resolves local demo data so the app runs with no backend.
 //   - LIVE: calls the Go backend under /api/v1 using the shared authenticated
 //     `api` axios instance (Bearer token from Supabase + 401 handling).
-//
-// Flip to live with EXPO_PUBLIC_INVEST_USE_MOCK=false (requires the backend
-// running with FEATURE_INVEST_ENABLED=true).
 
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';

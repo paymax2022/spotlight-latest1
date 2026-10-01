@@ -9,6 +9,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Handler exposes the member-facing and admin tuition payment endpoints.
@@ -18,14 +21,6 @@ type Handler struct {
 
 // NewHandler builds the tuition handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
-
-// idemKey reads the Idempotency-Key header (canonical or lowercase).
-func idemKey(c *gin.Context) string {
-	if v := c.GetHeader("Idempotency-Key"); v != "" {
-		return v
-	}
-	return c.GetHeader("idempotency-key")
-}
 
 // ConfirmPaymentRequest is the request body for POST /api/finance/academy/tuition/confirm.
 type ConfirmPaymentRequest struct {
@@ -45,37 +40,36 @@ type WaiveTuitionRequest struct {
 	Reason string `json:"reason"` // Optional reason for audit trail
 }
 
+// errMap holds the sentinel→status table; writeErr layers the three sentinels'
+// machine-readable "code" field on top so the response envelope is unchanged.
+var errMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusBadRequest, ErrZeroPayment, ErrInvalidPlanType, ErrInvalidPaymentAmount),
+	httperr.R(http.StatusForbidden, ErrForbidden),
+	httperr.R(http.StatusPaymentRequired, ErrPaymentNotConfirmed),
+	httperr.R(http.StatusConflict, ErrReferenceReused, ErrDuplicate),
+	httperr.R(http.StatusNotFound, ErrApplicationNotFound, ErrBatchNotFound, ErrPlanNotFound, ErrNotFound),
+)
+
 // writeErr maps domain errors onto HTTP status codes.
-// Ordering matters: most specific sentinels first, catch-all 500 last.
 func writeErr(c *gin.Context, err error) {
+	var code string
 	switch {
-	case errors.Is(err, ErrZeroPayment),
-		errors.Is(err, ErrInvalidPlanType),
-		errors.Is(err, ErrInvalidPaymentAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-
-	case errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-
 	case errors.Is(err, ErrPaymentNotConfirmed):
-		c.JSON(http.StatusPaymentRequired, gin.H{"error": err.Error(), "code": "payment_not_confirmed"})
-
+		code = "payment_not_confirmed"
 	case errors.Is(err, ErrReferenceReused):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "reference_reused"})
-
-	case errors.Is(err, ErrApplicationNotFound),
-		errors.Is(err, ErrBatchNotFound),
-		errors.Is(err, ErrPlanNotFound),
-		errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-
+		code = "reference_reused"
 	case errors.Is(err, ErrDuplicate):
-		// On idempotency collision, return 409 Conflict
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "idempotency_collision"})
-
-	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		code = "idempotency_collision"
 	}
+	status := errMap.Code(err)
+	body := gin.H{"error": err.Error()}
+	if status == http.StatusInternalServerError {
+		body["error"] = "internal server error"
+	}
+	if code != "" {
+		body["code"] = code
+	}
+	c.JSON(status, body)
 }
 
 // ConfirmPayment handles POST /api/finance/academy/tuition/confirm.
@@ -88,7 +82,7 @@ func (h *Handler) ConfirmPayment(c *gin.Context) {
 		return
 	}
 
-	idempKey := idemKey(c)
+	idempKey := ginutil.IdempotencyKey(c)
 	if idempKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Idempotency-Key header is required",
@@ -252,13 +246,8 @@ func (h *Handler) CreatePlan(c *gin.Context) {
 // requireUserID extracts the user ID from the auth context.
 // Returns empty string and error if not authenticated.
 func requireUserID(c *gin.Context) (string, error) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		return "", errors.New("user_id not found in context")
+	if u := ginutil.UserID(c); u != "" {
+		return u, nil
 	}
-	uid, ok := userID.(string)
-	if !ok {
-		return "", errors.New("user_id is not a string")
-	}
-	return uid, nil
+	return "", errors.New("user_id not found in context")
 }

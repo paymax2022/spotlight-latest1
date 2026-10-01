@@ -16,7 +16,6 @@ export async function GET(
 
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
 
-    // Get contestant info for share message
     const supabase = createAdminClient();
     const { data: contestant } = await supabase
       .from('competition_enrollments')

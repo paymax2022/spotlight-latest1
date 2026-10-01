@@ -1,4 +1,3 @@
-// ── Direct Referral Rewards — wire types ─────────────────────────────────────
 // Field names mirror the Go backend responses VERBATIM (snake_case). Do NOT
 // camelCase these on the wire (matches the events module convention). Money is
 // always integer minor units (kobo).
@@ -93,7 +92,6 @@ export interface MilestonesResponse {
   upcoming: UpcomingMilestone[];
 }
 
-// ── Notification preferences (reuses the existing notif-prefs pattern; local
 // to this module — the direct-rewards toggles differ from the legacy tree). ──
 export interface RewardsNotificationPrefs {
   new_referral:      boolean; // a referral joined

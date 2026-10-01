@@ -1,4 +1,3 @@
-// ── Marketplace — Notifications feed (§33 · NT-001/002/003) ──────────────────
 // The in-app inbox of delivered notifications (distinct from account/notifications
 // which is the opt-in preference toggles). Each row deep-links to the listing,
 // chat thread, or seller it concerns, and is marked read on tap.
@@ -8,9 +7,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Bell, Tag, HandCoins, MessageCircle, TrendingDown, Search, Zap, Star, CheckCheck } from 'lucide-react-native';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { MarketColors } from '@/features/marketplace';
 import { useNotifications, useMarkNotificationRead, useMarkAllNotificationsRead } from '@/features/marketplace/api/account.hooks';
 import type { MktNotification, MktNotificationType } from '@/features/marketplace/api/account.api';

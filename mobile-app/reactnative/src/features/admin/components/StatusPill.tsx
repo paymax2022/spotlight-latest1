@@ -1,13 +1,12 @@
-// ── Paymax · Admin — StatusPill / StatPill ───────────────────────────────────
 // Small status chip driven by the STATUS_STYLE maps in admin.constants. Design
 // tokens only (mirrors the crypto status chips).
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface ChipStyle {
   label: string;

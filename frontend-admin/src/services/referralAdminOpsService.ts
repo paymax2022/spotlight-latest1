@@ -1,6 +1,4 @@
-// ── Referral Admin OPS service (RA2) ─────────────────────────────────────────
 // Mock by default (mirrors referralAdminService). Flip with
-// NEXT_PUBLIC_REFERRAL_USE_MOCK=false to hit the live Go backend at
 // /api/referral/admin/*. RBAC: referral.* gates wired on the sidebar by the
 // orchestrator. Money is BIGINT kobo throughout.
 
@@ -41,7 +39,6 @@ import type {
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REFERRAL_USE_MOCK);
 
-// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/referral/admin')`,
 // which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
 // proxy origin instead), so the regex became a silent no-op and every live call
 // 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
@@ -63,7 +60,6 @@ function authHeaders(): Record<string, string> {
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
 // Verified against the real Go routes: backend/internal/referral/{risk,merchant,
-// analytics}/handlers.go. Functions with a real route throw NOT_IN_FIXTURE_MODE;
 // functions with no reachable route throw NO_BACKEND_YET instead, since
 // flipping the mock flag would not reach a working call either way. See
 // docs/audit/ADMIN_SIMULATED_WRITES.md — and the "Ambassador approval queue
@@ -91,7 +87,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -99,8 +94,6 @@ export function formatNaira(kobo: number): string {
 
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
-
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 
 const PAYOUTS: Payout[] = [
   { id: 'po_4001', beneficiary_id: 'usr_a12', beneficiary_name: 'Chidi Okafor', wallet_id: 'wal_a12', reward_ids: ['rwd_10231'], amount_kobo: 200_000, currency: 'NGN', status: 'pending', risk_flag: 'low', requested_at: iso(2), approved_by: null, approved_at: null, idempotency_key: 'idem-po-4001' },
@@ -433,7 +426,6 @@ const MERCHANT_DETAIL: Record<string, MerchantDetail> = {
   },
 };
 
-// ─── FINANCE (A-FIN) ───────────────────────────────────────────────────────────
 export async function listPayouts(status?: string): Promise<Payout[]> {
   if (USE_MOCK) { await delay(); return status && status !== 'all' ? PAYOUTS.filter((p) => p.status === status) : [...PAYOUTS]; }
   return getJson<Payout[]>(`/finance/payouts${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`);
@@ -462,7 +454,6 @@ export async function getFloat(): Promise<Float> {
   return getJson<Float>('/finance/float');
 }
 
-// ─── RISK (A-RSK) ────────────────────────────────────────────────────────────
 export async function getRiskDashboard(): Promise<RiskDashboard> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(RISK_DASHBOARD)); }
   return getJson<RiskDashboard>('/risk/dashboard');
@@ -488,7 +479,6 @@ export async function listClawbacks(status?: string): Promise<ClawbackRecord[]> 
   // risk.Handler.ClawbackHistory (backend/internal/referral/risk/handlers.go:345)
   // returns {"clawbacks": [...]}, NOT {"data": [...]} — getJson()'s generic
   // `j?.data ?? j` fallback returns the whole {clawbacks: [...]} envelope in
-  // that case, which crashes callers doing rows.map(...). Unwrap this
   // endpoint's actual field explicitly instead (REF-012).
   const path = `/risk/clawbacks${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`;
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
@@ -498,7 +488,6 @@ export async function listClawbacks(status?: string): Promise<ClawbackRecord[]> 
 }
 export async function executeClawbackOps(rewardId: string, reason: string): Promise<{ ok: true }> {
   if (USE_MOCK) throw new Error(`Executing a clawback ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /risk/clawbacks (risk.Handler.ExecuteClawback), NOT
   // /risk/rewards/:id/clawback — the reward id and reason travel in the body as
   // {reward_id, reason_code}, not a path param + {reason}.
   return sendJson<{ ok: true }>('POST', '/risk/clawbacks', { reward_id: rewardId, reason_code: reason }, true);
@@ -515,14 +504,12 @@ export async function listReviewQueue(): Promise<ReviewItem[]> {
 }
 export async function decideReview(id: string, decision: 'approved' | 'rejected', note: string): Promise<{ ok: true }> {
   if (USE_MOCK) throw new Error(`Deciding a review ${NOT_IN_FIXTURE_MODE}`);
-  // backend: risk review decisions are split into discrete POST verbs, not a
   // combined /decide route — POST /risk/review-queue/:id/{approve,reject}
   // (risk.Handler.{ApproveReview,RejectReview}).
   const verb = decision === 'approved' ? 'approve' : 'reject';
   return sendJson<{ ok: true }>('POST', `/risk/review-queue/${id}/${verb}`, { note }, true);
 }
 
-// ─── COMPLIANCE (A-CMPL) ──────────────────────────────────────────────────────
 export async function getCompliancePolicy(): Promise<CompliancePolicy> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(COMPLIANCE_POLICY)); }
   return getJson<CompliancePolicy>('/compliance/policy');
@@ -540,7 +527,6 @@ export async function listConsents(type?: string): Promise<ConsentRecord[]> {
   return getJson<ConsentRecord[]>(`/compliance/consents${type && type !== 'all' ? `?type=${encodeURIComponent(type)}` : ''}`);
 }
 
-// ─── USERS & GRAPH (A-USR) ────────────────────────────────────────────────────
 export async function listReferralUsers(filters?: { role?: string; status?: string; q?: string }): Promise<ReferralUserSummary[]> {
   if (USE_MOCK) {
     await delay();
@@ -569,7 +555,6 @@ export async function interveneUser(input: InterveneInput): Promise<{ ok: true }
   return sendJson<{ ok: true }>('POST', `/users/${input.user_id}/intervene`, input, true);
 }
 
-// ─── GAMIFICATION (A-GAM) ─────────────────────────────────────────────────────
 export async function listMissionsAdmin(status?: string): Promise<MissionAdmin[]> {
   if (USE_MOCK) { await delay(); return status && status !== 'all' ? MISSIONS.filter((m) => m.status === status) : [...MISSIONS]; }
   return getJson<MissionAdmin[]>(`/gamification/missions${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`);
@@ -587,7 +572,6 @@ export async function listContests(): Promise<ContestAdmin[]> {
   return getJson<ContestAdmin[]>('/gamification/contests');
 }
 
-// ─── ANALYTICS / BI (A-BI) ────────────────────────────────────────────────────
 export async function getAnalytics(): Promise<AnalyticsOverview> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(ANALYTICS)); }
   return getJson<AnalyticsOverview>('/analytics');
@@ -601,7 +585,6 @@ export async function getSegmentation(): Promise<SegmentationData> {
   return getJson<SegmentationData>('/analytics/segmentation');
 }
 
-// ─── AMBASSADORS / AGENTS (A-AMB) ─────────────────────────────────────────────
 export async function listAmbassadors(tier?: string): Promise<Ambassador[]> {
   if (USE_MOCK) { await delay(); return tier && tier !== 'all' ? AMBASSADORS.filter((a) => a.tier === tier) : [...AMBASSADORS]; }
   return getJson<Ambassador[]>(`/ambassadors${tier && tier !== 'all' ? `?tier=${encodeURIComponent(tier)}` : ''}`);
@@ -628,7 +611,6 @@ export async function getOverridePolicy(): Promise<OverridePolicy> {
   return getJson<OverridePolicy>('/ambassadors/override-policy');
 }
 
-// ─── MERCHANTS / PARTNERS (A-MER) ─────────────────────────────────────────────
 export async function listMerchants(status?: string): Promise<MerchantSummary[]> {
   if (USE_MOCK) { await delay(); return status && status !== 'all' ? MERCHANTS.filter((m) => m.status === status) : [...MERCHANTS]; }
   return getJson<MerchantSummary[]>(`/merchants${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`);
@@ -645,12 +627,8 @@ export async function approveMerchantCampaign(merchantId: string, campaignId: st
   return sendJson<{ ok: true }>('POST', `/merchants/${merchantId}/campaigns/${campaignId}/approve`, { note }, true);
 }
 
-
-// ── Ambassador approval queue (live) ─────────────────────────────────────────
 // These hit the endpoints the Go backend actually exposes:
-//   GET  /api/referral/admin/network/ambassadors?status=<status>   referral.amb.view
 //   POST /api/referral/admin/network/ambassadors/:id/status        referral.amb.manage
-//
 // The older listAmbassadors/listApplications/decideApplication above target
 // paths (/ambassadors/applications/:id/decide) that no backend route serves.
 // They are left untouched for the existing directory page rather than
@@ -730,10 +708,7 @@ export async function setAmbassadorStatus(id: string, status: AmbassadorDecision
   if (!res.ok) throw new Error(await readAmbErr(res));
 }
 
-
-// ── Override policies (live) ─────────────────────────────────────────────────
 // GET /api/referral/admin/network/override-policies  (referral.network.view)
-//
 // The older getOverridePolicy() above targets /ambassadors/override-policy,
 // which no backend route serves, and its shape carries policy-level flags
 // (activity_based_only, max_depth, recruitment_earnings_blocked,
@@ -781,10 +756,7 @@ export async function listOverridePolicies(): Promise<OverridePolicyRow[]> {
     .sort((a, b) => a.overrideBps - b.overrideBps);
 }
 
-
-// ── Agent networks (live) ────────────────────────────────────────────────────
 // GET /api/referral/admin/network/networks  (referral.amb.view)
-//
 // The older listNetworks() above targets /ambassadors/networks, which no
 // backend route served — the admin endpoint did not exist until it was added
 // alongside this. Its shape also carried depth / max_depth_cap /

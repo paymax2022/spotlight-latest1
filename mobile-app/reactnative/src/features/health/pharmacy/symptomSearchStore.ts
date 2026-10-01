@@ -1,10 +1,9 @@
-// ── Paymax Health — Symptom search flow store ────────────────────────────────
 // Tiny zustand store (mirrors cartStore) so the symptom screens (home → refine →
 // results → escalation) share terms/refiners without serialising router params —
 // NDPR: symptom terms are sensitive health data and should not leak into URLs.
 
 import { create } from 'zustand';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { SymptomRefiners, PharmacySkuOption } from '../api/symptomSearch.api';
 import type { PharmacyProduct } from './types';
 
@@ -26,7 +25,7 @@ interface SymptomSearchState {
   reset: () => void;
 }
 
-const MAX_TERMS = 5; // contract: terms maxItems 5
+const MAX_TERMS = 5;
 
 export const useSymptomSearchStore = create<SymptomSearchState>((set) => ({
   terms: [],
@@ -69,7 +68,6 @@ export const useSymptomSearchStore = create<SymptomSearchState>((set) => ({
 export function skuToCartProduct(sku: PharmacySkuOption): PharmacyProduct {
   return {
     id: sku.product_id,
-    // Symptom-search SKUs aren't pre-attributed to a pharmacy; the owning
     // pharmacy is chosen at checkout (pharmacy-select), so leave these blank.
     pharmacyId: '',
     pharmacyName: '',

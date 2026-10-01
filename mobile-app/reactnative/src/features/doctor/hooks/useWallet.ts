@@ -1,8 +1,6 @@
-// ── Doctor — Earnings, Wallet & Payout hooks (Batch 6, Section Y) ────────────
 // Query keys under ['doctor', 'wallet', …] and ['doctor', 'earnings', …].
 // Mutations auto-generate the idempotencyKey. REUSES the Phase 1 useEarnings /
 // useRequestPayout (useEarnings.ts) for the headline summary + simple payout and
-// the Phase 2 usePayoutReport (useReputation.ts) for the period report; this file
 // adds the earnings breakdown, wallet balance, payout details, invoices,
 // commission breakdown, tax/VAT report and settlement disputes. Hook names are
 // distinct from useEarnings to avoid a barrel collision. All money is kobo.
@@ -34,8 +32,6 @@ import type {
   UpdatePayoutBankAccountInput,
   RaiseSettlementDisputeInput,
 } from '@/types/doctor.batch6';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function useEarningsBreakdown() {
   return useQuery({
@@ -109,8 +105,6 @@ export function useSettlementDisputes() {
     staleTime:       30_000,
   });
 }
-
-// ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useWithdrawEarnings() {
   const qc = useQueryClient();

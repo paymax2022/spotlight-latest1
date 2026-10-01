@@ -48,7 +48,6 @@ const NoSheet = () => null;
 
 export function usePaystackGateway(): PaystackGatewayController {
   const open = useCallback((args: PaystackChargeArgs) => {
-    // newTransaction needs the public key; resumeTransaction rides on the
     // server-issued access code and does not.
     if (!args.accessCode && !PAYSTACK_PUBLIC_KEY) {
       args.onError?.('Paystack key missing — set EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY.');
@@ -61,7 +60,6 @@ export function usePaystackGateway(): PaystackGatewayController {
         const onCancel = () => args.onCancel?.();
         const onError = (e: { message: string }) => args.onError?.(e?.message ?? 'Payment error');
 
-        // Resume a server-initialized transaction when an access code is given;
         // otherwise open a fresh client-initialized one.
         if (args.accessCode) {
           popup.resumeTransaction(args.accessCode, { onSuccess, onCancel, onError });

@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-// --- Status constant values -------------------------------------------------
-
 func TestJobStatusValues(t *testing.T) {
 	cases := map[JobStatus]string{
 		JobActive:    "active",
@@ -34,8 +32,6 @@ func TestRunStatusValues(t *testing.T) {
 		}
 	}
 }
-
-// --- jobView (read-only projection) ----------------------------------------
 
 func TestJobView_Accessors(t *testing.T) {
 	j := Job{
@@ -96,8 +92,6 @@ func TestJobView_PayloadValue_NilPayload(t *testing.T) {
 	}
 }
 
-// --- runCtx (HandlerCtx implementation) ------------------------------------
-
 func TestRunCtx_Accessors(t *testing.T) {
 	type ctxKey string
 	const k ctxKey = "trace"
@@ -140,8 +134,6 @@ func TestRunCtx_SatisfiesInterfaces(t *testing.T) {
 	var _ JobView = hc.Job()
 }
 
-// --- NewService defaults ----------------------------------------------------
-
 func TestNewService_Defaults(t *testing.T) {
 	// nil pool is fine: constructor does not touch the DB.
 	s := NewService(nil)
@@ -158,8 +150,6 @@ func TestNewService_Defaults(t *testing.T) {
 		t.Errorf("backoffMax = %v, want %v", s.backoffMax, 6*time.Hour)
 	}
 }
-
-// --- RegisterJobType / handlerFor (in-memory registry) ---------------------
 
 func TestRegisterAndLookupHandler(t *testing.T) {
 	s := NewService(nil)

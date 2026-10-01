@@ -1,7 +1,5 @@
 // Pure-logic unit tests for the crypto quote/fee engine (money-path).
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs \
 //        --test "src/features/crypto/utils/__tests__/*.test.ts"
-//
 // BUG 1 (fiat-basis BUY overcharge): the entered fiat amount is the GROSS the
 // user pays. Fees must be carved OUT of it, not added ON TOP — so the total to
 // pay equals exactly what the user typed. These tests pin that invariant plus
@@ -20,7 +18,6 @@ import {
 } from '../../constants/crypto.constants.ts';
 import type { CryptoAsset, QuoteRequest } from '../../types/crypto.types.ts';
 
-// ── Fixtures ──────────────────────────────────────────────────────────────────
 // ₦1,000,000.00 per coin, 8-dp asset, low risk (50 bps spread).
 const PRICE = 100_000_000; // kobo per whole coin
 const DECIMALS = 8;
@@ -64,8 +61,6 @@ test('BUG1: buy/fiat — entering your full available balance is never rejected 
   assert.ok(q.totalFiat.amount <= ENTERED, 'total to pay must not exceed the entered amount');
 });
 
-// ── BUY · crypto basis — must stay: total = trade value + fees ──────────────────
-
 test('buy/crypto — total = trade value + fees (unchanged; fees added on top of a crypto-denominated order)', () => {
   const cryptoMinor = 1_000_000; // 0.01 coin
   const q = buildQuote(makeAsset(), { assetId: 'cr_test', side: 'buy', basis: 'crypto', amount: cryptoMinor, currency: 'NGN' });
@@ -76,8 +71,6 @@ test('buy/crypto — total = trade value + fees (unchanged; fees added on top of
   assert.equal(q.fiat.amount, expectedTrade, 'trade value derived from crypto qty at the all-in rate');
   assert.equal(q.totalFiat.amount, expectedTrade + feeSum, 'buy debit = trade value + fees');
 });
-
-// ── SELL — must stay: total credit = trade value − fees ─────────────────────────
 
 test('sell/fiat — user receives trade value minus fees (net credit below the trade value)', () => {
   const q = buildQuote(makeAsset(), { assetId: 'cr_test', side: 'sell', basis: 'fiat', amount: ENTERED, currency: 'NGN' });
@@ -93,8 +86,6 @@ test('sell/crypto — user receives trade value minus fees', () => {
   const feeSum = fee(q, 'paymax_fee') + fee(q, 'provider_fee');
   assert.equal(q.totalFiat.amount, Math.max(0, q.fiat.amount - feeSum), 'sell credit = trade value − fees');
 });
-
-// ── SWAP — the itemised fee must actually reduce the output ─────────────────────
 
 test('BUG1(swap): buildSwapQuote — the swap fee is actually applied to the output, not just displayed', () => {
   const from = makeAsset({ id: 'from', symbol: 'FRM' });

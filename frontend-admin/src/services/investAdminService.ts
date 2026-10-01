@@ -1,4 +1,3 @@
-// ── Admin — Paymax Invest service ────────────────────────────────────────────
 // Talks to the Go backend admin control plane at /api/v1/admin/invest/* (RBAC:
 // requires the `invest.manage` permission). Mock-flagged for dev: flip with
 // NEXT_PUBLIC_INVEST_ADMIN_USE_MOCK=false to hit the live endpoints.
@@ -11,13 +10,11 @@ import type {
 } from '@/types/investAdmin';
 
 // LIVE by default. Set NEXT_PUBLIC_INVEST_ADMIN_USE_MOCK=true for fixtures.
-//
 // Verified before flipping: every endpoint this service calls is registered at
 // /api/v1/admin/invest (internal/invest/routes.go) with matching methods —
 // GET assets/audit/corporate-actions/dividends/fees/orders/overview/providers,
 // POST assets, PATCH assets/:id, PUT fees, POST dividends, POST
 // corporate-actions, POST settlement/run.
-//
 // It mattered most for runSettlement, whose fixture branch returned 3 — rendered
 // to the operator as "3 settlements processed" while nothing ran.
 const USE_MOCK = (process.env.NEXT_PUBLIC_INVEST_ADMIN_USE_MOCK ?? 'false').toLowerCase() === 'true';
@@ -39,7 +36,6 @@ const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 // Every write below has a verified live endpoint (see the header comment above),
 // so fixture mode has nothing to add and refuses loudly instead of reporting a
 // write it did not perform — the same treatment runSettlement's fixture branch
-// already needed once (it used to return the literal 3, rendered as "3
 // settlements processed" while nothing ran). See
 // docs/audit/ADMIN_SIMULATED_WRITES.md.
 const NOT_IN_FIXTURE_MODE =
@@ -56,8 +52,6 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) throw new Error(body?.error || `Request failed (${res.status})`);
   return (body?.data ?? body) as T;
 }
-
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 
 const MOCK_OVERVIEW: InvestOverview = {
   assets_total: 10, assets_tradable: 9, orders_total: 1284,
@@ -82,8 +76,6 @@ const MOCK_AUDIT: AuditEntry[] = [
   { id: 'a1', admin_id: 'admin-1', action: 'asset.update', entity_type: 'stock_asset', entity_id: 's9', reason: 'Awaiting compliance sign-off', created_at: new Date(Date.now() - 5400000).toISOString() },
   { id: 'a2', admin_id: 'admin-1', action: 'fees.update', entity_type: 'fee_config', entity_id: '', reason: 'Q3 pricing review', created_at: new Date(Date.now() - 9000000).toISOString() },
 ];
-
-// ─── API ──────────────────────────────────────────────────────────────────────
 
 export async function getOverview(): Promise<InvestOverview> {
   if (USE_MOCK) { await delay(); return MOCK_OVERVIEW; }

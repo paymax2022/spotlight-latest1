@@ -4,9 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/provider"
 )
@@ -59,7 +64,6 @@ func (s *Service) GetOrProvision(ctx context.Context, userID string) (*VirtualAc
 		return nil, ErrProviderUnavailable
 	}
 
-	// Fetch user info for provisioning.
 	type userInfo struct {
 		Email     string
 		FirstName string
@@ -120,7 +124,6 @@ func (s *Service) ProvisionForUser(ctx context.Context, userID string) error {
 // CreditInbound processes an inbound transfer webhook event.
 // Idempotent — safe to replay; the ledger idempotency key prevents double-credit.
 func (s *Service) CreditInbound(ctx context.Context, t InboundTransfer) error {
-	// Look up user by account number.
 	const q = `SELECT user_id FROM virtual_accounts WHERE account_number=$1 LIMIT 1`
 	var userID string
 	if err := s.db.QueryRow(ctx, q, t.AccountNumber).Scan(&userID); err != nil {
@@ -140,4 +143,60 @@ func (s *Service) get(ctx context.Context, userID string) (*VirtualAccount, erro
 	return va, s.db.QueryRow(ctx, q, userID).Scan(
 		&va.ID, &va.UserID, &va.Provider, &va.AccountNumber, &va.AccountName, &va.BankName, &va.BankCode, &va.ProvisionedAt,
 	)
+}
+
+// VirtualAccount mirrors the virtual_accounts table.
+type VirtualAccount struct {
+	ID            string    `json:"id"`
+	UserID        string    `json:"user_id"`
+	Provider      string    `json:"provider"`
+	AccountNumber string    `json:"account_number"`
+	AccountName   string    `json:"account_name"`
+	BankName      string    `json:"bank_name"`
+	BankCode      string    `json:"bank_code,omitempty"`
+	ProvisionedAt time.Time `json:"provisioned_at"`
+}
+
+// InboundTransfer is a credit event from a bank transfer into a virtual account.
+type InboundTransfer struct {
+	AccountNumber  string
+	AmountKobo     int64
+	Reference      string // Paystack transfer reference
+	SenderName     string
+	SenderBank     string
+	IdempotencyKey string // derived from Paystack event ID
+}
+
+// Handler exposes virtual account endpoints.
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// GetMe handles GET /finance/va/me
+func (h *Handler) GetMe(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	va, err := h.svc.GetOrProvision(c.Request.Context(), userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrTierTooLow):
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "Complete Tier 1 (BVN) verification to get a virtual account.",
+				"code":  "tier_required",
+			})
+		case errors.Is(err, ErrProviderUnavailable):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Virtual accounts are temporarily unavailable."})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, va)
 }

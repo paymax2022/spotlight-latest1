@@ -2,8 +2,12 @@ package settlement
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/strutil"
 )
 
 // Repository is the parameterized data layer for stays settlement: hotel payouts,
@@ -16,8 +20,6 @@ type Repository struct {
 // NewRepository constructs the settlement repository.
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
-// --- payouts ---
-
 // CreatePayout inserts a payout (idempotent on idempotency_key). Returns the row id.
 func (r *Repository) CreatePayout(ctx context.Context, p Payout) (string, error) {
 	var id string
@@ -29,7 +31,7 @@ func (r *Repository) CreatePayout(ctx context.Context, p Payout) (string, error)
 		ON CONFLICT (idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
 		RETURNING id`,
 		p.PropertyID, p.HotelierUserID, p.ReservationID, p.AmountKobo,
-		orStr(p.Currency, "NGN"), orStr(p.Status, "HELD"), p.HoldReason, p.IdempotencyKey,
+		strutil.FirstNonEmpty(p.Currency, "NGN"), strutil.FirstNonEmpty(p.Status, "HELD"), p.HoldReason, p.IdempotencyKey,
 	).Scan(&id)
 	return id, err
 }
@@ -106,8 +108,6 @@ func (r *Repository) HasCompletedStay(ctx context.Context, propertyID string) (b
 	return ok, err
 }
 
-// --- commission ---
-
 // CreateCommission records a commission accrual/reversal (idempotent on key).
 func (r *Repository) CreateCommission(ctx context.Context, e CommissionEntry) (string, error) {
 	var id string
@@ -117,8 +117,8 @@ func (r *Repository) CreateCommission(ctx context.Context, e CommissionEntry) (s
 		VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, $6, $7)
 		ON CONFLICT (idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
 		RETURNING id`,
-		e.ReservationID, e.PropertyID, e.AmountKobo, orStr(e.Currency, "NGN"),
-		orStr(e.Kind, "ACCRUAL"), e.LedgerRef, e.IdempotencyKey,
+		e.ReservationID, e.PropertyID, e.AmountKobo, strutil.FirstNonEmpty(e.Currency, "NGN"),
+		strutil.FirstNonEmpty(e.Kind, "ACCRUAL"), e.LedgerRef, e.IdempotencyKey,
 	).Scan(&id)
 	return id, err
 }
@@ -166,8 +166,6 @@ func (r *Repository) ListCommission(ctx context.Context, limit int) ([]Commissio
 	return out, rows.Err()
 }
 
-// --- remittance reconciliation ---
-
 // UpsertRemittance records a supplier remittance line (idempotent) and sets its
 // match status.
 func (r *Repository) UpsertRemittance(ctx context.Context, m Remittance) (string, error) {
@@ -182,7 +180,7 @@ func (r *Repository) UpsertRemittance(ctx context.Context, m Remittance) (string
 			break_reason = EXCLUDED.break_reason, updated_at = now()
 		RETURNING id`,
 		m.SupplierCode, m.ReservationID, m.SupplierRef, m.ExpectedKobo, m.RemittedKobo,
-		orStr(m.Currency, "NGN"), orStr(m.Status, "UNMATCHED"), m.BreakReason, m.ExternalRef, m.IdempotencyKey,
+		strutil.FirstNonEmpty(m.Currency, "NGN"), strutil.FirstNonEmpty(m.Status, "UNMATCHED"), m.BreakReason, m.ExternalRef, m.IdempotencyKey,
 	).Scan(&id)
 	return id, err
 }
@@ -239,9 +237,62 @@ func (r *Repository) ListRemittances(ctx context.Context, status string, limit i
 	return out, rows.Err()
 }
 
-func orStr(s, def string) string {
-	if s == "" {
-		return def
-	}
-	return s
+// Sentinel errors.
+var (
+	// ErrPayoutHeld is returned when a payout cannot be released yet because the
+	// hotelier has no confirmed+completed stay (fraud control, PRD §12).
+	ErrPayoutHeld = errors.New("settlement: payout held until first confirmed+completed stay")
+	// ErrNotFound is a generic not-found.
+	ErrNotFound = errors.New("settlement: not found")
+	// ErrBadAmount guards non-positive money.
+	ErrBadAmount = errors.New("settlement: amount must be positive")
+)
+
+// Payout is a Naira hotel payout to a hotelier (direct rail).
+type Payout struct {
+	ID             string     `json:"id"`
+	PropertyID     string     `json:"property_id"`
+	HotelierUserID string     `json:"hotelier_user_id"`
+	ReservationID  string     `json:"reservation_id"`
+	AmountKobo     int64      `json:"amount_kobo"`
+	Currency       string     `json:"currency"`
+	Status         string     `json:"status"` // HELD | PENDING | PAID | FAILED | CANCELLED
+	HoldReason     string     `json:"hold_reason"`
+	LedgerRef      string     `json:"ledger_ref"`
+	SettlementID   string     `json:"settlement_id"`
+	IdempotencyKey string     `json:"idempotency_key"`
+	PaidAt         *time.Time `json:"paid_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
+// CommissionEntry records Paymax commission posted to the SEPARATE AccountCommission
+// ledger account. AmountKobo is positive on accrual, negative on a refund reversal.
+type CommissionEntry struct {
+	ID             string    `json:"id"`
+	ReservationID  string    `json:"reservation_id"`
+	PropertyID     string    `json:"property_id"`
+	AmountKobo     int64     `json:"amount_kobo"`
+	Currency       string    `json:"currency"`
+	Kind           string    `json:"kind"` // ACCRUAL | REVERSAL
+	LedgerRef      string    `json:"ledger_ref"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// Remittance is a Rail-A supplier remittance line reconciled against the expected
+// net-rate owed. A mismatch beyond tolerance records a BREAK fed to the admin
+// workbench.
+type Remittance struct {
+	ID             string    `json:"id"`
+	SupplierCode   string    `json:"supplier_code"`
+	ReservationID  string    `json:"reservation_id"`
+	SupplierRef    string    `json:"supplier_ref"`
+	ExpectedKobo   int64     `json:"expected_kobo"`
+	RemittedKobo   int64     `json:"remitted_kobo"`
+	Currency       string    `json:"currency"`
+	Status         string    `json:"status"` // UNMATCHED | MATCHED | BREAK | RESOLVED
+	BreakReason    string    `json:"break_reason"`
+	ExternalRef    string    `json:"external_ref"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	CreatedAt      time.Time `json:"created_at"`
 }

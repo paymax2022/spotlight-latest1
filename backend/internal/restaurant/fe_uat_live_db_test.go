@@ -1,11 +1,9 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // FE-UAT: independent live-DB reproductions for the Food module UAT test-plan
 // rows FE-004, FE-005 and FE-008 (docs/qa/food-restaurant-test-plan.md).
 // These are NEW tests, written fresh for this UAT pass — not a re-read of any
 // prior batch's coverage. Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -23,7 +21,6 @@ import (
 	"spotlight/backend/internal/testsupport"
 )
 
-// ── FE-004 ───────────────────────────────────────────────────────────────────
 // Reproduces the EXACT crash window reconciler.go's own doc comment describes:
 // transitionInternal flips orders.status='delivered' first, then calls
 // settleOrder — two separate statements, not one transaction. A crash between
@@ -155,7 +152,6 @@ func TestLiveDB_FE004_ReconcilerRecoversStrandedEscrowNoDoubleSettle(t *testing.
 	}
 }
 
-// ── FE-005 ───────────────────────────────────────────────────────────────────
 // Independent, fresh reproduction of the double-disbursement protection —
 // racing TWO separate payout runs (different period keys, same provider) for
 // the SAME settlement via true concurrency (goroutines + a start barrier), not
@@ -272,7 +268,6 @@ func TestLiveDB_FE005_ConcurrentPayoutRunsNeverDoubleDisburseSameSettlement(t *t
 	}
 }
 
-// ── FE-008 ───────────────────────────────────────────────────────────────────
 // A dispute refund on an order whose escrow never reached a rider AT ALL — no
 // rider was ever assigned (rider_id NULL throughout, the restaurant's own 90/10
 // no-rider settlement branch). disputes_service.go gates the tip-clawback block

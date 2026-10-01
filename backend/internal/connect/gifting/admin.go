@@ -6,28 +6,26 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/ptr"
 )
 
-// ---------------------------------------------------------------------------
 // CONNECT-001 (P0 blocker) — admin gifting read surface.
-//
 // Register() (handlers.go) only ever wired the MEMBER group (/gifts,
 // /gifts/sent, /gifts/catalog). There was no admin registration at all, so
 // the admin "Gift transactions ledger" page (frontend-admin/app/admin/connect/
 // gifting/page.tsx, via connectAdminService.ts listGifts() -> GET
 // /api/connect/admin/gifts) 404'd in production. This file adds that route.
-//
 // This is a REPORTING surface only: it reads connect_gifts (+ a join into
 // connect_gift_catalog for a human label) and never mutates money. No new
 // debit/credit logic is introduced here.
-//
 // Known, deliberate data-shape gaps (see full explanation on AdminGiftTransaction
 // below) — the admin UI's TypeScript type (frontend-admin/src/types/connectAdmin.ts
 // GiftTransaction) asks for three fields the current schema cannot honestly
 // supply as historical fact: fee_kobo, tier_at_send, limit_state. Rather than
 // inventing numbers, each is filled with the most defensible REAL value
 // available and clearly documented — never a fabricated one.
-// ---------------------------------------------------------------------------
 
 // AdminGiftTransaction is the admin ledger-view shape returned by
 // GET /api/connect/admin/gifts. Field names/JSON keys match
@@ -177,7 +175,7 @@ func (h *AdminHandler) ListGifts(c *gin.Context) {
 	filter := AdminGiftFilter{
 		Status:     c.Query("status"),
 		LimitState: c.Query("limit_state"),
-		Limit:      parseLimit(c),
+		Limit:      ptr.DerefZero(ginutil.IntParam(c, "limit")),
 	}
 	out, err := h.svc.ListAdmin(c.Request.Context(), filter)
 	if err != nil {

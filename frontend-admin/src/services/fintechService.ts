@@ -3,7 +3,6 @@ import { operationKey } from './idempotency';
 import type { WalletBalance, TransactionsResponse, Dispute, DisputeResolution } from '@/types/fintech';
 
 // Go backend finance admin routes live at /api/finance/admin/... . This used
-// to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin'), which
 // stopped matching once apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) instead of ending in /api/v1 —
 // every live call 404'd against <proxy>/kyc/pending instead of
@@ -25,7 +24,6 @@ function authHeaders(): Record<string, string> {
 // users/:id/approve,users/:id/reject} — an admin approving a tier with no
 // automated identity check behind it (that endpoint hashed BVN/NIN and stored
 // it, nothing more). Both the endpoints and this page's UI (app/admin/finance/kyc)
-// are removed; real identity verification is the KYC verification gateway
 // console at /admin/finance/kyc-verify (finance.admin.kyc), which reviews
 // actual Dojah/Smile ID/Youverify check results, not a bare tier number.
 

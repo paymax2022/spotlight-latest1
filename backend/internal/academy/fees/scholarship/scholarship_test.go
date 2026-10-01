@@ -17,8 +17,6 @@ import (
 //     an invoice payment; the balance stays derived per SF-2),
 //   - the fund flow is audited.
 
-// ── in-memory Store fake (also serves as its own Tx) ────────────────────────────
-
 type fakeStore struct {
 	pledges map[string]*Pledge
 	awards  []Award
@@ -121,8 +119,6 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(tx Tx) error) error {
 	return fn(f)
 }
 
-// ── fake LedgerPoster (idempotent on idemKey) ───────────────────────────────────
-
 type fakeLedger struct {
 	calls map[string]int // idemKey → count
 	refs  map[string]string
@@ -141,8 +137,6 @@ func (f *fakeLedger) PostFunding(_ context.Context, _, _, idemKey string, _ int6
 	f.refs[idemKey] = r
 	return r, nil
 }
-
-// ── fake InvoicePayer (records an invoice payment; idempotent; NO balance write) ─
 
 type invoicePaymentCall struct {
 	invoiceID       string
@@ -170,8 +164,6 @@ func (f *fakeInvoicePayer) RecordPayment(_ context.Context, _, invoiceID, guardi
 	return id, false, nil
 }
 
-// ── helper to reach the funded state ─────────────────────────────────────────────
-
 func fundedPledge(t *testing.T, store *fakeStore, ledger *fakeLedger, invoice *fakeInvoicePayer, amount int64) (*Service, *Pledge) {
 	t.Helper()
 	svc := NewServiceWithDeps(store, ledger, invoice)
@@ -186,8 +178,6 @@ func fundedPledge(t *testing.T, store *fakeStore, ledger *fakeLedger, invoice *f
 	fp, _ := store.GetPledge(ctx, p.ID)
 	return svc, fp
 }
-
-// ── FundPledge idempotency: one ledger move ──────────────────────────────────────
 
 func TestFundPledge_Idempotent_SingleLedgerMove(t *testing.T) {
 	ctx := context.Background()
@@ -231,8 +221,6 @@ func TestFundPledge_RequiresIdempotencyKey(t *testing.T) {
 		t.Fatalf("missing idempotency key must be rejected, got %v", err)
 	}
 }
-
-// ── ApplyAward: records an invoice payment (never a balance write); idempotent ────
 
 func TestApplyAward_RecordsInvoicePayment_NoBalanceWrite(t *testing.T) {
 	ctx := context.Background()
@@ -318,8 +306,6 @@ func TestApplyAward_Idempotent_SingleInvoicePaymentSingleAward(t *testing.T) {
 	}
 }
 
-// ── ApplyAward guards: unfunded + over-headroom rejected ─────────────────────────
-
 func TestApplyAward_RejectsUnfundedPledge(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
@@ -345,8 +331,6 @@ func TestApplyAward_RejectsOverHeadroom(t *testing.T) {
 // Compile-time proof the fake satisfies the Store contract (and thus the Tx facade via WithTx).
 var _ Store = (*fakeStore)(nil)
 var _ Tx = (*fakeStore)(nil)
-
-// ── helpers ──────────────────────────────────────────────────────────────────────
 
 func hasAudit(s *fakeStore, action string) bool {
 	for _, a := range s.audits {

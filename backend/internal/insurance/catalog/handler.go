@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/finance/kyc"
 )
 
@@ -42,9 +43,8 @@ func (h *Handler) WithAdmin(syncer *Syncer, floats *FloatService, health func() 
 // ListProducts (member): GET /products?line=&context=
 // Filtered by KYC tier + optional product_line context (PRD §12.1).
 func (h *Handler) ListProducts(c *gin.Context) {
-	userID := c.GetString("user_id")
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	tier := 0
@@ -85,7 +85,7 @@ func (h *Handler) AdminSetActive(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.SetActive(c.Request.Context(), code, body.Active, c.GetString("user_id")); err != nil {
+	if err := h.svc.SetActive(c.Request.Context(), code, body.Active, ginutil.UserID(c)); err != nil {
 		// A refusal here is usually "the provider cannot sell this", which is a
 		// 409, not a server fault.
 		c.JSON(http.StatusConflict, gin.H{"error": gin.H{"code": "not_activatable", "message": err.Error()}})
@@ -113,14 +113,12 @@ func (h *Handler) AdminSetRouting(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"code": code, "provider": body.Provider}})
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // Product detail + dynamic form schema (member)
-// ════════════════════════════════════════════════════════════════════════════
 
 // GetProduct (member): GET /products/:code — one product, including its
 // form_schema, so the app can render the purchase form without a second call.
 func (h *Handler) GetProduct(c *gin.Context) {
-	if c.GetString("user_id") == "" {
+	if ginutil.UserID(c) == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"code": "unauthenticated", "message": "sign in required"}})
 		return
 	}
@@ -134,14 +132,13 @@ func (h *Handler) GetProduct(c *gin.Context) {
 
 // GetProductSchema (member): GET /products/:code/schema — the dynamic form the
 // app renders for this product.
-//
 // MyCover validates a bespoke field set per purchase family, so there is no one
 // hardcoded quote form. When a schema has NOT been discovered yet the response
 // says so explicitly (available:false with a reason) instead of returning an
 // empty field list, which the app would render as a blank form that can never
 // validate — a dead end the member cannot get out of.
 func (h *Handler) GetProductSchema(c *gin.Context) {
-	if c.GetString("user_id") == "" {
+	if ginutil.UserID(c) == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"code": "unauthenticated", "message": "sign in required"}})
 		return
 	}
@@ -163,15 +160,13 @@ func (h *Handler) GetProductSchema(c *gin.Context) {
 }
 
 // GetFieldOptions GET /products/:code/options/:field[?query=…]
-//
 // Serves the list behind a schema field's options_url. The client asks by
 // product + field and never sees the provider URL — see Service.FieldOptions.
-//
 // Before this the route did not exist, so every remote-options dropdown in the
 // app 404'd (219 such fields across 65 products) and the picker sat empty with
 // no way for the user to proceed.
 func (h *Handler) GetFieldOptions(c *gin.Context) {
-	if c.GetString("user_id") == "" {
+	if ginutil.UserID(c) == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"code": "unauthenticated", "message": "sign in required"}})
 		return
 	}
@@ -213,9 +208,7 @@ func (h *Handler) GetFieldOptions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": opts})
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // Catalog sync + provider health (admin)
-// ════════════════════════════════════════════════════════════════════════════
 
 // AdminSync (admin): POST /catalog/sync — pull the live provider catalog into
 // the DB. Idempotent; safe to re-run. New products land INACTIVE so a sync never
@@ -228,7 +221,7 @@ func (h *Handler) AdminSync(c *gin.Context) {
 		}})
 		return
 	}
-	res, err := h.syncer.Run(c.Request.Context(), c.GetString("user_id"))
+	res, err := h.syncer.Run(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		// Report the run either way — a failed sync must be visible, not silent.
 		c.JSON(http.StatusBadGateway, gin.H{
@@ -242,7 +235,6 @@ func (h *Handler) AdminSync(c *gin.Context) {
 
 // AdminProviders (admin): GET /providers — adapter health, last sync, live/test
 // mode, and the prefunded-float state.
-//
 // It reports credential PRESENCE and never a value. The float section is the
 // launch gate: MyCover settles binds from a prefunded distributor wallet, so
 // binding_paused there means no policy can be issued no matter how healthy
@@ -297,7 +289,6 @@ func (h *Handler) AdminProviders(c *gin.Context) {
 
 // AdminResetFloat (admin): POST /providers/:provider/float/reset — re-arm
 // binding after an operator has topped the provider wallet up.
-//
 // note is a HUMAN RECORD of what they funded, not an authority: the real balance
 // lives at the provider and /wallet/balance is 403 for our key, so we cannot
 // read it. Resetting without actually funding simply means the next bind trips
@@ -312,7 +303,7 @@ func (h *Handler) AdminResetFloat(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&body)
 	provider := c.Param("provider")
-	if err := h.floats.Reset(c.Request.Context(), provider, body.Note, c.GetString("user_id")); err != nil {
+	if err := h.floats.Reset(c.Request.Context(), provider, body.Note, ginutil.UserID(c)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "reset_failed", "message": err.Error()}})
 		return
 	}
@@ -320,12 +311,10 @@ func (h *Handler) AdminResetFloat(c *gin.Context) {
 }
 
 // AdminActivateAllPurchasable (admin): POST /catalog/activate-purchasable
-//
 // Turns on every product the provider CAN sell, skipping any an admin has
 // explicitly ruled on. It exists for a catalog synced before visibility became
 // sync-managed — without it those products stay dark forever and members see an
 // empty (or, worse, a fictional) catalog.
-//
 // It cannot activate an unsellable or provider-missing product.
 func (h *Handler) AdminActivateAllPurchasable(c *gin.Context) {
 	var body struct {

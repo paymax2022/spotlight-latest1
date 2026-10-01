@@ -1,6 +1,5 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression for CF-008: the mobile "Message contributors" screen
 // (app/crowdfunding/creator/performance/[id].tsx, a real navigable button,
 // not behind any feature flag) called POST /campaigns/:id/broadcast, which
@@ -8,13 +7,10 @@ package crowdfunding_test
 // This pins the new engage.Service.BroadcastToContributors end to end: it
 // notifies every distinct backer who hasn't opted out, is creator-scoped,
 // and validates the same fields the mobile client itself validates.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL. See
 // campaign_analytics_live_db_test.go in this package for the pattern.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Broadcast -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

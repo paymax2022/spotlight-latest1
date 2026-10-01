@@ -36,7 +36,6 @@ export function usePerformanceDashboard(sessionId: string) {
     updateMetrics();
   }, [collector, updateMetrics]);
 
-  // Update metrics every 10 seconds
   useEffect(() => {
     const interval = setInterval(() => {
       updateMetrics();
@@ -66,7 +65,6 @@ export function useWebVitalsMonitoring(sessionId: string) {
       const snapshot = collector.getAverageMetrics();
       setVitals(snapshot.webVitals);
 
-      // Check against thresholds
       if (snapshot.webVitals.lcp && snapshot.webVitals.lcp > 2500) {
         console.warn('⚠️ High LCP:', snapshot.webVitals.lcp);
       }

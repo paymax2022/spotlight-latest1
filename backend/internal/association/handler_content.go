@@ -1,9 +1,9 @@
 package association
 
 import (
-	"net/http"
-
 	"github.com/gin-gonic/gin"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
 )
 
 // Content-authoring handlers. Authorization lives in the service layer
@@ -16,9 +16,9 @@ func bindCreate[T any](c *gin.Context, fn func(adminID, orgID string, body T) (s
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	id, err := fn(c.GetString("user_id"), c.Param("id"), b)
+	id, err := fn(ginutil.UserID(c), c.Param("id"), b)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"id": id})
@@ -31,8 +31,8 @@ func bindUpdate[T any](c *gin.Context, fn func(adminID, id string, body T) error
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := fn(c.GetString("user_id"), c.Param("childId"), b); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := fn(ginutil.UserID(c), c.Param("childId"), b); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -40,14 +40,12 @@ func bindUpdate[T any](c *gin.Context, fn func(adminID, id string, body T) error
 
 // bindDelete is the shared shape of every "delete a child by id" route.
 func bindDelete(c *gin.Context, fn func(adminID, id string) error) {
-	if err := fn(c.GetString("user_id"), c.Param("childId")); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := fn(ginutil.UserID(c), c.Param("childId")); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
-
-// ── Announcements ────────────────────────────────────────────────────────────
 
 func (h *Handler) CreateAnnouncement(c *gin.Context) {
 	bindCreate(c, func(a, o string, b AnnouncementRequest) (string, error) {
@@ -64,8 +62,6 @@ func (h *Handler) UpdateAnnouncement(c *gin.Context) {
 func (h *Handler) DeleteAnnouncement(c *gin.Context) {
 	bindDelete(c, func(a, id string) error { return h.svc.DeleteAnnouncement(c.Request.Context(), a, id) })
 }
-
-// ── Meetings ─────────────────────────────────────────────────────────────────
 
 func (h *Handler) CreateMeeting(c *gin.Context) {
 	bindCreate(c, func(a, o string, b MeetingRequest) (string, error) {
@@ -92,14 +88,12 @@ func (h *Handler) PublishMinutes(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.PublishMinutes(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), b.Published); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.PublishMinutes(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), b.Published); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
-
-// ── Documents ────────────────────────────────────────────────────────────────
 
 func (h *Handler) CreateDocument(c *gin.Context) {
 	bindCreate(c, func(a, o string, b DocumentRequest) (string, error) {
@@ -117,8 +111,6 @@ func (h *Handler) DeleteDocument(c *gin.Context) {
 	bindDelete(c, func(a, id string) error { return h.svc.DeleteDocument(c.Request.Context(), a, id) })
 }
 
-// ── Events ───────────────────────────────────────────────────────────────────
-
 func (h *Handler) CreateEvent(c *gin.Context) {
 	bindCreate(c, func(a, o string, b EventRequest) (string, error) {
 		return h.svc.CreateEvent(c.Request.Context(), a, o, b)
@@ -134,8 +126,6 @@ func (h *Handler) UpdateEvent(c *gin.Context) {
 func (h *Handler) DeleteEvent(c *gin.Context) {
 	bindDelete(c, func(a, id string) error { return h.svc.DeleteEvent(c.Request.Context(), a, id) })
 }
-
-// ── Tasks ────────────────────────────────────────────────────────────────────
 
 func (h *Handler) CreateTask(c *gin.Context) {
 	bindCreate(c, func(a, o string, b TaskRequest) (string, error) {
@@ -153,8 +143,6 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 	bindDelete(c, func(a, id string) error { return h.svc.DeleteTask(c.Request.Context(), a, id) })
 }
 
-// ── Dues (money path) ────────────────────────────────────────────────────────
-
 // POST /admin/organisations/:id/dues/run
 func (h *Handler) RunDues(c *gin.Context) {
 	var b DuesRunRequest
@@ -162,10 +150,10 @@ func (h *Handler) RunDues(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	b.IdempotencyKey = c.GetHeader("Idempotency-Key")
-	res, err := h.svc.RunDues(c.Request.Context(), c.GetString("user_id"), c.Param("id"), b)
+	b.IdempotencyKey = ginutil.IdempotencyKey(c)
+	res, err := h.svc.RunDues(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -178,16 +166,14 @@ func (h *Handler) CreateInvoice(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	b.IdempotencyKey = c.GetHeader("Idempotency-Key")
-	id, err := h.svc.CreateInvoice(c.Request.Context(), c.GetString("user_id"), b)
+	b.IdempotencyKey = ginutil.IdempotencyKey(c)
+	id, err := h.svc.CreateInvoice(c.Request.Context(), ginutil.UserID(c), b)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"id": id})
 }
-
-// ── Devices (member self-service) ────────────────────────────────────────────
 
 // POST /me/devices
 func (h *Handler) RegisterDevice(c *gin.Context) {
@@ -196,25 +182,24 @@ func (h *Handler) RegisterDevice(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	id, err := h.svc.RegisterDevice(c.Request.Context(), c.GetString("user_id"), b)
+	id, err := h.svc.RegisterDevice(c.Request.Context(), ginutil.UserID(c), b)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"id": id})
 }
 
-// ── Admin content listings ───────────────────────────────────────────────────
 // The member-facing reads join through the CALLER's own memberships, which
 // returns nothing for a platform admin. These take an explicit organisation.
 
 // contentList builds a handler for one org-scoped admin listing.
 func (h *Handler) contentList(fn func(c *gin.Context, adminID, orgID string, limit, offset int) ([]AdminContentRow, error)) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		limit, offset := pageParams(c)
-		rows, err := fn(c, c.GetString("user_id"), c.Param("id"), limit, offset)
+		limit, offset := ginutil.LimitOffset(c)
+		rows, err := fn(c, ginutil.UserID(c), c.Param("id"), limit, offset)
 		if err != nil {
-			c.JSON(statusFor(err), gin.H{"error": err.Error()})
+			errMap.Write(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, rows)
@@ -257,8 +242,6 @@ func (h *Handler) ListAdminDuesRuns() gin.HandlerFunc {
 	})
 }
 
-// ── Member-proposed meetings ─────────────────────────────────────────────────
-
 // ProposeMeeting — POST /associations/meetings.
 // Any active member may call it; an admin's proposal is approved on insert,
 // everyone else's starts pending. 201 with the resulting approvalStatus so the
@@ -269,9 +252,9 @@ func (h *Handler) ProposeMeeting(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	id, approval, err := h.svc.ProposeMeeting(c.Request.Context(), c.GetString("user_id"), r)
+	id, approval, err := h.svc.ProposeMeeting(c.Request.Context(), ginutil.UserID(c), r)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"id": id, "approvalStatus": approval})
@@ -284,9 +267,9 @@ func (h *Handler) DecideMeeting(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	status, err := h.svc.DecideMeeting(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), d)
+	status, err := h.svc.DecideMeeting(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), d)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"approvalStatus": status})
@@ -294,9 +277,9 @@ func (h *Handler) DecideMeeting(c *gin.Context) {
 
 // ListPendingMeetings — GET /associations/admin/organisations/:id/meetings/pending.
 func (h *Handler) ListPendingMeetings(c *gin.Context) {
-	items, err := h.svc.GetPendingMeetings(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+	items, err := h.svc.GetPendingMeetings(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -316,17 +299,15 @@ func (h *Handler) InviteToEvent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	n, err := h.svc.InviteToEvent(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), r.MembershipIDs)
+	n, err := h.svc.InviteToEvent(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), r.MembershipIDs)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	// `invited` can be lower than what was requested: ids outside the event's
 	// organisation are dropped. Reporting the real number lets the client say so.
 	c.JSON(http.StatusOK, gin.H{"invited": n, "requested": len(r.MembershipIDs)})
 }
-
-// ── Committee membership management ──────────────────────────────────────────
 
 type addCommitteeMembersBody struct {
 	MembershipIDs []string `json:"membershipIds" binding:"required"`
@@ -339,9 +320,9 @@ func (h *Handler) AddCommitteeMembers(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	n, err := h.svc.AddCommitteeMembers(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), b.MembershipIDs)
+	n, err := h.svc.AddCommitteeMembers(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), b.MembershipIDs)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	// `added` can be lower than requested: ids outside the committee's
@@ -361,8 +342,8 @@ func (h *Handler) DecideCommitteeRequest(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.DecideCommitteeRequest(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), b.MembershipID, b.Approve); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.DecideCommitteeRequest(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), b.MembershipID, b.Approve); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -370,8 +351,8 @@ func (h *Handler) DecideCommitteeRequest(c *gin.Context) {
 
 // RemoveCommitteeMember — DELETE /associations/admin/committees/:childId/members/:membershipId.
 func (h *Handler) RemoveCommitteeMember(c *gin.Context) {
-	if err := h.svc.RemoveCommitteeMember(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), c.Param("membershipId")); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.RemoveCommitteeMember(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), c.Param("membershipId")); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -388,8 +369,119 @@ func (h *Handler) SetCommitteeMemberRole(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.SetCommitteeMemberRole(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), c.Param("membershipId"), b.Role); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.SetCommitteeMemberRole(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), c.Param("membershipId"), b.Role); err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// Handlers for the gap-fill endpoints (detail reads, profile update, audit-log,
+// ai-note regenerate, chat reaction). Error→HTTP via errMap.
+
+// GetAnnouncement handles GET /associations/announcements/:id
+func (h *Handler) GetAnnouncement(c *gin.Context) {
+	v, err := h.svc.GetAnnouncement(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
+}
+
+// GetMeeting handles GET /associations/meetings/:id
+func (h *Handler) GetMeeting(c *gin.Context) {
+	v, err := h.svc.GetMeeting(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
+}
+
+// GetTask handles GET /associations/tasks/:id
+func (h *Handler) GetTask(c *gin.Context) {
+	v, err := h.svc.GetTask(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
+}
+
+// GetDocument handles GET /associations/documents/:id
+func (h *Handler) GetDocument(c *gin.Context) {
+	v, err := h.svc.GetDocument(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
+}
+
+// GetCommittee handles GET /associations/committees/:id
+func (h *Handler) GetCommittee(c *gin.Context) {
+	v, err := h.svc.GetCommittee(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
+}
+
+// GetEvent handles GET /associations/events/:id
+func (h *Handler) GetEvent(c *gin.Context) {
+	v, err := h.svc.GetEvent(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
+}
+
+// UpdateProfile handles PUT /associations/me/profile
+func (h *Handler) UpdateProfile(c *gin.Context) {
+	var in UpdateProfileInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	v, err := h.svc.UpdateProfile(c.Request.Context(), ginutil.UserID(c), in)
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
+}
+
+// GetAuditLog handles GET /associations/admin/audit-log
+func (h *Handler) GetAuditLog(c *gin.Context) {
+	v, err := h.svc.GetAuditLog(c.Request.Context(), ginutil.UserID(c), c.Query("action"), c.Query("org_id"))
+	if err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
+}
+
+// RegenerateAiNoteSummary handles POST /associations/ai-notes/:id/regenerate-summary
+func (h *Handler) RegenerateAiNoteSummary(c *gin.Context) {
+	if err := h.svc.RegenerateAiNoteSummary(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
+		errMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "PROCESSING"})
+}
+
+// ReactToMessage handles POST /associations/chat/threads/:id/messages/:messageId/react
+func (h *Handler) ReactToMessage(c *gin.Context) {
+	var b ReactRequest
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.ReactToMessage(c.Request.Context(), ginutil.UserID(c), c.Param("id"), c.Param("messageId"), b.Emoji); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

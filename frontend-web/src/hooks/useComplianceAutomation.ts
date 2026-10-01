@@ -168,7 +168,6 @@ export function useRemediationActions() {
 
       if (!response.ok) throw new Error('Failed to execute action');
 
-      // Update local state
       setActions((prev) =>
         prev.map((a) => (a.id === actionId ? { ...a, status: 'completed' } : a))
       );

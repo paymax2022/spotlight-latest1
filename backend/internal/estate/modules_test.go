@@ -8,8 +8,6 @@ import (
 	"spotlight/backend/internal/estate"
 )
 
-// ── Block 29: Dues / Rent money-path invariants (tests-first) ────────────────
-
 // TestPayDuesRequiresIdempotencyKey is the central money rule: a dues payment
 // with no Idempotency-Key must fail closed, never post a ledger entry.
 // A nil-ledger Service is sufficient because the guard runs before any ledger
@@ -67,8 +65,6 @@ func TestRestrictionLevels(t *testing.T) {
 		t.Error("both soft and hard restriction levels must exist")
 	}
 }
-
-// ── Block 31-37: module request validation invariants ────────────────────────
 
 // TestCreateTaskPriorityStatus verifies task enum domains.
 func TestTaskEnums(t *testing.T) {

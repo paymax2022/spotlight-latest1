@@ -6,17 +6,13 @@ import (
 	"time"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Admin (ops-console) READ models + service methods.
-//
 // These power the platform admin console surfaces (dispatch board, onboarding
 // review, payout reconciliation) under /api/restaurant/admin/*. They are thin
 // reads over the SAME tables the member/owner/rider flows already use — no new
 // money movement is introduced here. Mutations (onboarding decision, manual
 // assign) drive the EXISTING idempotent state transitions.
-//
 // All monetary amounts are integer minor units (kobo).
-// ─────────────────────────────────────────────────────────────────────────────
 
 // AdminRider is a row in the platform rider roster. It reads the shared transport
 // `drivers` pool (the same pool auto-dispatch offers deliveries to), plus the
@@ -98,14 +94,11 @@ type AdminPayoutRun struct {
 	Reconciled        bool      `json:"reconciled"`
 }
 
-// ── Riders roster ─────────────────────────────────────────────────────────────
-
 // AdminListRiders returns the platform rider roster from the shared transport
 // `drivers` pool, mapping transport status/verification to the console's rider
 // status and attaching the rider's currently-active food order if any.
 // mapRiderStatus maps the transport driver status + verification onto the ops
 // console's rider status vocabulary (available|on_delivery|offline|suspended).
-//
 // NOT called in production any more (ADR-050) — the roster computes status in SQL, because
 // it now filters, counts and pages on it and none of that can be done to a value
 // derived after the rows come back. This is kept deliberately as the executable
@@ -130,12 +123,9 @@ func mapRiderStatus(transportStatus, verification string, onDelivery bool) strin
 	}
 }
 
-// ── Dispatch queue ────────────────────────────────────────────────────────────
-
 // AdminDispatchQueue lists orders awaiting or in dispatch (ready/searching for a
 // rider, assigned, or picked_up but not delivered), newest first. waiting_minutes
 // is time since the order became ready (from ready_at when set, else created_at).
-// ── Onboarding review queue ───────────────────────────────────────────────────
 
 // AdminListApplications lists restaurant merchant records for the onboarding/KYC
 // review queue. status filters the derived onboarding status: an open restaurant
@@ -301,8 +291,6 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 	return nil
 }
 
-// ── Manual (ops) rider assignment ─────────────────────────────────────────────
-
 // AdminAssignRider is the ops-console manual assignment. It reuses the exact same
 // offer mechanics as the owner-facing AssignRider (sets rider_candidate_id +
 // notifies the rider), but authorizes the actor as the restaurant owner so a
@@ -316,8 +304,6 @@ func (s *Service) AdminAssignRider(ctx context.Context, orderID, candidateID str
 	// Drive the existing owner-authorized transition with the owner as actor.
 	return s.AssignRider(ctx, orderID, owner, candidateID)
 }
-
-// ── Payout reconciliation (READ-ONLY) ─────────────────────────────────────────
 
 // AdminPayoutRuns returns a READ-ONLY reconciliation view of settled food-delivery
 // escrows grouped by ISO week. Derived from the immutable `settlements` rows

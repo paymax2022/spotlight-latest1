@@ -6,9 +6,9 @@ import { goBack } from '@/lib/navigation';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import { usePartnerClaim, useUploadInspection } from '@/features/insurance/partner';
 import EvidencePicker from '@/features/insurance/components/claims-EvidencePicker';
 
