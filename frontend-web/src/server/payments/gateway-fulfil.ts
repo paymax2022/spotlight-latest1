@@ -1,0 +1,154 @@
+/**
+ * Server-side fulfilment for Paystack gateway charges (AUD-FE-003 residual).
+ *
+ * The client's success callback is not guaranteed to fire — crash,
+ * backgrounding, network drop — so anything the charge was buying must also be
+ * settleable server-side. This module is the ONE place that maps a
+ * Paystack-verified charge onto the pending records our own tables hold for
+ * the reference, and it is shared by two callers:
+ *
+ *   - the Paystack webhook's gateway handler (primary path), and
+ *   - POST /api/v1/payments/gateway/recover (verify-on-read self-heal for a
+ *     charge whose webhook failed AND whose client never came back).
+ *
+ * Every domain here is idempotent: the vote bridge settles through the atomic
+ * paid-vote RPC and a 'credited' row is skipped; a registration intent moves
+ * initiated → completed once. A caller-side retry or a webhook replay is a
+ * no-op, which is what makes webhook + recover safe to race.
+ *
+ * Domains that CANNOT be fulfilled here (and why):
+ *   - Academy tuition instalments — confirmation is proxied to the Go backend
+ *     (/api/finance/academy/tuition/confirm) which expects the caller's JWT;
+ *     no service-auth path exists for a webhook/recover context. The mobile
+ *     client confirm call remains the trigger.
+ *   - Academy application fee — the academy_applications row does not exist
+ *     until the client submits it (the reference is attached at submit), so
+ *     there is nothing to look up at payment time.
+ *   - OpenMic / reality-TV / contest-registration votes — the cast parameters
+ *     (entry, quantity) live only in the client's verify request body, not in
+ *     a server-side pending record keyed by reference.
+ */
+import { createAdminClient } from '@/lib/supabase/server';
+import { bridgedVerifyPaidVote } from '@/src/server/voting-bridge/bridge';
+import {
+  getRegistrationPaymentIntentByReference,
+  applyRegistrationPaymentSuccess,
+  markRegistrationPaymentIntentStatus,
+  type RegistrationPaymentIntent,
+} from '@/src/server/registration/supabase-store';
+
+export interface VoteTransactionTarget {
+  id: string;
+  vote_credit_status?: string | null;
+}
+
+export interface GatewayFulfilmentTargets {
+  voteTransaction: VoteTransactionTarget | null;
+  registrationIntent: RegistrationPaymentIntent | null;
+}
+
+export interface GatewayFulfilmentResult {
+  /** Domain tags that settled on this call, e.g. 'vote', 'registration_fee'. */
+  fulfilled: string[];
+  /** Set when a domain's fulfilment failed — the caller should retry/500. */
+  error?: string;
+}
+
+/** Vote transaction matching a Paystack reference, if any. */
+export async function findVoteTransactionByReference(
+  reference: string,
+): Promise<VoteTransactionTarget | null> {
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from('vote_transactions')
+    .select('id, vote_credit_status')
+    .eq('payment_reference', reference)
+    .maybeSingle();
+  return (data as VoteTransactionTarget | null) ?? null;
+}
+
+/** All reference-keyed pending records we can fulfil server-side. */
+export async function findGatewayFulfilmentTargets(
+  reference: string,
+): Promise<GatewayFulfilmentTargets> {
+  // A failed lookup is thrown, not swallowed — both callers treat it as
+  // retryable (webhook: dispatcher 500 → Paystack redelivers; recover: 500 →
+  // the caller retries) rather than silently reporting nothing to fulfil.
+  const [voteTransaction, registrationIntent] = await Promise.all([
+    findVoteTransactionByReference(reference),
+    getRegistrationPaymentIntentByReference(reference),
+  ]);
+  return { voteTransaction, registrationIntent };
+}
+
+/**
+ * True while a registration fee intent can still be settled — 'initiated' and
+ * 'verified' are the live states (the verify route treats both the same way);
+ * 'completed' is a settled no-op and 'failed' is terminal for that intent.
+ */
+export function isActionableRegistrationIntent(
+  intent: Pick<RegistrationPaymentIntent, 'status'> | null | undefined,
+): boolean {
+  return intent?.status === 'initiated' || intent?.status === 'verified';
+}
+
+/**
+ * Apply a Paystack-confirmed charge to the given pending records.
+ * `verifiedAmountKobo` is what Paystack ACTUALLY collected — never the
+ * client's claim — so a short payment fails the intent instead of minting a
+ * paid registration.
+ */
+export async function fulfilVerifiedGatewayCharge(
+  reference: string,
+  verifiedAmountKobo: number,
+  targets: GatewayFulfilmentTargets,
+): Promise<GatewayFulfilmentResult> {
+  const fulfilled: string[] = [];
+
+  // ── Paid votes ────────────────────────────────────────────────────────────
+  // The same atomic/idempotent bridge the v2 verify route uses — a client
+  // callback or a second webhook delivery arriving later harmlessly no-ops on
+  // 'credited'.
+  const voteTx = targets.voteTransaction;
+  if (voteTx?.id && voteTx.vote_credit_status !== 'credited') {
+    const result = await bridgedVerifyPaidVote(
+      { transactionId: voteTx.id, paymentReference: reference },
+      'system:webhook',
+      { ipAddress: '0.0.0.0', userAgent: 'paystack-webhook' },
+    );
+    if (!result.success) {
+      return { fulfilled, error: result.error ?? 'vote fulfilment failed' };
+    }
+    fulfilled.push('vote');
+  }
+
+  // ── Registration fee ──────────────────────────────────────────────────────
+  // Same rules as GET /api/registration/applications/[id]/payment/verify:
+  // under-collection fails the intent, otherwise mark the draft paid and the
+  // intent completed.
+  const intent = targets.registrationIntent;
+  if (isActionableRegistrationIntent(intent) && intent) {
+    if (verifiedAmountKobo < intent.amountKobo) {
+      await markRegistrationPaymentIntentStatus(
+        intent.id,
+        'failed',
+        `Paystack collected ${verifiedAmountKobo} kobo, below the ${intent.amountKobo} kobo fee for intent ${intent.id}`,
+      );
+      // Terminal — nothing to retry, so this is not an error to the caller.
+    } else {
+      try {
+        await applyRegistrationPaymentSuccess(intent.applicationId, {
+          reference,
+          method: 'PAYSTACK',
+        });
+        await markRegistrationPaymentIntentStatus(intent.id, 'completed');
+        fulfilled.push('registration_fee');
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { fulfilled, error: message };
+      }
+    }
+  }
+
+  return { fulfilled };
+}
