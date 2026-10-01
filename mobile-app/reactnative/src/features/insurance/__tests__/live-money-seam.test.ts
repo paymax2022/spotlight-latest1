@@ -142,7 +142,7 @@ test('nested and repeating money answers are kobo too', () => {
 
 test('the unit this app submits is the unit the Go adapter converts from', () => {
   const here = dirname(fileURLToPath(import.meta.url));
-  const goContract = resolve(here, '../../../../../../backend/internal/insurance/gateway/form_money.go');
+  const goContract = resolve(here, '../../../../../../backend/internal/insurance/gateway/gateway.go');
   const src = readFileSync(goContract, 'utf8');
 
   const m = /MoneyInputWireUnit\s*=\s*"([a-z]+)"/.exec(src);
