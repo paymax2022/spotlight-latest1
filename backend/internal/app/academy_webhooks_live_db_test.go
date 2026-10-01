@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -41,6 +42,15 @@ import (
 const academyWHTestSecret = "test-webhook-secret-zzz"
 
 func newAcademyWebhookRouter(t *testing.T) (*gin.Engine, *pgxpool.Pool) {
+	t.Helper()
+	r, pool, _ := newAcademyWebhookRouterWithHandler(t)
+	return r, pool
+}
+
+// newAcademyWebhookRouterWithHandler is newAcademyWebhookRouter plus the
+// handler itself, so tests can swap h.ledger mid-flight to simulate a transient
+// PostJournal failure recovering.
+func newAcademyWebhookRouterWithHandler(t *testing.T) (*gin.Engine, *pgxpool.Pool, *academyWebhookHandler) {
 	t.Helper()
 	pool := internalLedgerPool(t)
 	t.Cleanup(pool.Close)
@@ -58,7 +68,7 @@ func newAcademyWebhookRouter(t *testing.T) (*gin.Engine, *pgxpool.Pool) {
 	// handed to registerAcademyWebhooks, which adds /academy/<rail>.
 	g := r.Group("/internal/webhooks")
 	registerAcademyWebhooks(g, h)
-	return r, pool
+	return r, pool, h
 }
 
 func signedWebhookPost(t *testing.T, r *gin.Engine, rail string, payload map[string]any) *httptest.ResponseRecorder {
@@ -220,5 +230,112 @@ func TestAcademyRailWebhook_PhantomDisburseMovesNoEscrow_Integration(t *testing.
 	}
 	if n := ledgerRowsForRef(t, pool, phantomRef); n != 0 {
 		t.Fatalf("phantom disburse ref posted %d ledger entries — escrow moved without an obligation", n)
+	}
+}
+
+// AUD-BE-013 residual: a transient PostJournal failure on a settle webhook must
+// park the leg in academy_webhook_outbox (dedupe is already consumed, the row
+// is already terminal — previously the leg was silently lost), and the
+// provider's own retry — which lands on the dedupe-hit path — must redrive it,
+// posting the balanced leg exactly once.
+func TestAcademyRailWebhook_TransientPostJournalOutboxRedrive_Integration(t *testing.T) {
+	r, pool, h := newAcademyWebhookRouterWithHandler(t)
+	ctx := context.Background()
+
+	userID := seedAuthUser(t, pool)
+	tutorID := uuid.NewString()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO academy_tutors (id, user_id, status, kyc_state) VALUES ($1,$2,'verified','verified')`,
+		tutorID, userID); err != nil {
+		t.Fatalf("seed tutor: %v", err)
+	}
+	payoutRef := "payout-outbox-" + uuid.NewString()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO academy_tutor_payouts (tutor_id, amount_minor, state, payout_ref, decided_at) VALUES ($1,50000,'paid',$2,now())`,
+		tutorID, payoutRef); err != nil {
+		t.Fatalf("seed payout: %v", err)
+	}
+
+	// Simulate the transient failure: a ledger whose repository sits on a
+	// CLOSED pool — every PostJournal/standing-account lookup errors.
+	dead, err := pgxpool.New(ctx, os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("dead pool: %v", err)
+	}
+	dead.Close()
+	realLedger := h.ledger
+	h.ledger = financeledger.NewService(financeledger.NewRepository(dead), nil)
+
+	w := signedWebhookPost(t, r, "payout", map[string]any{
+		"rail": "payout", "event": "settled",
+		"ref": payoutRef, "reference": "RO-" + uuid.NewString()[:8],
+		"idempotency_key": "whk-" + uuid.NewString(), "amount_minor": 50000,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("failing webhook: status=%d body=%s", w.Code, w.Body.String())
+	}
+	if n := ledgerRowsForRef(t, pool, payoutRef); n != 0 {
+		t.Fatalf("failed post still wrote %d ledger entries", n)
+	}
+
+	// The leg must be PARKED, not lost.
+	var status string
+	if err := pool.QueryRow(ctx,
+		`SELECT status FROM academy_webhook_outbox WHERE rail='payout' AND provider_ref=$1`,
+		payoutRef).Scan(&status); err != nil {
+		t.Fatalf("outbox row missing for parked leg: %v", err)
+	}
+	if status != "pending" {
+		t.Fatalf("outbox status = %q, want pending", status)
+	}
+
+	// Transient fault clears; the provider retries the consumed event (dedupe
+	// hit) — that retry is the redrive trigger.
+	h.ledger = realLedger
+	w2 := signedWebhookPost(t, r, "payout", map[string]any{
+		"rail": "payout", "event": "settled",
+		"ref": payoutRef, "reference": "RO2-" + uuid.NewString()[:8],
+		"idempotency_key": "whk-" + uuid.NewString(), "amount_minor": 50000,
+	})
+	var body map[string]any
+	_ = json.Unmarshal(w2.Body.Bytes(), &body)
+	if w2.Code != http.StatusOK || body["data"] != "duplicate" {
+		t.Fatalf("retry: status=%d body=%s, want 200 duplicate", w2.Code, w2.Body.String())
+	}
+
+	var total int64
+	if err := pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries WHERE idempotency_key LIKE 'academy-rail:payout:' || $1 || ':%'`,
+		payoutRef).Scan(&total); err != nil {
+		t.Fatalf("sum ledger leg: %v", err)
+	}
+	if total != 2*50000 {
+		t.Fatalf("ledger legs summed to %d kobo, want 100000 (balanced pair posted exactly once)", total)
+	}
+	if err := pool.QueryRow(ctx,
+		`SELECT status FROM academy_webhook_outbox WHERE rail='payout' AND provider_ref=$1`,
+		payoutRef).Scan(&status); err != nil {
+		t.Fatalf("read outbox status: %v", err)
+	}
+	if status != "posted" {
+		t.Fatalf("outbox status after redrive = %q, want posted", status)
+	}
+
+	// A further replay must not double-post.
+	w3 := signedWebhookPost(t, r, "payout", map[string]any{
+		"rail": "payout", "event": "settled",
+		"ref": payoutRef, "reference": "RO3-" + uuid.NewString()[:8],
+		"idempotency_key": "whk-" + uuid.NewString(), "amount_minor": 50000,
+	})
+	if w3.Code != http.StatusOK {
+		t.Fatalf("second replay: status=%d", w3.Code)
+	}
+	if err := pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries WHERE idempotency_key LIKE 'academy-rail:payout:' || $1 || ':%'`,
+		payoutRef).Scan(&total); err != nil {
+		t.Fatalf("re-sum ledger leg: %v", err)
+	}
+	if total != 2*50000 {
+		t.Fatalf("ledger legs after second replay summed to %d kobo, want 100000 (leg re-posted)", total)
 	}
 }

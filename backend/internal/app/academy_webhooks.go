@@ -46,10 +46,21 @@ type academyWebhookEvent struct {
 	OccurredAt  string `json:"occurred_at"`
 }
 
+// railLedger is the slice of ledger.Service the webhook handler needs — an
+// interface seam so unit tests can inject transient PostJournal failures
+// without a live database. *ledger.Service satisfies it.
+type railLedger interface {
+	GetOrCreateStandingAccount(ctx context.Context, accountType ledger.AccountType) (*ledger.Account, error)
+	PostJournal(ctx context.Context, j ledger.JournalEntry) error
+}
+
 // academyWebhookHandler verifies + dedupes + reconciles academy rail webhooks.
 type academyWebhookHandler struct {
 	pool   *pgxpool.Pool
-	ledger *ledger.Service
+	ledger railLedger
+	// outbox parks settle legs whose PostJournal failed transiently for later
+	// redrive (AUD-BE-013 residual). nil when pool is nil.
+	outbox academyOutboxStore
 	// per-rail webhook secret (HMAC-SHA256). Empty secret ⇒ reject (fail-closed).
 	secrets map[string]string
 }
@@ -75,10 +86,43 @@ CREATE TABLE IF NOT EXISTS academy_rail_webhook_events (
 )`); err != nil {
 			log.Printf("[academy-webhooks] ensure dedupe table failed — every inbound rail webhook will fail closed on dedupe until resolved: %v", err)
 		}
+		// Outbox table fallback — authoritative copy is migration
+		// 20270324000000_academy_webhook_outbox.sql. A failure here means
+		// transiently-failed settle legs cannot be parked: log loudly.
+		if _, err := pool.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS academy_webhook_outbox (
+    id              UUID        NOT NULL DEFAULT gen_random_uuid(),
+    rail            TEXT        NOT NULL,
+    provider_ref    TEXT        NOT NULL,
+    reference       TEXT        NOT NULL DEFAULT '',
+    amount_minor    BIGINT      NOT NULL DEFAULT 0,
+    idempotency_key TEXT        NOT NULL,
+    status          TEXT        NOT NULL DEFAULT 'pending',
+    attempts        INT         NOT NULL DEFAULT 0,
+    next_retry_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_error      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (id),
+    UNIQUE (rail, provider_ref)
+)`); err != nil {
+			log.Printf("[academy-webhooks] ensure outbox table failed — transiently-failed settle legs cannot be parked for redrive until resolved: %v", err)
+		}
+	}
+	// Keep a nil *ledger.Service a nil interface so h.ledger == nil keeps
+	// meaning "no ledger wired" (releaseEscrowToSettlement's no-op guard).
+	var rl railLedger
+	if ledgerSvc != nil {
+		rl = ledgerSvc
+	}
+	var outbox academyOutboxStore
+	if pool != nil {
+		outbox = pgAcademyOutboxStore{pool: pool}
 	}
 	return &academyWebhookHandler{
 		pool:   pool,
-		ledger: ledgerSvc,
+		ledger: rl,
+		outbox: outbox,
 		secrets: map[string]string{
 			"bnpl":     cfg.BNPLWebhookSecret,
 			"payout":   cfg.PayoutWebhookSecret,
@@ -128,10 +172,19 @@ ON CONFLICT (rail, provider_ref) DO NOTHING`,
 		}
 		if tag.RowsAffected() == 0 {
 			// Already processed — acknowledge so the provider stops retrying.
+			// But first: the provider's own retry of a consumed event is the
+			// redrive trigger for a settle leg parked in the outbox by a
+			// transient PostJournal failure (AUD-BE-013 residual).
+			h.redrivePending(c.Request.Context(), rail, evt.Ref)
 			c.JSON(http.StatusOK, gin.H{"data": "duplicate"})
 			return
 		}
 	}
+
+	// A fresh signed event on this rail also sweeps due parked legs (bounded):
+	// the sandbox provider does not retry a 2xx, so later webhooks are the
+	// queue driver in place of a scheduler binary.
+	h.redrivePending(c.Request.Context(), rail, "")
 
 	// 3) State flip + ledger leg. Best-effort reconcile; on failure we still 200
 	//    (the event is recorded + idempotent), but log so ops can replay/repair.
@@ -202,24 +255,27 @@ func (h *academyWebhookHandler) reconcile(ctx context.Context, rail string, evt 
 		}
 		return err
 
-	case "payout":
-		// Tutor payout settled ⇒ the row must already be 'paid' (domain owns the
-		// requested→paid|failed transition, incl. the earnings flip). Release the
-		// row's amount escrow → settlement; idempotent on academy-rail:<rail>:<ref>.
-		return h.settleFromRow(ctx, rail, evt,
-			`SELECT amount_minor FROM academy_tutor_payouts WHERE payout_ref = $1 AND state = 'paid'`)
-
-	case "disburse":
-		// EduPay disbursement settled ⇒ row already 'disbursed'/'reconciled'.
-		return h.settleFromRow(ctx, rail, evt,
-			`SELECT amount_minor FROM academy_disbursements WHERE payout_ref = $1 AND state IN ('disbursed','reconciled')`)
-
-	case "billing":
-		// Institution billing settled ⇒ row already 'paid'.
-		return h.settleFromRow(ctx, rail, evt,
-			`SELECT amount_minor FROM academy_institution_billing WHERE payment_ref = $1 AND state = 'paid'`)
+	case "payout", "disburse", "billing":
+		// The obligation row must already be in its terminal-success state (the
+		// owning domain service terminates it: payout 'paid', disbursement
+		// 'disbursed'/'reconciled', billing 'paid'). Release the row's amount
+		// escrow → settlement; idempotent on academy-rail:<rail>:<ref>.
+		return h.settleFromRow(ctx, rail, evt, settleAmountQueries[rail])
 	}
 	return nil
+}
+
+// settleAmountQueries maps each money rail to the terminal-state obligation
+// lookup that authoritatively derives the settle amount. Shared by reconcile
+// and by outbox redrive (when a parked row has no amount snapshot).
+//   - payout:   academy_tutor_payouts row already 'paid' (domain owns the
+//     requested→paid|failed transition, incl. the earnings flip).
+//   - disburse: academy_disbursements row already 'disbursed'/'reconciled'.
+//   - billing:  academy_institution_billing row already 'paid'.
+var settleAmountQueries = map[string]string{
+	"payout":   `SELECT amount_minor FROM academy_tutor_payouts WHERE payout_ref = $1 AND state = 'paid'`,
+	"disburse": `SELECT amount_minor FROM academy_disbursements WHERE payout_ref = $1 AND state IN ('disbursed','reconciled')`,
+	"billing":  `SELECT amount_minor FROM academy_institution_billing WHERE payment_ref = $1 AND state = 'paid'`,
 }
 
 // settleFromRow reads the obligation's committed amount for a settled webhook
@@ -232,16 +288,33 @@ func (h *academyWebhookHandler) settleFromRow(ctx context.Context, rail string, 
 		return errNoMatchingObligation
 	}
 	if err != nil {
+		// Transient obligation-read failure: park the event with no amount
+		// snapshot — redrive re-derives it from the row.
+		h.enqueueOutbox(ctx, rail, evt, 0, err)
 		return err
 	}
-	return h.releaseEscrowToSettlement(ctx, rail, evt, amount)
+	err = h.releaseEscrowToSettlement(ctx, rail, evt.Ref, evt.Reference, amount)
+	if err != nil {
+		// ErrDuplicate ⇒ the balanced leg already exists (a prior attempt or a
+		// concurrent redrive won the race): exactly-once holds, nothing to park.
+		if errors.Is(err, ledger.ErrDuplicate) {
+			return nil
+		}
+		// Terminal obligation matched but the leg did NOT post — park a durable
+		// outbox row carrying the row's amount snapshot (AUD-BE-013 residual:
+		// previously this leg was lost forever because we still ack 200 and the
+		// dedupe row is already consumed).
+		h.enqueueOutbox(ctx, rail, evt, amount, err)
+		return err
+	}
+	return nil
 }
 
 // releaseEscrowToSettlement posts the settle ledger leg: release the held amount
 // from escrow into settlement (a balanced, idempotent journal). The idem key is
 // derived from the provider ref so a replayed webhook re-uses the same key and the
 // ledger rejects the duplicate (defense-in-depth on top of the dedupe table).
-func (h *academyWebhookHandler) releaseEscrowToSettlement(ctx context.Context, rail string, evt academyWebhookEvent, amountKobo int64) error {
+func (h *academyWebhookHandler) releaseEscrowToSettlement(ctx context.Context, rail, providerRef, reference string, amountKobo int64) error {
 	if h.ledger == nil || amountKobo <= 0 {
 		return nil
 	}
@@ -253,16 +326,22 @@ func (h *academyWebhookHandler) releaseEscrowToSettlement(ctx context.Context, r
 	if err != nil {
 		return err
 	}
-	// Route rail, not evt.Rail — the route is what was authenticated; the body's
-	// rail field is sender-supplied and must not steer the ledger key namespace.
-	idemKey := "academy-rail:" + rail + ":" + evt.Ref
 	return h.ledger.PostJournal(ctx, ledger.JournalEntry{
-		Reference:       evt.Reference,
-		IdempotencyKey:  idemKey,
+		Reference:       reference,
+		IdempotencyKey:  academyRailIdemKey(rail, providerRef),
 		AmountKobo:      amountKobo,    // the owning row's amount — never the wire's claim
 		DebitAccountID:  escrow.ID,     // release the hold
 		CreditAccountID: settlement.ID, // settle to the platform settlement account
 	})
+}
+
+// academyRailIdemKey derives the deterministic ledger idempotency key for a
+// rail settle leg. The route rail is used, never the body's sender-supplied
+// rail field, so the payload cannot steer the ledger key namespace. The outbox
+// reuses this key so a redrive of an actually-landed leg is an ErrDuplicate
+// no-op.
+func academyRailIdemKey(rail, providerRef string) string {
+	return "academy-rail:" + rail + ":" + providerRef
 }
 
 // verifyHMAC checks header ("sha256=<hex>" or bare "<hex>") against
