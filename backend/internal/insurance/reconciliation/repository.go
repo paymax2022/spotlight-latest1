@@ -107,7 +107,7 @@ func (r *Repository) ListRecords(ctx context.Context, status, provider string, l
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ReconciliationRecord
+	out := []ReconciliationRecord{}
 	for rows.Next() {
 		rec, err := scanRecord(rows)
 		if err != nil {
@@ -221,7 +221,7 @@ func (r *Repository) ListCommission(ctx context.Context, status, provider string
 		return nil, err
 	}
 	defer rows.Close()
-	var out []CommissionEntry
+	out := []CommissionEntry{}
 	for rows.Next() {
 		ce, err := scanCommission(rows)
 		if err != nil {

@@ -100,7 +100,7 @@ func (r *Repository) ListByUser(ctx context.Context, userID string, limit, offse
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Claim
+	out := []Claim{}
 	for rows.Next() {
 		c, err := scanClaim(rows)
 		if err != nil {
@@ -136,7 +136,7 @@ func (r *Repository) SearchAdmin(ctx context.Context, state, policyID string, li
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Claim
+	out := []Claim{}
 	for rows.Next() {
 		c, err := scanClaim(rows)
 		if err != nil {
@@ -231,7 +231,7 @@ func (r *Repository) ListEvidence(ctx context.Context, claimID string) ([]Eviden
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Evidence
+	out := []Evidence{}
 	for rows.Next() {
 		var e Evidence
 		if err := rows.Scan(&e.ID, &e.ClaimID, &e.FileName, &e.ContentType, &e.StorageRef, &e.CreatedAt); err != nil {
