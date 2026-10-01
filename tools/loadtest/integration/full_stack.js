@@ -65,34 +65,38 @@ const authed = (path, tags) =>
     tags: tags || {},
   });
 
+// SCALE multiplies all VU counts — SCALE=1 ≈175 peak, SCALE=6 ≈1,000.
+const SCALE = parseInt(__ENV.SCALE || '1', 10);
+const v = (n) => Math.max(1, Math.round(n * SCALE));
+
 export const options = {
   scenarios: {
     auth_churn: {
-      executor: 'constant-vus', vus: 15, duration: '2m',
+      executor: 'constant-vus', vus: v(15), duration: '2m',
       exec: 'authChurn', startTime: '0s',
     },
     browse: {
       executor: 'ramping-vus', startVUs: 0, exec: 'browse',
       stages: [
-        { duration: '30s', target: 40 },
-        { duration: '60s', target: 80 },
+        { duration: '30s', target: v(40) },
+        { duration: '60s', target: v(80) },
         { duration: '30s', target: 0 },
       ], startTime: '0s',
     },
     wallet: {
       executor: 'ramping-vus', startVUs: 0, exec: 'wallet',
       stages: [
-        { duration: '30s', target: 30 },
-        { duration: '60s', target: 60 },
+        { duration: '30s', target: v(30) },
+        { duration: '60s', target: v(60) },
         { duration: '30s', target: 0 },
       ], startTime: '10s',
     },
     frontend: {
-      executor: 'constant-vus', vus: 10, duration: '2m',
+      executor: 'constant-vus', vus: v(10), duration: '2m',
       exec: 'frontend', startTime: '20s',
     },
     dup_storm: {
-      executor: 'constant-vus', vus: 10, duration: '1m',
+      executor: 'constant-vus', vus: v(10), duration: '1m',
       exec: 'dupStorm', startTime: '45s',
     },
   },
