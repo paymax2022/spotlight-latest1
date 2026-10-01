@@ -13,3 +13,7 @@ CREATE TABLE IF NOT EXISTS public.academy_rail_webhook_events (
     processed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (rail, provider_ref)
 );
+
+-- Deny-all RLS (rls-check gate): backend-only table — no client reads it, and
+-- the Go service connects as the table owner over pgx, which bypasses RLS.
+ALTER TABLE public.academy_rail_webhook_events ENABLE ROW LEVEL SECURITY;
