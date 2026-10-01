@@ -413,7 +413,7 @@ func (h *MockExamHandler) AdminArchiveTemplate(c *gin.Context) {
 }
 
 // GetLearnerAnalytics returns learner's personal analytics with real data
-// GET /api/academy/mock-exams/analytics
+// GET /api/finance/academy/mock-exams/analytics (memberAcad base — see academy_routes.go)
 func (h *MockExamHandler) GetLearnerAnalytics(c *gin.Context) {
 	userID, err := getUserID(c)
 	if err != nil {
@@ -431,7 +431,7 @@ func (h *MockExamHandler) GetLearnerAnalytics(c *gin.Context) {
 }
 
 // GetAdminAnalytics returns system-wide analytics with real data
-// GET /api/academy/admin/analytics
+// GET /api/academy/admin/mock-exams/analytics (adminAcad base — see academy_routes.go)
 func (h *MockExamHandler) GetAdminAnalytics(c *gin.Context) {
 	timeRange := c.DefaultQuery("timeRange", "week")
 

@@ -36,7 +36,8 @@ describe('Mock Exam API Client', () => {
       expect(result.data).toHaveLength(1);
       expect(result.data[0].name).toBe('P6 Full Exam');
       expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/api/academy/mock-exams/templates')
+        expect.stringContaining('/api/v1/academy/mock-exams/templates'),
+        expect.anything()
       );
     });
 
@@ -84,7 +85,7 @@ describe('Mock Exam API Client', () => {
       expect(result.id).toBe('attempt-123');
       expect(result.status).toBe('in_progress');
       expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/api/academy/mock-exams/start'),
+        expect.stringContaining('/api/v1/academy/mock-exams/start'),
         expect.objectContaining({ method: 'POST' })
       );
     });
@@ -140,7 +141,7 @@ describe('Mock Exam API Client', () => {
       await mockExamClient.saveProgress('attempt-123', answers, flagged);
 
       const call = (global.fetch as any).mock.calls[0];
-      expect(call[0]).toContain('/api/academy/mock-exams/attempts/attempt-123/save');
+      expect(call[0]).toContain('/api/v1/academy/mock-exams/attempts/attempt-123/save');
       expect(call[1].method).toBe('POST');
     });
   });

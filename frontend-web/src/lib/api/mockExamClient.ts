@@ -1,9 +1,22 @@
 /**
  * Mock Exam API Client
  * Centralized API interaction for mock exam system
+ *
+ * Member calls go through the same-origin catch-all proxy
+ *   /api/v1/academy/mock-exams/<...>  →  Go /api/finance/academy/mock-exams/<...>
+ * (app/api/v1/academy/[...path]/route.ts → assessment.RegisterMockExamRoutes).
+ * The proxy requires a Supabase Bearer token, so every call goes through
+ * authFetch — a bare fetch() would 401 at requireRequestUser before reaching Go.
+ *
+ * Admin calls go through /api/academy/admin/<...> → Go /api/academy/admin/<...>
+ * (app/api/academy/admin/[...path]/route.ts). Go admin routes self-gate on RBAC
+ * academy.* slugs.
  */
 
-const API_BASE = '/api/academy/mock-exams';
+import { authFetch } from '@/src/lib/auth/flow';
+
+const API_BASE = '/api/v1/academy/mock-exams';
+const ADMIN_API_BASE = '/api/academy/admin/mock-exams';
 
 export interface MockExamTemplate {
   id: string;
@@ -92,7 +105,7 @@ class MockExamClient {
     if (filters?.exam_type) params.append('exam_type', filters.exam_type);
     if (filters?.limit) params.append('limit', filters.limit.toString());
 
-    const response = await fetch(`${API_BASE}/templates?${params}`);
+    const response = await authFetch(`${API_BASE}/templates?${params}`);
     if (!response.ok) throw new Error(`Failed to fetch templates: ${response.statusText}`);
     return response.json();
   }
@@ -101,7 +114,7 @@ class MockExamClient {
    * Get a specific exam template with instances
    */
   async getTemplate(templateId: string): Promise<any> {
-    const response = await fetch(`${API_BASE}/templates/${templateId}`);
+    const response = await authFetch(`${API_BASE}/templates/${templateId}`);
     if (!response.ok) throw new Error(`Failed to fetch template: ${response.statusText}`);
     return response.json();
   }
@@ -110,11 +123,10 @@ class MockExamClient {
    * Start a new exam attempt
    */
   async startExam(templateId: string): Promise<ExamAttempt> {
-    const response = await fetch(`${API_BASE}/start`, {
+    const response = await authFetch(`${API_BASE}/start`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ template_id: templateId }),
-    });
+    }, { json: true });
     if (!response.ok) throw new Error(`Failed to start exam: ${response.statusText}`);
     const data = await response.json();
     return data.data;
@@ -124,7 +136,7 @@ class MockExamClient {
    * Get current exam progress and questions
    */
   async getProgress(attemptId: string): Promise<ExamProgress> {
-    const response = await fetch(`${API_BASE}/attempts/${attemptId}`);
+    const response = await authFetch(`${API_BASE}/attempts/${attemptId}`);
     if (!response.ok) throw new Error(`Failed to fetch exam progress: ${response.statusText}`);
     const data = await response.json();
     return data.data;
@@ -138,14 +150,13 @@ class MockExamClient {
     answers: Record<string, any>,
     flaggedQuestions: string[]
   ): Promise<void> {
-    const response = await fetch(`${API_BASE}/attempts/${attemptId}/save`, {
+    const response = await authFetch(`${API_BASE}/attempts/${attemptId}/save`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         answers,
         flagged_questions: flaggedQuestions,
       }),
-    });
+    }, { json: true });
     if (!response.ok) throw new Error(`Failed to save progress: ${response.statusText}`);
   }
 
@@ -153,11 +164,10 @@ class MockExamClient {
    * Submit exam and get results
    */
   async submitExam(attemptId: string, answers: Record<string, any>): Promise<ExamResult> {
-    const response = await fetch(`${API_BASE}/attempts/${attemptId}/submit`, {
+    const response = await authFetch(`${API_BASE}/attempts/${attemptId}/submit`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ answers }),
-    });
+    }, { json: true });
     if (!response.ok) throw new Error(`Failed to submit exam: ${response.statusText}`);
     const data = await response.json();
     return data.data;
@@ -167,7 +177,7 @@ class MockExamClient {
    * Get exam results
    */
   async getResults(attemptId: string): Promise<ExamResult> {
-    const response = await fetch(`${API_BASE}/results/${attemptId}`);
+    const response = await authFetch(`${API_BASE}/results/${attemptId}`);
     if (!response.ok) throw new Error(`Failed to fetch results: ${response.statusText}`);
     const data = await response.json();
     return data.data;
@@ -177,7 +187,7 @@ class MockExamClient {
    * Get template statistics
    */
   async getStatistics(templateId: string): Promise<any> {
-    const response = await fetch(`${API_BASE}/statistics/${templateId}`);
+    const response = await authFetch(`${API_BASE}/statistics/${templateId}`);
     if (!response.ok) throw new Error(`Failed to fetch statistics: ${response.statusText}`);
     const data = await response.json();
     return data.data;
@@ -187,7 +197,7 @@ class MockExamClient {
    * Get learner's personal analytics
    */
   async getLearnerAnalytics(): Promise<LearnerAnalytics> {
-    const response = await fetch(`${API_BASE}/analytics`);
+    const response = await authFetch(`${API_BASE}/analytics`);
     if (!response.ok) throw new Error(`Failed to fetch analytics: ${response.statusText}`);
     const data = await response.json();
     return data.data;
@@ -200,7 +210,7 @@ class MockExamClient {
     const params = new URLSearchParams();
     if (timeRange) params.append('timeRange', timeRange);
 
-    const response = await fetch(`/api/academy/admin/analytics?${params}`);
+    const response = await authFetch(`${ADMIN_API_BASE}/analytics?${params}`);
     if (!response.ok) throw new Error(`Failed to fetch admin analytics: ${response.statusText}`);
     const data = await response.json();
     return data.data;

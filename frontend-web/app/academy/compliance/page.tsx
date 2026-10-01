@@ -17,6 +17,13 @@ import {
 
 /**
  * Compliance Dashboards Page
+ *
+ * NOTE (academy E2E audit): every /api/compliance/* endpoint this page calls via
+ * the useCompliance* hooks is unimplemented — no Next route handler and no Go
+ * route exists for them. The catch-all stub at app/api/compliance/[...path]/route.ts
+ * returns an explicit 501 so the dashboards render their error/empty states
+ * rather than silently failing. Build the compliance API (or scope these pages
+ * to the existing referral compliance surface) before shipping this page.
  */
 export default function ComplianceDashboardPage() {
   const [activeTab, setActiveTab] = useState<'overview' | 'gdpr' | 'security' | 'performance' | 'alerts' | 'schedules'>(
