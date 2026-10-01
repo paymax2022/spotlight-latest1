@@ -300,7 +300,7 @@ func (a *AdminService) ListCarHireBookings(ctx context.Context, status string) (
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, uid, status, hireType, vehicleClass string
 		var customerName, driver, driverName, settlementStatus *string

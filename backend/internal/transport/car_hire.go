@@ -439,7 +439,7 @@ func (s *Service) ListCarHire(ctx context.Context, userID string) ([]map[string]
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, hireType, vehicleClass, status string
 		var startAt, createdAt time.Time
