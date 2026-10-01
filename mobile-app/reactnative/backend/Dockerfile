@@ -2,7 +2,7 @@
 
 # ── Build stage ───────────────────────────────────────────────────────────────
 # Pinned toolchain; stdlib-only module so the build is fully reproducible offline.
-FROM golang:1.22-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 
 # Module cache layer — go.sum must be committed (run `go mod tidy` locally).
