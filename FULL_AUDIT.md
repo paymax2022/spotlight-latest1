@@ -1029,12 +1029,14 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | AUD-DB-005 | #396 | `4c9be371` | `update_contestant_vote_stats` unqualified `admin_votes` RHS in `ON CONFLICT DO UPDATE` → ambiguous; qualified to `contestant_vote_stats.admin_votes` via CREATE OR REPLACE (20270325000000) | open — verified in rolled-back txn on local DB |
 | AUD-DB-004 | #397 | `04855a40` | `payment_webhook_logs` dedup upserts were erroring `42P10` wholesale (no unique constraint) — dedup silently never fired; defensive dedupe DELETE + unique index `(provider, reference, event_type)` (20270326000000) | merged |
 | AUD-BILL-001 + AUD-FE-003 (OpenMic residual) | #401 | `587fdc44` | `openmic_vote_paystack_intents` (20270328000000): server-quoted price at initiate, frozen cast params, webhook/recover fulfil arm + claim; verify reconciles amount + uses intent params | in review — specs green locally, regression 131/131, tsc clean, migration applied on local Postgres |
+| AUD-FE-003/004 (sweep) | #402 | `1e753002` | `sweepGatewayIntents` + POST /api/v1/payments/gateway/reconcile (x-cron-secret): pending intent refs → Paystack verify → shared fulfil; off until GATEWAY_RECONCILE_SECRET wired | in review — spec 7/7 green locally |
 
 ### In review
 
 | PR | Lane |
 |----|------|
 | #401 | AUD-BILL-001 + AUD-FE-003 OpenMic residual |
+| #402 | AUD-FE-003/004 residual — reconcile sweep |
 
 ### New findings surfaced during this wave (2026-10-01)
 
