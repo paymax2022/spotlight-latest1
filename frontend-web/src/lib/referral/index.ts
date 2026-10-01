@@ -1,3 +1,5 @@
+'use client';
+
 import { authFetch, isUnauthorized, redirectToLogin } from '@/src/lib/auth/flow';
 
 export function formatNaira(kobo: number | null | undefined, opts?: { decimals?: boolean }): string {
@@ -41,8 +43,6 @@ export function shareMessage(code: string, link: string): string {
     `Use my code ${code} when you sign up: ${link}`
   );
 }
-
-'use client';
 
 // Wired LIVE to the Go engine via the same-origin proxy:
 //   /api/v1/referrals/<...>  →  Go /v1/referrals/<...>

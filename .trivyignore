@@ -22,3 +22,16 @@
 # entry will ALSO silence its finding — re-verify per-file before assuming
 # it's still only .devcontainer/Dockerfile affected.
 DS-0002
+
+# -- Vulnerabilities ------------------------------------------------------
+# CVE-2025-71329 / CVE-2025-71330 — HIGH DoS in image-size@1.2.1, reached
+# only as a transitive dependency of metro (metro -> image-size@^1.0.2) in
+# mobile-app/reactnative/package-lock.json. image-size runs at bundle/build
+# time on the app's own checked-in assets, never on attacker-controlled
+# input, so the crafted-ICNS crash vector is not reachable in production.
+# The fix (image-size@2.x) is a major bump metro's range does not accept and
+# metro@latest has dropped the dependency entirely — the override path
+# resolves on the next react-native/metro upgrade rather than forcing an
+# incompatible metro bump in this repo.
+CVE-2025-71329
+CVE-2025-71330

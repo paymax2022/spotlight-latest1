@@ -113,7 +113,11 @@ func randomPIN(n int) (string, error) {
 	if n <= 0 {
 		n = 6
 	}
+	if n > 64 {
+		n = 6
+	}
 	const digits = "0123456789"
+	// codeql[go/uncontrolled-allocation-size] n is clamped to <=64 above
 	out := make([]byte, n)
 	for i := range out {
 		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(digits))))

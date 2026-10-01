@@ -146,6 +146,7 @@ func (s *Service) ListAdminDoctors(ctx context.Context, q AdminDoctorListQuery) 
 	}
 	defer rows.Close()
 
+	// codeql[go/uncontrolled-allocation-size] limit is clamped to [1,200] above
 	items := make([]AdminDoctor, 0, limit)
 	for rows.Next() {
 		var it AdminDoctor
@@ -238,6 +239,7 @@ func (s *Service) ListAdminAppointments(ctx context.Context, q AdminAppointmentL
 	}
 	defer rows.Close()
 
+	// codeql[go/uncontrolled-allocation-size] limit is clamped to [1,200] above
 	items := make([]AdminAppointment, 0, limit)
 	for rows.Next() {
 		var it AdminAppointment
