@@ -26,20 +26,6 @@ type Repository struct {
 // NewRepository constructs the nutrition repository.
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
-// sqlStater matches the pgx-wrapped *pgconn.PgError without importing pgconn.
-type sqlStater interface{ SQLState() string }
-
-// isCheckViolation reports a Postgres check_violation (SQLSTATE 23514) — the
-// allergen safety CHECK constraints surface as this. Mapped to the clean
-// ErrAllergenRuleViolation sentinel so a safety breach never leaks a raw error.
-func isCheckViolation(err error) bool {
-	var pgErr sqlStater
-	if errors.As(err, &pgErr) {
-		return pgErr.SQLState() == "23514"
-	}
-	return false
-}
-
 // Ownership (replicates restaurant.assertOwner's join chain).
 
 // DishOwnership is the resolved (restaurant_id, owner_id, name) for a menu item.
@@ -573,7 +559,9 @@ func (r *Repository) UpsertAllergen(ctx context.Context, a AllergenDeclaration) 
 	_, err := r.db.Exec(ctx, q, uuid.New().String(), a.MenuItemID, a.RestaurantID, a.Allergen,
 		a.DeclarationType, a.Source, attestedBy, a.CrossContamAck)
 	if err != nil {
-		if isCheckViolation(err) {
+		// Allergen safety CHECK constraints (SQLSTATE 23514) map to the clean
+		// sentinel so a safety breach never leaks a raw error.
+		if dbutil.IsCheckViolation(err) {
 			return ErrAllergenRuleViolation
 		}
 		return err

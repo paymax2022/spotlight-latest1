@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/jsonx"
 )
 
 // sqlStore is the production, Postgres-backed Store. Money moves happen inside a
@@ -23,8 +25,8 @@ type sqlStore struct {
 func NewSQLStore(db *pgxpool.Pool) Store { return &sqlStore{db: db} }
 
 // jsonb columns are written as strings (pgx encodes []byte as bytea, not jsonb).
-func feesJSON(fees []Fee) string         { b, _ := json.Marshal(fees); return string(b) }
-func historyJSON(h []StatusEvent) string { b, _ := json.Marshal(h); return string(b) }
+func feesJSON(fees []Fee) string         { return jsonx.MarshalString(fees) }
+func historyJSON(h []StatusEvent) string { return jsonx.MarshalString(h) }
 
 // Balance reads ONE currency's spendable balance from whichever pot holds it —
 // the main platform ledger for NGN, orch_balances otherwise. All the routing

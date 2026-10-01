@@ -31,6 +31,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/jsonx"
 	"spotlight/backend/internal/provider"
 )
 
@@ -142,7 +143,7 @@ func NewCardStore(db *pgxpool.Pool, issuer provider.CardIssuer) CardStore {
 const cardCols = `id, label, brand, currency, last4, exp_month, exp_year, cardholder_name,
 	balance_minor, status, color, spent_this_month_minor, controls, provider, created_at`
 
-func controlsJSON(sc SpendingControls) string { b, _ := json.Marshal(sc); return string(b) }
+func controlsJSON(sc SpendingControls) string { return jsonx.MarshalString(sc) }
 
 func defaultCardControls() SpendingControls {
 	return SpendingControls{Online: true, Atm: false, International: true, Contactless: true}
