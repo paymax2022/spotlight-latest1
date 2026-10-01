@@ -2,11 +2,13 @@ package middleware
 
 import (
 	"errors"
-	"github.com/gin-gonic/gin"
 	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/services"
-	"strings"
 )
 
 // AdminRole is an admin console role that gates which endpoints they can access.
