@@ -37,15 +37,17 @@ func TestRequireVerifiedIdentity_FailClosedWithNoToken(t *testing.T) {
 	}
 }
 
-func TestRequireVerifiedIdentity_RejectsUnresolvableBearerToken(t *testing.T) {
+// AUD-AUTH-001: an unverifiable bearer token (auth backend unreachable — the
+// test client has no baseURL) is a 503 outage signal, not a 401 rejection.
+func TestRequireVerifiedIdentity_AuthBackendUnavailableReturns503(t *testing.T) {
 	r := newVerifiedIdentityTestRouter(t)
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	req.Header.Set("Authorization", "Bearer not-a-real-token")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", w.Code)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
 	}
 }
 

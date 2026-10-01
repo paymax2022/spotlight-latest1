@@ -74,32 +74,34 @@ function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+// k6's JS runtime has no URLSearchParams — build the query string manually.
 function buildSearchURL() {
-  const params = new URLSearchParams();
+  const params = [];
+  const set = (k, v) => params.push(`${k}=${encodeURIComponent(v)}`);
   const q = pick(QUERIES);
-  if (q) params.set('q', q);
+  if (q) set('q', q);
 
   const pattern = Math.random();
   if (pattern < 0.45) {
     // Plain filtered browse — category + condition, no geo, no text.
-    params.set('category_id', pick(CATEGORIES));
-    params.set('condition', pick(CONDITIONS));
+    set('category_id', pick(CATEGORIES));
+    set('condition', pick(CONDITIONS));
   } else if (pattern < 0.7) {
     // Text search with a price band.
-    params.set('price_min', String(Math.floor(Math.random() * 50000) * 100));
-    params.set('price_max', String((Math.floor(Math.random() * 50000) + 50000) * 100));
+    set('price_min', String(Math.floor(Math.random() * 50000) * 100));
+    set('price_max', String((Math.floor(Math.random() * 50000) + 50000) * 100));
   } else if (pattern < 0.9) {
     // Geo-radius search (Lagos mainland coordinates as a representative origin).
-    params.set('lat', (6.5244 + (Math.random() - 0.5) * 0.5).toFixed(4));
-    params.set('lng', (3.3792 + (Math.random() - 0.5) * 0.5).toFixed(4));
-    params.set('radius_km', String(pick([5, 10, 25, 50])));
+    set('lat', (6.5244 + (Math.random() - 0.5) * 0.5).toFixed(4));
+    set('lng', (3.3792 + (Math.random() - 0.5) * 0.5).toFixed(4));
+    set('radius_km', String(pick([5, 10, 25, 50])));
   } else {
     // State/LGA filtered browse.
-    params.set('state', pick(STATES));
+    set('state', pick(STATES));
   }
-  params.set('sort', pick(SORTS));
-  params.set('limit', String(pick([10, 20, 20, 20, 50]))); // 20 is the default/mode
-  return `${BASE_URL}/v1/marketplace/search?${params.toString()}`;
+  set('sort', pick(SORTS));
+  set('limit', String(pick([10, 20, 20, 20, 50]))); // 20 is the default/mode
+  return `${BASE_URL}/v1/marketplace/search?${params.join('&')}`;
 }
 
 export default function () {

@@ -55,7 +55,9 @@ type WalletTransferRequest struct {
 	RecipientPhone string `json:"recipient_phone" binding:"required"`
 	AmountKobo     int64  `json:"amount_kobo" binding:"required,min=100"`
 	Narration      string `json:"narration"`
-	IdempotencyKey string `json:"idempotency_key" binding:"required"`
+	// Not binding-required: the Idempotency-Key header supplies it for header-only
+	// callers, and the handlers merge the header before validating non-empty.
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 // WalletTransferResolveResponse is the response for GET /finance/transfers/paymax/resolve.
@@ -100,7 +102,7 @@ type BankTransferRequest struct {
 	SaveBeneficiary bool   `json:"save_beneficiary"`
 	Provider        string `json:"provider"` // optional preferred provider; "" = registry default
 	PIN             string `json:"pin" binding:"required"`
-	IdempotencyKey  string `json:"idempotency_key" binding:"required"`
+	IdempotencyKey  string `json:"idempotency_key"`
 }
 
 // BankToBankRequest is the body for POST /finance/transfers/bank-to-bank.
@@ -114,7 +116,7 @@ type BankToBankRequest struct {
 	SaveBeneficiary bool   `json:"save_beneficiary"`
 	Provider        string `json:"provider"`
 	PIN             string `json:"pin" binding:"required"`
-	IdempotencyKey  string `json:"idempotency_key" binding:"required"`
+	IdempotencyKey  string `json:"idempotency_key"`
 }
 
 // Beneficiary is a saved payout destination (generalized, multi-provider).

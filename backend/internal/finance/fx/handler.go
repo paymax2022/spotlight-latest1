@@ -48,6 +48,14 @@ func (h *Handler) Convert(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	// Header Idempotency-Key wins over a body field if present.
+	if k := c.GetHeader("Idempotency-Key"); k != "" {
+		req.IdempotencyKey = k
+	}
+	if req.IdempotencyKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key required"})
+		return
+	}
 	conv, err := h.svc.Convert(c.Request.Context(), userID, req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

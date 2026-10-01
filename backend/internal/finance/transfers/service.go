@@ -290,7 +290,7 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 
 	// Insert wallet_transfers row.
 	const insertTx = `
-		INSERT INTO wallet_transfers (sender_id, recipient_id, amount_kobo, fee_kobo, reference, status, idempotency_key)
+		INSERT INTO wallet_transfers (sender_id, receiver_id, amount_kobo, fee_kobo, reference, status, idempotency_key)
 		VALUES ($1, $2, $3, $4, $5, 'successful', $6)
 		RETURNING id, created_at`
 	wt := &WalletTransfer{
@@ -633,7 +633,7 @@ func (s *Service) markFunded(ctx context.Context, bt *BankTransfer, curStatus Ba
 }
 
 func (s *Service) getWalletTransfer(ctx context.Context, id string) (*WalletTransfer, error) {
-	const q = `SELECT id, sender_id, recipient_id, amount_kobo, fee_kobo, reference, status, idempotency_key, created_at FROM wallet_transfers WHERE id=$1`
+	const q = `SELECT id, sender_id, receiver_id, amount_kobo, fee_kobo, reference, status, idempotency_key, created_at FROM wallet_transfers WHERE id=$1`
 	wt := &WalletTransfer{}
 	var status string
 	err := s.db.QueryRow(ctx, q, id).Scan(&wt.ID, &wt.SenderID, &wt.RecipientID, &wt.AmountKobo, &wt.FeeKobo, &wt.Reference, &status, &wt.IdempotencyKey, &wt.CreatedAt)

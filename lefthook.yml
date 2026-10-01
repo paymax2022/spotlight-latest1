@@ -3,7 +3,11 @@ pre-commit:
   commands:
     lint:
       glob: "backend/**/*.go"
-      run: cd backend && mise exec -- golangci-lint run --new
+      # GIT_DIR/GIT_INDEX_FILE are set by git during hooks and point golangci's
+      # diff machinery at the wrong worktree → it reports the whole baseline
+      # (895 issues → uncommittable). Unset them, and --new-from-rev HEAD diffs
+      # the staged tree against HEAD: "this commit adds no new issues".
+      run: cd backend && env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE mise exec -- golangci-lint run --new-from-rev HEAD
       stage_fixed: true
     format:
       glob: "**/*.go"
