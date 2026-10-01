@@ -111,7 +111,28 @@ Legend: ✅ verified working · ⚠️ works with caveats · ❌ broken · ⬜ u
 | Academy compliance/analytics pages | ❌ | pages render but call `/api/compliance/*` + `/api/academy/mock-exams/analytics` — routes exist nowhere; `RegisterMockExamRoutes` never invoked (F-3) |
 | Elections | ⬜ | no seed data |
 
-## 7. Page surface — 69 pages
+## 7. Mobile app (Expo web :8085 → :3000/:8095) — READY WITH CAVEATS ✅
+
+Tooling: Pixel-7 viewport Playwright against `expo start --web` bundle.
+
+| Check | Status | Evidence |
+|---|---|---|
+| Static suite | ✅ | typecheck clean; `check:confirm` clean; unit: voting 36/36, auth 11/11, payments 44/44, wallet-idempotency 6/6, registration 25/25 |
+| Web bundle | ⚠️ | failed until `npm install` reconciled a stale `image-size@2.0.4` (metro wants `^1.0.2`) — node_modules drift only; lockfile was already correct |
+| UI login → home | ✅ | `POST /api/auth/login` 200 → `/home` renders (balance card, service grid, tab bar) |
+| Wallet/savings/finance tabs | ✅ | render; PIN-status call works → "Create your transaction PIN" prompt (correct gate) |
+| `/api/v1/wallet/balance` | ⚠️ | **403 `requireKycTier(1)`** — correct fail-closed for tier-0 user; falls back to PostgREST `wallet_balance` → shows ₦0.00 (masks real ₦499,900 ledger balance — display inconsistency) |
+| Voting: contests list | ✅ | `/api/v1/connect/contests` live after `FEATURE_CONNECT_ENABLED=true` — real contests render |
+| Contest detail + contestants | ✅ | live contest, stats, contestant profiles, "1/1 free vote" indicator |
+| **Free vote cast end-to-end** | ✅ | vote sheet → stepper → `POST /api/v1/connect/contests/:id/vote` → **201** → "Votes Counted! +1" — row verified in `connect_votes` |
+| Voting via Connect path | ✅ | works where web `/api/vote-page` is broken — mobile uses a different (working) API surface |
+| `GET /api/finance/kyc/me` | ✅ | live after `FEATURE_KYC_VERIFY_ENABLED=true`; renders "Unverified / Tier 0" |
+| `/api/v1/connect/contestants/:id/supporter` | ⚠️ | 403 — supporter-status gate, expected for non-supporter |
+| `/bills` route | ⚠️ | unmatched route — bills live under service paths, not `/bills` |
+| JS page errors | ✅ | 0 across all routes |
+| Minor | ⚠️ | uncontrolled→controlled input warning on login (React hygiene) |
+
+## 8. Page surface — 69 pages
 
 | Suite | Tested | 200 | Failed |
 |---|---|---|---|
@@ -153,7 +174,9 @@ Legend: ✅ verified working · ⚠️ works with caveats · ❌ broken · ⬜ u
 ## Env fixes applied during testing (local only, gitignored)
 
 - `frontend-web/.env.local`: +23 `FEATURE_*` flags → utility/restaurant/crowdfunding 503→200
-- `backend/.env`: `FEATURE_UTILITY_BILLS_ENABLED`, `FEATURE_BUSINESS_REGISTRY_ENABLED` → routes mounted
+- `backend/.env`: `FEATURE_UTILITY_BILLS_ENABLED`, `FEATURE_BUSINESS_REGISTRY_ENABLED` → routes mounted; +`FEATURE_CONNECT_ENABLED`, `FEATURE_KYC_VERIFY_ENABLED` → mobile Connect voting + KYC status live
+- `mobile-app/reactnative/.env`: `EXPO_PUBLIC_API_BASE_URL` → `http://127.0.0.1:3000` (Next.js proxy is the correct base — mobile expects frontend routes like `/api/v1/wallet/balance`, not the bare Go backend)
+- `mobile-app/reactnative`: `npm install` reconciled stale `image-size@2.0.4` → metro bundles again
 
 ## Blocked test paths
 
