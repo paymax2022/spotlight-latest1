@@ -182,13 +182,14 @@ func (w *workerHandler) handlePush(ctx context.Context, t *asynq.Task) error {
 
 	pushToken := n.PushToken
 	if pushToken == "" {
-		log.Printf("[push] user=%s event=%s: no push token, skipping", n.UserID, n.Event)
-		return nil
+		// Permanent condition — retrying can never mint a token. SkipRetry marks
+		// the task failed-without-retry so it lands in asynq's failed/archived
+		// set (and any metrics on it) instead of vanishing as "processed".
+		return fmt.Errorf("[push] user=%s event=%s: no push token, skipping: %w", n.UserID, n.Event, asynq.SkipRetry)
 	}
 
 	if w.cfg.ExpoPushToken == "" && w.cfg.ResendAPIKey == "" {
-		log.Printf("[push] user=%s event=%s: no provider configured", n.UserID, n.Event)
-		return nil
+		return fmt.Errorf("[push] user=%s event=%s: no provider configured: %w", n.UserID, n.Event, asynq.SkipRetry)
 	}
 
 	msg := expoPushMessage{
@@ -242,12 +243,13 @@ func (w *workerHandler) handleEmail(ctx context.Context, t *asynq.Task) error {
 	}
 
 	if w.cfg.ResendAPIKey == "" {
-		log.Printf("[email] user=%s event=%s: RESEND_API_KEY not configured, skipping", n.UserID, n.Event)
-		return nil
+		// Permanent condition — retrying cannot conjure a key. SkipRetry so the
+		// task is visibly failed/archived in asynq rather than silently counted
+		// as processed (this was the "sent" that never sends).
+		return fmt.Errorf("[email] user=%s event=%s: RESEND_API_KEY not configured, skipping: %w", n.UserID, n.Event, asynq.SkipRetry)
 	}
 	if n.Email == "" {
-		log.Printf("[email] user=%s event=%s: no email address, skipping", n.UserID, n.Event)
-		return nil
+		return fmt.Errorf("[email] user=%s event=%s: no email address, skipping: %w", n.UserID, n.Event, asynq.SkipRetry)
 	}
 
 	payload := resendEmailRequest{

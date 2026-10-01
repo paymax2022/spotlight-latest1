@@ -322,7 +322,21 @@ func (h *AuditHandler) ExportAuditLogs(c *gin.Context) {
 
 type HealthHandler struct {
 	pool *pgxpool.Pool
+
+	// Readiness verdict is probed at most once per readyProbeInterval and
+	// cached in between. Without this, every load-balancer/uptime/k8s probe
+	// (and every VU in a loadtest) issues its own pool.Ping — under a saturated
+	// pool those pings queue behind real traffic, exceed their deadline, and
+	// flap the pod out of service exactly when load is highest. One probe per
+	// interval bounds the probe cost regardless of request rate and still
+	// reports a real outage within readyProbeInterval.
+	mu          sync.Mutex
+	lastReady   bool
+	lastReason  string
+	lastProbeAt time.Time
 }
+
+const readyProbeInterval = 2 * time.Second
 
 func NewHealthHandler() *HealthHandler { return &HealthHandler{} }
 
@@ -342,15 +356,39 @@ func (h *HealthHandler) PublicHealth(c *gin.Context) {
 // process must also be able to serve DB-backed traffic. A nil pool (dev/test
 // boots without DATABASE_URL) reports not-ready — on deployed tiers a failed
 // pool is fatal at boot anyway, so this state is only reachable locally.
+//
+// The DB ping itself is rate-limited (see the struct comment): concurrent
+// probes within readyProbeInterval share the previous verdict rather than each
+// acquiring a pool connection. The mutex is held across the ping so at most
+// one probe is ever in flight.
 func (h *HealthHandler) Ready(c *gin.Context) {
 	if h.pool == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "status": "not_ready", "reason": "database pool not configured"})
 		return
 	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if time.Since(h.lastProbeAt) < readyProbeInterval {
+		h.writeReady(c, h.lastReady, h.lastReason)
+		return
+	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
-	defer cancel()
-	if err := h.pool.Ping(ctx); err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "status": "not_ready", "reason": "database ping failed"})
+	err := h.pool.Ping(ctx)
+	cancel()
+	h.lastProbeAt = time.Now()
+	h.lastReady = err == nil
+	if err != nil {
+		h.lastReason = "database ping failed"
+	} else {
+		h.lastReason = ""
+	}
+	h.writeReady(c, h.lastReady, h.lastReason)
+}
+
+func (h *HealthHandler) writeReady(c *gin.Context, ready bool, reason string) {
+	if !ready {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "status": "not_ready", "reason": reason})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "status": "ready"})
