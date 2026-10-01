@@ -146,8 +146,7 @@ func (s *Service) ListAdminDoctors(ctx context.Context, q AdminDoctorListQuery) 
 	}
 	defer rows.Close()
 
-	// codeql[go/uncontrolled-allocation-size] limit is clamped to [1,200] above
-	items := make([]AdminDoctor, 0, limit)
+	items := make([]AdminDoctor, 0)
 	for rows.Next() {
 		var it AdminDoctor
 		if err := rows.Scan(&it.ID, &it.UserID, &it.Name, &it.Specialty, &it.ConsultFeeKobo,
@@ -239,8 +238,7 @@ func (s *Service) ListAdminAppointments(ctx context.Context, q AdminAppointmentL
 	}
 	defer rows.Close()
 
-	// codeql[go/uncontrolled-allocation-size] limit is clamped to [1,200] above
-	items := make([]AdminAppointment, 0, limit)
+	items := make([]AdminAppointment, 0)
 	for rows.Next() {
 		var it AdminAppointment
 		if err := rows.Scan(&it.ID, &it.PatientID, &it.DoctorID, &it.DoctorName, &it.ScheduledAt,

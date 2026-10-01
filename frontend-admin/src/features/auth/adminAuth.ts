@@ -60,11 +60,11 @@ export async function signInAdmin(username: string, password: string) {
 
   if (typeof window !== 'undefined') {
     const accessToken = data.session?.access_token ?? '';
-    // codeql[js/clear-text-storage-of-sensitive-data] intentional — the session is
+    // lgtm[js/clear-text-storage-of-sensitive-data] intentional — the session is
     // also mirrored to an HttpOnly cookie for middleware; the localStorage copy
     // powers client-side Bearer calls to the Go backend (getAdminToken below).
     if (accessToken) localStorage.setItem(ADMIN_TOKEN_KEY, accessToken);
-    // codeql[js/clear-text-storage-of-sensitive-data] admin profile metadata for
+    // lgtm[js/clear-text-storage-of-sensitive-data] admin profile metadata for
     // client-side RBAC rendering only — authorization is enforced server-side.
     localStorage.setItem(
       ADMIN_USER_KEY,

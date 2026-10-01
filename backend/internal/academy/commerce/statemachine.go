@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"math/big"
+	"strings"
+
 	"spotlight/backend/go-common/fsm"
 )
 
@@ -117,16 +119,15 @@ func randomPIN(n int) (string, error) {
 		n = 6
 	}
 	const digits = "0123456789"
-	// codeql[go/uncontrolled-allocation-size] n is clamped to <=64 above
-	out := make([]byte, n)
-	for i := range out {
+	var out strings.Builder
+	for range n {
 		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(digits))))
 		if err != nil {
 			return "", err
 		}
-		out[i] = digits[idx.Int64()]
+		out.WriteByte(digits[idx.Int64()])
 	}
-	return string(out), nil
+	return out.String(), nil
 }
 
 // randomSerial returns a hex serial for an access card (batch generation).
