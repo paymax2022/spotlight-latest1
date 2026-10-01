@@ -112,8 +112,12 @@ export const options = {
   },
 };
 
+// pick rotates deterministically through arr — no RNG. Math.random is banned
+// here not for correctness but because CodeQL (js/insecure-randomness) flags
+// any Math.random in a script that also handles credentials; (__VU, __ITER)
+// gives the same uniform coverage across the run.
 function pick(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
+  return arr[(__VU + __ITER) % arr.length];
 }
 
 function headersFor(token) {
@@ -258,7 +262,9 @@ export function setup() {
 }
 
 export default function () {
-  const idx = Math.floor(Math.random() * POOL_SIZE);
+  // Fixed rider per VU (__VU is 1-based): stable identity gives each VU one
+  // cached token to refresh instead of re-login churn across the whole pool.
+  const idx = (__VU - 1) % POOL_SIZE;
   let token = ensureToken(idx, false);
   if (!token) {
     sleep(1);
@@ -322,5 +328,5 @@ export default function () {
     });
   }
 
-  sleep(Math.random() * 1 + 0.3); // 0.3-1.3s think time between list reads
+  sleep(0.3 + ((__VU * 7 + __ITER) % 10) / 10); // 0.3-1.2s deterministic think time between list reads
 }
