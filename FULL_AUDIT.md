@@ -248,6 +248,22 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Confidence: HIGH — code trace verified by independent re-read.
 * Status: **FIXED — PR #298 (merged, `10025679`).** Successful login after an *expired* `LockedUntil` resets `status='locked'` → `'active'` via typed `platformUserLoginPatch`; indefinite admin locks still refused earlier. Covered by `login_lockout_test.go`.
 
+### AUD-BE-011 — Money-initiate handlers reject the documented `Idempotency-Key` header contract (header-only callers 400)
+
+* Severity: HIGH (money-path API contract broken)
+* Component: `backend/internal/finance/transfers/{model,handler}.go` (`WalletTransferRequest`, `BankTransferRequest`, `BankToBankRequest`), `backend/internal/finance/fx/{model,handler}.go` (`ConvertRequest`)
+* Evidence (executed on live stack, 2026-09-30): `POST /api/finance/transfers/paymax` with `Idempotency-Key` header and a complete body → `400 Key: 'WalletTransferRequest.IdempotencyKey' ... 'required' tag`. Root cause: `idempotency_key binding:"required"` on the struct runs in `ShouldBindJSON`, and the header merge (`header wins`) executes **after** the bind — so header-only callers never reach it. `fx.Convert` additionally never read the header at all. Contracts tell clients to send the header; conforming clients get a hard 400 on every transfer.
+* Fix: fields no longer binding-required; handlers merge the header first, then 400 only when no key exists from either source. `fx.Convert` now merges the header too.
+* Status: **FIX IN REVIEW — PR #369.** Handler-level specs pin header-only acceptance + no-key 400 on all four surfaces.
+
+### AUD-BE-012 — `wallet_transfers` column-name drift: every wallet→wallet transfer 500s
+
+* Severity: HIGH
+* Component: `backend/internal/finance/transfers/service.go` (INSERT ~293, replay SELECT ~636) vs `supabase/migrations/20260616100000_wallet_transfers.sql`
+* Evidence (executed on live stack): `POST /api/finance/transfers/paymax` → `500 transfers: insert wallet_transfers: ERROR: column "recipient_id" of relation "wallet_transfers" does not exist (SQLSTATE 42703)`. The migration created `receiver_id`; the code used `recipient_id` (the `bank_transfers` column name — that table genuinely has `recipient_id`). The idempotent-replay lookup selected the same wrong column → replays 500'd too. **Every wallet-to-wallet transfer was dead on main.**
+* Fix: both sites corrected to `receiver_id`. Verified live: `201` on first send; identical replay returns `200 already_processed:true` with exactly one ledger effect (sender balance 500,000,000 → 499,900,000 kobo, debited once).
+* Status: **FIX IN REVIEW — PR #369** (same PR; both defects were found by the same endpoint drill).
+
 ## Frontend Findings
 
 ### AUD-FE-001 — Production EAS build profile lacks required env (API base URL + Supabase)
@@ -982,6 +998,7 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | Finding | PR | Change | Status |
 |---------|----|--------|--------|
 | AUD-AUTH-001 + AUD-TEST-005 | #367 | `503` on auth-backend outage (401 reserved for real rejection); worktree-safe pre-commit lint | OPEN — live-verified: kong down → 503, recovery → 200 |
+| AUD-BE-011 + AUD-BE-012 | #369 | Header-only `Idempotency-Key` accepted on all money initiates; `wallet_transfers` `receiver_id` drift fixed | OPEN — live-verified: 201 then 200 `already_processed`, one ledger effect |
 | (other session) | #365 | Mobile pre-auth 401s off session-expired path | OPEN — not this campaign's; review independently |
 | (other session) | #366 | Academy rail webhook path fix + dedupe DDL | OPEN — not this campaign's; review independently |
 
