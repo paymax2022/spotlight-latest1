@@ -12,7 +12,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/stretchr/testify v1.12.1
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/metric v1.46.0
 	go.opentelemetry.io/otel/sdk v1.46.0
@@ -33,7 +33,7 @@ require (
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
-	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
