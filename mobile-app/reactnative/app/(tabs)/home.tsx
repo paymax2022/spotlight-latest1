@@ -180,6 +180,8 @@ export default function HomeScreen() {
         <BalanceCard
           balance={balance}
           currency="NGN"
+          balanceUnavailable={data?.wallet.balanceUnavailable}
+          unavailableHint="Couldn’t load your balance — pull down to refresh"
           quickActions={quickActions.map((qa) => ({
             id:      qa.id,
             label:   qa.label,
