@@ -47,17 +47,17 @@ export async function GET(
     const ids = entries.map((e) => e.contestantId);
     if (ids.length > 0) {
       const { data: rows } = await supabase
-        .from('competition_enrollments')
-        .select('id, stage_name, profile_photo_url, genre_style, user_profiles(full_name, avatar_url)')
+        .from('contestants')
+        .select('id, name, stage_name, photo_url, category, state')
         .in('id', ids);
 
       const byId = new Map((rows ?? []).map((r: any) => [r.id, r]));
       for (const e of entries) {
         const r = byId.get(e.contestantId) as any;
         if (r) {
-          e.contestantName = r.user_profiles?.full_name ?? r.stage_name ?? 'Contestant';
+          e.contestantName = r.name ?? r.stage_name ?? 'Contestant';
           e.stageName = r.stage_name ?? null;
-          e.photoUrl = r.profile_photo_url || r.user_profiles?.avatar_url || null;
+          e.photoUrl = r.photo_url || null;
         }
       }
     }

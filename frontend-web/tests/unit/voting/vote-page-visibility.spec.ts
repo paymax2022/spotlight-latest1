@@ -42,9 +42,15 @@ import { createAdminClient } from '@/lib/supabase/server';
 const CONTEST_ROW = { id: 'contest-1', name: 'Star Search', slug: 'star-search', status: 'active' };
 const ENROLLMENT_ROW = {
   id: 'enr-1',
+  name: 'Ada Lovelace',
   stage_name: 'Ada',
-  status: 'active',
-  user_profiles: { id: 'u-1', full_name: 'Ada Lovelace', avatar_url: null, bio: null, state: 'Lagos' },
+  bio: null,
+  photo_url: null,
+  category: 'Acting',
+  state: 'Lagos',
+  media_url: null,
+  status: 'approved',
+  voting_link_slug: 'ada',
 };
 const TOTALS = {
   id: 't-1',
