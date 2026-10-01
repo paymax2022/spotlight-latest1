@@ -18,6 +18,8 @@ import (
 	"math/big"
 	"strings"
 	"time"
+
+	"spotlight/backend/go-common/strutil"
 )
 
 // EmailSender is declared here, in the consuming package, so otp stays testable
@@ -356,7 +358,7 @@ func Equal(a, b string) bool {
 // normalizeEmail is the single definition of identity for a code. Issue and
 // Verify must agree on it exactly, or a code issued to "User@x.com " can never
 // be verified by "user@x.com".
-func normalizeEmail(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+func normalizeEmail(s string) string { return strutil.Normalize(s) }
 
 // PostgresLimiter is a fixed-window counter.
 // In Postgres for the same reason the store is: a rate limit that evaporates
