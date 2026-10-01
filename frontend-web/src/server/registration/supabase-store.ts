@@ -11,6 +11,7 @@ import {
   runBasicFraudChecks,
   validateStepData,
 } from '@/src/features/registration/validation';
+import { verifyPaystackPayment } from '@/src/server/voting/payment/paystack';
 import { ACCOUNT_PROVIDED_KEYS } from '@/src/features/registration/account-prefill';
 import {
   findLiveRegistrationForContest,
@@ -469,7 +470,55 @@ export async function submitRegistrationApplication(applicationId: string) {
   }
 
   const now = nowIso();
-  const nextStatus: ApplicationStatus = draft.formData['payment.paymentStatus'] === 'pending' ? 'awaiting_payment' : 'submitted';
+
+  // AUD-BILL-002 — 'payment.paymentStatus' is merged wholesale from the
+  // client PATCH (saveRegistrationStep), so a bare claim of 'paid' with any
+  // (or no) reference previously transitioned a PAID contest straight to
+  // 'submitted' with zero money changing hands. Gate the transition on proof:
+  // a completed intent row for the application, or the recorded reference
+  // re-verifying with Paystack for at least the server-quoted fee (the fee is
+  // re-read from the contest here, not trusted from formData).
+  const lockedContest = await resolveAnyContest(draft.contestSlug).catch(() => null);
+  const feeNgn = lockedContest
+    ? lockedContest.registrationFeeNgn || 0
+    : Number(draft.formData['payment.feeAmount'] || 0);
+  const isPaidContest = lockedContest
+    ? lockedContest.isPaid
+    : feeNgn > 0 || draft.formData['derived.isPaidContest'] === true;
+  let paymentProven = false;
+  if (isPaidContest && draft.formData['payment.paymentStatus'] === 'paid') {
+    const intent = await getRegistrationPaymentIntentByApplicationAndMethod(applicationId, 'PAYSTACK');
+    if (intent?.status === 'completed' || intent?.status === 'verified') {
+      paymentProven = true;
+    } else {
+      // Pre-intent wizard path: the PATCHed reference can still be real —
+      // verify it against Paystack and backfill the intent so the charge is
+      // reconcilable by the gateway sweep/recover path.
+      const ref = String(draft.formData['payment.transactionReference'] || '').trim();
+      const verification = ref ? await verifyPaystackPayment(ref).catch(() => null) : null;
+      if (verification?.success && verification.amountKobo >= Math.round(feeNgn * 100)) {
+        paymentProven = true;
+        try {
+          const recorded = await createRegistrationPaymentIntent({
+            applicationId,
+            amountKobo: Math.round(feeNgn * 100),
+            paymentReference: ref,
+            idempotencyKey: `submit-verify:${ref}`,
+          });
+          await markRegistrationPaymentIntentStatus(recorded.id, 'completed');
+        } catch {
+          // best-effort bookkeeping — the verified charge already gates submit
+        }
+      }
+    }
+  }
+  const nextStatus: ApplicationStatus = isPaidContest
+    ? paymentProven
+      ? 'submitted'
+      : 'awaiting_payment'
+    : draft.formData['payment.paymentStatus'] === 'pending'
+      ? 'awaiting_payment'
+      : 'submitted';
 
   const { error } = await getSupabase()
     .from('registrations')

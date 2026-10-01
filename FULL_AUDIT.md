@@ -390,6 +390,15 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Confidence: HIGH — both halves verified by reading the live code path; the price field was never validated or compared anywhere in the flow.
 * Status: **FIXED — PR #401.** Initiate now derives the amount from `votingConfig.votePrice` and persists `openmic_vote_paystack_intents` (frozen params + server quote); verify reconciles `Paystack.amountKobo` against the quote (under-collection → 402 + intent `amount_mismatch`); the intent row also gives the webhook/`recover` path a fulfilment target (AUD-FE-003 residual). Regression: `open-mic-pay-verify.spec.ts` +6 cases, `openmic-vote-gateway-fulfil.spec.ts` +6 cases.
 
+### AUD-BILL-002 — Paid contest registration could be submitted with zero payment via client-asserted `payment.paymentStatus`
+
+* Severity: HIGH (money integrity / authz)
+* Component: `frontend-web` contest-registration submit path
+* Location: `src/server/registration/supabase-store.ts` — `saveRegistrationStep` (wholesale merge) + `submitRegistrationApplication` (status gate)
+* Evidence: `saveRegistrationStep` merges `params.values` into `form_data` verbatim — including `payment.paymentStatus` and `payment.transactionReference` — overriding only `'waived'` (free contest) or empty (`'pending'`). `submitRegistrationApplication` then computed `nextStatus = paymentStatus === 'pending' ? 'awaiting_payment' : 'submitted'` — any value other than the literal `'pending'` submitted the draft, with no Paystack verification and no intent check. `ContestRegistrationWizard` PATCHes `payment.paymentStatus: 'paid'` + a self-minted `SPOT-` reference after its inline `popup.newTransaction`, so both the vulnerable path and a legitimate-but-unverifiable user flow existed.
+* Exploit: `PATCH /api/registration/applications/{id}` `{ step: 'payment', values: { 'payment.paymentStatus': 'paid', 'payment.transactionReference': 'SPOT-FAKE' } }` → `POST …/submit` → `submitted` on a ₦2,000–₦7,500 contest without paying.
+* Status: **FIXED.** `submitRegistrationApplication` now gates the `submitted` transition on proof: a completed/verified `registration_payment_intents` row for the application, or the recorded reference re-verifying with Paystack for at least the server-quoted fee (re-read via `resolveAnyContest`, not trusted from `form_data`). Verified legacy-path references are backfilled as completed intents so the gateway sweep/recover can reconcile them. Anything else → `awaiting_payment`. Free contests unchanged. Regression: `paid-submit-gate.spec.ts` — 8 cases (fake ref, no ref, completed intent, real verified ref + intent backfill, under-collection, pending, waived-claim on paid, waived on free).
+
 ## Backend Findings (continued)
 
 ### AUD-BE-008 — Notification queue has producers but no consumer is ever started
@@ -1028,15 +1037,15 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | (codeql) Math.random in k6 lane | #394 | — | Deterministic `__VU`/`__ITER` picks replace Math.random flagged by js/insecure-randomness (merge of #387 raced it) | open |
 | AUD-DB-005 | #396 | `4c9be371` | `update_contestant_vote_stats` unqualified `admin_votes` RHS in `ON CONFLICT DO UPDATE` → ambiguous; qualified to `contestant_vote_stats.admin_votes` via CREATE OR REPLACE (20270325000000) | open — verified in rolled-back txn on local DB |
 | AUD-DB-004 | #397 | `04855a40` | `payment_webhook_logs` dedup upserts were erroring `42P10` wholesale (no unique constraint) — dedup silently never fired; defensive dedupe DELETE + unique index `(provider, reference, event_type)` (20270326000000) | merged |
-| AUD-BILL-001 + AUD-FE-003 (OpenMic residual) | #401 | `587fdc44` | `openmic_vote_paystack_intents` (20270328000000): server-quoted price at initiate, frozen cast params, webhook/recover fulfil arm + claim; verify reconciles amount + uses intent params | in review — specs green locally, regression 131/131, tsc clean, migration applied on local Postgres |
-| AUD-FE-003/004 (sweep) | #402 | `1e753002` | `sweepGatewayIntents` + POST /api/v1/payments/gateway/reconcile (x-cron-secret): pending intent refs → Paystack verify → shared fulfil; off until GATEWAY_RECONCILE_SECRET wired | in review — spec 7/7 green locally |
+| AUD-BILL-001 + AUD-FE-003 (OpenMic residual) | #401 | `587fdc44` | `openmic_vote_paystack_intents` (20270328000000): server-quoted price at initiate, frozen cast params, webhook/recover fulfil arm + claim; verify reconciles amount + uses intent params | merged |
+| AUD-FE-003 (sweep) | #402 | `5f51a24e` | `sweepGatewayIntents` + `POST /api/v1/payments/gateway/reconcile` (`x-cron-secret`): pending intent refs → Paystack verify → shared fulfil; off until `GATEWAY_RECONCILE_SECRET` wired | merged — spec 7/7; ops wiring (secret + scheduled caller) still open |
+| AUD-BILL-002 | #408 | `e7c8ccd6` | `submitRegistrationApplication` gates `submitted` on proof: completed/verified intent row, or PATCHed reference re-verifying ≥ server-quoted fee via Paystack (fee re-read from contest); verified legacy refs backfilled as completed intents; else `awaiting_payment` | in review — spec 8/8, registration suite 136, regression 131/131, tsc clean |
 
 ### In review
 
 | PR | Lane |
 |----|------|
-| #401 | AUD-BILL-001 + AUD-FE-003 OpenMic residual |
-| #402 | AUD-FE-003/004 residual — reconcile sweep |
+| #408 | AUD-BILL-002 paid-submit gate |
 
 ### New findings surfaced during this wave (2026-10-01)
 
@@ -1046,6 +1055,7 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | AUD-DB-005 | MED | `update_contestant_vote_stats` trigger fails on `contestant_votes` inserts — `admin_votes` ambiguity in its `ON CONFLICT DO UPDATE` | fix → PR #396 |
 | AUD-DB-006 | MED | Deeper trigger design bug under DB-005: the Aug-11 `CREATE OR REPLACE` of `update_contestant_vote_stats()` repurposed the shared function for `admin_votes` while `on_vote_inserted` on `contestant_votes` still calls it — `contestant_votes` inserts now write `contestant_vote_stats.admin_votes` instead of updating `contestants.total_votes`/`ranking` as the original body did | open — needs two functions or TG_TABLE_NAME branching |
 | AUD-FE-008 | LOW | `getWalletAccountId` (`mobile-app/reactnative/src/api/walletLedger.api.ts`) orders `account_type` asc and takes the first — post-consolidation users' pre-sweep history on the `wallet` plane under-reports in transactions/income-expense | deferred — needs a decision on how sweep DEBIT/CREDIT pairs should appear in totals |
+| AUD-BILL-002 | HIGH | Paid-contest registration submit trusted client-PATCHed `payment.paymentStatus: 'paid'` — wholesale step merge + submit's `'pending'→awaiting else submitted` gate meant any asserted status (incl. fabricated references, or 'waived' on a paid contest) submitted unpaid | fix → PR #408 (submit gate: intent row or Paystack-verified reference ≥ server fee, else awaiting_payment) |
 | F-3 (compliance half) | MED | `/api/compliance/*` is a genuinely missing backend feature (~25 endpoints: metrics, reports, alerts, schedules, export, incidents, workflows…) — not a wiring bug | mitigated: segment flag-gated off (#384), explicit 501 stub (#389); building it is a real feature needing spec |
 | (hygiene) | INFO | Dead `/api/mock-exams/*` references: `useBackgroundSync.ts` posts, `service-worker.js` caches; orphaned `compliance/{automation,predictions,analytics,notifications}-page.tsx` | dead code, no importers — cleanup optional |
 
