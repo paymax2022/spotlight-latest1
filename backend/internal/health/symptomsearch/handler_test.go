@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -265,5 +266,31 @@ func TestHTTP_AdminSymptomMetrics_PortAbsent404(t *testing.T) {
 	w := doJSON(t, r, http.MethodGet, "/symptom/metrics", "", nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", w.Code)
+	}
+}
+
+// Stale buckets must be swept from the in-memory fallback — the store
+// previously never evicted, so one-shot keys accumulated forever.
+func TestSearchLimiterSweepsStaleBuckets(t *testing.T) {
+	l := &searchLimiter{store: map[string]*searchBucket{}, limit: 2, window: time.Minute}
+	l.store["stale"] = &searchBucket{count: 1, windowStart: time.Now().Add(-2 * time.Minute)}
+
+	if _, ok := l.allow("fresh"); !ok {
+		t.Fatal("new key should pass")
+	}
+	if got := len(l.store); got != 1 {
+		t.Fatalf("stale bucket survived the sweep: size = %d, want 1", got)
+	}
+}
+
+// The device half of the key derives from the caller-set X-Device-Id header,
+// so a key flood must not grow the fallback store without bound.
+func TestSearchLimiterBoundedUnderKeyFlood(t *testing.T) {
+	l := &searchLimiter{store: map[string]*searchBucket{}, limit: 2, window: time.Minute, maxKeys: 10}
+	for i := range 100 {
+		l.allow("u1|dev-" + strconv.Itoa(i))
+	}
+	if got := len(l.store); got > 10 {
+		t.Fatalf("store exceeded the cap: %d entries, want <= 10", got)
 	}
 }
