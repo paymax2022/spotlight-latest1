@@ -102,7 +102,6 @@
   },
   "overrides": {
     "browserslist": "^4.28.8",
-    "image-size": "^2.0.3",
     "postcss": "^8.5.23",
     "decode-uri-component": "^0.5.0",
     "@xmldom/xmldom": "^0.9.12",
