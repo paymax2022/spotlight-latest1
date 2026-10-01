@@ -248,6 +248,22 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Confidence: HIGH — code trace verified by independent re-read.
 * Status: **FIXED — PR #298 (merged, `10025679`).** Successful login after an *expired* `LockedUntil` resets `status='locked'` → `'active'` via typed `platformUserLoginPatch`; indefinite admin locks still refused earlier. Covered by `login_lockout_test.go`.
 
+### AUD-BE-011 — Money-initiate handlers reject the documented `Idempotency-Key` header contract (header-only callers 400)
+
+* Severity: HIGH (money-path API contract broken)
+* Component: `backend/internal/finance/transfers/{model,handler}.go` (`WalletTransferRequest`, `BankTransferRequest`, `BankToBankRequest`), `backend/internal/finance/fx/{model,handler}.go` (`ConvertRequest`)
+* Evidence (executed on live stack, 2026-09-30): `POST /api/finance/transfers/paymax` with `Idempotency-Key` header and a complete body → `400 Key: 'WalletTransferRequest.IdempotencyKey' ... 'required' tag`. Root cause: `idempotency_key binding:"required"` on the struct runs in `ShouldBindJSON`, and the header merge (`header wins`) executes **after** the bind — so header-only callers never reach it. `fx.Convert` additionally never read the header at all. Contracts tell clients to send the header; conforming clients get a hard 400 on every transfer.
+* Fix: fields no longer binding-required; handlers merge the header first, then 400 only when no key exists from either source. `fx.Convert` now merges the header too.
+* Status: **FIXED — PR #369 (merged).** Handler-level specs pin header-only acceptance + no-key 400 on all four surfaces.
+
+### AUD-BE-012 — `wallet_transfers` column-name drift: every wallet→wallet transfer 500s
+
+* Severity: HIGH
+* Component: `backend/internal/finance/transfers/service.go` (INSERT ~293, replay SELECT ~636) vs `supabase/migrations/20260616100000_wallet_transfers.sql`
+* Evidence (executed on live stack): `POST /api/finance/transfers/paymax` → `500 transfers: insert wallet_transfers: ERROR: column "recipient_id" of relation "wallet_transfers" does not exist (SQLSTATE 42703)`. The migration created `receiver_id`; the code used `recipient_id` (the `bank_transfers` column name — that table genuinely has `recipient_id`). The idempotent-replay lookup selected the same wrong column → replays 500'd too. **Every wallet-to-wallet transfer was dead on main.**
+* Fix: both sites corrected to `receiver_id`. Verified live: `201` on first send; identical replay returns `200 already_processed:true` with exactly one ledger effect (sender balance 500,000,000 → 499,900,000 kobo, debited once).
+* Status: **FIXED — PR #369 (merged)** (same PR; both defects were found by the same endpoint drill).
+
 ## Frontend Findings
 
 ### AUD-FE-001 — Production EAS build profile lacks required env (API base URL + Supabase)
@@ -455,7 +471,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Evidence (executed 2026-09-30): `npm audit --audit-level=high` → 8 vulnerabilities (5 high, 3 moderate): `brace-expansion` DoS (eslint/glob chains), `vitest`/`@vitest/mocker` path-traversal, `js-yaml` merge-key DoS, `fast-uri` host normalization, `eslint-config-next` chain. All reachable only through dev dependencies (eslint, vitest, rimraf) — no production-runtime advisories in the output.
 * Production impact: none at runtime; CI/dev-machine exposure only. Worth a Dependabot/`npm audit` lane so this doesn't silently accumulate.
 * Confidence: HIGH.
-* Status: **PARTIALLY FIXED — PR #323 (merged, `1a7d8bd5`).** Production advisories cleared; remaining dev-tooling advisories still fail the `npm audit` lanes repo-wide.
+* Status: **PARTIALLY FIXED — PR #323 (merged, `1a7d8bd5`); residual reduced by PR #378.** Production advisories cleared in #323. Re-audit 2026-10-01 found 7 dev-tooling advisories; #378 cleared 4 non-breaking (`brace-expansion`, `js-yaml`, `vitest`, `@vitest/mocker`). **3 highs remain** — the `eslint-config-next@14 → @next/eslint-plugin-next → glob@10` chain, fixable only by `eslint-config-next@16.3.8`, a semver-major against Next 14.2 (would need a dedicated eslint-flat-config/Next-16 review, not `npm audit fix --force`). These still fail the `npm audit` CI lanes repo-wide — a known, documented baseline.
 
 ### AUD-SEC-003 — `NEXT_PUBLIC_ADMIN_API_KEY` referenced by seven client-side service modules (dead code today, latent secret leak)
 
@@ -480,7 +496,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Expected: definitive token rejection → 401; upstream/transport failure → 503 so clients retry/back off instead of discarding sessions.
 * Fix: `AuthUser` returns `ErrTokenInvalid` only on a definitive GoTrue 401/403; `RequireAuthContext` + `resolveVerifiedIdentity` map that to 401, everything else to `503 authentication service unavailable`; `ChangePassword` distinguishes likewise.
 * Verified live: Kong stopped → `503` in 17ms; Kong restored → `200`. Unit specs pin both branches (upstream 5xx → 503, conn-refused → 503, definitive 401 → 401).
-* Status: **FIX IN REVIEW — PR #367.**
+* Status: **FIXED — PR #367 (merged).**
 
 ## Infrastructure / DevOps Findings
 
@@ -650,7 +666,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Evidence (executed): committing inside a linked worktree ran `golangci-lint run --new` under the hook's `GIT_DIR`/`GIT_INDEX_FILE` env; the env points golangci's diff machinery at the wrong tree, `--new` falls back to reporting the **entire baseline (895 issues)**, and every commit fails the hook even with a zero-issue diff. Reproduced directly: same binary/config reports `0 issues` without the env, `895` with `GIT_INDEX_FILE`/`GIT_DIR` set.
 * Production impact: none at runtime; every developer/agent session in a linked worktree had to bypass `--no-verify` or burn time — meaning the gate trained people to skip it.
 * Fix: hook now runs `env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE mise exec -- golangci-lint run --new-from-rev HEAD` — diffs the staged tree against HEAD (exactly "this commit adds no new issues"), independent of merge-base and worktree layout.
-* Status: **FIX IN REVIEW — PR #367** (same branch as AUD-AUTH-001; separate commit).
+* Status: **FIXED — PR #367 (merged)** (same branch as AUD-AUTH-001; separate commit).
 
 ## Performance Findings
 
@@ -981,9 +997,10 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 
 | Finding | PR | Change | Status |
 |---------|----|--------|--------|
-| AUD-AUTH-001 + AUD-TEST-005 | #367 | `503` on auth-backend outage (401 reserved for real rejection); worktree-safe pre-commit lint | OPEN — live-verified: kong down → 503, recovery → 200 |
-| (other session) | #365 | Mobile pre-auth 401s off session-expired path | OPEN — not this campaign's; review independently |
-| (other session) | #366 | Academy rail webhook path fix + dedupe DDL | OPEN — not this campaign's; review independently |
+| AUD-AUTH-001 + AUD-TEST-005 | #367 | `503` on auth-backend outage (401 reserved for real rejection); worktree-safe pre-commit lint | MERGED — live-verified: kong down → 503, recovery → 200 |
+| AUD-BE-011 + AUD-BE-012 | #369 | Header-only `Idempotency-Key` accepted on all money initiates; `wallet_transfers` `receiver_id` drift fixed | MERGED — live-verified: 201 then 200 `already_processed`, one ledger effect |
+| (other session) | #365 | Mobile pre-auth 401s off session-expired path | MERGED — not this campaign's |
+| (other session) | #366 | Academy rail webhook path fix + dedupe DDL | MERGED — not this campaign's |
 
 ### Closed unmerged (superseded / no unique change)
 
