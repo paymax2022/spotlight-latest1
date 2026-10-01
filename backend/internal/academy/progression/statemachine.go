@@ -155,8 +155,7 @@ func pickItems(items []QuestionItemRef, objectiveIDs []string, limit int) []stri
 		buckets[k] = b
 	}
 	// Round-robin across objectives so the session is balanced.
-	// codeql[go/uncontrolled-allocation-size] limit is clamped to <=200 and len(items) above
-	out := make([]string, 0, limit)
+	out := make([]string, 0)
 	idx := make(map[string]int, len(order))
 	for len(out) < limit {
 		progressed := false
