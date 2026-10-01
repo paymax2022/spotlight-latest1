@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { isSessionValid, resolveEnforce, SESSION_COOKIE } from '../../../../middleware';
+import { extractSessionToken, isSessionValid, resolveEnforce } from '../../../../middleware';
 
 /**
  * Server-side admin proxy: /api/admin-proxy/<...> -> <ADMIN_API_BASE_URL>/<...>,
@@ -36,27 +36,6 @@ export const dynamic = 'force-dynamic';
 // ended in /api/v1 silently 404'd every module not mounted under it.
 const ADMIN_API_BASE_URL = process.env.ADMIN_API_BASE_URL || 'http://localhost:8080';
 const TIMEOUT_MS = Number(process.env.ADMIN_PROXY_TIMEOUT_MS ?? 20_000);
-
-/**
- * Pulls the admin session token out of a raw Cookie header. A route handler
- * here receives a plain Request (not NextRequest), so the req.cookies helper
- * isn't available — and keeping this as a standalone pure function makes it
- * unit-testable without constructing a Request at all.
- */
-export function extractSessionToken(cookieHeader: string | null): string | undefined {
-  if (!cookieHeader) return undefined;
-  for (const part of cookieHeader.split(';')) {
-    const idx = part.indexOf('=');
-    if (idx === -1) continue;
-    if (part.slice(0, idx).trim() !== SESSION_COOKIE) continue;
-    try {
-      return decodeURIComponent(part.slice(idx + 1).trim());
-    } catch {
-      return part.slice(idx + 1).trim();
-    }
-  }
-  return undefined;
-}
 
 async function forward(request: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
