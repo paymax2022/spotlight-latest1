@@ -13,6 +13,10 @@ const appDir = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Local testing browses via 127.0.0.1 (Supabase site_url) as well as
+  // localhost; without this the dev server blocks /_next/hmr, which stalls
+  // hydration entirely in dev mode.
+  allowedDevOrigins: ['127.0.0.1'],
   // Produce a traced production server so the deployment image contains only
   // the runtime files Next needs, rather than the complete build toolchain.
   output: 'standalone',
