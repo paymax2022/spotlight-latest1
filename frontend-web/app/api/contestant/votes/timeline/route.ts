@@ -15,7 +15,7 @@ export async function GET(request: Request) {
     const { data: enrollment } = await supabase
       .from('competition_enrollments')
       .select('id')
-      .eq('contest_id', contestId)
+      .eq('competition_id', contestId)
       .eq('user_id', user.id)
       .maybeSingle();
 

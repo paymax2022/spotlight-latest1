@@ -68,7 +68,7 @@ export async function GET(request: Request) {
         id, stage_name, status,
         user_profiles ( id, full_name, avatar_url, bio, state )
       `)
-      .eq('contest_id', contestId)
+      .eq('competition_id', contestId)
       .eq('slug', contestantSlug)
       .maybeSingle();
 
@@ -85,7 +85,7 @@ export async function GET(request: Request) {
             user_profiles ( id, full_name, avatar_url, bio, state )
           `)
           .eq('id', contestantSlug)
-          .eq('contest_id', contestId)
+          .eq('competition_id', contestId)
           .maybeSingle();
         enrollment = byId;
       }
