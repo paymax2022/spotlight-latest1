@@ -375,13 +375,6 @@ func ptrOrNil(s string) *string {
 	return &v
 }
 
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
-}
-
 func toJSON(v any) []byte {
 	if v == nil {
 		return []byte("{}")

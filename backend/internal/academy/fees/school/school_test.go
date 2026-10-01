@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"spotlight/backend/go-common/ptr"
 )
 
 // These tests are PURE — no DB, no pgx. The pgx-backed Repository is replaced by an
@@ -46,7 +48,7 @@ func (f *fakeStore) Get(_ context.Context, id string) (*School, error) {
 func (f *fakeStore) List(_ context.Context, ownerUserID string) ([]School, error) {
 	out := []School{}
 	for _, s := range f.schools {
-		if ownerUserID == "" || deref(s.OwnerUserID) == ownerUserID {
+		if ownerUserID == "" || ptr.ZeroIfNil(s.OwnerUserID) == ownerUserID {
 			out = append(out, *s)
 		}
 	}
@@ -205,8 +207,8 @@ func TestServiceCreate_OwnerIsCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if deref(sch.OwnerUserID) != "owner-42" {
-		t.Fatalf("owner_user_id must be the caller, got %q", deref(sch.OwnerUserID))
+	if ptr.ZeroIfNil(sch.OwnerUserID) != "owner-42" {
+		t.Fatalf("owner_user_id must be the caller, got %q", ptr.ZeroIfNil(sch.OwnerUserID))
 	}
 }
 

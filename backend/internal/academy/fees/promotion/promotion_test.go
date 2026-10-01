@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"spotlight/backend/go-common/ptr"
 	feesstatemachine "spotlight/backend/internal/academy/fees/statemachine"
 )
 
@@ -49,7 +50,7 @@ func (f *fakeStore) UpsertScore(_ context.Context, schoolID, classID, sessionID,
 	// Stage a session_active promotion record per (student, session, class) — mirrors
 	// the repository's staging behaviour.
 	for _, p := range f.promos {
-		if p.StudentID == studentID && deref(p.SessionID) == sessionID && deref(p.FromClassID) == classID {
+		if p.StudentID == studentID && ptr.ZeroIfNil(p.SessionID) == sessionID && ptr.ZeroIfNil(p.FromClassID) == classID {
 			p.ExamScore = f64(score)
 			return nil
 		}
@@ -99,7 +100,7 @@ func (f *fakeStore) GetPromotion(_ context.Context, id string) (*PromotionRecord
 func (f *fakeStore) ListPromotionsByClass(_ context.Context, sessionID, classID string) ([]PromotionRecord, error) {
 	out := []PromotionRecord{}
 	for _, p := range f.promos {
-		if deref(p.SessionID) == sessionID && deref(p.FromClassID) == classID {
+		if ptr.ZeroIfNil(p.SessionID) == sessionID && ptr.ZeroIfNil(p.FromClassID) == classID {
 			out = append(out, *p)
 		}
 	}
@@ -273,8 +274,8 @@ func TestPromotion_HappyPath_AppliesAndRolls(t *testing.T) {
 		t.Fatalf("want applied, got %s", out.State)
 	}
 	stu, _ := fs.GetStudent(ctx, "stu-1")
-	if deref(stu.ClassID) != "jss2" {
-		t.Fatalf("promoted student must move to jss2, got %q", deref(stu.ClassID))
+	if ptr.ZeroIfNil(stu.ClassID) != "jss2" {
+		t.Fatalf("promoted student must move to jss2, got %q", ptr.ZeroIfNil(stu.ClassID))
 	}
 	if stu.Status != StudentPromoted {
 		t.Fatalf("want status promoted, got %s", stu.Status)
@@ -427,8 +428,8 @@ func TestPromotion_Repeated_KeepsSameClass(t *testing.T) {
 		t.Fatalf("apply: %v", err)
 	}
 	stu, _ := fs.GetStudent(ctx, "stu-1")
-	if deref(stu.ClassID) != "jss1" {
-		t.Fatalf("repeated student must stay in jss1, got %q", deref(stu.ClassID))
+	if ptr.ZeroIfNil(stu.ClassID) != "jss1" {
+		t.Fatalf("repeated student must stay in jss1, got %q", ptr.ZeroIfNil(stu.ClassID))
 	}
 	if stu.Status != StudentRepeated {
 		t.Fatalf("want status repeated, got %s", stu.Status)

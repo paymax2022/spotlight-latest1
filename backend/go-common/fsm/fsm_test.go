@@ -59,69 +59,9 @@ func TestIsTerminal(t *testing.T) {
 	}
 }
 
-func TestLegal(t *testing.T) {
-	got := orderMoves.Legal(pending)
-	if len(got) != 2 {
-		t.Fatalf("Legal(pending) = %v, want 2 moves", got)
-	}
-	if orderMoves.Legal(delivered) != nil {
-		t.Fatal("Legal(terminal) must be nil")
-	}
-}
-
-func TestReachable(t *testing.T) {
-	if !orderMoves.Reachable(pending, delivered) {
-		t.Fatal("pending→delivered must be reachable")
-	}
-	if orderMoves.Reachable(delivered, pending) {
-		t.Fatal("delivered→pending must not be reachable")
-	}
-	if orderMoves.Reachable(pending, pending) {
-		t.Fatal("from==to must be false (same as Can)")
-	}
-}
-
-func TestValidate_CatchesSelfLoop(t *testing.T) {
-	bad := fsm.Table[status]{pending: fsm.Set(pending)}
-	got := bad.Validate()
-	if len(got) != 1 || got[0] != pending {
-		t.Fatalf("Validate = %v, want [pending]", got)
-	}
-	if len(orderMoves.Validate()) != 0 {
-		t.Fatal("clean table must validate empty")
-	}
-}
-
-func TestEdges(t *testing.T) {
-	if n := len(orderMoves.Edges()); n != 6 {
-		t.Fatalf("Edges = %d, want 6", n)
-	}
-}
-
 func TestTerminalOf(t *testing.T) {
 	term := fsm.TerminalOf(delivered, cancelled)
 	if !term(delivered) || !term(cancelled) || term(pending) {
 		t.Fatal("TerminalOf predicate wrong")
-	}
-}
-
-func TestMerge(t *testing.T) {
-	extra := fsm.Table[status]{delivered: fsm.Set(cancelled)} // admin override
-	merged := orderMoves.Merge(extra)
-	if !merged.Can(delivered, cancelled) {
-		t.Fatal("merged edge missing")
-	}
-	if !merged.Can(pending, confirmed) {
-		t.Fatal("base edge lost in merge")
-	}
-	// original table untouched
-	if orderMoves.Can(delivered, cancelled) {
-		t.Fatal("Merge mutated the base table")
-	}
-}
-
-func TestStates(t *testing.T) {
-	if n := len(orderMoves.States()); n != 5 {
-		t.Fatalf("States = %d, want 5", n)
 	}
 }

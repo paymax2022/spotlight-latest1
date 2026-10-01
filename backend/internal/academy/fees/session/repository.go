@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/ptr"
 )
 
 // Store is the data-access contract for sessions + classes. Defined as an in-package
@@ -147,8 +148,8 @@ func (r *Repository) InsertClass(ctx context.Context, c Class) (*Class, error) {
 	now := time.Now()
 	const q = `INSERT INTO academy_fee_classes (id, school_id, session_id, name, level, class_teacher_user_id, created_at)
 	           VALUES ($1,$2,$3,$4,$5,$6,$7)`
-	if _, err := r.db.Exec(ctx, q, id, c.SchoolID, dbutil.NullStr(deref(c.SessionID)), c.Name,
-		dbutil.NullStr(deref(c.Level)), dbutil.NullStr(deref(c.ClassTeacherUserID)), now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, c.SchoolID, dbutil.NullStr(ptr.ZeroIfNil(c.SessionID)), c.Name,
+		dbutil.NullStr(ptr.ZeroIfNil(c.Level)), dbutil.NullStr(ptr.ZeroIfNil(c.ClassTeacherUserID)), now); err != nil {
 		return nil, err
 	}
 	return r.GetClass(ctx, id)
@@ -227,13 +228,6 @@ func (r *Repository) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
 }
 
 func toJSON(v any) []byte {

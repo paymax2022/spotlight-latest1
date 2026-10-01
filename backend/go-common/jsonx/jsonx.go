@@ -9,7 +9,6 @@ package jsonx
 import (
 	"bytes"
 	"encoding/json"
-	"maps"
 )
 
 // Marshal is json.Marshal returning nil on error — for audit/log payloads
@@ -79,12 +78,6 @@ func NullJSON(raw []byte) any {
 	return raw
 }
 
-// Unmarshal is json.Unmarshal with the two-value form made explicit — exists
-// so call sites read `jsonx.Unmarshal(b, &v)` beside Marshal.
-func Unmarshal(data []byte, v any) error {
-	return json.Unmarshal(data, v)
-}
-
 // UnmarshalOr unmarshals into v or leaves def in place on error/empty input —
 // for scanned jsonb columns that tolerate blanks.
 func UnmarshalOr[T any](data []byte, def T) T {
@@ -96,68 +89,4 @@ func UnmarshalOr[T any](data []byte, def T) T {
 		return def
 	}
 	return v
-}
-
-// Decode unmarshals a json.RawMessage field into T — typed access over
-// interface{} payloads in event/audit rows.
-func Decode[T any](raw json.RawMessage) (T, error) {
-	var v T
-	err := json.Unmarshal(raw, &v)
-	return v, err
-}
-
-// Compact normalizes raw JSON (whitespace-stripped). Invalid input is
-// returned unchanged — callers decide whether invalid JSON is an error.
-func Compact(raw []byte) []byte {
-	var buf bytes.Buffer
-	if err := json.Compact(&buf, raw); err != nil {
-		return raw
-	}
-	return buf.Bytes()
-}
-
-// Valid reports whether raw is well-formed JSON — the pre-check used before
-// inserting into jsonb columns to fail fast instead of at the driver.
-func Valid(raw []byte) bool {
-	return json.Valid(bytes.TrimSpace(raw))
-}
-
-// Indent pretty-prints raw JSON for admin/debug surfaces. Invalid input is
-// returned unchanged.
-func Indent(raw []byte) []byte {
-	var buf bytes.Buffer
-	if err := json.Indent(&buf, raw, "", "  "); err != nil {
-		return raw
-	}
-	return buf.Bytes()
-}
-
-// MergeObject shallow-merges patch fields into a base JSON object — for
-// "update some keys of a stored jsonb column" without a full rewrite. Both
-// inputs must be objects; on any error the patch wins whole (the caller's
-// explicit intent).
-func MergeObject(base, patch []byte) []byte {
-	var b, p map[string]any
-	if err := json.Unmarshal(base, &b); err != nil {
-		b = map[string]any{}
-	}
-	if err := json.Unmarshal(patch, &p); err != nil {
-		return patch
-	}
-	maps.Copy(b, p)
-	out, err := json.Marshal(b)
-	if err != nil {
-		return patch
-	}
-	return out
-}
-
-// Stringify marshals v for logs — never fails, renders invalid values as
-// their fmt-ish zero so a log line is never dropped.
-func Stringify(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return "<unmarshalable>"
-	}
-	return string(b)
 }

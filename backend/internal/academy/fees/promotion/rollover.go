@@ -1,6 +1,10 @@
 package feespromotion
 
-import "context"
+import (
+	"context"
+
+	"spotlight/backend/go-common/ptr"
+)
 
 // Rollover executes the side effects of promotion_approved → applied: it reassigns the
 // student's class and status and reassigns the applicable fee schedule for the new
@@ -63,7 +67,7 @@ func (rl *Rollover) Execute(ctx context.Context, actorID string, rec PromotionRe
 
 	// Idempotency: if the student is already in the target class with the target
 	// status, this is a re-apply — skip the write entirely so double-apply is a no-op.
-	if deref(student.ClassID) == deref(targetClass) && student.Status == status {
+	if ptr.ZeroIfNil(student.ClassID) == ptr.ZeroIfNil(targetClass) && student.Status == status {
 		_ = rl.store.WriteAudit(ctx, actorID, "promotion_rollover_noop", "academy_student",
 			rec.StudentID, "", "", map[string]any{"reason": "already_reassigned"})
 		return nil
@@ -82,7 +86,7 @@ func (rl *Rollover) Execute(ctx context.Context, actorID string, rec PromotionRe
 	}
 
 	_ = rl.store.WriteAudit(ctx, actorID, "promotion_rollover_applied", "academy_student",
-		rec.StudentID, deref(student.ClassID), deref(targetClass),
+		rec.StudentID, ptr.ZeroIfNil(student.ClassID), ptr.ZeroIfNil(targetClass),
 		map[string]any{"decision": string(*rec.Decision), "status": string(status)})
 	return nil
 }

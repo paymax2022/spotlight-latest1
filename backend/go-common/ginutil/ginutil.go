@@ -8,7 +8,6 @@
 package ginutil
 
 import (
-	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -142,87 +141,15 @@ func IntParam(c *gin.Context, name string) *int {
 	return &v
 }
 
-// Query returns a trimmed query parameter; empty string when absent.
-func Query(c *gin.Context, name string) string {
-	return strings.TrimSpace(c.Query(name))
-}
-
-// QueryOr returns a trimmed query parameter or def when absent/blank.
-func QueryOr(c *gin.Context, name, def string) string {
-	if v := Query(c, name); v != "" {
-		return v
-	}
-	return def
-}
-
-// PathID returns a trimmed :name path parameter.
-func PathID(c *gin.Context, name string) string {
-	return strings.TrimSpace(c.Param(name))
-}
-
-// Header returns a trimmed request header value.
-func Header(c *gin.Context, name string) string {
-	return strings.TrimSpace(c.GetHeader(name))
-}
-
-// BearerToken extracts the token from "Authorization: Bearer <t>".
-func BearerToken(c *gin.Context) string {
-	const prefix = "Bearer "
-	h := strings.TrimSpace(c.GetHeader("Authorization"))
-	if len(h) <= len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
-		return ""
-	}
-	return strings.TrimSpace(h[len(prefix):])
-}
-
 // Fail writes the {"error": msg} envelope — the most common error shape.
 func Fail(c *gin.Context, status int, msg string) {
 	c.JSON(status, gin.H{errKey: msg})
-}
-
-// FailErr is Fail with err.Error() as the message.
-func FailErr(c *gin.Context, status int, err error) {
-	c.JSON(status, gin.H{errKey: err.Error()})
 }
 
 // FailOK writes the {"success": false, "error": msg} envelope used by modules
 // whose success responses carry a success flag.
 func FailOK(c *gin.Context, status int, msg string) {
 	c.JSON(status, gin.H{successKey: false, errKey: msg})
-}
-
-// OK writes the {"success": true, ...} envelope. Extra fields are merged in.
-func OK(c *gin.Context, status int, fields gin.H) {
-	body := gin.H{successKey: true}
-	maps.Copy(body, fields)
-	c.JSON(status, body)
-}
-
-// SortDir reads ?sort=|?dir= as "ASC" or "DESC" — the recurring pattern of
-// normalizing user sort input to a safe SQL direction token (never inject
-// the raw param into SQL).
-func SortDir(c *gin.Context) string {
-	v := strings.ToLower(strings.TrimSpace(FirstOf(c.Query("dir"), c.Query("sort"))))
-	if v == "asc" || v == "ascending" {
-		return "ASC"
-	}
-	return "DESC"
-}
-
-// FirstOf returns the first non-empty string — local copy kept tiny so this
-// package has no cross-package dependency for a one-liner.
-func FirstOf(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// Search reads the ?q=|?search= full-text param, trimmed.
-func Search(c *gin.Context) string {
-	return strings.TrimSpace(FirstOf(c.Query("q"), c.Query("search")))
 }
 
 // AdminID reads the admin identity key set by admin-auth middleware —

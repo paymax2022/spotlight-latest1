@@ -27,18 +27,6 @@ func TestToken(t *testing.T) {
 	}
 }
 
-func TestTokenB64(t *testing.T) {
-	tok := cryptox.TokenB64(32)
-	if tok == "" || len(tok) < 40 {
-		t.Fatalf("TokenB64 too short: %q", tok)
-	}
-	for _, r := range tok {
-		if r == '+' || r == '/' || r == '=' {
-			t.Fatalf("TokenB64 not URL-safe: %q", tok)
-		}
-	}
-}
-
 func TestHMACSHA256Hex_Deterministic(t *testing.T) {
 	a := cryptox.HMACSHA256Hex("secret", "cid", "123", "nonce")
 	b := cryptox.HMACSHA256Hex("secret", "cid", "123", "nonce")
@@ -104,28 +92,6 @@ func TestConstantTimeEqual(t *testing.T) {
 	}
 	if cryptox.ConstantTimeEqual("abc", "abcd") {
 		t.Fatal("different lengths accepted")
-	}
-}
-
-func TestAPIKey(t *testing.T) {
-	k := cryptox.APIKey("sk_test")
-	prefix, secret, ok := cryptox.ParseAPIKey(k)
-	if !ok {
-		t.Fatalf("ParseAPIKey failed on %q", k)
-	}
-	if prefix != "sk_test" {
-		t.Fatalf("prefix = %q, want sk_test", prefix)
-	}
-	if len(secret) < 40 {
-		t.Fatalf("secret too short: %d chars", len(secret))
-	}
-}
-
-func TestParseAPIKey_Bad(t *testing.T) {
-	for _, k := range []string{"", "noseparator", "_x", "x_"} {
-		if _, _, ok := cryptox.ParseAPIKey(k); ok {
-			t.Fatalf("ParseAPIKey(%q) should fail", k)
-		}
 	}
 }
 

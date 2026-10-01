@@ -10,7 +10,6 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -37,12 +36,6 @@ func RandHex(n int) string {
 // drop-in for the copied randToken() implementations.
 func Token() string {
 	return RandHex(16)
-}
-
-// TokenB64 returns a URL-safe base64 token of n random bytes — for tokens
-// that ride in URLs or cookies where hex's 2× expansion is wasteful.
-func TokenB64(n int) string {
-	return base64.RawURLEncoding.EncodeToString(RandBytes(n))
 }
 
 // HMACSHA256Hex signs the parts joined by "|" — the credential `sign` shape:
@@ -95,37 +88,6 @@ func ConstantTimeEqual(a, b string) bool {
 func Fingerprint(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])[:12]
-}
-
-// Nonce returns a random hex nonce of n bytes — for challenge-response and
-// replay-protection schemes that need a distinct value per request.
-func Nonce(n int) string {
-	return RandHex(n)
-}
-
-// ConstantTimeEqualBytes is ConstantTimeEqual for byte slices — signature
-// comparison when both sides are already decoded.
-func ConstantTimeEqualBytes(a, b []byte) bool {
-	return subtle.ConstantTimeCompare(a, b) == 1
-}
-
-// APIKey mints a prefixed opaque key: "<prefix>_<64 lowercase hex chars>" —
-// the shape used by admin/service keys (AUD-SEC-003). The prefix is not
-// secret; the entropy is 32 bytes. Hex secrets contain no '_', so the LAST
-// underscore is always the prefix/secret boundary — even for multi-segment
-// prefixes like "sk_test".
-func APIKey(prefix string) string {
-	return strings.TrimSpace(prefix) + "_" + RandHex(32)
-}
-
-// ParseAPIKey splits a prefixed key back into (prefix, secret) — for routers
-// that dispatch on the key class. ok is false when the shape is wrong.
-func ParseAPIKey(key string) (string, string, bool) {
-	i := strings.LastIndexByte(key, '_')
-	if i <= 0 || i == len(key)-1 {
-		return "", "", false
-	}
-	return key[:i], key[i+1:], true
 }
 
 // RandUint returns a uniform random uint64 below bound (rejection-sampled —

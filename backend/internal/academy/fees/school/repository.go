@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ptr"
 )
 
 // Store is the data-access contract the service depends on. Defining it as an in-package
@@ -68,8 +69,8 @@ func (r *Repository) Insert(ctx context.Context, s School) (*School, error) {
 	const q = `INSERT INTO academy_schools
 	    (id, name, code, level, virtual_account_ref, contact, owner_user_id, verification_tier, status, created_at)
 	    VALUES ($1,$2,$3,$4,$5,$6,$7,'unverified','active',$8)`
-	if _, err := r.db.Exec(ctx, q, id, s.Name, dbutil.NullStr(deref(s.Code)), dbutil.NullStr(deref(s.Level)),
-		dbutil.NullStr(deref(s.VirtualAccountRef)), dbutil.NullStr(deref(s.Contact)), dbutil.NullStr(deref(s.OwnerUserID)), now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, s.Name, dbutil.NullStr(ptr.ZeroIfNil(s.Code)), dbutil.NullStr(ptr.ZeroIfNil(s.Level)),
+		dbutil.NullStr(ptr.ZeroIfNil(s.VirtualAccountRef)), dbutil.NullStr(ptr.ZeroIfNil(s.Contact)), dbutil.NullStr(ptr.ZeroIfNil(s.OwnerUserID)), now); err != nil {
 		return nil, err
 	}
 	return r.Get(ctx, id)

@@ -156,52 +156,11 @@ func TestBoolParam(t *testing.T) {
 	}
 }
 
-func TestBearerToken(t *testing.T) {
-	c, _ := ctxWith(func(c *gin.Context) {
-		c.Request.Header.Set("Authorization", "Bearer tok-abc")
-	})
-	if got := ginutil.BearerToken(c); got != "tok-abc" {
-		t.Fatalf("BearerToken = %q, want tok-abc", got)
-	}
-	c2, _ := ctxWith(func(c *gin.Context) {
-		c.Request.Header.Set("Authorization", "Basic dXNlcg==")
-	})
-	if got := ginutil.BearerToken(c2); got != "" {
-		t.Fatalf("BearerToken(basic) = %q, want empty", got)
-	}
-}
-
-func TestFailAndOKEnvelopes(t *testing.T) {
+func TestFailEnvelope(t *testing.T) {
 	c, w := ctxWith()
 	ginutil.Fail(c, http.StatusTeapot, "nope")
 	if w.Code != http.StatusTeapot {
 		t.Fatalf("Fail status = %d", w.Code)
-	}
-	c2, w2 := ctxWith()
-	ginutil.OK(c2, http.StatusCreated, gin.H{"id": 1})
-	if w2.Code != http.StatusCreated {
-		t.Fatalf("OK status = %d", w2.Code)
-	}
-	if body := w2.Body.String(); body == "" || body == "{}" {
-		t.Fatalf("OK body = %q", body)
-	}
-}
-
-func TestSortDirAndSearch(t *testing.T) {
-	c, _ := ctxWith(func(c *gin.Context) {
-		c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x?dir=asc&q=%20%20hello%20%20", nil)
-	})
-	if got := ginutil.SortDir(c); got != "ASC" {
-		t.Fatalf("SortDir = %q, want ASC", got)
-	}
-	if got := ginutil.Search(c); got != "hello" {
-		t.Fatalf("Search = %q, want hello", got)
-	}
-	c2, _ := ctxWith(func(c *gin.Context) {
-		c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x?sort=weird", nil)
-	})
-	if got := ginutil.SortDir(c2); got != "DESC" {
-		t.Fatalf("SortDir default = %q, want DESC", got)
 	}
 }
 

@@ -91,27 +91,6 @@ func RFC3339Ptr(t *time.Time) string {
 	return RFC3339(*t)
 }
 
-// NowPtr returns a pointer to the current UTC time — for stamped columns
-// whose type is *time.Time.
-func NowPtr() *time.Time {
-	t := time.Now().UTC()
-	return &t
-}
-
-// StartOfDay truncates t to midnight UTC — the day-bucket boundary used by
-// reporting queries.
-func StartOfDay(t time.Time) time.Time {
-	u := t.UTC()
-	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
-}
-
-// EndOfDay returns the exclusive end of the UTC day containing t — i.e.
-// StartOfDay(t)+24h, the correct half-open bound for `ts >= start AND ts <
-// end` queries (never 23:59:59, which loses the last second).
-func EndOfDay(t time.Time) time.Time {
-	return StartOfDay(t).Add(24 * time.Hour)
-}
-
 // IntervalSeconds renders d as a Postgres interval literal ("N seconds")
 // for use in parameterized interval arithmetic — the formatInterval copies
 // in the reconciler loops. Non-positive durations clamp to 0 seconds so
@@ -119,28 +98,4 @@ func EndOfDay(t time.Time) time.Time {
 func IntervalSeconds(d time.Duration) string {
 	secs := max(int64(d/time.Second), 0)
 	return strconv.FormatInt(secs, 10) + " seconds"
-}
-
-// IntervalMinutes is IntervalSeconds with minute granularity — for grace
-// periods configured in whole minutes.
-func IntervalMinutes(d time.Duration) string {
-	mins := max(int64(d/time.Minute), 0)
-	return strconv.FormatInt(mins, 10) + " minutes"
-}
-
-// Age returns whole days since t — for "N days ago" surfaces.
-func Age(t time.Time) int {
-	return int(time.Since(t).Hours() / 24)
-}
-
-// ClampToRange bounds t into [lo, hi]; zero bounds are ignored so callers
-// can pass optional limits without branching.
-func ClampToRange(t, lo, hi time.Time) time.Time {
-	if !lo.IsZero() && t.Before(lo) {
-		return lo
-	}
-	if !hi.IsZero() && t.After(hi) {
-		return hi
-	}
-	return t
 }

@@ -85,7 +85,7 @@ func (s *Service) Update(ctx context.Context, callerID, id string, req UpdateSch
 	if err != nil {
 		return nil, err
 	}
-	if deref(cur.OwnerUserID) != callerID {
+	if ptr.ZeroIfNil(cur.OwnerUserID) != callerID {
 		return nil, ErrForbidden
 	}
 	out, err := s.store.Update(ctx, id, req)
@@ -142,7 +142,7 @@ func (s *Service) Export(ctx context.Context, callerID, schoolID string) (*Schoo
 	}
 	// Fail-closed: only the owning school (or a platform admin at a higher layer) may
 	// pull the export, and only once the school is verified (SF-10).
-	if deref(sch.OwnerUserID) != callerID {
+	if ptr.ZeroIfNil(sch.OwnerUserID) != callerID {
 		return nil, ErrForbidden
 	}
 	if !sch.IsVerified() {
@@ -166,14 +166,6 @@ func (s *Service) Export(ctx context.Context, callerID, schoolID string) (*Schoo
 		Roster:       roster,
 		FeeSchedules: fees,
 	}, nil
-}
-
-// deref returns the pointed-to string or "" for a nil pointer.
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
 }
 
 // toJSON marshals a detail payload for the audit_logs jsonb column, never returning nil.

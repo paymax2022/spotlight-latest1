@@ -77,65 +77,11 @@ func TestRFC3339(t *testing.T) {
 	}
 }
 
-func TestNowPtr(t *testing.T) {
-	p := timeutil.NowPtr()
-	if p == nil || p.IsZero() {
-		t.Fatal("NowPtr must be non-nil non-zero")
-	}
-}
-
-func TestStartEndOfDay(t *testing.T) {
-	tm := time.Date(2026, 9, 30, 15, 30, 0, 0, time.UTC)
-	sod := timeutil.StartOfDay(tm)
-	if sod.Hour() != 0 || sod.Day() != 30 {
-		t.Fatalf("StartOfDay = %v", sod)
-	}
-	eod := timeutil.EndOfDay(tm)
-	if eod.Day() != 1 || eod.Month() != 10 {
-		t.Fatalf("EndOfDay must be exclusive next-day midnight: %v", eod)
-	}
-	if !eod.After(sod) {
-		t.Fatal("EndOfDay must be after StartOfDay")
-	}
-}
-
 func TestIntervalSeconds(t *testing.T) {
 	if got := timeutil.IntervalSeconds(90 * time.Second); got != "90 seconds" {
 		t.Fatalf("IntervalSeconds = %q", got)
 	}
 	if got := timeutil.IntervalSeconds(-5 * time.Second); got != "0 seconds" {
 		t.Fatalf("negative must clamp: %q", got)
-	}
-}
-
-func TestIntervalMinutes(t *testing.T) {
-	if got := timeutil.IntervalMinutes(2 * time.Hour); got != "120 minutes" {
-		t.Fatalf("IntervalMinutes = %q", got)
-	}
-	if got := timeutil.IntervalMinutes(-1); got != "0 minutes" {
-		t.Fatalf("negative must clamp: %q", got)
-	}
-}
-
-func TestAge(t *testing.T) {
-	old := time.Now().Add(-48 * time.Hour)
-	if got := timeutil.Age(old); got != 2 {
-		t.Fatalf("Age = %d, want 2", got)
-	}
-}
-
-func TestClampToRange(t *testing.T) {
-	lo := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	hi := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
-	mid := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
-	if got := timeutil.ClampToRange(mid, lo, hi); got != mid {
-		t.Fatal("in-range passthrough")
-	}
-	before := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	if got := timeutil.ClampToRange(before, lo, hi); got != lo {
-		t.Fatal("below lo must clamp to lo")
-	}
-	if got := timeutil.ClampToRange(mid, time.Time{}, hi); got != mid {
-		t.Fatal("zero lo must be ignored")
 	}
 }
