@@ -865,6 +865,27 @@ A real shared stack now runs locally — `frontend → API → services → DB �
 | AUD-INFRA-006 | Worker/cron binaries are deployed by no production path | Scheduled jobs for any enabled module silently never run |
 | AUD-BE-008 | Notification queue has producers but no consumer (asynq server never started) | Enqueued push/email/SMS never delivered; Redis accumulates dead tasks |
 
+### Blocker reconciliation — 2026-10-02 (verified against `main` @ `96965c61`)
+
+Re-checked each blocker against current source; this table is the original
+baseline, statuses below are the present truth:
+
+| ID | Current status | Evidence |
+|----|----------------|----------|
+| AUD-BE-001 | RESOLVED | `go build ./...` green on `main` (re-verified this session) |
+| AUD-BE-002 | RESOLVED | `auth_service.go` distinguishes `ErrTokenInvalid`→401 vs upstream failure→503 (`AUD-AUTH-001` comment in ChangePassword reflects the same semantics) |
+| AUD-BE-005 | RESOLVED | `auth_service.go:434` `ChangePassword` verifies the current password via `VerifyPasswordGrant`, calls `AdminSetPassword`, revokes live sessions |
+| AUD-BE-008 | RESOLVED (code) | `cmd/notification-worker/main.go` runs `srv.Run(mux)`; permanent skips surface via `asynq.SkipRetry` (PR #395). Deploy wiring tracked under INFRA-006 |
+| AUD-BE-009 | RESOLVED | `auth_service.go:383-385` — expired auto-lockout resets `status='active'` on successful login |
+| AUD-DB-002 | RESOLVED | PR #329 merged: atomic `credit_paid_vote_transaction` RPC + unique index |
+| AUD-FE-003 | RESOLVED | PR #393 merged: server-side webhook dedup + gateway fulfilment |
+| AUD-FE-006 | RESOLVED | `src/lib/api/responses.ts:56-58` logs `console.error` + `Sentry.captureException` before the generic 500 |
+| AUD-FE-007 | RESOLVED | `app/vote-callback/page.tsx` reads and forwards `transactionId` |
+| AUD-INFRA-006 | PARTIAL | render.yaml declares 4 worker services incl. `spotlight-notification-worker` (PR #341); indexer idles until `ES_URL` provisioned |
+| AUD-INFRA-007 | RESOLVED | `/healthz` + `/readyz` registered at `internal/app/router.go:441-442`; readyz now rate-limits probes (PR #395) |
+| AUD-FE-001 | OPEN — operator | EAS production env vars need dashboard access to confirm/set |
+| AUD-TEST-003 | BLOCKED — needs repo admin | required-status-check config is outside the repo |
+
 ## Final Production Readiness Assessment
 
 ### Backend
@@ -896,6 +917,28 @@ Evidence: deployment is fragmented across Cloud Run (deploy.yml), Render (render
 `NOT READY`
 
 Evidence: one CRITICAL build break (backend unbuildable at HEAD), one conditional-CRITICAL mobile build-config gap, HIGH correctness bugs (BE-005 password no-op, BE-009 permanent-lockout, FE-003 client-side fulfilment, FE-007 always-failed vote callback, DB-002 unrecoverable credit-flag poisoning), one HIGH auth fail-open (BE-002), one HIGH dead notification pipeline (BE-008 — enqueued push/email/SMS never delivered), one HIGH deploy-pipeline break (INFRA-007 — smoke tests 404 unconditionally), one HIGH systemic observability gap (FE-006), and a CI posture where the deployable branch has no enforced checks. The codebase is more disciplined than most at this stage — money invariants, idempotency, feature flags, and observability scaffolding are real — but the gates that would keep it that way are advisory, and the deployable artifact currently does not exist.
+
+### Revision — 2026-10-02 (reconciled against `main` @ `96965c61`)
+
+**Code-level: `READY WITH RISKS`. Release authority: `BLOCKED ON OPERATOR`.**
+
+Eleven of thirteen critical blockers verified resolved in source (see table
+above); the codebase compiles, the credential flow is honest, paid-vote
+crediting is atomic, fulfilment is server-side, the notification consumer
+exists and fails observably, deploy smoke probes hit real routes, and the
+money-path vote endpoints now carry per-user rate limits (PR #400).
+
+What keeps this from an unconditional READY is entirely outside the code:
+
+- **AUD-TEST-003** — no enforced checks on `main` (repo admin action).
+- **AUD-FE-001** — EAS production env vars unverifiable without dashboard access.
+- **Deploy authority** (AUD-INFRA-003) — four deploy targets still coexist; an
+  operator must declare one per service.
+- **Workers** (AUD-INFRA-006 residual) — declared in render.yaml but not
+  verified running against production infra.
+- **Perf residuals** — wallet-balance p95 ~7.96s @ ~1,050 VU and the 30s pool
+  acquisition on hung DB need measured remediation, not blind tuning.
+- **ADR-PR395** (local JWT validation) — owner decision pending.
 
 **To reach `READY` (minimum set, in order):**
 1. Restore `FeatureContestantSocialEnabled` in `config.go` (or remove the references) so `go build ./...` is green on `main`.
