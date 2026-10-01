@@ -33,7 +33,7 @@ export const config = {
     /*
      * Page routes: everything except Next.js internals, static files, and API.
      */
-    '/((?!_next/static|_next/image|favicon|assets|icons|images|api/).*)',
+    '/((?!_next/static|_next/image|_next/hmr|_next/webpack-hmr|_next/turbopack-hmr|favicon|assets|icons|images|api/).*)',
     /*
      * API routes: matched so the CORS layer can answer preflight + attach
      * Access-Control headers (the handler short-circuits before Supabase auth).

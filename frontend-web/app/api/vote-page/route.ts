@@ -53,23 +53,19 @@ export async function GET(request: Request) {
     if (contestErr || !contest) return errorResponse('Contest not found', 404);
     const contestId = (contest as any).id;
 
-    // 2. Resolve contestant by slug on competition_enrollments
-    //    The slug is stored in metadata->>'slug' or as a generated value from stage_name.
-    //    We support three lookup strategies in order of preference:
-    //    (a) enrollment.slug column (if it exists)
-    //    (b) enrollment id exactly matches contestantSlug (UUID links)
-    //    (c) generated slug from stage_name / full_name
+    // 2. Resolve contestant on the `contestants` roster — the table votes.contestant_id
+    //    references (competition_enrollments is a separate, empty enrollment table).
+    //    Two lookup strategies: (a) voting_link_slug column, (b) id for UUID links.
+    const CONTESTANT_COLS =
+      'id, name, stage_name, bio, photo_url, category, state, media_url, status, voting_link_slug';
     let enrollment: any = null;
 
     // Strategy (a): direct slug column match
     const { data: bySlug } = await supabase
-      .from('competition_enrollments')
-      .select(`
-        id, stage_name, status,
-        user_profiles ( id, full_name, avatar_url, bio, state )
-      `)
+      .from('contestants')
+      .select(CONTESTANT_COLS)
       .eq('contest_id', contestId)
-      .eq('slug', contestantSlug)
+      .eq('voting_link_slug', contestantSlug)
       .maybeSingle();
 
     if (bySlug) {
@@ -79,11 +75,8 @@ export async function GET(request: Request) {
       const isUuid = /^[0-9a-f-]{36}$/i.test(contestantSlug);
       if (isUuid) {
         const { data: byId } = await supabase
-          .from('competition_enrollments')
-          .select(`
-            id, stage_name, status,
-            user_profiles ( id, full_name, avatar_url, bio, state )
-          `)
+          .from('contestants')
+          .select(CONTESTANT_COLS)
           .eq('id', contestantSlug)
           .eq('contest_id', contestId)
           .maybeSingle();
@@ -94,7 +87,6 @@ export async function GET(request: Request) {
     if (!enrollment) return errorResponse('Contestant not found', 404);
 
     const contestantId = enrollment.id;
-    const profile = (enrollment.user_profiles ?? {}) as any;
 
     // 3. Load voting settings (may throw if voting not enabled)
     let settings: any = null;
@@ -150,12 +142,12 @@ export async function GET(request: Request) {
     return successResponse({
       contestant: {
         id: contestantId,
-        name: profile.full_name ?? enrollment.stage_name ?? 'Contestant',
+        name: enrollment.name ?? enrollment.stage_name ?? 'Contestant',
         stageName: enrollment.stage_name ?? null,
-        photoUrl: profile.avatar_url ?? null,
-        bio: profile.bio ?? null,
-        category: null,
-        state: profile.state ?? null,
+        photoUrl: enrollment.photo_url ?? null,
+        bio: enrollment.bio ?? null,
+        category: enrollment.category ?? null,
+        state: enrollment.state ?? null,
         videoUrl: null,
         audioUrl: null,
         contestName: (contest as any).name,

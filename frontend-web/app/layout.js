@@ -29,6 +29,12 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en" className={kumbh.variable}>
       <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){var h=location.hash;if(!/[#&]type=recovery/.test(h))return;var p=new URLSearchParams(h.slice(1));fetch('/api/auth/recovery-session',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({access_token:p.get('access_token'),refresh_token:p.get('refresh_token')})}).finally(function(){location.replace('/auth/reset-password')})})()",
+          }}
+        />
         {staticStyles.map((href) => (
           <link key={href} rel="stylesheet" href={href} />
         ))}

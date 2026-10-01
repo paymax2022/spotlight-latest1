@@ -72,8 +72,8 @@ export async function GET(
 
     if (contestantIds.length > 0) {
       const { data: contestants } = await supabase
-        .from('competition_enrollments')
-        .select('id, user_id, stage_name, profiles:user_profiles(full_name, avatar_url, state)')
+        .from('contestants')
+        .select('id, name, stage_name, photo_url, category, state')
         .in('id', contestantIds);
 
       const byId = new Map((contestants ?? []).map((c: any) => [c.id, c]));
@@ -81,10 +81,10 @@ export async function GET(
       for (const entry of leaderboard) {
         const c = byId.get(entry.contestantId) as any;
         if (c) {
-          entry.contestantName = c.profiles?.full_name ?? c.stage_name ?? 'Contestant';
+          entry.contestantName = c.name ?? c.stage_name ?? 'Contestant';
           entry.stageName = c.stage_name ?? null;
-          entry.photoUrl = c.profiles?.avatar_url ?? null;
-          entry.state = c.profiles?.state ?? null;
+          entry.photoUrl = c.photo_url ?? null;
+          entry.state = c.state ?? null;
         }
       }
     }

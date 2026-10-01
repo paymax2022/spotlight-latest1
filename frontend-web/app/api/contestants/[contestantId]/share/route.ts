@@ -18,16 +18,16 @@ export async function GET(
 
     const supabase = createAdminClient();
     const { data: contestant } = await supabase
-      .from('competition_enrollments')
-      .select('stage_name, user_profiles(full_name), competitions(name, slug)')
+      .from('contestants')
+      .select('id, name, stage_name, photo_url, contests(name, slug)')
       .eq('id', contestantId)
       .maybeSingle();
 
     const contestantName =
+      (contestant as any)?.name ||
       (contestant as any)?.stage_name ||
-      (contestant as any)?.user_profiles?.full_name ||
       'Contestant';
-    const contestName = (contestant as any)?.competitions?.name ?? 'Spotlight Contest';
+    const contestName = (contestant as any)?.contests?.name ?? 'Spotlight Contest';
 
     const link = await getOrCreateShareLink(contestId, contestantId, baseUrl);
     const messages = buildShareMessages(contestantName, contestName, link.shareUrl);

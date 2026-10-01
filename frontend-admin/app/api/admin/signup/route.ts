@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { isSessionValid, resolveEnforce, SESSION_COOKIE } from '../../../../middleware';
+import { extractSessionToken, isSessionValid, resolveEnforce } from '../../../../middleware';
 import {
   ADMIN_TIER_ROLE_LABELS,
   ADMIN_TIER_ROLE_SLUGS,
@@ -73,21 +73,6 @@ function serviceClient(): SupabaseClient | null {
 /** The configured ADMIN_SIGNUP_CODE, or '' when it is unusable (too short). */
 function configuredSignupCode(): string {
   return sanitizeSignupCode(process.env[SIGNUP_CODE_ENV] ?? '');
-}
-
-function extractSessionToken(cookieHeader: string | null): string | undefined {
-  if (!cookieHeader) return undefined;
-  for (const part of cookieHeader.split(';')) {
-    const idx = part.indexOf('=');
-    if (idx === -1) continue;
-    if (part.slice(0, idx).trim() !== SESSION_COOKIE) continue;
-    try {
-      return decodeURIComponent(part.slice(idx + 1).trim());
-    } catch {
-      return part.slice(idx + 1).trim();
-    }
-  }
-  return undefined;
 }
 
 /** Only values an `inet` column will accept — a bad header must not fail the insert. */
