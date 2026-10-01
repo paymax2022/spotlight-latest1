@@ -29,3 +29,19 @@ func TestMemLimiterFixedWindow(t *testing.T) {
 		t.Fatal("after window reset the call should pass again")
 	}
 }
+
+// A flood of distinct user ids must not grow the store without bound — the
+// in-memory fallback otherwise becomes an attacker-sized allocation.
+func TestMemLimiterBoundedUnderKeyFlood(t *testing.T) {
+	l := &memLimiter{store: map[string]*memBucket{}, limit: 2, window: time.Minute}
+	for i := range memLimitMaxKeys + 10_000 {
+		l.allow("flood-" + time.Duration(i).String())
+	}
+	if len(l.store) > memLimitMaxKeys {
+		t.Fatalf("store grew to %d keys; cap is %d", len(l.store), memLimitMaxKeys)
+	}
+	// A tracked user still gets metered after the flood.
+	if _, ok := l.allow("u-after"); !ok {
+		t.Fatal("post-flood call should still pass")
+	}
+}

@@ -81,17 +81,47 @@ type memBucket struct {
 	windowStart time.Time
 }
 
+// memLimiter bounds apply only while Redis is absent — a single replica can
+// still be flooded with distinct (stolen-token, mass-signup) user ids, so the
+// store is swept and capped rather than trusted to stay small.
+const (
+	memLimitMaxKeys       = 100_000
+	memLimitSweepInterval = time.Minute
+)
+
 type memLimiter struct {
-	mu     sync.Mutex
-	store  map[string]*memBucket
-	limit  int
-	window time.Duration
+	mu        sync.Mutex
+	store     map[string]*memBucket
+	limit     int
+	window    time.Duration
+	lastSweep time.Time
 }
 
 func (m *memLimiter) allow(uid string) (int, bool) {
 	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if now.Sub(m.lastSweep) >= memLimitSweepInterval {
+		m.lastSweep = now
+		for k, b := range m.store {
+			if now.Sub(b.windowStart) >= m.window {
+				delete(m.store, k)
+			}
+		}
+	}
+	if len(m.store) >= memLimitMaxKeys {
+		if _, ok := m.store[uid]; !ok {
+			// Cap reached and this key isn't tracked — evict a ~10% batch of
+			// whatever remains (sweep already dropped expired buckets).
+			evict := memLimitMaxKeys / 10
+			for k := range m.store {
+				delete(m.store, k)
+				if evict--; evict <= 0 {
+					break
+				}
+			}
+		}
+	}
 	b, ok := m.store[uid]
 	if !ok || now.Sub(b.windowStart) >= m.window {
 		b = &memBucket{windowStart: now}
