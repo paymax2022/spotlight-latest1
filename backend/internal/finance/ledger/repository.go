@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -23,41 +24,96 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 // GetOrCreateAccount returns the ledger account for a user+type pair,
 // creating it if it doesn't exist.
 // For standing accounts (userID == nil), the unique constraint is on (type) WHERE user_id IS NULL.
+//
+// READ-FIRST, not write-first. In steady state the account already exists, so the
+// common path is a single SELECT — no write transaction, no XID, no speculative
+// insertion against the unique index. The previous shape upserted FIRST and only
+// fell back to SELECT when the INSERT conflicted (INSERT ... ON CONFLICT DO
+// NOTHING RETURNING yields zero rows on conflict), so every read paid for a write
+// attempt plus a second query — two round trips where one suffices, on the hottest
+// read path in the API (every balance / transaction / transfer call resolves its
+// account here). On a saturated pool the extra write-shaped acquisition also held
+// a connection longer per request (AGT1-PERF-001).
+//
+// Race safety is unchanged: two first-touch creators still converge on the
+// unique constraint — one inserts, the other conflicts (DO NOTHING → no rows)
+// and re-selects the now-committed row.
 func (r *Repository) GetOrCreateAccount(ctx context.Context, userID *string, accountType AccountType) (*Account, error) {
-	var a Account
-	var err error
-
 	if userID == nil {
-		// Standing account — keyed only by type.
-		const upsert = `
-			INSERT INTO ledger_accounts (type)
-			VALUES ($1)
-			ON CONFLICT DO NOTHING
-			RETURNING id, user_id, type, created_at`
-		err = r.db.QueryRow(ctx, upsert, string(accountType)).
-			Scan(&a.ID, &a.UserID, &a.Type, &a.CreatedAt)
-		if err == pgx.ErrNoRows {
-			const fetch = `SELECT id, user_id, type, created_at FROM ledger_accounts WHERE user_id IS NULL AND type=$1`
-			err = r.db.QueryRow(ctx, fetch, string(accountType)).
-				Scan(&a.ID, &a.UserID, &a.Type, &a.CreatedAt)
-		}
-	} else {
-		const upsert = `
-			INSERT INTO ledger_accounts (user_id, type)
-			VALUES ($1, $2)
-			ON CONFLICT (user_id, type) DO NOTHING
-			RETURNING id, user_id, type, created_at`
-		err = r.db.QueryRow(ctx, upsert, userID, string(accountType)).
-			Scan(&a.ID, &a.UserID, &a.Type, &a.CreatedAt)
-		if err == pgx.ErrNoRows {
-			const fetch = `SELECT id, user_id, type, created_at FROM ledger_accounts WHERE user_id=$1 AND type=$2`
-			err = r.db.QueryRow(ctx, fetch, userID, string(accountType)).
-				Scan(&a.ID, &a.UserID, &a.Type, &a.CreatedAt)
-		}
+		return r.getOrCreateStandingAccount(ctx, accountType)
+	}
+	return r.getOrCreateUserAccount(ctx, *userID, accountType)
+}
+
+// getOrCreateUserAccount implements GetOrCreateAccount for user-owned accounts
+// (unique key: (user_id, type)).
+func (r *Repository) getOrCreateUserAccount(ctx context.Context, userID string, accountType AccountType) (*Account, error) {
+	var a Account
+	const fetch = `SELECT id, user_id, type, created_at FROM ledger_accounts WHERE user_id=$1 AND type=$2`
+	err := r.db.QueryRow(ctx, fetch, userID, string(accountType)).
+		Scan(&a.ID, &a.UserID, &a.Type, &a.CreatedAt)
+	if err == nil {
+		return &a, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("ledger: get account user=%s type=%s: %w", userID, accountType, err)
 	}
 
-	if err != nil {
-		return nil, fmt.Errorf("ledger: get/create account user=%v type=%s: %w", userID, accountType, err)
+	// First touch — create it. ON CONFLICT DO NOTHING keeps a concurrent creator
+	// a no-op; on conflict this returns no rows and we re-select below.
+	const upsert = `
+		INSERT INTO ledger_accounts (user_id, type)
+		VALUES ($1, $2)
+		ON CONFLICT (user_id, type) DO NOTHING
+		RETURNING id, user_id, type, created_at`
+	err = r.db.QueryRow(ctx, upsert, userID, string(accountType)).
+		Scan(&a.ID, &a.UserID, &a.Type, &a.CreatedAt)
+	if err == nil {
+		return &a, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("ledger: create account user=%s type=%s: %w", userID, accountType, err)
+	}
+
+	// Lost a create race — the winner's row is committed now.
+	if err := r.db.QueryRow(ctx, fetch, userID, string(accountType)).
+		Scan(&a.ID, &a.UserID, &a.Type, &a.CreatedAt); err != nil {
+		return nil, fmt.Errorf("ledger: re-fetch account user=%s type=%s: %w", userID, accountType, err)
+	}
+	return &a, nil
+}
+
+// getOrCreateStandingAccount implements GetOrCreateAccount for system standing
+// accounts (unique key: (type) WHERE user_id IS NULL AND group_id IS NULL).
+func (r *Repository) getOrCreateStandingAccount(ctx context.Context, accountType AccountType) (*Account, error) {
+	var a Account
+	const fetch = `SELECT id, user_id, type, created_at FROM ledger_accounts WHERE user_id IS NULL AND type=$1`
+	err := r.db.QueryRow(ctx, fetch, string(accountType)).
+		Scan(&a.ID, &a.UserID, &a.Type, &a.CreatedAt)
+	if err == nil {
+		return &a, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("ledger: get standing account type=%s: %w", accountType, err)
+	}
+
+	const upsert = `
+		INSERT INTO ledger_accounts (type)
+		VALUES ($1)
+		ON CONFLICT DO NOTHING
+		RETURNING id, user_id, type, created_at`
+	err = r.db.QueryRow(ctx, upsert, string(accountType)).
+		Scan(&a.ID, &a.UserID, &a.Type, &a.CreatedAt)
+	if err == nil {
+		return &a, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("ledger: create standing account type=%s: %w", accountType, err)
+	}
+
+	if err := r.db.QueryRow(ctx, fetch, string(accountType)).
+		Scan(&a.ID, &a.UserID, &a.Type, &a.CreatedAt); err != nil {
+		return nil, fmt.Errorf("ledger: re-fetch standing account type=%s: %w", accountType, err)
 	}
 	return &a, nil
 }
