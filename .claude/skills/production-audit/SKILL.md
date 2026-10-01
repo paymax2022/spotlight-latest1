@@ -5,7 +5,7 @@ It defines the combined operating model:
 
 **audit → identify issue → fix one bounded area → test → commit → push → PR → verify CI → merge → next bounded area**
 
-while continuously maintaining `FULL_AUDIT.md` at the project root.
+while continuously maintaining `docs/full_audit.md` as the canonical audit ledger (moved from the root `FULL_AUDIT.md`).
 
 The goal is not a working app — it is a system that can be **built, tested, deployed,
 operated, monitored, scaled, recovered, maintained and safely changed** by an engineering
@@ -18,7 +18,7 @@ team, with every problem traceable: **finding → fix → test → commit → PR
 For every meaningful change:
 
 1. Inspect the current implementation (dependencies, callers, downstream, runtime behavior, related tests, production risks).
-2. Record the problem in `FULL_AUDIT.md` with an audit ID.
+2. Record the problem in `docs/full_audit.md` with an audit ID.
 3. Define the smallest sensible scope.
 4. Implement the fix.
 5. Run the relevant tests.
@@ -30,7 +30,7 @@ For every meaningful change:
 11. Open a focused PR.
 12. Verify CI/tests; resolve anything found.
 13. Merge when all required checks pass.
-14. Record `AUD-XXX-NNN → PR #N` in `FULL_AUDIT.md`.
+14. Record `AUD-XXX-NNN → PR #N` in `docs/full_audit.md`.
 15. Move to the next isolated unit.
 
 Never combine unrelated changes into giant PRs. A reasonable PR addresses ONE thing
@@ -53,7 +53,7 @@ one dependency cleanup, pagination on one resource, one auth hardening item).
 - unrelated changes are mixed in
 - regressions appear unexplained
 
-After merge: record PR + status in `FULL_AUDIT.md`, then continue.
+After merge: record PR + status in `docs/full_audit.md`, then continue.
 
 ## 4. Audit classification
 
@@ -71,7 +71,7 @@ problem` · `security issue` · `reliability issue` · `performance issue` · `t
 `AUD-ROLLBACK-NNN` `AUD-TEST-NNN` `AUD-E2E-NNN` `AUD-QA-NNN` `AUD-PERF-NNN` `AUD-REL-NNN`
 `AUD-DR-NNN` `AUD-SUPPORT-NNN`
 
-## 6. FULL_AUDIT.md — required sections
+## 6. docs/full_audit.md — required sections
 
 - Audit metadata (date, branch, commit, tree state, scope)
 - System inventory

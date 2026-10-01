@@ -2,7 +2,7 @@
 
 Audit of the running application (frontend-web :3000 → Go backend :8095 → local Supabase
 :54321/:54322) executed with Playwright 1.63 + Chrome 154, plus direct API probes with
-real Bearer sessions. Separate from `FULL_AUDIT.md` — this file tracks **what was
+real Bearer sessions. Separate from `docs/full_audit.md` — this file tracks **what was
 actually exercised**, per module, with evidence.
 
 - **Date:** 2026-10-01

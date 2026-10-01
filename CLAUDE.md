@@ -71,7 +71,7 @@ API source of truth: `contracts/openapi.yaml`.
 ## Stack & layout
 - **Frontend web:** `frontend-web/` — Next.js 14.2, TypeScript, Tailwind CSS, Supabase SSR;
   deploy targets are fragmented across cPanel Passenger (Node 20 + `frontend-web/server.js`),
-  Render (`render.yaml`) and Railway — see AUD-INFRA-003 in FULL_AUDIT.md.
+  Render (`render.yaml`) and Railway — see AUD-INFRA-003 in docs/full_audit.md.
 - **Admin dashboard:** `frontend-admin/` — Next.js 15.1, port 3001 (console at http://localhost:3001/admin). No Refine.
 - **Backend API:** `backend/` — Go 1.26 (go.mod `go 1.26.6`), Gin v1.10; module `spotlight/backend`.
 - **Mobile:** `mobile-app/reactnative/` (React Native/Expo), `mobile-app/vue-quasar/` (Vue 3).
