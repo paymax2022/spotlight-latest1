@@ -302,7 +302,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: client-triggered fulfilment with a server-side audit log only; no reconciliation job observed for orphaned gateway charges.
 * Production impact: paid-but-unfulfilled orders/votes whenever the client fails between charge and callback — a real-money support load and potential double-pay on user retry.
 * Confidence: HIGH for the architecture; MEDIUM on frequency (mitigated if verify endpoint is also reachable via retry UI).
-* Status: BUG — largely mitigated. **PR #336** (`4ceab866`) fulfilled `paymax_gateway` vote charges server-side; **PR #393** (`96965c61`) added `src/server/payments/gateway-fulfil.ts` (verified charge → reference-keyed pending record, incl. `registration_payment_intents`) plus `POST /api/v1/payments/gateway/recover` re-driving verified charges. **Residual open (documented-deferred)**: academy tuition instalments (confirm needs caller JWT — no service-auth for webhook context), academy application fee (reference only attached at client submit — nothing to look up), OpenMic/reality-TV/contest-registration votes (cast params live only in the client's verify body). Each needs a server-side pending record keyed by reference before the webhook can fulfil it.
+* Status: BUG — largely mitigated. **PR #336** (`4ceab866`) fulfilled `paymax_gateway` vote charges server-side; **PR #393** (`96965c61`) added `src/server/payments/gateway-fulfil.ts` (verified charge → reference-keyed pending record, incl. `registration_payment_intents`) plus `POST /api/v1/payments/gateway/recover` re-driving verified charges; **PR #401** extends pending-record coverage to Open Mic paid votes via `openmic_vote_paystack_intents` (also fixes AUD-BILL-001 — the client-declared price that made those charges under-collectable). **Residual open (documented-deferred)**: academy tuition instalments (confirm needs caller JWT — no service-auth for webhook context), academy application fee (reference only attached at client submit — nothing to look up), reality-TV/contest-registration votes (cast params live only in the client's verify body). Each needs a server-side pending record keyed by reference before the webhook can fulfil it.
 
 ### AUD-FE-004 — Webhook dispatcher swallows handler failures (always-200) with no dead-letter
 
@@ -378,6 +378,17 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Production impact: at 3 AM a payment/KYC/vote failure has **no diagnostic trail** — no error fingerprint, no stack, no correlation. Support tickets become un-debuggable.
 * Confidence: HIGH.
 * Status: **FIXED — PR #287 (merged).** `handleApiError` now logs unexpected errors (`[api] Unhandled route error:`) and calls `Sentry.captureException` behind a try/guard; response contract unchanged. Covered by `tests/unit/api/responses.spec.ts` (7 tests).
+
+### AUD-BILL-001 — Open Mic paid votes: charge price is client-declared; verify never reconciles Paystack's amount against the quote
+
+* Severity: HIGH (money integrity)
+* Component: `frontend-web` Open Mic paid-vote checkout
+* Location: `app/api/open-mic/votes/pay/initiate/route.ts` + `app/api/open-mic/votes/pay/verify/route.ts`
+* Evidence: initiate computed `amountKobo = body.votes * body.votePriceNgn * 100` — the price came **from the request body** even though the contest carries a server-side `vote_price_ngn` (surfaced as `votingConfig.votePrice`). Verify called `verifyVotePayment(reference)` which returns `amountKobo`, but never compared it against the expected quote before `castVote` granted the votes and recorded `amountNgn = serverPrice × votes` in the payment event — i.e. the audit trail would claim a full-price payment that never happened.
+* Exploit: `POST /api/open-mic/votes/pay/initiate` with `votes: 10000, votePriceNgn: 0.01` → Paystack collects ₦100; the same client's verify call credits 10,000 votes. No server record existed to contradict either side.
+* Production impact: unbounded votes for ~₦1 total; leaderboard integrity and vote revenue both falsified.
+* Confidence: HIGH — both halves verified by reading the live code path; the price field was never validated or compared anywhere in the flow.
+* Status: **FIXED — PR #401.** Initiate now derives the amount from `votingConfig.votePrice` and persists `openmic_vote_paystack_intents` (frozen params + server quote); verify reconciles `Paystack.amountKobo` against the quote (under-collection → 402 + intent `amount_mismatch`); the intent row also gives the webhook/`recover` path a fulfilment target (AUD-FE-003 residual). Regression: `open-mic-pay-verify.spec.ts` +6 cases, `openmic-vote-gateway-fulfil.spec.ts` +6 cases.
 
 ## Backend Findings (continued)
 
@@ -1016,15 +1027,14 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | AUD-FE-003/FE-004 (residuals) | #393 | `96965c61` | Per-domain `gateway:<event>` dedup keys; bank/DVA/gateway self-heal endpoints; `gateway-fulfil.ts` fulfils registration_payment_intents server-side | merged — 31 new spec cases, vitest 1227 green |
 | (codeql) Math.random in k6 lane | #394 | — | Deterministic `__VU`/`__ITER` picks replace Math.random flagged by js/insecure-randomness (merge of #387 raced it) | open |
 | AUD-DB-005 | #396 | `4c9be371` | `update_contestant_vote_stats` unqualified `admin_votes` RHS in `ON CONFLICT DO UPDATE` → ambiguous; qualified to `contestant_vote_stats.admin_votes` via CREATE OR REPLACE (20270325000000) | open — verified in rolled-back txn on local DB |
-| AUD-DB-004 | #397 | `04855a40` | `payment_webhook_logs` dedup upserts were erroring `42P10` wholesale (no unique constraint) — dedup silently never fired; defensive dedupe DELETE + unique index `(provider, reference, event_type)` (20270326000000) | open — verified live on local PostgREST |
+| AUD-DB-004 | #397 | `04855a40` | `payment_webhook_logs` dedup upserts were erroring `42P10` wholesale (no unique constraint) — dedup silently never fired; defensive dedupe DELETE + unique index `(provider, reference, event_type)` (20270326000000) | merged |
+| AUD-BILL-001 + AUD-FE-003 (OpenMic residual) | #401 | `587fdc44` | `openmic_vote_paystack_intents` (20270328000000): server-quoted price at initiate, frozen cast params, webhook/recover fulfil arm + claim; verify reconciles amount + uses intent params | in review — specs green locally, regression 131/131, tsc clean, migration applied on local Postgres |
 
 ### In review
 
 | PR | Lane |
 |----|------|
-| #394 | CodeQL follow-up to #387 (deterministic picks) |
-| #396 | AUD-DB-005 trigger ambiguity |
-| #397 | AUD-DB-004 webhook_logs unique constraint |
+| #401 | AUD-BILL-001 + AUD-FE-003 OpenMic residual |
 
 ### New findings surfaced during this wave (2026-10-01)
 

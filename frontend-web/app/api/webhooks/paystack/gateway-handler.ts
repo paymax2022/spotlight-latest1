@@ -9,6 +9,10 @@ import {
   isActionableRegistrationIntent,
 } from '@/src/server/payments/gateway-fulfil';
 import {
+  getOpenMicVoteIntentByReference,
+  type OpenMicVoteIntent,
+} from '@/src/server/payments/openmic-vote-intents';
+import {
   getRegistrationPaymentIntentByReference,
   type RegistrationPaymentIntent,
 } from '@/src/server/registration/supabase-store';
@@ -79,10 +83,18 @@ export async function handleGatewayPaystackWebhook(
   //    lookup is left to reject the handler so the dispatcher 500s and Paystack
   //    retries, rather than silently dropping a charge we might own.
   let registrationIntent: RegistrationPaymentIntent | null = null;
+  let openmicIntent: OpenMicVoteIntent | null = null;
   if (event.event === 'charge.success' && reference) {
-    registrationIntent = await getRegistrationPaymentIntentByReference(reference);
+    [registrationIntent, openmicIntent] = await Promise.all([
+      getRegistrationPaymentIntentByReference(reference),
+      getOpenMicVoteIntentByReference(reference),
+    ]);
   }
-  if (!marked && !isActionableRegistrationIntent(registrationIntent)) {
+  if (
+    !marked &&
+    !isActionableRegistrationIntent(registrationIntent) &&
+    openmicIntent?.status !== 'pending'
+  ) {
     return { processed: false, duplicate: false };
   }
 
@@ -155,6 +167,7 @@ export async function handleGatewayPaystackWebhook(
     const outcome = await fulfilVerifiedGatewayCharge(reference, verified.amountKobo, {
       voteTransaction,
       registrationIntent,
+      openmicIntent,
     });
     if (outcome.error) {
       await markProcessed(outcome.error);
