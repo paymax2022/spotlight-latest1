@@ -3,17 +3,27 @@ import {
   verifyPaystackWebhookSignature,
   verifyPaystackPayment,
 } from '@/src/server/voting/payment/paystack';
-import { bridgedVerifyPaidVote } from '@/src/server/voting-bridge/bridge';
+import {
+  findVoteTransactionByReference,
+  fulfilVerifiedGatewayCharge,
+  isActionableRegistrationIntent,
+} from '@/src/server/payments/gateway-fulfil';
+import {
+  getRegistrationPaymentIntentByReference,
+  type RegistrationPaymentIntent,
+} from '@/src/server/registration/supabase-store';
 
-// Webhook handler for the in-app Paystack gateway (the client-side Inline SDK
-// used by the mobile food/voting checkouts). Those charges are created directly
-// on Paystack from the client and tagged with `metadata.purpose = 'paymax_gateway'`.
+// Webhook handler for Paystack gateway charges — both the in-app client-side
+// Inline SDK (tagged `metadata.purpose = 'paymax_gateway'`) and server-initiated
+// checkouts that leave a pending fulfilment record keyed by reference (e.g.
+// registration_payment_intents, whose metadata is `type:'registration_payment'`
+// rather than the gateway marker).
 //
-// Because they are not server-initiated, this handler's job is to provide the
-// server-authoritative half: re-verify the signature, independently confirm the
-// charge with Paystack's verify API, and record it idempotently. It deliberately
-// claims ONLY events carrying our gateway marker, so it never conflicts with the
-// vote/wallet/utility handlers running alongside it.
+// This handler's job is the server-authoritative half: re-verify the signature,
+// independently confirm the charge with Paystack's verify API, settle every
+// matching pending record idempotently, and record the event. Domains with no
+// server-side record keyed by reference stay client-verify-driven — see
+// src/server/payments/gateway-fulfil.ts for which those are and why.
 
 interface GatewayWebhookResult {
   processed: boolean;
@@ -25,8 +35,22 @@ interface PaystackEvent {
   event: string;
   data?: {
     reference?: string;
-    metadata?: { purpose?: string; domain?: string } & Record<string, unknown>;
+    metadata?: { purpose?: string; domain?: string; type?: string } & Record<string, unknown>;
   };
+}
+
+/**
+ * AUD-FE-004 residual: this handler used to share ONE payment_webhook_logs row
+ * with the vote handler (keyed provider+reference+event_type). For a
+ * `paymax_gateway` charge.success both handlers run in the dispatcher's
+ * parallel fan-out, and whichever marked `processed` first made the other
+ * return `duplicate` and skip verification entirely. The vote handler file is
+ * protected legacy, so the split happens on this side: the gateway handler
+ * owns `gateway:<event>` rows, the vote handler keeps plain `<event>` rows,
+ * and neither can consume the other's dedup record.
+ */
+function gatewayEventType(eventType: string): string {
+  return `gateway:${eventType}`;
 }
 
 export async function handleGatewayPaystackWebhook(
@@ -45,24 +69,36 @@ export async function handleGatewayPaystackWebhook(
     return { processed: false, duplicate: false, error: 'Invalid JSON' };
   }
 
-  // 2. Only claim charges that originated from our in-app gateway.
-  if (event.data?.metadata?.purpose !== 'paymax_gateway') {
+  const reference = event.data?.reference;
+  const marked = event.data?.metadata?.purpose === 'paymax_gateway';
+
+  // 2. Claim: the gateway marker, OR a charge.success whose reference resolves
+  //    to a pending registration payment intent — server-initiated checkouts
+  //    never carry the marker, and without this their only fulfilment path was
+  //    the browser reaching the verify endpoint (AUD-FE-003 residual). A thrown
+  //    lookup is left to reject the handler so the dispatcher 500s and Paystack
+  //    retries, rather than silently dropping a charge we might own.
+  let registrationIntent: RegistrationPaymentIntent | null = null;
+  if (event.event === 'charge.success' && reference) {
+    registrationIntent = await getRegistrationPaymentIntentByReference(reference);
+  }
+  if (!marked && !isActionableRegistrationIntent(registrationIntent)) {
     return { processed: false, duplicate: false };
   }
 
-  const reference = event.data?.reference;
   if (!reference) return { processed: false, duplicate: false, error: 'Missing reference' };
 
-  const domain = event.data?.metadata?.domain ?? 'unknown';
   const supabase = createAdminClient();
+  const scopedEventType = gatewayEventType(event.event);
 
-  // 3. Idempotency — skip if we already processed this exact event.
+  // 3. Idempotency — skip if we already processed this exact event under OUR
+  //    scope (the vote handler's `charge.success` row no longer counts here).
   const { data: existing } = await supabase
     .from('payment_webhook_logs')
     .select('id, processed')
     .eq('reference', reference)
     .eq('provider', 'paystack')
-    .eq('event_type', event.event)
+    .eq('event_type', scopedEventType)
     .maybeSingle();
 
   if ((existing as { processed?: boolean } | null)?.processed) {
@@ -75,7 +111,7 @@ export async function handleGatewayPaystackWebhook(
     .upsert(
       {
         provider: 'paystack',
-        event_type: event.event,
+        event_type: scopedEventType,
         reference,
         payload: event as never,
         processed: false,
@@ -101,7 +137,9 @@ export async function handleGatewayPaystackWebhook(
     return { processed: true, duplicate: false };
   }
 
-  // 6. Independently confirm the charge with Paystack (never trust the payload).
+  // 6. Independently confirm the charge with Paystack (never trust the payload),
+  //    then settle every matching pending record through the shared fulfilment
+  //    module — the same one POST /api/v1/payments/gateway/recover re-drives.
   try {
     const verified = await verifyPaystackPayment(reference);
     if (!verified.success) {
@@ -109,34 +147,20 @@ export async function handleGatewayPaystackWebhook(
       return { processed: false, duplicate: false, error: 'Verification failed' };
     }
 
-    // Server-confirmed. Fulfil any matching vote transaction server-side —
-    // the client's success callback is not guaranteed to fire (crash,
-    // backgrounding, network drop), and until it did, a paid vote could be
-    // verified-but-never-credited (AUD-FE-003). The bridge path is the same
-    // atomic/idempotent verify the v2 route uses, so a client callback that
-    // arrives later harmlessly no-ops on 'credited'.
-    const { data: tx } = await supabase
-      .from('vote_transactions')
-      .select('id, vote_credit_status')
-      .eq('payment_reference', reference)
-      .maybeSingle();
+    // Vote fulfilment stays scoped to marked charges: the (protected) vote
+    // handler already owns unmarked charge.success vote crediting — this side
+    // only adds the server-initiated domains it cannot see.
+    const voteTransaction = marked ? await findVoteTransactionByReference(reference) : null;
 
-    if (tx?.id && tx.vote_credit_status !== 'credited') {
-      const result = await bridgedVerifyPaidVote(
-        { transactionId: tx.id, paymentReference: reference },
-        'system:webhook',
-        { ipAddress: '0.0.0.0', userAgent: 'paystack-webhook' },
-      );
-      if (!result.success) {
-        const message = result.error ?? 'vote fulfilment failed';
-        await markProcessed(message);
-        return { processed: false, duplicate: false, error: message };
-      }
+    const outcome = await fulfilVerifiedGatewayCharge(reference, verified.amountKobo, {
+      voteTransaction,
+      registrationIntent,
+    });
+    if (outcome.error) {
+      await markProcessed(outcome.error);
+      return { processed: false, duplicate: false, error: outcome.error };
     }
 
-    // Other gateway domains (food/orders) still settle on their client verify
-    // calls — the verified payment_webhook_logs row is their reconciliation
-    // anchor until they grow server-initiated fulfilment.
     await markProcessed();
     return { processed: true, duplicate: false };
   } catch (err) {

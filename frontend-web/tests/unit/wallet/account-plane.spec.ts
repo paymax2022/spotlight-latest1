@@ -29,7 +29,10 @@ const read = (rel: string) => readFileSync(join(root, rel), 'utf8');
 const MUTATION_SITES = [
   'src/server/wallet/service.ts',
   'src/server/tiers/service.ts',
-  'src/server/transfers/bank-webhook.ts',
+  // The bank-transfer reversal legs moved here when the settle was shared with
+  // the verify-on-read fallback (AUD-FE-004 residual) — the account resolution
+  // the guard checks lives in this file now, not the webhook wrapper.
+  'src/server/transfers/bank-settle.ts',
 ];
 
 describe('the wallet plane constant', () => {

@@ -49,6 +49,15 @@ vi.mock('@/src/server/voting-bridge/bridge', () => ({
   bridgedVerifyPaidVote: vi.fn(async () => ({ success: true, voteId: 'v1', totalVotes: 10 })),
 }));
 
+// The handler now also claims charge.success events with a pending
+// registration_payment_intents row (AUD-FE-003 residual). None match in this
+// spec — the vote-domain assertions are unchanged.
+vi.mock('@/src/server/registration/supabase-store', () => ({
+  getRegistrationPaymentIntentByReference: vi.fn(async () => null),
+  applyRegistrationPaymentSuccess: vi.fn(async () => ({})),
+  markRegistrationPaymentIntentStatus: vi.fn(async () => ({})),
+}));
+
 import { handleGatewayPaystackWebhook } from '../../../app/api/webhooks/paystack/gateway-handler';
 import { bridgedVerifyPaidVote } from '@/src/server/voting-bridge/bridge';
 
