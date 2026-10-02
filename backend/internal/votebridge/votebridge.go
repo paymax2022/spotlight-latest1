@@ -62,6 +62,21 @@ func (h *Handler) DebitForVotes(c *gin.Context) {
 			// recorded amount (1) won't match the BFF's quoted cost.
 			orig, found, lerr := h.wallet.VoteDebitAmount(c.Request.Context(), req.IdempotencyKey)
 			if lerr == nil && found && orig == req.CostKobo {
+				// The amount check alone is not enough: if this key's saga
+				// compensation already posted, the money went back to the user
+				// and a "successful" replay would fulfil votes against ₦0 held.
+				// The reversal legs carry a derived key, so the ledger itself
+				// answers whether this purchase is spent.
+				reversed, rerr := h.wallet.VoteDebitReversed(c.Request.Context(), userID, req.IdempotencyKey)
+				if rerr != nil {
+					// Fail closed: cannot prove the debit is still held.
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "could not verify reversal state"})
+					return
+				}
+				if reversed {
+					c.JSON(http.StatusConflict, gin.H{"error": "this purchase was refunded — submit a new idempotency key"})
+					return
+				}
 				c.JSON(http.StatusOK, DebitForVotesResponse{OK: true, IdempotencyKey: req.IdempotencyKey})
 				return
 			}

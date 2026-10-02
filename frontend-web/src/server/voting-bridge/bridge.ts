@@ -4,7 +4,7 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/server';
-import { checkAndClaimIdempotencyKey, storeIdempotencyResult, releaseIdempotencyKey } from './idempotency';
+import { boundClaimKey, checkAndClaimIdempotencyKey, storeIdempotencyResult, releaseIdempotencyKey } from './idempotency';
 import { assertKycTier } from './kyc-gate';
 import { enqueueOutboxEvent } from './outbox';
 import { isBridgeEnabled } from './feature-flag';
@@ -147,8 +147,20 @@ export async function bridgedCastFreeVote(
   // and releasing theirs would hand this duplicate a second vote.
   let ownsClaim = false;
 
+  // The raw key is unscoped: user B reusing user A's key would otherwise be
+  // served A's cached VoteResponse (a success B never earned) or 409 on A's
+  // in-flight claim. Bind to voter + vote shape; for anonymous votes the
+  // voterIdentifier/device fingerprint keeps distinct voters distinct.
+  const claimKey = boundClaimKey('free-vote', userId ?? 'anon', idempotencyKey, {
+    contestId: req.contestId,
+    contestantId: req.contestantId,
+    voteQuantity: req.voteQuantity ?? 1,
+    voter: req.voterIdentifier ?? '',
+    device: context.deviceFingerprint ?? '',
+  });
+
   try {
-    const cached = await checkAndClaimIdempotencyKey(idempotencyKey);
+    const cached = await checkAndClaimIdempotencyKey(claimKey);
     if (cached) {
       return cached as VoteResponse;
     }
@@ -190,7 +202,7 @@ export async function bridgedCastFreeVote(
     };
 
     // Step 4: Store result against idempotency key
-    await storeIdempotencyResult(idempotencyKey, result);
+    await storeIdempotencyResult(claimKey, result);
 
     if (req.shareCode && userId) {
       await enqueueOutboxEvent('referral.triggered', {
@@ -215,7 +227,7 @@ export async function bridgedCastFreeVote(
     // refused forever by the 409 guard. The claim row is written before the vote
     // and filled in after, so a failure leaves it holding the empty placeholder.
     if (ownsClaim) {
-      await releaseIdempotencyKey(idempotencyKey);
+      await releaseIdempotencyKey(claimKey);
     }
     console.error('[VoteBridge] castFreeVote error:', error);
     return {

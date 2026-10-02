@@ -90,6 +90,21 @@ func (s *Service) VoteDebitAmount(ctx context.Context, idempotencyKey string) (i
 	return s.ledger.EntryAmount(ctx, commissionAcc.ID, idempotencyKey+":credit")
 }
 
+// VoteDebitReversed reports whether this user's vote-bridge debit under
+// idempotencyKey was already refunded. The reversal's restore leg lands on the
+// caller's own wallet under the derived key "vote-reversal:<K>:rev_debit", so
+// its presence is the durable spent-marker: a debit replay that passes
+// VoteDebitAmount but finds this marker must NOT fulfil — the money is already
+// back with the user and any credit would be delivered against ₦0 held.
+func (s *Service) VoteDebitReversed(ctx context.Context, userID, idempotencyKey string) (bool, error) {
+	walletAcc, err := s.ledger.GetOrCreateUserWallet(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	_, found, err := s.ledger.EntryAmount(ctx, walletAcc.ID, "vote-reversal:"+idempotencyKey+":rev_debit")
+	return found, err
+}
+
 // VoteDebitReverse refunds a vote-bridge debit: restores the user's wallet
 // (REVERSAL_DEBIT) and drains the commission account (REVERSAL_CREDIT) by the
 // RECORDED debit amount — the request carries no amount, so this endpoint
