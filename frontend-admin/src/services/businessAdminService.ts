@@ -6,7 +6,7 @@
 //    matching once apiBaseUrl became the same-origin proxy path
 //    (<origin>/api/admin-proxy, no /api/v1 suffix), so every live call 404'd
 //    against <proxy>/admin/... instead of <proxy>/api/business/admin/....
-//  • authHeaders() attaches the admin Bearer token from localStorage.
+//  • authHeaders() sends only content headers; the same-origin admin proxy attaches the Bearer from the HttpOnly session cookie server-side.
 //  • getJson/sendJson unwrap the { data } envelope and throw on non-2xx.
 // Backend (already built): admin endpoints under /api/business/admin, authed +
 // RBAC permission `business.registry.review` (super-admin / system-admin). All
@@ -79,10 +79,7 @@ function businessBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 

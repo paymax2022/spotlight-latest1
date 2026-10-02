@@ -8,7 +8,7 @@
 // Request stack copies academyAdminService.ts EXACTLY:
 //   • base() rewrites apiRoot() (the proxy origin, /api/v1 already stripped) → the
 //     platform/academy admin group
-//   • authHeaders() attaches the admin Bearer token from localStorage
+//   • authHeaders() sends only content headers; the same-origin admin proxy attaches the Bearer from the HttpOnly session cookie server-side
 //     the live Go backend (academy fees admin + platform routes).
 // Live routes target the academy fees admin group + platform oversight endpoints:
 //   /api/academy/admin/platform/<module> — gated academy.fees.* + platform_edtech_admin.
@@ -38,10 +38,7 @@ function base(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 200) => new Promise((r) => setTimeout(r, ms));
 

@@ -2,9 +2,11 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 
 // Sets/clears the HttpOnly session cookie the admin middleware reads. The client
-// (features/auth/adminAuth) POSTs its Supabase access token here after sign-in so
-// SUPABASE_JWT_SECRET is set). Storing the token in an HttpOnly cookie keeps it
-// Bearer calls until those migrate to cookie auth (tracked separately).
+// (features/auth/adminAuth) POSTs its Supabase access token here after sign-in
+// and on every refresh. This cookie is the ONLY place the token is stored: the
+// same-origin proxies (/api/admin-proxy, /api/web-proxy) read it server-side
+// and attach it as the upstream Bearer, so the token is never in JS-readable
+// storage (CodeQL js/clear-text-storage-of-sensitive-data).
 
 const SESSION_COOKIE = 'sb-admin-token';
 const MAX_TTL_SECONDS = 60 * 60; // cap at 1h regardless of client input
