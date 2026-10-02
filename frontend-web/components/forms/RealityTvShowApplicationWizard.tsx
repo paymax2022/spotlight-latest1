@@ -1,17 +1,42 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { createClient } from '@/src/lib/supabase/client';
 import { authFetch, isUnauthorized, redirectToLogin } from '@/src/lib/auth/flow';
 import { NIGERIA_STATES, NIGERIA_CITIES_BY_STATE } from '@/src/features/registration/config';
-import { buildDraftSaveBody, draftSaveSucceeded } from '@/src/features/registration/draft-save';
+import { buildStepSaveBody, draftSaveSucceeded } from '@/src/features/registration/draft-save';
 import { loadPaystackClient } from '@/src/lib/payments';
+import {
+  REALITY_TV_WIZARD_INITIAL,
+  REALITY_TV_WIZARD_STEP_SAVE_KEY,
+  flatErrorKeyToFormKey,
+  realityTvFieldOptions,
+  realityTvWizardFormToFlat,
+  realityTvWizardHydrate,
+  realityTvWizardIsMinor,
+  realityTvWizardSchemaErrors,
+  validateRealityTvWizardStep,
+  type RealityTvUploadMeta,
+  type RealityTvWizardForm,
+} from '@/src/features/registration/reality-tv-show-wizard-map';
+import type { RegistrationStepKey } from '@/src/features/registration/types';
 
-const TALENT_OPTIONS = ['Singing', 'Acting', 'Dance', 'Comedy', 'Content Creation', 'Public Speaking', 'Rapping', 'Presenting'];
-const EXPERIENCE_LEVELS = ['Beginner', 'Emerging', 'Intermediate', 'Advanced', 'Professional'];
+// Option lists come from the LIVE schema (realityTvFieldOptions reads
+// forms/reality-tv-show.ts) so a wizard select can never offer a value the
+// server-side validator would reject — 'Prefer not to say' and 'Mentor'
+// slipped in exactly that way (AUD-FE-009).
+const TALENT_OPTIONS = realityTvFieldOptions('talent.primarySkill');
+const SKILL_LEVEL_OPTIONS = realityTvFieldOptions('talent.skillLevel');
+const GENDER_OPTIONS = realityTvFieldOptions('personal.gender');
+const EMERGENCY_RELATIONSHIPS = realityTvFieldOptions('emergency.relationship');
+const BOOTCAMP_AVAILABILITY = realityTvFieldOptions('bootcamp.availableFullPeriod');
+const ID_TYPE_OPTIONS = realityTvFieldOptions('identity.idType');
+const AUDITION_FORMATS = realityTvFieldOptions('audition.format');
+const HEALTH_STATUS_OPTIONS = realityTvFieldOptions('medical.generalHealthStatus');
+const MEDICAL_CONDITION_OPTIONS = realityTvFieldOptions('medical.knownConditions');
+const ALLERGY_OPTIONS = realityTvFieldOptions('medical.allergies');
 const ENTRY_MODES = ['Individual', 'Group'];
-const EMERGENCY_RELATIONSHIPS = ['Parent', 'Sibling', 'Spouse', 'Guardian', 'Relative', 'Friend', 'Mentor'];
 
 const STEPS = [
   { id: 1, label: 'About You',    icon: '👤' },
@@ -23,84 +48,8 @@ const STEPS = [
 
 const REGISTRATION_FEE = 5000;
 
-interface FormData {
-  // Step 1 — About You
-  personal_firstName: string;
-  personal_lastName: string;
-  personal_stageName: string;
-  personal_dateOfBirth: string;
-  personal_gender: string;
-  personal_stateOfResidence: string;
-  personal_city: string;
-  personal_primaryPhone: string;
-  personal_address: string;
-  media_profilePhoto: File | null;
-  media_profilePhotoPreview: string;
-  contest_entryMode: string;
-
-  // Step 2 — Your Talent
-  talent_primarySkill: string[];
-  talent_experienceYears: string;
-  talent_skillLevel: string;
-  talent_strengths: string;
-  talent_careerGoal: string;
-  talent_uniqueStory: string;
-
-  // Step 3 — Show Profile
-  category_uniqueStory: string;
-  social_instagram: string;
-  social_tiktok: string;
-  social_youtube: string;
-  social_totalFollowers: string;
-  media_performanceLink: string;
-  media_rightsConfirmed: boolean;
-
-  // Step 4 — Readiness
-  bootcamp_availableFullPeriod: string;
-  bootcamp_canTravel: boolean;
-  category_housemateReadiness: boolean;
-  category_dailyFilmingConsent: boolean;
-  bootcamp_personalConsiderations: string;
-  emergency_fullName: string;
-  emergency_relationship: string;
-  emergency_phone: string;
-  emergency_altPhone: string;
-
-  // Step 5 — Legal
-  legal_accuracyDeclaration: boolean;
-  legal_termsConsent: boolean;
-  legal_mediaRelease: boolean;
-  legal_publicVotingConsent: boolean;
-  legal_sponsorActivationConsent: boolean;
-  legal_productionRulesConsent: boolean;
-  compliance_codeOfConductAgreement: boolean;
-  review_confirmSubmit: boolean;
-}
-
-const INITIAL: FormData = {
-  personal_firstName: '', personal_lastName: '', personal_stageName: '',
-  personal_dateOfBirth: '', personal_gender: '', personal_stateOfResidence: '',
-  personal_city: '', personal_primaryPhone: '',
-  personal_address: '', contest_entryMode: 'Individual',
-  media_profilePhoto: null, media_profilePhotoPreview: '',
-
-  talent_primarySkill: [], talent_experienceYears: '', talent_skillLevel: '',
-  talent_strengths: '', talent_careerGoal: '', talent_uniqueStory: '',
-
-  category_uniqueStory: '',
-  social_instagram: '', social_tiktok: '', social_youtube: '',
-  social_totalFollowers: '', media_performanceLink: '', media_rightsConfirmed: false,
-
-  bootcamp_availableFullPeriod: '', bootcamp_canTravel: false,
-  category_housemateReadiness: false, category_dailyFilmingConsent: false,
-  bootcamp_personalConsiderations: '', emergency_fullName: '',
-  emergency_relationship: '', emergency_phone: '', emergency_altPhone: '',
-
-  legal_accuracyDeclaration: false, legal_termsConsent: false,
-  legal_mediaRelease: false, legal_publicVotingConsent: false,
-  legal_sponsorActivationConsent: false, legal_productionRulesConsent: false,
-  compliance_codeOfConductAgreement: false, review_confirmSubmit: false,
-};
+type FormData = RealityTvWizardForm;
+const INITIAL: FormData = REALITY_TV_WIZARD_INITIAL;
 
 const c = {
   pageBg: '#F4F6FB',
@@ -294,57 +243,17 @@ function StepProgress({ current }: { current: number }) {
   );
 }
 
-function validateStep(step: number, f: FormData): Record<string, string> {
-  const e: Record<string, string> = {};
-  if (step === 1) {
-    if (!f.personal_firstName.trim()) e.personal_firstName = 'First name is required';
-    if (!f.personal_lastName.trim()) e.personal_lastName = 'Last name is required';
-    if (!f.personal_dateOfBirth) e.personal_dateOfBirth = 'Date of birth is required';
-    if (!f.personal_gender) e.personal_gender = 'Gender is required';
-    if (!f.personal_stateOfResidence) e.personal_stateOfResidence = 'State is required';
-    if (!f.personal_primaryPhone.trim()) e.personal_primaryPhone = 'Phone number is required';
-    if (!f.media_profilePhoto) e.media_profilePhoto = 'Profile photo is required';
-  }
-  if (step === 2) {
-    if (f.talent_primarySkill.length === 0) e.talent_primarySkill = 'Select at least one talent';
-    if (!f.talent_experienceYears) e.talent_experienceYears = 'Years of experience is required';
-    if (!f.talent_skillLevel) e.talent_skillLevel = 'Skill level is required';
-    if (!f.talent_strengths.trim()) e.talent_strengths = 'Tell us your strengths';
-    if (!f.talent_careerGoal.trim()) e.talent_careerGoal = 'Career goal is required';
-    if (!f.talent_uniqueStory.trim()) e.talent_uniqueStory = 'This field is required';
-  }
-  if (step === 3) {
-    if (!f.category_uniqueStory.trim()) e.category_uniqueStory = 'Tell us what makes you a great TV contestant';
-    if (!f.media_rightsConfirmed) e.media_rightsConfirmed = 'You must confirm content rights';
-  }
-  if (step === 4) {
-    if (!f.bootcamp_availableFullPeriod) e.bootcamp_availableFullPeriod = 'Please indicate your availability';
-    if (!f.category_housemateReadiness) e.category_housemateReadiness = 'This consent is required';
-    if (!f.category_dailyFilmingConsent) e.category_dailyFilmingConsent = 'This consent is required';
-    if (!f.emergency_fullName.trim()) e.emergency_fullName = 'Emergency contact name is required';
-    if (!f.emergency_phone.trim()) e.emergency_phone = 'Emergency contact phone is required';
-    if (!f.emergency_relationship) e.emergency_relationship = 'Relationship is required';
-  }
-  if (step === 5) {
-    if (!f.legal_accuracyDeclaration) e.legal_accuracyDeclaration = 'Required';
-    if (!f.legal_termsConsent) e.legal_termsConsent = 'Required';
-    if (!f.legal_mediaRelease) e.legal_mediaRelease = 'Required';
-    if (!f.legal_publicVotingConsent) e.legal_publicVotingConsent = 'Required';
-    if (!f.legal_sponsorActivationConsent) e.legal_sponsorActivationConsent = 'Required';
-    if (!f.legal_productionRulesConsent) e.legal_productionRulesConsent = 'Required';
-    if (!f.compliance_codeOfConductAgreement) e.compliance_codeOfConductAgreement = 'Required';
-    if (!f.review_confirmSubmit) e.review_confirmSubmit = 'Please confirm you are ready to submit';
-  }
-  return e;
-}
-
 export default function RealityTvShowApplicationWizard() {
   const supabase = useMemo(() => createClient(), []);
-  const router = useRouter();
   const pathname = usePathname();
 
   const [step, setStep] = useState(1);
   const [form, setForm] = useState<FormData>(INITIAL);
+  // The upload POST response per schema file key ('media.profilePhoto' etc.)
+  // — persisted into the draft as `<key>.__meta` alongside the previewUrl
+  // value, so file names survive a reload.
+  const [uploadMeta, setUploadMeta] = useState<RealityTvUploadMeta>({});
+  const [uploading, setUploading] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -357,6 +266,8 @@ export default function RealityTvShowApplicationWizard() {
   const topRef = useRef<HTMLDivElement>(null);
 
   const cities = NIGERIA_CITIES_BY_STATE[form.personal_stateOfResidence] || [];
+  const emergencyCities = NIGERIA_CITIES_BY_STATE[form.emergency_state] || [];
+  const isMinor = realityTvWizardIsMinor(form.personal_dateOfBirth);
 
   useEffect(() => {
     let cancelled = false;
@@ -401,10 +312,12 @@ export default function RealityTvShowApplicationWizard() {
       if (!cancelled) {
         setDraftId(id);
         const saved = (readPayload.draft.formData || {}) as Record<string, unknown>;
-        // Hydrate form from saved draft
+        // Hydrate form + upload metadata from the saved draft.
+        const hydrated = realityTvWizardHydrate(saved);
+        setUploadMeta(hydrated.uploadMeta);
         setForm((prev) => ({
           ...prev,
-          ...flatToForm(saved),
+          ...hydrated.form,
           personal_firstName: String(saved['personal.firstName'] || name.split(' ')[0] || prev.personal_firstName),
           personal_lastName: String(saved['personal.lastName'] || name.split(' ').slice(1).join(' ') || prev.personal_lastName),
         }));
@@ -416,100 +329,73 @@ export default function RealityTvShowApplicationWizard() {
     return () => { cancelled = true; };
   }, []);
 
-  function flatToForm(saved: Record<string, unknown>): Partial<FormData> {
-    const get = (k: string) => saved[k];
-    return {
-      personal_firstName: String(get('personal.firstName') || ''),
-      personal_lastName: String(get('personal.lastName') || ''),
-      personal_stageName: String(get('personal.stageName') || ''),
-      personal_dateOfBirth: String(get('personal.dateOfBirth') || ''),
-      personal_gender: String(get('personal.gender') || ''),
-      personal_stateOfResidence: String(get('personal.stateOfResidence') || ''),
-      personal_city: String(get('personal.city') || ''),
-      personal_primaryPhone: String(get('personal.primaryPhone') || ''),
-      personal_address: String(get('personal.address') || ''),
-      contest_entryMode: String(get('contest.entryMode') || 'Individual'),
-      talent_primarySkill: Array.isArray(get('talent.primarySkill')) ? (get('talent.primarySkill') as string[]) : [],
-      talent_experienceYears: String(get('talent.experienceYears') || ''),
-      talent_skillLevel: String(get('talent.skillLevel') || ''),
-      talent_strengths: String(get('talent.strengths') || ''),
-      talent_careerGoal: String(get('talent.careerGoal') || ''),
-      talent_uniqueStory: String(get('talent.uniqueStory') || ''),
-      category_uniqueStory: String(get('category.uniqueStory') || ''),
-      social_instagram: String(get('social.instagram') || ''),
-      social_tiktok: String(get('social.tiktok') || ''),
-      social_youtube: String(get('social.youtube') || ''),
-      social_totalFollowers: String(get('social.totalFollowers') || ''),
-      media_performanceLink: String(get('media.performanceLink') || ''),
-      media_rightsConfirmed: Boolean(get('media.rightsConfirmed')),
-      bootcamp_availableFullPeriod: String(get('bootcamp.availableFullPeriod') || ''),
-      bootcamp_canTravel: Boolean(get('bootcamp.canTravel')),
-      category_housemateReadiness: Boolean(get('category.housemateReadiness')),
-      category_dailyFilmingConsent: Boolean(get('category.dailyFilmingConsent')),
-      bootcamp_personalConsiderations: String(get('bootcamp.personalConsiderations') || ''),
-      emergency_fullName: String(get('emergency.fullName') || ''),
-      emergency_relationship: String(get('emergency.relationship') || ''),
-      emergency_phone: String(get('emergency.phone') || ''),
-      emergency_altPhone: String(get('emergency.altPhone') || ''),
-    };
-  }
-
-  function formToFlat(f: FormData): Record<string, unknown> {
-    return {
-      'personal.firstName': f.personal_firstName,
-      'personal.lastName': f.personal_lastName,
-      'personal.stageName': f.personal_stageName,
-      'personal.dateOfBirth': f.personal_dateOfBirth,
-      'personal.gender': f.personal_gender,
-      'personal.stateOfResidence': f.personal_stateOfResidence,
-      'personal.city': f.personal_city,
-      'personal.primaryPhone': f.personal_primaryPhone,
-      'personal.address': f.personal_address,
-      'contest.entryMode': f.contest_entryMode,
-      'talent.primarySkill': f.talent_primarySkill,
-      'talent.experienceYears': f.talent_experienceYears,
-      'talent.skillLevel': f.talent_skillLevel,
-      'talent.strengths': f.talent_strengths,
-      'talent.careerGoal': f.talent_careerGoal,
-      'talent.uniqueStory': f.talent_uniqueStory,
-      'category.uniqueStory': f.category_uniqueStory,
-      'social.instagram': f.social_instagram,
-      'social.tiktok': f.social_tiktok,
-      'social.youtube': f.social_youtube,
-      'social.totalFollowers': f.social_totalFollowers,
-      'media.performanceLink': f.media_performanceLink,
-      'media.rightsConfirmed': f.media_rightsConfirmed,
-      'bootcamp.availableFullPeriod': f.bootcamp_availableFullPeriod,
-      'bootcamp.canTravel': f.bootcamp_canTravel,
-      'category.housemateReadiness': f.category_housemateReadiness,
-      'category.dailyFilmingConsent': f.category_dailyFilmingConsent,
-      'bootcamp.personalConsiderations': f.bootcamp_personalConsiderations,
-      'emergency.fullName': f.emergency_fullName,
-      'emergency.relationship': f.emergency_relationship,
-      'emergency.phone': f.emergency_phone,
-      'emergency.altPhone': f.emergency_altPhone,
-      'legal.accuracyDeclaration': f.legal_accuracyDeclaration,
-      'legal.termsConsent': f.legal_termsConsent,
-      'legal.mediaRelease': f.legal_mediaRelease,
-      'legal.publicVotingConsent': f.legal_publicVotingConsent,
-      'legal.sponsorActivationConsent': f.legal_sponsorActivationConsent,
-      'legal.productionRulesConsent': f.legal_productionRulesConsent,
-      'compliance.codeOfConductAgreement': f.compliance_codeOfConductAgreement,
-      'review.confirmSubmit': f.review_confirmSubmit,
-    };
-  }
-
   function set(key: keyof FormData, value: unknown) {
     setForm((prev) => ({ ...prev, [key]: value }));
     setErrors((prev) => { const n = { ...prev }; delete n[key as string]; return n; });
   }
 
-  // Returns true only when the draft row was actually written server-side.
-  // The [id] route has no PUT handler — the old call silently 405'd and
-  // nothing was ever persisted. PATCH merges `values` into formData but only
-  // writes when the named step validates, so DRAFT_CHECKPOINT_STEP_KEY
-  // ('contest_selection') is used: its sole required field is server-locked.
-  async function saveDraft(f: FormData = form): Promise<boolean> {
+  // Uploads go through POST /api/registration/uploads (multipart body), which
+  // proxies to R2 (or local disk in dev) and returns { previewUrl, storageKey,
+  // fileName, ... }. The previewUrl is what the draft stores — the schema's
+  // `file` validator accepts any non-empty string/object with a storage key.
+  async function uploadFile(
+    flatKey: string,
+    urlKey: keyof FormData,
+    nameKey: keyof FormData,
+    file: File,
+  ): Promise<string> {
+    setUploading((prev) => ({ ...prev, [flatKey]: true }));
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const res = await fetch('/api/registration/uploads', { method: 'POST', body });
+      const payload = (await res.json().catch(() => ({}))) as {
+        success?: boolean; error?: string; upload?: Record<string, unknown>;
+      };
+      if (!res.ok || !payload?.success || !payload.upload) {
+        throw new Error(payload?.error || 'Upload failed. Please try again.');
+      }
+      const url = String(payload.upload.previewUrl || payload.upload.storageKey || '');
+      set(urlKey, url);
+      set(nameKey, String(payload.upload.fileName || file.name));
+      setUploadMeta((prev) => ({ ...prev, [flatKey]: payload.upload as Record<string, unknown> }));
+      return url;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Upload failed. Please try again.';
+      setErrors((prev) => ({ ...prev, [urlKey as string]: message }));
+      setGlobalError(message);
+      return '';
+    } finally {
+      setUploading((prev) => ({ ...prev, [flatKey]: false }));
+    }
+  }
+
+  function clearUpload(flatKey: string, urlKey: keyof FormData, nameKey: keyof FormData) {
+    set(urlKey, '');
+    set(nameKey, '');
+    setUploadMeta((prev) => {
+      const next = { ...prev };
+      delete next[flatKey];
+      return next;
+    });
+  }
+
+  function pickProfilePhoto(file: File) {
+    if (!file.type.startsWith('image/')) return;
+    set('media_profilePhoto', file);
+    set('media_profilePhotoPreview', URL.createObjectURL(file));
+    void uploadFile('media.profilePhoto', 'media_profilePhotoUrl', 'media_profilePhotoName', file);
+  }
+
+  /**
+   * PATCH the draft under the schema stepKey that wizard step completes (see
+   * REALITY_TV_WIZARD_STEP_SAVE_KEY). Returns true only when the draft row
+   * was actually written — the server returns 200 with
+   * validation.isValid === false when the named step fails, in which case
+   * nothing persisted; its field errors are mapped back onto wizard keys so
+   * the offending inputs get highlighted.
+   */
+  async function saveDraft(stepKey: RegistrationStepKey, f: FormData = form): Promise<boolean> {
     if (!draftId) {
       setGlobalError('Session error — please refresh.');
       return false;
@@ -518,7 +404,7 @@ export default function RealityTvShowApplicationWizard() {
     try {
       const res = await authFetch(`/api/registration/applications/${draftId}`, {
         method: 'PATCH',
-        body: JSON.stringify(buildDraftSaveBody(formToFlat(f))),
+        body: JSON.stringify(buildStepSaveBody(stepKey, realityTvWizardFormToFlat(f, uploadMeta))),
       }, { json: true });
 
       if (isUnauthorized(res)) {
@@ -529,10 +415,20 @@ export default function RealityTvShowApplicationWizard() {
       const payload = (await res.json().catch(() => ({}))) as {
         success?: boolean;
         error?: string;
-        validation?: { isValid?: boolean };
+        validation?: { isValid?: boolean; errors?: Record<string, string> };
       };
       if (!res.ok || !draftSaveSucceeded(payload)) {
-        setGlobalError(payload.error || 'Could not save your progress. Please check your connection and try again.');
+        const serverErrors = payload?.validation?.errors;
+        if (serverErrors && typeof serverErrors === 'object' && Object.keys(serverErrors).length > 0) {
+          const mapped: Record<string, string> = {};
+          for (const [flatKey, message] of Object.entries(serverErrors)) {
+            mapped[flatErrorKeyToFormKey(flatKey)] = String(message);
+          }
+          setErrors((prev) => ({ ...prev, ...mapped }));
+          setGlobalError('Some required information is missing or invalid — please review the highlighted fields.');
+        } else {
+          setGlobalError(payload.error || 'Could not save your progress. Please check your connection and try again.');
+        }
         return false;
       }
       return true;
@@ -545,7 +441,7 @@ export default function RealityTvShowApplicationWizard() {
   }
 
   async function next() {
-    const errs = validateStep(step, form);
+    const errs = validateRealityTvWizardStep(step, form);
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
       topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -554,7 +450,7 @@ export default function RealityTvShowApplicationWizard() {
     setErrors({});
     // Don't advance when the draft save failed — the error is surfaced via
     // globalError and the user stays on the step so they can retry.
-    if (!(await saveDraft())) {
+    if (!(await saveDraft(REALITY_TV_WIZARD_STEP_SAVE_KEY[step]))) {
       topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
@@ -569,15 +465,30 @@ export default function RealityTvShowApplicationWizard() {
   }
 
   async function handleSubmit() {
-    const errs = validateStep(5, form);
+    const errs = validateRealityTvWizardStep(5, form);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     if (!draftId) { setGlobalError('Session error — please refresh.'); return; }
+
+    // Full schema re-check — the same validator submitRegistration runs —
+    // BEFORE any money moves. Without it a schema-required key the wizard
+    // missed would only surface as a 400 after Paystack had already charged.
+    const schemaErrs = realityTvWizardSchemaErrors(form, uploadMeta);
+    if (Object.keys(schemaErrs).length > 0) {
+      const mapped: Record<string, string> = {};
+      for (const [flatKey, message] of Object.entries(schemaErrs)) {
+        mapped[flatErrorKeyToFormKey(flatKey)] = String(message);
+      }
+      setErrors(mapped);
+      setGlobalError('Please complete the highlighted fields before paying.');
+      topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
 
     setSubmitting(true);
     setGlobalError('');
 
     // Payment must never run against an unsaved draft — abort loudly.
-    if (!(await saveDraft())) {
+    if (!(await saveDraft('review_submit'))) {
       setSubmitting(false);
       return;
     }
@@ -689,6 +600,50 @@ export default function RealityTvShowApplicationWizard() {
     background: '#F8FAFC', borderRadius: 12, padding: '20px 20px', border: `1px solid ${c.border}`,
   };
 
+  const sectionTitle: React.CSSProperties = {
+    fontSize: 13, fontWeight: 700, color: c.textMid, margin: '0 0 16px',
+    textTransform: 'uppercase', letterSpacing: '0.06em',
+  };
+
+  function filePicker(
+    flatKey: string,
+    urlKey: keyof FormData,
+    nameKey: keyof FormData,
+    accept: string,
+    icon = '📎',
+  ) {
+    const uploadedUrl = String(form[urlKey] || '');
+    const uploadedName = String(form[nameKey] || '');
+    const busy = Boolean(uploading[flatKey]);
+    return (
+      <label style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        padding: '14px 18px', border: `2px dashed ${errors[urlKey as string] ? c.danger : c.border}`,
+        borderRadius: 12, cursor: 'pointer', background: '#FAFAFA', transition: 'border-color 0.2s',
+      }}>
+        <input type="file" accept={accept} style={{ display: 'none' }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void uploadFile(flatKey, urlKey, nameKey, file);
+          }} />
+        <span style={{ fontSize: 18 }}>{icon}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: c.textMid }}>
+          {busy ? 'Uploading…' : uploadedName || 'Click to upload'}
+        </span>
+        {uploadedUrl && !busy && (
+          <span style={{ fontSize: 12, color: c.success, fontWeight: 700 }}>✓ Uploaded</span>
+        )}
+        {uploadedUrl && !busy && (
+          <button type="button"
+            onClick={(e) => { e.preventDefault(); clearUpload(flatKey, urlKey, nameKey); }}
+            style={{ fontSize: 11, color: c.danger, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700 }}>
+            Remove
+          </button>
+        )}
+      </label>
+    );
+  }
+
   if (loading) {
     return (
       <div style={{ padding: '60px 0', textAlign: 'center', color: c.textMuted }}>
@@ -767,6 +722,10 @@ export default function RealityTvShowApplicationWizard() {
                 <Input value={form.personal_firstName} error={errors.personal_firstName}
                   onChange={(e) => set('personal_firstName', e.target.value)} placeholder="e.g. Chisom" />
               </Field>
+              <Field label="Middle Name">
+                <Input value={form.personal_middleName}
+                  onChange={(e) => set('personal_middleName', e.target.value)} placeholder="(optional)" />
+              </Field>
               <Field label="Last Name" required error={errors.personal_lastName}>
                 <Input value={form.personal_lastName} error={errors.personal_lastName}
                   onChange={(e) => set('personal_lastName', e.target.value)} placeholder="e.g. Obi" />
@@ -788,12 +747,23 @@ export default function RealityTvShowApplicationWizard() {
                 <Select value={form.personal_gender} error={errors.personal_gender}
                   onChange={(e) => set('personal_gender', e.target.value)}>
                   <option value="">Select…</option>
-                  <option>Female</option><option>Male</option><option>Prefer not to say</option>
+                  {GENDER_OPTIONS.map((g) => <option key={g}>{g}</option>)}
                 </Select>
+              </Field>
+              <Field label="Nationality" required help="The Reality TV Show is currently open to Nigerian applicants.">
+                <Input value={form.personal_nationality} readOnly disabled
+                  style={{ background: '#F3F4F6', color: c.textMuted }} />
               </Field>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+              <Field label="State of Origin" required error={errors.personal_stateOfOrigin}>
+                <Select value={form.personal_stateOfOrigin} error={errors.personal_stateOfOrigin}
+                  onChange={(e) => set('personal_stateOfOrigin', e.target.value)}>
+                  <option value="">Select state…</option>
+                  {NIGERIA_STATES.map((s) => <option key={s}>{s}</option>)}
+                </Select>
+              </Field>
               <Field label="State of Residence" required error={errors.personal_stateOfResidence}>
                 <Select value={form.personal_stateOfResidence} error={errors.personal_stateOfResidence}
                   onChange={(e) => { set('personal_stateOfResidence', e.target.value); set('personal_city', ''); }}>
@@ -801,71 +771,83 @@ export default function RealityTvShowApplicationWizard() {
                   {NIGERIA_STATES.map((s) => <option key={s}>{s}</option>)}
                 </Select>
               </Field>
-              <Field label="City / Town">
+              <Field label="City / Town" required error={errors.personal_city}>
                 {cities.length > 0 ? (
-                  <Select value={form.personal_city} onChange={(e) => set('personal_city', e.target.value)}>
+                  <Select value={form.personal_city} error={errors.personal_city}
+                    onChange={(e) => set('personal_city', e.target.value)}>
                     <option value="">Select city…</option>
-                    {cities.map((c) => <option key={c}>{c}</option>)}
+                    {cities.map((city) => <option key={city}>{city}</option>)}
                   </Select>
                 ) : (
-                  <Input value={form.personal_city} onChange={(e) => set('personal_city', e.target.value)} placeholder="Enter your city" />
+                  <Input value={form.personal_city} error={errors.personal_city}
+                    onChange={(e) => set('personal_city', e.target.value)} placeholder="Enter your city" />
                 )}
               </Field>
             </div>
 
-            <Field label="Phone Number" required error={errors.personal_primaryPhone}>
-              <Input type="tel" value={form.personal_primaryPhone} error={errors.personal_primaryPhone}
-                onChange={(e) => set('personal_primaryPhone', e.target.value)} placeholder="+234 80X XXX XXXX" />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+              <Field label="Phone Number" required error={errors.personal_primaryPhone}>
+                <Input type="tel" value={form.personal_primaryPhone} error={errors.personal_primaryPhone}
+                  onChange={(e) => set('personal_primaryPhone', e.target.value)} placeholder="+234 80X XXX XXXX" />
+              </Field>
+              <Field label="WhatsApp Number">
+                <Input type="tel" value={form.personal_whatsapp}
+                  onChange={(e) => set('personal_whatsapp', e.target.value)} placeholder="+234 80X XXX XXXX" />
+              </Field>
+            </div>
+
+            <Field label="Residential Address" required error={errors.personal_address}>
+              <Textarea value={form.personal_address} error={errors.personal_address} rows={2}
+                onChange={(e) => set('personal_address', e.target.value)} placeholder="Street, area, city" />
             </Field>
 
-            <Field label="Profile Photo" required error={errors.media_profilePhoto as string | undefined}
+            <Field label="Profile Photo" required error={errors.media_profilePhotoUrl}
               help="Clear, well-lit headshot. JPG or PNG, max 5 MB.">
               <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                 {/* Preview */}
-                <div style={{ width: 88, height: 88, borderRadius: '50%', flexShrink: 0, overflow: 'hidden', border: `2px solid ${errors.media_profilePhoto ? c.danger : c.border}`, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ width: 88, height: 88, borderRadius: '50%', flexShrink: 0, overflow: 'hidden', border: `2px solid ${errors.media_profilePhotoUrl ? c.danger : c.border}`, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {form.media_profilePhotoPreview
                     ? <img src={form.media_profilePhotoPreview} alt="Profile preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     : <span style={{ fontSize: 32, color: '#D1D5DB' }}>👤</span>}
                 </div>
                 {/* Dropzone / file input */}
-                <label style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '18px 20px', border: `2px dashed ${errors.media_profilePhoto ? c.danger : c.border}`, borderRadius: 12, cursor: 'pointer', background: '#FAFAFA', transition: 'border-color 0.2s' }}
+                <label style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '18px 20px', border: `2px dashed ${errors.media_profilePhotoUrl ? c.danger : c.border}`, borderRadius: 12, cursor: 'pointer', background: '#FAFAFA', transition: 'border-color 0.2s' }}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={(e) => {
                     e.preventDefault();
                     const file = e.dataTransfer.files[0];
-                    if (file && file.type.startsWith('image/')) {
-                      set('media_profilePhoto', file);
-                      set('media_profilePhotoPreview', URL.createObjectURL(file));
-                    }
+                    if (file) pickProfilePhoto(file);
                   }}>
                   <input type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }}
                     onChange={(e) => {
                       const file = e.target.files?.[0];
-                      if (file) {
-                        set('media_profilePhoto', file);
-                        set('media_profilePhotoPreview', URL.createObjectURL(file));
-                      }
+                      if (file) pickProfilePhoto(file);
                     }} />
                   <span style={{ fontSize: 22 }}>📷</span>
                   <span style={{ fontSize: 13, fontWeight: 600, color: c.textMid }}>
-                    {form.media_profilePhoto ? (form.media_profilePhoto as File).name : 'Click to upload or drag & drop'}
+                    {uploading['media.profilePhoto']
+                      ? 'Uploading…'
+                      : (form.media_profilePhotoName || (form.media_profilePhoto as File | null)?.name || 'Click to upload or drag & drop')}
                   </span>
-                  {!form.media_profilePhoto && (
+                  {form.media_profilePhotoUrl && !uploading['media.profilePhoto'] && (
+                    <span style={{ fontSize: 12, color: c.success, fontWeight: 700 }}>✓ Uploaded</span>
+                  )}
+                  {!form.media_profilePhotoUrl && !uploading['media.profilePhoto'] && (
                     <span style={{ fontSize: 11, color: c.textMuted }}>JPG, PNG or WEBP · max 5 MB</span>
                   )}
-                  {form.media_profilePhoto && (
-                    <button type="button" onClick={(e) => { e.preventDefault(); set('media_profilePhoto', null); set('media_profilePhotoPreview', ''); }}
+                  {(form.media_profilePhotoUrl || form.media_profilePhoto) && !uploading['media.profilePhoto'] && (
+                    <button type="button" onClick={(e) => {
+                      e.preventDefault();
+                      set('media_profilePhoto', null);
+                      set('media_profilePhotoPreview', '');
+                      clearUpload('media.profilePhoto', 'media_profilePhotoUrl', 'media_profilePhotoName');
+                    }}
                       style={{ fontSize: 11, color: c.danger, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700, marginTop: 2 }}>
                       Remove photo
                     </button>
                   )}
                 </label>
               </div>
-            </Field>
-
-            <Field label="Residential Address">
-              <Input value={form.personal_address}
-                onChange={(e) => set('personal_address', e.target.value)} placeholder="Street, area, city" />
             </Field>
 
             <Field label="Applying as">
@@ -878,6 +860,57 @@ export default function RealityTvShowApplicationWizard() {
                 ))}
               </div>
             </Field>
+
+            {/* Guardian consent — schema-required whenever derived.age < 18. */}
+            {isMinor && (
+              <div style={section}>
+                <p style={sectionTitle}>🛡 Parent / Guardian Consent <span style={{ fontWeight: 400, color: c.danger, textTransform: 'none', letterSpacing: 0 }}>(required — applicant is under 18)</span></p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                    <Field label="Parent/Guardian Full Name" required error={errors.guardian_fullName}>
+                      <Input value={form.guardian_fullName} error={errors.guardian_fullName}
+                        onChange={(e) => set('guardian_fullName', e.target.value)} placeholder="e.g. Mrs. Ngozi Obi" />
+                    </Field>
+                    <Field label="Relationship to Applicant" required error={errors.guardian_relationship}>
+                      <Input value={form.guardian_relationship} error={errors.guardian_relationship}
+                        onChange={(e) => set('guardian_relationship', e.target.value)} placeholder="e.g. Mother" />
+                    </Field>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                    <Field label="Parent/Guardian Phone" required error={errors.guardian_phone}>
+                      <Input type="tel" value={form.guardian_phone} error={errors.guardian_phone}
+                        onChange={(e) => set('guardian_phone', e.target.value)} placeholder="+234 80X XXX XXXX" />
+                    </Field>
+                    <Field label="Parent/Guardian Email" required error={errors.guardian_email}>
+                      <Input type="email" value={form.guardian_email} error={errors.guardian_email}
+                        onChange={(e) => set('guardian_email', e.target.value)} placeholder="guardian@example.com" />
+                    </Field>
+                  </div>
+                  <Field label="Parent/Guardian Address" required error={errors.guardian_address}>
+                    <Textarea value={form.guardian_address} error={errors.guardian_address} rows={2}
+                      onChange={(e) => set('guardian_address', e.target.value)} placeholder="Street, area, city" />
+                  </Field>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                    <Field label="Digital Signature (typed name)" required error={errors.guardian_digitalSignature}
+                      help="The parent/guardian should type their full legal name">
+                      <Input value={form.guardian_digitalSignature} error={errors.guardian_digitalSignature}
+                        onChange={(e) => set('guardian_digitalSignature', e.target.value)} placeholder="Full legal name" />
+                    </Field>
+                    <Field label="Parent/Guardian ID Upload" error={errors.guardian_idUploadUrl}
+                      help="JPG, PNG or PDF">
+                      {filePicker('guardian.idUpload', 'guardian_idUploadUrl', 'guardian_idUploadName', '.jpg,.jpeg,.png,.pdf', '🪪')}
+                    </Field>
+                  </div>
+                  <Checkbox
+                    label="I authorize this applicant to participate in Spotlight programme activities."
+                    checked={form.guardian_consentGranted}
+                    onChange={(v) => set('guardian_consentGranted', v)}
+                    required
+                  />
+                  {errors.guardian_consentGranted && <span style={errTxt}>{errors.guardian_consentGranted}</span>}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -895,25 +928,29 @@ export default function RealityTvShowApplicationWizard() {
                 <MultiSelect options={TALENT_OPTIONS} selected={form.talent_primarySkill}
                   onChange={(v) => set('talent_primarySkill', v)} />
               </div>
-              {errors.talent_primarySkill && <span style={errTxt}>{errors.talent_primarySkill}</span>}
             </Field>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
-              <Field label="Years of Experience" required error={errors.talent_experienceYears}>
-                <Select value={form.talent_experienceYears} error={errors.talent_experienceYears}
-                  onChange={(e) => set('talent_experienceYears', e.target.value)}>
-                  <option value="">Select…</option>
-                  {['Less than 1 year','1 year','2 years','3 years','4 years','5+ years','10+ years'].map((y) => <option key={y}>{y}</option>)}
-                </Select>
+              <Field label="Years of Experience" required error={errors.talent_experienceYears}
+                help="A whole number of years — e.g. 0, 2, 7">
+                <Input type="number" min={0} max={80} step={1} value={form.talent_experienceYears}
+                  error={errors.talent_experienceYears}
+                  onChange={(e) => set('talent_experienceYears', e.target.value)} placeholder="e.g. 3" />
               </Field>
               <Field label="Skill Level" required error={errors.talent_skillLevel}>
                 <Select value={form.talent_skillLevel} error={errors.talent_skillLevel}
                   onChange={(e) => set('talent_skillLevel', e.target.value)}>
                   <option value="">Select…</option>
-                  {EXPERIENCE_LEVELS.map((l) => <option key={l}>{l}</option>)}
+                  {SKILL_LEVEL_OPTIONS.map((l) => <option key={l}>{l}</option>)}
                 </Select>
               </Field>
             </div>
+
+            <Field label="Previous Competitions" help="Contests or shows you have entered before">
+              <Textarea value={form.talent_previousCompetitions}
+                onChange={(e) => set('talent_previousCompetitions', e.target.value)}
+                placeholder="e.g. Nigerian Idol auditions 2023, church talent shows…" rows={2} />
+            </Field>
 
             <Field label="Your Key Strengths" required error={errors.talent_strengths}
               help="What do you do exceptionally well? Be specific.">
@@ -943,7 +980,7 @@ export default function RealityTvShowApplicationWizard() {
       {step === 3 && (
         <div style={card}>
           <h3 style={{ color: c.textDark, fontWeight: 800, fontSize: 18, marginBottom: 4 }}>🎬 Your Show Profile</h3>
-          <p style={{ color: c.textMuted, fontSize: 13.5, marginBottom: 24 }}>Help us see you beyond the form. Add your content and online presence.</p>
+          <p style={{ color: c.textMuted, fontSize: 13.5, marginBottom: 24 }}>Identity, media, and how you&apos;d like to audition — help us see you beyond the form.</p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             <Field label="Why would you make a great TV contestant?" required error={errors.category_uniqueStory}
@@ -953,6 +990,29 @@ export default function RealityTvShowApplicationWizard() {
                 placeholder="e.g. I'm naturally entertaining and drama-free but I speak my truth. Viewers would relate to my authenticity and root for me…" rows={4} />
             </Field>
 
+            <div style={section}>
+              <p style={sectionTitle}>Identity Verification</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                <Field label="Government-issued ID type" required error={errors.identity_idType}>
+                  <Select value={form.identity_idType} error={errors.identity_idType}
+                    onChange={(e) => set('identity_idType', e.target.value)}>
+                    <option value="">Select…</option>
+                    {ID_TYPE_OPTIONS.map((t) => <option key={t}>{t}</option>)}
+                  </Select>
+                </Field>
+                <Field label="ID Number">
+                  <Input value={form.identity_idNumber}
+                    onChange={(e) => set('identity_idNumber', e.target.value)} placeholder="e.g. NIN / passport no." />
+                </Field>
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <Field label="ID Upload" required error={errors.identity_idUploadUrl}
+                  help="JPG, PNG or PDF — a clear photo or scan of the document">
+                  {filePicker('identity.idUpload', 'identity_idUploadUrl', 'identity_idUploadName', '.jpg,.jpeg,.png,.pdf', '🪪')}
+                </Field>
+              </div>
+            </div>
+
             <Field label="Performance / Audition Link"
               help="YouTube, TikTok, Instagram Reel, or Google Drive link to a recent performance or audition clip">
               <Input type="url" value={form.media_performanceLink}
@@ -960,8 +1020,21 @@ export default function RealityTvShowApplicationWizard() {
                 placeholder="https://www.youtube.com/watch?v=…" />
             </Field>
 
+            <Field label="Short intro / audition video" error={errors.media_introVideoUrl}
+              help="Optional — MP4 or MOV, a short clip introducing yourself">
+              {filePicker('media.introVideo', 'media_introVideoUrl', 'media_introVideoName', '.mp4,.mov', '🎥')}
+            </Field>
+
+            <Field label="Preferred audition format" required error={errors.audition_format}>
+              <Select value={form.audition_format} error={errors.audition_format}
+                onChange={(e) => set('audition_format', e.target.value)}>
+                <option value="">Select…</option>
+                {AUDITION_FORMATS.map((f) => <option key={f}>{f}</option>)}
+              </Select>
+            </Field>
+
             <div style={section}>
-              <p style={{ fontSize: 13, fontWeight: 700, color: c.textMid, margin: '0 0 14px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              <p style={{ ...sectionTitle, margin: '0 0 14px' }}>
                 Social Media Presence <span style={{ fontWeight: 400, color: c.textMuted, textTransform: 'none', letterSpacing: 0 }}>(optional)</span>
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
@@ -977,20 +1050,47 @@ export default function RealityTvShowApplicationWizard() {
                   <Input value={form.social_youtube} placeholder="Channel name or link"
                     onChange={(e) => set('social_youtube', e.target.value)} />
                 </Field>
+                <Field label="X / Twitter">
+                  <Input value={form.social_x} placeholder="@handle"
+                    onChange={(e) => set('social_x', e.target.value)} />
+                </Field>
                 <Field label="Total Followers (est.)" help="Across all platforms combined">
                   <Input type="number" value={form.social_totalFollowers} placeholder="e.g. 12000"
                     onChange={(e) => set('social_totalFollowers', e.target.value)} min="0" />
                 </Field>
               </div>
+              <div style={{ marginTop: 12 }}>
+                <Checkbox
+                  label="I am willing to invite my fans and followers to vote for me."
+                  checked={form.social_willingToInviteVoting}
+                  onChange={(v) => set('social_willingToInviteVoting', v)}
+                />
+              </div>
             </div>
 
-            <Checkbox
-              label="I confirm that all links and content I have shared belong to me or I have rights to use them."
-              checked={form.media_rightsConfirmed}
-              onChange={(v) => set('media_rightsConfirmed', v)}
-              required
-            />
-            {errors.media_rightsConfirmed && <span style={errTxt}>{errors.media_rightsConfirmed}</span>}
+            <Field label="Talent summary for public voting profile" error={errors.publicProfile_talentSummary}
+              help="One or two sentences shown on your public voting page (optional)">
+              <Textarea value={form.publicProfile_talentSummary} rows={2}
+                onChange={(e) => set('publicProfile_talentSummary', e.target.value)}
+                placeholder="e.g. Singer and dancer from Lagos bringing big energy to the house…" />
+            </Field>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <Checkbox
+                label="I confirm that all links and content I have shared belong to me or I have rights to use them."
+                checked={form.media_rightsConfirmed}
+                onChange={(v) => set('media_rightsConfirmed', v)}
+                required
+              />
+              {errors.media_rightsConfirmed && <span style={errTxt}>{errors.media_rightsConfirmed}</span>}
+              <Checkbox
+                label="I consent to my profile being visible for public voting."
+                checked={form.publicProfile_publicVotingConsent}
+                onChange={(v) => set('publicProfile_publicVotingConsent', v)}
+                required
+              />
+              {errors.publicProfile_publicVotingConsent && <span style={errTxt}>{errors.publicProfile_publicVotingConsent}</span>}
+            </div>
           </div>
         </div>
       )}
@@ -998,26 +1098,25 @@ export default function RealityTvShowApplicationWizard() {
       {/* ── Step 4: Readiness ──────────────────────────────────────────────── */}
       {step === 4 && (
         <div style={card}>
-          <h3 style={{ color: c.textDark, fontWeight: 800, fontSize: 18, marginBottom: 4 }}>✅ Readiness & Emergency Contact</h3>
-          <p style={{ color: c.textMuted, fontSize: 13.5, marginBottom: 24 }}>Confirm you are ready for the show environment and provide a contact for emergencies.</p>
+          <h3 style={{ color: c.textDark, fontWeight: 800, fontSize: 18, marginBottom: 4 }}>✅ Readiness, Welfare & Emergency Contact</h3>
+          <p style={{ color: c.textMuted, fontSize: 13.5, marginBottom: 24 }}>Confirm you are ready for the show environment, tell us about your health, and provide a contact for emergencies.</p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             <div style={section}>
-              <p style={{ fontSize: 13, fontWeight: 700, color: c.textMid, margin: '0 0 16px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Show Readiness</p>
+              <p style={sectionTitle}>Show Readiness</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <Field label="Availability during production" required error={errors.bootcamp_availableFullPeriod}>
                   <Select value={form.bootcamp_availableFullPeriod} error={errors.bootcamp_availableFullPeriod}
                     onChange={(e) => set('bootcamp_availableFullPeriod', e.target.value)}>
                     <option value="">Select…</option>
-                    <option value="Fully available">Fully available — I can commit 100%</option>
-                    <option value="Available with notice">Available with advance notice</option>
-                    <option value="Partially available">Partially available</option>
+                    {BOOTCAMP_AVAILABILITY.map((a) => <option key={a}>{a}</option>)}
                   </Select>
                 </Field>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <Checkbox label="I am able and willing to travel to the production location." checked={form.bootcamp_canTravel}
-                    onChange={(v) => set('bootcamp_canTravel', v)} />
+                    onChange={(v) => set('bootcamp_canTravel', v)} required />
+                  {errors.bootcamp_canTravel && <span style={errTxt}>{errors.bootcamp_canTravel}</span>}
                   <Checkbox
                     label="I am comfortable living with other contestants in a shared house environment."
                     checked={form.category_housemateReadiness}
@@ -1032,7 +1131,19 @@ export default function RealityTvShowApplicationWizard() {
                     required
                   />
                   {errors.category_dailyFilmingConsent && <span style={errTxt}>{errors.category_dailyFilmingConsent}</span>}
+                  <Checkbox
+                    label="I am comfortable with public voting and possible eviction."
+                    checked={form.bootcamp_comfortPublicVoting}
+                    onChange={(v) => set('bootcamp_comfortPublicVoting', v)}
+                  />
                 </div>
+
+                <Field label="Any travel restrictions?"
+                  help="Visa issues, dates you cannot travel, etc. (optional)">
+                  <Textarea value={form.bootcamp_travelRestrictions}
+                    onChange={(e) => set('bootcamp_travelRestrictions', e.target.value)}
+                    placeholder="e.g. I cannot travel during the last two weeks of August…" rows={2} />
+                </Field>
 
                 <Field label="Dietary, cultural, or personal considerations"
                   help="Anything production should be aware of (optional)">
@@ -1044,7 +1155,47 @@ export default function RealityTvShowApplicationWizard() {
             </div>
 
             <div style={section}>
-              <p style={{ fontSize: 13, fontWeight: 700, color: c.textMid, margin: '0 0 16px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Emergency Contact</p>
+              <p style={sectionTitle}>Health & Welfare</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <Field label="General health status" required error={errors.medical_generalHealthStatus}
+                  help="Select everything that applies">
+                  <MultiSelect options={HEALTH_STATUS_OPTIONS} selected={form.medical_generalHealthStatus}
+                    onChange={(v) => set('medical_generalHealthStatus', v)} />
+                </Field>
+                <Field label="Known medical conditions" error={errors.medical_knownConditions}
+                  help="Select 'None' if not applicable">
+                  <MultiSelect options={MEDICAL_CONDITION_OPTIONS} selected={form.medical_knownConditions}
+                    onChange={(v) => set('medical_knownConditions', v)} />
+                </Field>
+                <Field label="Allergies" error={errors.medical_allergies}
+                  help="Select 'None' if not applicable">
+                  <MultiSelect options={ALLERGY_OPTIONS} selected={form.medical_allergies}
+                    onChange={(v) => set('medical_allergies', v)} />
+                </Field>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                  <Field label="Medication currently used" error={errors.medical_currentMedication}>
+                    <Textarea value={form.medical_currentMedication} rows={2}
+                      onChange={(e) => set('medical_currentMedication', e.target.value)}
+                      placeholder="e.g. Ventolin inhaler as needed…" />
+                  </Field>
+                  <Field label="Dietary restrictions" error={errors.medical_dietaryRestrictions}>
+                    <Textarea value={form.medical_dietaryRestrictions} rows={2}
+                      onChange={(e) => set('medical_dietaryRestrictions', e.target.value)}
+                      placeholder="e.g. Halal only, lactose intolerant…" />
+                  </Field>
+                </div>
+                <Checkbox
+                  label="I consent to emergency medical support where necessary."
+                  checked={form.medical_emergencyTreatmentConsent}
+                  onChange={(v) => set('medical_emergencyTreatmentConsent', v)}
+                  required
+                />
+                {errors.medical_emergencyTreatmentConsent && <span style={errTxt}>{errors.medical_emergencyTreatmentConsent}</span>}
+              </div>
+            </div>
+
+            <div style={section}>
+              <p style={sectionTitle}>Emergency Contact</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
                   <Field label="Full Name" required error={errors.emergency_fullName}>
@@ -1069,6 +1220,69 @@ export default function RealityTvShowApplicationWizard() {
                       onChange={(e) => set('emergency_altPhone', e.target.value)} placeholder="+234 80X XXX XXXX" />
                   </Field>
                 </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                  <Field label="State" required error={errors.emergency_state}>
+                    <Select value={form.emergency_state} error={errors.emergency_state}
+                      onChange={(e) => { set('emergency_state', e.target.value); set('emergency_city', ''); }}>
+                      <option value="">Select state…</option>
+                      {NIGERIA_STATES.map((s) => <option key={s}>{s}</option>)}
+                    </Select>
+                  </Field>
+                  <Field label="City" required error={errors.emergency_city}>
+                    {emergencyCities.length > 0 ? (
+                      <Select value={form.emergency_city} error={errors.emergency_city}
+                        onChange={(e) => set('emergency_city', e.target.value)}>
+                        <option value="">Select city…</option>
+                        {emergencyCities.map((city) => <option key={city}>{city}</option>)}
+                      </Select>
+                    ) : (
+                      <Input value={form.emergency_city} error={errors.emergency_city}
+                        onChange={(e) => set('emergency_city', e.target.value)} placeholder="Enter city" />
+                    )}
+                  </Field>
+                </div>
+              </div>
+            </div>
+
+            <div style={section}>
+              <p style={sectionTitle}>Declarations & Compliance</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <Checkbox
+                  label="I have previously participated in a reality show."
+                  checked={form.compliance_previouslyInRealityShow}
+                  onChange={(v) => set('compliance_previouslyInRealityShow', v)}
+                />
+                <Checkbox
+                  label="I am currently under an exclusive talent contract."
+                  checked={form.compliance_exclusiveContract}
+                  onChange={(v) => set('compliance_exclusiveContract', v)}
+                />
+                <Checkbox
+                  label="I have a legal restriction that may affect participation (e.g. ongoing court matter)."
+                  checked={form.compliance_legalRestriction}
+                  onChange={(v) => set('compliance_legalRestriction', v)}
+                />
+                <Checkbox
+                  label="I agree to Spotlight's code of conduct."
+                  checked={form.compliance_codeOfConductAgreement}
+                  onChange={(v) => set('compliance_codeOfConductAgreement', v)}
+                  required
+                />
+                {errors.compliance_codeOfConductAgreement && <span style={errTxt}>{errors.compliance_codeOfConductAgreement}</span>}
+                <Checkbox
+                  label="I agree to additional background checks if selected."
+                  checked={form.compliance_backgroundCheckAgreement}
+                  onChange={(v) => set('compliance_backgroundCheckAgreement', v)}
+                  required
+                />
+                {errors.compliance_backgroundCheckAgreement && <span style={errTxt}>{errors.compliance_backgroundCheckAgreement}</span>}
+                <Checkbox
+                  label="I confirm all submitted information is true and accurate."
+                  checked={form.compliance_truthDeclaration}
+                  onChange={(v) => set('compliance_truthDeclaration', v)}
+                  required
+                />
+                {errors.compliance_truthDeclaration && <span style={errTxt}>{errors.compliance_truthDeclaration}</span>}
               </div>
             </div>
           </div>
@@ -1085,7 +1299,7 @@ export default function RealityTvShowApplicationWizard() {
 
           {/* Summary card */}
           <div style={{ ...section, marginBottom: 24 }}>
-            <p style={{ fontSize: 13, fontWeight: 700, color: c.textMid, margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Application Summary</p>
+            <p style={sectionTitle}>Application Summary</p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
               {[
                 ['Name', `${form.personal_firstName} ${form.personal_lastName}`.trim() || '—'],
@@ -1093,7 +1307,8 @@ export default function RealityTvShowApplicationWizard() {
                 ['State', form.personal_stateOfResidence || '—'],
                 ['Entry mode', form.contest_entryMode],
                 ['Talent', form.talent_primarySkill.join(', ') || '—'],
-                ['Experience', form.talent_experienceYears || '—'],
+                ['Experience', form.talent_experienceYears !== '' ? `${form.talent_experienceYears} yr(s)` : '—'],
+                ['Audition', form.audition_format || '—'],
               ].map(([k, v]) => (
                 <div key={k}>
                   <p style={{ fontSize: 11, color: c.textMuted, margin: 0, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{k}</p>
@@ -1107,11 +1322,14 @@ export default function RealityTvShowApplicationWizard() {
             {[
               { key: 'legal_accuracyDeclaration', text: 'I confirm that all information I have submitted is true, complete, and accurate.' },
               { key: 'legal_termsConsent', text: 'I agree to the official rules, terms, and eligibility requirements of the Spotlight Reality TV Show.' },
+              { key: 'legal_privacyConsent', text: 'I consent to my personal data being processed for registration and programme administration.' },
               { key: 'legal_mediaRelease', text: 'I grant Spotlight rights to record, broadcast, and use my participation for promotional purposes.' },
               { key: 'legal_publicVotingConsent', text: 'I understand my profile may be displayed publicly and may be subject to audience voting.' },
-              { key: 'legal_sponsorActivationConsent', text: 'I understand programme activities may involve sponsors and brand integrations.' },
               { key: 'legal_productionRulesConsent', text: 'I agree to abide by production guidelines, safety protocols, and the code of conduct.' },
-              { key: 'compliance_codeOfConductAgreement', text: 'I agree to Spotlight\'s code of conduct and understand that misconduct may lead to disqualification.' },
+              { key: 'legal_disqualificationAcknowledgment', text: 'I understand that misconduct or fraud may lead to disqualification.' },
+              { key: 'legal_ageGuardianConfirmation', text: 'I meet the age requirements, or I have valid parent/guardian consent.' },
+              { key: 'legal_communicationConsent', text: 'I agree to receive updates via email, SMS, WhatsApp, or in-app notifications.' },
+              { key: 'legal_sponsorActivationConsent', text: 'I understand programme activities may involve sponsors and brand integrations.' },
               { key: 'review_confirmSubmit', text: 'I have reviewed my application and I am ready to submit and make payment.' },
             ].map(({ key, text }) => (
               <div key={key}>
