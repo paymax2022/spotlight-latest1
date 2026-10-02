@@ -661,6 +661,13 @@ func (r *Repository) InsertTransaction(ctx context.Context, t *TransactionRow) (
 	return nil, false, fmt.Errorf("utilitybills: insert transaction: %w", err)
 }
 
+// ErrStatusGuard is returned by UpdateTransaction when the patch carries
+// GuardStatuses and the row's current status is outside the allowed set — a
+// concurrent writer (the stuck-recovery path, an admin reversal, or the other
+// plane) already settled it. Distinguished from ErrNotFound so the caller can
+// re-read and adopt the winner's state instead of overwriting it.
+var ErrStatusGuard = errors.New("utilitybills: status guard rejected update")
+
 // TransactionPatch is the settle-time update applied after the provider answers.
 // Only non-nil fields are written, so a patch can advance the status without
 // clobbering a token or provider reference an earlier step recorded.
@@ -676,6 +683,14 @@ type TransactionPatch struct {
 	// previously-failed transaction must not leave the old reason behind). Takes
 	// precedence over FailureReason.
 	ClearFailureReason bool
+	// GuardStatuses, when non-empty, restricts the update to rows whose status
+	// is in the set — a compare-and-swap so a settle write cannot resurrect a
+	// transaction that recovery or an admin already moved to a terminal state.
+	GuardStatuses []string
+	// GuardUpdatedAt, when set, additionally requires the row to still be at the
+	// observed updated_at version — the writer-versus-recovery CAS: a claim
+	// bumps updated_at, so a stale writer's settle write refuses to land.
+	GuardUpdatedAt *time.Time
 }
 
 // UpdateTransaction applies a partial patch and returns the updated row.
@@ -711,15 +726,92 @@ func (r *Repository) UpdateTransaction(ctx context.Context, id string, patch Tra
 		add("failure_reason", *patch.FailureReason)
 	}
 
-	args = append(args, id)
 	q := `UPDATE public.utility_transactions SET ` + strings.Join(sets, ", ") +
-		fmt.Sprintf(` WHERE id = $%d RETURNING `, len(args)) + transactionCols
+		fmt.Sprintf(` WHERE id = $%d`, len(args)+1)
+	args = append(args, id)
+	if len(patch.GuardStatuses) > 0 {
+		args = append(args, patch.GuardStatuses)
+		q += fmt.Sprintf(` AND status = ANY($%d)`, len(args))
+	}
+	if patch.GuardUpdatedAt != nil {
+		args = append(args, *patch.GuardUpdatedAt)
+		q += fmt.Sprintf(` AND updated_at = $%d`, len(args))
+	}
+	guarded := len(patch.GuardStatuses) > 0 || patch.GuardUpdatedAt != nil
+	q += ` RETURNING ` + transactionCols
 	t, err := scanTransaction(r.db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
+		if guarded {
+			return nil, fmt.Errorf("%w: utility transaction %s", ErrStatusGuard, id)
+		}
 		return nil, fmt.Errorf("%w: utility transaction %s", ErrNotFound, id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("utilitybills: update transaction: %w", err)
+	}
+	return t, nil
+}
+
+// LedgerEntryExists reports whether ANY ledger_entries row carries this exact
+// idempotency key. The stuck-recovery path (AUD-BILL-005) uses it to tell
+// whether a debit or compensation leg actually posted; the caller supplies the
+// full key list because the two writer planes suffix keys differently — the TS
+// journal writes the key verbatim, this module's ledger appends per-side
+// suffixes (:debit / :credit / :rev_debit / :rev_credit).
+func (r *Repository) LedgerEntryExists(ctx context.Context, key string) (bool, error) {
+	var exists bool
+	if err := r.db.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM public.ledger_entries WHERE idempotency_key = $1)`, key).
+		Scan(&exists); err != nil {
+		return false, fmt.Errorf("utilitybills: ledger entry probe: %w", err)
+	}
+	return exists, nil
+}
+
+// LedgerCreditByReferenceExists probes ledger_entries by REFERENCE rather than
+// idempotency key. The Paystack VALIDATION_REFUND leg is keyed on the intent id,
+// which the transaction row does not store — its presence is detectable only
+// through the payment reference the leg carries.
+func (r *Repository) LedgerCreditByReferenceExists(ctx context.Context, reference string) (bool, error) {
+	var exists bool
+	if err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM public.ledger_entries
+			WHERE reference = $1 AND type = 'CREDIT')`, reference).
+		Scan(&exists); err != nil {
+		return false, fmt.Errorf("utilitybills: ledger reference probe: %w", err)
+	}
+	return exists, nil
+}
+
+// adminSettleWindow is how long a just-'failed' row must age before an ADMIN
+// reversal may claim it. While a row is freshly failed its compensator
+// (recovery, the in-flight writer's auto-reverse) is likely still inside its
+// probe→post window — the window serialises admin compensation behind it
+// without a schema-level lock.
+const adminSettleWindow = time.Minute
+
+// ClaimForSettlement compare-and-swaps a transaction into a settle-in-progress
+// state: status flips to 'failed' (outside every other claim set, so a second
+// claimer — a racing sweep, replay, or admin — cannot enter the probe→post
+// window concurrently) and the row is returned with its fresh updated_at.
+// nil, nil means the row is not claimable: another writer moved it, or it is a
+// 'failed' row still inside the admin settle window.
+// Claimable statuses: the requery-eligible set, plus 'failed' rows older than
+// adminSettleWindow (whose compensator has long since finished or died).
+func (r *Repository) ClaimForSettlement(ctx context.Context, id string, seenUpdatedAt time.Time, reason string) (*TransactionRow, error) {
+	t, err := scanTransaction(r.db.QueryRow(ctx, `
+		UPDATE public.utility_transactions
+		SET status = 'failed', failure_reason = $3, updated_at = now()
+		WHERE id = $1 AND updated_at = $2
+		  AND (status IN ('initiated','wallet_debited','provider_pending')
+		       OR (status = 'failed' AND updated_at <= now() - $4::interval))
+		RETURNING `+transactionCols,
+		id, seenUpdatedAt, reason, fmt.Sprintf("%d seconds", int64(adminSettleWindow.Seconds()))))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("utilitybills: claim for settlement: %w", err)
 	}
 	return t, nil
 }

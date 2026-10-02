@@ -111,6 +111,25 @@ func TestLiveDB_SweepPending_RespectsLimitOldestFirst(t *testing.T) {
 	f := newFixture(t, 2, 4_000_000, false)
 	ctx := context.Background()
 
+	// The suite shares one DB across tests AND runs: rows other tests leave in
+	// the pending set are older than anything created here, so limit=1 would
+	// pick them and the oldest-first assertion would test leftovers, not
+	// ordering. Clear them — ListPending has no narrower filter to use.
+	if _, err := f.pool.Exec(ctx, `
+		UPDATE public.utility_transactions SET status = 'failed'
+		WHERE status IN ('initiated','wallet_debited','provider_pending')`); err != nil {
+		t.Fatalf("clear pending leftovers: %v", err)
+	}
+	// limit=1 deliberately strands one row — terminalize both so this test
+	// does not become the next run's stale leftover itself.
+	t.Cleanup(func() {
+		if _, err := f.pool.Exec(context.Background(), `
+			UPDATE public.utility_transactions SET status = 'failed'
+			WHERE status IN ('initiated','wallet_debited','provider_pending')`); err != nil {
+			t.Logf("cleanup pending rows: %v", err)
+		}
+	})
+
 	olderKey := "test-util-sweep-limit-older-" + uuid.New().String()
 	olderRes, err := f.pay(t, meterTimeout, 200_000, olderKey)
 	if err != nil {

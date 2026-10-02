@@ -68,7 +68,8 @@ func writeErr(c *gin.Context, err error) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "credentials_key_missing"})
 	case errors.Is(err, ErrCustomerValidationFailed):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "customer_validation_failed"})
-	case errors.Is(err, ErrNotEligibleForReversal):
+	case errors.Is(err, ErrNotEligibleForReversal),
+		errors.Is(err, ErrNotDisputable):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -217,13 +218,23 @@ func (h *Handler) Pay(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
+	// AUD-BILL-005: payment_source is NOT client input on this plane — the Go
+	// service has no Paystack verification step (verification lives in the
+	// Next.js intake, which is the only legitimate writer of 'paystack' rows).
+	// Accepting it would let a member buy a vend for free AND then have the
+	// stuck-recovery path "refund" a charge that never existed. metadata's
+	// payment_reference is scrubbed for the same reason — it is the handle the
+	// refund probe uses to detect an already-captured charge.
+	if body.Metadata != nil {
+		delete(body.Metadata, "payment_reference")
+	}
 	res, err := h.svc.PayUtility(c.Request.Context(), userID, PayInput{
 		Category:          body.Category,
 		BillerID:          body.BillerID,
 		ProductID:         body.ProductID,
 		CustomerReference: body.CustomerReference,
 		AmountKobo:        body.AmountKobo,
-		PaymentSource:     body.PaymentSource,
+		PaymentSource:     paymentSourceWallet,
 		Metadata:          body.Metadata,
 	}, ginutil.IdempotencyKey(c))
 	if err != nil {
