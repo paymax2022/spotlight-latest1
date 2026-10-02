@@ -1219,3 +1219,30 @@ delete or archive the non-authoritative targets.
 **5. JWT local validation (ADR-PR395)** — pick a revocation-staleness option;
 recommended (d): local HS256 verify + 60s-cached `platform_users.status` check.
 The 200-VU measurement above is the evidence that this is the capacity fix.
+## Live E2E — Connect paid vote via wallet (2026-10-02, `main` @ `f2b4bfda`)
+
+Exercised the full Connect paid-vote money path against the rebuilt local stack
+(backend :8090 on latest `main`, Supabase Postgres :54322 migrated through
+`20270329`, Redis :6380). Test fixture: user `6053f241-…510`, contest
+`88099e1c-…9c6` ("Best Emerging Actor 2025", `paid_vote_kobo` set 0→100 locally
+— all seed contests ship unpaid; documented as test-data setup, not a code
+change), contestant `d92451be` as `optionRef`.
+
+| Step | Result | Evidence |
+|------|--------|----------|
+| Wallet funding | PASS | `POST /api/v1/wallet/fund` +`Idempotency-Key` → 201, balance 0 → 50,000 kobo, balanced journal DR provider_clearing / CR user wallet. This is the real authed funding route — frontend-web's Paystack topup (`/api/v1/wallet/topup`) hardcodes `api.paystack.co` so the :9100 fake rails cannot intercept it; the provider-callback leg is UNVERIFIED locally (same blocker class as AUD-QA-001) |
+| Tier gate fail-closed | PASS | Paid vote as Tier 0 (`canSend:false`, daily limit 0) → **403 "transaction limit exceeded"** before any money moved |
+| Paid vote | PASS | Tier set 0→1 locally; `POST …/contests/:id/paid-vote` `{optionRef, quantity:2}` + `Idempotency-Key: e2e-paidvote-001` → **201**, vote `ab34c5d6`, `paid:true, quantity:2, amount_kobo:200` (100/unit priced server-side), `ledger_ref` set |
+| Wallet debit | PASS | Balance 50,000 → 49,800 — exactly `paid_vote_kobo × quantity` |
+| Ledger invariants | PASS | Two rows, same reference: `DEBIT 200` user wallet account + `CREDIT 200` revenue account; idempotency keys `e2e-paidvote-001:debit` / `:credit` — balanced double-entry, immutable |
+| Audit event | PASS | `connect.vote.paid` row in `connect_audit_log` for the vote id |
+| Idempotent replay | PASS | Identical request + same key → **409 "duplicate request"**, balance unchanged, still exactly 1 paid vote row (ledger unique constraint short-circuits at the debit, so `connect_votes` needs no separate idem unique) |
+| Insufficient funds | PASS | `quantity:1000` (100,000 kobo > 49,800) → **402 "insufficient wallet balance"**, balance untouched |
+| Tally | PASS | `GET …/results` → `paid_votes: 2` on the contestant (free_votes 2 from earlier run) |
+| Rate limiting | PASS | `X-RateLimit-Limit: 10` / `X-RateLimit-Remaining` headers on every paid-vote response; earlier burst test confirmed 10 handler passes then **429** — per-user Redis key, not ClientIP (PR #400) |
+
+**Boundary note:** this paid-vote design debits an already-funded wallet — no
+provider callback exists in this path, so "provider webhook during paid vote"
+does not apply to Connect. The provider-dependent legs remain frontend-web's
+Paystack topup and the `verifyAndCreditPaidVote` path (AUD-DB-002/FE-003
+residuals above).
