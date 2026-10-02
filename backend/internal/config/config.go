@@ -342,6 +342,12 @@ type Config struct {
 	// The endpoints are ADDITIONALLY guarded by a constant-time service-token check
 	// against LedgerServiceToken — never a user JWT.
 	FeatureInternalLedgerAPIEnabled bool
+	// Lets the Next.js gateway-fulfilment arm (Paystack webhook/recover) confirm a
+	// paid academy tuition instalment when the payer's client never reaches the
+	// member confirm route. DEFAULT OFF. Gates
+	// POST /internal/finance/academy/tuition/confirm — additionally guarded by the
+	// same RequireServiceToken check (LedgerServiceToken; empty ⇒ fail-closed 503).
+	FeatureInternalAcademyAPIEnabled bool
 	// Shared Bearer service token authenticating the trading service to the internal
 	// ledger API. Server-side ONLY; NEVER shipped to a client and NEVER a user JWT.
 	// Empty ⇒ the internal ledger endpoints fail closed (503), even when the flag is on.
@@ -785,6 +791,7 @@ func Load() Config {
 		CACVASApiKey:                             getEnv("CAC_VAS_API_KEY", ""),
 		CACVASConsumerSecret:                     getEnv("CAC_VAS_CONSUMER_SECRET", ""),
 		FeatureInternalLedgerAPIEnabled:          getEnvBool("FEATURE_INTERNAL_LEDGER_API_ENABLED", false),
+		FeatureInternalAcademyAPIEnabled:         getEnvBool("FEATURE_INTERNAL_ACADEMY_API_ENABLED", false),
 		LedgerServiceToken:                       getEnv("LEDGER_SERVICE_TOKEN", ""),
 		FeatureLearnEnabled:                      getEnvBool("FEATURE_LEARN_ENABLED", false),
 		FeatureInvestaiEnabled:                   getEnvBool("FEATURE_INVESTAI_ENABLED", false),

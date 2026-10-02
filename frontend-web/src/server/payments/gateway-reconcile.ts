@@ -116,6 +116,7 @@ export async function sweepGatewayIntents(
         reference,
         verified.amountKobo,
         targets,
+        verified.metadata,
       );
       if (outcome.error) {
         result.failed.push({ reference, error: outcome.error });

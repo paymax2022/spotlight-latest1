@@ -109,7 +109,7 @@ func (g academyApprovalGate) Authorize(ctx context.Context, userID, orderID stri
 // Admin base (RBAC per-route via guard):
 //   - identity/curriculum/commerce embed "/academy" → base = /api.
 //   - gamification/rewards/assessment/exam → base = /api/academy/admin.
-func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, ledgerSvc *ledger.Service, rtcIssuer *rtc.Issuer, bnplRail commerce.BNPLRail, disburseRail edupay.DisburseRail, billingRail schools.BillingRail, payoutRail tutor.PayoutRail, paymentProvider providerInterfaces.PaymentProvider, examEnabled, spineEnabled, eduPayEnabled, credentialsEnabled, liveEnabled, schoolsEnabled, tutorEnabled, feesEnabled, tuitionEnabled bool, webhookHandler *webhooks.PaystackHandler) {
+func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, ledgerSvc *ledger.Service, rtcIssuer *rtc.Issuer, bnplRail commerce.BNPLRail, disburseRail edupay.DisburseRail, billingRail schools.BillingRail, payoutRail tutor.PayoutRail, paymentProvider providerInterfaces.PaymentProvider, examEnabled, spineEnabled, eduPayEnabled, credentialsEnabled, liveEnabled, schoolsEnabled, tutorEnabled, feesEnabled, tuitionEnabled bool, webhookHandler *webhooks.PaystackHandler, internalAcademyAPIEnabled bool, serviceToken string) {
 	if pool == nil {
 		return
 	}
@@ -276,6 +276,16 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 		tuitionGroup.POST("/confirm", tuitionHandler.ConfirmPayment)
 		tuitionGroup.POST("/validate", tuitionHandler.ValidatePayment)
 		tuitionGroup.GET("/status/:application_id", tuitionHandler.GetTuitionStatus)
+
+		// Internal, service-authenticated confirm — lets the Next.js Paystack
+		// webhook/recover fulfilment arm settle an instalment when the payer's
+		// client never reaches the member route (AUD-FE-003 residual). Never a
+		// user JWT: RequireServiceToken fails closed (503) when the token is unset.
+		if internalAcademyAPIEnabled {
+			internalTuition := r.Group("/internal/finance/academy/tuition")
+			internalTuition.Use(middleware.RequireServiceToken(serviceToken))
+			internalTuition.POST("/confirm", tuitionHandler.ConfirmPaymentInternal)
+		}
 
 		// Admin routes: waive an installment, force-complete a plan, or create a plan
 		// ahead of first payment. Every mutation is RBAC-gated on academy.tuition.admin.
