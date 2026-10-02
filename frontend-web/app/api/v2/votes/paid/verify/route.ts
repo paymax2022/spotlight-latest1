@@ -7,9 +7,22 @@ import { NextRequest, NextResponse } from 'next/server';
 import { bridgedVerifyPaidVote } from '@/server/voting-bridge/bridge';
 import { validateRequest } from '@/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
+import { checkRateLimit } from '@/src/lib/voting/rate-limit';
+import { getRequestIp } from '@/src/lib/rate-limit/client-ip';
 
 export async function POST(request: NextRequest) {
   try {
+    // 30/min/IP — mirrors vote:free. The vote-callback page polls this route
+    // while Paystack settles, so it needs headroom; the limit exists to stop
+    // payment_reference enumeration, not to squeeze legitimate retries.
+    const rl = checkRateLimit(`vote:paid:verify:${getRequestIp(request)}`, 30, 60_000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests. Please slow down.' },
+        { status: 429 }
+      );
+    }
+
     const { user, error: authError } = await validateRequest(request);
 
     const body = await request.json();
