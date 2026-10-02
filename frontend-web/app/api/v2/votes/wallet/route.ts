@@ -1,7 +1,7 @@
-import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
+import { ApiError, errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { isBridgeEnabled } from '@/src/server/voting-bridge/feature-flag';
-import { checkAndClaimIdempotencyKey, releaseIdempotencyKey, storeIdempotencyResult } from '@/src/server/voting-bridge/idempotency';
+import { boundClaimKey, checkAndClaimIdempotencyKey, releaseIdempotencyKey, storeIdempotencyResult } from '@/src/server/voting-bridge/idempotency';
 import { assertKycTier } from '@/src/server/voting-bridge/kyc-gate';
 import { enqueueOutboxEvent } from '@/src/server/voting-bridge/outbox';
 import { priceWalletVote } from '@/src/server/voting-bridge/wallet-pricing';
@@ -30,7 +30,12 @@ async function goVoteDebit(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `wallet debit failed: ${res.status}`);
+    // Keep the Go status — a 409 is the spent-key signal (debit reversed), and
+    // flattening it to 500 would tell the client to retry a refunded purchase.
+    throw new ApiError(
+      (body as { error?: string }).error ?? `wallet debit failed: ${res.status}`,
+      res.status,
+    );
   }
 }
 
@@ -96,8 +101,18 @@ export async function POST(request: Request) {
       return errorResponse(`costKobo does not match the server-quoted price (${quote.costKobo})`, 400);
     }
 
-    const cacheKey = `wallet-vote:${idempotencyKey as string}`;
-    const cached = await checkAndClaimIdempotencyKey(cacheKey);
+    // The raw client key is unscoped — user A's key reused by user B (or the
+    // same user with a different contest/contestant/amount) must not share a
+    // claim, cached result, ledger idempotency row, or transaction record.
+    // The bound key is the ONE key all four stores see, so a replay dedupes
+    // only the exact operation it describes.
+    const boundKey = boundClaimKey('wallet-vote', user.id, idempotencyKey as string, {
+      contestId: contestId as string,
+      contestantId: contestantId as string,
+      voteCount: quote.voteCount,
+      costKobo: quote.costKobo,
+    });
+    const cached = await checkAndClaimIdempotencyKey(boundKey);
     if (cached) return successResponse(cached as Record<string, unknown>);
 
     const authHeader = request.headers.get('Authorization') ?? '';
@@ -113,12 +128,12 @@ export async function POST(request: Request) {
         contestantId as string,
         quote.voteCount,
         quote.costKobo,
-        idempotencyKey as string,
+        boundKey,
       );
     } catch (debitErr) {
       // No money moved (or an idempotent no-op failed) — release the claim so
       // the same key can be retried after the user tops up / fixes the cause.
-      await releaseIdempotencyKey(cacheKey);
+      await releaseIdempotencyKey(boundKey);
       throw debitErr;
     }
 
@@ -134,7 +149,7 @@ export async function POST(request: Request) {
         voterEmail: user.email,
         voteCount: quote.voteCount,
         costKobo: quote.costKobo,
-        idempotencyKey: idempotencyKey as string,
+        idempotencyKey: boundKey,
         ip,
         userAgent: ua,
       });
@@ -142,21 +157,22 @@ export async function POST(request: Request) {
       // The debit is committed — compensate. Reversal is idempotent and uses
       // the ledger-recorded amount; if it fails, the outbox event gives
       // reconciliation a handle (charge held, transaction row flagged).
-      const reversed = await goVoteReverse(token, contestId as string, contestantId as string, idempotencyKey as string)
+      const reversed = await goVoteReverse(token, contestId as string, contestantId as string, boundKey)
         .then(() => true)
         .catch(() => false);
       if (reversed) {
-        await markVotePurchaseReversed(idempotencyKey as string).catch(() => {});
+        await markVotePurchaseReversed(boundKey).catch(() => {});
       } else {
         await enqueueOutboxEvent('votes.wallet.reversal_failed', {
-          idempotencyKey,
+          idempotencyKey: boundKey,
+          clientIdempotencyKey: idempotencyKey,
           contestId,
           contestantId,
           voterId: user.id,
           costKobo: quote.costKobo,
         }).catch(() => {});
       }
-      await releaseIdempotencyKey(cacheKey);
+      await releaseIdempotencyKey(boundKey);
       throw creditErr;
     }
 
@@ -167,7 +183,7 @@ export async function POST(request: Request) {
       votesAdded: result.votesCredited,
       costKobo: quote.costKobo,
     };
-    await storeIdempotencyResult(cacheKey, response);
+    await storeIdempotencyResult(boundKey, response);
     await enqueueOutboxEvent('votes.wallet.cast', {
       contestId,
       contestantId,
