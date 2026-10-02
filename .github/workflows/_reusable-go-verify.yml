@@ -68,7 +68,7 @@ jobs:
       RAILS_MODE: fake # FAKEs only — no external provider secrets in CI
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ inputs.go-version }}
           cache-dependency-path: backend/go.sum

@@ -60,7 +60,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: 'backend/go.mod'  # pin follows go.mod — manual pins have drifted below it before
           cache: true
