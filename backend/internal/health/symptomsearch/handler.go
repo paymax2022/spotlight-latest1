@@ -361,19 +361,57 @@ type searchBucket struct {
 	windowStart time.Time
 }
 
+// searchLimiterMaxKeys bounds the in-memory fallback store. The key is
+// user_id|deviceHash and the device half derives from the caller-set
+// X-Device-Id header, so a single authenticated user rotating device IDs could
+// grow the map without limit while Redis is absent (AUD-BE-004 / PERF-002
+// residual class). The cap stops the memory growth; note it does NOT close the
+// per-user bypass — rotating device IDs still mints fresh buckets, and the
+// Redis path shares that keying. A real fix needs a second-level per-user
+// ceiling.
+const searchLimiterMaxKeys = 50_000
+
 type searchLimiter struct {
-	mu     sync.Mutex
-	store  map[string]*searchBucket
-	limit  int
-	window time.Duration
+	mu        sync.Mutex
+	store     map[string]*searchBucket
+	limit     int
+	window    time.Duration
+	maxKeys   int // <=0 falls back to searchLimiterMaxKeys
+	lastSweep time.Time
 }
 
 func (l *searchLimiter) allow(key string) (int, bool) {
 	now := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	maxKeys := l.maxKeys
+	if maxKeys <= 0 {
+		maxKeys = searchLimiterMaxKeys
+	}
+	// Sweep stale buckets at most once per window — an O(len) scan per request
+	// against a large map would itself be a CPU amplifier.
+	if now.Sub(l.lastSweep) >= l.window {
+		for k, b := range l.store {
+			if now.Sub(b.windowStart) >= l.window {
+				delete(l.store, k)
+			}
+		}
+		l.lastSweep = now
+	}
 	b, ok := l.store[key]
 	if !ok || now.Sub(b.windowStart) >= l.window {
+		if !ok && len(l.store) >= maxKeys {
+			// At capacity with a fresh key: drop a batch of arbitrary entries
+			// (partial map range is O(batch)) rather than refusing the request
+			// — bounding memory beats perfect accuracy during a flood.
+			i := 0
+			for k := range l.store {
+				delete(l.store, k)
+				if i++; i >= max(maxKeys/10, 1) {
+					break
+				}
+			}
+		}
 		b = &searchBucket{windowStart: now}
 		l.store[key] = b
 	}

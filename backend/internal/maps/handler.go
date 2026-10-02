@@ -507,19 +507,53 @@ type memBucket struct {
 	windowStart time.Time
 }
 
+// memLimiterMaxKeys bounds the fallback store. Keys are authenticated user
+// IDs, so cardinality is naturally limited — but nothing evicted, so one-shot
+// users accumulated forever. A hard cap plus a periodic sweep keeps the
+// fallback bounded like its Redis counterpart (AUD-PERF-002 residual).
+const memLimiterMaxKeys = 50_000
+
 type memLimiter struct {
-	mu     sync.Mutex
-	store  map[string]*memBucket
-	limit  int
-	window time.Duration
+	mu        sync.Mutex
+	store     map[string]*memBucket
+	limit     int
+	window    time.Duration
+	maxKeys   int // <=0 falls back to memLimiterMaxKeys
+	lastSweep time.Time
 }
 
 func (m *memLimiter) allow(uid string) (int, bool) {
 	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	maxKeys := m.maxKeys
+	if maxKeys <= 0 {
+		maxKeys = memLimiterMaxKeys
+	}
+	// Sweep stale buckets at most once per window — an O(len) scan per request
+	// against a large map would itself be a CPU amplifier.
+	if now.Sub(m.lastSweep) >= m.window {
+		for k, b := range m.store {
+			if now.Sub(b.windowStart) >= m.window {
+				delete(m.store, k)
+			}
+		}
+		m.lastSweep = now
+	}
 	b, ok := m.store[uid]
 	if !ok || now.Sub(b.windowStart) >= m.window {
+		if !ok && len(m.store) >= maxKeys {
+			// At capacity with a fresh key: drop a batch of arbitrary entries
+			// (partial map range is O(batch)) rather than refusing the request
+			// — bounding memory beats perfect accuracy during a flood.
+			i := 0
+			for k := range m.store {
+				delete(m.store, k)
+				if i++; i >= max(maxKeys/10, 1) {
+					break
+				}
+			}
+		}
 		b = &memBucket{windowStart: now}
 		m.store[uid] = b
 	}
