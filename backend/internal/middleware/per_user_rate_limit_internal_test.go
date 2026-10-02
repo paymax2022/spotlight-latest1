@@ -45,3 +45,20 @@ func TestMemLimiterBoundedUnderKeyFlood(t *testing.T) {
 		t.Fatal("post-flood call should still pass")
 	}
 }
+
+// Stale buckets must be swept — one-shot users otherwise accumulate in the
+// fallback store forever. This assertion lived in internal/maps while the
+// limiter was inline there (#412) and was dropped when the merge delegated to
+// this shared limiter; restored here so the coverage survives the move.
+func TestMemLimiterSweepsStaleBuckets(t *testing.T) {
+	l := &memLimiter{store: map[string]*memBucket{}, limit: 2, window: time.Minute}
+	l.store["stale"] = &memBucket{count: 1, windowStart: time.Now().Add(-2 * time.Minute)}
+	l.lastSweep = time.Now().Add(-2 * memLimitSweepInterval)
+
+	if _, ok := l.allow("fresh"); !ok {
+		t.Fatal("new key should pass")
+	}
+	if got := len(l.store); got != 1 {
+		t.Fatalf("stale bucket survived the sweep: size = %d, want 1", got)
+	}
+}
