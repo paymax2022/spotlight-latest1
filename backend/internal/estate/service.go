@@ -1457,10 +1457,15 @@ func (s *Service) ReviewTenancyRequest(ctx context.Context, requestID, landlordI
 			`SELECT estate_id FROM estate_properties WHERE id=$1`, tr.PropertyID,
 		).Scan(&estateIDForProp)
 		if estateIDForProp != "" {
+			// estate_residents.role CHECK allows only 'resident'/'estate_admin';
+			// an approved tenant is admitted as a 'resident' (the tenant/owner
+			// distinction lives in resident_profiles.occupancy_type). 'tenant'
+			// here violated the CHECK, so the insert always failed and — the error
+			// being discarded — the approved tenant was never admitted.
 			_, _ = s.db.Exec(ctx,
 				`INSERT INTO estate_residents (id, estate_id, user_id, unit, role)
-				 VALUES ($1,$2,$3,'','tenant')
-				 ON CONFLICT (estate_id, user_id) DO UPDATE SET role='tenant'`,
+				 VALUES ($1,$2,$3,'','resident')
+				 ON CONFLICT (estate_id, user_id) DO UPDATE SET role='resident'`,
 				uuid.New().String(), estateIDForProp, tr.TenantID,
 			)
 		}
