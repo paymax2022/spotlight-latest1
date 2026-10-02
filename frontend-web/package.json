@@ -50,7 +50,7 @@
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.6.1",
     "eslint": "^8.57.1",
-    "eslint-config-next": "^14.2.35",
+    "eslint-config-next": "^16.3.7",
     "typescript": "7.0.2",
     "vitest": "^4.1.6"
   },
