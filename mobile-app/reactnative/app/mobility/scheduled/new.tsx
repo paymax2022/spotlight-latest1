@@ -74,7 +74,7 @@ export default function ScheduleNewTripScreen() {
 
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Pickup/dropoff — reuse the shared AddressEntry flow (via destination.tsx)
+  // Pickup/dropoff — reuse the shared address picker (via destination.tsx)
   // exactly like the mobility home planner: values round-trip through URL params.
   const pickup: ScheduledPlace = useMemo(
     () => (params.pickupAddress

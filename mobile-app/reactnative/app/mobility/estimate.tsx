@@ -15,7 +15,8 @@ import ServiceTypeCard from '@/features/mobility/components/ServiceTypeCard';
 import FareOfferSheet from '@/features/mobility/components/FareOfferSheet';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { errKind } from '@/features/mobility/utils/errKind';
-import AddressEntry, { type ConfirmedAddress } from '@/features/mobility/components/AddressEntry';
+import type { SelectedAddress } from '@/components/AddressAutocompleteInput';
+import AddressField from '@/features/mobility/components/AddressField';
 import { useRideEstimate, useRideRequest, useRideSettings } from '@/features/mobility/hooks/useMobility';
 import * as mobAPI from '@/features/mobility/api/mobility.api';
 import { useCurrentLocation } from '@/features/location/useCurrentLocation';
@@ -145,15 +146,15 @@ export default function EstimateScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const onPickupConfirmed = useCallback((addr: ConfirmedAddress) => {
-    setPickup({ address: addr.addressLabel, lat: addr.lat, lng: addr.lng, label: 'Pickup' });
+  const onPickupConfirmed = useCallback((addr: SelectedAddress) => {
+    setPickup({ address: addr.label, lat: addr.lat, lng: addr.lng, label: 'Pickup' });
     setPickupResolved(true);
     setPickupIsManual(true); // rider stated this pickup — not GPS
     setEditingPickup(false);
   }, []);
 
-  const onDestConfirmed = useCallback((addr: ConfirmedAddress) => {
-    setDest({ address: addr.addressLabel, lat: addr.lat, lng: addr.lng });
+  const onDestConfirmed = useCallback((addr: SelectedAddress) => {
+    setDest({ address: addr.label, lat: addr.lat, lng: addr.lng });
     setEditingDest(false);
   }, []);
 
@@ -480,17 +481,18 @@ export default function EstimateScreen() {
             </Pressable>
           </View>
           <ScrollView contentContainerStyle={styles.modalScroll} keyboardShouldPersistTaps="handled">
-            <AddressEntry
-              surface="checkout"
-              initialCenter={{ lat: pickup.lat, lng: pickup.lng }}
-              initialQuery={pickupResolved ? pickup.address : ''}
-              onConfirmed={onPickupConfirmed}
+            <AddressField
+              initial={pickupResolved ? pickup.address : ''}
+              near={{ lat: pickup.lat, lng: pickup.lng }}
+              placeholder="Enter pickup address"
+              onSelect={onPickupConfirmed}
+              currentLocation
             />
           </ScrollView>
         </SafeAreaView>
       </Modal>
 
-      {/* Edit destination: same autocomplete + confirm-on-map pin. */}
+      {/* Edit destination: same autocomplete. */}
       <Modal visible={editingDest} animationType="slide" onRequestClose={() => setEditingDest(false)}>
         <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
           <View style={styles.modalHeader}>
@@ -500,11 +502,11 @@ export default function EstimateScreen() {
             </Pressable>
           </View>
           <ScrollView contentContainerStyle={styles.modalScroll} keyboardShouldPersistTaps="handled">
-            <AddressEntry
-              surface="checkout"
-              initialCenter={{ lat: dest.lat, lng: dest.lng }}
-              initialQuery={dest.address}
-              onConfirmed={onDestConfirmed}
+            <AddressField
+              initial={dest.address}
+              near={{ lat: dest.lat, lng: dest.lng }}
+              placeholder="Enter destination"
+              onSelect={onDestConfirmed}
             />
           </ScrollView>
         </SafeAreaView>
