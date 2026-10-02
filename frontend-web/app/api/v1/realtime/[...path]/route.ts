@@ -1,5 +1,6 @@
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { GO_BACKEND_URL } from '@/src/lib/go-backend';
+import { clientIpHeaders } from '@/src/lib/rate-limit/client-ip';
 import { handleApiError } from '@/src/lib/api/responses';
 
 // The catch-all at app/api/v1/[...path]/route.ts forwards via proxyToGoBackend,
@@ -25,7 +26,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ path: strin
     const url = new URL(request.url);
     const targetUrl = `${GO_BACKEND_URL}/api/v1/realtime/${sub}${url.search}`;
 
-    const headers: Record<string, string> = { Accept: 'text/event-stream' };
+    const headers: Record<string, string> = {
+      Accept: 'text/event-stream',
+      ...clientIpHeaders(request),
+    };
     const auth =
       request.headers.get('Authorization') || request.headers.get('authorization');
     if (auth) headers.Authorization = auth;

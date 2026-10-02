@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     const go = await callGo('/api/auth/otp/request', {
       email: String(email).trim().toLowerCase(),
       purpose: 'verify_email',
-    });
+    }, request);
 
     if (go.kind === 'answered') {
       if (go.status >= 400) {
