@@ -66,6 +66,7 @@ describe('sweepGatewayIntents', () => {
     vi.mocked(verifyPaystackPayment).mockResolvedValue({
       success: true,
       amountKobo: 350_000,
+      metadata: { purpose: 'paymax_gateway', custom_fields: [] },
     } as never);
   });
 
@@ -79,10 +80,13 @@ describe('sweepGatewayIntents', () => {
     expect(result.fulfilled).toEqual(['open_mic_vote', 'open_mic_vote', 'open_mic_vote']);
     for (const ref of ['vote-tx-1', 'reg-1', 'om-1']) {
       expect(verifyPaystackPayment).toHaveBeenCalledWith(ref);
+      // Verified metadata rides along so metadata-resolved arms (academy
+      // tuition instalments) can fulfil without a persisted reference.
       expect(fulfilVerifiedGatewayCharge).toHaveBeenCalledWith(
         ref,
         350_000,
         expect.objectContaining({ openmicIntent: expect.objectContaining({ status: 'pending' }) }),
+        expect.objectContaining({ purpose: 'paymax_gateway' }),
       );
     }
   });

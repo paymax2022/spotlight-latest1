@@ -109,6 +109,38 @@ func (h *Handler) ConfirmPayment(c *gin.Context) {
 	})
 }
 
+// ConfirmPaymentInternal handles POST /internal/finance/academy/tuition/confirm.
+// The route is service-token authenticated upstream (middleware.RequireServiceToken),
+// so no user JWT exists — the payer is resolved from the payment row by the
+// service. The Idempotency-Key header is optional here: when absent the key is
+// derived as `academy-tuition-confirm:{paymentId}:{reference}`, identical to the
+// derivation the Next.js confirm route applies, so a webhook/recover fulfilment
+// and a late client retry collapse onto ONE logical operation (redis claim →
+// 409 idempotency_collision → the caller treats it as already-in-flight).
+func (h *Handler) ConfirmPaymentInternal(c *gin.Context) {
+	var req ConfirmPaymentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	idempKey := ginutil.IdempotencyKey(c)
+	if idempKey == "" {
+		idempKey = "academy-tuition-confirm:" + req.PaymentID + ":" + req.Reference
+	}
+
+	result, err := h.svc.ConfirmPaymentInternal(c.Request.Context(), idempKey, req.PlanID, req.PaymentID, req.Reference)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    result,
+	})
+}
+
 // ValidatePayment handles POST /api/finance/academy/tuition/validate (quote endpoint).
 func (h *Handler) ValidatePayment(c *gin.Context) {
 	userID, err := requireUserID(c)

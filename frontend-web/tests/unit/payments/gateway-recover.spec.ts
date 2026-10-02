@@ -30,7 +30,11 @@ vi.mock('@/src/lib/voting/rate-limit', () => ({
 }));
 
 vi.mock('@/src/server/voting/payment/paystack', () => ({
-  verifyPaystackPayment: vi.fn(async () => ({ success: true, amountKobo: 250_000 })),
+  verifyPaystackPayment: vi.fn(async () => ({
+    success: true,
+    amountKobo: 250_000,
+    metadata: { purpose: 'paymax_gateway', custom_fields: [] },
+  })),
 }));
 
 vi.mock('@/src/server/payments/gateway-fulfil', () => ({
@@ -74,6 +78,9 @@ describe('POST /api/v1/payments/gateway/recover', () => {
       'PAY_gw_1',
       250_000,
       expect.objectContaining({ registrationIntent: expect.objectContaining({ id: 'intent-1' }) }),
+      // Verified Paystack metadata is forwarded for metadata-resolved arms
+      // (academy tuition instalments resolve their pending row from it).
+      expect.objectContaining({ purpose: 'paymax_gateway' }),
     );
     expect(body.fulfilled).toEqual(['registration_fee']);
   });

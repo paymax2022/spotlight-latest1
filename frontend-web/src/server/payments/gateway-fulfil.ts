@@ -16,11 +16,13 @@
  * initiated → completed once. A caller-side retry or a webhook replay is a
  * no-op, which is what makes webhook + recover safe to race.
  *
+ * Academy tuition instalments ARE fulfilled here via the service-token-gated
+ * internal confirm endpoint (POST /internal/finance/academy/tuition/confirm):
+ * the pending instalment row is resolved from the verified charge's metadata
+ * custom_fields (plan_id + installment_number) — it stores no reference until
+ * paid — and Go re-runs the hardened confirm path end to end.
+ *
  * Domains that CANNOT be fulfilled here (and why):
- *   - Academy tuition instalments — confirmation is proxied to the Go backend
- *     (/api/finance/academy/tuition/confirm) which expects the caller's JWT;
- *     no service-auth path exists for a webhook/recover context. The mobile
- *     client confirm call remains the trigger.
  *   - Academy application fee — the academy_applications row does not exist
  *     until the client submits it (the reference is attached at submit), so
  *     there is nothing to look up at payment time.
@@ -43,6 +45,7 @@ import {
   type OpenMicVoteIntent,
 } from '@/src/server/payments/openmic-vote-intents';
 import { castVote } from '@/src/server/openmic/persistence';
+import { fulfilAcademyInstallment } from '@/src/server/payments/academy-tuition-fulfil';
 
 export interface VoteTransactionTarget {
   id: string;
@@ -111,6 +114,7 @@ export async function fulfilVerifiedGatewayCharge(
   reference: string,
   verifiedAmountKobo: number,
   targets: GatewayFulfilmentTargets,
+  verifiedMetadata?: Record<string, unknown> | null,
 ): Promise<GatewayFulfilmentResult> {
   const fulfilled: string[] = [];
 
@@ -205,6 +209,19 @@ export async function fulfilVerifiedGatewayCharge(
       await markOpenMicVoteIntent(reference, 'confirmed');
       fulfilled.push('open_mic_vote');
     }
+  }
+
+  // ── Academy tuition instalment ────────────────────────────────────────────
+  // The pending row carries no reference until paid, so resolution runs off the
+  // VERIFIED charge's metadata (custom_fields plan_id + installment_number —
+  // provider-authoritative, never the client's claim). Go re-verifies the
+  // charge itself, so underpayment/currency mismatch still fails closed there.
+  try {
+    const outcome = await fulfilAcademyInstallment(reference, verifiedMetadata);
+    if (outcome === 'fulfilled') fulfilled.push('academy_tuition');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { fulfilled, error: message };
   }
 
   return { fulfilled };
