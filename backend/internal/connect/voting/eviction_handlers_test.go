@@ -221,7 +221,7 @@ func TestRouteRegistration(t *testing.T) {
 			}
 		}()
 		cfg := config.Config{FeatureContestStageEvictionEnabled: true}
-		Register(router, mockSvc, cfg)
+		Register(router, mockSvc, cfg, nil)
 		t.Log("✓ Register() executed without panic")
 	})
 
@@ -308,7 +308,7 @@ func TestEvictionMutationsAreNotOnMemberRouter(t *testing.T) {
 	r := gin.New()
 	member := r.Group("")
 
-	Register(member, &Service{}, config.Config{FeatureContestStageEvictionEnabled: true})
+	Register(member, &Service{}, config.Config{FeatureContestStageEvictionEnabled: true}, nil)
 
 	forbidden := []struct{ method, path string }{
 		{"POST", "/contests/:id/stages/:stageNum/evict"},

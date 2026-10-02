@@ -46,6 +46,7 @@ import (
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/loyalty"
 	"spotlight/backend/internal/middleware"
+	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/points"
 	"spotlight/backend/internal/services"
 	"strconv"
@@ -58,7 +59,7 @@ import (
 // Gated behind FeatureConnectEnabled; skipped entirely if DATABASE_URL is unset.
 // Reuses the existing auth + RBAC middleware and the pgx pool. See
 // docs/prd/dating/{architecture.md, PHASE-0-PLAN.md §P0-B}.
-func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool) {
+func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool, redisClient *platformRedis.Client) {
 	if !cfg.FeatureConnectEnabled {
 		log.Println("[connect] FEATURE_CONNECT_ENABLED is off — skipping Connect routes")
 		return
@@ -130,8 +131,8 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	registerConnectGrowthRoutes(member, adminCg, pool, rbac)       // professional, events, creator, monetization
 	registerConnectNetworkRoutes(member, adminCg, cfg, pool, rbac) // Phase 6 networking: jobs/feed/profile/assessments/mentorship under /networking
 
-	RegisterConnectMoney(member, adminCg, cg, cfg, pool, rbac) // gifting (wallet→wallet), paid voting, AML/NFIU, payouts
-	RegisterConnectLiveGame(member, adminCg, pool, rbac)       // live streaming sessions/co-host/PK + gamification (non-cash)
+	RegisterConnectMoney(member, adminCg, cg, cfg, pool, rbac, redisClient) // gifting (wallet→wallet), paid voting, AML/NFIU, payouts
+	RegisterConnectLiveGame(member, adminCg, pool, rbac)                    // live streaming sessions/co-host/PK + gamification (non-cash)
 
 	log.Println("[connect] routes registered — config + safety + phases 1–6 + money + live/game live")
 }
@@ -783,7 +784,7 @@ func connectConfigString(pool *pgxpool.Pool, key, def string) string {
 // and no balance column is ever written.
 // The orchestrator (connect_routes.go) calls this; this file is the only one the
 // orchestrator wires in. It edits no existing file.
-func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, public *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, public *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService, redisClient *platformRedis.Client) {
 	if pool == nil {
 		log.Println("[connect-money] nil pool — skipping Connect money routes")
 		return
@@ -830,7 +831,7 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, publi
 		voteSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 		log.Println("[connect-money] commission recording wired → Contest/Voting (earning-row only; no ledger re-post)")
 	}
-	connectvoting.Register(member, voteSvc, cfg)
+	connectvoting.Register(member, voteSvc, cfg, redisClient)
 	connectvoting.RegisterPublic(public, voteSvc, cfg)
 	// Contest expiry loop — closes contests past their voting deadline so a
 	// finished contest stops advertising itself as LIVE on the phone and in the

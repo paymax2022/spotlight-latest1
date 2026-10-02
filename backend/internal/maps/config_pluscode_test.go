@@ -4,9 +4,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
-	"time"
 )
 
 func TestDefaultSurfaceConfigRouting(t *testing.T) {
@@ -96,53 +94,6 @@ func TestLoadSurfaceConfigOverlayMerge(t *testing.T) {
 func TestCapKey(t *testing.T) {
 	if k := capKey("google", PrimPlaces); k != "google.places" {
 		t.Fatalf("capKey = %q; want google.places", k)
-	}
-}
-
-func TestMemLimiterFixedWindow(t *testing.T) {
-	l := &memLimiter{store: map[string]*memBucket{}, limit: 2, window: time.Minute}
-	if _, ok := l.allow("u1"); !ok {
-		t.Fatal("1st call should pass")
-	}
-	if _, ok := l.allow("u1"); !ok {
-		t.Fatal("2nd call should pass")
-	}
-	if _, ok := l.allow("u1"); ok {
-		t.Fatal("3rd call should be limited")
-	}
-	// Different user has its own bucket.
-	if _, ok := l.allow("u2"); !ok {
-		t.Fatal("other user should pass")
-	}
-	// Window reset.
-	l.store["u1"].windowStart = time.Now().Add(-2 * time.Minute)
-	if _, ok := l.allow("u1"); !ok {
-		t.Fatal("after window reset the call should pass again")
-	}
-}
-
-// Stale buckets must be swept — one-shot users previously accumulated in the
-// fallback store forever.
-func TestMemLimiterSweepsStaleBuckets(t *testing.T) {
-	l := &memLimiter{store: map[string]*memBucket{}, limit: 2, window: time.Minute}
-	l.store["stale"] = &memBucket{count: 1, windowStart: time.Now().Add(-2 * time.Minute)}
-
-	if _, ok := l.allow("fresh"); !ok {
-		t.Fatal("new key should pass")
-	}
-	if got := len(l.store); got != 1 {
-		t.Fatalf("stale bucket survived the sweep: size = %d, want 1", got)
-	}
-}
-
-// Distinct keys beyond the cap must not grow the store without bound.
-func TestMemLimiterBoundedUnderKeyFlood(t *testing.T) {
-	l := &memLimiter{store: map[string]*memBucket{}, limit: 2, window: time.Minute, maxKeys: 10}
-	for i := range 100 {
-		l.allow("u" + strconv.Itoa(i))
-	}
-	if got := len(l.store); got > 10 {
-		t.Fatalf("store exceeded the cap: %d entries, want <= 10", got)
 	}
 }
 

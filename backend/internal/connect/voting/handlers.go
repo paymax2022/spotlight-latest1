@@ -9,6 +9,8 @@ import (
 
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/config"
+	"spotlight/backend/internal/middleware"
+	platformRedis "spotlight/backend/internal/platform/redis"
 
 	"github.com/gin-gonic/gin"
 )
@@ -298,12 +300,20 @@ func RegisterPublic(public gin.IRouter, svc *Service, cfg config.Config) {
 type PermissionGuard func(permission string) gin.HandlerFunc
 
 // Register wires the voting routes onto the auth-gated member group.
-func Register(member gin.IRouter, svc *Service, cfg config.Config) {
+// The vote mutations carry a per-user rate limit (middleware.PerUserRateLimit)
+// keyed on the authenticated user_id — Redis-backed when a client is supplied,
+// per-replica in-memory otherwise. The paid-vote limit doubles as a secondary
+// guard on the wallet-debit path (idempotency + tier checks remain primary).
+func Register(member gin.IRouter, svc *Service, cfg config.Config, redis *platformRedis.Client) {
 	h := NewHandler(svc)
 	member.GET("/contests", h.ListContests)
 	member.GET("/contests/:id", h.GetContest)
-	member.POST("/contests/:id/vote", h.FreeVote)      // free
-	member.POST("/contests/:id/paid-vote", h.PaidVote) // Idempotency-Key required
+	member.POST("/contests/:id/vote",
+		middleware.PerUserRateLimit(redis, "connect-vote-free", cfg.ConnectFreeVoteRatePerMin),
+		h.FreeVote) // free
+	member.POST("/contests/:id/paid-vote",
+		middleware.PerUserRateLimit(redis, "connect-vote-paid", cfg.ConnectPaidVoteRatePerMin),
+		h.PaidVote) // Idempotency-Key required
 	member.GET("/contests/:id/results", h.Results)
 	member.GET("/contests/:id/contestants", h.ListRoster)
 	member.GET("/contests/:id/free-vote-allowance", h.FreeVoteAllowance)
