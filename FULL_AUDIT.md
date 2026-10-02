@@ -1039,13 +1039,13 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | AUD-DB-004 | #397 | `04855a40` | `payment_webhook_logs` dedup upserts were erroring `42P10` wholesale (no unique constraint) — dedup silently never fired; defensive dedupe DELETE + unique index `(provider, reference, event_type)` (20270326000000) | merged |
 | AUD-BILL-001 + AUD-FE-003 (OpenMic residual) | #401 | `587fdc44` | `openmic_vote_paystack_intents` (20270328000000): server-quoted price at initiate, frozen cast params, webhook/recover fulfil arm + claim; verify reconciles amount + uses intent params | merged |
 | AUD-FE-003 (sweep) | #402 | `5f51a24e` | `sweepGatewayIntents` + `POST /api/v1/payments/gateway/reconcile` (`x-cron-secret`): pending intent refs → Paystack verify → shared fulfil; off until `GATEWAY_RECONCILE_SECRET` wired | merged — spec 7/7; ops wiring (secret + scheduled caller) still open |
-| AUD-BILL-002 | #408 | `e7c8ccd6` | `submitRegistrationApplication` gates `submitted` on proof: completed/verified intent row, or PATCHed reference re-verifying ≥ server-quoted fee via Paystack (fee re-read from contest); verified legacy refs backfilled as completed intents; else `awaiting_payment` | in review — spec 8/8, registration suite 136, regression 131/131, tsc clean |
+| AUD-BILL-002 | #408 | `c32ce795` | `submitRegistrationApplication` gates `submitted` on proof: completed/verified intent row, or PATCHed reference re-verifying ≥ server-quoted fee via Paystack (fee re-read from contest); verified legacy refs backfilled as completed intents; else `awaiting_payment` | merged — spec 8/8, registration suite 136, regression 131/131, tsc clean |
 
 ### In review
 
 | PR | Lane |
 |----|------|
-| #408 | AUD-BILL-002 paid-submit gate |
+| — | none pending from this lane |
 
 ### New findings surfaced during this wave (2026-10-01)
 
