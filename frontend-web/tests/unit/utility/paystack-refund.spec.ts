@@ -102,8 +102,12 @@ const MAPPING = {
  * two updates (provider-failed, then refund) — every other table is read-only
  * canned fixture data.
  */
-function makeFakeSupabase() {
+function makeFakeSupabase(opts: { ledgerKeys?: string[]; transactions?: Record<string, unknown>[] } = {}) {
   const transactionsById = new Map<string, Record<string, unknown>>();
+  for (const row of opts.transactions ?? []) transactionsById.set(row.id as string, { ...row });
+  // ledger_entries is modelled as a set of posted idempotency keys — the
+  // AUD-BILL-005 money-leg probe selects keys `.in(...)` against it.
+  const ledgerKeys = new Set(opts.ledgerKeys ?? []);
 
   function findByIdempotencyKey(key: unknown) {
     for (const row of transactionsById.values()) {
@@ -112,19 +116,51 @@ function makeFakeSupabase() {
     return null;
   }
 
+  // AUD-BILL-005: updates are CAS-guarded — eq/in/lt filters must ALL match the
+  // stored row before an update applies, so the fake models them faithfully.
+  function matches(
+    row: Record<string, unknown>,
+    filters: Record<string, unknown>,
+    ins: Record<string, unknown[]>,
+    lts: Record<string, unknown>,
+  ) {
+    for (const [col, val] of Object.entries(filters)) {
+      if (row[col] !== val) return false;
+    }
+    for (const [col, vals] of Object.entries(ins)) {
+      if (!vals.includes(row[col])) return false;
+    }
+    for (const [col, val] of Object.entries(lts)) {
+      if (!(String(row[col]) < String(val))) return false;
+    }
+    return true;
+  }
+
   function builderFor(table: string) {
-    const state: { filters: Record<string, unknown>; insertPayload?: any } = { filters: {} };
+    const state: {
+      filters: Record<string, unknown>;
+      ins: Record<string, unknown[]>;
+      lts: Record<string, unknown>;
+      insertPayload?: any;
+      updatePayload?: any;
+    } = { filters: {}, ins: {}, lts: {} };
 
     const resolve = async () => {
       switch (table) {
+        case 'ledger_entries':
+          if (state.ins.idempotency_key) {
+            return {
+              data: (state.ins.idempotency_key as string[]).filter((k) => ledgerKeys.has(k)).map((k) => ({ idempotency_key: k })),
+              error: null,
+            };
+          }
+          return { data: [], error: null };
         case 'utility_transactions': {
+          const rows = [...transactionsById.values()].filter((row) => matches(row, state.filters, state.ins, state.lts));
           if (state.filters.idempotency_key !== undefined) {
             return { data: findByIdempotencyKey(state.filters.idempotency_key), error: null };
           }
-          if (state.filters.id !== undefined) {
-            return { data: transactionsById.get(state.filters.id as string) ?? null, error: null };
-          }
-          return { data: null, error: null };
+          return { data: rows.length <= 1 ? (rows[0] ?? null) : rows, error: null };
         }
         case 'utility_billers':
           return { data: state.filters.id === BILLER_ID ? BILLER : null, error: null };
@@ -148,13 +184,42 @@ function makeFakeSupabase() {
       }
     };
 
+    const applyUpdate = () => {
+      if (table !== 'utility_transactions' || !state.updatePayload) return [];
+      const touched: Array<Record<string, unknown>> = [];
+      for (const [id, row] of transactionsById) {
+        if (matches(row, state.filters, state.ins, state.lts)) {
+          const merged = { ...row, ...state.updatePayload };
+          transactionsById.set(id, merged);
+          touched.push(merged);
+        }
+      }
+      state.updatePayload = undefined;
+      return touched;
+    };
+
     const builder: any = {
-      select: vi.fn(() => builder),
+      select: vi.fn(() => {
+        if (state.updatePayload) {
+          const touched = applyUpdate();
+          return { then: (f: any) => Promise.resolve({ data: touched, error: null }).then(f) };
+        }
+        return builder;
+      }),
       eq: vi.fn((col: string, val: unknown) => {
         state.filters[col] = val;
         return builder;
       }),
+      in: vi.fn((col: string, vals: unknown[]) => {
+        state.ins[col] = vals;
+        return builder;
+      }),
+      lt: vi.fn((col: string, val: unknown) => {
+        state.lts[col] = val;
+        return builder;
+      }),
       order: vi.fn(() => builder),
+      limit: vi.fn(() => builder),
       insert: vi.fn((payload: any) => {
         state.insertPayload = payload;
         if (table === 'utility_transactions') {
@@ -163,33 +228,19 @@ function makeFakeSupabase() {
         return builder;
       }),
       update: vi.fn((payload: any) => {
-        if (table === 'utility_transactions') {
-          const id = payload.id ?? state.filters.id;
-          // but also support the payload carrying its own id defensively.
-          builder.__pendingUpdate = payload;
-        }
+        state.updatePayload = payload;
         return builder;
       }),
       maybeSingle: vi.fn(() => resolve()),
       single: vi.fn(async () => {
-        if (table === 'utility_transactions' && state.insertPayload) {
-          return { data: transactionsById.get(state.insertPayload.id), error: null };
-        }
+        if (state.insertPayload) return { data: state.insertPayload, error: null };
         return resolve();
       }),
-      then: (onFulfilled: any) => resolve().then(onFulfilled),
+      then: (onFulfilled: any) => {
+        if (state.updatePayload) return Promise.resolve({ data: applyUpdate(), error: null }).then(onFulfilled);
+        return resolve().then(onFulfilled);
+      },
     };
-
-    // payUtility always calls .update(patch).eq('id', transactionId) in that order.
-    const originalEq = builder.eq;
-    builder.eq = vi.fn((col: string, val: unknown) => {
-      if (table === 'utility_transactions' && col === 'id' && builder.__pendingUpdate) {
-        const existing = transactionsById.get(val as string) ?? {};
-        transactionsById.set(val as string, { ...existing, ...builder.__pendingUpdate });
-        builder.__pendingUpdate = undefined;
-      }
-      return originalEq(col, val);
-    });
 
     return builder;
   }
@@ -312,6 +363,10 @@ describe('reverseUtilityTransaction — admin-triggered reversal, payment_source
     vi.mocked(creditWallet).mockResolvedValue({ alreadyProcessed: false, amountKobo: 500_000 } as any);
   });
 
+  // AUD-BILL-005: admin reversal now CAS-claims the row (a 'failed' row must be
+  // older than the 60s settle window) — the fixture is stale and seeded into
+  // the fake table.
+  const STALE = new Date(Date.now() - 15 * 60_000).toISOString();
   function rowFor(paymentSource: 'wallet' | 'paystack') {
     return {
       id: 'tx-admin-001',
@@ -320,10 +375,19 @@ describe('reverseUtilityTransaction — admin-triggered reversal, payment_source
       payment_source: paymentSource,
       retail_amount_kobo: 500_000,
       receipt_number: 'UTL-ADMIN-001',
+      idempotency_key: 'idem-admin-001',
+      metadata: {},
+      created_at: STALE,
+      updated_at: STALE,
     } as any;
   }
 
   it('reverses the wallet debit for a wallet-funded transaction (unchanged behaviour)', async () => {
+    // AUD-BILL-005: the admin path now proves the debit leg exists before
+    // reversing — this fixture carries it.
+    vi.mocked(createAdminClient).mockReturnValue(
+      makeFakeSupabase({ transactions: [rowFor('wallet')], ledgerKeys: ['utility:tx-admin-001:DEBIT'] }) as any,
+    );
     await reverseUtilityTransaction(rowFor('wallet'), 'customer requested cancellation');
 
     expect(reverseWalletDebit).toHaveBeenCalledWith(USER_ID, expect.objectContaining({
@@ -334,7 +398,10 @@ describe('reverseUtilityTransaction — admin-triggered reversal, payment_source
   });
 
   it('credits the wallet (never reverseWalletDebit) for a Paystack-funded transaction — it was never debited', async () => {
-    await reverseUtilityTransaction(rowFor('paystack'), 'stuck transaction investigated by finance');
+    const tx = rowFor('paystack');
+    tx.metadata = { payment_reference: 'UTIL_ADMIN_REF' };
+    vi.mocked(createAdminClient).mockReturnValue(makeFakeSupabase({ transactions: [tx] }) as any);
+    await reverseUtilityTransaction(tx, 'stuck transaction investigated by finance');
 
     expect(creditWallet).toHaveBeenCalledWith(USER_ID, expect.objectContaining({
       amountKobo: 500_000,

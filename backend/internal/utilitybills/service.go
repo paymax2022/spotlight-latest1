@@ -72,8 +72,17 @@ var (
 	ErrCustomerValidationFailed = errors.New("utilitybills: customer validation failed")
 	// ErrNotEligibleForReversal — the transaction's status forbids a reversal.
 	ErrNotEligibleForReversal = errors.New("utilitybills: transaction is not eligible for reversal")
+	// ErrNotDisputable — only a delivered ('successful') charge can be disputed.
+	ErrNotDisputable = errors.New("utilitybills: transaction is not eligible for a dispute")
 	// ErrProviderUnavailable — no adapter is configured for the routed provider.
 	ErrProviderUnavailable = errors.New("utilitybills: no configured adapter for this provider")
+)
+
+// Event payload keys for the settle/recovery paths — hoisted because goconst
+// flags any further repetition of these strings.
+const (
+	eventKeyProviderID = "provider_id"
+	eventKeyStatus     = "status"
 )
 
 // Auditor is the admin-action audit sink. It mirrors services.AuditService's
@@ -756,8 +765,31 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 			s.event(ctx, transactionID, "wallet_debit_failed", debitErr.Error(), nil)
 			return nil, fmt.Errorf("utilitybills: wallet debit failed: %w", debitErr)
 		}
-		if t, uerr := s.repo.UpdateTransaction(ctx, transactionID, TransactionPatch{Status: ptrx.Of(string(StatusWalletDebited))}); uerr == nil {
+		// AUD-BILL-005: advance to wallet_debited only while we still own the row —
+		// the CAS on (status, updated_at) detects a recovery/admin claim that landed
+		// between the insert and the debit. Losing the race means the claim winner
+		// owns the outcome INCLUDING compensating the debit we just posted, and the
+		// purchase loop must NOT run (a vend delivered after a refund pays out twice).
+		if t, uerr := s.repo.UpdateTransaction(ctx, transactionID, TransactionPatch{
+			Status:         ptrx.Of(string(StatusWalletDebited)),
+			GuardStatuses:  []string{string(StatusInitiated)},
+			GuardUpdatedAt: &transaction.UpdatedAt,
+		}); uerr == nil {
 			transaction = t
+		} else if errors.Is(uerr, ErrStatusGuard) {
+			s.event(ctx, transactionID, "writer_outraced",
+				"A settlement claim landed between the wallet debit and fulfilment — the writer yields.", nil)
+			// CRITICAL not WARN: this writer DID post the debit — if the claim
+			// winner's probe ran before the debit committed it saw debitPosted=false
+			// and compensated nothing. The event alone is silent about money.
+			log.Printf("[utilitybills] CRITICAL %s was claimed for settlement mid-debit — the debit posted and the writer yielded; verify the claim winner compensated it", transactionID)
+			current, rerr := s.repo.GetTransaction(ctx, transactionID)
+			if rerr != nil {
+				return nil, fmt.Errorf("utilitybills: reload after losing settlement claim: %w", rerr)
+			}
+			return &PayResult{AlreadyProcessed: false, Transaction: current}, nil
+		} else {
+			log.Printf("[utilitybills] WARN could not persist wallet_debited for %s: %v", transactionID, uerr)
 		}
 		s.event(ctx, transactionID, "wallet_debited", "Wallet debited for utility payment.", nil)
 	} else {
@@ -808,8 +840,26 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 		}
 		patch.FailureReason = ptrx.Of(reason)
 	}
+	// AUD-BILL-005: only write the settle patch while the row is still at the
+	// version AND status we own — a settlement claim bumps updated_at and flips
+	// the row to 'failed', so a claimed row rejects this write outright.
+	patch.GuardStatuses = []string{string(StatusInitiated), string(StatusWalletDebited)}
+	patch.GuardUpdatedAt = &transaction.UpdatedAt
+	settleWon := false
 	if t, uerr := s.repo.UpdateTransaction(ctx, transactionID, patch); uerr == nil {
 		transaction = t
+		settleWon = true
+	} else if errors.Is(uerr, ErrStatusGuard) {
+		// Recovery or an admin settled first — the claim winner owns the
+		// outcome INCLUDING the money legs; record what the provider said so
+		// reconciliation can see a vend that landed after settlement.
+		s.event(ctx, transactionID, "provider_outcome_after_claim", outcome.Message, map[string]any{
+			eventKeyProviderID: fulfilled.Provider.ID, "outcome": string(outcome.Outcome),
+		})
+		log.Printf("[utilitybills] WARN settle patch rejected for %s — a settlement claim owns the row (provider outcome: %s)", transactionID, outcome.Outcome)
+		if t, rerr := s.repo.GetTransaction(ctx, transactionID); rerr == nil {
+			transaction = t
+		}
 	} else {
 		log.Printf("[utilitybills] WARN could not persist settle patch for %s: %v", transactionID, uerr)
 	}
@@ -817,12 +867,14 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 		"provider_id": fulfilled.Provider.ID,
 	})
 
-	// Auto-reverse ONLY on a definite failure of a WALLET-sourced payment.
+	// Auto-reverse ONLY on a definite failure of a WALLET-sourced payment, and
+	// only when THIS writer still owns the settle — a lost settle means the
+	// claim winner is already compensating (or deliberately holding) the money.
 	// The payment_source gate is a faithful port of today's behaviour INCLUDING a
 	// known gap: a Paystack-sourced failure is not auto-refunded here (the money is
 	// at Paystack, not in the ledger, so a ledger reversal would invent funds).
 	// Deliberately left as-is rather than quietly changed inside a migration.
-	if outcome.Outcome == ProviderOutcomeFailed && paymentSource == paymentSourceWallet {
+	if outcome.Outcome == ProviderOutcomeFailed && paymentSource == paymentSourceWallet && settleWon {
 		if t := s.autoReverse(ctx, transaction, idempotencyKey, clearing.ID); t != nil {
 			transaction = t
 		}
@@ -1130,6 +1182,35 @@ func purchaseParams(pc purchaseContext, route Route, attemptKey string) map[stri
 // The #1 invariant of this module: a member is never left debited for a bill that
 // definitively did not happen.
 func (s *Service) autoReverse(ctx context.Context, t *TransactionRow, idempotencyKey, clearingAccountID string) *TransactionRow {
+	// AUD-BILL-005: the two planes compensate under different key conventions
+	// (TS writes utility:<tx>:REVERSAL_DEBIT, this plane writes <key>:reversal
+	// rev legs) so the ledger's unique constraint alone cannot dedupe a
+	// cross-plane double refund. Probe every known compensation key first.
+	legs, lerr := s.transactionMoneyLegs(ctx, t)
+	switch {
+	case lerr != nil:
+		// Unknown money state — leave 'failed' and let the sweep retry.
+		log.Printf("[utilitybills] WARN auto-reverse could not probe money legs for %s: %v", t.ID, lerr)
+		return nil
+	case legs.compensationPosted:
+		// Money already returned elsewhere — converge the status, never double-pay.
+		updated, uerr := s.repo.UpdateTransaction(ctx, t.ID, TransactionPatch{
+			Status:        ptrx.Of(string(StatusReversed)),
+			GuardStatuses: []string{string(StatusFailed)},
+		})
+		if uerr != nil {
+			log.Printf("[utilitybills] WARN compensation posted but status not persisted for %s: %v", t.ID, uerr)
+			return nil
+		}
+		s.event(ctx, t.ID, "wallet_reversed", "Compensation already posted; status converged to reversed.", nil)
+		return updated
+	case !legs.debitPosted:
+		// Status says the wallet was debited but the ledger shows no debit —
+		// reversing would mint funds. Loud, and left unresolved.
+		log.Printf("[utilitybills] CRITICAL auto-reverse found no debit leg for %s — refusing to mint a reversal", t.ID)
+		s.event(ctx, t.ID, "stuck_debit_missing", "No debit leg exists for this transaction — no compensation posted.", nil)
+		return nil
+	}
 	userWallet, werr := s.ledger.GetOrCreateUserWallet(ctx, t.UserID)
 	if werr != nil {
 		log.Printf("[utilitybills] CRITICAL: auto-reverse could not resolve wallet for %s — debited, no bill, no refund: %v", t.ID, werr)
@@ -1144,7 +1225,10 @@ func (s *Service) autoReverse(ctx context.Context, t *TransactionRow, idempotenc
 		s.event(ctx, t.ID, "wallet_reversal_failed", revErr.Error(), nil)
 		return nil
 	}
-	updated, uerr := s.repo.UpdateTransaction(ctx, t.ID, TransactionPatch{Status: ptrx.Of(string(StatusReversed))})
+	updated, uerr := s.repo.UpdateTransaction(ctx, t.ID, TransactionPatch{
+		Status:        ptrx.Of(string(StatusReversed)),
+		GuardStatuses: []string{string(StatusFailed)},
+	})
 	if uerr != nil {
 		log.Printf("[utilitybills] WARN reversal posted but status not persisted for %s: %v", t.ID, uerr)
 		return nil
@@ -1210,6 +1294,255 @@ func (s *Service) ListAttempts(ctx context.Context, transactionID string) ([]Att
 	return s.repo.ListAttempts(ctx, transactionID)
 }
 
+// AUD-BILL-005 — stuck-fulfilment recovery, the Go-plane port of
+// recoverStuckUtilityTransaction in frontend-web/src/server/utility/service.ts.
+//
+// PayUtility writes the transaction row first, debits the wallet, then calls
+// the provider. A crash between debit and settle left the row at
+// initiated/wallet_debited forever: money held, no provider call made,
+// SweepPending requerying a purchase the provider never saw (the VTPass
+// request_id embeds a timestamp and cannot be reconstructed), and
+// provider_pending verdicts marking the row failed WITHOUT compensating the
+// debit. Recovery is driven off utility_provider_attempts evidence — the
+// attempt row is written BEFORE the provider call, so zero attempts proves the
+// provider was never contacted — and off ledger-leg probes that recognise BOTH
+// writer conventions (TS verbatim keys AND this plane's per-side suffixes).
+
+// stuckRecoveryMinAge mirrors UTILITY_STUCK_MIN_AGE_MS. A row younger than
+// this may belong to an in-flight purchase; recovering under it could refund a
+// vend that is still completing. Comfortably beyond every provider timeout.
+const stuckRecoveryMinAge = 10 * time.Minute
+
+// ambiguousAttemptStatuses are attempt outcomes that cannot prove the provider
+// did NOT vend — the request may have been received and fulfilled upstream
+// (a 'timeout' in particular is OUR socket giving up, not the provider
+// declining). Only 'failed' is definitive; zero attempts means the provider
+// was never contacted at all.
+var ambiguousAttemptStatuses = map[string]bool{
+	"started": true, "pending": true, "timeout": true, "error": true, "successful": true,
+}
+
+// moneyLegs is the ledger evidence for one transaction: whether the purchase
+// debit posted, and whether ANY compensation leg already did.
+type moneyLegs struct {
+	debitPosted        bool
+	compensationPosted bool
+}
+
+// transactionMoneyLegs probes ledger_entries for every money leg this
+// transaction could have, under BOTH writer conventions: the TS journal writes
+// verbatim keys (utility:<tx>:DEBIT, :REVERSAL_DEBIT, :PAYSTACK_REFUND,
+// :ADMIN_REVERSAL_*), while this plane's ledger appends per-side suffixes to a
+// base key (<key>:debit:credit for the purchase debit, <key>:reversal:rev_*
+// for autoReverse, utility:<tx>:ADMIN_REVERSAL_DEBIT:rev_* for the Go admin
+// path). Probing only one family's keys is how double refunds happen.
+func (s *Service) transactionMoneyLegs(ctx context.Context, t *TransactionRow) (*moneyLegs, error) {
+	key := t.IdempotencyKey
+	debitKeys := []string{"utility:" + t.ID + ":DEBIT"}
+	compKeys := []string{
+		"utility:" + t.ID + ":REVERSAL_DEBIT",
+		"utility:" + t.ID + ":PAYSTACK_REFUND",
+		"utility:" + t.ID + ":PAYSTACK_REFUND:credit",
+		"utility:" + t.ID + ":ADMIN_REVERSAL_DEBIT",
+		"utility:" + t.ID + ":ADMIN_REVERSAL_DEBIT:rev_debit",
+		"utility:" + t.ID + ":ADMIN_REVERSAL_PAYSTACK_REFUND",
+		"utility:" + t.ID + ":ADMIN_REVERSAL_PAYSTACK_REFUND:credit",
+	}
+	if key != "" {
+		debitKeys = append(debitKeys, key+":debit:credit", key+":debit:debit")
+		compKeys = append(compKeys, key+":reversal:rev_debit", key+":reversal:rev_credit")
+	}
+	exists := func(keys []string) (bool, error) {
+		for _, k := range keys {
+			ok, err := s.repo.LedgerEntryExists(ctx, k)
+			if err != nil || ok {
+				return ok, err
+			}
+		}
+		return false, nil
+	}
+	debit, err := exists(debitKeys)
+	if err != nil {
+		return nil, err
+	}
+	comp, err := exists(compKeys)
+	if err != nil {
+		return nil, err
+	}
+	if !comp && t.PaymentSource == paymentSourcePaystack {
+		// The VALIDATION_REFUND leg is keyed on the Paystack intent id, which
+		// the transaction row does not store — detect it via the captured
+		// payment reference instead. Scoped to paystack rows: a wallet-source
+		// row carrying a foreign reference in its metadata must not read as
+		// compensated.
+		if ref := paymentRefFromMetadata(t.Metadata); ref != "" {
+			ok, err := s.repo.LedgerCreditByReferenceExists(ctx, ref)
+			if err != nil {
+				return nil, err
+			}
+			comp = ok
+		}
+	}
+	return &moneyLegs{debitPosted: debit, compensationPosted: comp}, nil
+}
+
+func paymentRefFromMetadata(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil {
+		return ""
+	}
+	v, _ := m["payment_reference"].(string)
+	return v
+}
+
+// recoverStuckTransaction settles a transaction that stopped between the row
+// insert and a provider-verified outcome. Attempt evidence decides which case
+// it is:
+//   - no attempts            → the provider was never contacted; safe to settle
+//   - only 'failed' attempts → every attempt definitively failed; safe to settle
+//   - any ambiguous attempt  → a vend may have happened; hold the money and
+//     flag for manual reconciliation, never auto-refund
+func (s *Service) recoverStuckTransaction(ctx context.Context, t *TransactionRow) (*TransactionRow, error) {
+	if time.Since(t.UpdatedAt) < stuckRecoveryMinAge {
+		return t, nil
+	}
+	attempts, err := s.repo.ListAttempts(ctx, t.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(attempts) == 0 {
+		return s.settleFailedTransaction(ctx, t,
+			"Purchase never reached a provider — recovered after the transaction stalled.", false)
+	}
+	for _, a := range attempts {
+		if ambiguousAttemptStatuses[a.Status] {
+			return s.settleFailedTransaction(ctx, t,
+				"Provider attempt evidence is ambiguous — held for manual reconciliation.", true)
+		}
+	}
+	return s.settleFailedTransaction(ctx, t,
+		"All provider attempts failed — recovered after the transaction stalled.", false)
+}
+
+// settleFailedTransaction claims the row, consults the ledger, compensates when
+// the evidence proves it is safe, and converges the status. ambiguousEvidence
+// skips every money leg — a provider that may have vended is never refunded
+// automatically. When compensation cannot be posted the transaction lands on
+// 'failed' (NOT 'reversed') so the outstanding money stays visible.
+func (s *Service) settleFailedTransaction(ctx context.Context, t *TransactionRow, reason string, ambiguousEvidence bool) (*TransactionRow, error) {
+	// The claim flips the row to 'failed' in one write — outside every other
+	// claim set — so exactly one compensator can ever be inside the
+	// probe→post window, and an in-flight writer's guarded settle patch can no
+	// longer land after the claim.
+	claimed, err := s.repo.ClaimForSettlement(ctx, t.ID, t.UpdatedAt, reason)
+	if err != nil {
+		return nil, err
+	}
+	if claimed == nil {
+		// Another writer owns the transition — adopt their outcome.
+		return s.repo.GetTransaction(ctx, t.ID)
+	}
+	if ambiguousEvidence {
+		s.event(ctx, t.ID, "stuck_needs_manual_reconciliation",
+			"Provider attempt evidence is ambiguous — a vend may have happened; holding money pending manual review.", nil)
+		log.Printf("[utilitybills] CRITICAL stuck transaction %s has ambiguous attempt evidence — manual reconciliation required", t.ID)
+		return claimed, nil
+	}
+
+	legs, err := s.transactionMoneyLegs(ctx, claimed)
+	if err != nil {
+		return nil, err
+	}
+	newStatus := string(StatusFailed)
+	switch {
+	case legs.compensationPosted:
+		// Another path already returned the money — converge the status only.
+		newStatus = string(StatusReversed)
+	case claimed.PaymentSource == paymentSourceWallet && legs.debitPosted:
+		if s.postStuckReversal(ctx, claimed) {
+			newStatus = string(StatusReversed)
+		}
+	case claimed.PaymentSource == paymentSourcePaystack:
+		if s.postPaystackRefund(ctx, claimed) {
+			newStatus = string(StatusReversed)
+		}
+	case claimed.PaymentSource == paymentSourceWallet && t.Status != string(StatusInitiated):
+		// The status claims a debit the ledger does not show — posting a
+		// reversal here would mint funds. Loud, and left unresolved.
+		s.event(ctx, t.ID, "stuck_debit_missing",
+			"Status claims the wallet was debited but no debit leg exists — no compensation posted.", nil)
+		log.Printf("[utilitybills] CRITICAL %s transaction %s has no debit leg — refusing to mint a reversal", t.Status, t.ID)
+	}
+	updated, uerr := s.repo.UpdateTransaction(ctx, t.ID, TransactionPatch{
+		Status:        ptrx.Of(newStatus),
+		FailureReason: ptrx.Of(reason),
+	})
+	if uerr != nil {
+		return nil, uerr
+	}
+	s.event(ctx, t.ID, "stuck_recovered", reason, map[string]any{eventKeyStatus: newStatus})
+	return updated, nil
+}
+
+// postStuckReversal compensates a stuck WALLET-sourced transaction by reversing
+// the purchase debit back into the member's wallet, under the same
+// "<key>:reversal" base convention autoReverse uses so the two paths dedupe on
+// the ledger's unique idempotency key. False = money still outstanding.
+func (s *Service) postStuckReversal(ctx context.Context, t *TransactionRow) bool {
+	clearing, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
+	if err != nil {
+		s.event(ctx, t.ID, "stuck_reversal_failed", "Could not resolve the clearing account — money still outstanding.", nil)
+		log.Printf("[utilitybills] CRITICAL stuck recovery could not resolve clearing for %s: %v", t.ID, err)
+		return false
+	}
+	userWallet, err := s.ledger.GetOrCreateUserWallet(ctx, t.UserID)
+	if err != nil {
+		s.event(ctx, t.ID, "stuck_reversal_failed", "Could not resolve the member wallet — money still outstanding.", nil)
+		log.Printf("[utilitybills] CRITICAL stuck recovery could not resolve wallet for %s: %v", t.ID, err)
+		return false
+	}
+	revErr := s.ledger.PostReversal(ctx, userWallet.ID, clearing.ID, t.RetailAmountKobo,
+		"utility:reversal:"+t.ID, t.IdempotencyKey+":reversal")
+	if revErr != nil && !errors.Is(revErr, ledger.ErrDuplicate) {
+		s.event(ctx, t.ID, "stuck_reversal_failed", revErr.Error(), nil)
+		log.Printf("[utilitybills] CRITICAL stuck recovery reversal FAILED for %s — debited, no bill, no refund: %v", t.ID, revErr)
+		return false
+	}
+	s.event(ctx, t.ID, "wallet_reversed", "Wallet debit reversed during stuck-transaction recovery.", nil)
+	return true
+}
+
+// postPaystackRefund compensates a stuck PAYSTACK-sourced transaction. The
+// charge was captured before fulfilment and the wallet was never debited, so
+// the compensation is a CREDIT (same key the TS plane writes, keeping the two
+// planes' probes symmetric). False = captured money not yet returned.
+func (s *Service) postPaystackRefund(ctx context.Context, t *TransactionRow) bool {
+	// A paystack-source row must carry the captured charge's reference — the TS
+	// intake writes it into metadata after verifying the payment. No reference
+	// means nothing verifiably captured, so there is nothing to refund.
+	if paymentRefFromMetadata(t.Metadata) == "" {
+		s.event(ctx, t.ID, "paystack_refund_skipped",
+			"Paystack-source transaction carries no payment_reference — captured charge cannot be verified.", nil)
+		log.Printf("[utilitybills] CRITICAL paystack-source %s has no payment_reference — refusing to credit an unverifiable refund", t.ID)
+		return false
+	}
+	reference := t.ID
+	if t.ReceiptNumber != nil && *t.ReceiptNumber != "" {
+		reference = *t.ReceiptNumber
+	}
+	err := s.wallet.Credit(ctx, t.UserID, reference, "utility:"+t.ID+":PAYSTACK_REFUND", t.RetailAmountKobo)
+	if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+		s.event(ctx, t.ID, "paystack_refund_failed", err.Error(), nil)
+		log.Printf("[utilitybills] CRITICAL paystack refund FAILED for %s — captured money not returned: %v", t.ID, err)
+		return false
+	}
+	s.event(ctx, t.ID, "paystack_refunded", "Captured Paystack charge refunded to wallet during stuck-transaction recovery.", nil)
+	return true
+}
+
 // RequeryTransaction asks the provider what actually happened and applies the
 // answer. Ports requeryUtilityTransaction.
 // Callable by a MEMBER (the handler resolves ownership first) and by an ADMIN
@@ -1226,15 +1559,16 @@ func (s *Service) RequeryTransaction(ctx context.Context, transactionID string) 
 	if !CanRequeryStatus(Status(t.Status)) {
 		return t, nil
 	}
-	if t.ProviderID == nil || *t.ProviderID == "" {
-		return t, nil
-	}
+	// AUD-BILL-005: pre-provider states (initiated / wallet_debited) and
+	// provider_pending rows with NO recorded provider reference cannot be
+	// requeried — VTpass can only look a purchase up by the reference it echoed
+	// back, and a fabricated request id would return a misleading "failed".
+	// Recovery decides these rows from attempt + ledger evidence instead.
 	if t.ProviderReference == nil || *t.ProviderReference == "" {
-		// VTpass (and the BillsProvider port generally) can only look a purchase up
-		// by the reference the PROVIDER echoed back. Without one there is nothing to
-		// ask about — see ports.go's GetBill doc comment. Leave the status alone.
-		s.event(ctx, t.ID, "status_requery_skipped", "No provider reference recorded — nothing to requery.", nil)
-		return t, nil
+		return s.recoverStuckTransaction(ctx, t)
+	}
+	if t.ProviderID == nil || *t.ProviderID == "" {
+		return s.recoverStuckTransaction(ctx, t)
 	}
 
 	providerRow, err := s.repo.GetProvider(ctx, *t.ProviderID)
@@ -1263,7 +1597,31 @@ func (s *Service) RequeryTransaction(ctx context.Context, transactionID string) 
 		return nil, fmt.Errorf("utilitybills: requery: %w", qerr)
 	}
 
+	// A nil bill with no error is not an authoritative answer — compensating on
+	// it could refund a vend the provider actually delivered.
+	if bill == nil {
+		s.event(ctx, t.ID, "status_requery_unresolved", "Provider returned no bill — answer is not authoritative.", nil)
+		return t, nil
+	}
+
 	outcome := billOutcome(bill)
+
+	// AUD-BILL-005: a real provider reference makes this verdict authoritative —
+	// a failed answer must COMPENSATE the debit, not just mark the row failed
+	// and strand the money (the pre-fix behaviour).
+	if outcome == ProviderOutcomeFailed {
+		reason := bill.Message
+		if reason == "" {
+			reason = "Provider reported the transaction as failed."
+		}
+		updated, uerr := s.settleFailedTransaction(ctx, t, reason, false)
+		if uerr != nil {
+			return nil, uerr
+		}
+		s.event(ctx, t.ID, "status_requery", bill.Message, map[string]any{eventKeyStatus: updated.Status})
+		return updated, nil
+	}
+
 	status := NextStatusFromProvider(outcome)
 	patch := TransactionPatch{Status: ptrx.Of(string(status)), ProviderResponse: bill.Raw}
 	if bill.ProviderRef != "" {
@@ -1272,18 +1630,21 @@ func (s *Service) RequeryTransaction(ctx context.Context, transactionID string) 
 	if bill.Token != "" {
 		patch.Token = ptrx.Of(bill.Token)
 	}
-	if outcome == ProviderOutcomeFailed {
-		reason := bill.Message
-		if reason == "" {
-			reason = "Provider reported the transaction as failed."
-		}
-		patch.FailureReason = ptrx.Of(reason)
-	} else {
-		patch.ClearFailureReason = true
-	}
+	patch.ClearFailureReason = true
+	// The provider may have answered while a recovery claim or an admin reversal
+	// settled the row — a successful/pending verdict only applies if the row is
+	// still in the state we observed, at the same version (a claim bumps
+	// updated_at, so a claimed row rejects this write even before status flips).
+	patch.GuardStatuses = []string{string(StatusInitiated), string(StatusWalletDebited), string(StatusProviderPending)}
+	patch.GuardUpdatedAt = &t.UpdatedAt
 
 	updated, uerr := s.repo.UpdateTransaction(ctx, t.ID, patch)
 	if uerr != nil {
+		if errors.Is(uerr, ErrStatusGuard) {
+			s.event(ctx, t.ID, "provider_verdict_after_claim",
+				"A settlement claim owns this row — discarding verdict "+string(status)+".", nil)
+			return s.repo.GetTransaction(ctx, t.ID)
+		}
 		return nil, uerr
 	}
 	s.event(ctx, t.ID, "status_requery", bill.Message, map[string]any{"status": string(status)})
@@ -1370,6 +1731,34 @@ func (s *Service) ReverseTransaction(ctx context.Context, actorUserID, transacti
 		return nil, fmt.Errorf("%w: payment_source %q is not wallet-sourced", ErrNotEligibleForReversal, t.PaymentSource)
 	}
 
+	// AUD-BILL-005: the automatic paths compensate under different key families
+	// (TS utility:<tx>:REVERSAL_DEBIT, this plane's <key>:reversal rev legs) so
+	// the ADMIN_REVERSAL_* unique key cannot dedupe a cross-plane double refund
+	// when a crash left the status 'failed' after money already returned. And a
+	// failed row with NO debit leg at all is an integrity anomaly — minting a
+	// reversal against it creates funds.
+	legs, lerr := s.transactionMoneyLegs(ctx, t)
+	if lerr != nil {
+		return nil, fmt.Errorf("utilitybills: probe money legs: %w", lerr)
+	}
+	if !legs.debitPosted && !legs.compensationPosted {
+		return nil, fmt.Errorf("%w: no wallet debit exists for transaction %s — nothing to reverse", ErrNotEligibleForReversal, t.ID)
+	}
+
+	// Serialise compensation behind the settlement claim: it flips the row to
+	// 'failed' (or refreshes an already-failed stale row) so a recovery pass or
+	// a second admin cannot enter the probe→post window concurrently.
+	claimed, cerr := s.repo.ClaimForSettlement(ctx, t.ID, t.UpdatedAt, reason)
+	if cerr != nil {
+		return nil, fmt.Errorf("utilitybills: claim for reversal: %w", cerr)
+	}
+	if claimed == nil {
+		// Either another writer moved the row first, or it is a just-failed row
+		// still inside the settle window — a concurrent compensator may be
+		// mid-flight; refusing here is what prevents the double refund.
+		return nil, fmt.Errorf("%w: transaction %s is being settled by another process — retry shortly", ErrNotEligibleForReversal, t.ID)
+	}
+
 	clearing, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
 	if err != nil {
 		return nil, fmt.Errorf("utilitybills: resolve clearing account: %w", err)
@@ -1379,14 +1768,19 @@ func (s *Service) ReverseTransaction(ctx context.Context, actorUserID, transacti
 		return nil, fmt.Errorf("utilitybills: resolve user wallet: %w", err)
 	}
 
-	reference := t.ID
-	if t.ReceiptNumber != nil && *t.ReceiptNumber != "" {
-		reference = *t.ReceiptNumber
-	}
-	revErr := s.ledger.PostReversal(ctx, userWallet.ID, clearing.ID, t.RetailAmountKobo,
-		reference, "utility:"+t.ID+":ADMIN_REVERSAL_DEBIT")
-	if revErr != nil && !errors.Is(revErr, ledger.ErrDuplicate) {
-		return nil, fmt.Errorf("utilitybills: admin reversal failed: %w", revErr)
+	if !legs.compensationPosted {
+		reference := t.ID
+		if t.ReceiptNumber != nil && *t.ReceiptNumber != "" {
+			reference = *t.ReceiptNumber
+		}
+		revErr := s.ledger.PostReversal(ctx, userWallet.ID, clearing.ID, t.RetailAmountKobo,
+			reference, "utility:"+t.ID+":ADMIN_REVERSAL_DEBIT")
+		if revErr != nil && !errors.Is(revErr, ledger.ErrDuplicate) {
+			return nil, fmt.Errorf("utilitybills: admin reversal failed: %w", revErr)
+		}
+	} else {
+		s.event(ctx, t.ID, "admin_reversal_skipped",
+			"Compensation already posted for this transaction; skipping duplicate money leg. Reason: "+reason, nil)
 	}
 
 	updated, err := s.repo.UpdateTransaction(ctx, t.ID, TransactionPatch{
@@ -1424,6 +1818,13 @@ func (s *Service) CreateDispute(ctx context.Context, userID, transactionID, reas
 	t, err := s.repo.GetUserTransaction(ctx, userID, transactionID)
 	if err != nil {
 		return nil, err
+	}
+	// AUD-BILL-005: 'disputed' is outside every claim, requery, and reversal
+	// set — flipping a NON-terminal row to it freezes the row out of the sweep
+	// and breaks the writer's settle CAS, stranding a debited wallet with no
+	// compensator able to claim it. Disputes exist for delivered charges only.
+	if t.Status != string(StatusSuccessful) {
+		return nil, fmt.Errorf("%w (status %s)", ErrNotDisputable, t.Status)
 	}
 	dispute, err := s.repo.InsertDispute(ctx, t.ID, userID, reason)
 	if err != nil {
