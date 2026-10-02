@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAnonClient, createServiceClient, formatUser } from '../_supabase';
+import { clientIpHeaders } from '@/src/lib/rate-limit/client-ip';
 
 /**
  * POST /api/auth/login — delegates to the Go backend.
@@ -43,7 +44,10 @@ export async function POST(request: Request) {
     try {
       upstream = await fetch(`${GO_BACKEND_URL}/api/auth/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // Forward the resolved client IP — Go keys the login limiter, audit
+        // rows and suspicious-login signals on it; without this every web
+        // login shares the BFF's address (AUD-BE-014).
+        headers: { 'Content-Type': 'application/json', ...clientIpHeaders(request) },
         body: JSON.stringify({ identifier, password }),
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });

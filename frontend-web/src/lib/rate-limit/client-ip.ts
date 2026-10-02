@@ -48,3 +48,21 @@ export function getRequestIp(request: Request): string {
   // authoritative — same exposure as before, now through one shared path.
   return sanitized(request.headers.get('x-real-ip')) ?? '0.0.0.0';
 }
+
+/**
+ * Headers that propagate the resolved client IP to an upstream service.
+ *
+ * The BFF→Go fetches previously sent no forwarding headers at all, so every
+ * proxied request arrived at the Go backend with the Next server's address as
+ * ClientIP() — collapsing per-IP controls (login/register/OTP rate limits,
+ * signup gate) into one shared bucket and recording the BFF's IP in audit
+ * rows and the suspicious-login engine's IP signals (AUD-BE-014).
+ *
+ * Go only honours these when the BFF's egress IP is inside its
+ * TRUSTED_PROXY_CIDRS; without that it fails closed to the direct peer
+ * address, which is today's behaviour — the header is safe to send always.
+ */
+export function clientIpHeaders(request: Request): Record<string, string> {
+  const ip = getRequestIp(request);
+  return { 'x-forwarded-for': ip, 'x-real-ip': ip };
+}

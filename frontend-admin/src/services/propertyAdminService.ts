@@ -21,8 +21,7 @@ function base(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return {};
 }
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 async function getJson<T>(path: string): Promise<T> {

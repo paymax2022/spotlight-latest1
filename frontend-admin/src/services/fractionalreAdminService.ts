@@ -32,8 +32,6 @@ function adminBase(): string {
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(extra || {}) };
   if (typeof window === 'undefined') return headers;
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
 }
 

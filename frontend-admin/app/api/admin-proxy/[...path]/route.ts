@@ -40,9 +40,14 @@ const TIMEOUT_MS = Number(process.env.ADMIN_PROXY_TIMEOUT_MS ?? 20_000);
 async function forward(request: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
 
+  // The HttpOnly session cookie holds the Supabase access token itself.
+  // Browser code no longer sends Authorization (the token must never sit in
+  // JS-readable storage — CodeQL js/clear-text-storage-of-sensitive-data), so
+  // this route attaches the bearer server-side from the cookie instead.
+  const sessionToken = extractSessionToken(request.headers.get('cookie'));
+
   if (resolveEnforce(process.env.ADMIN_MIDDLEWARE_ENFORCE)) {
-    const token = extractSessionToken(request.headers.get('cookie'));
-    if (!(await isSessionValid(token))) {
+    if (!(await isSessionValid(sessionToken))) {
       return NextResponse.json(
         { success: false, error: 'Not authenticated.' },
         { status: 401 },
@@ -59,7 +64,13 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
 
   // Forward the caller's identity so the backend still does its own authz - the
   // admin key is a gate in front of these routes, never a substitute for it.
-  const auth = request.headers.get('authorization');
+  // The session cookie's verified token wins over any client-supplied
+  // Authorization header: the cookie is the credential this app manages
+  // (mirrored by features/auth/adminAuth on every refresh), while a raw header
+  // could be anything the caller typed.
+  const auth = sessionToken
+    ? `Bearer ${sessionToken}`
+    : request.headers.get('authorization');
   if (auth) headers['Authorization'] = auth;
   const cookie = request.headers.get('cookie');
   if (cookie) headers['Cookie'] = cookie;

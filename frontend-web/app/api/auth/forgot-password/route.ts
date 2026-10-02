@@ -31,7 +31,7 @@ export async function POST(request: Request) {
 
     const go = await callGo('/api/auth/request-password-reset', {
       email: String(email).trim().toLowerCase(),
-    });
+    }, request);
     if (go.kind === 'answered') {
       // Go answers 200 regardless; a non-200 is logged, never surfaced.
       if (go.status >= 400) {

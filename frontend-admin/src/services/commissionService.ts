@@ -1,6 +1,6 @@
 // Copies the staysAdminService.ts / academyAdminService.ts request stack EXACTLY:
 //  • financeBase() builds the absolute backend path via apiRoot() + /api/finance
-//  • authHeaders() attaches the admin Bearer token from localStorage
+//  • authHeaders() sends only content headers; the same-origin admin proxy attaches the Bearer from the HttpOnly session cookie server-side
 //    { success, ... } envelope (NOT { data }), so each caller reads its named field.
 // ₦ (kobo/100) and % (bps/100) but ALWAYS converts back to integer kobo/bps on submit
 // (see toBps/toKobo) — floats never cross the wire for money.
@@ -105,10 +105,7 @@ function financeBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 
