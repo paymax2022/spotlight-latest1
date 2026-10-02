@@ -603,7 +603,7 @@ func (s *Service) GetAppointment(ctx context.Context, id, userID string) (*Appoi
 // CompleteAppointment marks an appointment as completed and settles the fee (85/15).
 func (s *Service) CompleteAppointment(ctx context.Context, appointmentID, doctorUserID string) error {
 	var appt Appointment
-	const q = `SELECT id, doctor_id, status, settlement_id, COALESCE(platform_fee_kobo,0)
+	const q = `SELECT id, doctor_id, status, COALESCE(settlement_id::text,''), COALESCE(platform_fee_kobo,0)
 	            FROM appointments WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, appointmentID).
 		Scan(&appt.ID, &appt.DoctorID, &appt.Status, &appt.SettlementID, &appt.PlatformFeeKobo); err != nil {
@@ -646,7 +646,7 @@ func (s *Service) CompleteAppointment(ctx context.Context, appointmentID, doctor
 func (s *Service) CancelAppointment(ctx context.Context, appointmentID, actorID string) error {
 	var patientID, status, settlementID, doctorID string
 	if err := s.db.QueryRow(ctx,
-		`SELECT patient_id, doctor_id, status, settlement_id FROM appointments WHERE id=$1`,
+		`SELECT patient_id, doctor_id, status, COALESCE(settlement_id::text,'') FROM appointments WHERE id=$1`,
 		appointmentID).Scan(&patientID, &doctorID, &status, &settlementID); err != nil {
 		return fmt.Errorf("telemedicine: appointment not found")
 	}

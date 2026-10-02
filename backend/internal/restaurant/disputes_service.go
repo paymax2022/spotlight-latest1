@@ -73,7 +73,7 @@ func (s *Service) RaiseFoodDispute(ctx context.Context, orderID, actorID, dtype,
 	// One active dispute per order.
 	var active bool
 	if err := s.db.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM disputes WHERE reference=$1 AND module_type='food' AND status IN ('open','investigating'))`,
+		`SELECT EXISTS(SELECT 1 FROM disputes WHERE reference=$1 AND module_type='food' AND status IN ('open','in_review'))`,
 		orderID).Scan(&active); err != nil {
 		return nil, err
 	}
@@ -582,9 +582,9 @@ func foodRefundKobo(res FoodDisputeResolution, requestedKobo, refundableKobo int
 }
 
 // foodDisputeResolvable reports whether a dispute in the given (shared-table) status can
-// still be resolved. open/investigating are actionable; resolved/closed are terminal.
+// still be resolved. open/in_review are actionable; resolved/closed are terminal.
 func foodDisputeResolvable(status string) bool {
-	return status == "open" || status == "investigating"
+	return status == "open" || status == "in_review"
 }
 
 // resolutionToDBFields maps a food resolution onto the shared disputes table's

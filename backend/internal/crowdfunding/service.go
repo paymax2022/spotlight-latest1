@@ -15,6 +15,16 @@ import (
 	"spotlight/backend/internal/finance/settlement"
 )
 
+// Contribution pre-check rejections — business-rule errors on well-formed input
+// (raised before any money moves). Handlers map these to 4xx, not 500.
+var (
+	ErrCampaignNotFound     = errors.New("crowdfunding: campaign not found")
+	ErrCampaignPaused       = errors.New("crowdfunding: campaign is paused by its creator and is not accepting contributions")
+	ErrCampaignNotAccepting = errors.New("crowdfunding: campaign is not accepting contributions")
+	ErrCampaignNotReviewed  = errors.New("crowdfunding: campaign has not passed admin review")
+	ErrCampaignDeadline     = errors.New("crowdfunding: campaign deadline has passed")
+)
+
 // Service manages crowdfunding campaigns, contributions, and payouts/refunds.
 type Service struct {
 	db         *pgxpool.Pool
@@ -172,27 +182,27 @@ func (s *Service) Contribute(ctx context.Context, campaignID, contributorID stri
 	var pausedAt, deletedAt *time.Time
 	if err := s.db.QueryRow(ctx, `SELECT status, review_status, creator_id, deadline, paused_at, deleted_at FROM campaigns WHERE id=$1`, campaignID).
 		Scan(&status, &reviewStatus, &creatorID, &deadline, &pausedAt, &deletedAt); err != nil {
-		return nil, fmt.Errorf("crowdfunding: campaign not found")
+		return nil, ErrCampaignNotFound
 	}
 	// A campaign the owner soft-deleted no longer exists as far as the product
 	// is concerned; presenting it as "not found" matches every read surface.
 	if deletedAt != nil {
-		return nil, fmt.Errorf("crowdfunding: campaign not found")
+		return nil, ErrCampaignNotFound
 	}
 	// Owner-paused campaigns stop TAKING money, not merely hiding from the
 	// rails — otherwise anyone holding a direct link could keep funding a
 	// campaign its creator has explicitly stopped.
 	if pausedAt != nil {
-		return nil, fmt.Errorf("crowdfunding: campaign is paused by its creator and is not accepting contributions")
+		return nil, ErrCampaignPaused
 	}
 	if status != "active" {
-		return nil, fmt.Errorf("crowdfunding: campaign is not accepting contributions")
+		return nil, ErrCampaignNotAccepting
 	}
 	if reviewStatus != "ACTIVE" {
-		return nil, fmt.Errorf("crowdfunding: campaign has not passed admin review")
+		return nil, ErrCampaignNotReviewed
 	}
 	if time.Now().After(deadline) {
-		return nil, fmt.Errorf("crowdfunding: campaign deadline has passed")
+		return nil, ErrCampaignDeadline
 	}
 
 	ref := "campaign:" + campaignID + ":contributor:" + contributorID

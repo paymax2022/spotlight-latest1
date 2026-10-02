@@ -55,7 +55,17 @@ func (h *Handler) Contribute(c *gin.Context) {
 	}
 	contrib, err := h.svc.Contribute(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		switch {
+		case errors.Is(err, ErrCampaignNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		case errors.Is(err, ErrCampaignPaused),
+			errors.Is(err, ErrCampaignNotAccepting),
+			errors.Is(err, ErrCampaignNotReviewed),
+			errors.Is(err, ErrCampaignDeadline):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 		return
 	}
 	c.JSON(http.StatusCreated, contrib)
