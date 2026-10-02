@@ -52,9 +52,9 @@ const draft = {
 };
 
 const store = vi.hoisted(() => ({
-  getRegistrationDraft: vi.fn(),
-  findRegistrationPaymentIntentByIdempotencyKey: vi.fn(async () => null),
-  getRegistrationPaymentIntentByApplicationAndMethod: vi.fn(async () => null),
+  getRegistrationDraft: vi.fn(async (): Promise<any> => null),
+  findRegistrationPaymentIntentByIdempotencyKey: vi.fn(async (): Promise<any> => null),
+  getRegistrationPaymentIntentByApplicationAndMethod: vi.fn(async (): Promise<any> => null),
   createRegistrationPaymentIntent: vi.fn(),
   retryRegistrationPaymentIntent: vi.fn(),
 }));
