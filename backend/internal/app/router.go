@@ -58,6 +58,26 @@ func NewRouter(cfg config.Config) *gin.Engine {
 
 	health := handlers.NewHealthHandler()
 	supabase := integrations.NewSupabaseRestClient(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey)
+	// ADR-PR395: local JWT verification (AUTH_JWT_LOCAL_VERIFY). Removes the
+	// per-request GoTrue GET /auth/v1/user call — the measured capacity ceiling
+	// (200-VU run: ~50% 503 "authentication service unavailable" while Postgres
+	// was fine). ES256 tokens verify against Supabase's JWKS endpoint; HS256
+	// tokens need SUPABASE_JWT_SECRET. Revocation staleness is bounded by the
+	// token TTL; platform_users status still gates suspended/locked/deleted
+	// per request. Enabling with no verification material is a fatal
+	// misconfig on deployed tiers — same doctrine as the nil-pool guard below.
+	if cfg.AuthJWTLocalVerify {
+		if strings.TrimSpace(cfg.SupabaseURL) == "" && strings.TrimSpace(cfg.SupabaseJWTSecret) == "" {
+			if e := strings.ToLower(strings.TrimSpace(cfg.AppEnv)); e == "staging" || cfg.IsProd() {
+				log.Fatalf("[router] AUTH_JWT_LOCAL_VERIFY=true but neither SUPABASE_URL (for JWKS) nor SUPABASE_JWT_SECRET is set — refusing to start")
+			}
+			log.Printf("[router] WARN: AUTH_JWT_LOCAL_VERIFY set but no JWKS URL or JWT secret — remote GoTrue validation kept")
+		} else {
+			supabase.EnableLocalJWTVerify(cfg.SupabaseJWTSecret)
+			log.Printf("[router] AUTH_JWT_LOCAL_VERIFY: local JWT verification enabled (JWKS via SUPABASE_URL, HS256 secret %s)",
+				map[bool]string{true: "set", false: "unset"}[cfg.SupabaseJWTSecret != ""])
+		}
+	}
 	adminRepo := repositories.NewAdminSupabaseRepository(supabase)
 	rbacRepo := repositories.NewRBACSupabaseRepository(supabase)
 	auditRepo := repositories.NewAuditSupabaseRepository(supabase)
@@ -71,6 +91,13 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	admin := handlers.NewAdminHandler(services.NewAdminService(adminRepo))
 	auditService := services.NewAuditService(auditRepo)
 	rbacService := services.NewRBACService(rbacRepo)
+	// Optional short-TTL identity cache (AUTH_IDENTITY_CACHE_TTL_SECONDS):
+	// RequireAuthContext issues 3 Supabase REST reads per request; under load
+	// that is the next saturation point after GoTrue (ADR-PR395 follow-up).
+	// 0 = live lookups, unchanged behavior.
+	if cfg.AuthIdentityCacheTTLSeconds > 0 {
+		rbacService = services.NewCachedRBACService(rbacService, time.Duration(cfg.AuthIdentityCacheTTLSeconds)*time.Second)
+	}
 	authService := services.NewAuthService(supabase, rbacService, cfg)
 	// Session-hardening (#19): store + notifier + service, feature-flagged.
 	sessionStore := repositories.NewSessionSupabaseRepository(supabase)

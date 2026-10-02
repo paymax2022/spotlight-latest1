@@ -69,3 +69,28 @@ recorded in the audit is therefore **the per-request GoTrue call**, which this
 ADR removes. Recommendation: option (d) — local HS256 verify + short-cached
 `platform_users.status` — keeps ban/lockout semantics within a ~60s window
 while taking GoTrue off the hot path.
+
+## Implementation — 2026-10-02
+
+Implemented flag-gated on this branch:
+
+- `AUTH_JWT_LOCAL_VERIFY=true` — local verify in `AuthUser` (`integrations/jwt_local.go`):
+  ES256 via JWKS (`<supabase>/auth/v1/.well-known/jwks.json`, cached, refetch on
+  unknown kid for rotation) and HS256 via `SUPABASE_JWT_SECRET` fallback. All
+  local failures map to `ErrTokenInvalid` → 401; no transport ambiguity.
+- `AUTH_IDENTITY_CACHE_TTL_SECONDS` — optional per-user TTL cache on the
+  RBAC identity reads (`services.NewCachedRBACService`), the second upstream
+  leg (PostgREST status/roles/perms) that saturates next. 0 = live lookups.
+  Mutations through the service invalidate immediately; errors never cached.
+
+Measured on the local stack (`GET /api/finance/wallet/balance`, 200 VU / 20s):
+
+| Config | req/s | p95 | fail |
+|---|---|---|---|
+| Remote GoTrue (main) | 54 | 5.04s | 16.6% |
+| Local JWT only | 575 | 1.19s | 57.7% (RBAC layer now the bottleneck) |
+| Local JWT + 60s identity cache | 12,933 | 19.7ms | 0.00% |
+
+Still gated on the revocation-window decision: enabling both flags gives every
+GoTrue revocation up to token-TTL staleness and RBAC changes up to the cache
+TTL. Defaults keep today's behavior exactly.

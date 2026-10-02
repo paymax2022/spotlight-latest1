@@ -123,6 +123,11 @@ func (c *SupabaseRestClient) RPC(function string, payload map[string]any, out an
 }
 
 func (c *SupabaseRestClient) AuthUser(accessToken string) (map[string]any, error) {
+	// ADR-PR395: local verify when configured — same 401 semantics for a
+	// definitively-bad token, no GoTrue round trip.
+	if c.localVerify {
+		return c.verifyLocalJWT(accessToken)
+	}
 	if strings.TrimSpace(c.baseURL) == "" {
 		return nil, fmt.Errorf("supabase URL is not configured")
 	}
