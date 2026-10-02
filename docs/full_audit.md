@@ -1249,3 +1249,23 @@ provider callback exists in this path, so "provider webhook during paid vote"
 does not apply to Connect. The provider-dependent legs remain frontend-web's
 Paystack topup and the `verifyAndCreditPaidVote` path (AUD-DB-002/FE-003
 residuals above).
+
+### Verification suite — latest `main` (`0185a4d4`, 2026-10-02)
+
+Re-run after all agent/remediation merges:
+
+| Gate | Result |
+|------|--------|
+| `backend` go build + vet | PASS |
+| `backend` go test ./... -count=1 | PASS (no FAIL lines; live-DB suites skipped as designed) |
+| `frontend-web` test:regression | PASS — 10 files, 131/131 |
+| `frontend-web` test:money | PASS — 13 files, 183/183 |
+| `frontend-web` contract:check | PASS — 19 contracts, 1,861 ops |
+| `frontend-web` tsc --noEmit | PASS |
+| `frontend-admin` type-check | PASS |
+| User's readyz-cache + `health_ready_test.go` | Present on main (via #395) |
+| Notification missing-config | On main: `asynq.SkipRetry` (observable skip), not the silent `return nil` variant |
+
+CI note: PR #423 reports all three previously-red baseline lanes (trivy fs,
+npm audit, deps) are now green after the #422 trivy allow-rule for the public
+Supabase anon key in eas.json.
