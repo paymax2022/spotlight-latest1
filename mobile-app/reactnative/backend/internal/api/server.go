@@ -49,6 +49,10 @@ type Server struct {
 	// ledgerShadowEnabled gates the additive parallel post. True only for
 	// LEDGER_BACKEND=shadow|http; false (default) leaves the money path untouched.
 	ledgerShadowEnabled bool
+
+	// trustedProxyHops is how many right-most X-Forwarded-For entries are
+	// operator-controlled proxies (TRUSTED_PROXY_HOPS). 0 ignores XFF entirely.
+	trustedProxyHops int
 }
 
 // NewServer builds a Server. Provider adapters are mock by default; set
@@ -68,11 +72,12 @@ func NewServer(repo store.Repository) *Server {
 	}
 
 	s := &Server{
-		S:      repo,
-		MD:     adapter.MockMarketData{S: repo},
-		LQ:     adapter.MockLiquidity{S: repo},
-		CU:     adapter.MockCustody{S: repo},
-		Stocks: stk,
+		S:                repo,
+		MD:               adapter.MockMarketData{S: repo},
+		LQ:               adapter.MockLiquidity{S: repo},
+		CU:               adapter.MockCustody{S: repo},
+		Stocks:           stk,
+		trustedProxyHops: cfg.TrustedProxyHops,
 	}
 	s.Admin = admin.NewService(repo, s.Stocks)
 
@@ -260,7 +265,7 @@ func (s *Server) Handler() http.Handler {
 		authMW = auth.Middleware(os.Getenv("SUPABASE_JWT_SECRET"), allowDevAuth)
 	}
 	rps := envFloat("RATE_LIMIT_RPS", 50)
-	rl := rateLimitMW(ratelimit.New(rps, rps*2))
+	rl := rateLimitMW(ratelimit.New(rps, rps*2), s.trustedProxyHops)
 	cors := corsMW(corsAllowedOrigins())
 	return recoverMW(metricsMW(reg)(requestIDMW(tracing.Middleware(rl(cors(authMW(logMW(mux))))))))
 }
@@ -384,14 +389,14 @@ func metricsMW(reg *metrics.Registry) func(http.Handler) http.Handler {
 }
 
 // rateLimitMW sheds excess load per client IP (health/readiness/metrics exempt).
-func rateLimitMW(l *ratelimit.Limiter) func(http.Handler) http.Handler {
+func rateLimitMW(l *ratelimit.Limiter, trustedHops int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if !l.Allow(clientIP(r)) {
+			if !l.Allow(clientIP(r, trustedHops)) {
 				writeErr(w, http.StatusTooManyRequests, "rate_limited", "Too many requests — slow down.")
 				return
 			}
@@ -400,10 +405,31 @@ func rateLimitMW(l *ratelimit.Limiter) func(http.Handler) http.Handler {
 	}
 }
 
-// clientIP prefers the left-most X-Forwarded-For hop, else the socket address.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
+// clientIP resolves the caller IP for rate limiting.
+//
+// trustedHops is the number of trusted proxies in the request path, counting
+// the directly-connected peer (TRUSTED_PROXY_HOPS — same convention as
+// frontend-web's RATE_LIMIT_TRUSTED_PROXY_HOPS / Express `trust proxy`).
+// XFF is appended to by proxies, so the client is the entry at index
+// len-hops — everything to its right was appended by trusted infrastructure.
+// The left-most entry is NEVER trusted: it is client-controlled and spoofing
+// it would defeat the limiter.
+//
+// Fail-closed: hops==0, a chain shorter than the configured proxy count, or a
+// candidate that isn't a parseable IP all fall back to RemoteAddr — the socket
+// peer, which only the directly-connected proxy can claim. Behind an
+// unconfigured proxy that aggregates clients into one bucket, which is the
+// safe direction for a limiter.
+func clientIP(r *http.Request, trustedHops int) string {
+	if trustedHops > 0 {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			if idx := len(parts) - trustedHops; idx >= 0 {
+				if ip := net.ParseIP(strings.TrimSpace(parts[idx])); ip != nil {
+					return ip.String()
+				}
+			}
+		}
 	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host
