@@ -144,6 +144,13 @@ func (s *Service) Debit(ctx context.Context, userID, reference, idempotencyKey, 
 	}, amountKobo)
 }
 
+// EntryAmount returns the amount_kobo posted under this idempotency_key on the
+// given account — the ledger of record for replay verification and reversal
+// lookups, so callers never trust the request's own amount claim.
+func (s *Service) EntryAmount(ctx context.Context, accountID, idempotencyKey string) (int64, bool, error) {
+	return s.repo.EntryAmount(ctx, accountID, idempotencyKey)
+}
+
 // PostJournal posts a balanced entry between two existing account IDs.
 // Use for non-wallet postings such as offline-payment approval
 // (DR provider_clearing → CR settlement) where no user wallet is involved.
