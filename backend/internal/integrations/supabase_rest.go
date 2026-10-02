@@ -6,13 +6,18 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
 type SupabaseRestClient struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL     string
+	apiKey      string
+	jwtSecret   []byte
+	localVerify bool
+	jwks        map[string]jwksKey
+	jwksMu      sync.Mutex
+	http        *http.Client
 }
 
 func NewSupabaseRestClient(baseURL, apiKey string) *SupabaseRestClient {

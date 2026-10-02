@@ -17,8 +17,18 @@ type Config struct {
 	Port                   string
 	SupabaseURL            string
 	SupabaseServiceRoleKey string
-	AdminAPIKey            string
-	CORSAllowOrigins       string
+	// SupabaseJWTSecret enables local HS256 verification of Supabase access
+	// tokens (ADR-PR395: removes the per-request GoTrue GET /auth/v1/user call
+	// that saturates first under load). Only consulted when AuthJWTLocalVerify
+	// is true.
+	SupabaseJWTSecret  string
+	AuthJWTLocalVerify bool
+	// AuthIdentityCacheTTLSeconds caches the per-request RBAC identity lookups
+	// (status/roles/global perms) for this many seconds; 0 = live lookups.
+	// Opt-in because a suspend/lock takes up to this long to take effect.
+	AuthIdentityCacheTTLSeconds int
+	AdminAPIKey                 string
+	CORSAllowOrigins            string
 	// TrustedProxyCIDRs is a CSV of CIDRs/IPs whose X-Forwarded-For/X-Real-Ip
 	// headers Gin may trust when resolving c.ClientIP(). c.ClientIP() feeds
 	// rate limits, audit records, and the suspicious-login engine, so it must
@@ -639,15 +649,18 @@ func getEnvBool(key string, fallback bool) bool {
 
 func Load() Config {
 	return Config{
-		AppEnv:                 getEnv("APP_ENV", "development"),
-		Port:                   getEnv("APP_PORT", "8080"),
-		SupabaseURL:            getEnv("SUPABASE_URL", getEnv("NEXT_PUBLIC_SUPABASE_URL", "")),
-		SupabaseServiceRoleKey: getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
-		AdminAPIKey:            getEnv("ADMIN_API_KEY", ""),
-		CORSAllowOrigins:       getEnv("CORS_ALLOW_ORIGINS", "http://localhost:3000,http://localhost:4030,http://localhost:8081"),
-		TrustedProxyCIDRs:      getEnv("TRUSTED_PROXY_CIDRS", "130.211.0.0/22,35.191.0.0/16"),
-		MaxFailedLoginAttempts: getEnvInt("AUTH_MAX_FAILED_LOGIN_ATTEMPTS", 5),
-		AccountLockMinutes:     getEnvInt("AUTH_ACCOUNT_LOCK_MINUTES", 30),
+		AppEnv:                      getEnv("APP_ENV", "development"),
+		Port:                        getEnv("APP_PORT", "8080"),
+		SupabaseURL:                 getEnv("SUPABASE_URL", getEnv("NEXT_PUBLIC_SUPABASE_URL", "")),
+		SupabaseServiceRoleKey:      getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
+		SupabaseJWTSecret:           getEnv("SUPABASE_JWT_SECRET", ""),
+		AuthJWTLocalVerify:          getEnvBool("AUTH_JWT_LOCAL_VERIFY", false),
+		AuthIdentityCacheTTLSeconds: getEnvInt("AUTH_IDENTITY_CACHE_TTL_SECONDS", 0),
+		AdminAPIKey:                 getEnv("ADMIN_API_KEY", ""),
+		CORSAllowOrigins:            getEnv("CORS_ALLOW_ORIGINS", "http://localhost:3000,http://localhost:4030,http://localhost:8081"),
+		TrustedProxyCIDRs:           getEnv("TRUSTED_PROXY_CIDRS", "130.211.0.0/22,35.191.0.0/16"),
+		MaxFailedLoginAttempts:      getEnvInt("AUTH_MAX_FAILED_LOGIN_ATTEMPTS", 5),
+		AccountLockMinutes:          getEnvInt("AUTH_ACCOUNT_LOCK_MINUTES", 30),
 
 		FeatureSessionHardeningEnabled: getEnvBool("FEATURE_SESSION_HARDENING_ENABLED", false),
 		SuspiciousFailedLoginSpike:     getEnvInt("AUTH_SUSPICIOUS_FAILED_LOGIN_SPIKE", 3),
@@ -970,6 +983,11 @@ func (c Config) Validate() error {
 	// Core infrastructure — always required to serve real traffic.
 	require(true, "DATABASE_URL", c.DatabaseURL)
 	require(true, "SUPABASE_SERVICE_ROLE_KEY", c.SupabaseServiceRoleKey)
+	// Local JWT verify (ADR-PR395) needs at least one verification material:
+	// SUPABASE_URL (JWKS, covers ES256) or SUPABASE_JWT_SECRET (covers HS256).
+	if c.AuthJWTLocalVerify && isPlaceholder(c.SupabaseURL) && isPlaceholder(c.SupabaseJWTSecret) {
+		problems = append(problems, "AUTH_JWT_LOCAL_VERIFY requires SUPABASE_URL or SUPABASE_JWT_SECRET")
+	}
 
 	// Payment providers — required only when their money path is enabled.
 	paymentsOn := c.FeatureWalletEnabled || c.FeatureBankTransfersEnabled
