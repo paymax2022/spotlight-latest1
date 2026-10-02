@@ -48,7 +48,7 @@ export default function MobilityHomeScreen() {
   const destAddress = trip.destAddress ? String(trip.destAddress) : '';
   const enc = encodeURIComponent;
 
-  // Open the shared AddressEntry autocomplete for either field, preserving the
+  // Open the shared address autocomplete picker for either field, preserving the
   // value already chosen for the other field.
   const pickerHref = (target: 'pickup' | 'destination') => {
     let q = `?target=${target}`;
@@ -121,7 +121,7 @@ export default function MobilityHomeScreen() {
           <RemoteBanner slug="ride" priority />
 
           {/* Trip planner — Current location + Where to. Both open the same
-              AddressEntry autocomplete (Google-powered lookup + confirm-on-map). */}
+              address autocomplete (Google-powered lookup). */}
           <View style={[styles.plannerCard, shadow1]}>
             <Pressable style={styles.plannerRow} onPress={() => router.push(pickerHref('pickup'))} accessibilityLabel="Set current location">
               <View style={styles.plannerDotWrap}><View style={styles.dotOrigin} /></View>
