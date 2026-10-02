@@ -204,7 +204,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: every IP-derived control — rate limits, OTP budgets, signup gate, fraud/travel heuristics, audit and KYC consent records — is spoofable by one header.
 * Production impact: credential-stuffing and OTP/quota abuse bypass the (per-instance) rate limiter; audit logs and KYC consent records can carry forged IPs (compliance integrity); suspicious-login engine both evadable and weaponizable; `StemRateLimit` doubles as a memory-growth DoS.
 * Confidence: HIGH (Gin default behavior + zero proxy config in repo, re-verified). Caveat: if the deployed edge (Railway/Render) strips client-supplied XFF, exposure is reduced — unverifiable from repo.
-* Status: **FIXED — PR #322 (merged, `dd4787ad`).** `TRUSTED_PROXY_CIDRS` → `SetTrustedProxies`; invalid config fails startup; untrusted peers can no longer spoof XFF.
+* Status: **FIXED — PR #322 (merged, `dd4787ad`).** `TRUSTED_PROXY_CIDRS` → `SetTrustedProxies`; invalid config fails startup; untrusted peers can no longer spoof XFF. **Second-module residual FIXED — PR #445 (in review, `c8a67826`):** standalone crypto backend `clientIP()` now resolves the client at `len(XFF) - TRUSTED_PROXY_HOPS` (hops counts proxies incl. the direct peer — Express/`RATE_LIMIT_TRUSTED_PROXY_HOPS` convention), default 0 ignores XFF, every failure mode falls back to `RemoteAddr`; `client_ip_test.go` 8/8.
 
 ### AUD-BE-005 — `POST /api/auth/change-password` reports success but never changes the password
 
@@ -1117,12 +1117,13 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | AUD-FE-009 (saveDraft half) | #433 | `32baba42` | `RealityTvShowApplicationWizard.saveDraft` now PATCHes `{stepKey:'contest_selection', values}` (the only step whose server validation passes on a partial draft), checks `res.ok` + `draftSaveSucceeded` (PATCH returns 200 `{isValid:false}` without persisting on validation failure), surfaces errors, and blocks step navigation + the Paystack block until the draft is saved | merged — new spec 5/5, regression 131/131, tsc clean; field-coverage gap still open (product decision) |
 | AUD-PERF-001 + ADR-PR395 (implementation) | #429 | `49dae8a0` | `AUTH_JWT_LOCAL_VERIFY`: in-process Supabase token verify — ES256 via JWKS (`/auth/v1/.well-known/jwks.json`, kid-matched, unknown-kid refetch for rotation) + HS256 via `SUPABASE_JWT_SECRET`; all local failures → `ErrTokenInvalid` (401). `AUTH_IDENTITY_CACHE_TTL_SECONDS`: opt-in bounded (10k-entry) TTL cache on the per-request PostgREST RBAC reads (status/roles/perms), mutation-invalidated, errors never cached; 0 = live lookups. Both flags default off — no behavior change until the owner ratifies the revocation-staleness trade-off in ADR-PR395 | merged — local measure on `GET /api/finance/wallet/balance` @ 200 VU/20s: remote-GoTrue baseline 54 req/s p95 5.04s 16.6% fail → local JWT only 575 req/s (PostgREST RBAC leg then saturates) → +cache **12,933 req/s, p95 19.7ms, 0.00% fail**; live ES256 token verified against local stack |
 | AUD-SEC-001 (v2 paid-vote residual) | #430 | `69856101` | `POST /api/v2/votes/paid/initiate` → 10/min/IP (gateway:recover weight — calls Paystack + inserts `vote_transactions`); `POST /api/v2/votes/paid/verify` → 30/min/IP (mirrors `vote:free`; callback-page polling headroom, blocks reference enumeration); keys via `getRequestIp` (unspoofed). v1 `/api/votes/paid/*` twins remain unthrottled — protected legacy; GET verify intentionally unthrottled (provider webhook retries must not be delayed) | merged — tsc clean; v2-route specs 17/17; same bounded token-bucket limiter as free vote |
+| AUD-BE-004 (second-module residual) | #445 | `c8a67826` | Standalone crypto backend `clientIP()` trusted leftmost XFF — now `TRUSTED_PROXY_HOPS` (default 0 = XFF ignored → `RemoteAddr`); client index `len-hops` (proxies incl. direct peer, Express/`RATE_LIMIT_TRUSTED_PROXY_HOPS` convention); short chain / non-IP / hops=0 all fail closed to `RemoteAddr`; leftmost entry never trusted | in review — `TestClientIP` 8/8, full module `go test ./...` green, vet + gofmt clean |
 
 ### In review
 
 | PR | Lane |
 |----|------|
-| — | none pending from this lane |
+| #445 | crypto-backend `clientIP()` trusted-proxy hardening (AUD-BE-004 residual) |
 
 ### New findings surfaced during this wave (2026-10-01)
 
