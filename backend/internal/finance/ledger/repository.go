@@ -60,12 +60,21 @@ func (r *Repository) getOrCreateUserAccount(ctx context.Context, userID string, 
 		return nil, fmt.Errorf("ledger: get account user=%s type=%s: %w", userID, accountType, err)
 	}
 
-	// First touch — create it. ON CONFLICT DO NOTHING keeps a concurrent creator
-	// a no-op; on conflict this returns no rows and we re-select below.
+	// First touch — create it. Plain ON CONFLICT DO NOTHING (no arbiter): the
+	// table carries TWO uniqueness surfaces — unique index
+	// ledger_accounts_user_type_key (user_id, type) AND the original table
+	// constraint ledger_accounts_user_id_type_currency_key (user_id, type,
+	// currency). An arbiter only suppresses conflicts on ITS index; the older
+	// constraint sits earlier in the index list, so a concurrent loser could
+	// pass the arbiter check before the winner reached it and then hit the
+	// winner's in-flight tuple in the (user_id,type,currency) index — a hard
+	// 23505 that escaped instead of being absorbed (caught by
+	// TestLiveDB_GetOrCreateAccount_ConcurrentCreatorsConverge, AUD-DB-007).
+	// With no arbiter, conflicts on ANY unique index resolve to DO NOTHING.
 	const upsert = `
 		INSERT INTO ledger_accounts (user_id, type)
 		VALUES ($1, $2)
-		ON CONFLICT (user_id, type) DO NOTHING
+		ON CONFLICT DO NOTHING
 		RETURNING id, user_id, type, created_at`
 	err = r.db.QueryRow(ctx, upsert, userID, string(accountType)).
 		Scan(&a.ID, &a.UserID, &a.Type, &a.CreatedAt)
