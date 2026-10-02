@@ -27,6 +27,22 @@ function reference() {
   return `SPT-REG-${crypto.randomUUID().replace(/-/g, '').slice(0, 18).toUpperCase()}`;
 }
 
+// `initializePaystackPayment` returns only the authorization URL — the
+// access_code Paystack embeds in it (https://checkout.paystack.com/<code>) is
+// what the inline popup needs to RESUME this server-created transaction
+// (PaystackPop.resumeTransaction). Passing our reference to newTransaction
+// instead would be a "Duplicate charge request for reference" error, so web
+// wizards resume by access code; the hosted-checkout URL remains for clients
+// that full-page redirect.
+function accessCodeFromAuthorizationUrl(url: string): string | undefined {
+  try {
+    const segment = new URL(url).pathname.replace(/^\/+|\/+$/g, '');
+    return segment || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;
   const idempotencyKey = request.headers.get('Idempotency-Key');
@@ -124,6 +140,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       transactionId: intent.id,
       reference: paymentReference,
       authorizationUrl,
+      accessCode: accessCodeFromAuthorizationUrl(authorizationUrl),
       status: 'initiated',
     }, { status: 201 });
   } catch (error) {

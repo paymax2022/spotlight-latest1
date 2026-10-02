@@ -15,10 +15,13 @@ import type {
   RegistrationStatusEvent,
   RegistrationStep,
 } from '@/src/features/registration/types';
-import { getOptionalEnv } from '@/src/lib/config';
-import { loadPaystackClient } from '@/src/lib/payments';
 import { createClient } from '@/src/lib/supabase/client';
 import { authFetch, isUnauthorized, redirectToLogin } from '@/src/lib/auth/flow';
+import {
+  confirmRegistrationPayment,
+  resumeRegistrationCheckout,
+  startRegistrationPayment,
+} from '@/src/lib/payments/registration-fee';
 
 const HIDDEN_AUTH_FIELDS = new Set([
   'account.fullName',
@@ -415,61 +418,49 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
           return;
         }
 
-        const publicKey = getOptionalEnv('NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY');
-        if (!publicKey) {
-          setErrorMessage('Paystack public key is missing. Please contact support.');
+        // AUD-FE-003: the fee is initiated SERVER-side — the route quotes the
+        // amount from the draft, mints the SPT-REG-* reference, binds it to a
+        // registration_payment_intents row (so webhook/recover/reconcile can
+        // still fulfil a charge whose submit never arrives), and initializes
+        // the Paystack transaction. A client-minted reference or
+        // client-declared amount would defeat all of that.
+        const start = await startRegistrationPayment(draft.id, email);
+        if (start.kind === 'unauthorized') {
+          redirectToLogin(pathname || `/apply/${contestSlug}`);
+          return;
+        }
+        if (start.kind === 'error') {
+          setErrorMessage(start.message);
           return;
         }
 
-        const Paystack = await loadPaystackClient();
-        const reference = `SPOT-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-        const amountKobo = Math.round(feeAmount * 100);
+        if (start.kind === 'checkout') {
+          const tx = await resumeRegistrationCheckout(start);
+          const paidReference = tx.reference || start.reference;
 
-        await new Promise<void>((resolve, reject) => {
-          const popup = new Paystack();
-          popup.newTransaction({
-            key: publicKey,
-            email,
-            amount: amountKobo,
-            currency: 'NGN',
-            firstName: String(formData['personal.firstName'] || formData['account.fullName'] || ''),
-            lastName: String(formData['personal.lastName'] || ''),
-            phone: String(formData['personal.primaryPhone'] || formData['account.phone'] || ''),
-            metadata: {
-              custom_fields: [
-                { display_name: 'Application Reference', variable_name: 'application_reference', value: String(draft.reference) },
-                { display_name: 'Contest', variable_name: 'contest_title', value: String(formData['contest.title'] || '') },
-              ],
-            },
-            onSuccess: (tx) => {
-              void (async () => {
-                try {
-                  await authFetch(`/api/registration/applications/${draft.id}`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({
-                      stepKey: currentStep.key,
-                      values: {
-                        ...formData,
-                        'payment.transactionReference': tx?.reference || reference,
-                        'payment.paymentStatus': 'paid',
-                      },
-                    }),
-                  }, { json: true });
-                  setFormData((prev) => ({
-                    ...prev,
-                    'payment.transactionReference': tx?.reference || reference,
-                    'payment.paymentStatus': 'paid',
-                  }));
-                  resolve();
-                } catch (err) {
-                  reject(err);
-                }
-              })();
-            },
-            onCancel: () => reject(new Error('Payment was cancelled.')),
-            onError: (error) => reject(new Error(error?.message || 'Payment failed.')),
-          });
-        });
+          // Never trust the popup's own success claim — confirm the charge
+          // server-side before submitting (verify writes paymentStatus/'paid'
+          // onto the draft itself via applyRegistrationPaymentSuccess).
+          const confirmation = await confirmRegistrationPayment(draft.id, paidReference);
+          if (confirmation === 'unauthorized') {
+            redirectToLogin(pathname || `/apply/${contestSlug}`);
+            return;
+          }
+          if (confirmation === 'FAILED' || confirmation === 'error') {
+            setErrorMessage(
+              `Payment could not be confirmed (reference ${paidReference}). If you were charged, it will be reconciled automatically — contact support with this reference.`,
+            );
+            return;
+          }
+          // Mirror the server-written reference locally only — 'paid' status is
+          // set by the server, never PATCHed by this wizard.
+          setFormData((prev) => ({
+            ...prev,
+            'payment.transactionReference': paidReference,
+          }));
+        }
+        // start.kind === 'paid' — an intent for this application already
+        // settled (e.g. a webhook landed first): skip checkout, submit below.
       }
 
       const res = await authFetch(`/api/registration/applications/${draft.id}/submit`, {
@@ -488,7 +479,11 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
       const submittedDraft = payload.draft as RegistrationDraft;
       setDraft(submittedDraft);
       setErrorMessage('');
-      setMessage(payload.message || `Application submitted successfully. Your application reference number is ${submittedDraft.reference}.`);
+      setMessage(
+        submittedDraft.status === 'awaiting_payment'
+          ? 'Your payment was received and is being confirmed — the application finalizes automatically once the charge settles. Check My Applications shortly.'
+          : payload.message || `Application submitted successfully. Your application reference number is ${submittedDraft.reference}.`,
+      );
       await fetchTimeline(submittedDraft.id);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Submission failed.');

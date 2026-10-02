@@ -79,8 +79,24 @@ export type PaystackTransactionConfig = {
   onError?: (error: { message: string }) => void;
 };
 
+export type PaystackPopupCallbacks = {
+  onSuccess?: (transaction: { reference: string; id: number; message: string }) => void;
+  onCancel?: () => void;
+  onError?: (error: { message: string }) => void;
+  onLoad?: (payload: { id: number; customer: unknown; accessCode: string }) => void;
+};
+
 type PaystackConstructor = new () => {
   newTransaction(config: PaystackTransactionConfig): void;
+  /**
+   * Resumes a transaction the SERVER already created via
+   * `transaction/initialize`, keyed by the access_code embedded in the
+   * returned authorization_url. This is the documented popup path for a
+   * backend-initiated charge — passing that same reference to
+   * `newTransaction` instead is a Paystack "Duplicate charge request for
+   * reference" error.
+   */
+  resumeTransaction(accessCode: string, callbacks?: PaystackPopupCallbacks): void;
 };
 
 declare global {

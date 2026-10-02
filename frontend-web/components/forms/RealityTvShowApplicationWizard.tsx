@@ -5,7 +5,11 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/src/lib/supabase/client';
 import { authFetch, isUnauthorized, redirectToLogin } from '@/src/lib/auth/flow';
 import { NIGERIA_STATES, NIGERIA_CITIES_BY_STATE } from '@/src/features/registration/config';
-import { loadPaystackClient } from '@/src/lib/payments';
+import {
+  confirmRegistrationPayment,
+  resumeRegistrationCheckout,
+  startRegistrationPayment,
+} from '@/src/lib/payments/registration-fee';
 
 const TALENT_OPTIONS = ['Singing', 'Acting', 'Dance', 'Comedy', 'Content Creation', 'Public Speaking', 'Rapping', 'Presenting'];
 const EXPERIENCE_LEVELS = ['Beginner', 'Emerging', 'Intermediate', 'Advanced', 'Professional'];
@@ -20,6 +24,9 @@ const STEPS = [
   { id: 5, label: 'Submit',       icon: '🚀' },
 ];
 
+// Display fallback only — the amount actually CHARGED is quoted server-side
+// from the draft's payment.feeAmount (catalog registrationFeeNgn) at initiate
+// time; this constant no longer reaches Paystack.
 const REGISTRATION_FEE = 5000;
 
 interface FormData {
@@ -353,6 +360,7 @@ export default function RealityTvShowApplicationWizard() {
   const [userEmail, setUserEmail] = useState('');
   const [userName, setUserName] = useState('');
   const [draftId, setDraftId] = useState<string | null>(null);
+  const [feeNgn, setFeeNgn] = useState<number>(REGISTRATION_FEE);
   const topRef = useRef<HTMLDivElement>(null);
 
   const cities = NIGERIA_CITIES_BY_STATE[form.personal_stateOfResidence] || [];
@@ -400,6 +408,10 @@ export default function RealityTvShowApplicationWizard() {
       if (!cancelled) {
         setDraftId(id);
         const saved = (readPayload.draft.formData || {}) as Record<string, unknown>;
+        // The server quotes the fee from this value at initiate — show the
+        // same number instead of the hardcoded display constant.
+        const serverFee = Number(saved['payment.feeAmount']);
+        if (serverFee > 0) setFeeNgn(serverFee);
         // Hydrate form from saved draft
         setForm((prev) => ({
           ...prev,
@@ -545,43 +557,49 @@ export default function RealityTvShowApplicationWizard() {
 
     await saveDraft();
 
-    const publicKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || '';
-    if (!publicKey || publicKey.includes('placeholder')) {
-      setGlobalError('Payment gateway is not configured. Please contact support.');
-      setSubmitting(false);
-      return;
-    }
-
     try {
-      const PaystackPop = await loadPaystackClient();
-      const handler = new PaystackPop();
-      handler.newTransaction({
-        key: publicKey,
-        email: userEmail,
-        amount: REGISTRATION_FEE * 100,
-        currency: 'NGN',
-        metadata: {
-          custom_fields: [
-            { display_name: 'Programme', variable_name: 'programme', value: 'Spotlight Reality TV Show' },
-            { display_name: 'Applicant', variable_name: 'applicant', value: `${form.personal_firstName} ${form.personal_lastName}` },
-          ],
-        },
-        onSuccess: async (transaction: { reference: string }) => {
-          await submitApplication(transaction.reference);
-        },
-        onCancel: () => {
-          setGlobalError('Payment was cancelled. Please complete payment to submit your application.');
-          setSubmitting(false);
-        },
-        onError: (err: { message?: string }) => {
-          setGlobalError(err.message || 'Payment failed. Please try again.');
-          setSubmitting(false);
-        },
-      });
+      // AUD-FE-003: the fee is initiated SERVER-side — the route quotes the
+      // amount from the draft's payment.feeAmount, mints the SPT-REG-*
+      // reference, binds it to a registration_payment_intents row (so
+      // webhook/recover/reconcile still fulfil a charge whose submit never
+      // arrives), and initializes the Paystack transaction. The popup then
+      // RESUMES that transaction by access code — passing its reference to
+      // PaystackPop.newTransaction is a "Duplicate charge request" error.
+      const start = await startRegistrationPayment(draftId, userEmail);
+      if (start.kind === 'unauthorized') { redirectToLogin(pathname || '/apply/reality-tv-show'); return; }
+      if (start.kind === 'error') {
+        setGlobalError(start.message);
+        setSubmitting(false);
+        return;
+      }
+      // An already-settled intent (e.g. a webhook landed first): skip checkout.
+      if (start.kind === 'paid') {
+        await verifyAndSubmit(start.reference);
+        return;
+      }
+
+      const tx = await resumeRegistrationCheckout(start);
+      await verifyAndSubmit(tx.reference || start.reference);
     } catch (err) {
+      // Popup cancel/error lands here — the intent stays 'initiated' and a
+      // retry re-issues it in place, so the wizard is never stuck.
       setGlobalError(err instanceof Error ? err.message : 'Payment failed.');
       setSubmitting(false);
     }
+  }
+
+  // Confirm the charge server-side before submitting — the popup's own
+  // success callback is never trusted as proof of payment.
+  async function verifyAndSubmit(reference: string) {
+    if (!draftId) return;
+    const confirmation = await confirmRegistrationPayment(draftId, reference);
+    if (confirmation === 'unauthorized') { redirectToLogin(pathname || '/apply/reality-tv-show'); return; }
+    if (confirmation === 'FAILED' || confirmation === 'error') {
+      setGlobalError(`Payment could not be confirmed (reference ${reference}). If you were charged, it will be reconciled automatically — contact support with this reference.`);
+      setSubmitting(false);
+      return;
+    }
+    await submitApplication(reference);
   }
 
   async function submitApplication(paymentRef: string) {
@@ -596,6 +614,12 @@ export default function RealityTvShowApplicationWizard() {
 
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(payload?.error || 'Submission failed.');
+
+      if (payload?.draft?.status === 'awaiting_payment') {
+        setGlobalError('Your payment was received and is being confirmed — the application finalizes automatically once the charge settles. Check My Applications shortly.');
+        setSubmitting(false);
+        return;
+      }
 
       setDone(true);
       topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -665,7 +689,7 @@ export default function RealityTvShowApplicationWizard() {
       <div style={{ background: 'rgba(245,158,11,0.08)', border: `1.5px solid rgba(245,158,11,0.3)`, borderRadius: 12, padding: '12px 16px', marginBottom: 24, display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ fontSize: 18 }}>💳</span>
         <div>
-          <span style={{ fontSize: 13, fontWeight: 800, color: c.textDark }}>Registration fee: ₦5,000 </span>
+          <span style={{ fontSize: 13, fontWeight: 800, color: c.textDark }}>Registration fee: ₦{feeNgn.toLocaleString('en-NG')} </span>
           <span style={{ fontSize: 12.5, color: c.textMuted }}>— payment is processed at the final step via Paystack.</span>
         </div>
       </div>
