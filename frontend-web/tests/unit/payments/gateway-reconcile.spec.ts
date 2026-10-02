@@ -2,11 +2,11 @@
  * AUD-FE-003 residual — gateway reconciliation sweep.
  *
  * POST /api/v1/payments/gateway/reconcile is the backstop for charges whose
- * webhook never arrived AND whose client never came back: it scans the three
+ * webhook never arrived AND whose client never came back: it scans the
  * pending-intent tables inside a grace/age window, asks Paystack whether each
  * reference actually collected, and re-drives shared fulfilment.
  *
- * Pins: pending-row collection across all three tables, verify-before-fulfil
+ * Pins: pending-row collection across all four tables, verify-before-fulfil
  * (Paystack is the authority), unverified references skipped (left to age
  * out), reference dedup, fulfil failures reported as retryable, and the
  * shared-secret auth gate (closed when the env var is unset).
@@ -54,10 +54,11 @@ function supabaseReturning(rowsByTable: Record<string, { refCol: string; rows: s
   };
 }
 
-const THREE_TABLES = {
+const FOUR_TABLES = {
   vote_transactions: { refCol: 'payment_reference', rows: ['vote-tx-1'] },
   registration_payment_intents: { refCol: 'reference', rows: ['reg-1'] },
   openmic_vote_paystack_intents: { refCol: 'reference', rows: ['om-1'] },
+  academy_application_fee_intents: { refCol: 'reference', rows: ['acad-fee-1'] },
 };
 
 describe('sweepGatewayIntents', () => {
@@ -70,30 +71,31 @@ describe('sweepGatewayIntents', () => {
   });
 
   it('verifies each pending reference with Paystack and fulfils the verified ones', async () => {
-    vi.mocked(createAdminClient).mockReturnValue(supabaseReturning(THREE_TABLES) as never);
+    vi.mocked(createAdminClient).mockReturnValue(supabaseReturning(FOUR_TABLES) as never);
 
     const result = await sweepGatewayIntents({ limit: 10, graceMs: 0, maxAgeMs: 3_600_000 });
 
-    expect(result.scanned).toBe(3);
-    expect(result.verified).toBe(3);
-    expect(result.fulfilled).toEqual(['open_mic_vote', 'open_mic_vote', 'open_mic_vote']);
-    for (const ref of ['vote-tx-1', 'reg-1', 'om-1']) {
+    expect(result.scanned).toBe(4);
+    expect(result.verified).toBe(4);
+    expect(result.fulfilled).toEqual(['open_mic_vote', 'open_mic_vote', 'open_mic_vote', 'open_mic_vote']);
+    for (const ref of ['vote-tx-1', 'reg-1', 'om-1', 'acad-fee-1']) {
       expect(verifyPaystackPayment).toHaveBeenCalledWith(ref);
       expect(fulfilVerifiedGatewayCharge).toHaveBeenCalledWith(
         ref,
         350_000,
         expect.objectContaining({ openmicIntent: expect.objectContaining({ status: 'pending' }) }),
+        expect.objectContaining({}), // verified-charge details (providerReference/paidAt)
       );
     }
   });
 
   it('skips references Paystack did not confirm — no fulfil call', async () => {
-    vi.mocked(createAdminClient).mockReturnValue(supabaseReturning(THREE_TABLES) as never);
+    vi.mocked(createAdminClient).mockReturnValue(supabaseReturning(FOUR_TABLES) as never);
     vi.mocked(verifyPaystackPayment).mockResolvedValue({ success: false } as never);
 
     const result = await sweepGatewayIntents({ graceMs: 0 });
 
-    expect(result.scanned).toBe(3);
+    expect(result.scanned).toBe(4);
     expect(result.verified).toBe(0);
     expect(fulfilVerifiedGatewayCharge).not.toHaveBeenCalled();
   });
@@ -112,7 +114,7 @@ describe('sweepGatewayIntents', () => {
   });
 
   it('reports fulfil failures as retryable instead of throwing', async () => {
-    vi.mocked(createAdminClient).mockReturnValue(supabaseReturning(THREE_TABLES) as never);
+    vi.mocked(createAdminClient).mockReturnValue(supabaseReturning(FOUR_TABLES) as never);
     vi.mocked(fulfilVerifiedGatewayCharge).mockResolvedValueOnce({
       fulfilled: [],
       error: 'draft update failed',
@@ -121,11 +123,11 @@ describe('sweepGatewayIntents', () => {
     const result = await sweepGatewayIntents({ graceMs: 0 });
 
     expect(result.failed).toEqual([{ reference: 'vote-tx-1', error: 'draft update failed' }]);
-    expect(result.fulfilled.length).toBe(2);
+    expect(result.fulfilled.length).toBe(3);
   });
 
   it('passes the grace/age window to every pending-row query', async () => {
-    const mock = supabaseReturning(THREE_TABLES);
+    const mock = supabaseReturning(FOUR_TABLES);
     vi.mocked(createAdminClient).mockReturnValue(mock as never);
 
     await sweepGatewayIntents({ graceMs: 60_000, maxAgeMs: 7_200_000, limit: 5 });

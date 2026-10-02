@@ -49,7 +49,10 @@ export async function POST(request: Request) {
     }
 
     const targets = await findGatewayFulfilmentTargets(reference);
-    const outcome = await fulfilVerifiedGatewayCharge(reference, verified.amountKobo, targets);
+    const outcome = await fulfilVerifiedGatewayCharge(reference, verified.amountKobo, targets, {
+      providerReference: verified.providerReference,
+      paidAt: verified.paidAt,
+    });
     if (outcome.error) {
       return errorResponse(outcome.error, 500);
     }

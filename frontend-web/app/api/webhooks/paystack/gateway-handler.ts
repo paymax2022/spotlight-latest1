@@ -13,6 +13,10 @@ import {
   type OpenMicVoteIntent,
 } from '@/src/server/payments/openmic-vote-intents';
 import {
+  getAcademyFeeIntentByReference,
+  type AcademyFeeIntent,
+} from '@/src/server/payments/academy-fee-intents';
+import {
   getRegistrationPaymentIntentByReference,
   type RegistrationPaymentIntent,
 } from '@/src/server/registration/supabase-store';
@@ -84,16 +88,19 @@ export async function handleGatewayPaystackWebhook(
   //    retries, rather than silently dropping a charge we might own.
   let registrationIntent: RegistrationPaymentIntent | null = null;
   let openmicIntent: OpenMicVoteIntent | null = null;
+  let academyIntent: AcademyFeeIntent | null = null;
   if (event.event === 'charge.success' && reference) {
-    [registrationIntent, openmicIntent] = await Promise.all([
+    [registrationIntent, openmicIntent, academyIntent] = await Promise.all([
       getRegistrationPaymentIntentByReference(reference),
       getOpenMicVoteIntentByReference(reference),
+      getAcademyFeeIntentByReference(reference),
     ]);
   }
   if (
     !marked &&
     !isActionableRegistrationIntent(registrationIntent) &&
-    openmicIntent?.status !== 'pending'
+    openmicIntent?.status !== 'pending' &&
+    academyIntent?.status !== 'pending'
   ) {
     return { processed: false, duplicate: false };
   }
@@ -164,11 +171,17 @@ export async function handleGatewayPaystackWebhook(
     // only adds the server-initiated domains it cannot see.
     const voteTransaction = marked ? await findVoteTransactionByReference(reference) : null;
 
-    const outcome = await fulfilVerifiedGatewayCharge(reference, verified.amountKobo, {
-      voteTransaction,
-      registrationIntent,
-      openmicIntent,
-    });
+    const outcome = await fulfilVerifiedGatewayCharge(
+      reference,
+      verified.amountKobo,
+      {
+        voteTransaction,
+        registrationIntent,
+        openmicIntent,
+        academyIntent,
+      },
+      { providerReference: verified.providerReference, paidAt: verified.paidAt },
+    );
     if (outcome.error) {
       await markProcessed(outcome.error);
       return { processed: false, duplicate: false, error: outcome.error };

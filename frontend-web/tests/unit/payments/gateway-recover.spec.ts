@@ -74,6 +74,7 @@ describe('POST /api/v1/payments/gateway/recover', () => {
       'PAY_gw_1',
       250_000,
       expect.objectContaining({ registrationIntent: expect.objectContaining({ id: 'intent-1' }) }),
+      expect.objectContaining({}), // verified-charge details (providerReference/paidAt)
     );
     expect(body.fulfilled).toEqual(['registration_fee']);
   });

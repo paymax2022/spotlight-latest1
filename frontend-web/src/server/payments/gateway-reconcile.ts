@@ -5,7 +5,8 @@
  * client verify callbacks are best-effort — either way a *collected* charge
  * can sit unfulfilled. Every server-initiated checkout now leaves a pending
  * record keyed by the charge reference (vote_transactions,
- * registration_payment_intents, openmic_vote_paystack_intents), so this sweep
+ * registration_payment_intents, openmic_vote_paystack_intents,
+ * academy_application_fee_intents), so this sweep
  * walks those pending rows, asks Paystack (the authority) whether the charge
  * succeeded, and re-drives the same fulfilment the webhook runs.
  *
@@ -52,7 +53,7 @@ async function pendingReferences(
   const newest = new Date(Date.now() - opts.graceMs).toISOString();
   const oldest = new Date(Date.now() - opts.maxAgeMs).toISOString();
 
-  const [voteTxs, regIntents, omIntents] = await Promise.all([
+  const [voteTxs, regIntents, omIntents, academyIntents] = await Promise.all([
     supabase
       .from('vote_transactions')
       .select('payment_reference')
@@ -74,9 +75,16 @@ async function pendingReferences(
       .lt('created_at', newest)
       .gt('created_at', oldest)
       .limit(opts.limit),
+    supabase
+      .from('academy_application_fee_intents')
+      .select('reference')
+      .eq('status', 'pending')
+      .lt('created_at', newest)
+      .gt('created_at', oldest)
+      .limit(opts.limit),
   ]);
 
-  for (const r of [voteTxs, regIntents, omIntents]) {
+  for (const r of [voteTxs, regIntents, omIntents, academyIntents]) {
     if (r.error) throw r.error;
   }
 
@@ -84,6 +92,7 @@ async function pendingReferences(
     ...(voteTxs.data ?? []).map((r) => (r as { payment_reference: string }).payment_reference),
     ...(regIntents.data ?? []).map((r) => (r as { reference: string }).reference),
     ...(omIntents.data ?? []).map((r) => (r as { reference: string }).reference),
+    ...(academyIntents.data ?? []).map((r) => (r as { reference: string }).reference),
   ];
   return [...new Set(refs)];
 }
@@ -116,6 +125,7 @@ export async function sweepGatewayIntents(
         reference,
         verified.amountKobo,
         targets,
+        { providerReference: verified.providerReference, paidAt: verified.paidAt },
       );
       if (outcome.error) {
         result.failed.push({ reference, error: outcome.error });

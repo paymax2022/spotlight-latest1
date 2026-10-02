@@ -19,6 +19,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const state = vi.hoisted(() => ({
   voteTx: null as { id: string; vote_credit_status: string } | null,
+  // Pending-intent rows the reference lookups can see (real intent modules
+  // run — only the tables are stubbed).
+  openmicIntent: null as Record<string, unknown> | null,
+  academyIntent: null as Record<string, unknown> | null,
+  academyUpdates: [] as Record<string, unknown>[],
   // Rows the dedup select can see, keyed by the event_type filter the handler
   // sent — simulates the vote handler owning a `charge.success` row while the
   // gateway's `gateway:charge.success` row may or may not exist.
@@ -59,6 +64,26 @@ vi.mock('@/lib/supabase/server', () => ({
           update: (u: Record<string, unknown>) => {
             state.logUpdates.push(u);
             return { eq: async () => ({ error: null }) };
+          },
+        };
+      }
+      if (table === 'openmic_vote_paystack_intents') {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: state.openmicIntent, error: null }) }),
+          }),
+          update: () => ({ eq: async () => ({ error: null }) }),
+        };
+      }
+      if (table === 'academy_application_fee_intents') {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: state.academyIntent, error: null }) }),
+          }),
+          update: (u: Record<string, unknown>) => {
+            state.academyUpdates.push(u);
+            // markPaid/mark chain .eq('reference').eq('status', 'pending')
+            return { eq: () => ({ eq: async () => ({ error: null }) }) };
           },
         };
       }
@@ -132,6 +157,9 @@ const pendingIntent = {
 beforeEach(() => {
   vi.clearAllMocks();
   state.voteTx = null;
+  state.openmicIntent = null;
+  state.academyIntent = null;
+  state.academyUpdates = [];
   state.logRows = {};
   state.eventTypeFilters = [];
   state.upserts = [];
@@ -244,5 +272,61 @@ describe('gateway handler registration-fee fulfilment (AUD-FE-003 residual)', ()
 
     expect(res).toMatchObject({ processed: false, duplicate: false, error: 'draft update failed' });
     expect(state.logUpdates.at(-1)).toMatchObject({ processed: false });
+  });
+});
+
+describe('gateway handler academy application-fee fulfilment (AUD-FE-003 residual)', () => {
+  const academyCharge = (reference = 'academy-fee-1') =>
+    JSON.stringify({
+      event: 'charge.success',
+      data: { reference, metadata: { purpose: 'academy_application_fee' } },
+    });
+
+  const pendingAcademyIntent = {
+    reference: 'academy-fee-1',
+    user_id: 'user-001',
+    email: 'student@example.com',
+    full_name: 'Ada Okafor',
+    batch_id: 'batch-001',
+    amount_kobo: 250_000,
+    verified_amount_kobo: null,
+    provider_reference: null,
+    application_id: null,
+    status: 'pending',
+  };
+
+  it('claims an UNMARKED charge.success on a pending academy fee intent and marks it paid', async () => {
+    // The academy_applications row does not exist yet — the intent IS the
+    // record. The charge is verified, the intent flips paid, and the apply
+    // route consumes it whenever the form submit finally arrives.
+    state.academyIntent = pendingAcademyIntent;
+
+    const res = await handleGatewayPaystackWebhook(academyCharge(), 'sig');
+
+    expect(res).toMatchObject({ processed: true, duplicate: false });
+    expect(verifyPaystackPayment).toHaveBeenCalledWith('academy-fee-1');
+    expect(state.academyUpdates.at(-1)).toMatchObject({ status: 'paid' });
+  });
+
+  it('marks amount_mismatch when Paystack collected less than the quoted fee', async () => {
+    state.academyIntent = pendingAcademyIntent;
+    vi.mocked(verifyPaystackPayment).mockResolvedValueOnce({
+      success: true,
+      amountKobo: 249_999,
+    } as never);
+
+    const res = await handleGatewayPaystackWebhook(academyCharge(), 'sig');
+
+    expect(res).toMatchObject({ processed: true, duplicate: false });
+    expect(state.academyUpdates.at(-1)).toMatchObject({ status: 'amount_mismatch' });
+  });
+
+  it('does not claim an unmarked charge whose academy intent is already settled', async () => {
+    state.academyIntent = { ...pendingAcademyIntent, status: 'consumed' };
+
+    const res = await handleGatewayPaystackWebhook(academyCharge(), 'sig');
+
+    expect(res).toMatchObject({ processed: false, duplicate: false });
+    expect(state.academyUpdates).toHaveLength(0);
   });
 });

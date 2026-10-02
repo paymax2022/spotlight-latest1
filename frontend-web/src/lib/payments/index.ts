@@ -65,6 +65,9 @@ export type PaystackTransactionConfig = {
   email: string;
   amount: number;
   currency?: string;
+  /** Server-minted charge reference — when the backend recorded a payment
+   *  intent, THIS is what keys it; letting Paystack mint one would orphan it. */
+  reference?: string;
   firstName?: string;
   lastName?: string;
   phone?: string;
