@@ -58,3 +58,14 @@ Option (d) hybrid: local JWT verify for all authed routes, plus the existing
 and keep remote GoTrue validation only where revocation must be immediate
 (admin grant/revoke surfaces). Ship behind `FEATURE_JWT_LOCAL_VALIDATION`
 so it can be toggled per environment.
+
+## Evidence update — 2026-10-02
+
+Re-measured after #417 (wallet read-path indexes + pool knobs): 200-VU local
+run against `GET /api/finance/wallet/balance` still fails ~50% — but the body
+is `{"error":"authentication service unavailable"}`, i.e. GoTrue saturation,
+not the ledger. Isolated warm wallet read: ~216ms. The wallet p95 residual
+recorded in the audit is therefore **the per-request GoTrue call**, which this
+ADR removes. Recommendation: option (d) — local HS256 verify + short-cached
+`platform_users.status` — keeps ban/lockout semantics within a ~60s window
+while taking GoTrue off the hot path.

@@ -957,7 +957,7 @@ What keeps this from an unconditional READY is entirely outside the code:
   key, Sentry env (PR #414). Residual: confirm no contradictory EAS *dashboard*
   env overrides (needs Expo org access).
 - **Deploy authority** (AUD-INFRA-003) — decision record drafted:
-  `docs/adr/ADR-PR42X-deployment-authority.md` proposes Cloud Run/deploy.yml as
+  `docs/adr/ADR-PR421-deployment-authority.md` proposes Cloud Run/deploy.yml as
   backend+worker authority, Render/Railway/cPanel quarantined. Owner ratification
   pending.
 - **Workers** (AUD-INFRA-006 residual) — all 4 declared in render.yaml
@@ -1213,7 +1213,7 @@ verify `spotlight-notification-worker`, `spotlight-marketplace-cron`,
 running services and `SELECT count(*) FROM asynq_*`/queue dashboards drain.
 Without that check, enqueue sites post jobs to a queue nobody consumes.
 
-**4. Deploy authority (AUD-INFRA-003)** — ratify `ADR-PR42X` (link below), then
+**4. Deploy authority (AUD-INFRA-003)** — ratify `ADR-PR421` (link below), then
 delete or archive the non-authoritative targets.
 
 **5. JWT local validation (ADR-PR395)** — pick a revocation-staleness option;
