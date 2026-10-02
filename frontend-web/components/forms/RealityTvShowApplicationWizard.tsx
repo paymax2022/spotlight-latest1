@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/src/lib/supabase/client';
 import { authFetch, isUnauthorized, redirectToLogin } from '@/src/lib/auth/flow';
 import { NIGERIA_STATES, NIGERIA_CITIES_BY_STATE } from '@/src/features/registration/config';
+import { buildDraftSaveBody, draftSaveSucceeded } from '@/src/features/registration/draft-save';
 import { loadPaystackClient } from '@/src/lib/payments';
 
 const TALENT_OPTIONS = ['Singing', 'Acting', 'Dance', 'Comedy', 'Content Creation', 'Public Speaking', 'Rapping', 'Presenting'];
@@ -503,14 +504,41 @@ export default function RealityTvShowApplicationWizard() {
     setErrors((prev) => { const n = { ...prev }; delete n[key as string]; return n; });
   }
 
-  async function saveDraft(f: FormData = form) {
-    if (!draftId) return;
+  // Returns true only when the draft row was actually written server-side.
+  // The [id] route has no PUT handler — the old call silently 405'd and
+  // nothing was ever persisted. PATCH merges `values` into formData but only
+  // writes when the named step validates, so DRAFT_CHECKPOINT_STEP_KEY
+  // ('contest_selection') is used: its sole required field is server-locked.
+  async function saveDraft(f: FormData = form): Promise<boolean> {
+    if (!draftId) {
+      setGlobalError('Session error — please refresh.');
+      return false;
+    }
     setSaving(true);
     try {
-      await authFetch(`/api/registration/applications/${draftId}`, {
-        method: 'PUT',
-        body: JSON.stringify({ formData: formToFlat(f) }),
+      const res = await authFetch(`/api/registration/applications/${draftId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(buildDraftSaveBody(formToFlat(f))),
       }, { json: true });
+
+      if (isUnauthorized(res)) {
+        redirectToLogin(pathname || '/apply/reality-tv-show');
+        return false;
+      }
+
+      const payload = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        error?: string;
+        validation?: { isValid?: boolean };
+      };
+      if (!res.ok || !draftSaveSucceeded(payload)) {
+        setGlobalError(payload.error || 'Could not save your progress. Please check your connection and try again.');
+        return false;
+      }
+      return true;
+    } catch {
+      setGlobalError('Could not save your progress. Please check your connection and try again.');
+      return false;
     } finally {
       setSaving(false);
     }
@@ -524,7 +552,12 @@ export default function RealityTvShowApplicationWizard() {
       return;
     }
     setErrors({});
-    await saveDraft();
+    // Don't advance when the draft save failed — the error is surfaced via
+    // globalError and the user stays on the step so they can retry.
+    if (!(await saveDraft())) {
+      topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
     setStep((s) => Math.min(s + 1, STEPS.length));
     topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
@@ -543,7 +576,11 @@ export default function RealityTvShowApplicationWizard() {
     setSubmitting(true);
     setGlobalError('');
 
-    await saveDraft();
+    // Payment must never run against an unsaved draft — abort loudly.
+    if (!(await saveDraft())) {
+      setSubmitting(false);
+      return;
+    }
 
     const publicKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || '';
     if (!publicKey || publicKey.includes('placeholder')) {
