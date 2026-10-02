@@ -1151,3 +1151,31 @@ Full local stack exercised end-to-end: mobile web (Metro :8083) → Next.js gate
 | AUD-BE-013 | HIGH | **Academy rail webhooks posted escrow→settlement legs unconditionally** — a validly-signed `settled` event for ANY provider ref (incl. refs owning no obligation) debited the pooled `escrow` standing account and credited `settlement`, priced by the WIRE's `amount_minor`. Live-verified: phantom ref moved 50,000 kobo; a 50,000-kobo payout ref carrying `amount_minor: 50_000_000` moved 50,000,000. `payout` had no owning-row interaction at all; disburse/billing UPDATEs ignored RowsAffected. | Synthetic signed webhook to :8090 → `{"data":"ok"}` + `DEBIT escrow 50000 / CREDIT settlement 50000` for a fabricated ref. FIXED → PR #372: leg requires the obligation row in its terminal settle state and posts the ROW's amount; non-settle events record but never reconcile; idem key uses route rail. Residual FIXED → PR #388: `academy_webhook_outbox` parks transiently-failed settle legs; redrive on dedupe-hit + per-ingest sweep (LIMIT 25 SKIP LOCKED), exp backoff 30s→30m, `exhausted` at 10 attempts; same deterministic idem key makes a raced leg a ledger-level no-op |
 | AUD-TEST-008 | LOW | `marketplace/checkout_mutation_load.js` targets `POST /v1/marketplace/orders` — removed by ADR-023 (marketplace is now a contact directory, no escrow orders). Script can never pass; it is stale against shipped behavior | `POST /v1/marketplace/orders` → 404 on :8090. FIXED → PR #376: script deleted; `docs/prd/marketplace/QA_REPORT.md` + transport QA report updated (section collapsed to historical note). If a marketplace money surface returns (`POST /boosts`), rewrite mutation coverage against it |
 | AUD-TEST-009 | LOW | `transport_scheduled/list_read_load.js` asserts `Array.isArray(bookings)` but the endpoint serializes empty as `{"bookings":null}` — 0% of responses could ever pass the shape check; also `RIDER_TOKENS` JWTs expire mid-run (>1h runs) causing mass 401s | 14,462 reqs: 7,143×200 / 7,319×401 (token expired mid-run); `has bookings array` 0% against `bookings:null`. API half FIXED → PR #375: all 7 transport `bookings:` list responses now emit `[]` on empty (nil-slice accumulators normalized in ListScheduled, ListScheduledAdmin, ListCarHire, ListCarHireBookings, ProviderBookings, ListEventBookings, ListEventBookingsAdmin; live-DB test asserts non-nil). k6 half FIXED → PR #387 (+ #394 CodeQL follow-up): `RIDER_CREDENTIALS` env drives per-VU token cache with proactive refresh at exp−120s and one reactive retry on 401; static tokens unchanged when unset; `sched_token_refreshes`/`sched_token_refresh_failures` counters expose refresh health |
+
+## Live E2E — Connect paid vote via wallet (2026-10-02, `main` @ `f2b4bfda`)
+
+Exercised the full Connect paid-vote money path against the rebuilt local stack
+(backend :8090 on latest `main`, Supabase Postgres :54322 migrated through
+`20270329`, Redis :6380). Test fixture: user `6053f241-…510`, contest
+`88099e1c-…9c6` ("Best Emerging Actor 2025", `paid_vote_kobo` set 0→100 locally
+— all seed contests ship unpaid; documented as test-data setup, not a code
+change), contestant `d92451be` as `optionRef`.
+
+| Step | Result | Evidence |
+|------|--------|----------|
+| Wallet funding | PASS | `POST /api/v1/wallet/fund` +`Idempotency-Key` → 201, balance 0 → 50,000 kobo, balanced journal DR provider_clearing / CR user wallet. This is the real authed funding route — frontend-web's Paystack topup (`/api/v1/wallet/topup`) hardcodes `api.paystack.co` so the :9100 fake rails cannot intercept it; the provider-callback leg is UNVERIFIED locally (same blocker class as AUD-QA-001) |
+| Tier gate fail-closed | PASS | Paid vote as Tier 0 (`canSend:false`, daily limit 0) → **403 "transaction limit exceeded"** before any money moved |
+| Paid vote | PASS | Tier set 0→1 locally; `POST …/contests/:id/paid-vote` `{optionRef, quantity:2}` + `Idempotency-Key: e2e-paidvote-001` → **201**, vote `ab34c5d6`, `paid:true, quantity:2, amount_kobo:200` (100/unit priced server-side), `ledger_ref` set |
+| Wallet debit | PASS | Balance 50,000 → 49,800 — exactly `paid_vote_kobo × quantity` |
+| Ledger invariants | PASS | Two rows, same reference: `DEBIT 200` user wallet account + `CREDIT 200` revenue account; idempotency keys `e2e-paidvote-001:debit` / `:credit` — balanced double-entry, immutable |
+| Audit event | PASS | `connect.vote.paid` row in `connect_audit_log` for the vote id |
+| Idempotent replay | PASS | Identical request + same key → **409 "duplicate request"**, balance unchanged, still exactly 1 paid vote row (ledger unique constraint short-circuits at the debit, so `connect_votes` needs no separate idem unique) |
+| Insufficient funds | PASS | `quantity:1000` (100,000 kobo > 49,800) → **402 "insufficient wallet balance"**, balance untouched |
+| Tally | PASS | `GET …/results` → `paid_votes: 2` on the contestant (free_votes 2 from earlier run) |
+| Rate limiting | PASS | `X-RateLimit-Limit: 10` / `X-RateLimit-Remaining` headers on every paid-vote response; earlier burst test confirmed 10 handler passes then **429** — per-user Redis key, not ClientIP (PR #400) |
+
+**Boundary note:** this paid-vote design debits an already-funded wallet — no
+provider callback exists in this path, so "provider webhook during paid vote"
+does not apply to Connect. The provider-dependent legs remain frontend-web's
+Paystack topup and the `verifyAndCreditPaidVote` path (AUD-DB-002/FE-003
+residuals above).
