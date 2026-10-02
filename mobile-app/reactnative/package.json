@@ -36,6 +36,7 @@
     "test:merchantws": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/merchantws/*.spec.ts\"",
     "test:outlets": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/outlets/*.spec.ts\"",
     "test:pharmacymerchant": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/pharmacymerchant/*.spec.ts\"",
+    "test:wallet": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/wallet/*.spec.ts\"",
     "check:env-mocks": "node scripts/check-env-mocks.mjs",
     "check:env-mocks:staging": "node scripts/check-env-mocks.mjs .env.staging",
     "env:staging": "node scripts/use-env.mjs staging",
