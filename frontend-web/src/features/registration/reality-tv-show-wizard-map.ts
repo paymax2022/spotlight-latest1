@@ -619,6 +619,9 @@ const FLAT_ERROR_KEY_OVERRIDES: Record<string, keyof RealityTvWizardForm> = {
   'media.introVideo': 'media_introVideoUrl',
   'identity.idUpload': 'identity_idUploadUrl',
   'guardian.idUpload': 'guardian_idUploadUrl',
+  // The wizard keeps the audition link under its legacy 'media_performanceLink'
+  // form key while emitting the schema's 'audition.onlineLink' flat key.
+  'audition.onlineLink': 'media_performanceLink',
 };
 
 /** Server error keys are flat ('identity.idType'); wizard keys are snake. */

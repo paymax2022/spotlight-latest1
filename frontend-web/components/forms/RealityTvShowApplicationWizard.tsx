@@ -790,8 +790,8 @@ export default function RealityTvShowApplicationWizard() {
                 <Input type="tel" value={form.personal_primaryPhone} error={errors.personal_primaryPhone}
                   onChange={(e) => set('personal_primaryPhone', e.target.value)} placeholder="+234 80X XXX XXXX" />
               </Field>
-              <Field label="WhatsApp Number">
-                <Input type="tel" value={form.personal_whatsapp}
+              <Field label="WhatsApp Number" error={errors.personal_whatsapp}>
+                <Input type="tel" value={form.personal_whatsapp} error={errors.personal_whatsapp}
                   onChange={(e) => set('personal_whatsapp', e.target.value)} placeholder="+234 80X XXX XXXX" />
               </Field>
             </div>
@@ -1013,9 +1013,9 @@ export default function RealityTvShowApplicationWizard() {
               </div>
             </div>
 
-            <Field label="Performance / Audition Link"
+            <Field label="Performance / Audition Link" error={errors.media_performanceLink}
               help="YouTube, TikTok, Instagram Reel, or Google Drive link to a recent performance or audition clip">
-              <Input type="url" value={form.media_performanceLink}
+              <Input type="url" value={form.media_performanceLink} error={errors.media_performanceLink}
                 onChange={(e) => set('media_performanceLink', e.target.value)}
                 placeholder="https://www.youtube.com/watch?v=…" />
             </Field>
@@ -1215,8 +1215,8 @@ export default function RealityTvShowApplicationWizard() {
                     <Input type="tel" value={form.emergency_phone} error={errors.emergency_phone}
                       onChange={(e) => set('emergency_phone', e.target.value)} placeholder="+234 80X XXX XXXX" />
                   </Field>
-                  <Field label="Alternative Phone" help="Optional">
-                    <Input type="tel" value={form.emergency_altPhone}
+                  <Field label="Alternative Phone" help="Optional" error={errors.emergency_altPhone}>
+                    <Input type="tel" value={form.emergency_altPhone} error={errors.emergency_altPhone}
                       onChange={(e) => set('emergency_altPhone', e.target.value)} placeholder="+234 80X XXX XXXX" />
                   </Field>
                 </div>
