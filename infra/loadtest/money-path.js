@@ -40,9 +40,16 @@ export default function () {
 
   // 2. Authenticated read on the money surface (wallet balance). Without a token
   //    this returns 401 (still exercises auth + routing); with one it exercises
-  //    the real read path. Swap for your representative read.
-  const wallet = http.get(`${BASE_URL}/api/v1/wallet/balance`, { headers: authHeaders });
-  check(wallet, { 'wallet not 5xx': (r) => r.status < 500 }) || errors.add(1);
+  //    the real ledger-projection read path.
+  //    NOTE: this previously pointed at /api/v1/wallet/balance — that route does
+  //    not exist in the Go router (the Connect wallet exposes /summary), so the
+  //    run exercised a 404 and 'status < 500' still passed. The not-404 check
+  //    below keeps a renamed route loud instead of silently measuring nothing.
+  const wallet = http.get(`${BASE_URL}/api/finance/wallet/balance`, { headers: authHeaders });
+  check(wallet, {
+    'wallet not 5xx': (r) => r.status < 500,
+    'wallet route exists': (r) => r.status !== 404,
+  }) || errors.add(1);
 
   // NOTE: do NOT load-test money MUTATIONS (fund/transfer/payout) against live
   // provider rails. If you must, use provider SANDBOX creds + unique
