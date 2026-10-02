@@ -5,11 +5,24 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/src/lib/supabase/client';
 import { authFetch, isUnauthorized, redirectToLogin } from '@/src/lib/auth/flow';
 import { NIGERIA_STATES, NIGERIA_CITIES_BY_STATE } from '@/src/features/registration/config';
+import { HEALTH_STATUS_OPTIONS } from '@/src/features/registration/reference-data';
 import { buildDraftSaveBody, draftSaveSucceeded } from '@/src/features/registration/draft-save';
 import { loadPaystackClient } from '@/src/lib/payments';
 
 const TALENT_OPTIONS = ['Singing', 'Acting', 'Dance', 'Comedy', 'Content Creation', 'Public Speaking', 'Rapping', 'Presenting'];
 const EXPERIENCE_LEVELS = ['Beginner', 'Emerging', 'Intermediate', 'Advanced', 'Professional'];
+// Server schema stores talent.experienceYears as a number — option values are
+// numeric so the saved value passes type validation.
+const EXPERIENCE_YEAR_OPTIONS: Array<{ label: string; value: string }> = [
+  { label: 'Less than 1 year', value: '0' },
+  { label: '1 year', value: '1' },
+  { label: '2 years', value: '2' },
+  { label: '3 years', value: '3' },
+  { label: '4 years', value: '4' },
+  { label: '5+ years', value: '5' },
+  { label: '10+ years', value: '10' },
+];
+const AUDITION_FORMAT_OPTIONS = ['Online video submission', 'Live virtual audition', 'Physical audition', 'Regional audition', 'Callback audition'];
 const ENTRY_MODES = ['Individual', 'Group'];
 const EMERGENCY_RELATIONSHIPS = ['Parent', 'Sibling', 'Spouse', 'Guardian', 'Relative', 'Friend', 'Mentor'];
 
@@ -23,19 +36,27 @@ const STEPS = [
 
 const REGISTRATION_FEE = 5000;
 
-interface FormData {
+export interface FormData {
   // Step 1 — About You
   personal_firstName: string;
   personal_lastName: string;
   personal_stageName: string;
   personal_dateOfBirth: string;
   personal_gender: string;
+  personal_stateOfOrigin: string;
   personal_stateOfResidence: string;
   personal_city: string;
   personal_primaryPhone: string;
   personal_address: string;
   media_profilePhoto: File | null;
   media_profilePhotoPreview: string;
+  // Server-persisted upload refs (POST /api/registration/uploads result) —
+  // what `media.profilePhoto`/`identity.idUpload` actually carry in formData.
+  media_profilePhotoRef: { previewUrl?: string; storageKey?: string } | null;
+  identity_idType: string;
+  identity_idUpload: File | null;
+  identity_idUploadName: string;
+  identity_idUploadRef: { previewUrl?: string; storageKey?: string } | null;
   contest_entryMode: string;
 
   // Step 2 — Your Talent
@@ -54,6 +75,7 @@ interface FormData {
   social_totalFollowers: string;
   media_performanceLink: string;
   media_rightsConfirmed: boolean;
+  publicProfile_publicVotingConsent: boolean;
 
   // Step 4 — Readiness
   bootcamp_availableFullPeriod: string;
@@ -61,28 +83,51 @@ interface FormData {
   category_housemateReadiness: boolean;
   category_dailyFilmingConsent: boolean;
   bootcamp_personalConsiderations: string;
+  audition_format: string;
+  medical_generalHealthStatus: string[];
+  medical_emergencyTreatmentConsent: boolean;
   emergency_fullName: string;
   emergency_relationship: string;
   emergency_phone: string;
   emergency_altPhone: string;
+  emergency_state: string;
+  emergency_city: string;
+
+  // Guardian consent — rendered only when the applicant is under 18 (the
+  // server schema gates the guardian block on isMinor too).
+  guardian_fullName: string;
+  guardian_relationship: string;
+  guardian_phone: string;
+  guardian_email: string;
+  guardian_address: string;
+  guardian_digitalSignature: string;
+  guardian_consentGranted: boolean;
 
   // Step 5 — Legal
   legal_accuracyDeclaration: boolean;
   legal_termsConsent: boolean;
+  legal_privacyConsent: boolean;
   legal_mediaRelease: boolean;
   legal_publicVotingConsent: boolean;
   legal_sponsorActivationConsent: boolean;
   legal_productionRulesConsent: boolean;
+  legal_disqualificationAcknowledgment: boolean;
+  legal_ageGuardianConfirmation: boolean;
+  legal_communicationConsent: boolean;
   compliance_codeOfConductAgreement: boolean;
+  compliance_backgroundCheckAgreement: boolean;
+  compliance_truthDeclaration: boolean;
   review_confirmSubmit: boolean;
 }
 
 const INITIAL: FormData = {
   personal_firstName: '', personal_lastName: '', personal_stageName: '',
-  personal_dateOfBirth: '', personal_gender: '', personal_stateOfResidence: '',
+  personal_dateOfBirth: '', personal_gender: '', personal_stateOfOrigin: '',
+  personal_stateOfResidence: '',
   personal_city: '', personal_primaryPhone: '',
   personal_address: '', contest_entryMode: 'Individual',
-  media_profilePhoto: null, media_profilePhotoPreview: '',
+  media_profilePhoto: null, media_profilePhotoPreview: '', media_profilePhotoRef: null,
+  identity_idType: '', identity_idUpload: null, identity_idUploadName: '', identity_idUploadRef: null,
 
   talent_primarySkill: [], talent_experienceYears: '', talent_skillLevel: '',
   talent_strengths: '', talent_careerGoal: '', talent_uniqueStory: '',
@@ -90,16 +135,28 @@ const INITIAL: FormData = {
   category_uniqueStory: '',
   social_instagram: '', social_tiktok: '', social_youtube: '',
   social_totalFollowers: '', media_performanceLink: '', media_rightsConfirmed: false,
+  publicProfile_publicVotingConsent: false,
 
   bootcamp_availableFullPeriod: '', bootcamp_canTravel: false,
   category_housemateReadiness: false, category_dailyFilmingConsent: false,
-  bootcamp_personalConsiderations: '', emergency_fullName: '',
+  bootcamp_personalConsiderations: '', audition_format: '',
+  medical_generalHealthStatus: [], medical_emergencyTreatmentConsent: false,
+  emergency_fullName: '',
   emergency_relationship: '', emergency_phone: '', emergency_altPhone: '',
+  emergency_state: '', emergency_city: '',
+
+  guardian_fullName: '', guardian_relationship: '', guardian_phone: '',
+  guardian_email: '', guardian_address: '', guardian_digitalSignature: '',
+  guardian_consentGranted: false,
 
   legal_accuracyDeclaration: false, legal_termsConsent: false,
+  legal_privacyConsent: false,
   legal_mediaRelease: false, legal_publicVotingConsent: false,
   legal_sponsorActivationConsent: false, legal_productionRulesConsent: false,
-  compliance_codeOfConductAgreement: false, review_confirmSubmit: false,
+  legal_disqualificationAcknowledgment: false, legal_ageGuardianConfirmation: false,
+  legal_communicationConsent: false,
+  compliance_codeOfConductAgreement: false, compliance_backgroundCheckAgreement: false,
+  compliance_truthDeclaration: false, review_confirmSubmit: false,
 };
 
 const c = {
@@ -294,16 +351,28 @@ function StepProgress({ current }: { current: number }) {
   );
 }
 
+function applicantIsMinor(f: FormData): boolean {
+  if (!f.personal_dateOfBirth) return false;
+  const dob = new Date(f.personal_dateOfBirth);
+  if (Number.isNaN(dob.getTime())) return false;
+  const age = Math.floor((Date.now() - dob.getTime()) / (365.25 * 86400000));
+  return age < 18;
+}
+
 function validateStep(step: number, f: FormData): Record<string, string> {
   const e: Record<string, string> = {};
+  const minor = applicantIsMinor(f);
   if (step === 1) {
     if (!f.personal_firstName.trim()) e.personal_firstName = 'First name is required';
     if (!f.personal_lastName.trim()) e.personal_lastName = 'Last name is required';
     if (!f.personal_dateOfBirth) e.personal_dateOfBirth = 'Date of birth is required';
     if (!f.personal_gender) e.personal_gender = 'Gender is required';
+    if (!f.personal_stateOfOrigin) e.personal_stateOfOrigin = 'State of origin is required';
     if (!f.personal_stateOfResidence) e.personal_stateOfResidence = 'State is required';
     if (!f.personal_primaryPhone.trim()) e.personal_primaryPhone = 'Phone number is required';
-    if (!f.media_profilePhoto) e.media_profilePhoto = 'Profile photo is required';
+    if (!f.media_profilePhotoRef) e.media_profilePhoto = 'Profile photo is required';
+    if (!f.identity_idType) e.identity_idType = 'ID type is required';
+    if (!f.identity_idUploadRef) e.identity_idUpload = 'A government ID document is required';
   }
   if (step === 2) {
     if (f.talent_primarySkill.length === 0) e.talent_primarySkill = 'Select at least one talent';
@@ -316,26 +385,193 @@ function validateStep(step: number, f: FormData): Record<string, string> {
   if (step === 3) {
     if (!f.category_uniqueStory.trim()) e.category_uniqueStory = 'Tell us what makes you a great TV contestant';
     if (!f.media_rightsConfirmed) e.media_rightsConfirmed = 'You must confirm content rights';
+    if (!f.publicProfile_publicVotingConsent) e.publicProfile_publicVotingConsent = 'This consent is required';
   }
   if (step === 4) {
     if (!f.bootcamp_availableFullPeriod) e.bootcamp_availableFullPeriod = 'Please indicate your availability';
+    if (!f.bootcamp_canTravel) e.bootcamp_canTravel = 'This confirmation is required';
     if (!f.category_housemateReadiness) e.category_housemateReadiness = 'This consent is required';
     if (!f.category_dailyFilmingConsent) e.category_dailyFilmingConsent = 'This consent is required';
+    if (!f.audition_format) e.audition_format = 'Select an audition format';
+    if (f.medical_generalHealthStatus.length === 0) e.medical_generalHealthStatus = 'Select at least one option';
+    if (!f.medical_emergencyTreatmentConsent) e.medical_emergencyTreatmentConsent = 'This consent is required';
     if (!f.emergency_fullName.trim()) e.emergency_fullName = 'Emergency contact name is required';
     if (!f.emergency_phone.trim()) e.emergency_phone = 'Emergency contact phone is required';
     if (!f.emergency_relationship) e.emergency_relationship = 'Relationship is required';
+    if (!f.emergency_state) e.emergency_state = 'State is required';
+    if (!f.emergency_city) e.emergency_city = 'City is required';
+    if (minor) {
+      if (!f.guardian_fullName.trim()) e.guardian_fullName = 'Parent/guardian name is required';
+      if (!f.guardian_relationship) e.guardian_relationship = 'Relationship is required';
+      if (!f.guardian_phone.trim()) e.guardian_phone = 'Guardian phone is required';
+      if (!f.guardian_email.trim()) e.guardian_email = 'Guardian email is required';
+      if (!f.guardian_address.trim()) e.guardian_address = 'Guardian address is required';
+      if (!f.guardian_digitalSignature.trim()) e.guardian_digitalSignature = 'Guardian signature is required';
+      if (!f.guardian_consentGranted) e.guardian_consentGranted = 'Guardian consent is required';
+    }
   }
   if (step === 5) {
     if (!f.legal_accuracyDeclaration) e.legal_accuracyDeclaration = 'Required';
     if (!f.legal_termsConsent) e.legal_termsConsent = 'Required';
+    if (!f.legal_privacyConsent) e.legal_privacyConsent = 'Required';
     if (!f.legal_mediaRelease) e.legal_mediaRelease = 'Required';
     if (!f.legal_publicVotingConsent) e.legal_publicVotingConsent = 'Required';
     if (!f.legal_sponsorActivationConsent) e.legal_sponsorActivationConsent = 'Required';
     if (!f.legal_productionRulesConsent) e.legal_productionRulesConsent = 'Required';
+    if (!f.legal_disqualificationAcknowledgment) e.legal_disqualificationAcknowledgment = 'Required';
+    if (!f.legal_ageGuardianConfirmation) e.legal_ageGuardianConfirmation = 'Required';
+    if (!f.legal_communicationConsent) e.legal_communicationConsent = 'Required';
     if (!f.compliance_codeOfConductAgreement) e.compliance_codeOfConductAgreement = 'Required';
+    if (!f.compliance_backgroundCheckAgreement) e.compliance_backgroundCheckAgreement = 'Required';
+    if (!f.compliance_truthDeclaration) e.compliance_truthDeclaration = 'Required';
     if (!f.review_confirmSubmit) e.review_confirmSubmit = 'Please confirm you are ready to submit';
   }
   return e;
+}
+
+// Pure draft ↔ form mapping, hoisted out of the component so the coverage spec
+// can assert every server-required schema key is persisted.
+export function flatToForm(saved: Record<string, unknown>): Partial<FormData> {
+  const get = (k: string) => saved[k];
+  return {
+    personal_firstName: String(get('personal.firstName') || ''),
+    personal_lastName: String(get('personal.lastName') || ''),
+    personal_stageName: String(get('personal.stageName') || ''),
+    personal_dateOfBirth: String(get('personal.dateOfBirth') || ''),
+    personal_gender: String(get('personal.gender') || ''),
+    personal_stateOfResidence: String(get('personal.stateOfResidence') || ''),
+    personal_city: String(get('personal.city') || ''),
+    personal_primaryPhone: String(get('personal.primaryPhone') || ''),
+    personal_address: String(get('personal.address') || ''),
+    personal_stateOfOrigin: String(get('personal.stateOfOrigin') || ''),
+    identity_idType: String(get('identity.idType') || ''),
+    // Saved uploads hydrate into the ref slots (the File objects themselves
+    // are client-side only); previews restore from the stored URL.
+    identity_idUploadRef: (get('identity.idUpload') as { previewUrl?: string; storageKey?: string } | null) ?? null,
+    media_profilePhotoRef: (get('media.profilePhoto') as { previewUrl?: string; storageKey?: string } | null) ?? null,
+    media_profilePhotoPreview: typeof get('media.profilePhoto') === 'object' && get('media.profilePhoto') !== null
+      ? String((get('media.profilePhoto') as { previewUrl?: string }).previewUrl || '')
+      : '',
+    contest_entryMode: String(get('contest.entryMode') || 'Individual'),
+    talent_primarySkill: Array.isArray(get('talent.primarySkill')) ? (get('talent.primarySkill') as string[]) : [],
+    talent_experienceYears: String(get('talent.experienceYears') || ''),
+    talent_skillLevel: String(get('talent.skillLevel') || ''),
+    talent_strengths: String(get('talent.strengths') || ''),
+    talent_careerGoal: String(get('talent.careerGoal') || ''),
+    talent_uniqueStory: String(get('talent.uniqueStory') || ''),
+    category_uniqueStory: String(get('category.uniqueStory') || ''),
+    social_instagram: String(get('social.instagram') || ''),
+    social_tiktok: String(get('social.tiktok') || ''),
+    social_youtube: String(get('social.youtube') || ''),
+    social_totalFollowers: String(get('social.totalFollowers') || ''),
+    media_performanceLink: String(get('media.performanceLink') || ''),
+    media_rightsConfirmed: Boolean(get('media.rightsConfirmed')),
+    publicProfile_publicVotingConsent: Boolean(get('publicProfile.publicVotingConsent')),
+    bootcamp_availableFullPeriod: String(get('bootcamp.availableFullPeriod') || ''),
+    audition_format: String(get('audition.format') || ''),
+    medical_generalHealthStatus: Array.isArray(get('medical.generalHealthStatus')) ? (get('medical.generalHealthStatus') as string[]) : [],
+    medical_emergencyTreatmentConsent: Boolean(get('medical.emergencyTreatmentConsent')),
+    bootcamp_canTravel: Boolean(get('bootcamp.canTravel')),
+    category_housemateReadiness: Boolean(get('category.housemateReadiness')),
+    category_dailyFilmingConsent: Boolean(get('category.dailyFilmingConsent')),
+    bootcamp_personalConsiderations: String(get('bootcamp.personalConsiderations') || ''),
+    emergency_fullName: String(get('emergency.fullName') || ''),
+    emergency_relationship: String(get('emergency.relationship') || ''),
+    emergency_phone: String(get('emergency.phone') || ''),
+    emergency_altPhone: String(get('emergency.altPhone') || ''),
+    emergency_state: String(get('emergency.state') || ''),
+    emergency_city: String(get('emergency.city') || ''),
+    guardian_fullName: String(get('guardian.fullName') || ''),
+    guardian_relationship: String(get('guardian.relationship') || ''),
+    guardian_phone: String(get('guardian.phone') || ''),
+    guardian_email: String(get('guardian.email') || ''),
+    guardian_address: String(get('guardian.address') || ''),
+    guardian_digitalSignature: String(get('guardian.digitalSignature') || ''),
+    guardian_consentGranted: Boolean(get('guardian.consentGranted')),
+    legal_privacyConsent: Boolean(get('legal.privacyConsent')),
+    legal_disqualificationAcknowledgment: Boolean(get('legal.disqualificationAcknowledgment')),
+    legal_ageGuardianConfirmation: Boolean(get('legal.ageGuardianConfirmation')),
+    legal_communicationConsent: Boolean(get('legal.communicationConsent')),
+    compliance_backgroundCheckAgreement: Boolean(get('compliance.backgroundCheckAgreement')),
+    compliance_truthDeclaration: Boolean(get('compliance.truthDeclaration')),
+    legal_accuracyDeclaration: Boolean(get('legal.accuracyDeclaration')),
+    legal_termsConsent: Boolean(get('legal.termsConsent')),
+    legal_mediaRelease: Boolean(get('legal.mediaRelease')),
+    legal_publicVotingConsent: Boolean(get('legal.publicVotingConsent')),
+    legal_sponsorActivationConsent: Boolean(get('legal.sponsorActivationConsent')),
+    legal_productionRulesConsent: Boolean(get('legal.productionRulesConsent')),
+    compliance_codeOfConductAgreement: Boolean(get('compliance.codeOfConductAgreement')),
+    review_confirmSubmit: Boolean(get('review.confirmSubmit')),
+  };
+}
+
+export function formToFlat(f: FormData): Record<string, unknown> {
+  return {
+    'personal.firstName': f.personal_firstName,
+    'personal.lastName': f.personal_lastName,
+    'personal.stageName': f.personal_stageName,
+    'personal.dateOfBirth': f.personal_dateOfBirth,
+    'personal.gender': f.personal_gender,
+    'personal.stateOfResidence': f.personal_stateOfResidence,
+    'personal.city': f.personal_city,
+    'personal.primaryPhone': f.personal_primaryPhone,
+    'personal.address': f.personal_address,
+    'personal.nationality': 'Nigerian',
+    'personal.stateOfOrigin': f.personal_stateOfOrigin,
+    'identity.idType': f.identity_idType,
+    'identity.idUpload': f.identity_idUploadRef,
+    'media.profilePhoto': f.media_profilePhotoRef,
+    'contest.entryMode': f.contest_entryMode,
+    'talent.primarySkill': f.talent_primarySkill,
+    'talent.experienceYears': Number(f.talent_experienceYears),
+    'talent.skillLevel': f.talent_skillLevel,
+    'talent.strengths': f.talent_strengths,
+    'talent.careerGoal': f.talent_careerGoal,
+    'talent.uniqueStory': f.talent_uniqueStory,
+    'category.uniqueStory': f.category_uniqueStory,
+    'social.instagram': f.social_instagram,
+    'social.tiktok': f.social_tiktok,
+    'social.youtube': f.social_youtube,
+    'social.totalFollowers': f.social_totalFollowers,
+    'media.performanceLink': f.media_performanceLink,
+    'media.rightsConfirmed': f.media_rightsConfirmed,
+    'publicProfile.publicVotingConsent': f.publicProfile_publicVotingConsent,
+    'audition.format': f.audition_format,
+    'medical.generalHealthStatus': f.medical_generalHealthStatus,
+    'medical.emergencyTreatmentConsent': f.medical_emergencyTreatmentConsent,
+    'bootcamp.availableFullPeriod': f.bootcamp_availableFullPeriod,
+    'bootcamp.canTravel': f.bootcamp_canTravel,
+    'category.housemateReadiness': f.category_housemateReadiness,
+    'category.dailyFilmingConsent': f.category_dailyFilmingConsent,
+    'bootcamp.personalConsiderations': f.bootcamp_personalConsiderations,
+    'emergency.fullName': f.emergency_fullName,
+    'emergency.relationship': f.emergency_relationship,
+    'emergency.phone': f.emergency_phone,
+    'emergency.altPhone': f.emergency_altPhone,
+    'emergency.state': f.emergency_state,
+    'emergency.city': f.emergency_city,
+    'guardian.fullName': f.guardian_fullName,
+    'guardian.relationship': f.guardian_relationship,
+    'guardian.phone': f.guardian_phone,
+    'guardian.email': f.guardian_email,
+    'guardian.address': f.guardian_address,
+    'guardian.digitalSignature': f.guardian_digitalSignature,
+    'guardian.consentGranted': f.guardian_consentGranted,
+    'legal.accuracyDeclaration': f.legal_accuracyDeclaration,
+    'legal.termsConsent': f.legal_termsConsent,
+    'legal.privacyConsent': f.legal_privacyConsent,
+    'legal.mediaRelease': f.legal_mediaRelease,
+    'legal.publicVotingConsent': f.legal_publicVotingConsent,
+    'legal.sponsorActivationConsent': f.legal_sponsorActivationConsent,
+    'legal.productionRulesConsent': f.legal_productionRulesConsent,
+    'legal.disqualificationAcknowledgment': f.legal_disqualificationAcknowledgment,
+    'legal.ageGuardianConfirmation': f.legal_ageGuardianConfirmation,
+    'legal.communicationConsent': f.legal_communicationConsent,
+    'compliance.codeOfConductAgreement': f.compliance_codeOfConductAgreement,
+    'compliance.backgroundCheckAgreement': f.compliance_backgroundCheckAgreement,
+    'compliance.truthDeclaration': f.compliance_truthDeclaration,
+    'review.confirmSubmit': f.review_confirmSubmit,
+  };
 }
 
 export default function RealityTvShowApplicationWizard() {
@@ -354,9 +590,12 @@ export default function RealityTvShowApplicationWizard() {
   const [userEmail, setUserEmail] = useState('');
   const [userName, setUserName] = useState('');
   const [draftId, setDraftId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState<Record<string, boolean>>({});
   const topRef = useRef<HTMLDivElement>(null);
 
   const cities = NIGERIA_CITIES_BY_STATE[form.personal_stateOfResidence] || [];
+  const emergencyCities = NIGERIA_CITIES_BY_STATE[form.emergency_state] || [];
+  const minor = applicantIsMinor(form);
 
   useEffect(() => {
     let cancelled = false;
@@ -416,92 +655,42 @@ export default function RealityTvShowApplicationWizard() {
     return () => { cancelled = true; };
   }, []);
 
-  function flatToForm(saved: Record<string, unknown>): Partial<FormData> {
-    const get = (k: string) => saved[k];
-    return {
-      personal_firstName: String(get('personal.firstName') || ''),
-      personal_lastName: String(get('personal.lastName') || ''),
-      personal_stageName: String(get('personal.stageName') || ''),
-      personal_dateOfBirth: String(get('personal.dateOfBirth') || ''),
-      personal_gender: String(get('personal.gender') || ''),
-      personal_stateOfResidence: String(get('personal.stateOfResidence') || ''),
-      personal_city: String(get('personal.city') || ''),
-      personal_primaryPhone: String(get('personal.primaryPhone') || ''),
-      personal_address: String(get('personal.address') || ''),
-      contest_entryMode: String(get('contest.entryMode') || 'Individual'),
-      talent_primarySkill: Array.isArray(get('talent.primarySkill')) ? (get('talent.primarySkill') as string[]) : [],
-      talent_experienceYears: String(get('talent.experienceYears') || ''),
-      talent_skillLevel: String(get('talent.skillLevel') || ''),
-      talent_strengths: String(get('talent.strengths') || ''),
-      talent_careerGoal: String(get('talent.careerGoal') || ''),
-      talent_uniqueStory: String(get('talent.uniqueStory') || ''),
-      category_uniqueStory: String(get('category.uniqueStory') || ''),
-      social_instagram: String(get('social.instagram') || ''),
-      social_tiktok: String(get('social.tiktok') || ''),
-      social_youtube: String(get('social.youtube') || ''),
-      social_totalFollowers: String(get('social.totalFollowers') || ''),
-      media_performanceLink: String(get('media.performanceLink') || ''),
-      media_rightsConfirmed: Boolean(get('media.rightsConfirmed')),
-      bootcamp_availableFullPeriod: String(get('bootcamp.availableFullPeriod') || ''),
-      bootcamp_canTravel: Boolean(get('bootcamp.canTravel')),
-      category_housemateReadiness: Boolean(get('category.housemateReadiness')),
-      category_dailyFilmingConsent: Boolean(get('category.dailyFilmingConsent')),
-      bootcamp_personalConsiderations: String(get('bootcamp.personalConsiderations') || ''),
-      emergency_fullName: String(get('emergency.fullName') || ''),
-      emergency_relationship: String(get('emergency.relationship') || ''),
-      emergency_phone: String(get('emergency.phone') || ''),
-      emergency_altPhone: String(get('emergency.altPhone') || ''),
-    };
-  }
-
-  function formToFlat(f: FormData): Record<string, unknown> {
-    return {
-      'personal.firstName': f.personal_firstName,
-      'personal.lastName': f.personal_lastName,
-      'personal.stageName': f.personal_stageName,
-      'personal.dateOfBirth': f.personal_dateOfBirth,
-      'personal.gender': f.personal_gender,
-      'personal.stateOfResidence': f.personal_stateOfResidence,
-      'personal.city': f.personal_city,
-      'personal.primaryPhone': f.personal_primaryPhone,
-      'personal.address': f.personal_address,
-      'contest.entryMode': f.contest_entryMode,
-      'talent.primarySkill': f.talent_primarySkill,
-      'talent.experienceYears': f.talent_experienceYears,
-      'talent.skillLevel': f.talent_skillLevel,
-      'talent.strengths': f.talent_strengths,
-      'talent.careerGoal': f.talent_careerGoal,
-      'talent.uniqueStory': f.talent_uniqueStory,
-      'category.uniqueStory': f.category_uniqueStory,
-      'social.instagram': f.social_instagram,
-      'social.tiktok': f.social_tiktok,
-      'social.youtube': f.social_youtube,
-      'social.totalFollowers': f.social_totalFollowers,
-      'media.performanceLink': f.media_performanceLink,
-      'media.rightsConfirmed': f.media_rightsConfirmed,
-      'bootcamp.availableFullPeriod': f.bootcamp_availableFullPeriod,
-      'bootcamp.canTravel': f.bootcamp_canTravel,
-      'category.housemateReadiness': f.category_housemateReadiness,
-      'category.dailyFilmingConsent': f.category_dailyFilmingConsent,
-      'bootcamp.personalConsiderations': f.bootcamp_personalConsiderations,
-      'emergency.fullName': f.emergency_fullName,
-      'emergency.relationship': f.emergency_relationship,
-      'emergency.phone': f.emergency_phone,
-      'emergency.altPhone': f.emergency_altPhone,
-      'legal.accuracyDeclaration': f.legal_accuracyDeclaration,
-      'legal.termsConsent': f.legal_termsConsent,
-      'legal.mediaRelease': f.legal_mediaRelease,
-      'legal.publicVotingConsent': f.legal_publicVotingConsent,
-      'legal.sponsorActivationConsent': f.legal_sponsorActivationConsent,
-      'legal.productionRulesConsent': f.legal_productionRulesConsent,
-      'compliance.codeOfConductAgreement': f.compliance_codeOfConductAgreement,
-      'review.confirmSubmit': f.review_confirmSubmit,
-    };
-  }
 
   function set(key: keyof FormData, value: unknown) {
     setForm((prev) => ({ ...prev, [key]: value }));
     setErrors((prev) => { const n = { ...prev }; delete n[key as string]; return n; });
+  }
+
+  // Persists a file via /api/registration/uploads and returns the ref object
+  // the server schema accepts ({storageKey, previewUrl}), or null on failure.
+  // The raw File is only kept client-side for the picker label/preview.
+  async function uploadFile(
+    file: File,
+    refKey: 'media_profilePhotoRef' | 'identity_idUploadRef',
+    errKey: string,
+  ) {
+    setUploading((prev) => ({ ...prev, [errKey]: true }));
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const res = await authFetch('/api/registration/uploads', { method: 'POST', body });
+      if (isUnauthorized(res)) { redirectToLogin(pathname || '/apply/reality-tv-show'); return; }
+      const payload = await res.json().catch(() => ({})) as {
+        upload?: { storageKey?: string; previewUrl?: string };
+        error?: string;
+      };
+      if (!res.ok || !payload.upload?.storageKey) {
+        setErrors((prev) => ({ ...prev, [errKey]: payload.error || 'Upload failed — try again.' }));
+        set(refKey, null);
+        return;
+      }
+      set(refKey, { storageKey: payload.upload.storageKey, previewUrl: payload.upload.previewUrl });
+    } catch {
+      setErrors((prev) => ({ ...prev, [errKey]: 'Upload failed — try again.' }));
+      set(refKey, null);
+    } finally {
+      setUploading((prev) => ({ ...prev, [errKey]: false }));
+    }
   }
 
   // Returns true only when the draft row was actually written server-side.
@@ -788,8 +977,21 @@ export default function RealityTvShowApplicationWizard() {
                 <Select value={form.personal_gender} error={errors.personal_gender}
                   onChange={(e) => set('personal_gender', e.target.value)}>
                   <option value="">Select…</option>
-                  <option>Female</option><option>Male</option><option>Prefer not to say</option>
+                  <option>Female</option><option>Male</option>
                 </Select>
+              </Field>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+              <Field label="State of Origin" required error={errors.personal_stateOfOrigin}>
+                <Select value={form.personal_stateOfOrigin} error={errors.personal_stateOfOrigin}
+                  onChange={(e) => set('personal_stateOfOrigin', e.target.value)}>
+                  <option value="">Select state…</option>
+                  {NIGERIA_STATES.map((s) => <option key={s}>{s}</option>)}
+                </Select>
+              </Field>
+              <Field label="Nationality" required>
+                <Input value="Nigerian" readOnly disabled />
               </Field>
             </div>
 
@@ -828,7 +1030,7 @@ export default function RealityTvShowApplicationWizard() {
                     : <span style={{ fontSize: 32, color: '#D1D5DB' }}>👤</span>}
                 </div>
                 {/* Dropzone / file input */}
-                <label style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '18px 20px', border: `2px dashed ${errors.media_profilePhoto ? c.danger : c.border}`, borderRadius: 12, cursor: 'pointer', background: '#FAFAFA', transition: 'border-color 0.2s' }}
+                <label style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '18px 20px', border: `2px dashed ${errors.media_profilePhoto ? c.danger : c.border}`, borderRadius: 12, cursor: uploading.media_profilePhoto ? 'wait' : 'pointer', background: '#FAFAFA', transition: 'border-color 0.2s' }}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={(e) => {
                     e.preventDefault();
@@ -836,6 +1038,7 @@ export default function RealityTvShowApplicationWizard() {
                     if (file && file.type.startsWith('image/')) {
                       set('media_profilePhoto', file);
                       set('media_profilePhotoPreview', URL.createObjectURL(file));
+                      void uploadFile(file, 'media_profilePhotoRef', 'media_profilePhoto');
                     }
                   }}>
                   <input type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }}
@@ -844,17 +1047,18 @@ export default function RealityTvShowApplicationWizard() {
                       if (file) {
                         set('media_profilePhoto', file);
                         set('media_profilePhotoPreview', URL.createObjectURL(file));
+                        void uploadFile(file, 'media_profilePhotoRef', 'media_profilePhoto');
                       }
                     }} />
                   <span style={{ fontSize: 22 }}>📷</span>
                   <span style={{ fontSize: 13, fontWeight: 600, color: c.textMid }}>
-                    {form.media_profilePhoto ? (form.media_profilePhoto as File).name : 'Click to upload or drag & drop'}
+                    {uploading.media_profilePhoto ? 'Uploading…' : form.media_profilePhoto ? (form.media_profilePhoto as File).name : 'Click to upload or drag & drop'}
                   </span>
-                  {!form.media_profilePhoto && (
+                  {!form.media_profilePhoto && !uploading.media_profilePhoto && (
                     <span style={{ fontSize: 11, color: c.textMuted }}>JPG, PNG or WEBP · max 5 MB</span>
                   )}
-                  {form.media_profilePhoto && (
-                    <button type="button" onClick={(e) => { e.preventDefault(); set('media_profilePhoto', null); set('media_profilePhotoPreview', ''); }}
+                  {form.media_profilePhoto && !uploading.media_profilePhoto && (
+                    <button type="button" onClick={(e) => { e.preventDefault(); set('media_profilePhoto', null); set('media_profilePhotoPreview', ''); set('media_profilePhotoRef', null); }}
                       style={{ fontSize: 11, color: c.danger, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700, marginTop: 2 }}>
                       Remove photo
                     </button>
@@ -867,6 +1071,40 @@ export default function RealityTvShowApplicationWizard() {
               <Input value={form.personal_address}
                 onChange={(e) => set('personal_address', e.target.value)} placeholder="Street, area, city" />
             </Field>
+
+            <div style={section}>
+              <p style={{ fontSize: 13, fontWeight: 700, color: c.textMid, margin: '0 0 14px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Identification <span style={{ fontWeight: 400, color: c.textMuted, textTransform: 'none', letterSpacing: 0 }}>(required for eligibility verification)</span>
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                <Field label="Government-issued ID type" required error={errors.identity_idType}>
+                  <Select value={form.identity_idType} error={errors.identity_idType}
+                    onChange={(e) => set('identity_idType', e.target.value)}>
+                    <option value="">Select…</option>
+                    {['National ID', 'International passport', 'Voter card', 'Driver’s license', 'Other approved ID'].map((t) => <option key={t}>{t}</option>)}
+                  </Select>
+                </Field>
+                <Field label="ID document" required error={errors.identity_idUpload}
+                  help="Clear photo or scan — JPG, PNG or PDF">
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', border: `1.5px dashed ${errors.identity_idUpload ? c.danger : c.border}`, borderRadius: 10, cursor: uploading.identity_idUpload ? 'wait' : 'pointer', background: '#FAFAFA' }}>
+                    <input type="file" accept="image/jpeg,image/png,application/pdf" style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          set('identity_idUpload', file);
+                          set('identity_idUploadName', file.name);
+                          void uploadFile(file, 'identity_idUploadRef', 'identity_idUpload');
+                        }
+                      }} />
+                    <span style={{ fontSize: 18 }}>🪪</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: c.textMid, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {uploading.identity_idUpload ? 'Uploading…' : form.identity_idUploadName || 'Choose file'}
+                    </span>
+                    {form.identity_idUploadRef && <span style={{ fontSize: 12, color: c.success, fontWeight: 700 }}>✓</span>}
+                  </label>
+                </Field>
+              </div>
+            </div>
 
             <Field label="Applying as">
               <div style={{ display: 'flex', gap: 10 }}>
@@ -903,7 +1141,7 @@ export default function RealityTvShowApplicationWizard() {
                 <Select value={form.talent_experienceYears} error={errors.talent_experienceYears}
                   onChange={(e) => set('talent_experienceYears', e.target.value)}>
                   <option value="">Select…</option>
-                  {['Less than 1 year','1 year','2 years','3 years','4 years','5+ years','10+ years'].map((y) => <option key={y}>{y}</option>)}
+                  {EXPERIENCE_YEAR_OPTIONS.map((y) => <option key={y.value} value={y.value}>{y.label}</option>)}
                 </Select>
               </Field>
               <Field label="Skill Level" required error={errors.talent_skillLevel}>
@@ -991,6 +1229,14 @@ export default function RealityTvShowApplicationWizard() {
               required
             />
             {errors.media_rightsConfirmed && <span style={errTxt}>{errors.media_rightsConfirmed}</span>}
+
+            <Checkbox
+              label="I consent to my public profile being visible for audience voting on the platform."
+              checked={form.publicProfile_publicVotingConsent}
+              onChange={(v) => set('publicProfile_publicVotingConsent', v)}
+              required
+            />
+            {errors.publicProfile_publicVotingConsent && <span style={errTxt}>{errors.publicProfile_publicVotingConsent}</span>}
           </div>
         </div>
       )}
@@ -1015,9 +1261,18 @@ export default function RealityTvShowApplicationWizard() {
                   </Select>
                 </Field>
 
+                <Field label="Preferred audition format" required error={errors.audition_format}>
+                  <Select value={form.audition_format} error={errors.audition_format}
+                    onChange={(e) => set('audition_format', e.target.value)}>
+                    <option value="">Select…</option>
+                    {AUDITION_FORMAT_OPTIONS.map((opt) => <option key={opt}>{opt}</option>)}
+                  </Select>
+                </Field>
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <Checkbox label="I am able and willing to travel to the production location." checked={form.bootcamp_canTravel}
-                    onChange={(v) => set('bootcamp_canTravel', v)} />
+                    onChange={(v) => set('bootcamp_canTravel', v)} required />
+                  {errors.bootcamp_canTravel && <span style={errTxt}>{errors.bootcamp_canTravel}</span>}
                   <Checkbox
                     label="I am comfortable living with other contestants in a shared house environment."
                     checked={form.category_housemateReadiness}
@@ -1040,6 +1295,24 @@ export default function RealityTvShowApplicationWizard() {
                     onChange={(e) => set('bootcamp_personalConsiderations', e.target.value)}
                     placeholder="e.g. I am vegetarian and observe Friday prayers…" rows={2} />
                 </Field>
+              </div>
+            </div>
+
+            <div style={section}>
+              <p style={{ fontSize: 13, fontWeight: 700, color: c.textMid, margin: '0 0 16px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Medical Declaration</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <Field label="General health status" required error={errors.medical_generalHealthStatus}
+                  help="Select all that apply">
+                  <MultiSelect options={[...HEALTH_STATUS_OPTIONS]} selected={form.medical_generalHealthStatus}
+                    onChange={(v) => set('medical_generalHealthStatus', v)} />
+                </Field>
+                <Checkbox
+                  label="I consent to emergency medical treatment being administered to me if required during programme activities."
+                  checked={form.medical_emergencyTreatmentConsent}
+                  onChange={(v) => set('medical_emergencyTreatmentConsent', v)}
+                  required
+                />
+                {errors.medical_emergencyTreatmentConsent && <span style={errTxt}>{errors.medical_emergencyTreatmentConsent}</span>}
               </div>
             </div>
 
@@ -1069,8 +1342,77 @@ export default function RealityTvShowApplicationWizard() {
                       onChange={(e) => set('emergency_altPhone', e.target.value)} placeholder="+234 80X XXX XXXX" />
                   </Field>
                 </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                  <Field label="State" required error={errors.emergency_state}>
+                    <Select value={form.emergency_state} error={errors.emergency_state}
+                      onChange={(e) => { set('emergency_state', e.target.value); set('emergency_city', ''); }}>
+                      <option value="">Select state…</option>
+                      {NIGERIA_STATES.map((s) => <option key={s}>{s}</option>)}
+                    </Select>
+                  </Field>
+                  <Field label="City" required error={errors.emergency_city}>
+                    {emergencyCities.length > 0 ? (
+                      <Select value={form.emergency_city} error={errors.emergency_city}
+                        onChange={(e) => set('emergency_city', e.target.value)}>
+                        <option value="">Select city…</option>
+                        {emergencyCities.map((ct) => <option key={ct}>{ct}</option>)}
+                      </Select>
+                    ) : (
+                      <Input value={form.emergency_city} error={errors.emergency_city}
+                        onChange={(e) => set('emergency_city', e.target.value)} placeholder="Enter city" />
+                    )}
+                  </Field>
+                </div>
               </div>
             </div>
+
+            {minor && (
+              <div style={section}>
+                <p style={{ fontSize: 13, fontWeight: 700, color: c.textMid, margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Parent / Guardian Consent</p>
+                <p style={{ fontSize: 12.5, color: c.textMuted, margin: '0 0 14px' }}>
+                  The applicant is under 18 — a parent or legal guardian must complete this section.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                    <Field label="Guardian full name" required error={errors.guardian_fullName}>
+                      <Input value={form.guardian_fullName} error={errors.guardian_fullName}
+                        onChange={(e) => set('guardian_fullName', e.target.value)} placeholder="e.g. Mr. Adewale Obi" />
+                    </Field>
+                    <Field label="Relationship to applicant" required error={errors.guardian_relationship}>
+                      <Input value={form.guardian_relationship} error={errors.guardian_relationship}
+                        onChange={(e) => set('guardian_relationship', e.target.value)} placeholder="e.g. Father" />
+                    </Field>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                    <Field label="Guardian phone" required error={errors.guardian_phone}>
+                      <Input type="tel" value={form.guardian_phone} error={errors.guardian_phone}
+                        onChange={(e) => set('guardian_phone', e.target.value)} placeholder="+234 80X XXX XXXX" />
+                    </Field>
+                    <Field label="Guardian email" required error={errors.guardian_email}>
+                      <Input type="email" value={form.guardian_email} error={errors.guardian_email}
+                        onChange={(e) => set('guardian_email', e.target.value)} placeholder="guardian@example.com" />
+                    </Field>
+                  </div>
+                  <Field label="Guardian address" required error={errors.guardian_address}>
+                    <Textarea value={form.guardian_address} error={errors.guardian_address}
+                      onChange={(e) => set('guardian_address', e.target.value)}
+                      placeholder="Street, area, city" rows={2} />
+                  </Field>
+                  <Field label="Guardian digital signature (typed name)" required error={errors.guardian_digitalSignature}
+                    help="Type the guardian's full legal name as a signature">
+                    <Input value={form.guardian_digitalSignature} error={errors.guardian_digitalSignature}
+                      onChange={(e) => set('guardian_digitalSignature', e.target.value)} placeholder="Full legal name" />
+                  </Field>
+                  <Checkbox
+                    label="I authorize this applicant to participate in Spotlight programme activities."
+                    checked={form.guardian_consentGranted}
+                    onChange={(v) => set('guardian_consentGranted', v)}
+                    required
+                  />
+                  {errors.guardian_consentGranted && <span style={errTxt}>{errors.guardian_consentGranted}</span>}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1107,11 +1449,17 @@ export default function RealityTvShowApplicationWizard() {
             {[
               { key: 'legal_accuracyDeclaration', text: 'I confirm that all information I have submitted is true, complete, and accurate.' },
               { key: 'legal_termsConsent', text: 'I agree to the official rules, terms, and eligibility requirements of the Spotlight Reality TV Show.' },
+              { key: 'legal_privacyConsent', text: 'I consent to the collection and processing of my personal data as described in the privacy policy.' },
               { key: 'legal_mediaRelease', text: 'I grant Spotlight rights to record, broadcast, and use my participation for promotional purposes.' },
               { key: 'legal_publicVotingConsent', text: 'I understand my profile may be displayed publicly and may be subject to audience voting.' },
               { key: 'legal_sponsorActivationConsent', text: 'I understand programme activities may involve sponsors and brand integrations.' },
               { key: 'legal_productionRulesConsent', text: 'I agree to abide by production guidelines, safety protocols, and the code of conduct.' },
+              { key: 'legal_disqualificationAcknowledgment', text: 'I acknowledge that providing false information or violating the rules may result in disqualification.' },
+              { key: 'legal_ageGuardianConfirmation', text: 'I confirm that I meet the age requirement and, if under 18, that my parent/guardian has given consent.' },
+              { key: 'legal_communicationConsent', text: 'I consent to being contacted by Spotlight about my application and programme updates.' },
               { key: 'compliance_codeOfConductAgreement', text: 'I agree to Spotlight\'s code of conduct and understand that misconduct may lead to disqualification.' },
+              { key: 'compliance_backgroundCheckAgreement', text: 'I consent to a background check being carried out as part of the selection process.' },
+              { key: 'compliance_truthDeclaration', text: 'I declare under penalty of disqualification that every statement in this application is truthful.' },
               { key: 'review_confirmSubmit', text: 'I have reviewed my application and I am ready to submit and make payment.' },
             ].map(({ key, text }) => (
               <div key={key}>
@@ -1145,8 +1493,9 @@ export default function RealityTvShowApplicationWizard() {
 
           {step < 5 ? (
             <button type="button" onClick={next}
-              style={{ padding: '12px 28px', borderRadius: 10, border: 'none', background: `linear-gradient(135deg, ${c.primary}, ${c.primaryDark})`, color: '#000', fontWeight: 800, cursor: 'pointer', fontSize: 14, boxShadow: '0 4px 14px rgba(245,158,11,0.35)', display: 'flex', alignItems: 'center', gap: 6 }}>
-              Continue →
+              disabled={Object.values(uploading).some(Boolean)}
+              style={{ padding: '12px 28px', borderRadius: 10, border: 'none', background: `linear-gradient(135deg, ${c.primary}, ${c.primaryDark})`, color: '#000', fontWeight: 800, cursor: Object.values(uploading).some(Boolean) ? 'wait' : 'pointer', fontSize: 14, boxShadow: '0 4px 14px rgba(245,158,11,0.35)', display: 'flex', alignItems: 'center', gap: 6, opacity: Object.values(uploading).some(Boolean) ? 0.6 : 1 }}>
+              {Object.values(uploading).some(Boolean) ? 'Uploading…' : 'Continue →'}
             </button>
           ) : (
             <button type="button" onClick={handleSubmit} disabled={submitting}
