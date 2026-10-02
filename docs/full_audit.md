@@ -1100,13 +1100,13 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | AUD-FE-003 (sweep) | #402 | `5f51a24e` | `sweepGatewayIntents` + `POST /api/v1/payments/gateway/reconcile` (`x-cron-secret`): pending intent refs → Paystack verify → shared fulfil; off until `GATEWAY_RECONCILE_SECRET` wired | merged — spec 7/7; ops wiring (secret + scheduled caller) still open |
 | AUD-BILL-002 | #408 | `c32ce795` | `submitRegistrationApplication` gates `submitted` on proof: completed/verified intent row, or PATCHed reference re-verifying ≥ server-quoted fee via Paystack (fee re-read from contest); verified legacy refs backfilled as completed intents; else `awaiting_payment` | merged — spec 8/8, registration suite 136, regression 131/131, tsc clean |
 | AUD-SEC-002 (trivy lane) | #422 | `10819fca` | `trivy-secret.yaml` scoped allow-rule suppresses only the public Supabase anon-key JWT false positives in `mobile-app/reactnative/eas.json` (built-in secret rules stay active — same JWT elsewhere still fires); `.trivyignore` gains `DS-0026` for the two justified no-HEALTHCHECK images (.devcontainer, distroless crypto backend — inline `trivy:ignore` comments don't work for file-scope checks under trivy ≥0.70) | merged — trivy-fs SARIF scan exits 0 locally under pinned v0.70.0 and in CI; npm-audit-mobile green via #419 node-forge baseline |
-| AUD-FE-003 (academy tuition residual) | #426 | — | `POST /internal/finance/academy/tuition/confirm` — service-token (`FEATURE_INTERNAL_ACADEMY_API_ENABLED` + `LEDGER_SERVICE_TOKEN`, fail-closed), payer resolved from payment row, reuses hardened `ConfirmPayment`; gateway-fulfil academy arm resolves pending instalment via verified metadata `custom_fields` (plan_id+installment_number); webhook/recover/reconcile pass `verified.metadata`; derived idempotency key matches member route so fulfil+client retry collapse | in review — spec 7/7 new + payments/webhooks 49, Go live-DB 3/3, regression 131/131, tsc+vet clean; ops: wire `FEATURE_INTERNAL_ACADEMY_API_ENABLED` + `LEDGER_SERVICE_TOKEN` on both sides |
+| AUD-FE-003 (academy tuition residual) | #426 | `faa70724` | `POST /internal/finance/academy/tuition/confirm` — service-token (`FEATURE_INTERNAL_ACADEMY_API_ENABLED` + `LEDGER_SERVICE_TOKEN`, fail-closed), payer resolved from payment row, reuses hardened `ConfirmPayment`; gateway-fulfil academy arm resolves pending instalment via verified metadata `custom_fields` (plan_id+installment_number); webhook/recover/reconcile pass `verified.metadata`; derived idempotency key matches member route so fulfil+client retry collapse | merged — spec 7/7 new + payments/webhooks 49, Go live-DB 3/3 (incl. CI live-DB lane), regression 131/131, tsc+vet clean, all required CI green; ops: wire `FEATURE_INTERNAL_ACADEMY_API_ENABLED` + `LEDGER_SERVICE_TOKEN` on both deploys (inert until then) |
 
 ### In review
 
 | PR | Lane |
 |----|------|
-| #426 | academy tuition webhook fulfilment |
+| — | none pending from this lane |
 
 ### New findings surfaced during this wave (2026-10-01)
 
