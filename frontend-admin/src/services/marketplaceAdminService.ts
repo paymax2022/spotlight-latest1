@@ -27,10 +27,7 @@ export function marketplaceAdminBase(): string {
 }
 
 function authHeaders(): Record<string, string> {
-  if (typeof window === 'undefined') return { 'Content-Type': 'application/json' };
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  if (!token) return { 'Content-Type': 'application/json' };
-  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 
 export function formatKobo(kobo: number | null | undefined): string {
@@ -665,16 +662,9 @@ interface Listing {
 
 class MarketplaceAdminService {
   private getHeaders(): HeadersInit {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    // Same key every other admin service reads (adminAuth.ts on sign-in) —
-    // this class used to read a 'auth_token' key nothing in this app ever
-    // writes, so every request here went out with no Authorization header
-    // at all and 401'd (or, once the route existed, still 401'd) silently.
-    if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('spotlight_admin_access_token');
-      if (token) headers.Authorization = `Bearer ${token}`;
-    }
-    return headers;
+    // No Authorization header — the same-origin admin proxy attaches the
+    // Bearer from the HttpOnly session cookie server-side.
+    return { 'Content-Type': 'application/json' };
   }
 
   /**

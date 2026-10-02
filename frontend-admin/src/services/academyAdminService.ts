@@ -1,6 +1,6 @@
 // Copies the healthVetVerificationService.ts request stack EXACTLY:
 //  • adminBase() rewrites apiRoot() (the proxy origin, /api/v1 already stripped) → …/api/academy
-//  • authHeaders() attaches the admin Bearer token from localStorage
+//  • authHeaders() sends only content headers; the same-origin admin proxy attaches the Bearer from the HttpOnly session cookie server-side
 //  • getJson/sendJson unwrap { data } and throw on non-2xx
 // Per-route RBAC (academy.*) is carried by the admin session token. Mock by
 // backend. Every state-change is audit-logged server-side.
@@ -52,10 +52,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 

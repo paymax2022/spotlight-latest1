@@ -10,6 +10,11 @@ export type OutboxEventType =
   | 'votes.free.cast'
   | 'votes.paid.credited'
   | 'votes.wallet.cast'
+  // Written by /api/v2/votes/wallet when a committed wallet debit could not be
+  // compensated by the Go reversal endpoint. No worker handler — it is an ops
+  // reconciliation record, so the default branch retries it into `failed`
+  // where it stays queryable until the charge is reconciled.
+  | 'votes.wallet.reversal_failed'
   | 'referral.triggered'
   | 'votes.analytics'
   | 'leaderboard.updated'

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/dbutil"
@@ -165,6 +166,23 @@ func (r *Repository) EntryExists(ctx context.Context, idempotencyKey string) (bo
 	return exists, nil
 }
 
+// EntryAmount returns the amount_kobo posted under this idempotency_key on the
+// given account. Used for replay verification and reversal lookups — the
+// recorded ledger amount is the source of truth, never the caller's claim.
+func (r *Repository) EntryAmount(ctx context.Context, accountID, idempotencyKey string) (int64, bool, error) {
+	var amount int64
+	err := r.db.QueryRow(ctx,
+		`SELECT amount_kobo FROM ledger_entries WHERE account_id=$1 AND idempotency_key=$2`,
+		accountID, idempotencyKey).Scan(&amount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("ledger: entry amount account=%s idem=%s: %w", accountID, idempotencyKey, err)
+	}
+	return amount, true, nil
+}
+
 // getBalanceTx projects an account balance from WITHIN an open transaction, so the
 // read observes any uncommitted entries the same tx already posted and — when the
 // caller holds the account's pg_advisory_xact_lock — is serialised against other
@@ -228,21 +246,54 @@ func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey st
 	}
 
 	// Post the balanced pair on the SAME tx. ON CONFLICT DO NOTHING keeps a retry
-	// idempotent (unique idempotency_key would otherwise error the replay).
+	// idempotent (unique idempotency_key would otherwise error the replay) — but
+	// only when the replayed amount matches what was actually posted. A different
+	// amount under a REUSED key is a tampered retry, not a retry at all: a caller
+	// could pre-claim the key cheaply at this endpoint, then replay it through a
+	// higher-level path that re-derives the real price and trusts the no-op.
 	const insertEntry = `
 		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	if _, err := tx.Exec(ctx, insertEntry,
-		j.DebitAccountID, string(EntryDebit), amountKobo, j.Reference, j.IdempotencyKey+":debit"); err != nil {
+	tag, err := tx.Exec(ctx, insertEntry,
+		j.DebitAccountID, string(EntryDebit), amountKobo, j.Reference, j.IdempotencyKey+":debit")
+	if err != nil {
 		return fmt.Errorf("ledger: insert debit entry: %w", err)
 	}
-	if _, err := tx.Exec(ctx, insertEntry,
-		j.CreditAccountID, string(EntryCredit), amountKobo, j.Reference, j.IdempotencyKey+":credit"); err != nil {
+	if err := verifyReplayAmount(ctx, tx, j.IdempotencyKey+":debit", amountKobo, tag); err != nil {
+		return err
+	}
+	tag, err = tx.Exec(ctx, insertEntry,
+		j.CreditAccountID, string(EntryCredit), amountKobo, j.Reference, j.IdempotencyKey+":credit")
+	if err != nil {
 		return fmt.Errorf("ledger: insert credit entry: %w", err)
+	}
+	if err := verifyReplayAmount(ctx, tx, j.IdempotencyKey+":credit", amountKobo, tag); err != nil {
+		return err
 	}
 
 	return tx.Commit(ctx)
+}
+
+// verifyReplayAmount runs when an idempotent insert hit an existing row
+// (RowsAffected==0). A same-amount replay is a true duplicate and stays a
+// no-op; a different amount fails closed as ErrDuplicate so the caller can
+// reject rather than silently absorb a cheaper journal under a recycled key.
+func verifyReplayAmount(ctx context.Context, tx pgx.Tx, idempotencyKey string, amountKobo int64, tag pgconn.CommandTag) error {
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+	var existing int64
+	if err := tx.QueryRow(ctx,
+		`SELECT amount_kobo FROM ledger_entries WHERE idempotency_key=$1`,
+		idempotencyKey).Scan(&existing); err != nil {
+		return fmt.Errorf("ledger: verify replay for %s: %w", idempotencyKey, err)
+	}
+	if existing != amountKobo {
+		return fmt.Errorf("%w: key %s replayed with different amount (posted %d, requested %d)",
+			ErrDuplicate, idempotencyKey, existing, amountKobo)
+	}
+	return nil
 }
 
 // PostJournal writes a balanced pair of ledger entries atomically.

@@ -7,7 +7,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    setupFiles: [],
+    setupFiles: ['./vitest.setup.ts'],
+    environmentOptions: {
+      jsdom: { url: 'http://localhost:3001/' },
+    },
   },
   resolve: {
     alias: {
