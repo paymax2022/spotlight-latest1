@@ -125,6 +125,7 @@ export async function sweepGatewayIntents(
         reference,
         verified.amountKobo,
         targets,
+        verified.metadata,
         { providerReference: verified.providerReference, paidAt: verified.paidAt },
       );
       if (outcome.error) {

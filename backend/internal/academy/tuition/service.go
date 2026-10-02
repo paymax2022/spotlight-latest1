@@ -301,6 +301,21 @@ func (s *Service) ConfirmPayment(ctx context.Context, idempotencyKey, planID, pa
 	}, nil
 }
 
+// ConfirmPaymentInternal is the service-authenticated variant of ConfirmPayment:
+// the caller holds the internal service token, not the payer's JWT, so the payer
+// is resolved FROM the payment row itself. Every invariant of the member-facing
+// path is unchanged — provider re-verify, amount/currency checks, reference-reuse
+// guard, balanced journal, conditional UPDATE — only the userID source differs.
+// Callers: POST /internal/finance/academy/tuition/confirm (webhook/recover
+// fulfilment when the payer's client never reaches the member confirm route).
+func (s *Service) ConfirmPaymentInternal(ctx context.Context, idempotencyKey, planID, paymentID, reference string) (*PaymentResult, error) {
+	payment, err := s.repo.GetPaymentByID(ctx, paymentID)
+	if err != nil {
+		return nil, fmt.Errorf("fetch payment: %w", err)
+	}
+	return s.ConfirmPayment(ctx, idempotencyKey, planID, paymentID, reference, payment.UserID)
+}
+
 // GetTuitionStatus returns the full payment and plan status for an application.
 // Used for enrollment gating and dashboard display.
 func (s *Service) GetTuitionStatus(ctx context.Context, appID, userID string) (*TuitionStatus, error) {

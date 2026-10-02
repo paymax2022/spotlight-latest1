@@ -121,6 +121,30 @@ vi.mock('@/src/server/registration/supabase-store', () => ({
   markRegistrationPaymentIntentStatus: vi.fn(async () => ({})),
 }));
 
+const openmicIntents = vi.hoisted(() => ({
+  intent: null as { reference: string; status: 'pending' | 'confirmed' } | null,
+}));
+
+vi.mock('@/src/server/payments/openmic-vote-intents', () => ({
+  getOpenMicVoteIntentByReference: vi.fn(async () => openmicIntents.intent),
+  markOpenMicVoteIntent: vi.fn(async () => undefined),
+}));
+
+vi.mock('@/src/server/payments/academy-tuition-fulfil', async (importOriginal) => {
+  const orig =
+    await importOriginal<typeof import('@/src/server/payments/academy-tuition-fulfil')>();
+  return {
+    ...orig,
+    // Mirror the real arm's self-skip: only academy-keyed metadata fulfils.
+    fulfilAcademyInstallment: vi.fn(
+      async (_ref: string, metadata: Record<string, unknown> | null | undefined) =>
+        (orig.academyInstallmentKeysFromMetadata(metadata)
+          ? 'fulfilled'
+          : 'skipped') as 'fulfilled' | 'skipped',
+    ),
+  };
+});
+
 import { handleGatewayPaystackWebhook } from '../../../app/api/webhooks/paystack/gateway-handler';
 import { verifyPaystackPayment } from '@/src/server/voting/payment/paystack';
 import { bridgedVerifyPaidVote } from '@/src/server/voting-bridge/bridge';
@@ -129,6 +153,7 @@ import {
   applyRegistrationPaymentSuccess,
   markRegistrationPaymentIntentStatus,
 } from '@/src/server/registration/supabase-store';
+import { fulfilAcademyInstallment } from '@/src/server/payments/academy-tuition-fulfil';
 
 const markedCharge = (reference = 'PAY_gw_1') =>
   JSON.stringify({
@@ -165,6 +190,7 @@ beforeEach(() => {
   state.upserts = [];
   state.logUpdates = [];
   registrationStore.intent = null;
+  openmicIntents.intent = null;
 });
 
 describe('gateway handler dedup scoping (AUD-FE-004 residual)', () => {
@@ -328,5 +354,69 @@ describe('gateway handler academy application-fee fulfilment (AUD-FE-003 residua
 
     expect(res).toMatchObject({ processed: false, duplicate: false });
     expect(state.academyUpdates).toHaveLength(0);
+  });
+});
+
+describe('gateway handler academy tuition fulfilment (AUD-FE-003 residual)', () => {
+  // Pending academy_installment_payments rows store no reference until paid —
+  // the charge's metadata custom_fields (plan_id + installment_number) are the
+  // only claim signal, so an academy event has no purpose marker and no
+  // reference-keyed intent row.
+  const academyCharge = (reference = 'ACAD-TUIT-1') =>
+    JSON.stringify({
+      event: 'charge.success',
+      data: {
+        reference,
+        metadata: {
+          custom_fields: [
+            { variable_name: 'plan_id', value: 'plan-1' },
+            { variable_name: 'installment_number', value: '2' },
+          ],
+        },
+      },
+    });
+
+  it('claims an unmarked charge.success carrying academy instalment metadata', async () => {
+    const academyMetadata = {
+      custom_fields: [
+        { variable_name: 'plan_id', value: 'plan-1' },
+        { variable_name: 'installment_number', value: '2' },
+      ],
+    };
+    vi.mocked(verifyPaystackPayment).mockResolvedValueOnce({
+      success: true,
+      amountKobo: 150_000,
+      metadata: academyMetadata,
+    } as never);
+
+    const res = await handleGatewayPaystackWebhook(academyCharge(), 'sig');
+
+    expect(res).toMatchObject({ processed: true, duplicate: false });
+    expect(verifyPaystackPayment).toHaveBeenCalledWith('ACAD-TUIT-1');
+    expect(fulfilAcademyInstallment).toHaveBeenCalledWith('ACAD-TUIT-1', academyMetadata);
+  });
+
+  it('does not run the registration/openmic intent lookups for academy-marked events', async () => {
+    await handleGatewayPaystackWebhook(academyCharge(), 'sig');
+
+    expect(getRegistrationPaymentIntentByReference).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an academy fulfilment failure so the dispatcher 500s and Paystack retries', async () => {
+    vi.mocked(fulfilAcademyInstallment).mockRejectedValueOnce(new Error('upstream 502'));
+    vi.mocked(verifyPaystackPayment).mockResolvedValueOnce({
+      success: true,
+      amountKobo: 150_000,
+      metadata: {
+        custom_fields: [
+          { variable_name: 'plan_id', value: 'plan-1' },
+          { variable_name: 'installment_number', value: '2' },
+        ],
+      },
+    } as never);
+
+    const res = await handleGatewayPaystackWebhook(academyCharge(), 'sig');
+
+    expect(res).toMatchObject({ processed: false, error: 'upstream 502' });
   });
 });

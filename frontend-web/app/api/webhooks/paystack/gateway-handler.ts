@@ -20,6 +20,7 @@ import {
   getRegistrationPaymentIntentByReference,
   type RegistrationPaymentIntent,
 } from '@/src/server/registration/supabase-store';
+import { isAcademyInstallmentMetadata } from '@/src/server/payments/academy-tuition-fulfil';
 
 // Webhook handler for Paystack gateway charges — both the in-app client-side
 // Inline SDK (tagged `metadata.purpose = 'paymax_gateway'`) and server-initiated
@@ -86,10 +87,15 @@ export async function handleGatewayPaystackWebhook(
   //    the browser reaching the verify endpoint (AUD-FE-003 residual). A thrown
   //    lookup is left to reject the handler so the dispatcher 500s and Paystack
   //    retries, rather than silently dropping a charge we might own.
+  // Academy tuition instalments mark themselves via metadata custom_fields
+  // (plan_id + installment_number) — the pending row stores no reference, so
+  // metadata is the only claim signal before verification.
+  const academyMarked = isAcademyInstallmentMetadata(event.data?.metadata);
+
   let registrationIntent: RegistrationPaymentIntent | null = null;
   let openmicIntent: OpenMicVoteIntent | null = null;
   let academyIntent: AcademyFeeIntent | null = null;
-  if (event.event === 'charge.success' && reference) {
+  if (event.event === 'charge.success' && reference && !academyMarked) {
     [registrationIntent, openmicIntent, academyIntent] = await Promise.all([
       getRegistrationPaymentIntentByReference(reference),
       getOpenMicVoteIntentByReference(reference),
@@ -98,6 +104,7 @@ export async function handleGatewayPaystackWebhook(
   }
   if (
     !marked &&
+    !academyMarked &&
     !isActionableRegistrationIntent(registrationIntent) &&
     openmicIntent?.status !== 'pending' &&
     academyIntent?.status !== 'pending'
@@ -180,6 +187,7 @@ export async function handleGatewayPaystackWebhook(
         openmicIntent,
         academyIntent,
       },
+      verified.metadata,
       { providerReference: verified.providerReference, paidAt: verified.paidAt },
     );
     if (outcome.error) {
