@@ -13,6 +13,7 @@ import { assertKycTier, KycGateError } from '@/server/voting-bridge/kyc-gate';
 import { castFreeVoteAtomic } from '@/server/voting-bridge/free-vote-atomic';
 import { fakeIdempotencyTable } from './_idempotency-fake';
 import { enableBridge } from '@/server/voting-bridge/feature-flag';
+import { boundClaimKey } from '@/server/voting-bridge/idempotency';
 
 // Mock Supabase client
 vi.mock('@/lib/supabase/server');
@@ -126,9 +127,14 @@ describe('Free Vote Concurrency', () => {
     expect(result1.freeVotesRemaining).toBe(CLAIM_OK.freeVotesRemaining);
 
     // The result was published against the key, so a later duplicate can be
-    // served from it rather than voting again.
+    // served from it rather than voting again. The row lives under the BOUND
+    // key — raw client keys are scoped to voter + vote shape before touching
+    // the store (cross-user/payload key reuse must not share a claim).
     expect(client.update).toHaveBeenCalled();
-    expect(rows.get(idempotencyKey)?.response).toMatchObject({ success: true });
+    const boundKey = boundClaimKey('free-vote', userId, idempotencyKey, {
+      contestId: '1', contestantId: '2', voteQuantity: 1, voter: '', device: 'fp-123',
+    });
+    expect(rows.get(boundKey)?.response).toMatchObject({ success: true });
   });
 
   it('should return cached result on second identical request', async () => {

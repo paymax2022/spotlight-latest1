@@ -5,6 +5,37 @@
 
 import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
+import { createHash } from 'node:crypto';
+
+/**
+ * Bind a caller-supplied idempotency key to the authenticated user and the
+ * operation's material parameters before it touches any store.
+ *
+ * The raw client key is attacker/user-controlled and nothing scopes it: two
+ * users submitting the same key would collide on the same claim row, and the
+ * second could receive the FIRST user's cached vote result — or be absorbed by
+ * a claim describing a different purchase entirely. Binding key = scope + user
+ * + hash(contest/contestant/votes/amount…) means a replay only dedupes the
+ * operation it actually described; a key reused across users or payloads gets
+ * its own claim and executes as the distinct operation it is.
+ */
+export function boundClaimKey(
+  scope: string,
+  userId: string,
+  clientKey: string,
+  fingerprint: Record<string, string | number>,
+): string {
+  const fp = createHash('sha256')
+    .update(
+      Object.keys(fingerprint)
+        .sort()
+        .map((k) => `${k}=${fingerprint[k]}`)
+        .join('|'),
+    )
+    .digest('hex')
+    .slice(0, 16);
+  return `${scope}:${userId}:${clientKey}:${fp}`;
+}
 
 /**
  * How long a duplicate waits for the in-flight original to publish its result.

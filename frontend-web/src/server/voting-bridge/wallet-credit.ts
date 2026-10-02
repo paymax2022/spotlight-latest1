@@ -77,6 +77,19 @@ async function fulfillVotes(
       confirmed_at: now,
     });
     if (voteErr) {
+      // A concurrent same-key caller can pass the claim gate when the claim
+      // insert fails open on a transient error. The loser's heal insert then
+      // hits uq_votes_paid_transaction — that is "the other caller fulfilled
+      // it", NOT a credit failure. Throwing here would send the route down the
+      // reversal path and refund a purchase that was just delivered.
+      if (voteErr.code === '23505') {
+        const { data: won } = await supabase
+          .from('votes')
+          .select('id')
+          .eq('transaction_id', txId)
+          .maybeSingle();
+        if (won) return;
+      }
       throw new ApiError('Failed to credit votes', 500);
     }
     await incrementVoteTotals(p.contestId, p.contestantId, { paidVotes: votes });

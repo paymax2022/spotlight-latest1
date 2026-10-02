@@ -17,11 +17,15 @@ vi.mock('@/src/lib/auth/request', () => ({
 }));
 
 vi.mock('@/src/server/voting-bridge/feature-flag', () => ({ isBridgeEnabled: vi.fn(() => true) }));
-vi.mock('@/src/server/voting-bridge/idempotency', () => ({
-  checkAndClaimIdempotencyKey: vi.fn(async () => null),
-  storeIdempotencyResult: vi.fn(async () => undefined),
-  releaseIdempotencyKey: vi.fn(async () => undefined),
-}));
+vi.mock('@/src/server/voting-bridge/idempotency', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/src/server/voting-bridge/idempotency')>();
+  return {
+    ...real, // keep the real boundClaimKey — the route's key binding is under test
+    checkAndClaimIdempotencyKey: vi.fn(async () => null),
+    storeIdempotencyResult: vi.fn(async () => undefined),
+    releaseIdempotencyKey: vi.fn(async () => undefined),
+  };
+});
 vi.mock('@/src/server/voting-bridge/kyc-gate', () => ({ assertKycTier: vi.fn(async () => undefined) }));
 vi.mock('@/src/server/voting-bridge/outbox', () => ({ enqueueOutboxEvent: vi.fn(async () => undefined) }));
 vi.mock('@/src/server/voting-bridge/wallet-pricing', () => ({ priceWalletVote: vi.fn() }));
@@ -37,7 +41,7 @@ import { POST } from '../../../app/api/v2/votes/wallet/route';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { priceWalletVote } from '@/src/server/voting-bridge/wallet-pricing';
 import { creditWalletVotes, markVotePurchaseReversed } from '@/src/server/voting-bridge/wallet-credit';
-import { releaseIdempotencyKey } from '@/src/server/voting-bridge/idempotency';
+import { boundClaimKey, checkAndClaimIdempotencyKey, releaseIdempotencyKey } from '@/src/server/voting-bridge/idempotency';
 import { enqueueOutboxEvent } from '@/src/server/voting-bridge/outbox';
 
 const QUOTE = { voteCount: 50, costKobo: 500_000 };
@@ -73,6 +77,12 @@ const BODY = {
   voteCount: 50,
   idempotencyKey: 'idem-1',
 };
+
+/** The key all stores should see for BODY + a given user under QUOTE. */
+const bound = (userId: string, clientKey = 'idem-1', fp = {
+  contestId: 'contest-1', contestantId: 'contestant-1',
+  voteCount: 50, costKobo: 500_000,
+}) => boundClaimKey('wallet-vote', userId, clientKey, fp);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -128,8 +138,8 @@ describe('POST /api/v2/votes/wallet', () => {
     const urls = vi.mocked(fetch).mock.calls.map((c) => String(c[0]));
     expect(urls.some((u) => u.endsWith('/debit'))).toBe(true);
     expect(urls.some((u) => u.endsWith('/reverse'))).toBe(true);
-    expect(vi.mocked(markVotePurchaseReversed)).toHaveBeenCalledWith('idem-1');
-    expect(vi.mocked(releaseIdempotencyKey)).toHaveBeenCalledWith('wallet-vote:idem-1');
+    expect(vi.mocked(markVotePurchaseReversed)).toHaveBeenCalledWith(bound('u-wallet-6'));
+    expect(vi.mocked(releaseIdempotencyKey)).toHaveBeenCalledWith(bound('u-wallet-6'));
   });
 
   it('flags reconciliation via outbox when the reversal itself fails', async () => {
@@ -141,7 +151,10 @@ describe('POST /api/v2/votes/wallet', () => {
     expect(vi.mocked(markVotePurchaseReversed)).not.toHaveBeenCalled();
     expect(vi.mocked(enqueueOutboxEvent)).toHaveBeenCalledWith(
       'votes.wallet.reversal_failed',
-      expect.objectContaining({ idempotencyKey: 'idem-1' }),
+      expect.objectContaining({
+        idempotencyKey: bound('u-wallet-7'),
+        clientIdempotencyKey: 'idem-1',
+      }),
     );
   });
 
@@ -149,9 +162,74 @@ describe('POST /api/v2/votes/wallet', () => {
     vi.mocked(requireRequestUser).mockResolvedValue({ id: 'u-wallet-8' } as never);
     stubGo({ debit: 402 });
     const res = await POST(voteRequest(BODY) as never);
-    expect(res.status).toBe(500);
+    // The Go status propagates — insufficient balance stays a 402.
+    expect(res.status).toBe(402);
     expect(vi.mocked(creditWalletVotes)).not.toHaveBeenCalled();
-    expect(vi.mocked(releaseIdempotencyKey)).toHaveBeenCalledWith('wallet-vote:idem-1');
+    expect(vi.mocked(releaseIdempotencyKey)).toHaveBeenCalledWith(bound('u-wallet-8'));
+  });
+
+  it('surfaces Go\'s spent-key 409 when the debit was already reversed', async () => {
+    vi.mocked(requireRequestUser).mockResolvedValue({ id: 'u-wallet-9' } as never);
+    stubGo({ debit: 409 });
+    const res = await POST(voteRequest(BODY) as never);
+    expect(res.status).toBe(409);
+    // Never credit against refunded money — and the claim is released so the
+    // client learns fast rather than wedging the key.
+    expect(vi.mocked(creditWalletVotes)).not.toHaveBeenCalled();
+    expect(vi.mocked(releaseIdempotencyKey)).toHaveBeenCalledWith(bound('u-wallet-9'));
+  });
+
+  it('binds the claim, Go debit, and tx idempotency to user + payload', async () => {
+    vi.mocked(requireRequestUser).mockResolvedValue({ id: 'u-bound-1' } as never);
+    const res = await POST(voteRequest(BODY) as never);
+    expect(res.status).toBe(200);
+    const key = bound('u-bound-1');
+    expect(key.startsWith('wallet-vote:u-bound-1:idem-1:')).toBe(true);
+    expect(vi.mocked(checkAndClaimIdempotencyKey)).toHaveBeenCalledWith(key);
+    const sent = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string);
+    expect(sent.idempotency_key).toBe(key);
+    expect(vi.mocked(creditWalletVotes)).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: key }),
+    );
+  });
+
+  it('a client key reused by another user produces a different bound key', async () => {
+    vi.mocked(requireRequestUser).mockResolvedValue({ id: 'u-bound-a' } as never);
+    await POST(voteRequest(BODY) as never);
+    vi.mocked(requireRequestUser).mockResolvedValue({ id: 'u-bound-b' } as never);
+    await POST(voteRequest(BODY) as never);
+    const keys = vi.mocked(checkAndClaimIdempotencyKey).mock.calls.map((c) => c[0]);
+    expect(keys[0]).toBe(bound('u-bound-a'));
+    expect(keys[1]).toBe(bound('u-bound-b'));
+    expect(keys[0]).not.toBe(keys[1]);
+    // Both executed — user B's purchase is NOT absorbed by user A's claim.
+    expect(vi.mocked(creditWalletVotes)).toHaveBeenCalledTimes(2);
+  });
+
+  it('the same user + key with a changed payload is a distinct operation', async () => {
+    vi.mocked(requireRequestUser).mockResolvedValue({ id: 'u-bound-c' } as never);
+    await POST(voteRequest(BODY) as never);
+    await POST(voteRequest({ ...BODY, contestantId: 'contestant-2' }) as never);
+    const keys = vi.mocked(checkAndClaimIdempotencyKey).mock.calls.map((c) => c[0]);
+    expect(keys[1]).toBe(bound('u-bound-c', 'idem-1', {
+      contestId: 'contest-1', contestantId: 'contestant-2',
+      voteCount: 50, costKobo: 500_000,
+    }));
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(vi.mocked(creditWalletVotes)).toHaveBeenCalledTimes(2);
+  });
+
+  it('a true replay returns the cached result without debiting again', async () => {
+    vi.mocked(requireRequestUser).mockResolvedValue({ id: 'u-bound-d' } as never);
+    vi.mocked(checkAndClaimIdempotencyKey).mockResolvedValueOnce(null as never);
+    await POST(voteRequest(BODY) as never);
+    vi.mocked(checkAndClaimIdempotencyKey).mockResolvedValueOnce({ votesAdded: 50 } as never);
+    const res = await POST(voteRequest(BODY) as never);
+    const body = await res.json();
+    expect(body.votesAdded).toBe(50);
+    // One debit total — the replay was served from the claim.
+    const debits = vi.mocked(fetch).mock.calls.filter((c) => String(c[0]).endsWith('/debit'));
+    expect(debits).toHaveLength(1);
   });
 
   it('429s the 11th purchase in a minute for one user (shared v1/v2 bucket)', async () => {
