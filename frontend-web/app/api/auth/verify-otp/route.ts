@@ -27,7 +27,7 @@ export async function POST(request: Request) {
       email: String(email).trim().toLowerCase(),
       code: String(otp).trim(),
       purpose: 'verify_email',
-    });
+    }, request);
 
     if (go.kind === 'answered') {
       if (go.status >= 400) {

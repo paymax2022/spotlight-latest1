@@ -27,7 +27,7 @@ export async function POST(request: Request) {
       email: String(email).trim().toLowerCase(),
       code: String(code).trim(),
       purpose: 'login',
-    });
+    }, request);
 
     if (go.kind === 'fallback') {
       console.info('[auth/otp-verify] step-up unavailable:', go.reason);
