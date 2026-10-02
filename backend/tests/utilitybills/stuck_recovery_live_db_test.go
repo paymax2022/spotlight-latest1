@@ -59,9 +59,9 @@ func (f *fixture) insertStuckTransaction(t *testing.T, status, source, key strin
 	if err != nil || dup {
 		t.Fatalf("insert stuck transaction: err=%v dup=%v", err, dup)
 	}
-	age := "0 minutes"
+	age := "0"
 	if stale {
-		age = "15 minutes"
+		age = "15"
 	}
 	if _, err := f.pool.Exec(ctx, `
 		UPDATE public.utility_transactions
@@ -86,6 +86,21 @@ func (f *fixture) postGoDebit(t *testing.T, key, receipt string) {
 	}
 }
 
+// terminalize forces a test row out of the pending set at test end. Tests that
+// deliberately leave a row initiated/wallet_debited would otherwise leak it
+// into the shared suite DB, where a later run's ListPending(oldest-first)
+// picks it before the rows that run created.
+func (f *fixture) terminalize(t *testing.T, txID string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if _, err := f.pool.Exec(context.Background(), `
+			UPDATE public.utility_transactions SET status = 'failed'
+			WHERE id = $1 AND status IN ('initiated','wallet_debited','provider_pending')`, txID); err != nil {
+			t.Logf("cleanup terminalize %s: %v", txID, err)
+		}
+	})
+}
+
 func (f *fixture) eventCount(t *testing.T, txID, eventType string) int {
 	t.Helper()
 	var n int
@@ -103,9 +118,8 @@ func TestLiveDB_StuckRecovery_WalletDebitedNoAttemptsReverses(t *testing.T) {
 
 	key := "test-stuck-debited-" + uuid.New().String()
 	txn := f.insertStuckTransaction(t, "wallet_debited", "wallet", key, true)
-	f.postGoDebit(t, key, *txn.ReceiptNumber)
-
 	before := f.walletNet(t)
+	f.postGoDebit(t, key, *txn.ReceiptNumber)
 	updated, err := f.svc.RequeryTransaction(ctx, txn.ID)
 	if err != nil {
 		t.Fatalf("requery: %v", err)
@@ -148,6 +162,7 @@ func TestLiveDB_StuckRecovery_FailedAttemptsStillReverse(t *testing.T) {
 
 	key := "test-stuck-failed-" + uuid.New().String()
 	txn := f.insertStuckTransaction(t, "wallet_debited", "wallet", key, true)
+	before := f.walletNet(t)
 	f.postGoDebit(t, key, *txn.ReceiptNumber)
 
 	attempt, err := repo.StartAttempt(ctx, txn.ID, f.providerID, "", 1, key+":provider:test:attempt:1")
@@ -158,7 +173,6 @@ func TestLiveDB_StuckRecovery_FailedAttemptsStillReverse(t *testing.T) {
 		t.Fatalf("finish attempt: %v", err)
 	}
 
-	before := f.walletNet(t)
 	updated, err := f.svc.RequeryTransaction(ctx, txn.ID)
 	if err != nil {
 		t.Fatalf("requery: %v", err)
@@ -216,6 +230,7 @@ func TestLiveDB_StuckRecovery_FreshRowLeftAlone(t *testing.T) {
 
 	key := "test-stuck-fresh-" + uuid.New().String()
 	txn := f.insertStuckTransaction(t, "wallet_debited", "wallet", key, false /* fresh */)
+	f.terminalize(t, txn.ID)
 	f.postGoDebit(t, key, *txn.ReceiptNumber)
 
 	updated, err := f.svc.RequeryTransaction(ctx, txn.ID)
@@ -232,13 +247,12 @@ func TestLiveDB_StuckRecovery_ExistingCompensationConverges(t *testing.T) {
 	ctx := context.Background()
 
 	key := "test-stuck-comp-" + uuid.New().String()
-	const amount = int64(500_000)
 	txn := f.insertStuckTransaction(t, "wallet_debited", "wallet", key, true)
 	f.postGoDebit(t, key, *txn.ReceiptNumber)
 
 	// Simulate a reversal the in-flight writer posted before dying between the
 	// reversal and the status update — under the Go "<key>:reversal" base.
-	if err := f.ledger.PostReversal(ctx, f.walletID, f.clearingID, amount,
+	if err := f.ledger.PostReversal(ctx, f.walletID, f.clearingID, stuckAmount,
 		"utility:reversal:"+txn.ID, key+":reversal"); err != nil {
 		t.Fatalf("post reversal: %v", err)
 	}
@@ -261,7 +275,6 @@ func TestLiveDB_StuckRecovery_PaystackRefundsWallet(t *testing.T) {
 	ctx := context.Background()
 
 	key := "test-stuck-paystack-" + uuid.New().String()
-	const amount = int64(500_000)
 	// A paystack-source row exists only because the charge already verified —
 	// the money was captured, so recovery is a wallet CREDIT, never a reversal
 	// of a debit that never happened. The captured payment_reference is the
@@ -287,8 +300,8 @@ func TestLiveDB_StuckRecovery_PaystackRefundsWallet(t *testing.T) {
 	if updated.Status != string(utilitybills.StatusReversed) {
 		t.Fatalf("status = %s, want reversed — the captured charge must be refunded", updated.Status)
 	}
-	if got := f.walletNet(t) - before; got != amount {
-		t.Fatalf("wallet gained %d, want %d — the captured charge must land in the wallet", got, amount)
+	if got := f.walletNet(t) - before; got != stuckAmount {
+		t.Fatalf("wallet gained %d, want %d — the captured charge must land in the wallet", got, stuckAmount)
 	}
 	// Idempotent: if the row were stranded at 'initiated' again (e.g. the status
 	// update lost its own race), a second recovery pass must detect the posted
@@ -302,8 +315,8 @@ func TestLiveDB_StuckRecovery_PaystackRefundsWallet(t *testing.T) {
 	if _, err := f.svc.RequeryTransaction(ctx, txn.ID); err != nil {
 		t.Fatalf("second requery: %v", err)
 	}
-	if got := f.walletNet(t) - before; got != amount {
-		t.Fatalf("wallet gained %d after second pass, want exactly %d — double refund", got, amount)
+	if got := f.walletNet(t) - before; got != stuckAmount {
+		t.Fatalf("wallet gained %d after second pass, want exactly %d — double refund", got, stuckAmount)
 	}
 }
 
@@ -350,14 +363,13 @@ func TestLiveDB_AdminReversal_SkipsAlreadyCompensated(t *testing.T) {
 	ctx := context.Background()
 
 	key := "test-admin-rev-comp-" + uuid.New().String()
-	const amount = int64(500_000)
 	// stale=true: the admin claim on a 'failed' row waits out the 60s settle
 	// window so it cannot collide with a compensator still inside its window.
 	txn := f.insertStuckTransaction(t, "failed", "wallet", key, true)
 	f.postGoDebit(t, key, *txn.ReceiptNumber)
 	// Compensation already posted under the GO convention — the admin key
 	// (utility:<tx>:ADMIN_REVERSAL_DEBIT) cannot dedupe this on its own.
-	if err := f.ledger.PostReversal(ctx, f.walletID, f.clearingID, amount,
+	if err := f.ledger.PostReversal(ctx, f.walletID, f.clearingID, stuckAmount,
 		"utility:reversal:"+txn.ID, key+":reversal"); err != nil {
 		t.Fatalf("post reversal: %v", err)
 	}
@@ -409,6 +421,7 @@ func TestLiveDB_CreateDispute_RejectsNonTerminalTransaction(t *testing.T) {
 
 	key := "test-stuck-dispute-" + uuid.New().String()
 	txn := f.insertStuckTransaction(t, "wallet_debited", "wallet", key, true)
+	f.terminalize(t, txn.ID)
 	f.postGoDebit(t, key, *txn.ReceiptNumber)
 
 	_, err := f.svc.CreateDispute(ctx, f.userID, txn.ID, "where is my vend")
