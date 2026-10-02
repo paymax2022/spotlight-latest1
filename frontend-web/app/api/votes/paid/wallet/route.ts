@@ -16,6 +16,8 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { featureFlags } from '@/src/lib/feature-flags';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { debitWallet, reverseWalletDebit } from '@/src/server/wallet/service';
+import { checkRateLimit } from '@/src/lib/voting/rate-limit';
+import { getRequestIp } from '@/src/lib/rate-limit/client-ip';
 import { getVotingSettings, assertVotingOpen } from '@/src/server/voting/free-vote.service';
 import { incrementVoteTotals } from '@/src/server/voting/totals.service';
 import { appendAuditLog } from '@/src/server/voting/audit.service';
@@ -42,7 +44,15 @@ export async function POST(request: Request) {
 
   try {
     const user = await requireRequestUser(request);
-    const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
+
+    // Wallet-debit money path — per-user throttle (AUD-SEC-001). Shares the
+    // bucket key with the v2 wallet route so both draw one allowance.
+    const rl = checkRateLimit(`vote:paid:wallet:${user.id}`, 10, 60_000);
+    if (!rl.allowed) {
+      return errorResponse('Too many requests. Please slow down.', 429);
+    }
+
+    const ip = getRequestIp(request);
     const ua = request.headers.get('user-agent') ?? 'unknown';
 
     const body = (await request.json()) as WalletVoteBody;
