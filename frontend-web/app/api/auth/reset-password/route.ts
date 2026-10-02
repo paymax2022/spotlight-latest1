@@ -33,7 +33,7 @@ export async function POST(request: Request) {
         email: String(email).trim().toLowerCase(),
         code: String(code).trim(),
         newPassword: password,
-      });
+      }, request);
 
       if (go.kind === 'answered') {
         if (go.status >= 400) {

@@ -41,8 +41,7 @@ export type ContestPrizePatch = Partial<{
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
   const base = extra ?? {};
   if (typeof window === 'undefined') return base;
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token ? { ...base, Authorization: `Bearer ${token}` } : base;
+  return base;
 }
 
 async function readJsonOrThrow(res: Response, label: string): Promise<Record<string, unknown>> {

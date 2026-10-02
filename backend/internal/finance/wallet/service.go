@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -70,6 +71,60 @@ func (s *Service) VoteDebit(ctx context.Context, userID, reference, idempotencyK
 		return fmt.Errorf("wallet: resolve commission account: %w", err)
 	}
 	return s.Debit(ctx, userID, reference, idempotencyKey, commissionAcc.ID, amountKobo)
+}
+
+// ErrNoVoteDebit is returned when no committed vote-bridge debit exists for the
+// idempotency key — nothing to verify against or reverse.
+var ErrNoVoteDebit = errors.New("wallet: no vote debit found for idempotency key")
+
+// VoteDebitAmount returns the amount the vote-bridge debit under idempotencyKey
+// actually posted to the commission account. The credit-side leg doubles as a
+// provenance check: VoteDebit always pairs a user-wallet DEBIT with a
+// commission CREDIT in one tx, so a K:credit row on commission means this key
+// was a vote debit — and its amount is the ONLY amount a caller may act on.
+func (s *Service) VoteDebitAmount(ctx context.Context, idempotencyKey string) (int64, bool, error) {
+	commissionAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountCommission)
+	if err != nil {
+		return 0, false, fmt.Errorf("wallet: resolve commission account: %w", err)
+	}
+	return s.ledger.EntryAmount(ctx, commissionAcc.ID, idempotencyKey+":credit")
+}
+
+// VoteDebitReverse refunds a vote-bridge debit: restores the user's wallet
+// (REVERSAL_DEBIT) and drains the commission account (REVERSAL_CREDIT) by the
+// RECORDED debit amount — the request carries no amount, so this endpoint
+// cannot mint value. Provenance is double-checked on both legs: the debit must
+// have hit THIS user's wallet and the matching credit the commission account,
+// which stops a caller reversing somebody else's debit into their own wallet.
+// Idempotent: a repeat reversal with the same key is a duplicate no-op.
+func (s *Service) VoteDebitReverse(ctx context.Context, userID, reference, idempotencyKey string) error {
+	walletAcc, err := s.ledger.GetOrCreateUserWallet(ctx, userID)
+	if err != nil {
+		return err
+	}
+	commissionAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountCommission)
+	if err != nil {
+		return fmt.Errorf("wallet: resolve commission account: %w", err)
+	}
+	debitAmount, found, err := s.ledger.EntryAmount(ctx, walletAcc.ID, idempotencyKey+":debit")
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrNoVoteDebit
+	}
+	creditAmount, found, err := s.ledger.EntryAmount(ctx, commissionAcc.ID, idempotencyKey+":credit")
+	if err != nil {
+		return err
+	}
+	if !found || creditAmount != debitAmount {
+		return ErrNoVoteDebit
+	}
+	if err := s.ledger.PostReversal(ctx, walletAcc.ID, commissionAcc.ID, debitAmount, reference,
+		"vote-reversal:"+idempotencyKey); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+		return err
+	}
+	return nil
 }
 
 // ListTransactions returns paginated ledger entries as user-facing transactions.

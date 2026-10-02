@@ -30,7 +30,8 @@ import type {
 // Arena (Naija Driver contest) admin console — service layer.
 // arena.admin.*, arena.reviewer.screen, arena.proctor.attest, arena.judge.score,
 // arena.auditor.read). Public GETs live at /api/arena/...
-// Auth: Bearer localStorage 'spotlight_admin_access_token' (matches kyc/transfers).
+// Auth: Bearer attached server-side by /api/admin-proxy from the HttpOnly
+// 'sb-admin-token' cookie — the token never enters JS-readable storage.
 // Backend / feature flag may not be running — default to deterministic fixtures
 // unless explicitly disabled, so every screen renders. Mirrors kycAdminService.
 const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_ARENA_ADMIN_USE_MOCK);
@@ -49,9 +50,7 @@ export function arenaPublicBase(): string {
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return { 'Content-Type': 'application/json' };
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  if (!token) return { 'Content-Type': 'application/json' };
-  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 
 export function formatKobo(kobo: number): string {

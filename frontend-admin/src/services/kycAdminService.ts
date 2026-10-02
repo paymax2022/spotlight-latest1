@@ -14,7 +14,8 @@ import type {
 
 // KYC verification admin console — service layer.
 // Backend: Go, mounted at /api/finance/admin/kyc (RBAC: finance.admin.kyc).
-// Auth: Bearer localStorage 'spotlight_admin_access_token' (matches fintechService).
+// Auth: Bearer attached server-side by /api/admin-proxy from the HttpOnly
+// 'sb-admin-token' cookie — the token never enters JS-readable storage.
 // Backend / flag may not be running — default to deterministic fixtures unless
 // explicitly disabled, so every screen renders. Mirrors transfersAdminService.
 const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_KYC_ADMIN_USE_MOCK);
@@ -31,9 +32,7 @@ export function kycAdminBase(): string {
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return { 'Content-Type': 'application/json' };
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  if (!token) return { 'Content-Type': 'application/json' };
-  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 
 // Idempotency-Key per the house iron rule (see services/idempotency.ts). A KYC

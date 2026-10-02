@@ -26,10 +26,7 @@ function webBase(): string {
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 
 export async function listAdminContests(type?: string): Promise<AdminContest[]> {
@@ -265,15 +262,14 @@ export async function advanceStageSurvivors(slug: string, stageNumber: number): 
  * header.
  */
 export async function uploadContestBanner(file: File): Promise<string> {
-  const token = typeof window !== 'undefined'
-    ? localStorage.getItem('spotlight_admin_access_token') || ''
-    : '';
   const form = new FormData();
   form.append('file', file);
 
+  // No Authorization header here — the same-origin web-proxy attaches the
+  // Bearer from the HttpOnly session cookie server-side (multipart bodies must
+  // not carry a hand-set Content-Type either; the browser adds the boundary).
   const res = await fetch(`${webBase()}/api/admin/contests/banner`, {
     method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: form,
   });
   const json = await readJsonOrThrow(res, 'Uploading banner');
