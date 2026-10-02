@@ -9,7 +9,7 @@
  *   return proxyToGoBackend(request, '/api/finance/telemedicine/doctors');
  */
 import { NextResponse } from 'next/server';
-import { getRequestIp } from '@/src/lib/rate-limit/client-ip';
+import { clientIpHeaders, getRequestIp } from '@/src/lib/rate-limit/client-ip';
 import { checkRateLimit } from '@/src/lib/voting/rate-limit';
 
 export const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
@@ -70,6 +70,12 @@ export async function proxyToGoBackend(
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
+    // Propagate the resolved client IP so the Go backend's IP-keyed controls
+    // (auth rate limits, OTP budgets, suspicious-login signals, audit rows)
+    // see the real caller, not this BFF's address. Go trusts it only when this
+    // host is inside TRUSTED_PROXY_CIDRS — otherwise it fails closed to the
+    // direct peer IP, i.e. today's behaviour (AUD-BE-014).
+    ...clientIpHeaders(request),
   };
 
   // Forward the Authorization header so Go backend can validate the JWT.

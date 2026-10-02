@@ -30,10 +30,7 @@ function votingBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${votingBase()}${path}`, { headers: authHeaders(), cache: 'no-store' });

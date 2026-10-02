@@ -2509,12 +2509,20 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// votes via the legacy Spotlight service. Never touches protected contest files.
 	if cfg.FeatureVoteBridgeEnabled && cfg.FeatureWalletEnabled {
 		vbHandler := votebridge.NewHandler(walletSvc)
-		// Same per-user money-path guard as connect paid-vote: this endpoint debits
-		// a wallet, so a hammering loop shouldn't reach the ledger unchecked.
+		// mapsAuth() is load-bearing: it validates the bearer token and sets
+		// user_id — without it requireUserID() fails closed on every call and
+		// PerUserRateLimit (which reads user_id) meters nothing. Same per-user
+		// money-path guard as connect paid-vote.
 		r.POST("/api/finance/vote-bridge/debit",
+			mapsAuth(),
 			requireUserID(),
 			middleware.PerUserRateLimit(redisClient, "vote-bridge-debit", cfg.ConnectPaidVoteRatePerMin),
 			vbHandler.DebitForVotes)
+		r.POST("/api/finance/vote-bridge/reverse",
+			mapsAuth(),
+			requireUserID(),
+			middleware.PerUserRateLimit(redisClient, "vote-bridge-reverse", cfg.ConnectPaidVoteRatePerMin),
+			vbHandler.ReverseForVotes)
 	}
 
 	// These five are UNREACHABLE today and have been: requireUserID() reads

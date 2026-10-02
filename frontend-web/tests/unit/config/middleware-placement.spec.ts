@@ -68,14 +68,20 @@ describe('middleware placement', () => {
     // at nothing would pass the checks above while still loading no rules.
     const found = entryPoint(liveAppDir()) as string;
     const source = readFileSync(found, 'utf8');
-    const isReExport = /from\s+['"](.+)['"]/.exec(source);
 
-    if (isReExport) {
-      const target = isReExport[1].replace(/^\.\//, '');
+    // The entry point may import packages (e.g. 'next/server') — only RELATIVE
+    // specifiers name repo files, so only those must resolve. Check each of
+    // them rather than just the first `from` in the file.
+    const relativeSpecifiers = [...source.matchAll(/from\s+['"](\.[^'"]+)['"]/g)].map(
+      (m) => m[1],
+    );
+
+    for (const specifier of relativeSpecifiers) {
+      const target = specifier.replace(/^\.\//, '');
       const resolved = join(APP_ROOT, `${target}.ts`);
       expect(
         existsSync(resolved),
-        `Entry point re-exports from '${isReExport[1]}', which does not exist.`,
+        `Entry point references '${specifier}', which does not exist.`,
       ).toBe(true);
     }
   });

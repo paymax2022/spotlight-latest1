@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { clientIpHeaders } from '@/src/lib/rate-limit/client-ip';
 
 /**
  * POST /api/auth/register — delegates to the Go backend.
@@ -41,7 +42,9 @@ export async function POST(request: Request) {
     try {
       upstream = await fetch(`${GO_BACKEND_URL}/api/auth/register`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // Forward the resolved client IP so Go's signup gate + register limiter
+        // key on the real caller, not this BFF's address (AUD-BE-014).
+        headers: { 'Content-Type': 'application/json', ...clientIpHeaders(request) },
         body: JSON.stringify({
           fullName,
           email,

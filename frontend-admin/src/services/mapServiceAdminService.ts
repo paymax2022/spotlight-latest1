@@ -1,6 +1,6 @@
 // Mirrors healthVetVerificationService.ts exactly for request building / auth / errors:
 //  • adminBase() rewrites env.apiBaseUrl (…/api/v1) → …/api/maps/admin
-//  • authHeaders() attaches the admin Bearer token from localStorage
+//  • authHeaders() sends only content headers; the same-origin admin proxy attaches the Bearer from the HttpOnly session cookie server-side
 //  • getJson/sendJson unwrap { data } and throw on non-2xx
 // These endpoints live under …/api/maps/admin and require RBAC permission
 // `map.admin.review` (carried by the admin session token).
@@ -30,10 +30,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
