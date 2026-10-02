@@ -198,13 +198,10 @@ func RequireServiceToken(expected string) gin.HandlerFunc {
 // (failed_login_attempts / locked_until in authService) defends a single account
 // being guessed at; it does nothing about one client sweeping many accounts, or
 // about hammering password-reset to spend the project's small email quota.
-// Deliberately separate from StemRateLimit rather than reusing it:
-//   - StemRateLimit's map NEVER evicts. One entry per (route, method, IP) is
-//     harmless for a handful of internal routes and is an unbounded, attacker-
-//     controlled allocation on an endpoint facing the internet. This one sweeps.
-//   - It keys partly on an `x-stem-role` REQUEST HEADER, which a caller can set
-//     freely. On an auth endpoint that is a trivial bypass: vary the header, get
-//     a fresh bucket.
+// It is a separate limiter rather than the shared stemRateStore because the key
+// here must exclude everything the caller controls (route + method + client IP
+// only) and the store is bounded — the two properties an internet-facing
+// credential endpoint cannot do without.
 //
 // The window is fixed rather than sliding, which permits a burst across a window
 // boundary. That is accepted: the goal is to make bulk guessing expensive, and a
@@ -214,12 +211,21 @@ type authRateBucket struct {
 	windowStart time.Time
 }
 
+// authRateLimitMaxKeys bounds the bucket map. Distinct keys are
+// attacker-influenced (rotated source IPs behind a botnet or a permissive
+// proxy chain), so without a hard cap a key-rotation flood grows the map
+// unboundedly inside a single window — the sweep only removes buckets whose
+// window expired. AUD-BE-004 / AUD-PERF-002 residual.
+const authRateLimitMaxKeys = 100_000
+
 type AuthRateLimiter struct {
-	mu      sync.Mutex
-	buckets map[string]*authRateBucket
-	limit   int
-	window  time.Duration
-	now     func() time.Time // injectable so the tests do not sleep
+	mu        sync.Mutex
+	buckets   map[string]*authRateBucket
+	limit     int
+	window    time.Duration
+	maxKeys   int
+	lastSweep time.Time
+	now       func() time.Time // injectable so the tests do not sleep
 }
 
 // NewAuthRateLimiter builds a limiter. A non-positive limit or window falls back
@@ -235,6 +241,7 @@ func NewAuthRateLimiter(limit int, window time.Duration) *AuthRateLimiter {
 		buckets: map[string]*authRateBucket{},
 		limit:   limit,
 		window:  window,
+		maxKeys: authRateLimitMaxKeys,
 		now:     time.Now,
 	}
 }
@@ -249,6 +256,21 @@ func (l *AuthRateLimiter) sweepLocked(now time.Time) {
 	}
 }
 
+// evictLocked drops up to n arbitrary buckets. A partial map range is O(n) and
+// self-batches, so the cost of freeing space during a key-rotation flood stays
+// amortized instead of scanning for the oldest entry on every overflow.
+// Accuracy during an active flood loosens slightly — an evicted client regains
+// a fresh budget — but bounding memory wins.
+func (l *AuthRateLimiter) evictLocked(n int) {
+	i := 0
+	for k := range l.buckets {
+		delete(l.buckets, k)
+		if i++; i >= n {
+			return
+		}
+	}
+}
+
 // Allow records an attempt and reports whether it is permitted, plus the seconds
 // until the window resets.
 func (l *AuthRateLimiter) Allow(key string) (bool, int, int) {
@@ -259,14 +281,28 @@ func (l *AuthRateLimiter) Allow(key string) (bool, int, int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	// Bound the map before inserting, so a flood of distinct keys cannot grow it
-	// without limit across windows.
-	if len(l.buckets) > 0 {
+	maxKeys := l.maxKeys
+	if maxKeys <= 0 {
+		maxKeys = authRateLimitMaxKeys
+	}
+
+	// Sweep stale buckets at most once per window — an O(len) scan on every
+	// request against a near-cap map would itself be a CPU amplifier.
+	if now.Sub(l.lastSweep) >= l.window {
 		l.sweepLocked(now)
+		l.lastSweep = now
 	}
 
 	b, ok := l.buckets[key]
 	if !ok || now.Sub(b.windowStart) >= l.window {
+		if !ok && len(l.buckets) >= maxKeys {
+			// At capacity with a fresh key: prefer expired buckets, then a
+			// batch of arbitrary ones, so the map never exceeds the cap.
+			l.sweepLocked(now)
+			if len(l.buckets) >= maxKeys {
+				l.evictLocked(max(maxKeys/10, 1))
+			}
+		}
 		b = &authRateBucket{windowStart: now}
 		l.buckets[key] = b
 	}
@@ -313,14 +349,55 @@ func (l *AuthRateLimiter) Size() int {
 type stemRateBucket struct {
 	count       int
 	windowStart time.Time
+	// window is the owning limiter's window, recorded at bucket creation so the
+	// shared sweeper knows when the entry went stale — the store is global but
+	// each (route, method) key belongs to exactly one limiter instance.
+	window time.Duration
 }
 
 var (
-	stemRateMu    sync.Mutex
-	stemRateStore = map[string]*stemRateBucket{}
+	stemRateMu        sync.Mutex
+	stemRateStore     = map[string]*stemRateBucket{}
+	stemRateLastSweep time.Time
+	// Bounds for the shared store. The key is derived from route + method +
+	// client IP, so an attacker rotating source IPs must not be able to grow
+	// the map without limit (AUD-BE-004 residual: previously it NEVER evicted,
+	// and it also mixed the caller-set `x-stem-role` header into the key — a
+	// second bypass axis, since each distinct header value minted a fresh
+	// bucket). Vars (not consts) so tests can shrink them.
+	stemRateMaxKeys       = 100_000
+	stemRateSweepInterval = time.Minute
 )
 
-// StemRateLimit enforces a simple in-memory fixed-window rate limit per route+client key.
+// sweepStemRateStoreLocked drops buckets whose owning window has passed. The
+// caller holds stemRateMu.
+func sweepStemRateStoreLocked(now time.Time) {
+	for k, b := range stemRateStore {
+		if now.Sub(b.windowStart) >= b.window {
+			delete(stemRateStore, k)
+		}
+	}
+}
+
+// evictStemRateStoreLocked drops up to n arbitrary buckets — a partial map
+// range is O(n) and self-batches, keeping overflow cost amortized under a
+// key-rotation flood. The caller holds stemRateMu.
+func evictStemRateStoreLocked(n int) {
+	i := 0
+	for k := range stemRateStore {
+		delete(stemRateStore, k)
+		if i++; i >= n {
+			return
+		}
+	}
+}
+
+// StemRateLimit enforces a simple in-memory fixed-window rate limit per
+// route+client key. The store is shared across all mount points and is bounded:
+// stale buckets are swept periodically on write, and the map never exceeds
+// stemRateMaxKeys. The key deliberately excludes the caller-set `x-stem-role`
+// header — it is dead for authz since roles resolve via RBAC (ADR-056), and as
+// a key component it let any caller mint a fresh bucket per request.
 func StemRateLimit(limit int, window time.Duration) gin.HandlerFunc {
 	if limit <= 0 {
 		limit = 60
@@ -329,17 +406,25 @@ func StemRateLimit(limit int, window time.Duration) gin.HandlerFunc {
 		window = time.Minute
 	}
 	return func(c *gin.Context) {
-		clientKey := c.ClientIP()
-		if role := c.GetHeader("x-stem-role"); role != "" {
-			clientKey = clientKey + "|" + role
-		}
-		key := c.FullPath() + "|" + c.Request.Method + "|" + clientKey
+		key := c.FullPath() + "|" + c.Request.Method + "|" + c.ClientIP()
 
 		now := time.Now()
 		stemRateMu.Lock()
+		if now.Sub(stemRateLastSweep) >= stemRateSweepInterval {
+			sweepStemRateStoreLocked(now)
+			stemRateLastSweep = now
+		}
 		b, ok := stemRateStore[key]
 		if !ok || now.Sub(b.windowStart) >= window {
-			b = &stemRateBucket{count: 0, windowStart: now}
+			if !ok && len(stemRateStore) >= stemRateMaxKeys {
+				// At capacity with a fresh key: prefer expired buckets, then
+				// a batch of arbitrary ones, so the map never exceeds the cap.
+				sweepStemRateStoreLocked(now)
+				if len(stemRateStore) >= stemRateMaxKeys {
+					evictStemRateStoreLocked(max(stemRateMaxKeys/10, 1))
+				}
+			}
+			b = &stemRateBucket{count: 0, windowStart: now, window: window}
 			stemRateStore[key] = b
 		}
 		b.count++
@@ -348,7 +433,7 @@ func StemRateLimit(limit int, window time.Duration) gin.HandlerFunc {
 		stemRateMu.Unlock()
 
 		c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
-		c.Header("X-RateLimit-Remaining", strconv.Itoa(maxIntStem(limit-current, 0)))
+		c.Header("X-RateLimit-Remaining", strconv.Itoa(max(limit-current, 0)))
 		c.Header("X-RateLimit-Reset", strconv.Itoa(resetIn))
 
 		if current > limit {
@@ -360,11 +445,4 @@ func StemRateLimit(limit int, window time.Duration) gin.HandlerFunc {
 		}
 		c.Next()
 	}
-}
-
-func maxIntStem(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
