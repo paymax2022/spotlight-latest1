@@ -46,7 +46,7 @@ jobs:
         working-directory: mobile-app/reactnative
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           # Without this the RN dependency tree is installed from scratch every
@@ -66,7 +66,7 @@ jobs:
         working-directory: mobile-app/reactnative
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: '20' }
       - run: npm ci
       - name: Export bundle (verifies Metro can resolve all imports)
@@ -95,7 +95,7 @@ jobs:
         working-directory: frontend-web
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: '20', cache: 'npm', cache-dependency-path: frontend-web/package-lock.json }
       - run: npm ci
       - name: Estate implementation ↔ OpenAPI drift guard
@@ -108,7 +108,7 @@ jobs:
         working-directory: frontend-web
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: '20' }
       - run: npm ci
       - name: Dues money-path invariants + AI-notes summariser
