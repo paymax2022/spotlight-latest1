@@ -54,6 +54,10 @@ export async function POST(request: Request) {
       verified.amountKobo,
       targets,
       verified.metadata,
+      {
+        providerReference: verified.providerReference,
+        paidAt: verified.paidAt,
+      },
     );
     if (outcome.error) {
       return errorResponse(outcome.error, 500);

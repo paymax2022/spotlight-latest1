@@ -81,6 +81,7 @@ describe('POST /api/v1/payments/gateway/recover', () => {
       // Verified Paystack metadata is forwarded for metadata-resolved arms
       // (academy tuition instalments resolve their pending row from it).
       expect.objectContaining({ purpose: 'paymax_gateway' }),
+      expect.objectContaining({}), // verified-charge details (providerReference/paidAt)
     );
     expect(body.fulfilled).toEqual(['registration_fee']);
   });

@@ -1,5 +1,33 @@
 import { createAdminClient } from '@/lib/supabase/server';
 
+/**
+ * The single server-side read of the admin-managed application fee.
+ *
+ * Shared by POST /api/academy/apply (what must be paid before submit) and
+ * POST /api/academy/application-fee/initiate (what gets quoted to Paystack) —
+ * the two must never read different rows or quote different amounts, so the
+ * query lives exactly once, here.
+ */
+export async function getActiveAcademySettings() {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from('academy_settings')
+    .select('registration_type, application_fee, application_fee_refundable, tuition_fee')
+    .eq('is_active', true)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  return {
+    registration_type: (data?.registration_type ?? 'free') as 'free' | 'paid',
+    application_fee: Number(data?.application_fee ?? 0),
+    application_fee_refundable: data?.application_fee_refundable === true,
+    tuition_fee: Number(data?.tuition_fee ?? 0),
+  };
+}
+
 // Enrolment — the anchor for everything a learner does.
 // Lesson progress and assignment submissions are both keyed on enrollment_id, so
 // until an enrolment exists a learner cannot start, and nothing created one. This

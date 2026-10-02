@@ -4,9 +4,15 @@
 import { ApiError, errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser, type RequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { getBatchAreaSlugs } from '@/src/server/services/academy';
+import { getActiveAcademySettings, getBatchAreaSlugs } from '@/src/server/services/academy';
 import { getOrCreateUserProfile } from '@/src/server/user/profile';
 import { verifyPaystackTransaction } from '@/src/lib/payments';
+import {
+  consumeAcademyFeeIntent,
+  getAcademyFeeIntentByReference,
+  releaseAcademyFeeIntent,
+  type AcademyFeeIntent,
+} from '@/src/server/payments/academy-fee-intents';
 
 type AcademyBatchRow = {
   id: string;
@@ -142,26 +148,6 @@ async function backfillProfileDetails(
   } catch (error) {
     console.warn('[academy] profile backfill skipped:', error);
   }
-}
-
-async function getActiveAcademySettings() {
-  const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from('academy_settings')
-    .select('registration_type, application_fee, application_fee_refundable, tuition_fee')
-    .eq('is_active', true)
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) throw error;
-
-  return {
-    registration_type: (data?.registration_type ?? 'free') as 'free' | 'paid',
-    application_fee: Number(data?.application_fee ?? 0),
-    application_fee_refundable: data?.application_fee_refundable === true,
-    tuition_fee: Number(data?.tuition_fee ?? 0),
-  };
 }
 
 async function findExistingBatchApplication(input: {
@@ -319,6 +305,10 @@ export async function POST(request: Request) {
       settings.registration_type === 'paid' && requiredFee > 0;
     let paidRegistrationFee = 0;
     let registrationFeeReference = '';
+    // Set when application_fee_reference resolves to a server-minted intent —
+    // the intent's state and recorded verified amount then govern, and the
+    // intent is consumed below so one charge can never file two applications.
+    let applicationFeeIntent: AcademyFeeIntent | null = null;
 
     const { data: batch, error: batchError } = await supabase
       .from('academy_batches')
@@ -369,6 +359,47 @@ export async function POST(request: Request) {
         return errorResponse('Registration fee payment is required before submitting this application.', 402);
       }
 
+      // A server-minted fee intent (POST /api/academy/application-fee/initiate)
+      // is authoritative for this reference: the webhook/recover fulfil path
+      // already verified the charge against the frozen quote, so the intent's
+      // state — not a live re-verify — decides here. References minted before
+      // intents existed (or by older clients) keep the live-verify path below.
+      applicationFeeIntent = await getAcademyFeeIntentByReference(registrationFeeReference);
+
+      if (applicationFeeIntent) {
+        // Payer-scoped: a reference initiated under another account cannot
+        // fund this application.
+        if (applicationFeeIntent.user_id && applicationFeeIntent.user_id !== user.id) {
+          return errorResponse('This payment reference belongs to a different account', 403);
+        }
+        if (applicationFeeIntent.status === 'consumed') {
+          return errorResponse('This payment reference has already been used for an application.', 409);
+        }
+        if (applicationFeeIntent.status === 'pending') {
+          // The charge exists but fulfilment has not landed yet — the webhook
+          // or the reconcile sweep marks it paid; a resubmit reuses the same
+          // reference (the client keeps it) rather than charging again.
+          return errorResponse(
+            'Your payment is still being confirmed — please submit again in a moment.',
+            402,
+          );
+        }
+        if (applicationFeeIntent.status !== 'paid') {
+          // amount_mismatch / failed — terminal, this charge cannot apply.
+          return errorResponse('Registration fee payment was not completed successfully.', 402);
+        }
+        // The amount Paystack actually collected, recorded at fulfil — never
+        // the client's claim and never just the quote.
+        paidRegistrationFee =
+          Number(applicationFeeIntent.verified_amount_kobo ?? applicationFeeIntent.amount_kobo) / 100;
+
+        if (paidRegistrationFee < requiredFee) {
+          return errorResponse(
+            `Application fee payment is lower than the required ₦${requiredFee.toLocaleString('en-NG')}.`,
+            400,
+          );
+        }
+      } else {
       let payment;
       try {
         payment = await verifyPaystackTransaction(registrationFeeReference);
@@ -405,6 +436,7 @@ export async function POST(request: Request) {
       if (payment.customerEmail && email && payment.customerEmail.toLowerCase() !== email.toLowerCase()) {
         console.warn('Ignoring academy registration fee email mismatch after successful Paystack verification');
       }
+      }
     }
 
     // The account is missing details the applicant just typed — save them so no
@@ -416,6 +448,17 @@ export async function POST(request: Request) {
     );
 
     const applicationId = crypto.randomUUID();
+
+    // Claim the paid intent for THIS application BEFORE inserting. The consume
+    // is guarded on status='paid', so only one submit can ever win a charge —
+    // a raced or replayed submit transitions nothing and gets a 409 instead of
+    // a second application off the same fee.
+    if (applicationFeeIntent) {
+      const claimed = await consumeAcademyFeeIntent(registrationFeeReference, applicationId);
+      if (!claimed) {
+        return errorResponse('This payment reference has already been used for an application.', 409);
+      }
+    }
     const paymentStatus = registrationFeeRequired ? 'paid' : 'not_required';
     const talentCategory = deriveTalentCategory(areasOfInterest);
     const careerGoals = getString(body.career_goals) || motivation;
@@ -479,6 +522,14 @@ export async function POST(request: Request) {
     if (insertError) {
       if (isDuplicateApplicationError(insertError)) {
         return errorResponse('You have already applied for this Film Academy batch.', 409);
+      }
+
+      // The claim must not burn with a failed insert — release the intent back
+      // to 'paid' so the same charge can fund the retry.
+      if (applicationFeeIntent) {
+        await releaseAcademyFeeIntent(registrationFeeReference).catch((releaseError) => {
+          console.error('Academy fee intent release after insert failure failed:', releaseError);
+        });
       }
 
       console.error('Academy application insert failed:', insertError);
