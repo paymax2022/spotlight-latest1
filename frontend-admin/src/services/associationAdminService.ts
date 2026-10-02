@@ -54,15 +54,11 @@ function moduleBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 function authHeadersNoContentType(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return {};
 }
 function newIdempotencyKey(): string {
   return `assoc-admin-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
