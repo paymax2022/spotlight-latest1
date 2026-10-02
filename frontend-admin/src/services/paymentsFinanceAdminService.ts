@@ -113,10 +113,8 @@ function webBase(): string {
 
 function authHeaders(json = false, extra?: Record<string, string>): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
   const headers: Record<string, string> = { ...extra };
   if (json) headers['Content-Type'] = 'application/json';
-  if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
 }
 

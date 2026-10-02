@@ -26,6 +26,19 @@ export function buildDraftSaveBody(values: Record<string, unknown>) {
 }
 
 /**
+ * Save under an explicit schema step key so the server validates THAT step
+ * against the merged draft (AUD-FE-009). Only call this once the step's
+ * required fields are all collected — a failed step validation means nothing
+ * persisted. Mid-collection checkpoints should still use buildDraftSaveBody.
+ */
+export function buildStepSaveBody(
+  stepKey: RegistrationStepKey,
+  values: Record<string, unknown>,
+) {
+  return { stepKey, values };
+}
+
+/**
  * A PATCH save only persisted when the response succeeded AND the named step
  * validated — `validation.isValid === false` means the server returned the
  * merged draft without writing it (see comment above). Anything else

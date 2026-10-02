@@ -60,10 +60,11 @@ export async function signInAdmin(username: string, password: string) {
 
   if (typeof window !== 'undefined') {
     const accessToken = data.session?.access_token ?? '';
-    // lgtm[js/clear-text-storage-of-sensitive-data] intentional — the session is
-    // also mirrored to an HttpOnly cookie for middleware; the localStorage copy
-    // powers client-side Bearer calls to the Go backend (getAdminToken below).
-    if (accessToken) localStorage.setItem(ADMIN_TOKEN_KEY, accessToken);
+    // The access token is NEVER written to localStorage (CodeQL
+    // js/clear-text-storage-of-sensitive-data). It lives only in the HttpOnly
+    // `sb-admin-token` cookie mirrored below; the same-origin proxies
+    // (/api/admin-proxy, /api/web-proxy) attach it as the upstream Bearer
+    // server-side, so no browser code can read it.
     // lgtm[js/clear-text-storage-of-sensitive-data] admin profile metadata for
     // client-side RBAC rendering only — authorization is enforced server-side.
     localStorage.setItem(
@@ -76,10 +77,9 @@ export async function signInAdmin(username: string, password: string) {
       }),
     );
 
-    // Mirror the session into an HttpOnly cookie so the server-side middleware can
-    // gate /admin/* (see middleware.ts + app/api/admin/session). Additive — the
-    // localStorage copy still powers the service-layer Bearer calls. Best-effort:
-    // a failure here must never block a successful sign-in.
+    // Mirror the session into the HttpOnly cookie the middleware + proxies read
+    // (see middleware.ts + app/api/admin/session). Best-effort: a failure here
+    // must never block a successful sign-in.
     if (accessToken) {
       const expSec = data.session?.expires_at
         ? Math.max(60, Math.floor(data.session.expires_at - Date.now() / 1000))
@@ -91,7 +91,7 @@ export async function signInAdmin(username: string, password: string) {
           body: JSON.stringify({ token: accessToken, maxAge: expSec }),
         });
       } catch {
-        /* non-fatal — middleware is off by default and localStorage still works */
+        /* non-fatal — the next syncAdminSession() re-mirrors it */
       }
     }
   }
@@ -100,79 +100,51 @@ export async function signInAdmin(username: string, password: string) {
 }
 
 /**
- * Clears the admin session — both the localStorage copy and the server-side
- * HttpOnly cookie the middleware reads. Wire this into the sign-out control.
+ * Clears the admin session — the operator metadata and the HttpOnly cookie the
+ * middleware + proxies read — and signs the supabase-js client out too. Wire
+ * this into the sign-out control.
+ *
+ * The supabase signOut matters: without it the client's persisted session keeps
+ * its refresh token alive, and the next syncAdminSession() would mint a fresh
+ * access token and silently re-mirror it into the cookie — resurrecting the
+ * session the operator just ended.
  */
 export async function clearAdminSession(): Promise<void> {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(ADMIN_TOKEN_KEY);
   localStorage.removeItem(ADMIN_USER_KEY);
   try {
     await fetch('/api/admin/session', { method: 'DELETE' });
   } catch {
     /* non-fatal */
   }
-}
-
-/**
- * Keeps the console's Bearer token alive.
- *
- * WHY THIS EXISTS: signInAdmin wrote the Supabase access token into
- * localStorage ONCE, and ~30 services read that copy synchronously for their
- * Authorization header. Supabase access tokens live 3600s, and nothing ever
- * rewrote the copy — so exactly one hour after signing in, every live console
- * page started answering 401 while AdminRouteGuard (which only checked that the
- * key was PRESENT) still considered the operator signed in. The console looked
- * logged in and worked for nothing; the only recovery was signing out and back
- * in, which nobody could guess from a page reading "Withdrawals failed: 401".
- *
- * The supabase-js client refreshes its own persisted session, but only while an
- * instance is alive — and outside the login page nothing ever constructed one.
- * So this module does both halves: it instantiates the client (which starts the
- * auto-refresh timer and rehydrates the persisted session) and mirrors every
- * token it produces back onto the legacy key the services read.
- */
-
-export const ADMIN_TOKEN_KEY = 'spotlight_admin_access_token';
-export const ADMIN_USER_KEY = 'spotlight_admin_user';
-
-/**
- * Treat a token with less than this left as already dead. A token that passes
- * the guard with 3s of life expires mid-flight and produces the same 401 this
- * module exists to remove.
- */
-const SKEW_SECONDS = 60;
-
-function expiryOf(token: string): number | null {
-  const payload = token.split('.')[1];
-  if (!payload) return null;
   try {
-    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
-    const exp = (JSON.parse(json) as { exp?: unknown }).exp;
-    return typeof exp === 'number' ? exp : null;
+    const supabase = getSupabaseClient();
+    await supabase?.auth.signOut();
   } catch {
-    return null;
+    /* non-fatal */
   }
 }
 
-/** False when the token is missing or (nearly) expired. */
-export function isTokenUsable(token: string | null | undefined): boolean {
-  if (!token) return false;
-  const exp = expiryOf(token);
-  // out of a console that might be perfectly reachable.
-  if (exp === null) return true;
-  return exp - SKEW_SECONDS > Date.now() / 1000;
-}
+/**
+ * Keeps the console's session cookie fresh.
+ *
+ * WHY THIS EXISTS: the Supabase access token the console sends (now via the
+ * HttpOnly cookie the proxies read, never via JS-readable storage) lives only
+ * 3600s. Supabase-js refreshes its own persisted session, but only while an
+ * instance is alive — and outside the login page nothing else constructed one.
+ * Without this module a console left open past the hour still had the
+ * `spotlight_admin_user` record and looked signed in while every proxied call
+ * answered 401. So this module instantiates the client (starting its
+ * auto-refresh timer) and mirrors every token it produces into the session
+ * cookie the middleware and proxies read.
+ */
 
-/** The token the service layer will send on its next call. */
-export function currentAdminToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(ADMIN_TOKEN_KEY);
-}
+export const ADMIN_USER_KEY = 'spotlight_admin_user';
 
 /**
- * Mirrors the session into the HttpOnly cookie middleware.ts reads. Best-effort,
- * exactly as in signInAdmin: a failure here must never break a working session.
+ * Mirrors the session into the HttpOnly cookie middleware.ts and the proxy
+ * route handlers read. Best-effort: a failure here must never break a working
+ * session — the next refresh or guard pass retries it.
  */
 async function mirrorCookie(token: string, expiresAt?: number | null): Promise<void> {
   const maxAge = expiresAt ? Math.max(60, Math.floor(expiresAt - Date.now() / 1000)) : 3600;
@@ -187,28 +159,32 @@ async function mirrorCookie(token: string, expiresAt?: number | null): Promise<v
   }
 }
 
-function writeToken(token: string, expiresAt?: number | null): void {
-  localStorage.setItem(ADMIN_TOKEN_KEY, token);
-  void mirrorCookie(token, expiresAt);
+/** Clears the server-side session cookie. Best-effort. */
+async function dropCookie(): Promise<void> {
+  try {
+    await fetch('/api/admin/session', { method: 'DELETE' });
+  } catch {
+    /* non-fatal */
+  }
 }
 
 /**
  * Pulls the current Supabase session (refreshing it if the access token has
- * expired but the refresh token is still good) and republishes it onto the
- * legacy key.
+ * expired but the refresh token is still good) and re-mirrors it into the
+ * session cookie.
  *
- * Resolves true when a usable Bearer token is in place afterwards — i.e. when it
- * is safe to render pages that will immediately call the API. False means the
- * session is genuinely gone and the caller should send the operator to /login.
+ * Resolves true when a live session exists — i.e. when it is safe to render
+ * pages that will immediately call the API. False means the session is
+ * genuinely gone and the caller should send the operator to /login.
  */
 export async function syncAdminSession(): Promise<boolean> {
   if (typeof window === 'undefined') return false;
 
   const supabase = getSupabaseClient();
   if (!supabase) {
-    // Supabase not configured for this deployment — fall back to whatever is
-    // stored so a non-Supabase auth setup is not broken by this module.
-    return isTokenUsable(currentAdminToken());
+    // No Supabase client means there is no session source at all — nothing was
+    // ever mirrored into the cookie, so there is no session to honour.
+    return false;
   }
 
   // getSession() performs the refresh itself when the access token has expired.
@@ -216,35 +192,34 @@ export async function syncAdminSession(): Promise<boolean> {
   const session = data?.session ?? null;
 
   if (error || !session?.access_token) {
-    // No recoverable session. Drop the stale copy so the guard cannot wave the
-    // operator through into a console that answers 401 on every request.
-    // The user record goes too. It was left behind, and roughly two dozen
-    // screens plus the sidebar read it directly from localStorage — so an
-    // expired session kept publishing an identity and a permission set that
-    // nothing could honour any more. Only an explicit Log out click cleared it.
-    localStorage.removeItem(ADMIN_TOKEN_KEY);
+    // No recoverable session. Drop the operator record and the stale cookie so
+    // the guard cannot wave the operator through into a console that answers
+    // 401 on every request.
     localStorage.removeItem(ADMIN_USER_KEY);
+    void dropCookie();
     return false;
   }
 
-  writeToken(session.access_token, session.expires_at);
+  await mirrorCookie(session.access_token, session.expires_at);
   return true;
 }
 
 /**
  * Starts mirroring every subsequent token the client mints (hourly refreshes,
- * sign-in, sign-out) onto the legacy key. Returns an unsubscribe function.
+ * sign-in, sign-out) into the session cookie. Returns an unsubscribe function.
  */
 export function startAdminSessionSync(): () => void {
   const supabase = getSupabaseClient();
   if (!supabase) return () => {};
 
   const { data } = supabase.auth.onAuthStateChange((event, session) => {
-    if (event === 'SIGNED_OUT' || !session?.access_token) {
-      if (event === 'SIGNED_OUT') localStorage.removeItem(ADMIN_TOKEN_KEY);
+    if (event === 'SIGNED_OUT') {
+      localStorage.removeItem(ADMIN_USER_KEY);
+      void dropCookie();
       return;
     }
-    writeToken(session.access_token, session.expires_at);
+    if (!session?.access_token) return;
+    void mirrorCookie(session.access_token, session.expires_at);
   });
 
   return () => data.subscription.unsubscribe();

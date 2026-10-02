@@ -27,9 +27,7 @@ function financeApiBase(): string {
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  if (!token) return {};
-  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 
 const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_VENDORS_ADMIN_USE_MOCK);

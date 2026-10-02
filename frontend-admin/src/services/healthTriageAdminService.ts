@@ -3,7 +3,7 @@
 // governance surfaces on health.triage.admin (wired on the sidebar + pages).
 // Request building / auth / errors mirror the existing health admin services:
 //  • adminBase() builds the absolute backend path via apiRoot() + /api/health/triage/admin
-//  • authHeaders() attaches the admin Bearer token from localStorage
+//  • authHeaders() sends only content headers; the same-origin admin proxy attaches the Bearer from the HttpOnly session cookie server-side
 //  • getJson/sendJson unwrap { data } and throw on non-2xx
 // which stopped matching the moment apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
@@ -40,10 +40,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 

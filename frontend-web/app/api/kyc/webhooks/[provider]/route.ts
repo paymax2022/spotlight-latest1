@@ -1,4 +1,5 @@
 import { handleApiError } from '@/src/lib/api/responses';
+import { clientIpHeaders } from '@/src/lib/rate-limit/client-ip';
 
 const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 
@@ -14,7 +15,11 @@ const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 async function forward(request: Request, provider: string) {
   try {
     const rawBody = await request.text();
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      // The provider's real edge IP — Go records it against the KYC audit row.
+      ...clientIpHeaders(request),
+    };
     for (const name of ['content-type', 'x-dojah-signature', 'x-youverify-signature', 'x-smile-signature']) {
       const v = request.headers.get(name);
       if (v) headers[name] = v;

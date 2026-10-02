@@ -33,8 +33,7 @@ function adminBase(): string {
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
   const base: Record<string, string> = { 'Content-Type': 'application/json', ...(extra ?? {}) };
   if (typeof window === 'undefined') return base;
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token ? { ...base, Authorization: `Bearer ${token}` } : base;
+  return base;
 }
 function idempotencyKey(): string {
   try {
