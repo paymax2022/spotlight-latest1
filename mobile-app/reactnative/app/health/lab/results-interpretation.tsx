@@ -92,7 +92,10 @@ function Body({ result }: { result: LabResult }) {
       ) : null}
 
       <View style={styles.footer}>
-        <PrimaryButton label="Book a consult" onPress={() => router.push('/health/consult')} />
+        {/* /health/consult has no index route (only lobby/room, which need an
+            existing consultId) — the telemedicine booking flow lives at
+            /services/telemedicine. */}
+        <PrimaryButton label="Book a consult" onPress={() => router.push('/services/telemedicine')} />
       </View>
     </ScrollView>
   );

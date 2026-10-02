@@ -65,14 +65,20 @@ export async function getOrCreateAccount(userId: string): Promise<string> {
   return newId;
 }
 
-async function migrateLegacyMobileBalanceIfNeeded(userId: string, accountId: string) {
+// Returns whether the account has any ledger entries AFTER this call —
+// i.e. it already had some, or the legacy migration just posted one. The
+// callers only ever need "any rows?", so this is a LIMIT-1 existence check
+// instead of `count: 'exact'` — an exact count scans every index entry the
+// account owns on EVERY balance read (AGT1-PERF-007).
+async function migrateLegacyMobileBalanceIfNeeded(userId: string, accountId: string): Promise<boolean> {
   const supabase = createAdminClient();
-  const { count } = await supabase
+  const { data: anyEntry } = await supabase
     .from('ledger_entries')
-    .select('id', { count: 'exact', head: true })
-    .eq('account_id', accountId);
+    .select('id')
+    .eq('account_id', accountId)
+    .limit(1);
 
-  if ((count ?? 0) > 0) return;
+  if ((anyEntry ?? []).length > 0) return true;
 
   const { data: legacy } = await supabase
     .from('mobile_fintech_accounts')
@@ -81,7 +87,7 @@ async function migrateLegacyMobileBalanceIfNeeded(userId: string, accountId: str
     .maybeSingle();
 
   const legacyBalance = Number(legacy?.available_balance ?? 0);
-  if (legacyBalance <= 0) return;
+  if (legacyBalance <= 0) return false;
 
   const amountKobo = Math.round(legacyBalance * 100);
 
@@ -102,6 +108,8 @@ async function migrateLegacyMobileBalanceIfNeeded(userId: string, accountId: str
     }),
     'Failed to migrate legacy wallet balance',
   );
+  // The migration just posted a ledger entry — the account now has entries.
+  return true;
 }
 
 // Balance
@@ -114,7 +122,7 @@ export interface WalletBalance {
 
 export async function getBalance(userId: string): Promise<WalletBalance> {
   const accountId = await getOrCreateAccount(userId);
-  await migrateLegacyMobileBalanceIfNeeded(userId, accountId);
+  const hasEntries = await migrateLegacyMobileBalanceIfNeeded(userId, accountId);
   const supabase = createAdminClient();
 
   // Mutations are unified on WALLET_ACCOUNT_TYPE (ADR-045). This read still sums
@@ -140,12 +148,12 @@ export async function getBalance(userId: string): Promise<WalletBalance> {
     0,
   );
   const data = (balances ?? []).find((row) => row.account_id === accountId) ?? null;
-  const { count: ledgerEntryCount } = await supabase
-    .from('ledger_entries')
-    .select('id', { count: 'exact', head: true })
-    .eq('account_id', accountId);
 
-  if (availableKobo === 0 && (ledgerEntryCount ?? 0) === 0) {
+  // The second exact-COUNT this block used to run duplicated the existence
+  // check migrateLegacyMobileBalanceIfNeeded already performed (it is the same
+  // predicate: "any ledger_entries rows for this account?"). Reusing that
+  // answer removes one O(#entries) scan per balance read (AGT1-PERF-007).
+  if (availableKobo === 0 && !hasEntries) {
     const { data: legacy } = await supabase
       .from('mobile_fintech_accounts')
       .select('available_balance, currency')

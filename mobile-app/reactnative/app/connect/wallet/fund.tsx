@@ -63,7 +63,9 @@ export default function FundWallet() {
         // A 409 means the first attempt already funded the wallet.
         if (isDuplicateReplay(e)) {
           resetIdempotencyKey();
-          router.replace('/connect/wallet');
+          // /connect/wallet has no index route — the wallet home lives at
+          // /connect/wallet/home; navigating to the bare path hits +not-found.
+          router.replace('/connect/wallet/home');
           return;
         }
         Alert.alert('Funding failed', moneyErrorMessage(e));
