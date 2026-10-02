@@ -950,15 +950,29 @@ money-path vote endpoints now carry per-user rate limits (PR #400).
 
 What keeps this from an unconditional READY is entirely outside the code:
 
-- **AUD-TEST-003** — no enforced checks on `main` (repo admin action).
-- **AUD-FE-001** — EAS production env vars unverifiable without dashboard access.
-- **Deploy authority** (AUD-INFRA-003) — four deploy targets still coexist; an
-  operator must declare one per service.
-- **Workers** (AUD-INFRA-006 residual) — declared in render.yaml but not
-  verified running against production infra.
-- **Perf residuals** — wallet-balance p95 ~7.96s @ ~1,050 VU and the 30s pool
-  acquisition on hung DB need measured remediation, not blind tuning.
-- **ADR-PR395** (local JWT validation) — owner decision pending.
+- **AUD-TEST-003** — no enforced checks on `main` (repo admin action; exact
+  command below under "Operator runbook").
+- **AUD-FE-001** — RESOLVED in source 2026-10-02: `eas.json` production profile
+  now carries `EXPO_PUBLIC_APP_ENV=production`, API base, Supabase URL + anon
+  key, Sentry env (PR #414). Residual: confirm no contradictory EAS *dashboard*
+  env overrides (needs Expo org access).
+- **Deploy authority** (AUD-INFRA-003) — decision record drafted:
+  `docs/adr/ADR-PR42X-deployment-authority.md` proposes Cloud Run/deploy.yml as
+  backend+worker authority, Render/Railway/cPanel quarantined. Owner ratification
+  pending.
+- **Workers** (AUD-INFRA-006 residual) — all 4 declared in render.yaml
+  (`spotlight-notification-worker`, `spotlight-marketplace-cron`,
+  `spotlight-marketplace-indexer`, `spotlight-transport-scheduler`); execution on
+  production infra still unverifiable without deploy access.
+- **Perf residuals** — MEASURED 2026-10-02 (k6, local single instance):
+  wallet-balance at 200 VU ≈ **50% 503**, p95 ~5s — but the failures are
+  `{"error":"authentication service unavailable"}` from per-request GoTrue
+  `GET /auth/v1/user` saturation, NOT the ledger read (isolated warm read
+  ~216ms; the original 7.96s figure was measured against a broken 404 script —
+  see #417). The wallet p95 residual is the **auth bottleneck**, i.e. exactly
+  what ADR-PR395 proposes to remove.
+- **ADR-PR395** (local JWT validation) — strengthened with the measurement
+  above; the remaining question is only the revocation staleness window.
 
 **To reach `READY` (minimum set, in order):**
 1. Restore `FeatureContestantSocialEnabled` in `config.go` (or remove the references) so `go build ./...` is green on `main`.
@@ -1151,3 +1165,57 @@ Full local stack exercised end-to-end: mobile web (Metro :8083) → Next.js gate
 | AUD-BE-013 | HIGH | **Academy rail webhooks posted escrow→settlement legs unconditionally** — a validly-signed `settled` event for ANY provider ref (incl. refs owning no obligation) debited the pooled `escrow` standing account and credited `settlement`, priced by the WIRE's `amount_minor`. Live-verified: phantom ref moved 50,000 kobo; a 50,000-kobo payout ref carrying `amount_minor: 50_000_000` moved 50,000,000. `payout` had no owning-row interaction at all; disburse/billing UPDATEs ignored RowsAffected. | Synthetic signed webhook to :8090 → `{"data":"ok"}` + `DEBIT escrow 50000 / CREDIT settlement 50000` for a fabricated ref. FIXED → PR #372: leg requires the obligation row in its terminal settle state and posts the ROW's amount; non-settle events record but never reconcile; idem key uses route rail. Residual FIXED → PR #388: `academy_webhook_outbox` parks transiently-failed settle legs; redrive on dedupe-hit + per-ingest sweep (LIMIT 25 SKIP LOCKED), exp backoff 30s→30m, `exhausted` at 10 attempts; same deterministic idem key makes a raced leg a ledger-level no-op |
 | AUD-TEST-008 | LOW | `marketplace/checkout_mutation_load.js` targets `POST /v1/marketplace/orders` — removed by ADR-023 (marketplace is now a contact directory, no escrow orders). Script can never pass; it is stale against shipped behavior | `POST /v1/marketplace/orders` → 404 on :8090. FIXED → PR #376: script deleted; `docs/prd/marketplace/QA_REPORT.md` + transport QA report updated (section collapsed to historical note). If a marketplace money surface returns (`POST /boosts`), rewrite mutation coverage against it |
 | AUD-TEST-009 | LOW | `transport_scheduled/list_read_load.js` asserts `Array.isArray(bookings)` but the endpoint serializes empty as `{"bookings":null}` — 0% of responses could ever pass the shape check; also `RIDER_TOKENS` JWTs expire mid-run (>1h runs) causing mass 401s | 14,462 reqs: 7,143×200 / 7,319×401 (token expired mid-run); `has bookings array` 0% against `bookings:null`. API half FIXED → PR #375: all 7 transport `bookings:` list responses now emit `[]` on empty (nil-slice accumulators normalized in ListScheduled, ListScheduledAdmin, ListCarHire, ListCarHireBookings, ProviderBookings, ListEventBookings, ListEventBookingsAdmin; live-DB test asserts non-nil). k6 half FIXED → PR #387 (+ #394 CodeQL follow-up): `RIDER_CREDENTIALS` env drives per-VU token cache with proactive refresh at exp−120s and one reactive retry on 401; static tokens unchanged when unset; `sched_token_refreshes`/`sched_token_refresh_failures` counters expose refresh health |
+
+### Operator runbook — residual blockers (2026-10-02)
+
+Items below cannot be executed from a non-admin credential or without
+production/dashboard access; the exact actions are now spelled out.
+
+**1. Branch protection on `main` (AUD-TEST-003)** — needs a repo admin:
+
+```bash
+gh api -X PUT repos/paymax2022/spotlight-latest1/branches/main/protection \
+  --input - <<'JSON'
+{
+  "required_status_checks": {
+    "strict": true,
+    "checks": [
+      {"context": "backend (go build + vet) / verify"},
+      {"context": "frontend-web (regression + money + contract + tsc + lint) / verify"},
+      {"context": "frontend-admin (type-check) / typecheck"},
+      {"context": "hygiene (client secrets + live-DB test gate + migration versions)"},
+      {"context": "migrations (additive-only guard) / guard"},
+      {"context": "openapi (validate all contracts) / validate"},
+      {"context": "gitleaks (secret scan)"},
+      {"context": "secrets-scan"},
+      {"context": "mobile (whole-app tsc) / typecheck"}
+    ]
+  },
+  "enforce_admins": true,
+  "required_pull_request_reviews": {"required_approving_review_count": 1},
+  "restrictions": null
+}
+JSON
+```
+
+Check names taken verbatim from `check-runs` on `main` @ `f2b4bfda`. `npm audit`
+and `trivy` lanes are deliberately absent — they fail on baseline today and
+would block every merge until the dependency debt is cleared (agent5 triage).
+
+**2. EAS dashboard env (AUD-FE-001 residual)** — in `paymax2022`'s Expo org:
+confirm the project env does not override `EXPO_PUBLIC_API_BASE_URL`,
+`EXPO_PUBLIC_SUPABASE_URL`, or `EXPO_PUBLIC_SUPABASE_ANON_KEY` with stale
+values; eas.json now supplies all of them (PR #414).
+
+**3. Worker execution (AUD-INFRA-006)** — after the next Render deploy,
+verify `spotlight-notification-worker`, `spotlight-marketplace-cron`,
+`spotlight-marketplace-indexer`, `spotlight-transport-scheduler` show as
+running services and `SELECT count(*) FROM asynq_*`/queue dashboards drain.
+Without that check, enqueue sites post jobs to a queue nobody consumes.
+
+**4. Deploy authority (AUD-INFRA-003)** — ratify `ADR-PR42X` (link below), then
+delete or archive the non-authoritative targets.
+
+**5. JWT local validation (ADR-PR395)** — pick a revocation-staleness option;
+recommended (d): local HS256 verify + 60s-cached `platform_users.status` check.
+The 200-VU measurement above is the evidence that this is the capacity fix.
