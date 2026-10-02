@@ -1085,6 +1085,7 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | AUD-BILL-001 + AUD-FE-003 (OpenMic residual) | #401 | `587fdc44` | `openmic_vote_paystack_intents` (20270328000000): server-quoted price at initiate, frozen cast params, webhook/recover fulfil arm + claim; verify reconciles amount + uses intent params | merged |
 | AUD-FE-003 (sweep) | #402 | `5f51a24e` | `sweepGatewayIntents` + `POST /api/v1/payments/gateway/reconcile` (`x-cron-secret`): pending intent refs → Paystack verify → shared fulfil; off until `GATEWAY_RECONCILE_SECRET` wired | merged — spec 7/7; ops wiring (secret + scheduled caller) still open |
 | AUD-BILL-002 | #408 | `c32ce795` | `submitRegistrationApplication` gates `submitted` on proof: completed/verified intent row, or PATCHed reference re-verifying ≥ server-quoted fee via Paystack (fee re-read from contest); verified legacy refs backfilled as completed intents; else `awaiting_payment` | merged — spec 8/8, registration suite 136, regression 131/131, tsc clean |
+| AUD-SEC-002 (trivy lane) | #422 | `10819fca` | `trivy-secret.yaml` scoped allow-rule suppresses only the public Supabase anon-key JWT false positives in `mobile-app/reactnative/eas.json` (built-in secret rules stay active — same JWT elsewhere still fires); `.trivyignore` gains `DS-0026` for the two justified no-HEALTHCHECK images (.devcontainer, distroless crypto backend — inline `trivy:ignore` comments don't work for file-scope checks under trivy ≥0.70) | merged — trivy-fs SARIF scan exits 0 locally under pinned v0.70.0 and in CI; npm-audit-mobile green via #419 node-forge baseline |
 
 ### In review
 
@@ -1117,9 +1118,11 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | #333 | PERF-002 hard cap — superseded; the meaningful cap landed via merged #327 |
 | #343 | Audit sync — superseded by merged #345 |
 
-### Baseline CI failures (not merge-blocking, tracked as findings)
+### Baseline CI failures
 
-`npm audit (frontend-web)`, `npm audit (mobile-app/reactnative)`, `trivy (filesystem)` are red on every PR including docs-only #285 — pre-existing dependency/IaC advisories, see AUD-SEC-002 and infra findings. Everything else (backend, frontend-*, CodeQL, govulncheck, secrets-scan, gitleaks, verify) is expected green before merge.
+Update 2026-10-02: **all three previously-red lanes are now green.** `npm audit (mobile-app/reactnative)` was fixed by the node-forge baseline entry (PR #419); `trivy (filesystem)` by PR #422 — root causes were (a) public Supabase anon-key JWTs in `eas.json` flagged by the `jwt-token` secret rule (suppressed via scoped `trivy-secret.yaml` allow-rule) and (b) LOW `DS-0026` no-HEALTHCHECK findings failing the job because the trivy-action builds SARIF with all severities, bypassing the `severity: HIGH,CRITICAL` filter (suppressed via `.trivyignore`; inline comments proven ineffective for file-scope checks on trivy 0.70). `npm audit (frontend-web)` is also green on current main.
+
+Historical note: these lanes were red on every PR including docs-only #285 — pre-existing dependency/IaC advisories, see AUD-SEC-002 and infra findings. Everything else (backend, frontend-*, CodeQL, govulncheck, secrets-scan, gitleaks, verify) is expected green before merge.
 
 ## Local Integration Stack Verification (live run, 2026-09-30)
 
