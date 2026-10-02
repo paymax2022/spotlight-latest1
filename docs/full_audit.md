@@ -434,10 +434,10 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Evidence (independent re-verification overturned the initial claim):
   * `Makefile:84-87` — `migrate-reset` invokes `$(MAKE) rls-check` as its final step; `rls-check` queries live `pg_class.relrowsecurity` with allowlist `spatial_ref_sys`.
   * `integration-verify.yml:174-175` — the `migrate-reset` step ("Migration fresh replay from zero (clean-apply + RLS check)") runs inside a job with a real `postgis/postgis:17` Postgres service — so **rls-check executes on every push to `main` and every PR**. The original finding missed the `migrate-reset → rls-check` indirection.
-  * Residual gaps that are real: (a) `ci.yml`'s develop/staging/prod lanes run `make migrate-up` only — **no reset/RLS check on develop**; (b) `check-migration-versions.sh` runs only in ci.yml's `hygiene` lane (develop/staging/prod + dispatch) — **never on `main`**; (c) `make verify` is invoked by no workflow.
+  * Residual gaps that are real: (a) `ci.yml`'s develop/staging/prod lanes run `make migrate-up` only — **no reset/RLS check on develop**; (c) `make verify` is invoked by no workflow (its steps are covered piecewise by other lanes).
+  * Correction (2026-10-02 re-check): the earlier claim "(b) `check-migration-versions.sh` never runs on `main`" is **refuted** — ci.yml triggers on `pull_request`/`push` to `main` (lines 44-49), `secret-hygiene` has no branch `if:`, and the `hygiene (… + migration versions)` check is observed passing on main-targeted PRs (e.g. #430). The collision gate covers all four deployable branches.
 * Expected: both the collision check AND the RLS check run on every deployable branch.
-* Actual: RLS check runs on main/PRs only; migration-version-collision check runs on develop/staging/prod only — each gate covers a different half of the branch topology.
-* Production impact: a version-collision PR merged straight to `main` bypasses `check-migration-versions.sh`; an RLS-less table merged on `develop` is caught only when it reaches `main`/`integration-verify`.
+* Actual: collision check runs everywhere; RLS check runs on main/PRs only — an RLS-less table merged on `develop` is caught only when it reaches `main`/`integration-verify`.
 * Confidence: HIGH (re-verified).
 * Status: MISSING CONTROL (asymmetric coverage) — corrected. Main-side collision coverage **FIXED — PR #331 (merged, `8384aa80`)**; the deliberate develop-only push gap remains a documented minutes-vs-cost tradeoff.
 * Migration version-collision check against the committed tree: **0 duplicate timestamp prefixes across 568 files** — clean at HEAD.
