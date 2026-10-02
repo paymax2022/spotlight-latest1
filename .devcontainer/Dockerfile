@@ -40,5 +40,6 @@ RUN arch="$(dpkg --print-architecture)" \
 # ── trivy DS-0026 ("No HEALTHCHECK defined") — also not applicable here ────────
 # Nothing ever orchestrates or polls this image for liveness; it's opened
 # interactively by VS Code / Codespaces on a developer's own machine, not run
-# as a service. A HEALTHCHECK would have no consumer.
-# trivy:ignore:DS-0026
+# as a service. A HEALTHCHECK would have no consumer. Suppressed via the
+# repo-root .trivyignore (DS-0026) — like DS-0002 it reports at file scope,
+# so an inline `# trivy:ignore:DS-0026` here has no effect under trivy 0.70.

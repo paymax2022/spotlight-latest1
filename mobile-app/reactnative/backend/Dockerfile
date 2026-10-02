@@ -24,7 +24,8 @@ COPY --from=build /out/crypto-service /crypto-service
 
 # Readiness/liveness: HTTP GET /healthz (use an orchestrator probe — the image
 # has no shell, so there is intentionally no Docker HEALTHCHECK here).
-# trivy:ignore:DS-0026
+# Suppressed via the repo-root .trivyignore (DS-0026) — the check reports at
+# file scope, so an inline `# trivy:ignore:` comment has no effect.
 EXPOSE 8080
 ENV PORT=8080
 USER nonroot:nonroot
