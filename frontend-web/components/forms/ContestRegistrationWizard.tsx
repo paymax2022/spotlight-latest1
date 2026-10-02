@@ -421,9 +421,35 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
           return;
         }
 
-        const Paystack = await loadPaystackClient();
-        const reference = `SPOT-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-        const amountKobo = Math.round(feeAmount * 100);
+        // Register the charge BEFORE Paystack collects: the intent row is the
+        // pending record the webhook/recover fulfilment arm settles on when the
+        // browser never returns (AUD-FE-003 residual), and the server-minted
+        // reference is what the submit gate re-verifies.
+        const initRes = await authFetch(`/api/registration/applications/${draft.id}/payment/initiate`, {
+          method: 'POST',
+          headers: { 'Idempotency-Key': crypto.randomUUID() },
+          body: JSON.stringify({ method: 'PAYSTACK', email, inline: true }),
+        }, { json: true });
+        const initPayload = await initRes.json().catch(() => ({})) as {
+          success?: boolean; reference?: string; status?: string; amountKobo?: number; error?: string;
+        };
+        if (!initRes.ok || !initPayload?.success) {
+          setErrorMessage(initPayload?.error || 'Could not start payment. Please try again.');
+          return;
+        }
+        if (initPayload.status === 'completed') {
+          // Already settled by an earlier attempt — mark paid and skip the popup.
+          setFormData((prev) => ({
+            ...prev,
+            'payment.transactionReference': initPayload.reference || '',
+            'payment.paymentStatus': 'paid',
+          }));
+        } else {
+          const Paystack = await loadPaystackClient();
+          const reference = initPayload.reference || '';
+          // Server-quoted fee (locked draft) — what fulfilment reconciles
+          // against; the local figure is only a fallback for older backends.
+          const amountKobo = Number(initPayload.amountKobo) || Math.round(feeAmount * 100);
 
         await new Promise<void>((resolve, reject) => {
           const popup = new Paystack();
@@ -444,32 +470,30 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
             onSuccess: (tx) => {
               void (async () => {
                 try {
-                  await authFetch(`/api/registration/applications/${draft.id}`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({
-                      stepKey: currentStep.key,
-                      values: {
-                        ...formData,
-                        'payment.transactionReference': tx?.reference || reference,
-                        'payment.paymentStatus': 'paid',
-                      },
-                    }),
-                  }, { json: true });
-                  setFormData((prev) => ({
-                    ...prev,
-                    'payment.transactionReference': tx?.reference || reference,
-                    'payment.paymentStatus': 'paid',
-                  }));
-                  resolve();
-                } catch (err) {
-                  reject(err);
+                  // Server-side verify settles the intent and stamps the paid
+                  // marker + reference + method on the draft — the submit gate
+                  // re-verifies them; self-asserted PATCH flags are not the
+                  // proof path.
+                  await authFetch(
+                    `/api/registration/applications/${draft.id}/payment/verify?reference=${encodeURIComponent(tx?.reference || reference)}`,
+                  );
+                } catch {
+                  // Webhook/recover fulfilment still covers the charge; submit
+                  // lands on awaiting_payment if the marker never persisted.
                 }
+                setFormData((prev) => ({
+                  ...prev,
+                  'payment.transactionReference': tx?.reference || reference,
+                  'payment.paymentStatus': 'paid',
+                }));
+                resolve();
               })();
             },
             onCancel: () => reject(new Error('Payment was cancelled.')),
             onError: (error) => reject(new Error(error?.message || 'Payment failed.')),
           });
         });
+        }
       }
 
       const res = await authFetch(`/api/registration/applications/${draft.id}/submit`, {

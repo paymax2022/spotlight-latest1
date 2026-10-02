@@ -553,13 +553,40 @@ export default function RealityTvShowApplicationWizard() {
     }
 
     try {
+      // Register the charge BEFORE Paystack collects: the intent row gives the
+      // webhook/recover path a fulfilment target when the browser never makes
+      // it back (AUD-FE-003 residual), and binds the popup to the server-minted
+      // reference the submit gate re-verifies.
+      const initRes = await authFetch(`/api/registration/applications/${draftId}/payment/initiate`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify({ method: 'PAYSTACK', email: userEmail, inline: true }),
+      }, { json: true });
+      const initPayload = await initRes.json().catch(() => ({})) as {
+        success?: boolean; reference?: string; status?: string; amountKobo?: number; error?: string;
+      };
+      if (!initRes.ok || !initPayload?.success || !initPayload.reference) {
+        setGlobalError(initPayload?.error || 'Could not start payment. Please try again.');
+        setSubmitting(false);
+        return;
+      }
+      if (initPayload.status === 'completed') {
+        // A previous attempt already settled (webhook/recover fulfilled it) —
+        // no second charge; submit straight away.
+        await submitApplication(initPayload.reference);
+        return;
+      }
+
       const PaystackPop = await loadPaystackClient();
       const handler = new PaystackPop();
       handler.newTransaction({
         key: publicKey,
         email: userEmail,
-        amount: REGISTRATION_FEE * 100,
+        // Server-quoted fee from the locked draft — the same figure fulfilment
+        // and the submit gate reconcile against.
+        amount: Number(initPayload.amountKobo) || REGISTRATION_FEE * 100,
         currency: 'NGN',
+        reference: initPayload.reference,
         metadata: {
           custom_fields: [
             { display_name: 'Programme', variable_name: 'programme', value: 'Spotlight Reality TV Show' },
@@ -567,6 +594,17 @@ export default function RealityTvShowApplicationWizard() {
           ],
         },
         onSuccess: async (transaction: { reference: string }) => {
+          // Server-side verify settles the intent and stamps the paid marker +
+          // reference + method on the draft (the submit gate re-verifies them);
+          // self-asserted PATCH flags are not the proof path.
+          try {
+            await authFetch(
+              `/api/registration/applications/${draftId}/payment/verify?reference=${encodeURIComponent(transaction.reference)}`,
+            );
+          } catch {
+            // Webhook/recover fulfilment still covers the charge; let submit
+            // run and land on awaiting_payment if the marker never persisted.
+          }
           await submitApplication(transaction.reference);
         },
         onCancel: () => {
