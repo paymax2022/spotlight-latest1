@@ -98,7 +98,7 @@
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@types/react": "~19.1.10",
-    "babel-preset-expo": "~57.0.13",
+    "babel-preset-expo": "~54.0.12",
     "typescript": "~5.9.2"
   },
   "overrides": {
