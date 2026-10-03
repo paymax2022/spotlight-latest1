@@ -21,6 +21,10 @@ var (
 	ErrMissingIdem     = errors.New("arena: Idempotency-Key required")
 	ErrPotState        = errors.New("arena: pot not in a disbursable state")
 	ErrRateLimited     = errors.New("arena: rate limited")
+	// ErrTierGateUnwired is returned when a money rail has no wallet-debit
+	// limiter — a nil gate must fail CLOSED, never debit ungated (mirrors
+	// social.ErrTierGateUnwired; E2E-FIN-046).
+	ErrTierGateUnwired = errors.New("arena: money path requires a tier gate (not wired)")
 )
 
 // Competition is an Arena competition.
@@ -208,4 +212,16 @@ type LedgerPort interface {
 // TierPort reads a user's KYC tier for the NDC-3 identity gate.
 type TierPort interface {
 	UserTier(ctx context.Context, userID string) (int, error)
+}
+
+// DebitLimitPort is the fail-closed KYC-tier / daily-debit gate port the money
+// rails depend on (E2E-FIN-046) — the SAME EnforceWalletDebitLimit the
+// canonical transfer rail (finance/transfers) runs. repo.DebitLimitAdapter
+// satisfies it in production; unit tests inject a fake via WithDebitLimiter.
+// Support gifting is a wallet DEBIT, so the STRICT gate is used: it is not a
+// checkout purchase, so the Tier-0 checkout allowance (ADR-043) does NOT apply
+// here. Like LedgerPort this port is deliberately narrow — the rail holds no
+// extra tier capability beyond this one method.
+type DebitLimitPort interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
 }

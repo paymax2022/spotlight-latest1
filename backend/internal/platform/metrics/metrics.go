@@ -23,10 +23,11 @@ import (
 const meterName = "paymax-backend"
 
 var (
-	once          sync.Once
-	paymentResult metric.Int64Counter
-	moneyMovement metric.Int64Counter
-	ledgerBreach  metric.Int64Counter
+	once                sync.Once
+	paymentResult       metric.Int64Counter
+	moneyMovement       metric.Int64Counter
+	ledgerBreach        metric.Int64Counter
+	notificationEnqueue metric.Int64Counter
 )
 
 func instruments() {
@@ -38,6 +39,8 @@ func instruments() {
 			metric.WithDescription("Wallet/transfer/payout movements by type and result"))
 		ledgerBreach, _ = m.Int64Counter("paymax.ledger.invariant_breach",
 			metric.WithDescription("Ledger invariant breaches detected — SLO target is 0"))
+		notificationEnqueue, _ = m.Int64Counter("paymax.notification.enqueue",
+			metric.WithDescription("Notification task enqueues by channel and result — failures here mean silently dropped notifications (E2E-FR-051)"))
 	})
 }
 
@@ -69,4 +72,17 @@ func RecordMoneyMovement(ctx context.Context, movementType, result string) {
 func RecordLedgerInvariantBreach(ctx context.Context, kind string) {
 	instruments()
 	ledgerBreach.Add(ctx, 1, metric.WithAttributes(attribute.String("kind", kind)))
+}
+
+// RecordNotificationEnqueue counts notification-task enqueues by channel
+// ("push" | "email" | "sms") and result ("success" | "failure" |
+// "marshal_error" | "client_unconfigured"). E2E-FR-051: enqueue failures used
+// to be silently dropped at call sites — this counter is the metric surface to
+// alert on when notifications are expected to flow (failure ≈ 0).
+func RecordNotificationEnqueue(ctx context.Context, channel, result string) {
+	instruments()
+	notificationEnqueue.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("channel", channel),
+		attribute.String("result", result),
+	))
 }

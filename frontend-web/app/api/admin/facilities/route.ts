@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { handleApiError } from '@/src/lib/api/responses';
-import { requireRequestUser } from '@/src/lib/auth/request';
+import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 
 const COLS = 'id, estate_id, name, kind, capacity, fee_kobo';
@@ -10,9 +10,12 @@ function mapFacility(row: any) {
 }
 
 // GET /api/admin/facilities — List all facilities across all estates
+// E2E-SEC-054: was gated on requireRequestUser only (any signed-in user could
+// enumerate every estate's facilities via the RLS-bypassing service client).
+// Now requires the same admin permission as /api/admin/programs.
 export async function GET(request: Request) {
   try {
-    const user = await requireRequestUser(request);
+    await assertAdminPermission(request, 'programs:manage');
     const supabase = createAdminClient();
     const { data: rows, error } = await supabase
       .from('estate_facilities')
@@ -26,9 +29,12 @@ export async function GET(request: Request) {
 }
 
 // POST /api/admin/facilities — Create a new facility
+// E2E-SEC-054: a plain user could create real estate_facilities rows (verified
+// 201 live). Now requires programs:manage, resolved from user_roles — not the
+// self-assignable user_profiles.role.
 export async function POST(request: Request) {
   try {
-    const user = await requireRequestUser(request);
+    await assertAdminPermission(request, 'programs:manage');
     const supabase = createAdminClient();
     const body = await request.json();
 

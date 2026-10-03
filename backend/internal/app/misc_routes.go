@@ -343,7 +343,8 @@ func RegisterArena(
 	meritSvc := arenasvc.NewMeritService(meritRepo, auditRepo)
 	scoringSvc := arenasvc.NewScoringService(gateway, meritSvc, auditRepo)
 	credentialSvc := arenasvc.NewCredentialService(credentialRepo, auditRepo)
-	supportSvc := arenasvc.NewSupportService(supportRepo, ledgerPort, tierPort, compSvc, auditRepo)
+	supportSvc := arenasvc.NewSupportService(supportRepo, ledgerPort, tierPort, compSvc, auditRepo).
+		WithDebitLimiter(arenarepo.NewDebitLimitAdapter(tiers.NewService(pool)))
 	potSvc := arenasvc.NewPotDisbursementService(potRepo, supportRepo, ledgerPort, compSvc, auditRepo)
 	playAlongSvc := arenasvc.NewPlayAlongService(engagementRepo, credentialSvc, ledgerPort, compSvc, auditRepo)
 	predictionSvc := arenasvc.NewPredictionService(engagementRepo, auditRepo)

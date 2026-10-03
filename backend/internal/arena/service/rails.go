@@ -278,11 +278,12 @@ func (s *PredictionService) Submit(ctx context.Context, userID, idemKey, competi
 // (via LedgerPort) and tag the gift (via SupportRepo). Its awards are Support-fed
 // and can never influence the crown (arena.AwardFedByMeritOnly is false for them).
 type SupportService struct {
-	repo   SupportRepo
-	ledger LedgerPort
-	tiers  TierPort
-	cfg    ConfigReader
-	audit  AuditRepo
+	repo       SupportRepo
+	ledger     LedgerPort
+	tiers      TierPort
+	debitLimit DebitLimitPort
+	cfg        ConfigReader
+	audit      AuditRepo
 }
 
 // ConfigReader is the minimal config lookup the rails need (KYC gate, play-along
@@ -307,8 +308,33 @@ func isLedgerReplay(err error) bool {
 }
 
 // NewSupportService builds the Support rail. It receives NO signer/gateway.
+// The daily-debit limiter is a separate injection (WithDebitLimiter): a rail
+// built without one fails CLOSED via ErrTierGateUnwired — it can never debit
+// ungated.
 func NewSupportService(repo SupportRepo, ledger LedgerPort, tiers TierPort, cfg ConfigReader, audit AuditRepo) *SupportService {
 	return &SupportService{repo: repo, ledger: ledger, tiers: tiers, cfg: cfg, audit: audit}
+}
+
+// WithDebitLimiter injects the wallet-debit limiter (app-wiring /
+// repo.DebitLimitAdapter; tests inject a fake). A nil argument is ignored so an
+// unwired injection can never strip the gate. Returns the service for chaining.
+func (s *SupportService) WithDebitLimiter(l DebitLimitPort) *SupportService {
+	if l != nil {
+		s.debitLimit = l
+	}
+	return s
+}
+
+// enforceDebitLimit is the fail-closed guard applied before EVERY support
+// debit (E2E-FIN-046). Tier 0 → tiers.ErrWalletDisabled, over daily cap →
+// tiers.ErrDailyLimitExceeded, gate/db errors refuse, and a missing gate
+// refuses via ErrTierGateUnwired. The error propagates UNWRAPPED so the handler
+// maps the tier sentinels to 403 via errors.Is.
+func (s *SupportService) enforceDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
+	if s.debitLimit == nil {
+		return ErrTierGateUnwired
+	}
+	return s.debitLimit.EnforceWalletDebitLimit(ctx, userID, amountKobo)
 }
 
 // Contribute gifts amountKobo to a contestant: (1) KYC-gate via TierPort against
@@ -333,6 +359,16 @@ func (s *SupportService) Contribute(ctx context.Context, userID, idemKey, compet
 	}
 	if tier < cfg.RequiredKYCTier {
 		return ErrKYCTierTooLow
+	}
+
+	// Daily-debit gate (fail-closed, E2E-FIN-046): support gifting is a wallet
+	// debit, so the same EnforceWalletDebitLimit the transfer rail applies runs
+	// BEFORE money moves — a refused attempt posts zero ledger legs and no
+	// support tag. A replay whose leg already posted hits the ledger's own
+	// ErrDuplicate below (isLedgerReplay → success), so refusal ordering does
+	// not double-charge.
+	if err := s.enforceDebitLimit(ctx, userID, amountKobo); err != nil {
+		return err
 	}
 
 	// Resolve the pot standing account and DEBIT the backer's wallet into it.
@@ -383,6 +419,11 @@ func (s *SupportService) ContributeWithState(ctx context.Context, userID, idemKe
 	}
 	if tier < cfg.RequiredKYCTier {
 		return ErrKYCTierTooLow
+	}
+	// Daily-debit gate (fail-closed, E2E-FIN-046): same guard as Contribute —
+	// the backer's wallet debit cannot run while the tier gate refuses.
+	if err := s.enforceDebitLimit(ctx, userID, amountKobo); err != nil {
+		return err
 	}
 	potAcct, err := s.ledger.StandingAccountID(ctx, supportPotAccountType)
 	if err != nil {

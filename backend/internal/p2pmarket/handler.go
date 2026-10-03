@@ -1,12 +1,14 @@
 package p2pmarket
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 // Handler exposes P2P marketplace member + admin endpoints. The authenticated caller
@@ -106,7 +108,16 @@ func (h *Handler) Checkout(c *gin.Context) {
 	}
 	o, err := h.svc.Checkout(c.Request.Context(), c.Param("listingId"), uid, key)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
+		// unwired escrow gate is a dependency failure → 503 (E2E-FIN-046).
+		switch {
+		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		case errors.Is(err, escrow.ErrTierGateUnwired):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		}
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})

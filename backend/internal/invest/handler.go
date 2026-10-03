@@ -9,6 +9,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
 	platformRedis "spotlight/backend/internal/platform/redis"
@@ -32,6 +33,10 @@ var errMap = httperr.New(http.StatusInternalServerError,
 	httperr.R(http.StatusForbidden, ErrInvalidPIN, ErrPINNotSet, ErrPINLocked,
 		ErrTradingDisabled, ErrNotEligible, ErrKYCInsufficient,
 		ErrSuitabilityRequired, ErrTermsRequired, ErrAssetUnavailable),
+	// Tier-limit refusals: 403 — the same mapping the canonical transfer rail
+	// uses (E2E-FIN-046). An unwired/degraded gate is a dependency failure: 503.
+	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
+	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
 	httperr.R(http.StatusUnprocessableEntity, ErrInsufficientCash, ErrInsufficientShares),
 	httperr.R(http.StatusConflict, ErrMarketClosed),
 	httperr.R(http.StatusBadRequest, ErrBelowMinimum, ErrAboveMaximum, ErrInvalidOrder),

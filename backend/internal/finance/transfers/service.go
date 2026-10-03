@@ -29,7 +29,22 @@ type Service struct {
 	registry   *disbursement.Registry // multi-provider payout (nil = bank routes degraded)
 	pins       *pinStore
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	auditSink  Auditor            // optional; nil ⇒ audit() stays a stdout breadcrumb only
 }
+
+// Auditor is the nil-safe seam into the shared durable audit sink
+// (services.AuditService satisfies this signature — the app-wiring auditSink).
+// Modeled as a LOCAL interface (mirrors CommissionRecorder) so transfers never
+// imports the services package at compile time. Injection is post-construction
+// via SetAuditor; when nil, audit() degrades to its original stdout-only
+// behaviour — a missing sink must never fail the money path.
+type Auditor interface {
+	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
+}
+
+// SetAuditor injects the durable audit sink (app-wiring, post-construction).
+// Nil is accepted and leaves audit() stdout-only.
+func (s *Service) SetAuditor(a Auditor) { s.auditSink = a }
 
 // CommissionRecorder is the nil-safe seam into the central Commission & Profit
 // module. app-wiring injects a thin adapter over the finance commission service;
@@ -311,6 +326,17 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 	if fee > 0 {
 		s.recordCommissionSafe(ctx, "Money Transfer", wt.AmountKobo, wt.FeeKobo, wt.ID, &wt.SenderID)
 	}
+	// E2E-X-029: wallet-to-wallet sends previously wrote NO durable audit row at
+	// all (the audit() path was stdout-only and never called here). Emit the
+	// action-level event: actor = sender, target = recipient, entity = the
+	// transfer row, metadata = {amount, fee, reference}. Best-effort — an audit
+	// failure can never fail or reverse the committed transfer. Replays return
+	// early above, so a duplicate Idempotency-Key cannot double-emit.
+	s.auditEvent(ctx, senderID, wt.RecipientID, "wallet.transfer.send", wt.ID, map[string]any{
+		"amount_kobo": wt.AmountKobo,
+		"fee_kobo":    wt.FeeKobo,
+		"reference":   wt.Reference,
+	})
 	return wt, nil
 }
 

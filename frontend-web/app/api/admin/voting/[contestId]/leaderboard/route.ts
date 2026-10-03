@@ -1,6 +1,9 @@
 import { handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
-import { getLeaderboard, recomputeRanks } from '@/src/server/voting/totals.service';
+import { recomputeRanks } from '@/src/server/voting/totals.service';
+// E2E-X-026: bridge-owned getLeaderboard — totals.service's version embeds
+// contestant_share_links with no FK (PGRST200 → swallowed → permanently []).
+import { getLeaderboard } from '@/src/server/voting-bridge/leaderboard.service';
 import { createAdminClient } from '@/lib/supabase/server';
 
 export async function GET(

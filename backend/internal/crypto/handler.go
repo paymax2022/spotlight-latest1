@@ -6,6 +6,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 	"strconv"
@@ -27,6 +28,10 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 var errMap = httperr.New(http.StatusBadRequest,
 	httperr.R(http.StatusForbidden, ErrForbidden),
+	// Tier-limit refusals: 403 — the same mapping the canonical transfer rail
+	// uses (E2E-FIN-046). An unwired/degraded gate is a dependency failure: 503.
+	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
+	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
 	httperr.R(http.StatusNotFound, ErrNotFound, ErrAddressNotFound),
 	httperr.R(http.StatusConflict, ErrInsufficient, ErrAssetInactive, ErrAmountTooSmall,
 		ErrSameAsset, ErrInvalidTransition, ErrWithdrawTooSmall, ErrAddressExists),

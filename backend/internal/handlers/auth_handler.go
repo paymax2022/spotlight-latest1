@@ -279,13 +279,26 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 	out, err := h.auth.LoginUser(in)
 	if err != nil {
+		// LoginUser wraps its errors with the identity it resolved before
+		// failing — a phone identifier becomes the account email, and the
+		// platform user id is attached once platform_users has answered — so
+		// the login_activity row is attributable even on a refusal
+		// (E2E-AUTH-007). Falling back to in.Email preserves direct-email
+		// callers whose identifier was never resolved.
+		failUserID, failEmail := "", in.Email
+		if fail, ok := errors.AsType[*services.LoginFailureError](err); ok {
+			failUserID = fail.UserID
+			if fail.Email != "" {
+				failEmail = fail.Email
+			}
+		}
 		// Correct password, unverified address. Answered distinctly so the client
 		// can send the user to enter their code instead of telling them their
 		// password is wrong — which is what it used to say, leaving them stuck
 		// with no route forward. See ErrEmailNotConfirmed for why this does not
 		// leak account existence.
 		if errors.Is(err, services.ErrEmailNotConfirmed) {
-			h.audit.LogLogin("", in.Email, "failed", "email_not_confirmed", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+			h.audit.LogLogin(failUserID, failEmail, "failed", "email_not_confirmed", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
 			c.JSON(http.StatusForbidden, gin.H{
 				"success": false,
 				"code":    "email_not_confirmed",
@@ -293,11 +306,27 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			})
 			return
 		}
-		h.audit.LogLogin("", in.Email, "failed", "invalid_credentials", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+		// GoTrue was unreachable/degraded — the service never reached a
+		// credential verdict and counted NO strike. This must not look like a
+		// wrong password: E2E-FR-049 was a GoTrue outage answering 401
+		// invalid_credentials for CORRECT passwords, each of which also bumped
+		// failed_login_attempts. The row is written too — an outage window is
+		// exactly what forensics needs to reconstruct — but with the honest
+		// "upstream_error" reason rather than a false invalid_credentials
+		// (failure_reason is free text; only status is CHECK-constrained).
+		if errors.Is(err, services.ErrAuthUnavailable) {
+			h.audit.LogLogin(failUserID, failEmail, "failed", "upstream_error", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"success": false,
+				"code":    "auth_unavailable",
+				"error":   "Sign-in is temporarily unavailable. Please try again shortly.",
+			})
+			return
+		}
+		h.audit.LogLogin(failUserID, failEmail, "failed", "invalid_credentials", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "invalid credentials"})
 		return
 	}
-	h.audit.LogLogin("", in.Email, "success", "", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
 
 	// Strip the internal hints BEFORE any branch can return `out` to a client.
 	// They were previously removed only inside the session-hardening branch, so
@@ -307,6 +336,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	resolvedEmail, _ := out["__email"].(string)
 	delete(out, "__user_id")
 	delete(out, "__email")
+
+	// Success is attributed the same way the failure paths are: the resolved
+	// account identity, not the raw request fields — identifier logins carry
+	// no email, so in.Email was logging every row anonymous (E2E-AUTH-007).
+	h.audit.LogLogin(loginUserID, resolvedEmail, "success", "", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
 
 	// Second factor. The password was correct, so GoTrue has already minted a
 	// session in `out` — it is DISCARDED here rather than parked anywhere, and a

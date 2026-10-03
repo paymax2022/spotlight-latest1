@@ -82,9 +82,13 @@ linters:
   exclusions:
     rules:
       # Repeated literals in tests are fixtures, not magic constants.
+      # Whitebox (same-package) tests are the repo convention — ~570 test files
+      # exercise unexported seams (tier gates, errMap, internal state) that
+      # cannot be reached from a _test package without exporting internals.
       - path: _test\.go
         linters:
           - goconst
+          - testpackage
 formatters:
   enable:
     - gofmt

@@ -1,16 +1,23 @@
 import { NextResponse } from 'next/server';
 import { handleApiError } from '@/src/lib/api/responses';
-import { requireRequestUser } from '@/src/lib/auth/request';
+import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 
 // GET /api/admin/privileges — Get privileges for all users
+// E2E-SEC-054: was gated on requireRequestUser only — any signed-in user could
+// enumerate every user's role/permission assignments. RBAC inventory is
+// roles:manage territory, same as /api/admin/users-roles.
+//
+// Residual fix: the user list read `.from('auth.users')`, which PostgREST does
+// not expose → every gated call 500'd. public.user_profiles carries the same
+// id + email columns and is the store every other BFF route reads.
 export async function GET(request: Request) {
   try {
-    const user = await requireRequestUser(request);
+    await assertAdminPermission(request, 'roles:manage');
     const supabase = createAdminClient();
 
     const { data: usersData, error: usersError } = await supabase
-      .from('auth.users')
+      .from('user_profiles')
       .select(`
         id,
         email

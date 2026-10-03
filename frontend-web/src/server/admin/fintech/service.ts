@@ -17,8 +17,8 @@
 import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 import { creditWallet, debitWallet } from '@/src/server/wallet/service';
-import { hasPermission, parseAdminRole } from '@/src/server/admin/rbac';
-import { getRequestUserRole } from '@/src/lib/auth/request';
+import { hasPermission, resolveAdminRoleFromRbacSlugs } from '@/src/server/admin/rbac';
+import { getUserRbacRoleSlugs } from '@/src/server/admin/auth';
 
 /** Adjustments below this threshold execute immediately (no checker required). */
 const AUTO_EXECUTE_THRESHOLD_KOBO = 10_000_000; // ₦100,000
@@ -49,12 +49,22 @@ async function requireFinanceRole(
   userId: string,
   permission: 'finance:adjust:initiate' | 'finance:adjust:approve',
 ): Promise<string> {
-  const rawRole = await getRequestUserRole(userId);
-  const role = parseAdminRole(rawRole);
+  // E2E-SEC-053: resolve from the authoritative RBAC store (user_roles →
+  // roles.slug), same as assertAdminPermission — never user_profiles.role,
+  // which was user-writable via PUT /api/me/profile and let any user mint a
+  // 'finance_admin' role that could initiate (and sub-₦100k auto-execute)
+  // wallet debits. Fail closed: an unreadable role lookup denies.
+  let slugs: string[];
+  try {
+    slugs = await getUserRbacRoleSlugs(userId);
+  } catch {
+    throw new ApiError(`Could not resolve admin role for permission '${permission}'`, 403);
+  }
+  const role = resolveAdminRoleFromRbacSlugs(slugs, permission);
   if (!hasPermission(role, permission)) {
     throw new ApiError(`Role '${role}' does not have permission '${permission}'`, 403);
   }
-  return rawRole ?? role;
+  return role;
 }
 
 // executeAdjustment — shared execution path

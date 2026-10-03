@@ -1,9 +1,12 @@
 package healthvet
 
 import (
+	"errors"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/strutil"
+	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/tiers"
 	healthrx "spotlight/backend/internal/health/rx"
 	"strconv"
 	"time"
@@ -158,7 +161,16 @@ func (h *Handler) Book(c *gin.Context) {
 	}
 	a, err := h.svc.Book(c.Request.Context(), id, in)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+		// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
+		// unwired escrow gate is a dependency failure → 503 (E2E-FIN-046).
+		switch {
+		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+			ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		case errors.Is(err, escrow.ErrTierGateUnwired):
+			ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
+		default:
+			ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+		}
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "appointment": a})

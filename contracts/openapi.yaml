@@ -15042,8 +15042,13 @@ paths:
   /api/v1/referrals/attribute:
     post:
       operationId: applyReferralCode
-      summary: Apply a referral code (once, at signup — idempotent per user)
-      description: Creates a permanent referral_attributions row for the caller. Invisible to the referred user by design. No reward is created here.
+      summary: Apply a referral code (at signup, or late claim — idempotent per user)
+      description: >
+        Writes the caller's referral_attributions row. A caller with only the
+        default house placeholder (codeless signup) has it REPLACED by the real
+        referrer while the placeholder is still claimable; a caller already
+        attributed to a real referrer keeps it — first-real-attribution wins.
+        Invisible to the referred user by design. No reward is created here.
       tags: [Referral]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -15055,12 +15060,23 @@ paths:
             schema: { $ref: '#/components/schemas/ReferralAttributeRequest' }
       responses:
         '200':
-          description: Attribution recorded (or idempotent replay)
+          description: >
+            Outcome of the claim. `attributed` is true only when the submitted
+            code is the attribution now in effect; `referrer_id` is the caller's
+            actual current referrer (empty when still house-attributed). An
+            already-attributed caller answers 200 with attributed=false and the
+            EXISTING referrer_id — not an error.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/SuccessResponse' }
+              schema:
+                type: object
+                required: [referrer_id, referred_user_id, attributed]
+                properties:
+                  referrer_id: { type: string, description: "Actual current referrer user id (empty when still house-attributed)" }
+                  referred_user_id: { type: string, format: uuid }
+                  attributed: { type: boolean, description: "True only when the submitted code is the attribution now in effect" }
+        '400': { description: "Invalid body, unknown code, or self-referral" }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '409': { description: "Caller already has an attribution (permanent, one per user for life)" }
   /api/finance/referral/withdraw:
     post:
       operationId: withdrawReferralEarnings

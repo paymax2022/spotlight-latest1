@@ -26,10 +26,12 @@ vi.mock('@/src/server/voting/totals.service', () => ({
   getLeaderboard: vi.fn(),
   recomputeRanks: vi.fn(),
 }));
+// E2E-X-026: the route now reads the bridge-owned leaderboard service.
+vi.mock('@/src/server/voting-bridge/leaderboard.service', () => ({ getLeaderboard: vi.fn() }));
 vi.mock('@/lib/supabase/server', () => ({ createAdminClient: vi.fn(), createClient: vi.fn() }));
 
 import { GET } from '../../../app/api/admin/voting/[contestId]/leaderboard/route';
-import { getLeaderboard } from '@/src/server/voting/totals.service';
+import { getLeaderboard } from '@/src/server/voting-bridge/leaderboard.service';
 import { createAdminClient, createClient } from '@/lib/supabase/server';
 
 const ORIGINAL_ADMIN_KEY = process.env.SPOTLIGHT_ADMIN_API_KEY;

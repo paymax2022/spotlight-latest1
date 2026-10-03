@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 type Handler struct{ svc *Service }
@@ -56,6 +57,12 @@ func (h *Handler) Contribute(c *gin.Context) {
 	contrib, err := h.svc.Contribute(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
 		switch {
+		// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
+		// unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
+		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		case errors.Is(err, ErrTierGateUnwired):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		case errors.Is(err, ErrCampaignNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		case errors.Is(err, ErrCampaignPaused),

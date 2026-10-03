@@ -1,0 +1,95 @@
+import { errorResponse, successResponse } from '@/src/lib/api/responses';
+import { buildRegistrationSteps } from '@/src/features/registration/config';
+import { getRegistrationDraft, saveRegistrationStep } from '@/src/server/registration/supabase-store';
+import { requireUser } from '@/src/lib/auth/server';
+import type { RegistrationStepKey } from '@/src/features/registration/types';
+import { NextResponse } from 'next/server';
+
+/**
+ * Strict step-save endpoint — adapter around saveRegistrationStep.
+ *
+ * The sibling `../route.ts` PATCH is a protected legacy file whose contract
+ * returns HTTP 200 with `validation.isValid: false` and persists nothing on a
+ * failed step validation — correct for the wizard but ambiguous for API
+ * consumers that read only the HTTP status (E2E-USER-017). This endpoint keeps
+ * the same save semantics but answers 422 with the same validation payload
+ * when the step fails validation, so `res.ok` alone is a trustworthy signal.
+ *
+ * Valid saves still return 200 with `{ success: true, draft, validation,
+ * steps }` — identical to the legacy response.
+ */
+export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
+  try {
+    // Validate param
+    if (!params?.id || typeof params.id !== 'string') {
+      return errorResponse('Invalid application ID', 400);
+    }
+
+    const { user } = await requireUser(request);
+    const current = await getRegistrationDraft(params.id);
+    if (!current) {
+      console.warn('[registration/applications/step PATCH] draft not found:', params.id);
+      return errorResponse('Application not found', 404);
+    }
+    if (current.userId !== user.id) {
+      console.warn('[registration/applications/step PATCH] forbidden access to:', params.id, 'by user:', user.id);
+      return errorResponse('Forbidden', 403);
+    }
+
+    let body: { stepKey?: RegistrationStepKey; values?: Record<string, unknown> } = {};
+    try {
+      body = (await request.json()) as {
+        stepKey?: RegistrationStepKey;
+        values?: Record<string, unknown>;
+      };
+    } catch (parseError) {
+      console.error('[registration/applications/step PATCH] invalid JSON:', parseError);
+      return errorResponse('Invalid request body: malformed JSON', 400);
+    }
+
+    if (!body?.stepKey || !body.values) {
+      return errorResponse('stepKey and values are required', 400);
+    }
+
+    const result = await saveRegistrationStep({
+      applicationId: params.id,
+      stepKey: body.stepKey,
+      values: body.values,
+    });
+
+    const steps = buildRegistrationSteps(result.draft);
+
+    if (result.validation && result.validation.isValid === false) {
+      // Error envelope matches neighboring registration routes
+      // (`errorResponse`: { success: false, error }) with the validation
+      // payload attached so callers can still highlight field errors.
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Step validation failed',
+          validation: result.validation,
+          draft: result.draft,
+          steps,
+        },
+        { status: 422 },
+      );
+    }
+
+    return successResponse({ success: true, ...result, steps });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'UNAUTHORIZED') {
+      return errorResponse('Authentication required', 401);
+    }
+    if (error instanceof Error && error.message === 'Application not found') {
+      console.warn('[registration/applications/step PATCH] application not found during save:', params.id);
+      return errorResponse('Application not found', 404);
+    }
+    console.error('[registration/applications/step PATCH] error for', params.id, {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    const detail = error instanceof Error ? error.message : 'Unknown error';
+    return errorResponse(`Failed to save registration step: ${detail}`, 500);
+  }
+}

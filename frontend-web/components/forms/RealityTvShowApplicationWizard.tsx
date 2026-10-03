@@ -286,20 +286,36 @@ export default function RealityTvShowApplicationWizard() {
         setUserEmail(session.user.email || '');
       }
 
-      const createRes = await authFetch('/api/registration/applications', {
-        method: 'POST',
-        body: JSON.stringify({ contestSlug: 'reality-tv-show' }),
-      }, { json: true });
+      // StrictMode double-mounts this effect in dev (a second tab can do the
+      // same): two concurrent creates race the one-live-per-contest unique
+      // index and the loser 500s. Reuse the 409's existing registration and
+      // retry once so the race loser lands on it.
+      let id: string | undefined;
+      let createError = 'Unable to start application.';
+      for (let attempt = 0; attempt < 2 && !id; attempt++) {
+        const createRes = await authFetch('/api/registration/applications', {
+          method: 'POST',
+          body: JSON.stringify({ contestSlug: 'reality-tv-show' }),
+        }, { json: true });
 
-      if (isUnauthorized(createRes)) { redirectToLogin(pathname || '/apply/reality-tv-show'); return; }
+        if (isUnauthorized(createRes)) { redirectToLogin(pathname || '/apply/reality-tv-show'); return; }
 
-      const createPayload = await createRes.json().catch(() => ({}));
-      if (!createRes.ok || !createPayload?.draft?.id) {
-        if (!cancelled) { setGlobalError(createPayload?.error || 'Unable to start application.'); setLoading(false); }
+        const createPayload = await createRes.json().catch(() => ({}));
+        if (createRes.ok && createPayload?.draft?.id) {
+          id = createPayload.draft.id as string;
+          break;
+        }
+        const existingId = createPayload?.registration?.id;
+        if (typeof existingId === 'string' && existingId) {
+          id = existingId;
+          break;
+        }
+        createError = createPayload?.error || createError;
+      }
+      if (!id) {
+        if (!cancelled) { setGlobalError(createError); setLoading(false); }
         return;
       }
-
-      const id = createPayload.draft.id as string;
       const readRes = await authFetch(`/api/registration/applications/${id}`, { cache: 'no-store' });
       if (isUnauthorized(readRes)) { redirectToLogin(pathname || '/apply/reality-tv-show'); return; }
 
@@ -390,7 +406,7 @@ export default function RealityTvShowApplicationWizard() {
   /**
    * PATCH the draft under the schema stepKey that wizard step completes (see
    * REALITY_TV_WIZARD_STEP_SAVE_KEY). Returns true only when the draft row
-   * was actually written — the server returns 200 with
+   * was actually written — the strict step endpoint returns 422 with
    * validation.isValid === false when the named step fails, in which case
    * nothing persisted; its field errors are mapped back onto wizard keys so
    * the offending inputs get highlighted.
@@ -402,7 +418,7 @@ export default function RealityTvShowApplicationWizard() {
     }
     setSaving(true);
     try {
-      const res = await authFetch(`/api/registration/applications/${draftId}`, {
+      const res = await authFetch(`/api/registration/applications/${draftId}/step`, {
         method: 'PATCH',
         body: JSON.stringify(buildStepSaveBody(stepKey, realityTvWizardFormToFlat(f, uploadMeta))),
       }, { json: true });

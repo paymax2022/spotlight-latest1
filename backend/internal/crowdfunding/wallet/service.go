@@ -17,7 +17,23 @@ import (
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/timeutil"
 	financeledger "spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 )
+
+// walletDebitLimiter is the minimal seam the creator-withdrawal money path
+// depends on for the fail-closed KYC-tier / daily-debit gate. *tiers.Service
+// satisfies it in production; unit tests inject a fake via WithTiers. Modeled as
+// a local interface — mirrors social's walletDebitLimiter. A payout debits the
+// creator's own wallet, so the STRICT gate is used: it is a wallet cash-out,
+// not a checkout purchase, so the Tier-0 checkout allowance (ADR-043) does NOT
+// apply here.
+type walletDebitLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
+// must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
+var ErrTierGateUnwired = errors.New("crowdfunding/wallet: money path requires a tier gate (not wired)")
 
 // Service exposes the campaign wallet, ledger projection, bank accounts, and the
 // withdrawal flow. It never stores a balance: every balance is derived from the
@@ -25,17 +41,47 @@ import (
 type Service struct {
 	db     *pgxpool.Pool
 	ledger *financeledger.Service // required for SubmitWithdrawal's payout leg; nil fails that path closed
+	tiers  walletDebitLimiter     // required for SubmitWithdrawal's debit gate; nil fails that path closed
 }
 
-// NewService constructs a wallet Service over a pgx pool.
+// NewService constructs a wallet Service over a pgx pool. The tier-limit gate
+// is built from the same pool (tiers.NewService needs only the DB) — same
+// convention as social.NewService; a nil pool leaves the gate unwired and the
+// payout path then fails closed via ErrTierGateUnwired.
 func NewService(db *pgxpool.Pool) *Service {
-	return &Service{db: db}
+	s := &Service{db: db}
+	if db != nil {
+		s.tiers = tiers.NewService(db)
+	}
+	return s
 }
 
 // WithLedger injects the finance ledger used by SubmitWithdrawal's payout
 // money-path. Non-breaking: existing NewService(db) callers keep a nil ledger
 // and the payout path fails closed until one is wired.
 func (s *Service) WithLedger(l *financeledger.Service) *Service { s.ledger = l; return s }
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *Service) WithTiers(t walletDebitLimiter) *Service {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
+}
+
+// enforceDebitLimit is the fail-closed guard applied before the withdrawal
+// payout debit (E2E-FIN-046): the same EnforceWalletDebitLimit the canonical
+// transfer rail (finance/transfers) runs. Tier 0 → ErrWalletDisabled, over
+// daily cap → ErrDailyLimitExceeded, gate/db errors refuse, and a missing gate
+// refuses via ErrTierGateUnwired. The error is propagated UNWRAPPED so the
+// handler maps the tier sentinels to 403 via errors.Is.
+func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	return s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo)
+}
 
 // ErrLedgerUnavailable is returned when SubmitWithdrawal is invoked without a
 // wired finance ledger. Fail-closed: we refuse to transition without posting money.
@@ -360,6 +406,15 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	// OTHER campaigns' unsettled contributions instead of this creator's own
 	// balance — ledger.Debit is also TOCTOU-safe (advisory-locked balance
 	// check), which the manual escrow posting below was not.
+	// Tier gate (fail-closed, E2E-FIN-046): the payout debits the creator's own
+	// wallet, so the same EnforceWalletDebitLimit the transfer rail applies runs
+	// BEFORE money moves — a refused attempt posts zero ledger legs and no
+	// cf_withdrawals row. Replays already returned the existing result above, so
+	// a completed key never reaches this gate.
+	if err := s.enforceDebitLimit(ctx, creatorID, in.AmountKobo); err != nil {
+		return nil, err
+	}
+
 	payoutIdem := "cf:withdraw:payout:" + id
 	clearingAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, financeledger.AccountProviderClearing)
 	if err != nil {
@@ -592,6 +647,12 @@ func (h *Handler) SubmitWithdrawal(c *gin.Context) {
 	res, err := h.svc.SubmitWithdrawal(c.Request.Context(), userID, campaignID, idempotencyKey, in)
 	if err != nil {
 		switch {
+		// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
+		// unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
+		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		case errors.Is(err, ErrTierGateUnwired):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		case errors.Is(err, ErrCampaignNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		case errors.Is(err, ErrLedgerUnavailable):

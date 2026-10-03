@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 // TargetService implements Group Target savings: a shared pot many members fund
@@ -23,10 +24,27 @@ type TargetService struct {
 	db    *pgxpool.Pool
 	led   *ledger.Service
 	audit Auditor
+	tiers walletDebitLimiter // fail-closed KYC-tier / daily-debit gate on member debits
 }
 
 func NewTargetService(db *pgxpool.Pool, led *ledger.Service, audit Auditor) *TargetService {
-	return &TargetService{db: db, led: led, audit: audit}
+	s := &TargetService{db: db, led: led, audit: audit}
+	// Tier-limit gate from the same pool — zero extra wiring at the call site
+	// (same convention as transport.NewService). A nil pool leaves the gate nil
+	// and enforceDebitLimit fails closed via ErrTierGateUnwired.
+	if db != nil {
+		s.tiers = tiers.NewService(db)
+	}
+	return s
+}
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *TargetService) WithTiers(t walletDebitLimiter) *TargetService {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
 }
 
 // Create opens a group target with the creator as the first member.
@@ -133,6 +151,11 @@ func (s *TargetService) Contribute(ctx context.Context, targetID, userID string,
 	}
 	if !member {
 		return 0, ErrForbidden
+	}
+	// Tier guard (fail-closed, E2E-FIN-041): a target contribution debits the
+	// member's wallet — the same EnforceWalletDebitLimit the transfer rail runs.
+	if err := enforceDebitLimit(s.tiers, ctx, userID, amountKobo); err != nil {
+		return 0, err
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {

@@ -950,6 +950,23 @@ baseline, statuses below are the present truth:
 | AUD-FE-001 | OPEN — operator | EAS production env vars need dashboard access to confirm/set |
 | AUD-TEST-003 | BLOCKED — needs repo admin | required-status-check config is outside the repo |
 
+### E2E re-verification — 2026-10-03 (live stack, `docs/e2e/results/carried-reverify.md`)
+
+Independent re-check of carried findings against the running stack (api :8080 built from HEAD + session fixes). Verdicts supersede rows above where they differ:
+
+| ID | Verdict | Evidence |
+|----|---------|----------|
+| AUD-BE-002 | CONFIRMED-RESOLVED | `authz.go:153-159` → 403 on `GetUserStatus` error; `auth_context.go:75,100-103` → 503 covers **both** `RequireAuthContext` and `RequireAuthContextWithSessions`; `rbac_cache.go:64-67` propagates errors without caching; suspend/lock invalidate (132-154); `go test ./internal/middleware/` green |
+| AUD-BE-008 | CONFIRMED-RESOLVED | `cmd/notification-worker/main.go:19-45` real consumer; Dockerfile:18,28 builds it; `render.yaml:68-100` deploys `spotlight-notification-worker`. Residual (P3): absent from local `docker-compose.yml` |
+| AUD-FE-006 | CONFIRMED-RESOLVED | `responses.ts:56-61` `console.error` + guarded `Sentry.captureException`; Sentry initialized via `withSentryConfig`; ~1,080 call sites; `responses.spec.ts` 7/7 |
+| AUD-FE-001 | CONFIRMED-RESOLVED (source) | `eas.json` prod profile carries `EXPO_PUBLIC_API_BASE_URL` + Supabase URL/anon + Sentry env; `apiBaseUrl.ts` fails loudly if unset. EAS-dashboard-override check remains operator-only |
+| AUD-TEST-003 | REPO-LEVEL RESOLVED / GitHub UNVERIFIABLE | `ci.yml` triggers on main; `.github/required-checks.txt` lists 9 required checks for develop **and** main; `scripts/ci/apply-branch-protection.sh` applies them. Actual GitHub branch protection needs admin token — downgraded P2 operator action |
+| AUD-SEC-001 / AUD-BE-004 | PARTIALLY-RESOLVED | XFF spoofing closed: `SetTrustedProxies` via `TRUSTED_PROXY_CIDRS` (`router.go:49-55`, fail-closed `none`); web root `middleware.ts:44-79` rewrites XFF rightmost-N-hops. Redis `PerUserRateLimit` on vote-bridge + maps; Postgres limiter on OTP/signup. Residual (P2): `AuthRateLimiter`, `StemRateLimit`, BFF `checkRateLimit` remain per-instance memory → limit × replicas |
+| AUD-INFRA-002 | CONFIRMED-RESOLVED | — |
+| AUD-INFRA-003 | PARTIALLY-RESOLVED | Deploy matrix doc exists, but `render.yaml` `spotlight-backend` still `autoDeploy:true` → two armed backend writers (Cloud Run `deploy.yml` + Render); ADR-PR421 still Proposed |
+| AUD-INFRA-005 | CONFIRMED-OPEN (by design) | `db-migrate.yml` dormant pending secrets — deliberate; operator action |
+| AUD-INFRA-006 | RESOLVED (manifest) | render.yaml covers workers; "actually running on prod infra" unverifiable from repo |
+
 ## Final Production Readiness Assessment
 
 ### Backend

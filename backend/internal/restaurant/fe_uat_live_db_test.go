@@ -326,13 +326,13 @@ func TestLiveDB_FE008_DisputeRefundNoRiderNeverAssignedNoPhantomClawback(t *test
 	// the real transitionInternal path (delivered is only reachable internally
 	// or via ConfirmHandoff in the live product; here we drive the same function
 	// the crash-recovery reconciler and ConfirmHandoff both call).
-	if err := svc.transitionInternal(ctx, order.ID, OrderConfirmed); err != nil {
+	if err := svc.transitionInternal(ctx, order.ID, owner, OrderConfirmed); err != nil {
 		t.Fatalf("confirm: %v", err)
 	}
-	if err := svc.transitionInternal(ctx, order.ID, OrderPreparing); err != nil {
+	if err := svc.transitionInternal(ctx, order.ID, owner, OrderPreparing); err != nil {
 		t.Fatalf("preparing: %v", err)
 	}
-	if err := svc.transitionInternal(ctx, order.ID, OrderReady); err != nil {
+	if err := svc.transitionInternal(ctx, order.ID, owner, OrderReady); err != nil {
 		t.Fatalf("ready: %v", err)
 	}
 	var riderID *string
@@ -342,10 +342,10 @@ func TestLiveDB_FE008_DisputeRefundNoRiderNeverAssignedNoPhantomClawback(t *test
 	if riderID != nil {
 		t.Fatalf("precondition failed: a rider (%s) was auto-dispatched — fixture must have NO rider for this case", *riderID)
 	}
-	if err := svc.transitionInternal(ctx, order.ID, OrderPickedUp); err != nil {
+	if err := svc.transitionInternal(ctx, order.ID, owner, OrderPickedUp); err != nil {
 		t.Fatalf("picked_up (no rider): %v", err)
 	}
-	if err := svc.transitionInternal(ctx, order.ID, OrderDelivered); err != nil {
+	if err := svc.transitionInternal(ctx, order.ID, owner, OrderDelivered); err != nil {
 		t.Fatalf("deliver (no rider): %v", err)
 	}
 

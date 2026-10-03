@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/platform/r2"
 )
 
@@ -38,6 +39,21 @@ var ErrNoMembership = errors.New("association: no membership")
 // user's typo looked like a server fault.
 var ErrInvalidInput = errors.New("association: invalid input")
 
+// walletDebitLimiter is the minimal seam the dues money path depends on for
+// the fail-closed KYC-tier / daily-debit gate. *tiers.Service satisfies it in
+// production; unit tests inject a fake via WithTiers. Modeled as a local
+// interface — mirrors social's walletDebitLimiter. A dues payment is a wallet
+// DEBIT (cash leaves the member's wallet into settlement), so the STRICT gate
+// is used: it is not a checkout purchase, so the Tier-0 checkout allowance
+// (ADR-043) does NOT apply here.
+type walletDebitLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
+// must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
+var ErrTierGateUnwired = errors.New("association: money path requires a tier gate (not wired)")
+
 // Service manages association dues payments, receipts, and admin approvals.
 type Service struct {
 	db         *pgxpool.Pool
@@ -47,10 +63,42 @@ type Service struct {
 	// presigner resolves stored logo object keys to signed GET URLs on read;
 	// nil means stored values are passed through unchanged (see presign.go).
 	presigner *r2.Presigner
+	tiers     walletDebitLimiter
 }
 
+// NewService builds the association service. The tier-limit gate is
+// constructed from the same pool (tiers.NewService needs only the DB), so no
+// extra wiring is required at the call site — same convention as
+// social.NewService. A nil pool leaves the gate nil, and enforceDebitLimit
+// then fails closed via ErrTierGateUnwired.
 func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
-	return &Service{db: db, ledger: ledger}
+	s := &Service{db: db, ledger: ledger}
+	if db != nil {
+		s.tiers = tiers.NewService(db)
+	}
+	return s
+}
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *Service) WithTiers(t walletDebitLimiter) *Service {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
+}
+
+// enforceDebitLimit is the fail-closed guard applied before the dues wallet
+// debit (E2E-FIN-046): the same EnforceWalletDebitLimit the canonical transfer
+// rail (finance/transfers) runs. Tier 0 → ErrWalletDisabled, over daily cap →
+// ErrDailyLimitExceeded, gate/db errors refuse, and a missing gate refuses via
+// ErrTierGateUnwired. The error is propagated UNWRAPPED so errMap maps the tier
+// sentinels to 403 via errors.Is.
+func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	return s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo)
 }
 
 // CommissionRecorder is the nil-safe seam into the central Commission & Profit
@@ -174,6 +222,15 @@ func (s *Service) PayInvoice(ctx context.Context, userID, invoiceID string, req 
 	if status == "PAID" {
 		// Already settled — return the existing receipt id idempotently.
 		return &PayInvoiceResult{ReceiptID: "rcpt_" + invoiceID, Status: "SUCCESS"}, nil
+	}
+
+	// Tier gate (fail-closed, E2E-FIN-046): dues payment is a wallet debit, so
+	// the same EnforceWalletDebitLimit the transfer rail applies runs BEFORE
+	// money moves — a refused attempt posts zero ledger legs and no payment row.
+	// Replays of a PAID invoice already returned the receipt above, so a
+	// completed payment never reaches this gate.
+	if err := s.enforceDebitLimit(ctx, userID, amount); err != nil {
+		return nil, err
 	}
 
 	// Settlement standing account receives the credit (balanced double-entry).

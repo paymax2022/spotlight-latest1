@@ -13,6 +13,7 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 // Contribution pre-check rejections — business-rule errors on well-formed input
@@ -25,16 +26,63 @@ var (
 	ErrCampaignDeadline     = errors.New("crowdfunding: campaign deadline has passed")
 )
 
+// walletDebitLimiter is the minimal seam the crowdfunding money path depends
+// on for the fail-closed KYC-tier / daily-debit gate. *tiers.Service satisfies
+// it in production; unit tests inject a fake via WithTiers. Modeled as a local
+// interface — mirrors social's walletDebitLimiter. A contribution debits the
+// contributor's wallet into escrow, so the STRICT gate is used: it is not a
+// checkout purchase, so the Tier-0 checkout allowance (ADR-043) does NOT apply
+// here.
+type walletDebitLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
+// must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
+var ErrTierGateUnwired = errors.New("crowdfunding: money path requires a tier gate (not wired)")
+
 // Service manages crowdfunding campaigns, contributions, and payouts/refunds.
 type Service struct {
 	db         *pgxpool.Pool
 	ledger     *ledger.Service
 	settlement *settlement.Service
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	tiers      walletDebitLimiter
 }
 
+// NewService builds the crowdfunding service. The tier-limit gate is
+// constructed from the same pool (tiers.NewService needs only the DB), so no
+// extra wiring is required at the call site — same convention as
+// social.NewService. A nil pool leaves the gate nil, and enforceDebitLimit
+// then fails closed via ErrTierGateUnwired.
 func NewService(db *pgxpool.Pool, ledger *ledger.Service, settlement *settlement.Service) *Service {
-	return &Service{db: db, ledger: ledger, settlement: settlement}
+	s := &Service{db: db, ledger: ledger, settlement: settlement}
+	if db != nil {
+		s.tiers = tiers.NewService(db)
+	}
+	return s
+}
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *Service) WithTiers(t walletDebitLimiter) *Service {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
+}
+
+// enforceDebitLimit is the fail-closed guard applied before the Contribute
+// escrow debit (E2E-FIN-046): the same EnforceWalletDebitLimit the canonical
+// transfer rail (finance/transfers) runs. Tier 0 → ErrWalletDisabled, over
+// daily cap → ErrDailyLimitExceeded, gate/db errors refuse, and a missing gate
+// refuses via ErrTierGateUnwired. The error is propagated UNWRAPPED so the
+// handler maps the tier sentinels to 403 via errors.Is.
+func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	return s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo)
 }
 
 // CommissionRecorder is the nil-safe seam into the central Commission & Profit
@@ -203,6 +251,15 @@ func (s *Service) Contribute(ctx context.Context, campaignID, contributorID stri
 	}
 	if time.Now().After(deadline) {
 		return nil, ErrCampaignDeadline
+	}
+
+	// Tier gate (fail-closed, E2E-FIN-046): the contribution debits the
+	// contributor's wallet into escrow, so the same EnforceWalletDebitLimit the
+	// transfer rail applies runs BEFORE money moves — a refused attempt posts
+	// zero ledger legs and no contribution row. Replays already returned the
+	// existing contribution above, so a completed key never reaches this gate.
+	if err := s.enforceDebitLimit(ctx, contributorID, req.AmountKobo); err != nil {
+		return nil, err
 	}
 
 	ref := "campaign:" + campaignID + ":contributor:" + contributorID

@@ -136,7 +136,7 @@ func (s *RewardService) OnPurchaseSettled(ctx context.Context, in PurchaseSettle
 	}
 
 	s.emit(ctx, "referral.reward.credited", map[string]any{
-		"reward_id": rewardID, "referrer_id": referrerID, "referred_user_id": in.PayerUserID,
+		"reward_id": rewardID, keyReferrerID: referrerID, keyReferredUserID: in.PayerUserID,
 		"transaction_id": in.TransactionID, "module": in.Module, "reward_kobo": rewardKobo,
 		"applied_rate": rate, "config_version": cfgVersion,
 	})
@@ -199,7 +199,7 @@ func (s *RewardService) OnPurchaseRefunded(ctx context.Context, in PurchaseRefun
 	}
 
 	s.emit(ctx, "referral.reward.reversed", map[string]any{
-		"reward_id": rewardID, "referrer_id": referrerID,
+		"reward_id": rewardID, keyReferrerID: referrerID,
 		"transaction_id": in.TransactionID, "reward_kobo": rewardKobo,
 	})
 	return nil
@@ -355,49 +355,80 @@ func (s *RewardService) GetOrCreateLink(ctx context.Context, referrerID string) 
 	return nil, fmt.Errorf("referrals: no free referral code in %d attempts", codeIssueAttempts)
 }
 
-// Attribute applies a referral code at signup: resolves the code to a referrer and
-// creates the permanent referral_attributions row for the caller. Idempotent per
-// user (referred_user_id UNIQUE). Rejects self-referral and unknown codes.
-func (s *RewardService) Attribute(ctx context.Context, referredUserID, code string) (string, error) {
+// Attribute applies a referral code at signup (or as a late claim afterwards):
+// resolves the code to a referrer and writes the permanent referral_attributions
+// row for the caller. Idempotent per user (referred_user_id UNIQUE). Rejects
+// self-referral and unknown codes.
+//
+// Late-claim semantics (E2E-FIN-042): the §7A signup resolver ALWAYS writes a
+// row — a codeless signup gets a house placeholder (is_house, referrer NULL) —
+// so the plain ON CONFLICT DO NOTHING insert this endpoint used to run was a
+// silent no-op for every codeless signup: the placeholder survived, the code
+// never attributed, and the response lied with referrer_id="". The upsert
+// below now REPLACES a still-claimable house placeholder with the real
+// referrer (mirroring the claimable conditions attribution.Service.ClaimCode
+// enforces: is_house, status='grace', grace window open). A row already held
+// by a real referrer is never overwritten — first-real-attribution wins, so a
+// concurrent signup-time attribution beats a racing late claim.
+//
+// Returns (referrerID, attributed): referrerID is the user's ACTUAL current
+// referrer ("" when still house-attributed), and attributed is true only when
+// the submitted code is the attribution now in effect — false when a different
+// real referrer already won or the house row is no longer claimable.
+func (s *RewardService) Attribute(ctx context.Context, referredUserID, code string) (string, bool, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
-		return "", fmt.Errorf("referrals: attribute requires a code")
-	}
-
-	// Already attributed? Idempotent — return the existing referrer.
-	if existing, err := s.attributedReferrer(ctx, referredUserID); err != nil {
-		return "", err
-	} else if existing != "" {
-		return existing, nil
+		return "", false, errors.New("referrals: attribute requires a code")
 	}
 
 	referrerID, err := s.resolveCode(ctx, code)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if referrerID == "" {
-		return "", fmt.Errorf("referrals: unknown referral code")
+		return "", false, errors.New("referrals: unknown referral code")
 	}
 	if referrerID == referredUserID {
-		return "", fmt.Errorf("referrals: self-referral rejected")
+		return "", false, errors.New("referrals: self-referral rejected")
 	}
 
-	const ins = `
+	// Insert on a fresh user; on the UNIQUE(referred_user_id) conflict, override
+	// ONLY a claimable house placeholder — the WHERE on the conflict update is
+	// what makes the racing-real-attribution case a safe no-op (its is_house is
+	// false), preserving first-real-attribution-wins atomically.
+	const upsert = `
 		INSERT INTO referral_attributions (referred_user_id, referrer_id, attribution_type, code_used)
 		VALUES ($1,$2,'code',$3)
-		ON CONFLICT (referred_user_id) DO NOTHING`
-	if _, err := s.db.Exec(ctx, ins, referredUserID, referrerID, code); err != nil {
-		return "", fmt.Errorf("referrals: insert attribution: %w", err)
+		ON CONFLICT (referred_user_id) DO UPDATE
+			SET referrer_id      = EXCLUDED.referrer_id,
+			    house_account_id = NULL,
+			    attribution_type = 'code',
+			    code_used        = EXCLUDED.code_used,
+			    is_house         = false,
+			    risk_flag        = NULL,
+			    reassigned_from  = 'house',
+			    reassigned_at    = now(),
+			    updated_at       = now()
+			WHERE referral_attributions.is_house
+			  AND referral_attributions.status = 'grace'
+			  AND (referral_attributions.grace_expires_at IS NULL
+			       OR referral_attributions.grace_expires_at > now())`
+	res, err := s.db.Exec(ctx, upsert, referredUserID, referrerID, code)
+	if err != nil {
+		return "", false, fmt.Errorf("referrals: write attribution: %w", err)
 	}
-	// Re-read to return the authoritative referrer (covers a concurrent insert).
+	// Re-read to return the authoritative referrer (covers a concurrent insert
+	// or a conflict row the WHERE declined to update).
 	final, err := s.attributedReferrer(ctx, referredUserID)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	s.emit(ctx, "referral.attributed", map[string]any{
-		"referred_user_id": referredUserID, "referrer_id": final, "code": code,
-	})
-	return final, nil
+	if res.RowsAffected() > 0 {
+		s.emit(ctx, "referral.attributed", map[string]any{
+			keyReferredUserID: referredUserID, keyReferrerID: referrerID, "code": code,
+		})
+	}
+	return final, final != "" && final == referrerID, nil
 }
 
 // resolveCode maps a code to a referrer, checking the engine's referral_links
@@ -689,7 +720,7 @@ func (s *RewardService) RecalculateTiers(ctx context.Context) error {
 			return fmt.Errorf("referrals: recalc upsert tier: %w", err)
 		}
 		s.emit(ctx, "referral.tier.recalculated", map[string]any{
-			"referrer_id": rr.referrerID, "active_referral_count": rr.count,
+			keyReferrerID: rr.referrerID, "active_referral_count": rr.count,
 			"current_tier": tier, "current_rate": rate,
 		})
 
@@ -743,7 +774,7 @@ func (s *RewardService) awardMilestone(ctx context.Context, referrerID string, b
 		return fmt.Errorf("referrals: mark milestone paid: %w", err)
 	}
 	s.emit(ctx, "referral.milestone.paid", map[string]any{
-		"referrer_id": referrerID, "threshold": band.Threshold, "bonus_kobo": band.BonusKobo,
+		keyReferrerID: referrerID, "threshold": band.Threshold, "bonus_kobo": band.BonusKobo,
 	})
 	return nil
 }
@@ -1042,7 +1073,7 @@ func (s *RewardService) AdjustCase(ctx context.Context, referrerID string, adjus
 		}
 	}
 	s.emit(ctx, "referral.case.adjusted", map[string]any{
-		"referrer_id": referrerID, "adjust_kobo": adjustKobo, "reason": reason, "admin_id": adminID,
+		keyReferrerID: referrerID, "adjust_kobo": adjustKobo, "reason": reason, "admin_id": adminID,
 	})
 	return nil
 }

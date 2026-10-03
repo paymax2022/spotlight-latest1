@@ -7,7 +7,7 @@ import {
 import { buildRealityTvShowSteps } from '@/src/features/registration/forms/reality-tv-show';
 import type { RegistrationDraft } from '@/src/features/registration/types';
 
-describe('registration draft-save contract (PATCH /api/registration/applications/[id])', () => {
+describe('registration draft-save contract (PATCH /api/registration/applications/[id]/step)', () => {
   it('sends the { stepKey, values } body the PATCH handler requires', () => {
     const body = buildDraftSaveBody({ 'personal.firstName': 'Ada' });
     expect(body).toEqual({

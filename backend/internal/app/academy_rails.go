@@ -19,6 +19,7 @@ import (
 	"spotlight/backend/internal/academy/tutor"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/integrations/rtc"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
@@ -39,13 +40,42 @@ import (
 //     onboarding); auto-assigning a privileged role server-side would over-grant.
 //     The backend only records the routed application.
 
+// ErrTierGateUnwired is returned when an app-layer money adapter has no tier
+// gate — a nil gate must fail CLOSED, never debit ungated (mirrors
+// social.ErrTierGateUnwired; E2E-FIN-046).
+var ErrTierGateUnwired = errors.New("app: money path requires a tier gate (not wired)")
+
+// enforceAdapterDebitLimit is the fail-closed guard shared by the app-layer
+// money adapters (E2E-FIN-046): the same EnforceWalletDebitLimit the canonical
+// transfer rail (finance/transfers) runs. Every gated adapter debit is a wallet
+// DEBIT (academy purchase charge, fees collect, vault deposit, scholarship
+// funding, triage payment), so the STRICT gate is used — the Tier-0 checkout
+// allowance (ADR-043) does NOT apply here. Tier 0 → tiers.ErrWalletDisabled,
+// over daily cap → tiers.ErrDailyLimitExceeded, gate/db errors refuse, and a
+// missing gate refuses via ErrTierGateUnwired. The error propagates UNWRAPPED
+// so a caller can errors.Is the tier sentinels to 403.
+func enforceAdapterDebitLimit(ctx context.Context, gate *tiers.Service, userID string, amountKobo int64) error {
+	if gate == nil {
+		return ErrTierGateUnwired
+	}
+	return gate.EnforceWalletDebitLimit(ctx, userID, amountKobo)
+}
+
 // academyLedgerRail charges/collects on the Paymax wallet ledger: it debits the
 // user's wallet into the academy escrow standing account. Idempotent on idemKey
 // (the ledger enforces it). Satisfies commerce.PaymentRail (Charge) and
 // edupay.CollectRail (Collect) structurally — no shadow ledger (golden rule 2/3).
-type academyLedgerRail struct{ ledger *ledger.Service }
+// The tier-limit gate runs BEFORE the debit (E2E-FIN-046); a nil gate fails
+// closed via ErrTierGateUnwired.
+type academyLedgerRail struct {
+	ledger *ledger.Service
+	tiers  *tiers.Service
+}
 
 func (a academyLedgerRail) move(ctx context.Context, userID, reference, idemKey string, amountMinor int64) (string, error) {
+	if err := enforceAdapterDebitLimit(ctx, a.tiers, userID, amountMinor); err != nil {
+		return "", err
+	}
 	acc, err := a.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return "", err

@@ -112,6 +112,20 @@ func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID strin
 		Reference: "crypto:swap:" + from.Symbol + "->" + to.Symbol, idem: idemKey,
 	}
 
+	// Tier gate (fail-closed, E2E-FIN-046): the swap's cash legs DEBIT the wallet
+	// (buy B + retained spread = gross cashKobo), so the same
+	// EnforceWalletDebitLimit the transfer rail applies runs BEFORE the order and
+	// holdings are recorded — a refused attempt moves nothing. Skipped only when
+	// the buy leg is already durably posted (led.Posted): a replay of a completed
+	// swap must re-drive to the filled result, not refuse on today's usage.
+	if posted, err := s.led.Posted(ctx, idemKey+":buy"); err != nil {
+		return nil, err
+	} else if !posted {
+		if err := s.enforceDebitLimit(ctx, userID, q.CashKobo); err != nil {
+			return nil, err
+		}
+	}
+
 	// 1) Asset legs FIRST (fail-closed oversell): record the order + move both
 	//    holdings atomically. A replay is a no-op (dup → holdings untouched).
 	orderID, dup, err := s.repo.RecordSwapFill(ctx, o)
@@ -380,6 +394,21 @@ func (s *Service) Withdraw(ctx context.Context, userID, assetID, addressID strin
 		UserID: userID, AssetID: a.ID, Symbol: a.Symbol, AddressID: addr.ID,
 		Units: units, NetworkFeeUnits: netFee, FeeKobo: feeKobo, PriceKobo: priceKobo,
 		Provider: s.withdraw.Name(), Reference: "crypto:withdraw:" + a.Symbol, idem: idemKey,
+	}
+
+	// Tier gate (fail-closed, E2E-FIN-046): the fiat processing fee DEBITS the
+	// wallet below, and a Tier-0 wallet must not open an asset withdrawal at all,
+	// so the same EnforceWalletDebitLimit the transfer rail applies runs BEFORE
+	// any units are parked — a refused attempt creates no withdrawal row and
+	// posts zero ledger legs. Skipped only when the fee leg is already durably
+	// posted (led.Posted): a replay then falls through to the dup return below
+	// instead of refusing on today's usage.
+	if posted, err := s.led.Posted(ctx, idemKey+":fee"); err != nil {
+		return nil, err
+	} else if !posted {
+		if err := s.enforceDebitLimit(ctx, userID, feeKobo); err != nil {
+			return nil, err
+		}
 	}
 
 	// 1) Create the withdrawal + park the units atomically (state=requested). A

@@ -189,21 +189,39 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
           setLoggedInUserAvatar(avatarUrl);
         }
 
-        const createRes = await authFetch('/api/registration/applications', {
-          method: 'POST',
-          body: JSON.stringify({ contestSlug: contest.slug }),
-        }, { json: true });
+        // React StrictMode double-mounts this effect in dev (and a second tab
+        // or a re-click can do the same in prod): two concurrent creates race
+        // the one-live-application-per-contest unique index and the loser gets
+        // a 500. Reusing the 409's existing registration, plus one retry so the
+        // race loser lands on it, keeps bootstrap single-draft.
+        let appId: string | undefined;
+        let createError = 'Unable to start application.';
+        for (let attempt = 0; attempt < 2 && !appId; attempt++) {
+          const createRes = await authFetch('/api/registration/applications', {
+            method: 'POST',
+            body: JSON.stringify({ contestSlug: contest.slug }),
+          }, { json: true });
 
-        const createPayload = await createRes.json().catch(() => ({}));
-        if (isUnauthorized(createRes)) {
-          redirectToLogin(pathname || `/apply/${contestSlug}`);
-          return;
+          const createPayload = await createRes.json().catch(() => ({}));
+          if (isUnauthorized(createRes)) {
+            redirectToLogin(pathname || `/apply/${contestSlug}`);
+            return;
+          }
+          if (createRes.ok && createPayload?.success && createPayload?.draft?.id) {
+            appId = createPayload.draft.id as string;
+            break;
+          }
+          // 409 carries the already-live application — continue into it.
+          const existingId = createPayload?.registration?.id;
+          if (typeof existingId === 'string' && existingId) {
+            appId = existingId;
+            break;
+          }
+          createError = createPayload?.error || createError;
         }
-        if (!createRes.ok || !createPayload?.success || !createPayload?.draft?.id) {
-          throw new Error(createPayload?.error || 'Unable to start application.');
+        if (!appId) {
+          throw new Error(createError);
         }
-
-        const appId = createPayload.draft.id as string;
         const readRes = await authFetch(`/api/registration/applications/${appId}`, {
           cache: 'no-store',
         });
@@ -298,7 +316,7 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
     setMessage('');
 
     try {
-      const res = await authFetch(`/api/registration/applications/${draft.id}`, {
+      const res = await authFetch(`/api/registration/applications/${draft.id}/step`, {
         method: 'PATCH',
         body: JSON.stringify({
           stepKey: currentStep.key,
@@ -311,14 +329,17 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
         return false;
       }
 
-      if (!res.ok || !payload?.success) {
-        throw new Error(payload?.error || 'Failed to save application step.');
-      }
-
+      // The strict step endpoint answers 422 with the validation payload on a
+      // failed step — check it before the generic !res.ok branch so the
+      // offending fields still get highlighted.
       if (payload.validation?.isValid === false) {
         setErrors(payload.validation.errors || {});
         setErrorMessage('Please fix the highlighted fields before continuing.');
         return false;
+      }
+
+      if (!res.ok || !payload?.success) {
+        throw new Error(payload?.error || 'Failed to save application step.');
       }
 
       const updatedDraft = payload.draft as RegistrationDraft;

@@ -148,6 +148,14 @@ func (h *Handler) GetListing(c *gin.Context) {
 		fail(c, err)
 		return
 	}
+	// Tombstone gate (E2E-SOC-037): a soft-deleted listing answers
+	// LISTING_NOT_FOUND, identical to a row that never existed — the public
+	// read path must not leak removed_user/removed_policy rows. Checked before
+	// RecordListingView so a removed listing does not keep counting views.
+	if listingTombstoned(l.Status) {
+		fail(c, ErrListingNotFound)
+		return
+	}
 	// Count the view only after a successful read, and never on the error path.
 	// Best effort by design: a failed counter bump must not fail loading a
 	// listing. Anonymous browsers (this route is tier0_browse) resolve to "" and

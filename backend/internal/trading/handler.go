@@ -7,6 +7,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/trading/kyc"
@@ -38,6 +39,10 @@ func NewHandler(k *kyc.Service, w *wallet.Service, p *promotion.Service) *Handle
 // errMap maps typed service errors to status codes; unknown → 400.
 var errMap = httperr.New(http.StatusBadRequest,
 	httperr.R(http.StatusForbidden, wallet.ErrNoAccess),
+	// Tier-limit refusals: 403 — the same mapping the canonical transfer rail
+	// uses (E2E-FIN-046). An unwired/degraded gate is a dependency failure: 503.
+	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
+	httperr.R(http.StatusServiceUnavailable, wallet.ErrTierGateUnwired),
 	httperr.R(http.StatusPaymentRequired, wallet.ErrInsufficientCash),
 	httperr.R(http.StatusConflict, wallet.ErrInsufficientUnit, wallet.ErrIdemConflict, kyc.ErrInvalidTransition, kyc.ErrVersionConflict),
 	httperr.R(http.StatusAccepted, wallet.ErrDebitPending, wallet.ErrCreditPending),

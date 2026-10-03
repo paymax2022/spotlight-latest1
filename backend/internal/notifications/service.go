@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/hibiken/asynq"
 	"io"
 	"log"
 	"net/http"
+	"spotlight/backend/internal/platform/metrics"
 	"spotlight/backend/internal/platform/queue"
 	"time"
 )
@@ -66,10 +68,30 @@ func NewService(client *asynq.Client) *Service {
 }
 
 // Send enqueues a notification for async delivery on the specified channels.
+//
+// E2E-FR-051: enqueue failures were previously dropped silently (callers did
+// `_ = svc.Send(...)`) — 115 tasks sat pending unnoticed during a failure
+// drill. This method is now the observability floor: EVERY per-channel failure
+// is logged (structured key=value) AND counted on the
+// paymax.notification.enqueue metric, and ALL channels are attempted before
+// the aggregated error is returned — one bad channel must not starve the rest.
+// A nil client (queue not wired) is itself a reportable failure, not a panic.
 func (s *Service) Send(ctx context.Context, n Notification) error {
 	if len(n.Channels) == 0 {
 		n.Channels = []Channel{ChannelPush, ChannelInApp}
 	}
+	if s.client == nil {
+		err := errors.New("notifications: asynq client not configured")
+		for _, ch := range n.Channels {
+			if taskTypeForChannel(ch) == "" {
+				continue
+			}
+			metrics.RecordNotificationEnqueue(ctx, string(ch), "client_unconfigured")
+		}
+		log.Printf("[notifications] enqueue failed reason=client_unconfigured user=%s event=%s channels=%v", n.UserID, n.Event, n.Channels)
+		return err
+	}
+	var errs []error
 	for _, ch := range n.Channels {
 		taskType := taskTypeForChannel(ch)
 		if taskType == "" {
@@ -77,13 +99,22 @@ func (s *Service) Send(ctx context.Context, n Notification) error {
 		}
 		task, err := queue.NewTask(taskType, n, asynq.MaxRetry(3))
 		if err != nil {
-			return fmt.Errorf("notifications: create task %s: %w", taskType, err)
+			err = fmt.Errorf("notifications: create task %s: %w", taskType, err)
+			log.Printf("[notifications] enqueue failed reason=marshal_error channel=%s task=%s user=%s event=%s err=%v", ch, taskType, n.UserID, n.Event, err)
+			metrics.RecordNotificationEnqueue(ctx, string(ch), "marshal_error")
+			errs = append(errs, err)
+			continue
 		}
 		if _, err := s.client.EnqueueContext(ctx, task); err != nil {
-			return fmt.Errorf("notifications: enqueue %s: %w", taskType, err)
+			err = fmt.Errorf("notifications: enqueue %s: %w", taskType, err)
+			log.Printf("[notifications] enqueue failed reason=enqueue_error channel=%s task=%s user=%s event=%s err=%v", ch, taskType, n.UserID, n.Event, err)
+			metrics.RecordNotificationEnqueue(ctx, string(ch), "failure")
+			errs = append(errs, err)
+			continue
 		}
+		metrics.RecordNotificationEnqueue(ctx, string(ch), "success")
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Predefined helpers for common events.

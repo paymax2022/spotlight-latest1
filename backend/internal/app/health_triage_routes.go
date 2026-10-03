@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/health/triage"
 	"spotlight/backend/internal/health/triage/care"
 	"spotlight/backend/internal/health/triage/core"
@@ -30,13 +31,17 @@ import (
 //   - WhatsApp omnichannel driven by the core session service (gated)
 //
 // Member: /api/finance/health/triage/*; admin: /api/health/triage/admin/*.
+// adminAuthMW must be the same RequireAuthContext middleware the finance group
+// uses (mapsAuth()): adminGroupTop5 applies it before requireUserID, which only
+// reads the user_id it populates — without it every /api/health/triage/admin/*
+// route 401s even with a valid token (E2E-SOC-034).
 func RegisterHealthTriage(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService,
-	ledgerSvc *ledger.Service, mapSvc *maps.Service, anthropicKey, redisURL, engineName, infID, infKey, waSecret string,
+	adminAuthMW gin.HandlerFunc, ledgerSvc *ledger.Service, mapSvc *maps.Service, anthropicKey, redisURL, engineName, infID, infKey, waSecret string,
 	whatsappEnabled bool, audit services.AuditService) {
 	if pool == nil {
 		return
 	}
-	adminG := adminGroupTop5(r, "/api/health/triage/admin")
+	adminG := adminGroupTop5(r, "/api/health/triage/admin", adminAuthMW)
 
 	// Clinical engine: licensed Infermedica when configured, else deterministic mock.
 	var engine triage.EngineProvider
@@ -60,7 +65,7 @@ func RegisterHealthTriage(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool
 	// disposition into the existing pharmacy/lab/telemedicine booking flows.
 	var pay care.Payment
 	if ledgerSvc != nil {
-		pay = triagePayment{l: ledgerSvc}
+		pay = triagePayment{l: ledgerSvc, tiers: tiers.NewService(pool)}
 	}
 	var loc care.EmergencyLocator
 	if mapSvc != nil {
@@ -89,10 +94,19 @@ func RegisterHealthTriage(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool
 }
 
 // triagePayment charges the user's wallet into the escrow standing account via the
-// ledger (idempotent on idemKey). Satisfies care.Payment.
-type triagePayment struct{ l *ledger.Service }
+// ledger (idempotent on idemKey). Satisfies care.Payment. The tier-limit gate runs
+// BEFORE the debit (E2E-FIN-046); a nil gate fails closed via ErrTierGateUnwired.
+type triagePayment struct {
+	l     *ledger.Service
+	tiers *tiers.Service
+}
 
 func (p triagePayment) Charge(ctx context.Context, userID, reference, idemKey string, amountMinor int64) (string, error) {
+	// Tier gate (fail-closed, E2E-FIN-046): the same EnforceWalletDebitLimit the
+	// transfer rail applies — a refused attempt posts zero ledger legs.
+	if err := enforceAdapterDebitLimit(ctx, p.tiers, userID, amountMinor); err != nil {
+		return "", err
+	}
 	acc, err := p.l.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return "", err

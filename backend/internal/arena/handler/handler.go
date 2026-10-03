@@ -18,6 +18,7 @@ import (
 	"spotlight/backend/internal/arena"
 	"spotlight/backend/internal/arena/quiz"
 	"spotlight/backend/internal/arena/service"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 // entryHashHex hex-encodes a signed entry's hash for the response.
@@ -66,6 +67,12 @@ func mapErr(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "POT_STATE"})
 	case errors.Is(err, service.ErrRateLimited):
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
+	// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
+	// unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
+	case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+	case errors.Is(err, service.ErrTierGateUnwired):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 	case errors.Is(err, service.ErrInvalidInput):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:

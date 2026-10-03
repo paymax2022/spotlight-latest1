@@ -45,8 +45,13 @@ func (h *RewardHandler) PostLink(c *gin.Context) {
 	c.JSON(http.StatusOK, link)
 }
 
-// PostAttribute handles POST /v1/referrals/attribute — apply a code at signup.
-// Idempotent per user; rejects self-referral and unknown codes.
+// PostAttribute handles POST /v1/referrals/attribute — apply a code at signup
+// or as a late claim. Idempotent per user; rejects self-referral and unknown
+// codes. The response is honest about the outcome: `attributed` is true only
+// when the submitted code is the attribution now in effect (false when a
+// different real referrer already won or the house placeholder is no longer
+// claimable), and `referrer_id` is the caller's ACTUAL current referrer —
+// empty when still house-attributed.
 func (h *RewardHandler) PostAttribute(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
@@ -60,12 +65,14 @@ func (h *RewardHandler) PostAttribute(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	referrerID, err := h.svc.Attribute(c.Request.Context(), uid, req.Code)
+	referrerID, attributed, err := h.svc.Attribute(c.Request.Context(), uid, req.Code)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"referrer_id": referrerID, "referred_user_id": uid})
+	c.JSON(http.StatusOK, gin.H{
+		keyReferrerID: referrerID, keyReferredUserID: uid, "attributed": attributed,
+	})
 }
 
 // GetDashboard handles GET /v1/referrals/me/dashboard.
@@ -357,7 +364,7 @@ func (h *RewardHandler) AdminSetCode(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"code": link.Code, "referrer_id": link.ReferrerID})
+	c.JSON(http.StatusOK, gin.H{"code": link.Code, keyReferrerID: link.ReferrerID})
 }
 
 // AdminMilestonesLog handles GET /v1/admin/referrals/milestones-log (A6).

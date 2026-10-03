@@ -271,6 +271,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	)
 
 	xferSvc := transfers.NewService(pool, ledgerSvc, tiersSvc, paymentProvider, disbRegistry)
+	// E2E-X-029: without a durable sink, transfers.audit() was a stdout log line
+	// and money mutations left zero audit_logs rows. Wire the shared audit sink
+	// (built above) so every transfer action lands in audit_logs; still
+	// best-effort — the sink swallows its own errors and can never fail a
+	// transfer.
+	xferSvc.SetAuditor(auditSink)
 
 	// When the commission feature is on, inject a nil-safe recorder so realized
 	// transfer profit lands in commission_earnings for the profit report. The recorder
@@ -574,9 +580,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Pass the bare finance group: savings.Handler.Register adds the "/savings"
 		// segment itself, so routes land at /api/finance/savings/* (the client
 		// contract). Passing finance.Group("/savings") here double-mounted them at
-		// /api/finance/savings/savings/*. NOTE: RegisterSocialPay below has the same
-		// latent double-mount and should get the same fix when social goes live.
-		RegisterSavings(finance, adminGroupTop5(r, "/api/savings/admin"), cfg, pool, rbac)
+		// /api/finance/savings/savings/*. RegisterSocialPay below gets the same
+		// treatment (E2E-FIN-043) — see the note there.
+		RegisterSavings(finance, adminGroupTop5(r, "/api/savings/admin", mapsAuth()), cfg, pool, rbac)
 	}
 	// AI-trading fund (Module-KYC + fund wallet). Mounted at the paths the module
 	// documents and the clients call:
@@ -600,30 +606,30 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			cfg.TradingFeeBps, cfg.TradingHurdleBps, cfg.FeatureAITradingEnabled)
 	}
 	if cfg.FeatureSocialPayEnabled && pool != nil {
-		RegisterSocialPay(finance.Group("/social"), adminGroupTop5(r, "/api/social/admin"), pool, rbac)
+		// E2E-FIN-043: pass the BARE finance group — social.Handler.Register adds
+		// "/social" itself, so the canonical /api/finance/social/* now works.
+		// RegisterSocialPay additionally re-mounts /api/finance/social/social/*
+		// as a backward-compatible alias for already-deployed callers.
+		RegisterSocialPay(finance, adminGroupTop5(r, "/api/social/admin", mapsAuth()), pool, rbac)
 	}
 	if cfg.FeatureEventsEnabled && pool != nil {
-		// adminGroupTop5 only calls requireUserID(), which reads ginutil.UserID(c)
-		// but never sets it — RequireAuthContext is what populates that (and the RBAC
-		// context GetAuthenticatedUser needs). Without mapsAuth() here, every route
-		// under /api/events/admin — including approve/suspend/settle — 401s for every
-		// caller, including super-admin. Same fix already applied to tAdmin above and
-		// several other admin groups in this file; adminGroupTop5's other 13 call
-		// sites still have this gap and are a separate follow-up.
-		eventsAdmin := r.Group("/api/events/admin")
-		eventsAdmin.Use(mapsAuth())
-		eventsAdmin.Use(requireUserID())
-		RegisterEvents(finance.Group("/events"), eventsAdmin, cfg, pool, rbac, rtHub)
+		// adminGroupTop5 now takes authMW and applies it BEFORE requireUserID:
+		// RequireAuthContext is what populates ginutil.UserID(c) (and the RBAC
+		// context GetAuthenticatedUser needs); without it every route under
+		// /api/events/admin — including approve/suspend/settle — 401s for every
+		// caller, including super-admin. The same wiring now covers every other
+		// adminGroupTop5 call site (E2E-SOC-034 follow-up, done).
+		RegisterEvents(finance.Group("/events"), adminGroupTop5(r, "/api/events/admin", mapsAuth()), cfg, pool, rbac, rtHub)
 	}
 	if cfg.FeatureLoyaltyEnabled && pool != nil {
-		RegisterLoyalty(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin"), pool, rbac)
-		RegisterLoyaltyBlack(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin/black"), pool, rbac)
+		RegisterLoyalty(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin", mapsAuth()), pool, rbac)
+		RegisterLoyaltyBlack(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin/black", mapsAuth()), pool, rbac)
 	}
 	if cfg.FeatureCreatorsEnabled && pool != nil {
-		RegisterCreators(finance.Group("/creators"), adminGroupTop5(r, "/api/creators/admin"), pool, rbac, cfg)
+		RegisterCreators(finance.Group("/creators"), adminGroupTop5(r, "/api/creators/admin", mapsAuth()), pool, rbac, cfg)
 	}
 	if cfg.FeatureP2PMarketEnabled && pool != nil {
-		RegisterP2PMarket(finance.Group("/p2p"), adminGroupTop5(r, "/api/p2p/admin"), pool, rbac, auditSink)
+		RegisterP2PMarket(finance.Group("/p2p"), adminGroupTop5(r, "/api/p2p/admin", mapsAuth()), pool, rbac, auditSink)
 	}
 
 	// what Spotlight earns on every service). Rate registry (audited), fee
@@ -633,7 +639,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// the finance ledger: DR provider_clearing → CR AccountCommission. ---
 	commission.RegisterCommission(
 		finance,
-		adminGroupTop5(r, "/api/commission/admin"),
+		adminGroupTop5(r, "/api/commission/admin", mapsAuth()),
 		pool, rbac, ledgerSvc, cfg.FeatureCommissionEnabled,
 	)
 
@@ -643,7 +649,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// admin /api/health/<vertical>/admin/* (RBAC health.<vertical>.*). Reuses
 	// escrow (HELD→RELEASE→REFUND), scheduler, transport last-mile, wallet/ledger.
 	if cfg.FeatureHealthEnabled && pool != nil {
-		RegisterHealth(finance, adminGroupTop5(r, "/api/health/admin"), pool, rbac, cfg, auditSink) // shared platform
+		RegisterHealth(finance, adminGroupTop5(r, "/api/health/admin", mapsAuth()), pool, rbac, cfg, auditSink) // shared platform
 		if cfg.FeatureHealthPharmacyEnabled {
 			// PHARMACY-001: NOT adminGroupTop5 — that helper applies requireUserID()
 			// on the group, which would run BEFORE RegisterHealthPharmacy's own
@@ -658,7 +664,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// Symptom-based medication search addon — its own flag AND'd with
 			// the pharmacy flag (FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED).
 			if cfg.FeaturePharmacySymptomSearchEnabled {
-				symptomSvc := RegisterHealthSymptomSearch(ctx, finance, adminGroupTop5(r, "/api/health/pharmacy/admin"), pool, redisClient, rbac)
+				symptomSvc := RegisterHealthSymptomSearch(ctx, finance, adminGroupTop5(r, "/api/health/pharmacy/admin", mapsAuth()), pool, redisClient, rbac)
 				// Order seams (PRD §10 review cases + §5.5 quantity caps): hand
 				// the symptom addon's collaborators to the pharmacy order flow.
 				// Flag off ⇒ this block never runs ⇒ nil seams ⇒ CreateOrder
@@ -690,7 +696,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// AI Symptom Checker (triage & navigation, NOT diagnosis) — reuses the care
 		// loop + wallet + clinician-governed red-flag layer. SC-1..SC-12 enforced.
 		if cfg.FeatureHealthTriageEnabled {
-			RegisterHealthTriage(r, finance, pool, rbac, ledgerSvc, mapSvc,
+			RegisterHealthTriage(r, finance, pool, rbac, mapsAuth(), ledgerSvc, mapSvc,
 				cfg.AnthropicAPIKey, cfg.RedisURL, cfg.TriageEngine, cfg.InfermedicaAppID,
 				cfg.InfermedicaAppKey, cfg.TriageWhatsAppSecret, cfg.FeatureHealthTriageWhatsAppEnabled, auditSink)
 		}
@@ -708,7 +714,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// unbacked academy rails (BNPL/payout/disburse/billing). nil per-rail ⇒ that
 		// package keeps its in-process dev stub (academy_rails_external.go).
 		academyBNPL, academyDisburse, academyBilling, academyPayout := academyRails(cfg)
-		RegisterAcademy(r, finance, pool, rbac, ledgerSvc, academyRTC, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled, cfg.FeatureAcademyTuitionEnabled, webhookHandler, cfg.FeatureInternalAcademyAPIEnabled, cfg.LedgerServiceToken)
+		RegisterAcademy(r, finance, pool, rbac, mapsAuth(), ledgerSvc, academyRTC, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled, cfg.FeatureAcademyTuitionEnabled, webhookHandler, cfg.FeatureInternalAcademyAPIEnabled, cfg.LedgerServiceToken)
 
 		// EdTech PLATFORM super-admin oversight (SU-01..SU-12): read-only cross-tenant
 		// console backend at /api/academy/admin/platform/*, gated purely by the seeded
@@ -1190,8 +1196,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 							tokens = append(tokens, tok)
 						}
 					}
+					// E2E-FR-051: a failed enqueue must not vanish — attempt every
+					// device token and surface the aggregate so the caller (and
+					// the per-channel log+metric inside Send) can observe it.
+					var sendErrs []error
 					for _, tok := range tokens {
-						_ = notifSvc.Send(ctx, notifications.Notification{
+						if err := notifSvc.Send(ctx, notifications.Notification{
 							UserID:    n.UserID,
 							Event:     notifications.Event(n.Type),
 							Title:     n.Title,
@@ -1199,9 +1209,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 							Data:      n.Data,
 							Channels:  []notifications.Channel{notifications.ChannelPush},
 							PushToken: tok,
-						})
+						}); err != nil {
+							sendErrs = append(sendErrs, err)
+						}
 					}
-					return nil
+					return errors.Join(sendErrs...)
 				}))
 			}
 		}
@@ -1555,6 +1567,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restaurantSvc = restaurant.NewService(pool, settlementSvcR).
 			WithLedger(ledgerSvc).
 			WithTiers(tiersSvc).
+			// E2E-X-030: order FSM transitions wrote zero audit rows (recordOrderEvent
+			// was a TODO no-op). Attach the shared audit sink so every transition
+			// lands in audit_logs; best-effort — it can never fail a transition.
+			WithAudit(auditSink).
 			// FOOD-005: the merchant/rider withdrawal money path (withdrawal.go) had a
 			// complete service (RequestWithdrawal/MarkWithdrawalPaid/MarkWithdrawalFailed)
 			// but was never wired — no flag, no routes, so it was completely unreachable.

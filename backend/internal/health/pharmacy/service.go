@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/tiers"
 	"strings"
 	"time"
 
@@ -1640,6 +1642,16 @@ func (s *Service) checkQuantityCaps(ctx context.Context, patientID string, lines
 // rejection gets the structured QuantityCapError shape (code + remaining);
 // everything else keeps the plain {success,error} envelope.
 func failCreateOrder(c *gin.Context, err error) {
+	// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
+	// unwired escrow gate is a dependency failure → 503 (E2E-FIN-046).
+	switch {
+	case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		return
+	case errors.Is(err, escrow.ErrTierGateUnwired):
+		ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	if qe, ok := errors.AsType[*QuantityCapError](err); ok {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"success":     false,

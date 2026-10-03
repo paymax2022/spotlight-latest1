@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/cashtag"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"time"
 )
 
@@ -16,6 +17,22 @@ import (
 type Auditor interface {
 	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
 }
+
+// walletDebitLimiter is the minimal seam the Social Pay money path depends on
+// for the fail-closed KYC-tier / daily-debit gate. *tiers.Service satisfies it
+// in production; unit tests inject a fake via WithTiers. Modeled as a local
+// interface — mirrors transport's tierLimiter — so the package never depends on
+// more of tiers than this one method. Every social debit is a wallet DEBIT
+// (send / pay-request / split share / pool contribution), so the STRICT gate
+// is used: these move cash between users, not a checkout purchase, so the
+// Tier-0 checkout allowance (ADR-043) deliberately does NOT apply here.
+type walletDebitLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
+// must fail CLOSED, never debit ungated (mirrors groups.ErrTierGateUnwired).
+var ErrTierGateUnwired = errors.New("social: money path requires a tier gate (not wired)")
 
 // Service implements Social Pay: P2P send/request on cashtag, split-bill and
 // group pool. All money moves through the finance ledger (NL-8), is idempotent
@@ -28,10 +45,41 @@ type Service struct {
 	tags  *cashtag.Service
 	aml   *AML
 	audit Auditor
+	tiers walletDebitLimiter
 }
 
 func NewService(db *pgxpool.Pool, led *ledger.Service, tags *cashtag.Service, aml *AML, audit Auditor) *Service {
-	return &Service{db: db, led: led, tags: tags, aml: aml, audit: audit}
+	s := &Service{db: db, led: led, tags: tags, aml: aml, audit: audit}
+	// The tier-limit gate is constructed from the same pool (tiers.NewService
+	// needs only the DB), so no extra wiring is required at the call site —
+	// same convention as transport.NewService. A nil pool leaves the gate nil,
+	// and enforceDebitLimit then fails closed via ErrTierGateUnwired.
+	if db != nil {
+		s.tiers = tiers.NewService(db)
+	}
+	return s
+}
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *Service) WithTiers(t walletDebitLimiter) *Service {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
+}
+
+// enforceDebitLimit is the fail-closed guard applied before EVERY social wallet
+// debit (E2E-FIN-041): the same EnforceWalletDebitLimit the canonical transfer
+// rail (finance/transfers) runs. Tier 0 → ErrWalletDisabled, over daily cap →
+// ErrDailyLimitExceeded, gate/db errors refuse, and a missing gate refuses via
+// ErrTierGateUnwired. The error is propagated UNWRAPPED so handlers map the
+// tier sentinels to 403 via errors.Is.
+func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	return s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo)
 }
 
 // Send transfers amountKobo from senderID to the user behind recipientHandle.
@@ -55,6 +103,17 @@ func (s *Service) Send(ctx context.Context, senderID, recipientHandle, note, ide
 	// Replay-safe: existing payment for this key short-circuits.
 	if p, err := s.paymentByIdem(ctx, idemKey); err == nil && p != nil {
 		return p, nil
+	}
+
+	// Tier guard (fail-closed, E2E-FIN-041): a cashtag send is a wallet debit, so
+	// it runs the same EnforceWalletDebitLimit the transfer rail applies — Tier 0
+	// and over-daily-cap senders are refused. Placed AFTER the replay short-
+	// circuit (same ordering rule as transfers.walletPreflight): once a send has
+	// completed, re-running the gate could only refuse a request whose money
+	// already moved — telling the caller it failed invites a fresh-key retry,
+	// which is a real second debit.
+	if err := s.enforceDebitLimit(ctx, senderID, amountKobo); err != nil {
+		return nil, err
 	}
 
 	// Move money: debit sender -> escrow standing, credit escrow -> recipient.
@@ -126,6 +185,11 @@ func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) err
 	}
 	// AML applies to the implied send.
 	if err := s.aml.Check(ctx, payerID, r.AmountKobo); err != nil {
+		return err
+	}
+	// Tier guard (fail-closed, E2E-FIN-041) BEFORE the state flip: a refused
+	// payer must leave the request PENDING, never PAID-without-money.
+	if err := s.enforceDebitLimit(ctx, payerID, r.AmountKobo); err != nil {
 		return err
 	}
 	// Flip state guarded first, then move money keyed off the request id.
@@ -327,6 +391,11 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 	if err := s.aml.Check(ctx, payerID, sh.AmountKobo); err != nil {
 		return err
 	}
+	// Tier guard (fail-closed, E2E-FIN-041) BEFORE the PENDING→PAID flip: a
+	// refused payer must leave the share collectible, not marked paid.
+	if err := s.enforceDebitLimit(ctx, payerID, sh.AmountKobo); err != nil {
+		return err
+	}
 	const upd = `UPDATE split_shares SET state='PAID', paid_at=now() WHERE id=$1 AND state='PENDING'`
 	ct, err := s.db.Exec(ctx, upd, shareID)
 	if err != nil || ct.RowsAffected() == 0 {
@@ -435,6 +504,11 @@ func (s *Service) ContributePool(ctx context.Context, userID, poolID string, amo
 		return 0, fmt.Errorf("social: pool not open")
 	}
 	if err := s.aml.Check(ctx, userID, amountKobo); err != nil {
+		return 0, err
+	}
+	// Tier guard (fail-closed, E2E-FIN-041): a pool contribution is a wallet
+	// debit and runs the same EnforceWalletDebitLimit as the transfer rail.
+	if err := s.enforceDebitLimit(ctx, userID, amountKobo); err != nil {
 		return 0, err
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)

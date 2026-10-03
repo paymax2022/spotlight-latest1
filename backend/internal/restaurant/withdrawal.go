@@ -470,7 +470,7 @@ func (s *Service) MarkWithdrawalFailed(ctx context.Context, withdrawalID, reason
 		Event:  EventWithdrawalReversed,
 		Title:  "Withdrawal reversed",
 		Body:   fmt.Sprintf("Your withdrawal of ₦%d.%02d could not be completed and was returned to your wallet.", out.AmountKobo/100, out.AmountKobo%100),
-		Data:   map[string]any{"withdrawal_id": out.ID, "amount_kobo": out.AmountKobo, "reason": reason},
+		Data:   map[string]any{"withdrawal_id": out.ID, "amount_kobo": out.AmountKobo, keyReason: reason},
 	})
 	return out, nil
 }

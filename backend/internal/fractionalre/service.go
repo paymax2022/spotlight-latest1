@@ -124,12 +124,17 @@ func (s *Service) WithPresigner(p Presigner) *Service { s.presigner = p; return 
 
 const moduleType = "fractionalre"
 
-// notify delivers a best-effort notification (never fails the caller).
+// notify delivers a best-effort notification (never fails the caller). The
+// error is logged rather than discarded (E2E-FR-051) — a failed enqueue must
+// stay observable; the enqueue layer also logs per-channel and counts the
+// paymax.notification.enqueue metric.
 func (s *Service) notify(ctx context.Context, userID, title, body string) {
 	if s.notifier == nil {
 		return
 	}
-	_ = s.notifier.Notify(ctx, userID, title, body)
+	if err := s.notifier.Notify(ctx, userID, title, body); err != nil {
+		log.Printf("[fractionalre] notifier failed user=%s err=%v", userID, err)
+	}
 }
 
 // Activate creates/activates the investor profile (idempotent).
