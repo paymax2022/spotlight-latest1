@@ -40,7 +40,10 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	member.GET("/p2p/sellers/:sellerId/rating", h.SellerRating)
 
 	// Admin dispute arbitration console (separation-of-duties enforced in escrow).
-	admin.POST("/p2p/orders/:orderId/arbitrate", guard("p2p.dispute.arbitrate"), h.Arbitrate)
+	// Unlike the member routes this does NOT self-prefix /p2p — the admin group
+	// is already mounted at /api/p2p/admin (a prefix here produced
+	// /api/p2p/admin/p2p/* — E2E-SOC-036).
+	admin.POST("/orders/:orderId/arbitrate", guard("p2p.dispute.arbitrate"), h.Arbitrate)
 }
 
 type createListingRequest struct {

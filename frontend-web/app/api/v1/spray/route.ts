@@ -8,9 +8,10 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 // not this root, so the send action itself was unreachable through the BFF.
 // Go mounts spray on the P2P member group (E2E-SOC-036) — see the sibling
 // route's comment for the path-map context. The Idempotency-Key is forwarded
-// verbatim (money mutation).
+// verbatim (money mutation). Gated on p2pMarket for the same reason as the
+// sibling catch-all: the upstream mount lives under FEATURE_P2P_MARKET_ENABLED.
 export async function POST(request: Request) {
-  if (!featureFlags.socialPay()) return errorResponse('This service is not available.', 503);
+  if (!featureFlags.p2pMarket()) return errorResponse('This service is not available.', 503);
   try {
     await requireRequestUser(request);
     return proxyToGoBackend(request, '/api/finance/p2p/spray');
