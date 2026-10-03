@@ -2,6 +2,7 @@ package care
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -138,9 +139,15 @@ func (l *fakeLocator) NearestER(_ context.Context, lat, lng float64) (string, st
 	return "St. Nicholas ER", "57 Campbell St, Lagos", 1200, nil
 }
 
-type fakeNotifier struct{ sent []string }
+type fakeNotifier struct {
+	sent []string
+	err  error
+}
 
 func (n *fakeNotifier) Notify(_ context.Context, userID, template string, _ map[string]any) error {
+	if n.err != nil {
+		return n.err
+	}
 	n.sent = append(n.sent, template+":"+userID)
 	return nil
 }
@@ -350,6 +357,38 @@ func TestEscalationLifecycle(t *testing.T) {
 	// Resolving again is illegal (resolved is terminal).
 	if _, err := svc.Resolve(ctx, e.ID, "clin-9"); err == nil {
 		t.Fatalf("expected illegal transition resolving a resolved case")
+	}
+}
+
+// A failed hand-off must NOT advance to notified — that would be the silent
+// flag SC-5 exists to prevent. The case stays raised and Notify retries cleanly.
+func TestNotifyFailureLeavesEscalationRaised(t *testing.T) {
+	repo := newFakeRepo()
+	notify := &fakeNotifier{err: errors.New("queue unreachable")}
+	svc := NewCareService(repo, nil, nil, notify, nil, nil)
+	ctx := context.Background()
+
+	e, err := svc.Raise(ctx, "sess-1", "user-1", "high-risk")
+	if err != nil {
+		t.Fatalf("Raise: %v", err)
+	}
+	if _, err := svc.Notify(ctx, e.ID); err == nil {
+		t.Fatalf("expected the delivery failure to propagate")
+	}
+	stored, err := repo.GetEscalation(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("GetEscalation: %v", err)
+	}
+	if stored.State != triage.EscRaised {
+		t.Fatalf("failed hand-off must leave the case raised, got %s", stored.State)
+	}
+	notify.err = nil
+	got, err := svc.Notify(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("retry after recovery: %v", err)
+	}
+	if got.State != triage.EscNotified {
+		t.Fatalf("retry state = %s, want notified", got.State)
 	}
 }
 

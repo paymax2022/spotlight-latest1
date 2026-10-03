@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/timeutil"
 )
 
@@ -63,7 +64,7 @@ func (h *Handler) ListVanity(c *gin.Context) {
 		ORDER BY created_at DESC`
 	rows, err := h.db.Query(c.Request.Context(), q, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	defer rows.Close()
@@ -72,13 +73,13 @@ func (h *Handler) ListVanity(c *gin.Context) {
 	for rows.Next() {
 		vr, scanErr := scanVanity(rows)
 		if scanErr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": scanErr.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, scanErr)})
 			return
 		}
 		out = append(out, vr)
 	}
 	if err := rows.Err(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, out)
@@ -122,7 +123,7 @@ func (h *Handler) CreateVanity(c *gin.Context) {
 		vr, err = scanVanity(h.db.QueryRow(ctx, fetchQ, userID, alias))
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, vr)

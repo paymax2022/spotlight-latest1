@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"net/http"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
 	"strconv"
 	"time"
@@ -183,7 +184,7 @@ func mapErr(c *gin.Context, err error) {
 	case errors.Is(err, ErrAlreadyReversed):
 		c.JSON(http.StatusConflict, gin.H{"error": "already_reversed"})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -195,7 +196,7 @@ func (h *Handler) MatchStatement(c *gin.Context) {
 		Lines    []StatementLine `json:"lines" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	recs, err := h.svc.MatchStatement(c.Request.Context(), body.Provider, body.Lines)

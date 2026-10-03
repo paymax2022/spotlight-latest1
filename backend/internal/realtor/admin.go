@@ -13,12 +13,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/estate"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyError = "error"
 
 // Admin handler (HTTP). Mounted under /api/realtor/admin with RBAC.
 // RBAC-gated by the `realtor.manage` permission (fail-closed). Every mutation is
@@ -41,7 +44,7 @@ func adminID(c *gin.Context) string {
 func (h *AdminHandler) Overview(c *gin.Context) {
 	out, err := h.repo.Overview(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, out)
@@ -52,7 +55,7 @@ func (h *AdminHandler) PendingListings(c *gin.Context) {
 	limit, offset := adminPage(c, 50)
 	listings, err := h.repo.PendingListings(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": listings})
@@ -67,29 +70,29 @@ func (h *AdminHandler) DecideListing(c *gin.Context) {
 		Reason   string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if !isValidListingDecision(body.Decision) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "decision must be one of approved, rejected, changes_requested"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "decision must be one of approved, rejected, changes_requested"})
 		return
 	}
 	beforeStatus, beforeVerification, err := h.repo.GetListingStatus(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "listing not found"})
+			c.JSON(http.StatusNotFound, gin.H{keyError: "listing not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	newStatus, err := h.repo.DecideListing(c.Request.Context(), id, body.Decision)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "listing not found"})
+			c.JSON(http.StatusNotFound, gin.H{keyError: "listing not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	_ = h.repo.InsertAudit(c.Request.Context(), adminID(c), "listing.decision", "listing", id, body.Reason,
@@ -103,7 +106,7 @@ func (h *AdminHandler) PendingVerifications(c *gin.Context) {
 	limit, offset := adminPage(c, 50)
 	reqs, err := h.repo.PendingVerifications(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": reqs})
@@ -118,19 +121,19 @@ func (h *AdminHandler) DecideVerification(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if !isValidVerificationStatus(body.Status) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "status must be one of approved, rejected, more_info"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "status must be one of approved, rejected, more_info"})
 		return
 	}
 	if err := h.repo.DecideVerification(c.Request.Context(), id, body.Status); err != nil {
 		if errors.Is(err, ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "verification subject not found"})
+			c.JSON(http.StatusNotFound, gin.H{keyError: "verification subject not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	_ = h.repo.InsertAudit(c.Request.Context(), adminID(c), "verification.decision", "listing", id, body.Reason,
@@ -143,7 +146,7 @@ func (h *AdminHandler) Payments(c *gin.Context) {
 	limit, offset := adminPage(c, 50)
 	payments, err := h.repo.Payments(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": payments})
@@ -154,7 +157,7 @@ func (h *AdminHandler) Escrow(c *gin.Context) {
 	limit, offset := adminPage(c, 50)
 	escrow, err := h.repo.Escrow(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": escrow})
@@ -172,24 +175,24 @@ func (h *AdminHandler) ResolveEscrow(c *gin.Context) {
 		Note     string `json:"note"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	result, err := h.repo.ResolveEscrow(c.Request.Context(), id, body.Decision, body.Note, adminID(c))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": "escrow deposit not found"})
+			c.JSON(http.StatusNotFound, gin.H{keyError: "escrow deposit not found"})
 		case errors.Is(err, ErrInvalidEscrowDecision):
-			c.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEscrowDecision.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, ErrInvalidEscrowDecision)})
 		case errors.Is(err, ErrEscrowAlreadyResolved):
-			c.JSON(http.StatusConflict, gin.H{"error": ErrEscrowAlreadyResolved.Error()})
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, ErrEscrowAlreadyResolved)})
 		case errors.Is(err, ErrMoveOutRequired):
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": ErrMoveOutRequired.Error()})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, ErrMoveOutRequired)})
 		case errors.Is(err, ErrLedgerNotConfigured):
-			c.JSON(http.StatusInternalServerError, gin.H{"error": ErrLedgerNotConfigured.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, ErrLedgerNotConfigured)})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		}
 		return
 	}
@@ -414,7 +417,7 @@ func NewStaysHandler(svc *StaysService) *StaysHandler { return &StaysHandler{svc
 func (h *StaysHandler) GetGatePass(c *gin.Context) {
 	callerID := ginutil.UserID(c)
 	if callerID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "authentication required"})
 		return
 	}
 	bookingID := c.Param("bookingId")
@@ -426,7 +429,7 @@ func (h *StaysHandler) GetGatePass(c *gin.Context) {
 	isEstateStaff := c.GetBool("property_estate_staff")
 	pass, err := h.svc.GetOrIssueGatePass(c.Request.Context(), bookingID, callerID, isEstateStaff)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no gate pass for this booking"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "no gate pass for this booking"})
 		return
 	}
 	c.JSON(http.StatusOK, pass)

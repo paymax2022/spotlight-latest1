@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // BusinessAccountCreate registers a business account for the caller.
@@ -13,7 +14,7 @@ func (h *Handler) BusinessAccountCreate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req BusinessAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	acct, err := h.svc.CreateBusinessAccount(c.Request.Context(), userID, req)
@@ -40,7 +41,7 @@ func (h *Handler) BusinessDeliveryCreate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req BusinessDeliveryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	d, err := h.svc.CreateDelivery(c.Request.Context(), userID, req, ginutil.IdempotencyKey(c))
@@ -56,7 +57,7 @@ func (h *Handler) BusinessBatchCreate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req BusinessBatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.CreateBatch(c.Request.Context(), userID, req, ginutil.IdempotencyKey(c))
@@ -182,7 +183,7 @@ func (h *Handler) BusinessDeliver(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req DeliverRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.DeliverDelivery(c.Request.Context(), c.Param("id"), userID, req.DropoffPin, req.ProofURL); err != nil {
@@ -197,7 +198,7 @@ func (h *Handler) BusinessFail(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req FailRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.FailDelivery(c.Request.Context(), c.Param("id"), userID, req.Reason); err != nil {

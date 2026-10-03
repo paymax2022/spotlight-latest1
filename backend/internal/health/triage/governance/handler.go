@@ -17,6 +17,8 @@ import (
 	"spotlight/backend/go-common/httperr"
 )
 
+const keyError = "error"
+
 // Handler exposes the admin clinical-governance API + the validation runner. All
 // admin routes are RBAC-gated by health.triage.review (applied at registration).
 // The actor is the authenticated reviewer (the licensed clinician signing off).
@@ -57,7 +59,7 @@ func respond[T any](c *gin.Context, v T, err error) {
 func (h *Handler) CreateContent(c *gin.Context) {
 	var in ContentItem
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.gov.CreateContentDraft(c.Request.Context(), actor(c), in)
@@ -70,7 +72,7 @@ func (h *Handler) EditContent(c *gin.Context) {
 		RAGTags []string `json:"rag_tags"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.gov.EditContent(c.Request.Context(), actor(c), c.Param("id"), body.Body, body.RAGTags)
@@ -102,7 +104,7 @@ func (h *Handler) ContentLifecycle(c *gin.Context) {
 	case "deprecate":
 		v, err = h.gov.DeprecateContent(ctx, uid, id)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "unknown action"})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: "unknown action"})
 		return
 	}
 	respond(c, v, err)
@@ -111,7 +113,7 @@ func (h *Handler) ContentLifecycle(c *gin.Context) {
 func (h *Handler) CreateRule(c *gin.Context) {
 	var in RedFlagRule
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.gov.CreateRuleDraft(c.Request.Context(), actor(c), in)
@@ -126,7 +128,7 @@ func (h *Handler) EditRule(c *gin.Context) {
 		Severity     string        `json:"severity"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.gov.EditRule(c.Request.Context(), actor(c), c.Param("id"), body.Name, body.Condition, body.UrgencyLevel, body.Severity)
@@ -158,7 +160,7 @@ func (h *Handler) RuleLifecycle(c *gin.Context) {
 	case "deprecate":
 		v, err = h.gov.DeprecateRule(ctx, uid, id)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "unknown action"})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: "unknown action"})
 		return
 	}
 	respond(c, v, err)
@@ -167,7 +169,7 @@ func (h *Handler) RuleLifecycle(c *gin.Context) {
 func (h *Handler) UpsertVignette(c *gin.Context) {
 	var v Vignette
 	if err := c.ShouldBindJSON(&v); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.val.store.UpsertVignette(c.Request.Context(), &v)
@@ -184,7 +186,7 @@ func (h *Handler) ListVignettes(c *gin.Context) {
 func (h *Handler) RunValidation(c *gin.Context) {
 	rep, err := h.val.RunShadowEval(c.Request.Context(), h.engine)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "report": rep})
@@ -193,7 +195,7 @@ func (h *Handler) RunValidation(c *gin.Context) {
 func (h *Handler) UpsertLanguagePack(c *gin.Context) {
 	var lp LanguagePack
 	if err := c.ShouldBindJSON(&lp); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.gov.UpsertLanguagePack(c.Request.Context(), actor(c), lp)
@@ -351,7 +353,7 @@ type inboundMessage struct {
 // Handle handles POST /internal/webhooks/triage/whatsapp.
 func (h *WhatsAppHandler) Handle(c *gin.Context) {
 	if !h.enabled {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "whatsapp triage disabled"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: "whatsapp triage disabled"})
 		return
 	}
 	body, err := io.ReadAll(c.Request.Body)
@@ -364,13 +366,13 @@ func (h *WhatsAppHandler) Handle(c *gin.Context) {
 		sig = c.GetHeader("X-Signature")
 	}
 	if !h.verifySignature(body, sig) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid signature"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "invalid signature"})
 		return
 	}
 
 	var msg inboundMessage
 	if err := json.Unmarshal(body, &msg); err != nil || msg.From == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid payload"})
 		return
 	}
 	if msg.Language == "" {

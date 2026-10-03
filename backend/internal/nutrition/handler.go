@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const keyCode = "code"
 
 // Handler exposes the member (buyer + vendor) and admin nutrition routes.
 type Handler struct {
@@ -30,15 +33,15 @@ func mapErr(c *gin.Context, err error) {
 	case errors.Is(err, ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 	case errors.Is(err, ErrAllergenRuleViolation):
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error(), "code": "ALLERGEN_RULE_VIOLATION"})
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": httperr.Msg(c, http.StatusUnprocessableEntity, err), keyCode: "ALLERGEN_RULE_VIOLATION"})
 	case errors.Is(err, ErrSanityBounds):
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error(), "code": "SANITY_BOUNDS", "needs_review": true})
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": httperr.Msg(c, http.StatusUnprocessableEntity, err), keyCode: "SANITY_BOUNDS", "needs_review": true})
 	case errors.Is(err, ErrBadState):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "ILLEGAL_TRANSITION"})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), keyCode: "ILLEGAL_TRANSITION"})
 	case errors.Is(err, ErrVersionConflict):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "VERSION_CONFLICT"})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), keyCode: "VERSION_CONFLICT"})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -65,7 +68,7 @@ func (h *Handler) DeclareRecipe(c *gin.Context) {
 		CookMethod   string       `json:"cook_method"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	profile, err := h.svc.DeclareRecipe(c.Request.Context(), c.Param("dishId"), ginutil.UserID(c), DeclareRecipeInput{
@@ -109,7 +112,7 @@ func (h *Handler) Edit(c *gin.Context) {
 		PortionMacroNudge map[string]float64 `json:"portion_macro_nudges"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if body.PortionLabel == "" && len(body.PortionMacroNudge) == 0 {
@@ -168,7 +171,7 @@ func (h *Handler) AttestAllergens(c *gin.Context) {
 		Allergens []AllergenAttestInput `json:"allergens" binding:"required,min=1"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.AttestAllergens(c.Request.Context(), c.Param("dishId"), ginutil.UserID(c), body.Allergens)
@@ -209,7 +212,7 @@ func (h *Handler) CartSummary(c *gin.Context) {
 func (h *Handler) AdminUpsertComposition(c *gin.Context) {
 	var c0 Composition
 	if err := c.ShouldBindJSON(&c0); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpsertComposition(c.Request.Context(), ginutil.UserID(c), c0)
@@ -224,7 +227,7 @@ func (h *Handler) AdminUpsertComposition(c *gin.Context) {
 func (h *Handler) AdminUpsertLibrary(c *gin.Context) {
 	var e LibraryEntry
 	if err := c.ShouldBindJSON(&e); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.UpsertLibrary(c.Request.Context(), ginutil.UserID(c), e); err != nil {
@@ -298,7 +301,7 @@ func (h *Handler) AdminResolve(c *gin.Context) {
 		DefaultPortionG float64 `json:"default_portion_g"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	profile, err := h.svc.Resolve(c.Request.Context(), ResolveInput{

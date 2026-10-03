@@ -12,10 +12,15 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/go-common/timeutil"
 	redisPkg "spotlight/backend/internal/platform/redis"
 )
+
+const keySuccess = "success"
+
+const keyError = "error"
 
 // Service is the high-level ledger API consumed by other finance modules.
 type Service struct {
@@ -245,11 +250,11 @@ func (h *AdminHandler) ListTransactions(c *gin.Context) {
 
 	page, err := h.svc.AdminListTransactions(c.Request.Context(), f)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success":     true,
+		keySuccess:    true,
 		"rows":        page.Rows,
 		"total":       page.Total,
 		"limit":       f.Limit,
@@ -267,14 +272,14 @@ func (h *AdminHandler) GetTransaction(c *gin.Context) {
 	detail, err := h.svc.AdminGetTransaction(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		if errors.Is(err, ErrTransactionNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "transaction not found"})
+			c.JSON(http.StatusNotFound, gin.H{keySuccess: false, keyError: "transaction not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success":     true,
+		keySuccess:    true,
 		"transaction": detail,
 		"note_source": "source_inferred is a best-effort guess parsed from the reference string (SPLIT_PART on ':'); it is NOT an authoritative module field.",
 	})

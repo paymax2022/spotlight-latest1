@@ -515,7 +515,7 @@ func (h *Handler) Submit(c *gin.Context) {
 		} `json:"docs"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	in := SubmitInput{ApplicationID: body.ApplicationID, RegNumber: body.RegNumber, FullName: body.FullName, DOB: body.DOB, Consent: body.Consent}
@@ -562,7 +562,7 @@ func (h *Handler) MyDocURL(c *gin.Context) {
 func (h *Handler) Queue(c *gin.Context) {
 	items, err := h.svc.ListQueue(c.Request.Context(), 0)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
@@ -598,7 +598,7 @@ func (h *Handler) Decide(c *gin.Context) {
 		Notes         string `json:"notes"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	var expiry *time.Time

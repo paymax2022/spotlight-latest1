@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -25,12 +26,12 @@ func (h *Handler) GetProfile(c *gin.Context) {
 func (h *Handler) UpsertProfile(c *gin.Context) {
 	var in ProfileInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.UpsertProfile(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": p})
@@ -47,7 +48,7 @@ func (h *Handler) RequestVerification(c *gin.Context) {
 		return
 	}
 	if err := h.svc.RequestBusinessVerification(c.Request.Context(), ginutil.UserID(c), body.EvidenceRef); err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"data": gin.H{"status": "pending"}})
@@ -57,7 +58,7 @@ func (h *Handler) Discover(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	out, err := h.svc.Discover(c.Request.Context(), ginutil.UserID(c), c.Query("industry"), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -66,16 +67,16 @@ func (h *Handler) Discover(c *gin.Context) {
 func (h *Handler) SendIntro(c *gin.Context) {
 	var in IntroInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.SendIntro(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		if errors.Is(err, ErrSelfIntro) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": r})
@@ -84,18 +85,18 @@ func (h *Handler) SendIntro(c *gin.Context) {
 func (h *Handler) RespondIntro(c *gin.Context) {
 	var body IntroResponse
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.RespondIntro(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Accept)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotRecipient):
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 		case errors.Is(err, ErrBadTransition):
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		}
 		return
 	}
@@ -105,12 +106,12 @@ func (h *Handler) RespondIntro(c *gin.Context) {
 func (h *Handler) UpsertCard(c *gin.Context) {
 	var in CardInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	bc, err := h.svc.UpsertCard(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": bc})
@@ -122,16 +123,16 @@ func (h *Handler) ExchangeCard(c *gin.Context) {
 		ContactID string `json:"contact_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	sc, err := h.svc.ExchangeCard(c.Request.Context(), ginutil.UserID(c), body.ContactID)
 	if err != nil {
 		if errors.Is(err, ErrNoConsent) {
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": sc})
@@ -140,7 +141,7 @@ func (h *Handler) ExchangeCard(c *gin.Context) {
 func (h *Handler) ListContacts(c *gin.Context) {
 	out, err := h.svc.ListContacts(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -149,12 +150,12 @@ func (h *Handler) ListContacts(c *gin.Context) {
 func (h *Handler) CreateRoom(c *gin.Context) {
 	var in RoomInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.CreateRoom(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": r})
@@ -162,7 +163,7 @@ func (h *Handler) CreateRoom(c *gin.Context) {
 
 func (h *Handler) JoinRoom(c *gin.Context) {
 	if err := h.svc.JoinRoom(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"joined": true}})
@@ -171,15 +172,15 @@ func (h *Handler) JoinRoom(c *gin.Context) {
 func (h *Handler) ModerateRoom(c *gin.Context) {
 	var in RoomModerationInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.ModerateRoom(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in); err != nil {
 		if errors.Is(err, ErrNotRoomOwner) {
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
@@ -193,11 +194,11 @@ func (h *Handler) AdminReviewVerification(c *gin.Context) {
 		Reason  string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.ReviewBusinessVerification(c.Request.Context(), ginutil.UserID(c), body.UserID, body.Approve, body.Reason); err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"reviewed": true}})

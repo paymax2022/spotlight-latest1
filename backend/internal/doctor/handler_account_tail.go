@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // handler_account_tail.go — Gin handlers for the Wave-2 "account tail" endpoints.
@@ -23,7 +24,7 @@ func (h *Handler) CreateBankAccount(c *gin.Context) {
 	}
 	var req BankAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.CreateBankAccount(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
@@ -43,12 +44,12 @@ func (h *Handler) VerifyBankAccount(c *gin.Context) {
 	}
 	var req BankAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	result, err := h.svc.VerifyBankAccount(c.Request.Context(), uid, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -62,7 +63,7 @@ func (h *Handler) UploadProfileDocument(c *gin.Context) {
 	}
 	var req ProfileDocumentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.UploadProfileDocument(c.Request.Context(), uid, req)
@@ -81,7 +82,7 @@ func (h *Handler) SetProfilePhoto(c *gin.Context) {
 	}
 	var req ProfilePhotoRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.SetProfilePhoto(c.Request.Context(), uid, req)
@@ -160,7 +161,7 @@ func (h *Handler) UpdatePayoutAccount(c *gin.Context) {
 	}
 	var req PayoutAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.UpdatePayoutAccount(c.Request.Context(), uid, req)
@@ -328,7 +329,7 @@ func (h *Handler) SetPresence(c *gin.Context) {
 	}
 	var req PresenceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetPresence(c.Request.Context(), uid, req); err != nil {
@@ -366,7 +367,7 @@ func (h *Handler) CreateTechnicalSupport(c *gin.Context) {
 	}
 	var req TechnicalSupportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.CreateTechnicalSupport(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
@@ -385,7 +386,7 @@ func (h *Handler) SetEmergencySchedule(c *gin.Context) {
 	}
 	var req EmergencyScheduleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetEmergencySchedule(c.Request.Context(), uid, req); err != nil {

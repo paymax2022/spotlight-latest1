@@ -8,9 +8,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyError = "error"
 
 // Service is the referral analytics read-model service.
 type Service struct {
@@ -152,7 +155,7 @@ func Register(admin *gin.RouterGroup, svc *Service, rbac services.RBACService) {
 func (h *Handler) KFactor(c *gin.Context) {
 	k, err := h.svc.KFactor(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"k_factor": k})
@@ -161,7 +164,7 @@ func (h *Handler) KFactor(c *gin.Context) {
 func (h *Handler) Funnel(c *gin.Context) {
 	f, err := h.svc.Funnel(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"funnel": f})
@@ -174,7 +177,7 @@ func (h *Handler) CAC(c *gin.Context) {
 	}
 	cac, err := h.svc.CAC(c.Request.Context(), paid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"cac": cac})
@@ -183,7 +186,7 @@ func (h *Handler) CAC(c *gin.Context) {
 func (h *Handler) Cohorts(c *gin.Context) {
 	rows, err := h.svc.Cohorts(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"cohorts": rows})
@@ -192,7 +195,7 @@ func (h *Handler) Cohorts(c *gin.Context) {
 func (h *Handler) Channels(c *gin.Context) {
 	rows, err := h.svc.Channels(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"channels": rows})
@@ -201,7 +204,7 @@ func (h *Handler) Channels(c *gin.Context) {
 func (h *Handler) Segmentation(c *gin.Context) {
 	s, err := h.svc.Segmentation(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"segmentation": s})
@@ -210,7 +213,7 @@ func (h *Handler) Segmentation(c *gin.Context) {
 func (h *Handler) User360(c *gin.Context) {
 	u, err := h.svc.User360(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"user": u})

@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/stays/dedup"
 	"spotlight/backend/internal/stays/gateway"
 	"spotlight/backend/internal/stays/pricing"
@@ -57,7 +58,7 @@ func (h *Handler) Content(c *gin.Context) {
 	content, err := h.svc.GetContent(c.Request.Context(),
 		gateway.SourceRail(c.Param("rail")), c.Param("supplier"), c.Param("ref"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": content})

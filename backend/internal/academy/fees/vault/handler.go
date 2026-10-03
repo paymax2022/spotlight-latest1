@@ -7,8 +7,13 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 )
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
 
 // Handler exposes FeesVault routes over Gin. Router registration into RegisterAcademy is
 // owned by the QA/integration task — see RegisterFeesVault. The member group already
@@ -43,27 +48,27 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrMissingGoal):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_goal", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_goal", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrIdempotencyRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrIdempotencyKeyReused):
-		c.JSON(http.StatusConflict, gin.H{"error": "idempotency_key_reused", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "idempotency_key_reused", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrTargetNotReached):
-		c.JSON(http.StatusConflict, gin.H{"error": "target_not_reached", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "target_not_reached", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrVaultEmpty):
-		c.JSON(http.StatusConflict, gin.H{"error": "vault_empty", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "vault_empty", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrTerminal):
-		c.JSON(http.StatusConflict, gin.H{"error": "terminal_state", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "terminal_state", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -103,7 +108,7 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	var req CreateVaultRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateVault(c.Request.Context(), u, req)
@@ -147,7 +152,7 @@ func (h *Handler) Contribute(c *gin.Context) {
 	}
 	var req ContributeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Contribute(c.Request.Context(), u, c.Param("id"), req.AmountMinor, ginutil.IdempotencyKey(c))
@@ -165,7 +170,7 @@ func (h *Handler) ApplyToInvoice(c *gin.Context) {
 	}
 	var req ApplyToInvoiceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.ApplyToInvoice(c.Request.Context(), u, c.Param("id"), req.InvoiceID, ginutil.IdempotencyKey(c))

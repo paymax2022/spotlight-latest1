@@ -8,7 +8,10 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyError = "error"
 
 // Handler exposes the member + extranet + admin review surfaces. RBAC is applied at
 // the route by the aggregator; object-level checks are in the service.
@@ -22,15 +25,15 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func mapErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotCompleted):
-		c.JSON(http.StatusPreconditionFailed, gin.H{"error": err.Error(), "code": "REVIEW_LOCKED"})
+		c.JSON(http.StatusPreconditionFailed, gin.H{keyError: httperr.Msg(c, http.StatusPreconditionFailed, err), "code": "REVIEW_LOCKED"})
 	case errors.Is(err, ErrNotOwner), errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: "forbidden"})
 	case errors.Is(err, ErrAlreadyReviewed):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "ALREADY_REVIEWED"})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), "code": "ALREADY_REVIEWED"})
 	case errors.Is(err, ErrBadScore):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -90,7 +93,7 @@ func (h *Handler) CanReview(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"data": gin.H{"can_review": false, "reason": "NOT_COMPLETED"}})
 			return
 		case errors.Is(err, ErrNotOwner):
-			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			c.JSON(http.StatusForbidden, gin.H{keyError: "forbidden"})
 			return
 		default:
 			mapErr(c, err)
@@ -109,7 +112,7 @@ func (h *Handler) Create(c *gin.Context) {
 		Body         string         `json:"body"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, err := h.svc.Create(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.OverallScore, b.SubScores, b.Title, b.Body)
@@ -158,7 +161,7 @@ func (h *Handler) Respond(c *gin.Context) {
 		Body string `json:"body" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, err := h.svc.Respond(c.Request.Context(), ginutil.UserID(c), c.Param("reviewId"), b.Body)
@@ -200,7 +203,7 @@ func (h *Handler) Moderate(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.Moderate(c.Request.Context(), c.Param("reviewId"), b.Status, b.Reason); err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"spotlight/backend/go-common/httperr"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	"time"
 
@@ -153,7 +154,7 @@ func (r *Repository) Reconciliation(ctx context.Context) (*ReconSummary, []Order
 func (h *AdminHandler) Reconciliation(c *gin.Context) {
 	summary, stuck, trapped, err := h.svc.repo.Reconciliation(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{

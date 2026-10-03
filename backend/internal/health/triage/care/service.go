@@ -2,7 +2,9 @@ package care
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -123,6 +125,8 @@ func (s *CareService) routeEmergency(ctx context.Context, ref *CareReferral, lev
 	}
 	if _, err := s.Notify(ctx, esc.ID); err == nil {
 		esc.State = triage.EscNotified // reflect to caller
+	} else {
+		log.Printf("[care] emergency escalation %s notify failed (left raised): %v", esc.ID, err)
 	}
 	// SC-8 payload (best-effort nearest ER; coords unknown here so 0,0 — the emergency
 	// screen calls NearestEmergency with the device location for the precise facility).
@@ -307,7 +311,8 @@ func (s *CareService) Raise(ctx context.Context, sessionID, userID, reason strin
 }
 
 // Notify delivers the hand-off (patient + clinician) and advances raised →
-// notified. SC-5: a high-risk case is never a silent flag.
+// notified. SC-5: a high-risk case is never a silent flag — a delivery failure
+// returns the error and leaves the case raised, so a retry is a clean re-call.
 func (s *CareService) Notify(ctx context.Context, escalationID string) (*Escalation, error) {
 	e, err := s.repo.GetEscalation(ctx, escalationID)
 	if err != nil {
@@ -321,10 +326,22 @@ func (s *CareService) Notify(ctx context.Context, escalationID string) (*Escalat
 	}
 	if s.notify != nil {
 		data := map[string]any{"escalation_id": e.ID, "session_id": e.SessionID, "reason": e.Reason}
+		var notifyErrs []error
 		// Patient hand-off.
-		_ = s.notify.Notify(ctx, e.UserID, "triage.escalation.patient", data)
+		if err := s.notify.Notify(ctx, e.UserID, "triage.escalation.patient", data); err != nil {
+			log.Printf("[care] escalation hand-off failed escalation=%s user=%s template=%s err=%v", e.ID, e.UserID, "triage.escalation.patient", err)
+			notifyErrs = append(notifyErrs, err)
+		}
 		// Clinician hand-off (broadcast template — the on-call clinician pool).
-		_ = s.notify.Notify(ctx, "", "triage.escalation.clinician", data)
+		if err := s.notify.Notify(ctx, "", "triage.escalation.clinician", data); err != nil {
+			log.Printf("[care] escalation hand-off failed escalation=%s template=%s err=%v", e.ID, "triage.escalation.clinician", err)
+			notifyErrs = append(notifyErrs, err)
+		}
+		// SC-5: a failed delivery stays `raised` — marking it notified would be
+		// the silent flag this state exists to prevent. Retry = call Notify again.
+		if err := errors.Join(notifyErrs...); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.repo.UpdateEscalationState(ctx, e.ID, triage.EscRaised, triage.EscNotified, nil, nil); err != nil {
 		return nil, err

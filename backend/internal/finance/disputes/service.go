@@ -218,12 +218,12 @@ func (h *Handler) Open(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req OpenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	d, err := h.svc.Open(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, d)
@@ -239,7 +239,7 @@ func (h *Handler) List(c *gin.Context) {
 	}
 	disputes, err := h.svc.List(c.Request.Context(), userID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": disputes, "count": len(disputes)})
@@ -259,7 +259,7 @@ func (h *Handler) AdminResolve(c *gin.Context) {
 		RefundKobo int64  `json:"refund_kobo"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.Resolve(c.Request.Context(), disputeID, Resolution(body.Resolution), body.AdminNote, body.RefundKobo, adminID); err != nil {

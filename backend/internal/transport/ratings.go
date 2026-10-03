@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // RateTrip records a bidirectional rating + optional tip. The rater must be a
@@ -323,7 +324,7 @@ func (h *Handler) ParcelRate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req RateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.RateParcel(c.Request.Context(), c.Param("id"), userID, req)
@@ -339,7 +340,7 @@ func (h *Handler) TowingRate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req RateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.RateTowing(c.Request.Context(), c.Param("id"), userID, req)
@@ -355,7 +356,7 @@ func (h *Handler) MoverRate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req RateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.RateMover(c.Request.Context(), c.Param("id"), userID, req)
@@ -371,7 +372,7 @@ func (h *Handler) BusRate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req RateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.RateBusTrip(c.Request.Context(), c.Param("id"), userID, req)

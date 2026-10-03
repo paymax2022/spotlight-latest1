@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
@@ -175,15 +176,15 @@ func (h *StemHandler) CreateSchool(c *gin.Context) {
 		return
 	}
 	if err := validateStemArtifactURL(payload.SchoolLogoURL, "image"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": fmt.Sprintf("invalid schoolLogoUrl: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Sanitize(c, http.StatusBadRequest, fmt.Sprintf("invalid schoolLogoUrl: %v", err))})
 		return
 	}
 	if err := validateStemArtifactURL(payload.RegistrationDocumentURL, "document"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": fmt.Sprintf("invalid registrationDocumentUrl: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Sanitize(c, http.StatusBadRequest, fmt.Sprintf("invalid registrationDocumentUrl: %v", err))})
 		return
 	}
 	if err := validateStemArtifactURL(payload.AccreditationDocumentURL, "document"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": fmt.Sprintf("invalid accreditationDocumentUrl: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Sanitize(c, http.StatusBadRequest, fmt.Sprintf("invalid accreditationDocumentUrl: %v", err))})
 		return
 	}
 	created, err := h.service.CreateSchool(domain.StemSchoolCreateInput{
@@ -418,19 +419,19 @@ func (h *StemHandler) CreateEmergingInnovator(c *gin.Context) {
 		return
 	}
 	if err := validateStemArtifactURL(payload.PitchDeckURL, "deck"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": fmt.Sprintf("invalid pitchDeckUrl: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Sanitize(c, http.StatusBadRequest, fmt.Sprintf("invalid pitchDeckUrl: %v", err))})
 		return
 	}
 	if err := validateStemArtifactURL(payload.VideoDemoURL, "video"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": fmt.Sprintf("invalid videoDemoUrl: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Sanitize(c, http.StatusBadRequest, fmt.Sprintf("invalid videoDemoUrl: %v", err))})
 		return
 	}
 	if err := validateStemArtifactURL(payload.PhotoURL, "image"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": fmt.Sprintf("invalid photoUrl: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Sanitize(c, http.StatusBadRequest, fmt.Sprintf("invalid photoUrl: %v", err))})
 		return
 	}
 	if err := validateStemArtifactURL(payload.IDVerificationURL, "id_doc"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": fmt.Sprintf("invalid idVerificationUrl: %v", err)})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Sanitize(c, http.StatusBadRequest, fmt.Sprintf("invalid idVerificationUrl: %v", err))})
 		return
 	}
 

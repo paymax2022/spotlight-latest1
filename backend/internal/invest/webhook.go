@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/ptr"
 )
 
@@ -78,7 +79,7 @@ func (h *WebhookHandler) Handle(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"status": "ignored"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})

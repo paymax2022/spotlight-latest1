@@ -5,9 +5,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strconv"
 	"time"
 )
+
+const keyData = "data"
 
 // Handler exposes member + admin claim routes.
 type Handler struct {
@@ -27,9 +30,9 @@ func mapErr(c *gin.Context, err error) {
 	case errors.Is(err, ErrNotBound):
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "policy_not_bound"})
 	case errors.Is(err, ErrBadState):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -53,7 +56,7 @@ func (h *Handler) SubmitFNOL(c *gin.Context) {
 		Inputs            map[string]any `json:"inputs"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if body.LossEventAt.IsZero() {
@@ -70,13 +73,13 @@ func (h *Handler) SubmitFNOL(c *gin.Context) {
 		// A claim row may still be returned (DRAFT) when only the provider hand-off
 		// failed — surface it so the client can retry.
 		if cl != nil {
-			c.JSON(http.StatusAccepted, gin.H{"warning": err.Error(), "data": cl})
+			c.JSON(http.StatusAccepted, gin.H{"warning": httperr.Msg(c, http.StatusAccepted, err), keyData: cl})
 			return
 		}
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"data": cl})
+	c.JSON(http.StatusCreated, gin.H{keyData: cl})
 }
 
 // List (member): GET /claims
@@ -88,7 +91,7 @@ func (h *Handler) List(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": cs})
+	c.JSON(http.StatusOK, gin.H{keyData: cs})
 }
 
 // Get (member): GET /claims/:id
@@ -98,7 +101,7 @@ func (h *Handler) Get(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": cl})
+	c.JSON(http.StatusOK, gin.H{keyData: cl})
 }
 
 // AddEvidence (member): POST /claims/:id/evidence
@@ -110,7 +113,7 @@ func (h *Handler) AddEvidence(c *gin.Context) {
 		StorageRef  string `json:"storage_ref"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ev, err := h.svc.UploadEvidence(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.FileName, body.ContentType, body.StorageRef)
@@ -118,7 +121,7 @@ func (h *Handler) AddEvidence(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"data": ev})
+	c.JSON(http.StatusCreated, gin.H{keyData: ev})
 }
 
 // ListEvidence (member): GET /claims/:id/evidence
@@ -128,7 +131,7 @@ func (h *Handler) ListEvidence(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": evs})
+	c.JSON(http.StatusOK, gin.H{keyData: evs})
 }
 
 // AdminSearch (admin): GET /claims?state=&policy_id=
@@ -137,10 +140,10 @@ func (h *Handler) AdminSearch(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	cs, err := h.svc.SearchAdmin(c.Request.Context(), c.Query("state"), c.Query("policy_id"), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": cs})
+	c.JSON(http.StatusOK, gin.H{keyData: cs})
 }
 
 // AdminGet (admin): GET /claims/:id
@@ -150,7 +153,7 @@ func (h *Handler) AdminGet(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": cl})
+	c.JSON(http.StatusOK, gin.H{keyData: cl})
 }
 
 // AdminDecision (admin): POST /claims/:id/decision
@@ -162,7 +165,7 @@ func (h *Handler) AdminDecision(c *gin.Context) {
 		Reason             string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ctx := c.Request.Context()
@@ -192,7 +195,7 @@ func (h *Handler) AdminDecision(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": cl})
+	c.JSON(http.StatusOK, gin.H{keyData: cl})
 }
 
 // Register wires the member + admin claim routes. The aggregator

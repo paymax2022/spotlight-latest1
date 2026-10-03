@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -27,7 +28,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 	}
 	p, err := h.svc.GetProfile(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, p)
@@ -42,7 +43,7 @@ func (h *Handler) GetBadges(c *gin.Context) {
 	}
 	b, err := h.svc.GetBadges(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"badges": b})
@@ -70,7 +71,7 @@ func (h *Handler) GetClassLeaderboard(c *gin.Context) {
 	}
 	out, err := h.svc.GetClassLeaderboard(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, out)
@@ -80,7 +81,7 @@ func (h *Handler) GetClassLeaderboard(c *gin.Context) {
 func (h *Handler) GetChallenges(c *gin.Context) {
 	ch, err := h.svc.GetChallenges(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"challenges": ch})
@@ -89,7 +90,7 @@ func (h *Handler) GetChallenges(c *gin.Context) {
 func (h *Handler) AdminListBadges(c *gin.Context) {
 	b, err := h.svc.AdminListBadges(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"badges": b})
@@ -100,7 +101,7 @@ func (h *Handler) AdminListBadges(c *gin.Context) {
 func (h *Handler) AdminGetConfig(c *gin.Context) {
 	cfg, err := h.svc.AdminGetConfig(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -113,12 +114,12 @@ func (h *Handler) AdminGetConfig(c *gin.Context) {
 func (h *Handler) AdminUpsertBadge(c *gin.Context) {
 	var in UpsertBadgeRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.AdminUpsertBadge(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, b)
@@ -127,12 +128,12 @@ func (h *Handler) AdminUpsertBadge(c *gin.Context) {
 func (h *Handler) AdminUpsertChallenge(c *gin.Context) {
 	var in UpsertChallengeRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ch, err := h.svc.AdminUpsertChallenge(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, ch)
@@ -141,12 +142,12 @@ func (h *Handler) AdminUpsertChallenge(c *gin.Context) {
 func (h *Handler) AdminUpsertLeaderboard(c *gin.Context) {
 	var in UpsertLeaderboardRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	lb, err := h.svc.AdminUpsertLeaderboard(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, lb)

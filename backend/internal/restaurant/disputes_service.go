@@ -13,8 +13,11 @@ import (
 	"github.com/google/uuid"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
 )
+
+const keyError = "error"
 
 // FoodDispute is a restaurant food-order dispute (a projection of the shared `disputes`
 // ticket + this module's resolution/refund record).
@@ -626,12 +629,12 @@ func (h *Handler) RaiseFoodDispute(c *gin.Context) {
 		Description string `json:"description" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	d, err := h.svc.RaiseFoodDispute(c.Request.Context(), c.Param("orderId"), actorID, body.Type, body.Description)
 	if err != nil {
-		c.JSON(disputeErrCode(err), gin.H{"error": err.Error()})
+		c.JSON(disputeErrCode(err), gin.H{keyError: httperr.Msg(c, disputeErrCode(err), err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"dispute": d})
@@ -642,7 +645,7 @@ func (h *Handler) GetFoodDispute(c *gin.Context) {
 	actorID := ginutil.UserID(c)
 	d, err := h.svc.GetFoodDispute(c.Request.Context(), c.Param("id"), actorID)
 	if err != nil {
-		c.JSON(disputeErrCode(err), gin.H{"error": err.Error()})
+		c.JSON(disputeErrCode(err), gin.H{keyError: httperr.Msg(c, disputeErrCode(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"dispute": d})
@@ -653,7 +656,7 @@ func (h *Handler) AdminListFoodDisputes(c *gin.Context) {
 	limit, offset := ginutil.LimitOffset(c)
 	list, err := h.svc.AdminListFoodDisputes(c.Request.Context(), c.Query("status"), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"disputes": list})
@@ -669,12 +672,12 @@ func (h *Handler) AdminResolveFoodDispute(c *gin.Context) {
 		Note       string `json:"note"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	d, err := h.svc.AdminResolveFoodDispute(c.Request.Context(), c.Param("id"), adminID, FoodDisputeResolution(body.Resolution), body.RefundKobo, body.Note)
 	if err != nil {
-		c.JSON(disputeErrCode(err), gin.H{"error": err.Error()})
+		c.JSON(disputeErrCode(err), gin.H{keyError: httperr.Msg(c, disputeErrCode(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"dispute": d})

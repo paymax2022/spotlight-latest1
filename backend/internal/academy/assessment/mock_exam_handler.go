@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -169,7 +170,7 @@ func (h *MockExamHandler) ListTemplates(c *gin.Context) {
 
 	templates, err := h.svc.GetTemplates(c.Request.Context(), filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 
@@ -195,7 +196,7 @@ func (h *MockExamHandler) ListTemplates(c *gin.Context) {
 func (h *MockExamHandler) GetTemplate(c *gin.Context) {
 	detail, err := h.svc.GetTemplate(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 
@@ -214,13 +215,13 @@ func (h *MockExamHandler) StartExam(c *gin.Context) {
 
 	var req StartMockExamRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
 	attempt, err := h.svc.StartExam(c.Request.Context(), userID, req.TemplateID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -232,7 +233,7 @@ func (h *MockExamHandler) StartExam(c *gin.Context) {
 func (h *MockExamHandler) GetExamProgress(c *gin.Context) {
 	progress, err := h.svc.GetExamProgress(c.Request.Context(), c.Param("attempt_id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 
@@ -245,13 +246,13 @@ func (h *MockExamHandler) GetExamProgress(c *gin.Context) {
 func (h *MockExamHandler) SaveProgress(c *gin.Context) {
 	var req SubmitMockExamRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
 	if err := h.svc.SaveProgress(c.Request.Context(), c.Param("attempt_id"),
 		req.Answers, req.FlaggedQuestions); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 
@@ -264,13 +265,13 @@ func (h *MockExamHandler) SaveProgress(c *gin.Context) {
 func (h *MockExamHandler) SubmitExam(c *gin.Context) {
 	var req SubmitMockExamRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
 	result, err := h.svc.SubmitExam(c.Request.Context(), c.Param("attempt_id"), req.Answers)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -348,7 +349,7 @@ func (h *MockExamHandler) AdminListTemplates(c *gin.Context) {
 
 	templates, err := h.svc.GetTemplates(c.Request.Context(), filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 
@@ -372,7 +373,7 @@ func (h *MockExamHandler) AdminListTemplates(c *gin.Context) {
 func (h *MockExamHandler) AdminCreateTemplate(c *gin.Context) {
 	var req MockExamTemplate
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -392,7 +393,7 @@ func (h *MockExamHandler) AdminCreateTemplate(c *gin.Context) {
 func (h *MockExamHandler) AdminUpdateTemplate(c *gin.Context) {
 	var req MockExamTemplate
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 

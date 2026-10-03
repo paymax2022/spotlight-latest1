@@ -10,8 +10,12 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 // used to proxy to and why every spray call upstream-404'd: E2E-SOC-036).
 // transitions, ledger/idempotency and the NL-1..12 invariants. Admin routes hit
 // Go directly. Money mutations forward the Idempotency-Key.
+// Gated on p2pMarket (NOT socialPay): Go mounts the spray engine inside
+// RegisterP2PMarket, which runs only under FEATURE_P2P_MARKET_ENABLED — this
+// flag check must mirror that mount gate or the proxy either 503s a healthy
+// upstream or forwards into an unmounted 404 (E2E-SOC-036).
 async function forward(request: Request, path: string[]) {
-  if (!featureFlags.socialPay()) return errorResponse('This service is not available.', 503);
+  if (!featureFlags.p2pMarket()) return errorResponse('This service is not available.', 503);
   try {
     await requireRequestUser(request);
     const sub = (path ?? []).join('/');

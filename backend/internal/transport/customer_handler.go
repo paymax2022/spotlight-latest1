@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Home returns the rider's mobility landing payload.
@@ -37,7 +38,7 @@ func (h *Handler) ConfigPricing(c *gin.Context) {
 func (h *Handler) Estimate(c *gin.Context) {
 	var req EstimateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	est, err := h.svc.EstimateRide(c.Request.Context(), req)
@@ -53,7 +54,7 @@ func (h *Handler) RequestRide(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req RequestRideRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	key := ginutil.IdempotencyKey(c)
@@ -70,7 +71,7 @@ func (h *Handler) Offer(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req OfferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	fo, err := h.svc.RiderOffer(c.Request.Context(), c.Param("id"), userID, req.OfferKobo)
@@ -172,7 +173,7 @@ func (h *Handler) Rate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req RateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.RateTrip(c.Request.Context(), c.Param("id"), userID, req)
@@ -210,7 +211,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req UpsertProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.UpsertProfile(c.Request.Context(), userID, req)
@@ -237,7 +238,7 @@ func (h *Handler) AddContact(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req TrustedContactRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ct, err := h.svc.AddTrustedContact(c.Request.Context(), userID, req.Name, req.Phone)

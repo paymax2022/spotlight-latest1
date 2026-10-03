@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"spotlight/backend/go-common/httperr"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -560,7 +561,7 @@ func estimateFromPrice(st StockAsset, req EstimateRequest, priceForCalc int64, f
 func (h *Handler) Estimate(c *gin.Context) {
 	var req EstimateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	est, err := h.svc.EstimateOrder(c.Request.Context(), req)

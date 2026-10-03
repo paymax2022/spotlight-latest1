@@ -14,11 +14,18 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	ptrx "spotlight/backend/go-common/ptr"
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 )
+
+const keyInvalidRequestBody = "invalid request body"
+
+const keyError = "error"
+
+const keyCode = "code"
 
 // Handler exposes the member- and admin-facing Utility Bills endpoints. Every
 // user-scoped op derives the caller's id from the auth context (set by
@@ -37,7 +44,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func writeErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrIdempotencyKeyRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "idempotency_key_required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err), keyCode: "idempotency_key_required"})
 	case errors.Is(err, ErrInvalidCategory),
 		errors.Is(err, ErrFieldRequired),
 		errors.Is(err, ErrCategoryMismatch),
@@ -56,45 +63,45 @@ func writeErr(c *gin.Context, err error) {
 		errors.Is(err, ErrEmptyImport),
 		errors.Is(err, ErrInvalidDisputeStatus),
 		errors.Is(err, ErrInvalidReportType):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrHealthCheckUnsupported):
 		// 501: the request was valid and the provider exists — this deployment
 		// simply has no adapter capable of answering it. Not the caller's fault
 		// (400) and not a failure of something that should have worked (500).
-		c.JSON(http.StatusNotImplemented, gin.H{"error": err.Error(), "code": "health_check_unsupported"})
+		c.JSON(http.StatusNotImplemented, gin.H{keyError: httperr.Msg(c, http.StatusNotImplemented, err), keyCode: "health_check_unsupported"})
 	case errors.Is(err, ErrCredentialsKeyMissing):
 		// A deployment misconfiguration: UTILITY_PROVIDER_CREDENTIALS_KEY is unset.
 		// Fails CLOSED — the alternative would be storing a secret in the clear.
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "credentials_key_missing"})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err), keyCode: "credentials_key_missing"})
 	case errors.Is(err, ErrCustomerValidationFailed):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "customer_validation_failed"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err), keyCode: "customer_validation_failed"})
 	case errors.Is(err, ErrNotEligibleForReversal),
 		errors.Is(err, ErrNotDisputable):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrCategoryDailyLimit):
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error(), "code": "category_daily_limit"})
+		c.JSON(http.StatusTooManyRequests, gin.H{keyError: httperr.Msg(c, http.StatusTooManyRequests, err), keyCode: "category_daily_limit"})
 	case errors.Is(err, tiers.ErrDailyLimitExceeded):
 		// The WALLET tier limit, distinct from the category limit above.
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error(), "code": "wallet_daily_limit"})
+		c.JSON(http.StatusTooManyRequests, gin.H{keyError: httperr.Msg(c, http.StatusTooManyRequests, err), keyCode: "wallet_daily_limit"})
 	case errors.Is(err, tiers.ErrWalletDisabled):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "code": "wallet_disabled"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err), keyCode: "wallet_disabled"})
 	case errors.Is(err, ledger.ErrInsufficientFunds):
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error(), "code": "insufficient_funds"})
+		c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, err), keyCode: "insufficient_funds"})
 	case errors.Is(err, ErrNoViableRoute),
 		errors.Is(err, ErrCategoryUnavailable),
 		errors.Is(err, ErrProviderUnavailable):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
 	case errors.Is(err, ErrBindInFlight):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "purchase_in_flight"})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), keyCode: "purchase_in_flight"})
 	case errors.Is(err, ErrBindOutcomeUnknown):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "outcome_unknown"})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), keyCode: "outcome_unknown"})
 	case errors.Is(err, ErrProviderCostNotPositive):
 		// A misconfigured catalogue, not a caller error.
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "pricing_misconfigured"})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err), keyCode: "pricing_misconfigured"})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -143,7 +150,7 @@ func (h *Handler) Validate(c *gin.Context) {
 	}
 	var body validateBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	res, err := h.svc.ValidateCustomer(c.Request.Context(), ValidateInput{
@@ -178,7 +185,7 @@ func (h *Handler) Quote(c *gin.Context) {
 	}
 	var body quoteBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	quote, err := h.svc.QuotePayment(c.Request.Context(), QuoteInput{
@@ -215,7 +222,7 @@ func (h *Handler) Pay(c *gin.Context) {
 	}
 	var body payBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	// AUD-BILL-005: payment_source is NOT client input on this plane — the Go
@@ -329,7 +336,7 @@ func (h *Handler) CreateDispute(c *gin.Context) {
 	}
 	var body disputeBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	dispute, err := h.svc.CreateDispute(c.Request.Context(), userID, c.Param("id"), body.Reason)
@@ -370,7 +377,7 @@ func (h *Handler) SaveBeneficiary(c *gin.Context) {
 	}
 	var body beneficiaryBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	b, err := h.svc.SaveBeneficiary(c.Request.Context(), userID,
@@ -433,12 +440,12 @@ type reverseBody struct {
 func (h *Handler) AdminReverse(c *gin.Context) {
 	var body reverseBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	reason := body.Reason
 	if reason == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "reason is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "reason is required"})
 		return
 	}
 	t, err := h.svc.ReverseTransaction(c.Request.Context(), adminActor(c), c.Param("id"), reason)

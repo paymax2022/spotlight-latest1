@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 type Handler struct{ svc *Service }
@@ -17,7 +18,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) ListSpecialties(c *gin.Context) {
 	specialties, err := h.svc.ListSpecialties(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": specialties})
@@ -27,12 +28,12 @@ func (h *Handler) RegisterDoctor(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req RegisterDoctorRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	d, err := h.svc.RegisterDoctor(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, d)
@@ -42,12 +43,12 @@ func (h *Handler) RegisterDoctorV2(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req RegisterDoctorV2Request
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	d, err := h.svc.RegisterDoctorV2(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{"doctor_id": d.ID}})
@@ -74,7 +75,7 @@ func (h *Handler) ListDoctors(c *gin.Context) {
 
 	doctors, err := h.svc.ListDoctors(c.Request.Context(), q)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": doctors})
@@ -83,7 +84,7 @@ func (h *Handler) ListDoctors(c *gin.Context) {
 func (h *Handler) GetDoctor(c *gin.Context) {
 	doctor, err := h.svc.GetDoctor(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": doctor})
@@ -93,11 +94,11 @@ func (h *Handler) ToggleAvailability(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req ToggleAvailabilityRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.ToggleDoctorAvailability(c.Request.Context(), userID, req.IsOnline); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -107,7 +108,7 @@ func (h *Handler) GetDoctorDashboard(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	dash, err := h.svc.GetDoctorDashboard(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": dash})
@@ -117,7 +118,7 @@ func (h *Handler) BookAppointment(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req BookAppointmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	// Accept Idempotency-Key from header OR body.
@@ -130,10 +131,10 @@ func (h *Handler) BookAppointment(c *gin.Context) {
 		// and the fix is to re-read the doctor's booking quote — not to retry the
 		// same amount (ADR-044).
 		if errors.Is(err, ErrQuoteMismatch) {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": appt})
@@ -144,7 +145,7 @@ func (h *Handler) ListMyAppointments(c *gin.Context) {
 	filter := c.Query("filter") // "upcoming" | "past" | ""
 	appts, err := h.svc.ListMyAppointments(c.Request.Context(), userID, filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": appts})
@@ -154,7 +155,7 @@ func (h *Handler) GetAppointment(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	appt, err := h.svc.GetAppointment(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": appt})
@@ -163,7 +164,7 @@ func (h *Handler) GetAppointment(c *gin.Context) {
 func (h *Handler) CompleteAppointment(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if err := h.svc.CompleteAppointment(c.Request.Context(), c.Param("id"), userID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -172,7 +173,7 @@ func (h *Handler) CompleteAppointment(c *gin.Context) {
 func (h *Handler) CancelAppointment(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if err := h.svc.CancelAppointment(c.Request.Context(), c.Param("id"), userID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -182,12 +183,12 @@ func (h *Handler) IssuePrescription(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req IssuePrescriptionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.IssuePrescription(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": p})
@@ -200,7 +201,7 @@ func (h *Handler) GetPrescription(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	p, err := h.svc.GetPrescription(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": p})
@@ -210,12 +211,12 @@ func (h *Handler) SubmitSOAPNote(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req SubmitSOAPNoteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	note, err := h.svc.SubmitSOAPNote(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": note})
@@ -225,7 +226,7 @@ func (h *Handler) UploadLicenceDoc(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req UploadLicenceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if req.IdempotencyKey == "" {
@@ -233,7 +234,7 @@ func (h *Handler) UploadLicenceDoc(c *gin.Context) {
 	}
 	doc, err := h.svc.UploadLicenceDoc(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{"upload_id": doc.ID}})

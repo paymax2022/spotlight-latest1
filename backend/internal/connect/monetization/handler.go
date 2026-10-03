@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strconv"
 	"strings"
 	"time"
@@ -46,7 +47,7 @@ func mapMoneyError(c *gin.Context, err error) {
 func (h *Handler) ListPlans(c *gin.Context) {
 	plans, err := h.svc.ListPlans(c.Request.Context(), PlanKind(c.Query("kind")))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": plans})
@@ -61,7 +62,7 @@ func (h *Handler) purchase(c *gin.Context, kind PlanKind) {
 	}
 	var req PurchaseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	order, ent, err := h.svc.Purchase(c.Request.Context(), uid, ginutil.IdempotencyKey(c), kind, req)
@@ -85,7 +86,7 @@ func (h *Handler) BuyPass(c *gin.Context) { h.purchase(c, KindPass) }
 func (h *Handler) Entitlements(c *gin.Context) {
 	ents, err := h.svc.ActiveEntitlements(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": ents})
@@ -105,7 +106,7 @@ func (h *Handler) book(c *gin.Context, kind string) {
 	}
 	var req BookingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	req.Kind = kind // endpoint dictates kind; client cannot override.
@@ -146,7 +147,7 @@ func (h *Handler) CancelSubscription(c *gin.Context) {
 func (h *Handler) AdminRunRenewals(c *gin.Context) {
 	rep, err := h.svc.ProcessRenewals(c.Request.Context(), time.Now().UTC())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "partial": rep})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err), "partial": rep})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": rep})
@@ -156,12 +157,12 @@ func (h *Handler) AdminRunRenewals(c *gin.Context) {
 func (h *Handler) AdminUpsertPlan(c *gin.Context) {
 	var p Plan
 	if err := c.ShouldBindJSON(&p); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpsertPlan(c.Request.Context(), ginutil.UserID(c), p)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -197,7 +198,7 @@ func (h *Handler) AdminListOrders(c *gin.Context) {
 	}
 	orders, err := h.svc.ListOrders(c.Request.Context(), c.Query("user_id"), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": orders})

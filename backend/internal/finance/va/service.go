@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/provider"
 )
@@ -194,7 +195,7 @@ func (h *Handler) GetMe(c *gin.Context) {
 		case errors.Is(err, ErrProviderUnavailable):
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Virtual accounts are temporarily unavailable."})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		}
 		return
 	}

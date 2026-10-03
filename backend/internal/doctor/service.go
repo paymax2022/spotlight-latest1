@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path"
 	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
@@ -372,7 +373,7 @@ func (h *Handler) PresignUpload(c *gin.Context) {
 
 	var req PresignUploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	prefix, ok := uploadKinds[req.Kind]

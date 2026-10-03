@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Service reads backend-owned Connect config from public.connect_config.
@@ -86,7 +87,7 @@ func (h *Handler) Health(c *gin.Context) {
 func (h *Handler) Config(c *gin.Context) {
 	cfg, err := h.svc.PublicConfig(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": cfg})
@@ -97,7 +98,7 @@ func (h *Handler) Config(c *gin.Context) {
 func (h *Handler) AdminConfig(c *gin.Context) {
 	entries, err := h.svc.AllConfig(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": entries})

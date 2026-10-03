@@ -17,6 +17,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const keyError = "error"
+
 // Service owns the date-safety center. All reads/writes are scoped to the owner
 // (object-level authz) so one user can never see or mutate another's contacts or
 // plans; RLS is the DB backstop.
@@ -301,12 +303,12 @@ func (h *Handler) AddContact(c *gin.Context) {
 	}
 	var req TrustedContactRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	t, err := h.svc.AddContact(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not add contact"})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "could not add contact"})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": t})
@@ -320,7 +322,7 @@ func (h *Handler) ListContacts(c *gin.Context) {
 	}
 	list, err := h.svc.ListContacts(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": list})
@@ -333,7 +335,7 @@ func (h *Handler) DeleteContact(c *gin.Context) {
 		return
 	}
 	if err := h.svc.DeleteContact(c.Request.Context(), userID, c.Param("id")); err != nil {
-		c.JSON(errMap.Code(err), gin.H{"error": err.Error()})
+		c.JSON(errMap.Code(err), gin.H{keyError: httperr.Msg(c, errMap.Code(err), err)})
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -347,12 +349,12 @@ func (h *Handler) CreatePlan(c *gin.Context) {
 	}
 	var req CreateDatePlanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.CreatePlan(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": p})
@@ -366,12 +368,12 @@ func (h *Handler) Share(c *gin.Context) {
 	}
 	var req ShareRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.Share(c.Request.Context(), userID, c.Param("id"), req)
 	if err != nil {
-		c.JSON(errMap.Code(err), gin.H{"error": err.Error()})
+		c.JSON(errMap.Code(err), gin.H{keyError: httperr.Msg(c, errMap.Code(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": p})
@@ -385,7 +387,7 @@ func (h *Handler) CheckIn(c *gin.Context) {
 	}
 	p, err := h.svc.CheckIn(c.Request.Context(), userID, c.Param("id"))
 	if err != nil {
-		c.JSON(errMap.Code(err), gin.H{"error": err.Error()})
+		c.JSON(errMap.Code(err), gin.H{keyError: httperr.Msg(c, errMap.Code(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": p})
@@ -399,12 +401,12 @@ func (h *Handler) Feedback(c *gin.Context) {
 	}
 	var req FeedbackRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.Feedback(c.Request.Context(), userID, c.Param("id"), req)
 	if err != nil {
-		c.JSON(errMap.Code(err), gin.H{"error": err.Error()})
+		c.JSON(errMap.Code(err), gin.H{keyError: httperr.Msg(c, errMap.Code(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": p})

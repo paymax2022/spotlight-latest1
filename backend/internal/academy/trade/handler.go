@@ -8,9 +8,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyUnauthenticated = "unauthenticated"
+
+const keyMessage = "message"
+
+const keyError = "error"
+
+const keyInvalidInput = "invalid_input"
+
+const keyIllegalTransition = "illegal_transition"
 
 // Handler exposes the academy trade surface over Gin.
 //   - member: trade hub + module reads, project submit, skill-assessment take,
@@ -38,15 +49,15 @@ func authUserID(c *gin.Context) string {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: keyIllegalTransition, keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrIdempotencyRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_required", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "idempotency_required", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -106,7 +117,7 @@ func RegisterAcademyTrade(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rb
 func (h *Handler) GetHub(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	track := c.Query("track")
@@ -155,12 +166,12 @@ func (h *Handler) GetProject(c *gin.Context) {
 func (h *Handler) SubmitProject(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req SubmitProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.SubmitProject(c.Request.Context(), u, c.Param("id"), req.Files)
@@ -174,7 +185,7 @@ func (h *Handler) SubmitProject(c *gin.Context) {
 func (h *Handler) ListMySubmissions(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.ListMySubmissions(c.Request.Context(), u)
@@ -210,12 +221,12 @@ func (h *Handler) GetAssessment(c *gin.Context) {
 func (h *Handler) TakeAssessment(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req TakeAssessmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	idemKey := c.GetHeader("Idempotency-Key")
@@ -239,7 +250,7 @@ func (h *Handler) ListMentors(c *gin.Context) {
 func (h *Handler) RequestMentor(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.RequestMentor(c.Request.Context(), u, c.Param("id"))
@@ -253,7 +264,7 @@ func (h *Handler) RequestMentor(c *gin.Context) {
 func (h *Handler) CloseMatch(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.CloseMatch(c.Request.Context(), u, c.Param("id"))
@@ -267,7 +278,7 @@ func (h *Handler) CloseMatch(c *gin.Context) {
 func (h *Handler) AdminCreateModule(c *gin.Context) {
 	var req CreateModuleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateModule(c.Request.Context(), ginutil.UserID(c, authUserID), req)
@@ -281,7 +292,7 @@ func (h *Handler) AdminCreateModule(c *gin.Context) {
 func (h *Handler) AdminUpdateModule(c *gin.Context) {
 	var req UpdateModuleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpdateModule(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)
@@ -295,7 +306,7 @@ func (h *Handler) AdminUpdateModule(c *gin.Context) {
 func (h *Handler) AdminCreateLesson(c *gin.Context) {
 	var req CreateLessonRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateLesson(c.Request.Context(), ginutil.UserID(c, authUserID), req)
@@ -309,7 +320,7 @@ func (h *Handler) AdminCreateLesson(c *gin.Context) {
 func (h *Handler) AdminUpdateLesson(c *gin.Context) {
 	var req UpdateLessonRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpdateLesson(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)
@@ -323,7 +334,7 @@ func (h *Handler) AdminUpdateLesson(c *gin.Context) {
 func (h *Handler) AdminCreateProject(c *gin.Context) {
 	var req CreateProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateProject(c.Request.Context(), ginutil.UserID(c, authUserID), req)
@@ -337,7 +348,7 @@ func (h *Handler) AdminCreateProject(c *gin.Context) {
 func (h *Handler) AdminUpdateProject(c *gin.Context) {
 	var req UpdateProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpdateProject(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)
@@ -351,7 +362,7 @@ func (h *Handler) AdminUpdateProject(c *gin.Context) {
 func (h *Handler) AdminCreateAssessment(c *gin.Context) {
 	var req CreateSkillAssessmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateSkillAssessment(c.Request.Context(), ginutil.UserID(c, authUserID), req)
@@ -365,7 +376,7 @@ func (h *Handler) AdminCreateAssessment(c *gin.Context) {
 func (h *Handler) AdminUpdateAssessment(c *gin.Context) {
 	var req UpdateSkillAssessmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpdateSkillAssessment(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)
@@ -379,7 +390,7 @@ func (h *Handler) AdminUpdateAssessment(c *gin.Context) {
 func (h *Handler) AdminReviewSubmission(c *gin.Context) {
 	var req ReviewSubmissionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.ReviewProject(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req.RubricScore, req.Pass, req.Feedback)
@@ -393,7 +404,7 @@ func (h *Handler) AdminReviewSubmission(c *gin.Context) {
 func (h *Handler) AdminApproveMentor(c *gin.Context) {
 	var req CreateMentorRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.ApproveMentor(c.Request.Context(), ginutil.UserID(c, authUserID), req)

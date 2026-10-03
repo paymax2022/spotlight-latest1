@@ -7,9 +7,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/middleware"
 )
+
+const keyError = "error"
 
 // Handler exposes the read-only platform EdTech oversight endpoints. Every response
 // is wrapped in {"data": ...} to match the console client (getJson unwraps
@@ -32,7 +35,7 @@ func rfcPtr(t *time.Time) any {
 }
 
 func fail(c *gin.Context, err error) {
-	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 }
 
 func (h *Handler) ListSchools(c *gin.Context) {
@@ -329,7 +332,7 @@ func (h *Handler) OverrideTrustScore(c *gin.Context) {
 		Reason   string  `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid body"})
 		return
 	}
 	if schoolID == "" {
@@ -453,11 +456,11 @@ func (h *Handler) ToggleFlag(c *gin.Context) {
 		Enabled   bool   `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid body"})
 		return
 	}
 	if body.Key == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "key is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "key is required"})
 		return
 	}
 	actorID := ""

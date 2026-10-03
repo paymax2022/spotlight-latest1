@@ -619,7 +619,7 @@ func (h *Handler) GetBankAccounts(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	accounts, err := h.svc.GetBankAccounts(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": accounts})
@@ -640,7 +640,7 @@ func (h *Handler) SubmitWithdrawal(c *gin.Context) {
 
 	var in WithdrawalRequestInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -650,15 +650,15 @@ func (h *Handler) SubmitWithdrawal(c *gin.Context) {
 		// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
 		// unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
 		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 		case errors.Is(err, ErrTierGateUnwired):
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err)})
 		case errors.Is(err, ErrCampaignNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 		case errors.Is(err, ErrLedgerUnavailable):
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err)})
 		default:
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		}
 		return
 	}

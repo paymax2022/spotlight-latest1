@@ -9,9 +9,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
+
+const keyIllegalTransition = "illegal_transition"
+
+const keyError = "error"
 
 // Handler exposes the academy content CMS over Gin.
 //   - member: live-content reads (lessons for an objective, live bundles, manifest).
@@ -37,13 +46,13 @@ func authUserID(c *gin.Context) string {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: keyIllegalTransition, keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -121,7 +130,7 @@ func (h *Handler) GetBundleManifest(c *gin.Context) {
 		return
 	}
 	if b.Status != StatusLive {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": "bundle not live"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: "bundle not live"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": b.Manifest})
@@ -143,7 +152,7 @@ func (h *Handler) AdminListItems(c *gin.Context) {
 func (h *Handler) AdminTransitionLesson(c *gin.Context) {
 	var req TransitionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.TransitionLesson(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req.To)
@@ -157,7 +166,7 @@ func (h *Handler) AdminTransitionLesson(c *gin.Context) {
 func (h *Handler) AdminTransitionBundle(c *gin.Context) {
 	var req TransitionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.TransitionBundle(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req.To)
@@ -171,7 +180,7 @@ func (h *Handler) AdminTransitionBundle(c *gin.Context) {
 func (h *Handler) AdminCreateProduction(c *gin.Context) {
 	var req CreateProductionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateProduction(c.Request.Context(), ginutil.UserID(c, authUserID), req)
@@ -185,7 +194,7 @@ func (h *Handler) AdminCreateProduction(c *gin.Context) {
 func (h *Handler) AdminUpdateProduction(c *gin.Context) {
 	var req UpdateProductionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpdateProduction(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)
@@ -199,7 +208,7 @@ func (h *Handler) AdminUpdateProduction(c *gin.Context) {
 func (h *Handler) AdminAdvanceProduction(c *gin.Context) {
 	var req AdvanceProductionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.AdvanceProduction(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req.To)
@@ -249,7 +258,7 @@ func (h *Handler) AdminListProductions(c *gin.Context) {
 func (h *Handler) AdminUpsertLocalization(c *gin.Context) {
 	var req UpsertLocalizationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpsertLocalization(c.Request.Context(), ginutil.UserID(c, authUserID), req)

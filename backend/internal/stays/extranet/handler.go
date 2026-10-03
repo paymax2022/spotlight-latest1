@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Handler exposes the hotelier extranet routes. Authorization is object-level
@@ -31,9 +32,9 @@ func mapErr(c *gin.Context, err error) {
 	case errors.Is(err, ErrInviteNotValid):
 		c.JSON(http.StatusBadRequest, gin.H{"error": "this invite is not valid"})
 	case errors.Is(err, ErrValidation):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -116,7 +117,7 @@ func (h *Handler) CreateProperty(c *gin.Context) {
 		StarRating   int    `json:"star_rating"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if b.StarRating < 0 || b.StarRating > 5 {
@@ -151,7 +152,7 @@ func (h *Handler) UpdateContent(c *gin.Context) {
 		PropertyType string `json:"property_type"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.UpdateContent(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"),
@@ -180,7 +181,7 @@ func (h *Handler) UpdateDetails(c *gin.Context) {
 		ContactEmail       *string   `json:"contact_email"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	patch := PropertyDetailsPatch{
@@ -213,7 +214,7 @@ func (h *Handler) CreateRoomType(c *gin.Context) {
 		Bedding   string `json:"bedding"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if b.Occupancy <= 0 {
@@ -248,7 +249,7 @@ func (h *Handler) CreateRatePlan(c *gin.Context) {
 		Currency         string `json:"currency"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, err := h.svc.CreateRatePlan(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"),
@@ -342,7 +343,7 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		Body string `json:"body" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	msg, err := h.svc.PostMessage(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), c.Param("reservationId"), b.Body)
@@ -411,7 +412,7 @@ func (h *Handler) UpsertStaff(c *gin.Context) {
 		Status string `json:"status"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.UpsertStaff(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), b.UserID, b.Role, b.Status); err != nil {
@@ -431,7 +432,7 @@ func (h *Handler) InviteStaffByEmail(c *gin.Context) {
 		Role  string `json:"role"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.InviteStaffByEmail(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), b.Name, b.Email, b.Role)
@@ -449,7 +450,7 @@ func (h *Handler) AcceptStaffInvite(c *gin.Context) {
 		Token string `json:"token" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.AcceptStaffInvite(c.Request.Context(), ginutil.UserID(c), c.GetString("user_email"), b.Token); err != nil {

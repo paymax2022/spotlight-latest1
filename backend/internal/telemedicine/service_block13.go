@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -306,7 +307,7 @@ type RescheduleRequest struct {
 func (h *Handler) GetAvailability(c *gin.Context) {
 	slots, err := h.svc.GetAvailability(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": slots})
@@ -316,7 +317,7 @@ func (h *Handler) GetAvailability(c *gin.Context) {
 func (h *Handler) ConfirmAppointment(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if err := h.svc.ConfirmAppointment(c.Request.Context(), c.Param("id"), userID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -327,11 +328,11 @@ func (h *Handler) RescheduleAppointment(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req RescheduleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.RescheduleAppointment(c.Request.Context(), c.Param("id"), userID, req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -342,12 +343,12 @@ func (h *Handler) AddReview(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req SubmitReviewRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.AddReview(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": r})
@@ -358,7 +359,7 @@ func (h *Handler) ListDoctorReviews(c *gin.Context) {
 	limit, _ := ginutil.PageParams(c, 20, 0)
 	reviews, err := h.svc.ListDoctorReviews(c.Request.Context(), c.Param("id"), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": reviews})
@@ -369,7 +370,7 @@ func (h *Handler) GetVisitSummary(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	vs, err := h.svc.GetVisitSummary(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": vs})

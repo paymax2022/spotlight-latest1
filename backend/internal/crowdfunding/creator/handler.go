@@ -72,7 +72,7 @@ func (h *Handler) GetSaved(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	items, err := h.svc.GetSaved(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -83,7 +83,7 @@ func (h *Handler) GetRecentlyViewed(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	items, err := h.svc.GetRecentlyViewed(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -94,7 +94,7 @@ func (h *Handler) SaveCampaign(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	res, err := h.svc.ToggleSave(c.Request.Context(), userID, c.Param("id"), true)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -105,7 +105,7 @@ func (h *Handler) UnsaveCampaign(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	res, err := h.svc.ToggleSave(c.Request.Context(), userID, c.Param("id"), false)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -116,7 +116,7 @@ func (h *Handler) GetCreatorStats(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	st, err := h.svc.GetCreatorStats(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, st)
@@ -127,7 +127,7 @@ func (h *Handler) GetMyCampaigns(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	items, err := h.svc.GetMyCampaigns(c.Request.Context(), userID, c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -138,7 +138,7 @@ func (h *Handler) GetCreatorContributions(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	items, err := h.svc.GetCreatorContributions(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -149,7 +149,7 @@ func (h *Handler) GetCreatorWithdrawals(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	items, err := h.svc.GetCreatorWithdrawals(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -160,7 +160,7 @@ func (h *Handler) GetCreatorNotifications(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	items, err := h.svc.GetCreatorNotifications(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -180,7 +180,7 @@ func (h *Handler) GetCampaignAnalytics(c *gin.Context) {
 func (h *Handler) GetMilestones(c *gin.Context) {
 	items, err := h.svc.GetMilestones(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -190,7 +190,7 @@ func (h *Handler) GetMilestones(c *gin.Context) {
 func (h *Handler) GetRewardBackers(c *gin.Context) {
 	items, err := h.svc.GetRewardBackers(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -200,7 +200,7 @@ func (h *Handler) GetRewardBackers(c *gin.Context) {
 func (h *Handler) UpdateRewardStatus(c *gin.Context) {
 	var in RewardStatusInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.UpdateRewardStatus(c.Request.Context(), c.Param("id"), in.Status); err != nil {
@@ -208,7 +208,7 @@ func (h *Handler) UpdateRewardStatus(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "reward backer not found"})
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"id": c.Param("id"), "status": in.Status})
@@ -243,7 +243,7 @@ func failSelfManage(c *gin.Context, err error) {
 func (h *Handler) UpdateCampaign(c *gin.Context) {
 	var in CampaignUpdateRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpdateCampaign(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)

@@ -20,6 +20,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/httperr"
 	feescompetition "spotlight/backend/internal/academy/fees/competition"
 	"spotlight/backend/internal/middleware"
 )
@@ -101,11 +102,11 @@ func (h *Handler) TransitionCompetition(c *gin.Context) {
 	out, err := svc.Transition(c.Request.Context(), id, body.Event)
 	if err != nil {
 		if errors.Is(err, feescompetition.ErrUnknownEvent) || errors.Is(err, feescompetition.ErrScopeInvalid) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 			return
 		}
 		// Illegal/terminal/no-such-competition ⇒ conflict (matches the fees competition handler).
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 		return
 	}
 	actorID := actorOf(c)

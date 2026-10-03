@@ -8,12 +8,17 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/timeutil"
 	financeledger "spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/middleware"
 	referralevents "spotlight/backend/internal/referral/events"
 	"spotlight/backend/internal/services"
 )
+
+const keyInvalidBody = "invalid body"
+
+const keyError = "error"
 
 // minPayoutTier is the KYC tier required to receive a referral payout (Tier/KYC
 // gated). Tier 1 (basic verified) is the floor; admins can raise this in policy.
@@ -264,7 +269,7 @@ func uid(c *gin.Context) string {
 func (h *Handler) ListPayouts(c *gin.Context) {
 	list, err := h.svc.ListPayouts(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"payouts": list})
@@ -273,7 +278,7 @@ func (h *Handler) ListPayouts(c *gin.Context) {
 func (h *Handler) QueuePayout(c *gin.Context) {
 	var in PayoutRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	if in.IdempotencyKey == "" {
@@ -281,7 +286,7 @@ func (h *Handler) QueuePayout(c *gin.Context) {
 	}
 	p, err := h.svc.QueuePayout(c.Request.Context(), in, uid(c))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"payout": p})
@@ -290,7 +295,7 @@ func (h *Handler) QueuePayout(c *gin.Context) {
 func (h *Handler) ApprovePayout(c *gin.Context) {
 	p, err := h.svc.ApprovePayout(c.Request.Context(), c.Param("id"), uid(c))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"payout": p})
@@ -302,7 +307,7 @@ func (h *Handler) RejectPayout(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&body)
 	if err := h.svc.RejectPayout(c.Request.Context(), c.Param("id"), uid(c), body.Reason); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -311,7 +316,7 @@ func (h *Handler) RejectPayout(c *gin.Context) {
 func (h *Handler) ListReconciliations(c *gin.Context) {
 	list, err := h.svc.ListReconciliations(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"reconciliations": list})
@@ -320,7 +325,7 @@ func (h *Handler) ListReconciliations(c *gin.Context) {
 func (h *Handler) Reconcile(c *gin.Context) {
 	rc, err := h.svc.Reconcile(c.Request.Context(), c.Query("since"), c.Query("until"), uid(c))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"reconciliation": rc})
@@ -329,7 +334,7 @@ func (h *Handler) Reconcile(c *gin.Context) {
 func (h *Handler) ListBudgets(c *gin.Context) {
 	list, err := h.svc.ListBudgets(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"budgets": list})
@@ -338,12 +343,12 @@ func (h *Handler) ListBudgets(c *gin.Context) {
 func (h *Handler) UpsertBudget(c *gin.Context) {
 	var in BudgetInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	b, err := h.svc.UpsertBudget(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"budget": b})
@@ -352,7 +357,7 @@ func (h *Handler) UpsertBudget(c *gin.Context) {
 func (h *Handler) LatestFloat(c *gin.Context) {
 	f, err := h.svc.LatestFloat(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"float": f})
@@ -364,12 +369,12 @@ func (h *Handler) SnapshotFloat(c *gin.Context) {
 		Note       string `json:"note"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	f, err := h.svc.SnapshotFloat(c.Request.Context(), body.FundedKobo, body.Note)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"float": f})
@@ -378,7 +383,7 @@ func (h *Handler) SnapshotFloat(c *gin.Context) {
 func (h *Handler) RewardToLTV(c *gin.Context) {
 	r, err := h.svc.RewardToLTV(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"reward_to_ltv": r})

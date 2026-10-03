@@ -16,6 +16,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const keyUnauthenticated = "unauthenticated"
+
+const keyError = "error"
+
 // Auditor is the immutable-audit sink (nil-safe), matching the finance modules.
 type Auditor interface {
 	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
@@ -475,10 +479,10 @@ var errMap = httperr.New(http.StatusInternalServerError,
 // internals never leak to the client.
 func httpErr(c *gin.Context, err error) {
 	if code := errMap.Code(err); code != http.StatusInternalServerError {
-		c.JSON(code, gin.H{"error": err.Error()})
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "something went wrong"})
+	c.JSON(http.StatusInternalServerError, gin.H{keyError: "something went wrong"})
 }
 
 // GetVideos — GET /videos?topic=
@@ -515,7 +519,7 @@ func (h *Handler) GetChallenge(c *gin.Context) {
 func (h *Handler) JoinChallenge(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	ch, err := h.svc.JoinChallenge(c.Request.Context(), uid, c.Param("id"))
@@ -530,7 +534,7 @@ func (h *Handler) JoinChallenge(c *gin.Context) {
 func (h *Handler) CompleteChallenge(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	key, ok := ginutil.RequireIdempotencyKey(c)
@@ -559,7 +563,7 @@ func (h *Handler) GetLeaderboard(c *gin.Context) {
 func (h *Handler) GetRewardWallet(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	w, err := h.svc.RewardWallet(c.Request.Context(), uid)

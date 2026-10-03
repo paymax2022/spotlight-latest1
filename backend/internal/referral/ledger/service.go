@@ -23,6 +23,7 @@ import (
 
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	financeledger "spotlight/backend/internal/finance/ledger"
 )
 
@@ -615,7 +616,7 @@ func (h *Handler) MySummary(c *gin.Context) {
 	}
 	sum, err := h.svc.GetSummary(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, sum)
@@ -631,7 +632,7 @@ func (h *Handler) MyEligible(c *gin.Context) {
 	}
 	sum, err := h.svc.GetSummary(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -659,10 +660,10 @@ func (h *Handler) MyWithdraw(c *gin.Context) {
 	res, err := h.svc.WithdrawEligible(c.Request.Context(), userID, idem)
 	if err != nil {
 		if errors.Is(err, ErrKYCRequired) || errors.Is(err, ErrAccountNotEligible) {
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -674,7 +675,7 @@ func (h *Handler) AdminList(c *gin.Context) {
 	beneficiary := c.Query("beneficiary")
 	entries, err := h.svc.ListByBeneficiary(c.Request.Context(), beneficiary, 200)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"entries": entries})

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/arena/quiz"
 	arenasvc "spotlight/backend/internal/arena/service"
 	"spotlight/backend/internal/middleware"
@@ -17,6 +18,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const keyError = "error"
 
 // Repo is the persistence surface the service depends on (concrete: *Repository).
 type Repo interface {
@@ -341,18 +344,18 @@ func fail(c *gin.Context, err error) {
 	switch {
 	case errors.As(err, &cool):
 		c.JSON(http.StatusTooManyRequests, gin.H{
-			"error": cool.Error(), "cooldownUntil": cool.Until,
+			keyError: httperr.Msg(c, http.StatusTooManyRequests, cool), "cooldownUntil": cool.Until,
 		})
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrMissingIdem):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInactive):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -392,7 +395,7 @@ func (h *Handler) Submit(c *gin.Context) {
 		Answers []Answer `json:"answers"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Submit(c.Request.Context(), ginutil.UserID(c), c.Param("id"), c.Param("attemptId"), body.Answers, idem)
@@ -427,7 +430,7 @@ func (h *Handler) AdminList(c *gin.Context) {
 func (h *Handler) AdminUpsert(c *gin.Context) {
 	var in UpsertInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	a, err := h.svc.AdminUpsert(c.Request.Context(), ginutil.UserID(c), in)

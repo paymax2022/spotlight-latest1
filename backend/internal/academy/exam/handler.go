@@ -8,9 +8,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyUnauthenticated = "unauthenticated"
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
+
+const keyError = "error"
 
 // Handler exposes the exam-arena + CBT surface over Gin.
 //   - member: arena/blueprint reads, attempt lifecycle, UTME combinations.
@@ -37,15 +46,15 @@ func authUserID(c *gin.Context) string {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrNotEntitled):
-		c.JSON(http.StatusForbidden, gin.H{"error": "not_entitled", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: "not_entitled", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrPauseNotAllowed), errors.Is(err, ErrInvalidInput), errors.Is(err, ErrAlreadyFinal):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -116,12 +125,12 @@ func (h *Handler) ListBlueprints(c *gin.Context) {
 func (h *Handler) BeginAttempt(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req BeginAttemptRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	idem := c.GetHeader("Idempotency-Key")
@@ -136,7 +145,7 @@ func (h *Handler) BeginAttempt(c *gin.Context) {
 func (h *Handler) PauseAttempt(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.Pause(c.Request.Context(), u, c.Param("id"))
@@ -150,7 +159,7 @@ func (h *Handler) PauseAttempt(c *gin.Context) {
 func (h *Handler) ResumeAttempt(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.Resume(c.Request.Context(), u, c.Param("id"))
@@ -165,12 +174,12 @@ func (h *Handler) ResumeAttempt(c *gin.Context) {
 func (h *Handler) SubmitAttempt(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req SubmitAttemptRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	idem := c.GetHeader("Idempotency-Key")
@@ -185,7 +194,7 @@ func (h *Handler) SubmitAttempt(c *gin.Context) {
 func (h *Handler) GetAttempt(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.GetAttempt(c.Request.Context(), u, c.Param("id"))
@@ -202,7 +211,7 @@ func (h *Handler) GetAttempt(c *gin.Context) {
 func (h *Handler) GetAttemptResult(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.GetAttemptResult(c.Request.Context(), u, c.Param("id"))
@@ -258,7 +267,7 @@ func (h *Handler) AdminListCombinations(c *gin.Context) {
 func (h *Handler) AdminCreateArena(c *gin.Context) {
 	var req CreateArenaRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateArena(c.Request.Context(), ginutil.UserID(c, authUserID), req)
@@ -272,7 +281,7 @@ func (h *Handler) AdminCreateArena(c *gin.Context) {
 func (h *Handler) AdminUpdateArena(c *gin.Context) {
 	var req UpdateArenaRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpdateArena(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)
@@ -286,7 +295,7 @@ func (h *Handler) AdminUpdateArena(c *gin.Context) {
 func (h *Handler) AdminCreateBlueprint(c *gin.Context) {
 	var req CreateBlueprintRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateBlueprint(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)
@@ -300,7 +309,7 @@ func (h *Handler) AdminCreateBlueprint(c *gin.Context) {
 func (h *Handler) AdminUpdateBlueprint(c *gin.Context) {
 	var req UpdateBlueprintRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpdateBlueprint(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)
@@ -314,7 +323,7 @@ func (h *Handler) AdminUpdateBlueprint(c *gin.Context) {
 func (h *Handler) AdminCreateCombination(c *gin.Context) {
 	var req CombinationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateCombination(c.Request.Context(), ginutil.UserID(c, authUserID), req)
@@ -328,7 +337,7 @@ func (h *Handler) AdminCreateCombination(c *gin.Context) {
 func (h *Handler) AdminUpdateCombination(c *gin.Context) {
 	var req CombinationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpdateCombination(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/middleware"
 	platformRedis "spotlight/backend/internal/platform/redis"
@@ -32,13 +33,13 @@ func mapError(c *gin.Context, err error) {
 			"error": "that contestant is not in this contest"})
 	case errors.Is(err, ErrContestClosed), errors.Is(err, ErrPaidUnavailable),
 		errors.Is(err, ErrInvalidAmount), errors.Is(err, ErrInvalidQuantity):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrFreeVoteUsed):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrVelocity):
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": httperr.Msg(c, http.StatusTooManyRequests, err)})
 	case errors.Is(err, ErrNotContestant):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 	default:
 		msg := err.Error()
 		switch {
@@ -62,7 +63,7 @@ func (h *Handler) ListContests(c *gin.Context) {
 	}
 	out, err := h.svc.ListContests(c.Request.Context(), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -87,7 +88,7 @@ func (h *Handler) FreeVote(c *gin.Context) {
 	}
 	var req FreeVoteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.svc.FreeVote(c.Request.Context(), c.Param("id"), uid, req)
@@ -114,7 +115,7 @@ func (h *Handler) PaidVote(c *gin.Context) {
 	}
 	var req PaidVoteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.svc.PaidVote(c.Request.Context(), c.Param("id"), uid, ginutil.IdempotencyKey(c), req)
@@ -129,7 +130,7 @@ func (h *Handler) PaidVote(c *gin.Context) {
 func (h *Handler) Results(c *gin.Context) {
 	out, err := h.svc.Results(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -264,7 +265,7 @@ func (h *Handler) ResolveShare(c *gin.Context) {
 func (h *Handler) GetStages(c *gin.Context) {
 	stages, err := h.svc.GetStages(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": stages})

@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/httperr"
 	feesstatemachine "spotlight/backend/internal/academy/fees/statemachine"
 )
 
@@ -61,7 +62,7 @@ func (h *Handler) fail(c *gin.Context, err error) {
 func (h *Handler) CreateCompetition(c *gin.Context) {
 	var in CreateCompetitionRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Create(c.Request.Context(), in)
@@ -76,7 +77,7 @@ func (h *Handler) CreateCompetition(c *gin.Context) {
 func (h *Handler) TransitionCompetition(c *gin.Context) {
 	var in TransitionCompetitionRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Transition(c.Request.Context(), c.Param("id"), in.Event)
@@ -91,7 +92,7 @@ func (h *Handler) TransitionCompetition(c *gin.Context) {
 func (h *Handler) RegisterSchool(c *gin.Context) {
 	var in RegisterSchoolRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Register(c.Request.Context(), c.Param("id"), in.SchoolID)
@@ -107,7 +108,7 @@ func (h *Handler) RegisterSchool(c *gin.Context) {
 func (h *Handler) RecordScore(c *gin.Context) {
 	var in RecordScoreRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.RecordScore(c.Request.Context(), c.Param("id"), in); err != nil {

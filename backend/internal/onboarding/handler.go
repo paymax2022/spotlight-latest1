@@ -34,7 +34,7 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		return
 	}
 	code := errMap.Code(err)
-	body := gin.H{"error": err.Error()}
+	body := gin.H{"error": httperr.Msg(c, code, err)}
 	switch {
 	case errors.Is(err, ErrNotFound):
 		body["error"] = "not found"
@@ -102,7 +102,7 @@ func (h *Handler) GetFormSchema(c *gin.Context) {
 func (h *Handler) CreateApplication(c *gin.Context) {
 	var req CreateApplicationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	app, err := h.svc.CreateApplication(c.Request.Context(), ginutil.UserID(c, authUserID), req)
@@ -116,7 +116,7 @@ func (h *Handler) CreateApplication(c *gin.Context) {
 func (h *Handler) SaveDraft(c *gin.Context) {
 	var req SaveDraftRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	app, err := h.svc.SaveDraft(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)
@@ -241,7 +241,7 @@ func (h *Handler) Escalate(c *gin.Context) {
 func (h *Handler) CreateModule(c *gin.Context) {
 	var req CreateModuleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.CreateModule(c.Request.Context(), req); err != nil {
@@ -254,7 +254,7 @@ func (h *Handler) CreateModule(c *gin.Context) {
 func (h *Handler) CreateMerchantType(c *gin.Context) {
 	var req CreateMerchantTypeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.CreateMerchantType(c.Request.Context(), req); err != nil {
@@ -267,7 +267,7 @@ func (h *Handler) CreateMerchantType(c *gin.Context) {
 func (h *Handler) CreateFormSchema(c *gin.Context) {
 	var req CreateFormSchemaRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	fs, err := h.svc.CreateFormSchemaVersion(c.Request.Context(), c.Param("id"), req)

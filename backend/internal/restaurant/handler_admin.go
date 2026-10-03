@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Admin (ops-console) HTTP handlers for /api/restaurant/admin/*.
@@ -44,7 +45,7 @@ func (h *Handler) AdminListRiders(c *gin.Context) {
 		Offset:  queryInt(c, "offset"),
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, page)
@@ -77,7 +78,7 @@ func (h *Handler) AdminDispatchQueue(c *gin.Context) {
 		Offset:       queryInt(c, "offset"),
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, page)
@@ -92,11 +93,11 @@ func (h *Handler) AdminAssignRider(c *gin.Context) {
 		RiderID string `json:"rider_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.AdminAssignRider(c.Request.Context(), c.Param("id"), body.RiderID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -116,7 +117,7 @@ func (h *Handler) AdminAssignRider(c *gin.Context) {
 // DispatchOrder the owner path uses — no second sourcing implementation.
 func (h *Handler) AdminRedispatch(c *gin.Context) {
 	if err := h.svc.DispatchOrder(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -127,7 +128,7 @@ func (h *Handler) AdminRedispatch(c *gin.Context) {
 func (h *Handler) AdminListApplications(c *gin.Context) {
 	apps, err := h.svc.AdminListApplications(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	if apps == nil {
@@ -157,7 +158,7 @@ func (h *Handler) AdminDecideApplication(c *gin.Context) {
 		decision = body.Decision
 	}
 	if err := h.svc.AdminDecideApplication(c.Request.Context(), c.Param("id"), adminID, decision, body.Note); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -170,7 +171,7 @@ func (h *Handler) AdminDecideApplication(c *gin.Context) {
 func (h *Handler) AdminListPayoutRuns(c *gin.Context) {
 	runs, err := h.svc.ListRuns(c.Request.Context(), 100)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	if runs == nil {
@@ -185,10 +186,10 @@ func (h *Handler) AdminGetPayoutRun(c *gin.Context) {
 	run, err := h.svc.GetRun(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		if err == ErrPayoutRunNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, run)
@@ -205,12 +206,12 @@ func (h *Handler) AdminBuildPayoutRun(c *gin.Context) {
 		ProviderID   string `json:"provider_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	run, err := h.svc.BuildRun(c.Request.Context(), body.PeriodKey, body.ProviderType, body.ProviderID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, run)
@@ -224,18 +225,18 @@ func (h *Handler) AdminBuildPayoutRun(c *gin.Context) {
 func (h *Handler) AdminProcessPayoutRun(c *gin.Context) {
 	idem := ginutil.IdempotencyKey(c)
 	if idem == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": ErrPayoutMissingIdem.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, ErrPayoutMissingIdem)})
 		return
 	}
 	run, err := h.svc.ProcessRun(c.Request.Context(), c.Param("id"), idem)
 	if err != nil {
 		switch err {
 		case ErrPayoutRunNotFound:
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 		case ErrPayoutMissingIdem, ErrPayoutNothingDue:
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		default:
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": httperr.Msg(c, http.StatusUnprocessableEntity, err)})
 		}
 		return
 	}

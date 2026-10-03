@@ -113,7 +113,7 @@ func (h *Handler) SuitabilityQuestions(c *gin.Context) {
 func (h *Handler) SubmitSuitability(c *gin.Context) {
 	var req SuitabilitySubmitRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.SubmitSuitability(c.Request.Context(), ginutil.UserID(c), req.Answers)
@@ -202,14 +202,14 @@ func (h *Handler) MarketStatus(c *gin.Context) {
 func (h *Handler) Buy(c *gin.Context) {
 	var req BuyOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	rec, err := h.svc.Buy(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		// Failed orders still return the receipt where available (status visible).
 		if rec != nil {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error(), "receipt": rec})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": httperr.Msg(c, http.StatusUnprocessableEntity, err), "receipt": rec})
 			return
 		}
 		httpErr(c, err)
@@ -221,13 +221,13 @@ func (h *Handler) Buy(c *gin.Context) {
 func (h *Handler) Sell(c *gin.Context) {
 	var req SellOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	rec, err := h.svc.Sell(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req)
 	if err != nil {
 		if rec != nil {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error(), "receipt": rec})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": httperr.Msg(c, http.StatusUnprocessableEntity, err), "receipt": rec})
 			return
 		}
 		httpErr(c, err)
@@ -306,7 +306,7 @@ func (h *Handler) Wallet(c *gin.Context) {
 func (h *Handler) Deposit(c *gin.Context) {
 	var req DepositRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	w, err := h.svc.Deposit(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req.AmountKobo, req.Source)
@@ -320,7 +320,7 @@ func (h *Handler) Deposit(c *gin.Context) {
 func (h *Handler) Withdraw(c *gin.Context) {
 	var req WithdrawRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	w, err := h.svc.Withdraw(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req.AmountKobo, req.Destination)
@@ -368,7 +368,7 @@ func (h *Handler) UpdateWatchlist(c *gin.Context) {
 		Name string `json:"name"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.RenameWatchlist(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Name); err != nil {
@@ -391,7 +391,7 @@ func (h *Handler) AddWatchlistStock(c *gin.Context) {
 		Symbol string `json:"symbol" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.AddToWatchlist(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Symbol); err != nil {
@@ -425,7 +425,7 @@ func (h *Handler) CreateAlert(c *gin.Context) {
 		Target    int64  `json:"target_price_kobo"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	a, err := h.svc.CreateAlert(c.Request.Context(), ginutil.UserID(c), body.Symbol, body.Condition, body.Target)
@@ -441,7 +441,7 @@ func (h *Handler) UpdateAlert(c *gin.Context) {
 		Status string `json:"status" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.UpdateAlert(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Status); err != nil {
@@ -482,7 +482,7 @@ func (h *Handler) ApplyPublicOffer(c *gin.Context) {
 		AmountKobo int64 `json:"amount_kobo" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	app, err := h.svc.ApplyPublicOffer(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), c.Param("id"), body.AmountKobo)
@@ -525,7 +525,7 @@ func (h *Handler) AcceptRightsIssue(c *gin.Context) {
 		Units float64 `json:"units" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	app, err := h.svc.AcceptRightsIssue(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), c.Param("id"), body.Units)
@@ -871,7 +871,7 @@ func (h *Handler) SetPIN(c *gin.Context) {
 		CurrentPIN string `json:"current_pin"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetPIN(c.Request.Context(), ginutil.UserID(c), body.PIN, body.CurrentPIN); err != nil {

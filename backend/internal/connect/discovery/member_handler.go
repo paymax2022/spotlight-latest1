@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strconv"
 	"strings"
 
@@ -36,7 +37,7 @@ func mapDiscoveryError(c *gin.Context, err error) {
 	case errors.Is(err, ErrSelfSwipe):
 		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot swipe your own profile"})
 	case errors.Is(err, ErrInvalidSwipe):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrTargetNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "target profile not found"})
 	case errors.Is(err, ErrNothingToUndo):
@@ -44,7 +45,7 @@ func mapDiscoveryError(c *gin.Context, err error) {
 	case errors.Is(err, ErrBoostMissingIdem):
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 	case errors.Is(err, ErrBoostInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
 		msg := err.Error()
 		switch {
@@ -110,7 +111,7 @@ func (h *MemberHandler) Swipe(c *gin.Context) {
 	}
 	var req SwipeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	matched, matchID, err := h.svc.Swipe(c.Request.Context(), uid, req.TargetID, req.Direction, h.liker)

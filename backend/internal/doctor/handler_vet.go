@@ -3,6 +3,7 @@ package doctor
 import (
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 
 	"github.com/gin-gonic/gin"
 )
@@ -750,7 +751,7 @@ func (h *Handler) RenewVetLicence(c *gin.Context) {
 	}
 	var req SubmitVerificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.RenewVetLicence(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
@@ -769,7 +770,7 @@ func (h *Handler) SubmitVetVerification(c *gin.Context) {
 	}
 	var req SubmitVerificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.SubmitVetVerification(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)

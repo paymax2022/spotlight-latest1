@@ -6,7 +6,12 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyMessage = "message"
+
+const keyCode = "code"
 
 // ADMIN DASHBOARD
 // KPIs for the insurance admin console.
@@ -220,7 +225,7 @@ func (h *Handler) AdminDashboard(c *gin.Context) {
 	stats, err := h.svc.DashboardStats(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
-			"code": "dashboard_failed", "message": err.Error(),
+			keyCode: "dashboard_failed", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err),
 		}})
 		return
 	}

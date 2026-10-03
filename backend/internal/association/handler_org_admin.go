@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Admin organisation-management handlers. Every route is org-scoped in the
@@ -25,7 +26,7 @@ func (h *Handler) GetAdminOrganisation(c *gin.Context) {
 func (h *Handler) UpdateAdminOrganisation(c *gin.Context) {
 	var b UpdateOrganisationRequest
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b.IdempotencyKey = ginutil.IdempotencyKey(c)
@@ -62,7 +63,7 @@ func (h *Handler) GetOrganisationSettings(c *gin.Context) {
 func (h *Handler) UpdateOrganisationSettings(c *gin.Context) {
 	var patch map[string]any
 	if err := c.ShouldBindJSON(&patch); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpdateOrganisationSettings(c.Request.Context(), ginutil.UserID(c), c.Param("id"), patch)
@@ -76,7 +77,7 @@ func (h *Handler) UpdateOrganisationSettings(c *gin.Context) {
 func (h *Handler) CreateChapter(c *gin.Context) {
 	var b ChapterRequest
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, err := h.svc.CreateChapter(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b)
@@ -90,7 +91,7 @@ func (h *Handler) CreateChapter(c *gin.Context) {
 func (h *Handler) UpdateChapter(c *gin.Context) {
 	var b ChapterRequest
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.UpdateChapter(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), b); err != nil {
@@ -111,7 +112,7 @@ func (h *Handler) DeleteChapter(c *gin.Context) {
 func (h *Handler) CreateCommittee(c *gin.Context) {
 	var b CommitteeRequest
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, err := h.svc.CreateCommittee(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b)
@@ -125,7 +126,7 @@ func (h *Handler) CreateCommittee(c *gin.Context) {
 func (h *Handler) UpdateCommittee(c *gin.Context) {
 	var b CommitteeRequest
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.UpdateCommittee(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), b); err != nil {
@@ -146,7 +147,7 @@ func (h *Handler) DeleteCommittee(c *gin.Context) {
 func (h *Handler) CreateCategory(c *gin.Context) {
 	var b CategoryRequest
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b.IdempotencyKey = ginutil.IdempotencyKey(c)
@@ -161,7 +162,7 @@ func (h *Handler) CreateCategory(c *gin.Context) {
 func (h *Handler) UpdateCategory(c *gin.Context) {
 	var b CategoryRequest
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b.IdempotencyKey = ginutil.IdempotencyKey(c)
@@ -183,7 +184,7 @@ func (h *Handler) DeleteCategory(c *gin.Context) {
 func (h *Handler) CreateRule(c *gin.Context) {
 	var b RuleRequest
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, err := h.svc.CreateRule(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b)
@@ -197,7 +198,7 @@ func (h *Handler) CreateRule(c *gin.Context) {
 func (h *Handler) UpdateRule(c *gin.Context) {
 	var b RuleRequest
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.UpdateRule(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), b); err != nil {

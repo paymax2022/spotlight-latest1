@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/academy/commerce"
 	"spotlight/backend/internal/academy/edupay"
 	"spotlight/backend/internal/academy/platform"
@@ -386,7 +387,7 @@ func registerAcademyMemberWallet(member *gin.RouterGroup, ledgerSvc *ledger.Serv
 		// (finance/wallet.Service.GetBalance) uses. No parallel balance store.
 		balanceKobo, err := ledgerSvc.GetBalance(c.Request.Context(), userID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"balanceKobo": balanceKobo, "currency": "NGN"})

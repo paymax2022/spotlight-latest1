@@ -12,6 +12,7 @@ import (
 
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 const (
@@ -147,7 +148,7 @@ func (h *Handler) SubmitForReview(c *gin.Context) {
 	out, err := h.svc.SubmitForReview(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		if errors.Is(err, ErrVerificationIncomplete) {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, err)})
 			return
 		}
 		mapErr(c, err)
@@ -174,7 +175,7 @@ func (h *Handler) AdminDecideKYB(c *gin.Context) {
 		Note         string `json:"note"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.AdminDecideKYB(c.Request.Context(), c.Param("propertyId"), ginutil.UserID(c),
@@ -185,7 +186,7 @@ func (h *Handler) AdminDecideKYB(c *gin.Context) {
 		}, b.Decision, b.Note)
 	if err != nil {
 		if errors.Is(err, ErrBadDecision) || errors.Is(err, ErrDecisionNoteRequired) {
-			c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 			return
 		}
 		mapErr(c, err)

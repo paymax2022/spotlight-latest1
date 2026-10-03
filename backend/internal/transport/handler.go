@@ -15,6 +15,7 @@ import (
 
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/platform/ws"
 )
@@ -63,12 +64,12 @@ func (h *Handler) TrackPosition(c *gin.Context) {
 	}
 	var p TrackPoint
 	if err := c.ShouldBindJSON(&p); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.tracker.Ingest(c.Request.Context(), tripID, uid, p); err != nil {
 		if errors.Is(err, ErrNotTripDriver) {
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "code": "not_trip_driver"})
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err), "code": "not_trip_driver"})
 			return
 		}
 		respondErr(c, err)
@@ -95,7 +96,7 @@ func (h *Handler) SendMessage(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	var req SendTripMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	tripID := c.Param("id")
@@ -118,19 +119,19 @@ func respondErr(c *gin.Context, err error) {
 		c.JSON(ce.Status, gin.H{"error": ce.Message, "code": ce.Code})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 }
 
 func (h *Handler) RegisterDriver(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req RegisterDriverRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	d, err := h.svc.RegisterDriver(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, d)
@@ -142,11 +143,11 @@ func (h *Handler) SetStatus(c *gin.Context) {
 		Status string `json:"status" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetDriverStatus(c.Request.Context(), userID, DriverStatus(body.Status)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -156,12 +157,12 @@ func (h *Handler) RequestTrip(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req RequestTripRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	trip, err := h.svc.RequestTrip(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, trip)
@@ -170,7 +171,7 @@ func (h *Handler) RequestTrip(c *gin.Context) {
 func (h *Handler) AcceptTrip(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if err := h.svc.AcceptTrip(c.Request.Context(), c.Param("id"), userID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -182,11 +183,11 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 		Status string `json:"status" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.UpdateTripStatus(c.Request.Context(), c.Param("id"), userID, TripStatus(body.Status)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -197,7 +198,7 @@ func (h *Handler) OnboardingSubmit(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req OnboardingSubmitRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	d, err := h.svc.SubmitOnboarding(c.Request.Context(), userID, req)
@@ -213,7 +214,7 @@ func (h *Handler) AddDocument(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req DocumentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	doc, err := h.svc.AddDocument(c.Request.Context(), userID, req)
@@ -229,7 +230,7 @@ func (h *Handler) AddVehicle(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req VehicleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.svc.AddVehicle(c.Request.Context(), userID, req)
@@ -256,7 +257,7 @@ func (h *Handler) DriverStatus(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req DriverStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetDriverOnline(c.Request.Context(), userID, req); err != nil {
@@ -293,7 +294,7 @@ func (h *Handler) DriverCounter(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req CounterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	fo, err := h.svc.DriverCounter(c.Request.Context(), c.Param("id"), userID, req.CounterKobo)
@@ -319,7 +320,7 @@ func (h *Handler) VerifyPin(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req VerifyPinRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.VerifyPin(c.Request.Context(), c.Param("id"), userID, req.Pin); err != nil {
@@ -576,7 +577,7 @@ func (h *Handler) PresignDriverDocument(c *gin.Context) {
 
 	var req DriverDocPresignRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 

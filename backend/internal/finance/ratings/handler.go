@@ -6,7 +6,10 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyError = "error"
 
 type Handler struct{ svc *Service }
 
@@ -17,12 +20,12 @@ func (h *Handler) Create(c *gin.Context) {
 	raterID := ginutil.UserID(c)
 	var req CreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, created, err := h.svc.Create(c.Request.Context(), raterID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	if !created {
@@ -41,12 +44,12 @@ func (h *Handler) GetSummary(c *gin.Context) {
 	entityID := c.Param("entity_id")
 	entityType := EntityType(c.Query("type"))
 	if entityType == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "type query param required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "type query param required"})
 		return
 	}
 	sum, err := h.svc.GetSummary(c.Request.Context(), entityID, entityType)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, sum)

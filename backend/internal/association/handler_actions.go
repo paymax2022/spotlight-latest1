@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Write-path (mutation) handlers, kept separate from handler.go to reduce merge
@@ -37,7 +38,7 @@ type rsvpBody struct {
 func (h *Handler) RsvpMeeting(c *gin.Context) {
 	var b rsvpBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.RsvpMeeting(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Status); err != nil {
@@ -64,7 +65,7 @@ type taskStatusBody struct {
 func (h *Handler) UpdateTaskStatus(c *gin.Context) {
 	var b taskStatusBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.UpdateTaskStatus(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Status); err != nil {
@@ -104,7 +105,7 @@ type eventFeedbackBody struct {
 func (h *Handler) RsvpEvent(c *gin.Context) {
 	var b eventRsvpBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.RsvpEvent(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Rsvp); err != nil {
@@ -134,7 +135,7 @@ func (h *Handler) RegisterEvent(c *gin.Context) {
 func (h *Handler) SubmitEventFeedback(c *gin.Context) {
 	var b eventFeedbackBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SubmitEventFeedback(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Rating, b.Comment); err != nil {
@@ -161,7 +162,7 @@ type roleBody struct {
 func (h *Handler) DecideOfflinePayment(c *gin.Context) {
 	var b offlineDecisionBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	idemKey := ginutil.IdempotencyKey(c)
@@ -196,7 +197,7 @@ func (h *Handler) RestoreMember(c *gin.Context) {
 func (h *Handler) TransferMember(c *gin.Context) {
 	var b transferBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.TransferMember(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Chapter); err != nil {
@@ -210,12 +211,12 @@ func (h *Handler) TransferMember(c *gin.Context) {
 func (h *Handler) BulkImportMembers(c *gin.Context) {
 	orgID := c.Query("org_id")
 	if orgID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "org_id query param required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "org_id query param required"})
 		return
 	}
 	file, _, err := c.Request.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "multipart file 'file' required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "multipart file 'file' required"})
 		return
 	}
 	defer file.Close()
@@ -231,7 +232,7 @@ func (h *Handler) BulkImportMembers(c *gin.Context) {
 func (h *Handler) AssignRole(c *gin.Context) {
 	var b roleBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.AssignRole(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Role); err != nil {

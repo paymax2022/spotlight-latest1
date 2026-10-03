@@ -12,6 +12,12 @@ import { makeRequest, withAuth } from '../golden-path/_fixtures';
  * so /api/v1/spray/* must proxy under /api/finance/p2p/spray* — proxying to a
  * standalone /api/finance/spray/* upstream 404'd every call even with the
  * feature flag on.
+ *
+ * The BFF gate must be featureFlags.p2pMarket (FEATURE_P2P_MARKET_ENABLED) —
+ * that is the env that controls whether RegisterP2PMarket (and therefore the
+ * spray mount) runs on the Go side. socialPay is the WRONG flag here: it left
+ * spray reachable-but-404ing when P2P was off, and needlessly 503'd when
+ * social pay alone was off.
  */
 
 vi.mock('next/server', () => ({
@@ -25,7 +31,7 @@ vi.mock('next/server', () => ({
 }));
 
 vi.mock('@/src/lib/feature-flags', () => ({
-  featureFlags: { socialPay: vi.fn(() => true) },
+  featureFlags: { socialPay: vi.fn(() => true), p2pMarket: vi.fn(() => true) },
 }));
 
 vi.mock('@/src/lib/auth/request', () => ({
@@ -55,6 +61,7 @@ describe('spray BFF route → Go upstream mapping', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(featureFlags.socialPay).mockReturnValue(true);
+    vi.mocked(featureFlags.p2pMarket).mockReturnValue(true);
     vi.mocked(requireRequestUser).mockResolvedValue(TEST_USER as any);
   });
 
@@ -103,14 +110,36 @@ describe('spray BFF route → Go upstream mapping', () => {
     );
   });
 
-  it('refuses 503 before auth when the socialPay flag is off', async () => {
-    vi.mocked(featureFlags.socialPay).mockReturnValue(false);
+  it('refuses 503 before auth when the p2pMarket flag is off', async () => {
+    vi.mocked(featureFlags.p2pMarket).mockReturnValue(false);
     const res = await GET(
       makeRequest('/api/v1/spray/leaderboard/ctx-1', { method: 'GET' }),
       params(['leaderboard', 'ctx-1'])
     );
     expect(res.status).toBe(503);
     expect(vi.mocked(requireRequestUser)).not.toHaveBeenCalled();
+    expect(vi.mocked(proxyToGoBackend)).not.toHaveBeenCalled();
+  });
+
+  it('still proxies when socialPay is off — spray is gated by the P2P mount flag', async () => {
+    vi.mocked(featureFlags.socialPay).mockReturnValue(false);
+    const res = await GET(
+      makeRequest('/api/v1/spray/leaderboard/ctx-1', { method: 'GET', headers: withAuth() }),
+      params(['leaderboard', 'ctx-1'])
+    );
+    expect(res.status).toBe(200);
+    expect(vi.mocked(proxyToGoBackend)).toHaveBeenCalledWith(
+      expect.anything(),
+      '/api/finance/p2p/spray/leaderboard/ctx-1'
+    );
+  });
+
+  it('root POST also refuses 503 before auth when p2pMarket is off', async () => {
+    vi.mocked(featureFlags.p2pMarket).mockReturnValue(false);
+    const res = await rootPOST(
+      makeRequest('/api/v1/spray', { method: 'POST', headers: withAuth(), body: {} })
+    );
+    expect(res.status).toBe(503);
     expect(vi.mocked(proxyToGoBackend)).not.toHaveBeenCalled();
   });
 });

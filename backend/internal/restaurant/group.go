@@ -10,7 +10,10 @@ import (
 	"github.com/google/uuid"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyIdempotencyKeyIsRequired = "Idempotency-Key is required"
 
 // GroupOrder is a shared cart multiple people contribute to; the host finalizes it into
 // one order (SG-003/004). Payment is host-paid on finalize — a single escrow. (Per-
@@ -163,7 +166,7 @@ func (h *Handler) CreateGroupOrder(c *gin.Context) {
 	_ = c.ShouldBindJSON(&body)
 	g, err := h.svc.CreateGroupOrder(c.Request.Context(), host, c.Param("id"), body.PerContributorCapKobo)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, g)
@@ -177,12 +180,12 @@ func (h *Handler) AddGroupItem(c *gin.Context) {
 		Quantity int    `json:"quantity" binding:"required,min=1"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	it, err := h.svc.AddGroupItem(c.Request.Context(), c.Param("groupId"), contributor, body.ItemID, body.Quantity)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, it)
@@ -192,7 +195,7 @@ func (h *Handler) AddGroupItem(c *gin.Context) {
 func (h *Handler) GetGroupOrder(c *gin.Context) {
 	g, err := h.svc.GetGroupOrder(c.Request.Context(), c.Param("groupId"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	c.JSON(http.StatusOK, g)
@@ -204,14 +207,14 @@ func (h *Handler) FinalizeGroupOrder(c *gin.Context) {
 	host := ginutil.UserID(c)
 	var req PlaceOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if hk := ginutil.IdempotencyKey(c); hk != "" {
 		req.IdempotencyKey = hk
 	}
 	if req.IdempotencyKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyIdempotencyKeyIsRequired})
 		return
 	}
 	order, err := h.svc.FinalizeGroupOrder(c.Request.Context(), c.Param("groupId"), host, req)
@@ -219,10 +222,10 @@ func (h *Handler) FinalizeGroupOrder(c *gin.Context) {
 		// Finalize escrows through PlaceOrder, so it inherits that path's money-side
 		// refusals (tier gate, insufficient funds) — map them the same way here.
 		if code, ok := escrowErrStatus(err); ok {
-			c.JSON(code, gin.H{"error": err.Error()})
+			c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
 			return
 		}
-		c.JSON(statusCodeFor(err), gin.H{"error": err.Error()})
+		c.JSON(statusCodeFor(err), gin.H{keyError: httperr.Msg(c, statusCodeFor(err), err)})
 		return
 	}
 	c.JSON(http.StatusCreated, order)
@@ -233,7 +236,7 @@ func (h *Handler) FinalizeGroupOrder(c *gin.Context) {
 func (h *Handler) AdminActivateScheduled(c *gin.Context) {
 	released, cancelled, err := h.svc.ActivateScheduledOrders(c.Request.Context(), time.Now())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"released": released, "cancelled": cancelled})

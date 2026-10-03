@@ -15,6 +15,7 @@ import (
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // A scheduling LAYER over the existing per-mode transport services. A user books
@@ -666,7 +667,7 @@ func (h *Handler) ScheduledCreate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req ScheduledCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	key := ginutil.IdempotencyKey(c)
@@ -712,7 +713,7 @@ func (h *Handler) ScheduledPatch(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req ScheduledPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.RescheduleScheduled(c.Request.Context(), c.Param("id"), userID, req)
@@ -741,7 +742,7 @@ func (h *Handler) ScheduledCancel(c *gin.Context) {
 func (h *Handler) ScheduledEstimate(c *gin.Context) {
 	var req ScheduledEstimateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.EstimateScheduled(c.Request.Context(), req)

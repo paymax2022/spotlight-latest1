@@ -5,7 +5,12 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyForbidden = "forbidden"
+
+const keyError = "error"
 
 // PropertyAuthorizer is the object-level authZ hook the extranet supplies: it
 // returns true when the calling user (uid) holds an ACTIVE hotelier grant on the
@@ -38,11 +43,11 @@ func (h *Handler) allow(c *gin.Context, propertyID string) bool {
 func ariErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrOversellBlocked):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "OVERSELL_BLOCKED"})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), "code": "OVERSELL_BLOCKED"})
 	case errors.Is(err, ErrBadRange):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -74,7 +79,7 @@ func (h *Handler) GetRateCalendar(c *gin.Context) {
 	rp := c.Param("ratePlanId")
 	pid, err := h.svc.PropertyOfRatePlan(c.Request.Context(), rp)
 	if err != nil || !h.allow(c, pid) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: keyForbidden})
 		return
 	}
 	days, err := h.svc.RateCalendar(c.Request.Context(), rp, c.Query("from"), c.Query("to"))
@@ -90,7 +95,7 @@ func (h *Handler) GetAvailabilityCalendar(c *gin.Context) {
 	rt := c.Param("roomTypeId")
 	pid, err := h.svc.PropertyOfRoomType(c.Request.Context(), rt)
 	if err != nil || !h.allow(c, pid) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: keyForbidden})
 		return
 	}
 	days, err := h.svc.AvailabilityCalendar(c.Request.Context(), rt, c.Query("from"), c.Query("to"))
@@ -106,12 +111,12 @@ func (h *Handler) SetRateDay(c *gin.Context) {
 	rp := c.Param("ratePlanId")
 	pid, err := h.svc.PropertyOfRatePlan(c.Request.Context(), rp)
 	if err != nil || !h.allow(c, pid) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: keyForbidden})
 		return
 	}
 	var d RateDay
 	if err := c.ShouldBindJSON(&d); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	d.RatePlanID = rp
@@ -127,12 +132,12 @@ func (h *Handler) SetAvailabilityDay(c *gin.Context) {
 	rt := c.Param("roomTypeId")
 	pid, err := h.svc.PropertyOfRoomType(c.Request.Context(), rt)
 	if err != nil || !h.allow(c, pid) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: keyForbidden})
 		return
 	}
 	var d AvailabilityDay
 	if err := c.ShouldBindJSON(&d); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	d.RoomTypeID = rt
@@ -148,12 +153,12 @@ func (h *Handler) BulkEditRates(c *gin.Context) {
 	rp := c.Param("ratePlanId")
 	pid, err := h.svc.PropertyOfRatePlan(c.Request.Context(), rp)
 	if err != nil || !h.allow(c, pid) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: keyForbidden})
 		return
 	}
 	var e BulkEdit
 	if err := c.ShouldBindJSON(&e); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	n, err := h.svc.BulkEditRates(c.Request.Context(), rp, e)
@@ -169,12 +174,12 @@ func (h *Handler) BulkEditAvailability(c *gin.Context) {
 	rt := c.Param("roomTypeId")
 	pid, err := h.svc.PropertyOfRoomType(c.Request.Context(), rt)
 	if err != nil || !h.allow(c, pid) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: keyForbidden})
 		return
 	}
 	var e BulkEdit
 	if err := c.ShouldBindJSON(&e); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	n, err := h.svc.BulkEditAvailability(c.Request.Context(), rt, e)
@@ -190,12 +195,12 @@ func (h *Handler) SetRestrictions(c *gin.Context) {
 	rp := c.Param("ratePlanId")
 	pid, err := h.svc.PropertyOfRatePlan(c.Request.Context(), rp)
 	if err != nil || !h.allow(c, pid) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: keyForbidden})
 		return
 	}
 	var e BulkEdit
 	if err := c.ShouldBindJSON(&e); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	n, err := h.svc.SetRestrictions(c.Request.Context(), rp, e)
@@ -215,7 +220,7 @@ func (h *Handler) ApplyDerivedRate(c *gin.Context) {
 	parent := c.Param("ratePlanId")
 	pid, err := h.svc.PropertyOfRatePlan(c.Request.Context(), parent)
 	if err != nil || !h.allow(c, pid) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: keyForbidden})
 		return
 	}
 	var body struct {
@@ -227,13 +232,13 @@ func (h *Handler) ApplyDerivedRate(c *gin.Context) {
 		To              string `json:"to" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	// The child plan must belong to the same property (object scope).
 	childPid, cerr := h.svc.PropertyOfRatePlan(c.Request.Context(), body.ChildRatePlanID)
 	if cerr != nil || childPid != pid {
-		c.JSON(http.StatusForbidden, gin.H{"error": "child rate plan not in property"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: "child rate plan not in property"})
 		return
 	}
 	n, err := h.svc.ApplyDerivedRate(c.Request.Context(), DerivedRateRule{
@@ -254,7 +259,7 @@ func (h *Handler) ApplyDerivedRate(c *gin.Context) {
 func (h *Handler) ListPromotions(c *gin.Context) {
 	pid := c.Param("propertyId")
 	if !h.allow(c, pid) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: keyForbidden})
 		return
 	}
 	out, err := h.svc.ListPromotions(c.Request.Context(), pid)
@@ -269,12 +274,12 @@ func (h *Handler) ListPromotions(c *gin.Context) {
 func (h *Handler) CreatePromotion(c *gin.Context) {
 	pid := c.Param("propertyId")
 	if !h.allow(c, pid) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: keyForbidden})
 		return
 	}
 	var p Promotion
 	if err := c.ShouldBindJSON(&p); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p.PropertyID = pid
@@ -290,14 +295,14 @@ func (h *Handler) CreatePromotion(c *gin.Context) {
 func (h *Handler) SetPromotionActive(c *gin.Context) {
 	pid := c.Param("propertyId")
 	if !h.allow(c, pid) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: keyForbidden})
 		return
 	}
 	var body struct {
 		Active bool `json:"active"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetPromotionActive(c.Request.Context(), c.Param("promoId"), pid, body.Active); err != nil {

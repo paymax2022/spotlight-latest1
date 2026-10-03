@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 )
@@ -274,7 +275,7 @@ func (h *Handler) GetBalance(c *gin.Context) {
 	}
 	resp, err := h.svc.GetBalance(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -292,7 +293,7 @@ func (h *Handler) ListTransactions(c *gin.Context) {
 
 	resp, err := h.svc.ListTransactions(c.Request.Context(), userID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -303,7 +304,7 @@ func (h *Handler) AdminGetBalance(c *gin.Context) {
 	targetUserID := c.Param("user_id")
 	resp, err := h.svc.AdminGetBalance(c.Request.Context(), targetUserID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -317,7 +318,7 @@ func (h *Handler) AdminListTransactions(c *gin.Context) {
 
 	resp, err := h.svc.AdminListTransactions(c.Request.Context(), targetUserID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, resp)

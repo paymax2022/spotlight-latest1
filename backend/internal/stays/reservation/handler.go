@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/stays/gateway"
 )
 
@@ -89,13 +90,13 @@ func mapErr(c *gin.Context, err error) {
 	case errors.Is(err, ErrConsentRequired):
 		c.JSON(http.StatusPreconditionRequired, gin.H{"error": "ndpa_consent_required", "code": "consent_required"})
 	case errors.Is(err, ErrPrebookFailed):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "PREBOOK_FAILED"})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), "code": "PREBOOK_FAILED"})
 	case errors.Is(err, ErrInsufficient):
-		c.JSON(http.StatusPaymentRequired, gin.H{"error": err.Error(), "code": "INSUFFICIENT_FUNDS"})
+		c.JSON(http.StatusPaymentRequired, gin.H{"error": httperr.Msg(c, http.StatusPaymentRequired, err), "code": "INSUFFICIENT_FUNDS"})
 	case errors.Is(err, ErrBadState):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -126,7 +127,7 @@ func (h *Handler) Prebook(c *gin.Context) {
 		PaymentMethod       string         `json:"payment_method"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ci, err1 := time.Parse("2006-01-02", body.CheckIn)
@@ -185,7 +186,7 @@ func (h *Handler) Book(c *gin.Context) {
 		} `json:"guest"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.Book(c.Request.Context(), uid, body.ReservationID, body.BookToken, idemKey, gateway.GuestInfo{
@@ -198,7 +199,7 @@ func (h *Handler) Book(c *gin.Context) {
 		// A book that auto-released returns the VOID reservation plus an error;
 		// surface the state so the client can show "released".
 		if res != nil {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "data": res})
+			c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), "data": res})
 			return
 		}
 		mapErr(c, err)
@@ -277,7 +278,7 @@ func (h *Handler) Modify(c *gin.Context) {
 		CheckOut string `json:"check_out" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ci, err1 := time.Parse("2006-01-02", body.CheckIn)
@@ -300,7 +301,7 @@ func (h *Handler) AdminSearch(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	rs, err := h.svc.SearchAdmin(c.Request.Context(), c.Query("state"), c.Query("city"), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": rs})

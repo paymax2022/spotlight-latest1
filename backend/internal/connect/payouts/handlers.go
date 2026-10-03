@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/timeutil"
 	"strconv"
 	"strings"
@@ -23,9 +24,9 @@ func mapMoneyError(c *gin.Context, err error) {
 	case errors.Is(err, ErrMissingIdem):
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 	case errors.Is(err, ErrInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrTierTooLow):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 	default:
 		msg := err.Error()
 		switch {
@@ -50,7 +51,7 @@ func (h *Handler) RequestPayout(c *gin.Context) {
 	}
 	var req RequestPayoutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.Request(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
@@ -69,7 +70,7 @@ func (h *Handler) ListPayouts(c *gin.Context) {
 	}
 	out, err := h.svc.List(c.Request.Context(), ginutil.UserID(c), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -187,7 +188,7 @@ func (h *Handler) AdminListPayouts(c *gin.Context) {
 	}
 	rows, err := h.svc.AdminList(c.Request.Context(), f)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": toAdminPayoutResponses(rows)})
@@ -214,7 +215,7 @@ type adminSettleRequest struct {
 func (h *Handler) AdminSettlePayout(c *gin.Context) {
 	var req adminSettleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.AdminSettle(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req.SettlementRef)
@@ -235,7 +236,7 @@ type adminRejectRequest struct {
 func (h *Handler) AdminRejectPayout(c *gin.Context) {
 	var req adminRejectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.AdminReject(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req.Reason)
@@ -251,9 +252,9 @@ func mapAdminError(c *gin.Context, err error) {
 	case errors.Is(err, ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "payout not found"})
 	case errors.Is(err, ErrAlreadyTerminal), errors.Is(err, ErrForwardOnly):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 

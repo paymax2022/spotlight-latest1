@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strconv"
 	"strings"
 	"time"
@@ -362,7 +363,7 @@ func (h *Handler) History(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	entries, err := h.svc.History(c.Request.Context(), userID, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "history": entries})
@@ -376,7 +377,7 @@ func (h *Handler) Balance(c *gin.Context) {
 	}
 	bal, err := h.svc.Balance(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "balance_points": bal})
@@ -385,7 +386,7 @@ func (h *Handler) Balance(c *gin.Context) {
 func (h *Handler) Catalog(c *gin.Context) {
 	items, err := h.svc.ListCatalog(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "items": items})
@@ -403,18 +404,18 @@ func (h *Handler) Redeem(c *gin.Context) {
 	}
 	var req redeemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	red, item, err := h.svc.Redeem(c.Request.Context(), userID, req.SKU)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInsufficientPoints):
-			c.JSON(http.StatusPaymentRequired, gin.H{"error": err.Error()})
+			c.JSON(http.StatusPaymentRequired, gin.H{"error": httperr.Msg(c, http.StatusPaymentRequired, err)})
 		case errors.Is(err, ErrCashRedemptionForbidden):
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 		default:
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		}
 		return
 	}

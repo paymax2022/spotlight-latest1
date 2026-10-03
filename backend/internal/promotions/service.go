@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
+	"spotlight/backend/go-common/httperr"
 	"time"
 )
 
@@ -135,7 +136,7 @@ func (h *Handler) ListBanners(c *gin.Context) {
 func (h *Handler) CreateBanner(c *gin.Context) {
 	var input BannerInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -153,7 +154,7 @@ func (h *Handler) CreateBanner(c *gin.Context) {
 func (h *Handler) UpdateBanner(c *gin.Context) {
 	var input BannerInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 

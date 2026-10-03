@@ -4,7 +4,10 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyError = "error"
 
 // Handler exposes referral config endpoints.
 type Handler struct {
@@ -19,7 +22,7 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) Get(c *gin.Context) {
 	cfg, err := h.svc.Get(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, cfg)
@@ -29,12 +32,12 @@ func (h *Handler) Get(c *gin.Context) {
 func (h *Handler) Update(c *gin.Context) {
 	var in Config
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid config body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid config body"})
 		return
 	}
 	cfg, err := h.svc.Update(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, cfg)

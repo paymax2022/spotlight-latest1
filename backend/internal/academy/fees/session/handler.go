@@ -8,9 +8,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyInvalidInput = "invalid_input"
+
+const keyMessage = "message"
 
 // Handler exposes AcademicSession + Class routes over Gin. The router will mount these
 // under /internal/edtech-fees/schools/:schoolId/{sessions,classes} (build-spec §6).
@@ -44,23 +49,23 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrMissingName):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_name", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_name", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidDate):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_date", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_date", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidStatus):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_status", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_status", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrSchoolMismatch):
-		c.JSON(http.StatusConflict, gin.H{"error": "school_mismatch", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "school_mismatch", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -105,7 +110,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	}
 	var req CreateSessionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateSession(c.Request.Context(), u, c.Param("schoolId"), req)
@@ -141,7 +146,7 @@ func (h *Handler) SetSessionStatus(c *gin.Context) {
 	}
 	var req UpdateSessionStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.SetSessionStatus(c.Request.Context(), u, c.Param("sessionId"), SessionStatus(req.Status))
@@ -159,7 +164,7 @@ func (h *Handler) CreateClass(c *gin.Context) {
 	}
 	var req CreateClassRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateClass(c.Request.Context(), u, c.Param("schoolId"), req)
@@ -195,7 +200,7 @@ func (h *Handler) UpdateClass(c *gin.Context) {
 	}
 	var req UpdateClassRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpdateClass(c.Request.Context(), u, c.Param("classId"), req)

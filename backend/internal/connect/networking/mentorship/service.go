@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 	"strconv"
@@ -12,6 +13,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const keyError = "error"
 
 var (
 	ErrNotFound       = errors.New("connect: mentorship record not found")
@@ -219,17 +222,17 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrSelfMatch):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrNotMentor), errors.Is(err, ErrNotParticipant):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrBadTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -237,7 +240,7 @@ func fail(c *gin.Context, err error) {
 func (h *Handler) OptIn(c *gin.Context) {
 	var in OptInInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.OptIn(c.Request.Context(), ginutil.UserID(c), in)
@@ -263,7 +266,7 @@ func (h *Handler) Discover(c *gin.Context) {
 func (h *Handler) RequestMatch(c *gin.Context) {
 	var in MatchRequestInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.RequestMatch(c.Request.Context(), ginutil.UserID(c), in)
@@ -278,7 +281,7 @@ func (h *Handler) RequestMatch(c *gin.Context) {
 func (h *Handler) RespondMatch(c *gin.Context) {
 	var in MatchRespondInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.RespondMatch(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in.Accept)
@@ -294,7 +297,7 @@ func (h *Handler) RespondMatch(c *gin.Context) {
 func (h *Handler) TransitionMatch(c *gin.Context) {
 	var in StateTransitionInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Transition(c.Request.Context(), ginutil.UserID(c), c.Param("id"), MatchState(in.State))

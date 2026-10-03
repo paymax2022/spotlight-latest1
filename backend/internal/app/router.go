@@ -137,7 +137,6 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 
 		apiAuth.POST("/register", loginLimiter.Middleware(), authHandler.Register)
 		apiAuth.POST("/login", loginLimiter.Middleware(), authHandler.Login)
-		apiAuth.POST("/logout", authHandler.Logout)
 		apiAuth.POST("/request-password-reset", resetLimiter.Middleware(), authHandler.RequestPasswordReset)
 		apiAuth.POST("/reset-password", resetLimiter.Middleware(), authHandler.ResetPassword)
 		// Email verification is OTP CODES, not links (decided 2026-08-25). The former
@@ -147,6 +146,9 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 		apiAuthProtected := apiAuth.Group("")
 		apiAuthProtected.Use(middleware.RequireAuthContextWithSessions(supabase, rbacService, sessionService, cfg.FeatureSessionHardeningEnabled))
 		apiAuthProtected.GET("/me", authHandler.Me)
+		// Logout lives behind auth: it revokes the caller's GoTrue session
+		// server-side (E2E-SEC-055), so an anonymous call has nothing to revoke.
+		apiAuthProtected.POST("/logout", authHandler.Logout)
 		apiAuthProtected.POST("/change-password", authHandler.ChangePassword)
 		apiAuthProtected.POST("/complete-profile", authHandler.CompleteProfile)
 		// Self-service session management (feature-flagged; 503 when OFF).
@@ -672,6 +674,11 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	// known handler-less producers get log-only stubs (scheduler_poller.go).
 	startSchedulerPoller(ctx, cfg, sharedPool)
 
+	// Optional in-process workers (RUN_WORKERS_INPROCESS, default OFF): the
+	// marketplace search indexer for single-instance deploys that can't run
+	// cmd/marketplace-indexer as its own process (ADR-026).
+	startInProcessWorkers(ctx, cfg, sharedPool)
+
 	return r
 }
 
@@ -718,9 +725,9 @@ func connectWalletKYCMountAllowed(cfg config.Config) bool {
 // It is NOT a substitute for dedicated worker processes at scale: a second API replica
 // would run a second indexer. That is safe for the outbox drain (idempotent) but
 // wasteful, so this stays OFF by default — promote to real worker processes off free
-// tier. The goroutine lives for the process lifetime and stops when the process exits
-// (SIGTERM); the outbox drain is idempotent, so an abrupt stop re-processes on restart.
-func startInProcessWorkers(cfg config.Config, pool *pgxpool.Pool) {
+// tier. The goroutine rides the router's lifecycle ctx and stops on SIGTERM; the
+// outbox drain is idempotent, so an abrupt stop re-processes on restart.
+func startInProcessWorkers(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) {
 	if !cfg.RunWorkersInProcess {
 		return
 	}
@@ -739,5 +746,5 @@ func startInProcessWorkers(cfg config.Config, pool *pgxpool.Pool) {
 
 	interval := search.ResolveInterval(os.Getenv("MARKETPLACE_INDEXER_INTERVAL_MS"), search.DefaultIndexerInterval)
 	log.Printf("[workers] starting in-process marketplace indexer (interval=%s, es=%s)", interval, cfg.ElasticsearchURL)
-	go search.RunIndexerLoop(context.Background(), pool, cfg.ElasticsearchURL, interval)
+	go search.RunIndexerLoop(ctx, pool, cfg.ElasticsearchURL, interval)
 }

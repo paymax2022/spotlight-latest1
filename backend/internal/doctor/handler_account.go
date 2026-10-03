@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // handler_account.go — Wave 2 (account / provider / admin) Gin handlers.
@@ -22,7 +23,7 @@ import (
 func (h *Handler) rawBody(c *gin.Context) (json.RawMessage, bool) {
 	b, err := c.GetRawData()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return nil, false
 	}
 	return json.RawMessage(b), true
@@ -48,7 +49,7 @@ func (h *Handler) AcceptConsent(c *gin.Context) {
 	}
 	var req AcceptConsentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.AcceptConsent(c.Request.Context(), uid, req)
@@ -79,7 +80,7 @@ func (h *Handler) RecordPermission(c *gin.Context) {
 	}
 	var req RecordPermissionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.RecordPermission(c.Request.Context(), uid, req)
@@ -127,7 +128,7 @@ func (h *Handler) SetProviderType(c *gin.Context) {
 	}
 	var req SetProviderTypeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.SetProviderType(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
@@ -214,7 +215,7 @@ func (h *Handler) RenewLicence(c *gin.Context) {
 	}
 	var req SubmitVerificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.RenewLicence(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
@@ -258,7 +259,7 @@ func (h *Handler) UpdateNotificationPreference(c *gin.Context) {
 	}
 	var req UpdateNotificationPreferenceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.UpdateNotificationPreference(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
@@ -302,7 +303,7 @@ func (h *Handler) CreateSupportTicket(c *gin.Context) {
 	}
 	var req CreateSupportTicketRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.CreateSupportTicket(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
@@ -346,7 +347,7 @@ func (h *Handler) CreateSupportDispute(c *gin.Context) {
 	}
 	var req CreateDisputeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.CreateSupportDispute(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
@@ -364,7 +365,7 @@ func (h *Handler) AddDisputeEvidence(c *gin.Context) {
 	}
 	var req AddEvidenceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.AddDisputeEvidence(c.Request.Context(), uid, c.Param("id"), ginutil.IdempotencyKey(c), req)
@@ -395,7 +396,7 @@ func (h *Handler) SendSupportMessage(c *gin.Context) {
 	}
 	var req SendSupportMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.SendSupportMessage(c.Request.Context(), uid, c.Param("threadId"), ginutil.IdempotencyKey(c), req)
@@ -469,7 +470,7 @@ func (h *Handler) ReportSafetyIssue(c *gin.Context) {
 	}
 	var req ReportSafetyIssueRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.ReportSafetyIssue(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
@@ -560,7 +561,7 @@ func (h *Handler) SetSecurityFlags(c *gin.Context) {
 	}
 	var req UpdateSettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.SetSecurityFlags(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
@@ -677,7 +678,7 @@ func (h *Handler) DisputeReview(c *gin.Context) {
 	}
 	var req ReviewActionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.DisputeReview(c.Request.Context(), uid, c.Param("reviewId"), ginutil.IdempotencyKey(c), req)
@@ -697,7 +698,7 @@ func (h *Handler) ReportReview(c *gin.Context) {
 	}
 	var req ReviewActionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.ReportReview(c.Request.Context(), uid, c.Param("reviewId"), ginutil.IdempotencyKey(c), req)

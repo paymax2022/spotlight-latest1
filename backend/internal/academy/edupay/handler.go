@@ -8,9 +8,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyInvalidInput = "invalid_input"
+
+const keyMessage = "message"
 
 // Handler exposes the academy EduPay surface over Gin.
 //   - member: school/fee reads, link, dashboard, pay fees, savings pots (create / fund / pay).
@@ -45,33 +50,33 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrIdempotencyRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrIdempotencyKeyReused):
-		c.JSON(http.StatusConflict, gin.H{"error": "idempotency_key_reused", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "idempotency_key_reused", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidSource):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_source", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_source", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrSchoolInactive):
-		c.JSON(http.StatusConflict, gin.H{"error": "school_inactive", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "school_inactive", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrFeeScheduleInactive):
-		c.JSON(http.StatusConflict, gin.H{"error": "fee_schedule_inactive", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "fee_schedule_inactive", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrSchoolAccountMissing):
-		c.JSON(http.StatusConflict, gin.H{"error": "school_account_missing", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "school_account_missing", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrInsufficientPot):
-		c.JSON(http.StatusConflict, gin.H{"error": "insufficient_pot_balance", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "insufficient_pot_balance", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrPotClosed):
-		c.JSON(http.StatusConflict, gin.H{"error": "pot_closed", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "pot_closed", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrScholarshipInactive):
-		c.JSON(http.StatusConflict, gin.H{"error": "scholarship_inactive", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "scholarship_inactive", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrScholarshipExhausted):
-		c.JSON(http.StatusConflict, gin.H{"error": "scholarship_budget_exhausted", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "scholarship_budget_exhausted", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -172,7 +177,7 @@ func (h *Handler) LinkSchool(c *gin.Context) {
 	}
 	var req LinkSchoolRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.LinkSchool(c.Request.Context(), u, req)
@@ -203,7 +208,7 @@ func (h *Handler) PayFees(c *gin.Context) {
 	}
 	var req PayFeesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.PayFees(c.Request.Context(), u, req.FeeScheduleID, req.StudentRef, req.Source, ginutil.IdempotencyKey(c))
@@ -221,7 +226,7 @@ func (h *Handler) CreatePot(c *gin.Context) {
 	}
 	var req CreatePotRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreatePot(c.Request.Context(), u, req)
@@ -239,7 +244,7 @@ func (h *Handler) FundPot(c *gin.Context) {
 	}
 	var req FundPotRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.FundPot(c.Request.Context(), u, c.Param("id"), req.AmountMinor, ginutil.IdempotencyKey(c))
@@ -257,7 +262,7 @@ func (h *Handler) PayFromPot(c *gin.Context) {
 	}
 	var req PayFromPotRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.PayFromPot(c.Request.Context(), u, c.Param("id"), req.FeeScheduleID, req.StudentRef, ginutil.IdempotencyKey(c))
@@ -321,7 +326,7 @@ func (h *Handler) AdminListPots(c *gin.Context) {
 func (h *Handler) AdminCreateSchool(c *gin.Context) {
 	var req CreateSchoolRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateSchool(c.Request.Context(), ginutil.UserID(c, authUserID), req)
@@ -335,7 +340,7 @@ func (h *Handler) AdminCreateSchool(c *gin.Context) {
 func (h *Handler) AdminCreateFeeSchedule(c *gin.Context) {
 	var req CreateFeeScheduleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateFeeSchedule(c.Request.Context(), ginutil.UserID(c, authUserID), req)
@@ -367,7 +372,7 @@ func (h *Handler) AdminListScholarships(c *gin.Context) {
 func (h *Handler) AdminCreateScholarship(c *gin.Context) {
 	var req CreateScholarshipRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateScholarship(c.Request.Context(), ginutil.UserID(c, authUserID), req)
@@ -381,7 +386,7 @@ func (h *Handler) AdminCreateScholarship(c *gin.Context) {
 func (h *Handler) AdminAwardScholarship(c *gin.Context) {
 	var req AwardScholarshipRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.AwardScholarship(c.Request.Context(), ginutil.UserID(c, authUserID), req, ginutil.IdempotencyKey(c))

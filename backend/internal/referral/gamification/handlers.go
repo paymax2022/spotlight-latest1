@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -52,7 +53,7 @@ func (h *Handler) MissionList(c *gin.Context) {
 	}
 	list, err := h.svc.ListMissions(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"missions": list})
@@ -66,7 +67,7 @@ func (h *Handler) MyProgress(c *gin.Context) {
 	}
 	rows, pts, err := h.svc.MyProgress(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"progress": rows, "points": pts})
@@ -85,7 +86,7 @@ func (h *Handler) Claim(c *gin.Context) {
 	}
 	res, err := h.svc.Claim(c.Request.Context(), c.Param("id"), uid, idem)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -94,7 +95,7 @@ func (h *Handler) Claim(c *gin.Context) {
 func (h *Handler) RanksList(c *gin.Context) {
 	list, err := h.svc.ListRanks(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ranks": list})
@@ -108,7 +109,7 @@ func (h *Handler) MyRank(c *gin.Context) {
 	}
 	rank, pts, err := h.svc.MyRank(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"rank": rank, "points": pts})
@@ -125,7 +126,7 @@ func (h *Handler) Streak(c *gin.Context) {
 	}
 	st, err := h.svc.repo.GetStreak(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	if !st.Found {
@@ -154,7 +155,7 @@ func (h *Handler) Streak(c *gin.Context) {
 func (h *Handler) BadgesList(c *gin.Context) {
 	list, err := h.svc.ListBadges(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"badges": list})
@@ -163,7 +164,7 @@ func (h *Handler) BadgesList(c *gin.Context) {
 func (h *Handler) Leaderboard(c *gin.Context) {
 	list, err := h.svc.Leaderboard(c.Request.Context(), c.Query("period"), c.Query("scope"), 100)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"leaderboard": list})
@@ -172,7 +173,7 @@ func (h *Handler) Leaderboard(c *gin.Context) {
 func (h *Handler) ContestsList(c *gin.Context) {
 	list, err := h.svc.ListContests(c.Request.Context(), true)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"contests": list})
@@ -181,7 +182,7 @@ func (h *Handler) ContestsList(c *gin.Context) {
 func (h *Handler) AdminMissionList(c *gin.Context) {
 	list, err := h.svc.repo.ListAllMissions(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"missions": list})
@@ -195,7 +196,7 @@ func (h *Handler) AdminCreateMission(c *gin.Context) {
 	}
 	m, err := h.svc.CreateMission(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, m)
@@ -209,7 +210,7 @@ func (h *Handler) AdminCreateRank(c *gin.Context) {
 	}
 	r, err := h.svc.CreateRank(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, r)
@@ -218,7 +219,7 @@ func (h *Handler) AdminCreateRank(c *gin.Context) {
 func (h *Handler) AdminContestsList(c *gin.Context) {
 	list, err := h.svc.ListContests(c.Request.Context(), false)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"contests": list})

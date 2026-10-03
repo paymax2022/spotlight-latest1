@@ -356,9 +356,12 @@ func RegisterCreators(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 // core + its Phase-3 dispute extension: checkout = Hold, confirm = Release, dispute =
 // RaiseDispute, arbitration = Arbitrate (separation-of-duties enforced in escrow).
 // NL-6 (holds, never lends), NL-9 idempotent checkout. Called under
-// FeatureSocialPayEnabled. Also mounts the shared spray engine member endpoints.
-//   - member: /api/finance/p2p/*  (incl. spray, mounted on the same group →
-//     /api/finance/p2p/spray* — the BFF /api/v1/spray proxies here)
+// FeatureP2PMarketEnabled. Also mounts the shared spray engine member endpoints.
+// The p2p handler self-prefixes /p2p, so `member` must be the bare finance group
+// (mounting it under /p2p again produced /api/finance/p2p/p2p/* — E2E-SOC-036);
+// spray is mounted on member.Group("/p2p") to keep its documented path.
+//   - member: /api/finance/p2p/*  (incl. spray → /api/finance/p2p/spray* — the
+//     BFF /api/v1/spray proxies here)
 //   - admin : /api/p2p/admin/*  (both p2p AND spray admin routes share this one
 //     group — spray has no admin group of its own) (RBAC p2p.* / spray.*)
 func RegisterP2PMarket(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService) {
@@ -392,7 +395,7 @@ func RegisterP2PMarket(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	}
 	spraySvc := spray.NewService(pool, ledgerSvc, walletSvc, sprayAML, audit)
 	sprayHandler := spray.NewHandler(spraySvc)
-	sprayHandler.Register(member, admin, spray.GuardFunc(guardFor(rbac)))
+	sprayHandler.Register(member.Group("/p2p"), admin, spray.GuardFunc(guardFor(rbac)))
 
 	log.Println("[p2pmarket] routes registered — listings / escrow checkout / disputes / ratings / spray live")
 }

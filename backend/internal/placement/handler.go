@@ -37,7 +37,7 @@ var errMap = httperr.New(http.StatusInternalServerError,
 
 // mapErr writes the HTTP response for a service error.
 func mapErr(c *gin.Context, err error) {
-	body := gin.H{keyError: err.Error()}
+	body := gin.H{keyError: httperr.Msg(c, errMap.Code(err), err)}
 	switch {
 	case errors.Is(err, ErrForbidden):
 		body["error"] = "forbidden"
@@ -73,7 +73,7 @@ func (h *Handler) CreateCampaign(c *gin.Context) {
 		Creative     map[string]any `json:"creative"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ws, err := time.Parse(time.RFC3339, body.WindowStart)
@@ -303,7 +303,7 @@ func (h *Handler) Events(c *gin.Context) {
 		Events []EventInput `json:"events"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	n, err := h.svc.RecordEvents(c.Request.Context(), body.Events)

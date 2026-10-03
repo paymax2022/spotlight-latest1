@@ -47,6 +47,17 @@ export const featureFlags = {
   /** Top-5 expansion modules (no-new-licence; existing wallet/ledger rails) */
   events: () => envFlag('FEATURE_EVENTS_ENABLED'),
   socialPay: () => envFlag('FEATURE_SOCIAL_PAY_ENABLED'),
+
+  /**
+   * P2P escrow marketplace — MIRRORS the Go backend's FEATURE_P2P_MARKET_ENABLED
+   * (backend/internal/config/config.go → FeatureP2PMarketEnabled gates
+   * RegisterP2PMarket in finance_routes.go, which mounts BOTH /api/finance/p2p/*
+   * AND the shared spray engine at /api/finance/p2p/spray*). The BFF routes
+   * /api/v1/p2p/* and /api/v1/spray/* must gate on THIS flag, not socialPay:
+   * socialPay-off + p2pMarket-on used to 503 healthy upstreams, and
+   * socialPay-on + p2pMarket-off proxied into an unmounted 404 (E2E-SOC-036).
+   */
+  p2pMarket: () => envFlag('FEATURE_P2P_MARKET_ENABLED'),
   savings: () => envFlag('FEATURE_SAVINGS_ENABLED'),
   creators: () => envFlag('FEATURE_CREATORS_ENABLED'),
   loyalty: () => envFlag('FEATURE_LOYALTY_ENABLED'),

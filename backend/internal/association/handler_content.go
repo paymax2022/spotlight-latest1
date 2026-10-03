@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 const (
@@ -18,7 +19,7 @@ const (
 func bindCreate[T any](c *gin.Context, fn func(adminID, orgID string, body T) (string, error)) {
 	var b T
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, err := fn(ginutil.UserID(c), c.Param("id"), b)
@@ -33,7 +34,7 @@ func bindCreate[T any](c *gin.Context, fn func(adminID, orgID string, body T) (s
 func bindUpdate[T any](c *gin.Context, fn func(adminID, id string, body T) error) {
 	var b T
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := fn(ginutil.UserID(c), c.Param("childId"), b); err != nil {
@@ -90,7 +91,7 @@ func (h *Handler) PublishMinutes(c *gin.Context) {
 		Published bool `json:"published"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.PublishMinutes(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), b.Published); err != nil {
@@ -152,7 +153,7 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 func (h *Handler) RunDues(c *gin.Context) {
 	var b DuesRunRequest
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b.IdempotencyKey = ginutil.IdempotencyKey(c)
@@ -168,7 +169,7 @@ func (h *Handler) RunDues(c *gin.Context) {
 func (h *Handler) CreateInvoice(c *gin.Context) {
 	var b InvoiceRequest
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b.IdempotencyKey = ginutil.IdempotencyKey(c)
@@ -184,7 +185,7 @@ func (h *Handler) CreateInvoice(c *gin.Context) {
 func (h *Handler) RegisterDevice(c *gin.Context) {
 	var b DeviceRequest
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, err := h.svc.RegisterDevice(c.Request.Context(), ginutil.UserID(c), b)
@@ -254,7 +255,7 @@ func (h *Handler) ListAdminDuesRuns() gin.HandlerFunc {
 func (h *Handler) ProposeMeeting(c *gin.Context) {
 	var r MeetingRequest
 	if err := c.ShouldBindJSON(&r); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, approval, err := h.svc.ProposeMeeting(c.Request.Context(), ginutil.UserID(c), r)
@@ -269,7 +270,7 @@ func (h *Handler) ProposeMeeting(c *gin.Context) {
 func (h *Handler) DecideMeeting(c *gin.Context) {
 	var d MeetingApprovalDecision
 	if err := c.ShouldBindJSON(&d); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	status, err := h.svc.DecideMeeting(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), d)
@@ -301,7 +302,7 @@ type InviteToEventRequest struct {
 func (h *Handler) InviteToEvent(c *gin.Context) {
 	var r InviteToEventRequest
 	if err := c.ShouldBindJSON(&r); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	n, err := h.svc.InviteToEvent(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), r.MembershipIDs)
@@ -322,7 +323,7 @@ type addCommitteeMembersBody struct {
 func (h *Handler) AddCommitteeMembers(c *gin.Context) {
 	var b addCommitteeMembersBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	n, err := h.svc.AddCommitteeMembers(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), b.MembershipIDs)
@@ -344,7 +345,7 @@ type committeeDecisionBody struct {
 func (h *Handler) DecideCommitteeRequest(c *gin.Context) {
 	var b committeeDecisionBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.DecideCommitteeRequest(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), b.MembershipID, b.Approve); err != nil {
@@ -371,7 +372,7 @@ type committeeRoleBody struct {
 func (h *Handler) SetCommitteeMemberRole(c *gin.Context) {
 	var b committeeRoleBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetCommitteeMemberRole(c.Request.Context(), ginutil.UserID(c), c.Param("childId"), c.Param("membershipId"), b.Role); err != nil {
@@ -448,7 +449,7 @@ func (h *Handler) GetEvent(c *gin.Context) {
 func (h *Handler) UpdateProfile(c *gin.Context) {
 	var in UpdateProfileInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.svc.UpdateProfile(c.Request.Context(), ginutil.UserID(c), in)
@@ -482,7 +483,7 @@ func (h *Handler) RegenerateAiNoteSummary(c *gin.Context) {
 func (h *Handler) ReactToMessage(c *gin.Context) {
 	var b ReactRequest
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.ReactToMessage(c.Request.Context(), ginutil.UserID(c), c.Param("id"), c.Param("messageId"), b.Emoji); err != nil {

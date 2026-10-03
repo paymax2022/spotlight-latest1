@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strconv"
 	"time"
 
@@ -312,16 +313,16 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) OptIn(c *gin.Context) {
 	var in OptInInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	o, err := h.svc.OptIn(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
 	if err != nil {
 		if errors.Is(err, ErrNoTicket) {
-			c.JSON(http.StatusForbidden, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: o})
@@ -333,10 +334,10 @@ func (h *Handler) Attendees(c *gin.Context) {
 	out, err := h.svc.Attendees(c.Request.Context(), ginutil.UserID(c), c.Param("id"), limit)
 	if err != nil {
 		if errors.Is(err, ErrNotOptedIn) {
-			c.JSON(http.StatusForbidden, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: out})
@@ -346,10 +347,10 @@ func (h *Handler) Attendees(c *gin.Context) {
 func (h *Handler) CheckIn(c *gin.Context) {
 	if err := h.svc.CheckInSelf(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 		if errors.Is(err, ErrNoTicket) {
-			c.JSON(http.StatusForbidden, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"checked_in": true}})
@@ -359,16 +360,16 @@ func (h *Handler) CheckIn(c *gin.Context) {
 func (h *Handler) ScanQR(c *gin.Context) {
 	var in ScanInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ownerID, err := h.svc.ScanQR(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in.QRCode)
 	if err != nil {
 		if errors.Is(err, ErrBadQR) {
-			c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 			return
 		}
-		c.JSON(http.StatusForbidden, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"checked_in_user": ownerID}})
@@ -378,18 +379,18 @@ func (h *Handler) ScanQR(c *gin.Context) {
 func (h *Handler) SaveContact(c *gin.Context) {
 	var in SaveContactInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ec, err := h.svc.SaveContact(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrSelfContact):
-			c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		case errors.Is(err, ErrNotOptedIn):
-			c.JSON(http.StatusForbidden, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		}
 		return
 	}
@@ -400,7 +401,7 @@ func (h *Handler) SaveContact(c *gin.Context) {
 func (h *Handler) ListContacts(c *gin.Context) {
 	out, err := h.svc.ListContacts(c.Request.Context(), ginutil.UserID(c), c.Query("event_id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: out})

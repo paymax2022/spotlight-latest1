@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strconv"
 	"time"
 
@@ -390,12 +391,12 @@ func (h *Handler) GetProfile(c *gin.Context) {
 func (h *Handler) UpsertProfile(c *gin.Context) {
 	var in ProfileInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.UpsertProfile(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: p})
@@ -404,18 +405,18 @@ func (h *Handler) UpsertProfile(c *gin.Context) {
 func (h *Handler) AddPortfolio(c *gin.Context) {
 	var in PortfolioInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	it, err := h.svc.AddPortfolioItem(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidKind):
-			c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		case errors.Is(err, ErrNoProfile):
-			c.JSON(http.StatusConflict, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		}
 		return
 	}
@@ -425,7 +426,7 @@ func (h *Handler) AddPortfolio(c *gin.Context) {
 func (h *Handler) ListPortfolio(c *gin.Context) {
 	out, err := h.svc.ListPortfolio(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: out})
@@ -441,7 +442,7 @@ func (h *Handler) RequestVerification(c *gin.Context) {
 		return
 	}
 	if err := h.svc.RequestVerification(c.Request.Context(), ginutil.UserID(c), body.EvidenceRef); err != nil {
-		c.JSON(http.StatusConflict, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{keyData: gin.H{"status": "pending"}})
@@ -451,15 +452,15 @@ func (h *Handler) RequestVerification(c *gin.Context) {
 func (h *Handler) SetFanPolicy(c *gin.Context) {
 	var in FanPolicyInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetFanPolicy(c.Request.Context(), ginutil.UserID(c), FanMessagePolicy(in.FanMessages)); err != nil {
 		if errors.Is(err, ErrInvalidPolicy) {
-			c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 			return
 		}
-		c.JSON(http.StatusConflict, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"fan_messages": in.FanMessages}})
@@ -469,12 +470,12 @@ func (h *Handler) SetFanPolicy(c *gin.Context) {
 func (h *Handler) SubmitCollab(c *gin.Context) {
 	var in CollabInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.SubmitCollab(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{keyData: r})
@@ -484,7 +485,7 @@ func (h *Handler) SubmitCollab(c *gin.Context) {
 func (h *Handler) ListCollabs(c *gin.Context) {
 	out, err := h.svc.ListCollabsForCreator(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: out})
@@ -494,18 +495,18 @@ func (h *Handler) ListCollabs(c *gin.Context) {
 func (h *Handler) RespondCollab(c *gin.Context) {
 	var body CollabResponse
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.RespondCollab(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Accept)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotCreator):
-			c.JSON(http.StatusForbidden, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		case errors.Is(err, ErrBadTransition):
-			c.JSON(http.StatusConflict, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		}
 		return
 	}
@@ -517,7 +518,7 @@ func (h *Handler) AdminVerificationQueue(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	out, err := h.svc.ListVerificationQueue(c.Request.Context(), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: out})
@@ -531,11 +532,11 @@ func (h *Handler) AdminReviewVerification(c *gin.Context) {
 		Reason  string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.ReviewVerification(c.Request.Context(), ginutil.UserID(c), body.UserID, body.Approve, body.Reason); err != nil {
-		c.JSON(http.StatusConflict, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"reviewed": true}})

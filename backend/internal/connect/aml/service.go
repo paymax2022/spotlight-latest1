@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/ptr"
 	"time"
 
@@ -287,7 +288,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) ListAlerts(c *gin.Context) {
 	out, err := h.svc.ListAlerts(c.Request.Context(), ptr.DerefZero(ginutil.IntParam(c, "limit")))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: out})
@@ -297,7 +298,7 @@ func (h *Handler) ListAlerts(c *gin.Context) {
 func (h *Handler) ListCases(c *gin.Context) {
 	out, err := h.svc.ListCases(c.Request.Context(), ptr.DerefZero(ginutil.IntParam(c, "limit")))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: out})
@@ -314,16 +315,16 @@ type openCaseRequest struct {
 func (h *Handler) OpenCase(c *gin.Context) {
 	var req openCaseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.OpenCase(c.Request.Context(), req.SubjectID, req.ReportType, req.ReasonCodes, ginutil.UserID(c))
 	if err != nil {
 		if errors.Is(err, ErrInvalidType) {
-			c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{keyData: out})
@@ -333,16 +334,16 @@ func (h *Handler) OpenCase(c *gin.Context) {
 func (h *Handler) FileSTR(c *gin.Context) {
 	var req FileSTRRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.FileSTR(c.Request.Context(), c.Param("id"), ginutil.UserID(c), req)
 	if err != nil {
 		if errors.Is(err, ErrCaseNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: out})

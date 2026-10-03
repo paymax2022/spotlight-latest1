@@ -23,8 +23,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/timeutil"
 )
+
+const keyError = "error"
 
 // CampaignDirectoryRow is one line of the directory: the campaign, who owns it,
 // how it is classified, and what it has actually raised.
@@ -420,7 +423,7 @@ func (h *Handler) CampaignDirectory(c *gin.Context) {
 	}
 	out, err := h.svc.ListCampaignDirectory(c.Request.Context(), f)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, out)
@@ -431,7 +434,7 @@ func (h *Handler) CampaignBackers(c *gin.Context) {
 	out, err := h.svc.ListCampaignBackers(c.Request.Context(), c.Param("id"),
 		atoiOr(c.Query("page"), 1), atoiOr(c.Query("limit"), 50))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, out)
@@ -441,7 +444,7 @@ func (h *Handler) CampaignBackers(c *gin.Context) {
 func (h *Handler) CampaignFundingHandler(c *gin.Context) {
 	out, err := h.svc.CampaignFundingRollup(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, out)

@@ -629,7 +629,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		RegisterCreators(finance.Group("/creators"), adminGroupTop5(r, "/api/creators/admin", mapsAuth()), pool, rbac, cfg)
 	}
 	if cfg.FeatureP2PMarketEnabled && pool != nil {
-		RegisterP2PMarket(finance.Group("/p2p"), adminGroupTop5(r, "/api/p2p/admin", mapsAuth()), pool, rbac, auditSink)
+		RegisterP2PMarket(finance, adminGroupTop5(r, "/api/p2p/admin", mapsAuth()), pool, rbac, auditSink)
 	}
 
 	// what Spotlight earns on every service). Rate registry (audited), fee

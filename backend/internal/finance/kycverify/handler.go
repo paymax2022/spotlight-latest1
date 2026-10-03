@@ -17,6 +17,12 @@ import (
 	"spotlight/backend/internal/provider"
 )
 
+const keyUnauthenticated = "unauthenticated"
+
+const keyInvalidRequestBody = "invalid request body"
+
+const keyError = "error"
+
 // Handler exposes the member, webhook, and admin HTTP surface for the KYC
 // verification gateway. Member ops derive the caller's user id from the auth
 // context (set by requireUserID) — NEVER from the body — enforcing object-level
@@ -41,7 +47,7 @@ var errMap = httperr.New(http.StatusInternalServerError,
 )
 
 func writeErr(c *gin.Context, err error) {
-	body := gin.H{"error": err.Error()}
+	body := gin.H{keyError: httperr.Msg(c, errMap.Code(err), err)}
 	switch {
 	case errors.Is(err, ErrConsentRequired):
 		body["code"] = "consent_required"
@@ -59,12 +65,12 @@ type startSessionBody struct {
 func (h *Handler) StartSession(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var body startSessionBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	sess, err := h.svc.StartSession(c.Request.Context(), uid, body.TargetTier)
@@ -79,7 +85,7 @@ func (h *Handler) StartSession(c *gin.Context) {
 func (h *Handler) GetSession(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	sess, checks, err := h.svc.GetSession(c.Request.Context(), uid, c.Param("id"))
@@ -99,12 +105,12 @@ type consentBody struct {
 func (h *Handler) RecordConsent(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var body consentBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	rec, err := h.svc.RecordConsent(c.Request.Context(), uid, body.Scope, body.Version, c.ClientIP())
@@ -141,16 +147,16 @@ type checkBody struct {
 func (h *Handler) runCheck(c *gin.Context, ct provider.KycCheckType) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var body checkBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	if body.SessionID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "session_id required"})
 		return
 	}
 	clientRef := body.ClientRef
@@ -215,7 +221,7 @@ type sdkTokenBody struct {
 func (h *Handler) SDKToken(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var body sdkTokenBody
@@ -249,7 +255,7 @@ func (h *Handler) Webhook(c *gin.Context) {
 	if err := h.wh.Ingest(ctx, providerName, body); err != nil {
 		// Deterministic processing failure → still 200 (provider stops retrying);
 		// the event is recorded in webhook_event with status=failed for follow-up.
-		c.JSON(http.StatusOK, gin.H{"ok": false, "error": err.Error()})
+		c.JSON(http.StatusOK, gin.H{"ok": false, keyError: httperr.Msg(c, http.StatusOK, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -350,12 +356,12 @@ type routingRuleBody struct {
 func (h *Handler) UpdateRoutingRule(c *gin.Context) {
 	var body routingRuleBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	ct := provider.KycCheckType(c.Param("check_type"))
 	if !validCheckType(ct) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown check_type"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "unknown check_type"})
 		return
 	}
 	rule := RoutingRule{

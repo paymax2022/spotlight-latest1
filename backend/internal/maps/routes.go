@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/scheduler"
 )
@@ -366,7 +367,7 @@ func (a *mapsV2Admin) sinceParam(c *gin.Context) time.Time {
 func (a *mapsV2Admin) dashboard(c *gin.Context) {
 	stats, err := a.rec.DeflectionStats(c.Request.Context(), a.sinceParam(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	health, _ := a.guard.Snapshot(c.Request.Context())
@@ -382,7 +383,7 @@ func (a *mapsV2Admin) events(c *gin.Context) {
 	}
 	evs, err := a.rec.RecentEvents(c.Request.Context(), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"events": evs})
@@ -391,7 +392,7 @@ func (a *mapsV2Admin) events(c *gin.Context) {
 func (a *mapsV2Admin) providers(c *gin.Context) {
 	health, err := a.guard.Snapshot(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"providers": health})
@@ -401,7 +402,7 @@ func (a *mapsV2Admin) listContributions(c *gin.Context) {
 	status := c.DefaultQuery("status", "pending")
 	rows, err := a.contrib.ListForReview(c.Request.Context(), status, 200)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"candidates": rows})
@@ -413,12 +414,12 @@ func (a *mapsV2Admin) reviewContribution(c *gin.Context) {
 		Notes  string `json:"notes"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := a.contrib.Review(c.Request.Context(), c.Param("id"), ginutil.UserID(c), body.Action, body.Notes)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 		return
 	}
 	c.JSON(http.StatusOK, out)

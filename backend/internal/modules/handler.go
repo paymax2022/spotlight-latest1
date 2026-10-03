@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 	"time"
@@ -50,7 +51,7 @@ func (h *Handler) Visibility(c *gin.Context) {
 func (h *Handler) List(c *gin.Context) {
 	mods, err := h.svc.List(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
@@ -70,12 +71,12 @@ type setVisibilityRequest struct {
 func (h *Handler) SetVisibility(c *gin.Context) {
 	var req setVisibilityRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	status, err := ParseStatus(req.Status)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	m, err := h.svc.SetVisibility(c.Request.Context(), c.Param("key"),
@@ -97,12 +98,12 @@ type setLifecycleRequest struct {
 func (h *Handler) SetLifecycle(c *gin.Context) {
 	var req setLifecycleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	lc, err := ParseLifecycle(req.Lifecycle)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	m, err := h.svc.SetLifecycle(c.Request.Context(), c.Param("key"), lc, req.Note, ginutil.UserID(c))
@@ -118,7 +119,7 @@ func (h *Handler) SetLifecycle(c *gin.Context) {
 func (h *Handler) History(c *gin.Context) {
 	entries, err := h.svc.History(c.Request.Context(), c.Param("key"), 50)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": entries})
@@ -129,14 +130,14 @@ func (h *Handler) History(c *gin.Context) {
 func (h *Handler) writeErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrModuleNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrInvalidEnv), errors.Is(err, ErrInvalidStatus), errors.Is(err, ErrInvalidLifecycle):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrArchivedModule):
 		// 409: the request is well-formed, it conflicts with the module's state.
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -164,7 +165,7 @@ func (h *Handler) MyAccess(c *gin.Context) {
 func (h *Handler) ListUserGrants(c *gin.Context) {
 	rows, err := h.svc.ListGrants(c.Request.Context(), c.Param("userId"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"grants": rows}})
@@ -183,7 +184,7 @@ func (h *Handler) GrantUserModule(c *gin.Context) {
 		ExpiresAt *time.Time `json:"expires_at"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if body.ExpiresAt != nil && !body.ExpiresAt.After(time.Now()) {
@@ -194,7 +195,7 @@ func (h *Handler) GrantUserModule(c *gin.Context) {
 	}
 	if err := h.svc.Grant(c.Request.Context(), c.Param("userId"), body.ModuleKey,
 		ginutil.UserID(c), body.Note, body.ExpiresAt); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"granted": body.ModuleKey}})
@@ -204,7 +205,7 @@ func (h *Handler) GrantUserModule(c *gin.Context) {
 // DELETE /api/v1/admin/modules/users/:userId/grants/:moduleKey
 func (h *Handler) RevokeUserModule(c *gin.Context) {
 	if err := h.svc.Revoke(c.Request.Context(), c.Param("userId"), c.Param("moduleKey")); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"revoked": c.Param("moduleKey")}})

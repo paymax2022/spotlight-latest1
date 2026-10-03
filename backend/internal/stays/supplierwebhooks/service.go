@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/stays/ari"
 )
 
@@ -325,7 +326,7 @@ func (h *Handler) Receive(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"data": gin.H{"status": "duplicate"}})
 			return
 		}
-		c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"status": "applied"}})

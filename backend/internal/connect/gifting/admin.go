@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/ptr"
 )
 
@@ -179,7 +180,7 @@ func (h *AdminHandler) ListGifts(c *gin.Context) {
 	}
 	out, err := h.svc.ListAdmin(c.Request.Context(), filter)
 	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("list admin gifts: %v", err)})
+		c.JSON(500, gin.H{"error": httperr.Sanitize(c, 500, fmt.Sprintf("list admin gifts: %v", err))})
 		return
 	}
 	c.JSON(200, gin.H{"data": out})

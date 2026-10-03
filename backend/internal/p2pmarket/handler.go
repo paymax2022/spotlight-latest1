@@ -7,9 +7,12 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/escrow"
 	"spotlight/backend/internal/finance/tiers"
 )
+
+const keyError = "error"
 
 // Handler exposes P2P marketplace member + admin endpoints. The authenticated caller
 // is the actor; object-level authZ (seller owns listing; buyer/seller scoping on
@@ -40,7 +43,10 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	member.GET("/p2p/sellers/:sellerId/rating", h.SellerRating)
 
 	// Admin dispute arbitration console (separation-of-duties enforced in escrow).
-	admin.POST("/p2p/orders/:orderId/arbitrate", guard("p2p.dispute.arbitrate"), h.Arbitrate)
+	// Unlike the member routes this does NOT self-prefix /p2p — the admin group
+	// is already mounted at /api/p2p/admin (a prefix here produced
+	// /api/p2p/admin/p2p/* — E2E-SOC-036).
+	admin.POST("/orders/:orderId/arbitrate", guard("p2p.dispute.arbitrate"), h.Arbitrate)
 }
 
 type createListingRequest struct {
@@ -56,12 +62,12 @@ func (h *Handler) CreateListing(c *gin.Context) {
 	}
 	var req createListingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	l, err := h.svc.CreateListing(c.Request.Context(), uid, req.Title, req.Description, req.PriceKobo)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "listing": l})
@@ -70,7 +76,7 @@ func (h *Handler) CreateListing(c *gin.Context) {
 func (h *Handler) Browse(c *gin.Context) {
 	ls, err := h.svc.Browse(c.Request.Context(), 50)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "listings": ls})
@@ -79,7 +85,7 @@ func (h *Handler) Browse(c *gin.Context) {
 func (h *Handler) GetListing(c *gin.Context) {
 	l, err := h.svc.GetListing(c.Request.Context(), c.Param("listingId"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "listing": l})
@@ -91,7 +97,7 @@ func (h *Handler) CloseListing(c *gin.Context) {
 		return
 	}
 	if err := h.svc.CloseListing(c.Request.Context(), c.Param("listingId"), uid); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -112,11 +118,11 @@ func (h *Handler) Checkout(c *gin.Context) {
 		// unwired escrow gate is a dependency failure → 503 (E2E-FIN-046).
 		switch {
 		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		case errors.Is(err, escrow.ErrTierGateUnwired):
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
 		default:
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		}
 		return
 	}
@@ -133,7 +139,7 @@ func (h *Handler) Confirm(c *gin.Context) {
 		if err == ErrNotParty {
 			status = http.StatusForbidden
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		c.JSON(status, gin.H{keyError: httperr.Msg(c, status, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -155,7 +161,7 @@ func (h *Handler) Dispute(c *gin.Context) {
 		if err == escrow.ErrDisputeNotParty {
 			status = http.StatusForbidden
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		c.JSON(status, gin.H{keyError: httperr.Msg(c, status, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -169,7 +175,7 @@ func (h *Handler) Arbitrate(c *gin.Context) {
 	arbiterID := ginutil.UserID(c)
 	var req arbitrateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.Arbitrate(c.Request.Context(), c.Param("orderId"), escrow.DisputeDecision(req.Decision), arbiterID); err != nil {
@@ -177,7 +183,7 @@ func (h *Handler) Arbitrate(c *gin.Context) {
 		if err == escrow.ErrArbiterConflict {
 			status = http.StatusForbidden
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		c.JSON(status, gin.H{keyError: httperr.Msg(c, status, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -195,7 +201,7 @@ func (h *Handler) Rate(c *gin.Context) {
 	}
 	var req rateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.RateSeller(c.Request.Context(), c.Param("orderId"), uid, req.Stars, req.Comment)
@@ -204,7 +210,7 @@ func (h *Handler) Rate(c *gin.Context) {
 		if err == ErrNotParty {
 			status = http.StatusForbidden
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		c.JSON(status, gin.H{keyError: httperr.Msg(c, status, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "rating": r})
@@ -213,7 +219,7 @@ func (h *Handler) Rate(c *gin.Context) {
 func (h *Handler) SellerRating(c *gin.Context) {
 	avg, count, err := h.svc.SellerRating(c.Request.Context(), c.Param("sellerId"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "average_stars": avg, "count": count})

@@ -1365,3 +1365,146 @@ Re-run after all agent/remediation merges:
 CI note: PR #423 reports all three previously-red baseline lanes (trivy fs,
 npm audit, deps) are now green after the #422 trivy allow-rule for the public
 Supabase anon key in eas.json.
+
+### E2E remediation wave 2 — 2026-10-03 (post-Phase-12 fix batch)
+
+Three-agent remediation wave over the residual findings from the 12-phase
+e2e campaign (ledger: `../../track.md`). All items below are code-complete and
+verified on a rebuilt `spotlight-latest1-api` image unless marked otherwise.
+
+**P1 — closed:**
+- **E2E-FIN-046 (systemic tier-limit bypass) — FIXED.** Repo-wide `.Debit()`
+  sweep: 17 user-facing debit sites now gated through package-local
+  `walletDebitLimiter` / `DebitLimitPort` seams backed by
+  `tiers.EnforceWalletDebitLimit` — crypto (buy, swap buy+spread, withdraw fee),
+  invest deposit, fx convert (amount+fee), crowdfunding contribute +
+  creator-withdrawal, association PayInvoice, arena contribute, escrow Hold
+  (shared by health vet/pharmacy/lab + p2pmarket), trading subscribe,
+  merchant-referral fund, academy rails (commerce Charge, edupay Collect,
+  guardian→school, vault, scholarship), health-triage care charge. Contract:
+  nil/unwired limiter ⇒ `ErrTierGateUnwired` ⇒ **503**; refusal ⇒ **403**;
+  refused attempts post **zero ledger legs** (10 new `tier_gate_test.go`
+  packages incl. live-DB leg counts). Verified already-gated without change:
+  `wallet.Service.Debit` (covers business, creators, top5events, utilitybills,
+  placement, insurance, spray, connect, gifting/payouts), transport
+  `enforceTierLimit` sites, fractionalre, doctor, marketplace boost,
+  restaurant, estate checkout, groups, savings/social (FIN-041). Deliberately
+  ungated (classified): internal service-token ops route, admin-executed
+  payout leg, system-initiated rider clawback, early-withdrawal penalty levy,
+  infrastructure settlement legs downstream of gated call sites.
+- **E2E-BE-005 (orphaned durable-job scheduler) — FIXED.** Producers were real
+  (savings autosave + ajo, creators subscriptions, health licence sweeps,
+  appointment/vet reminders, maps OSM batches). Wired `Service.Poll(ctx,
+  interval)` — `SCHEDULER_ENABLED` (default true) +
+  `SCHEDULER_POLL_INTERVAL_SECONDS` (default 5) — via new
+  `internal/app/scheduler_poller.go` on the server signal context
+  (`cmd/server/main.go` `signal.NotifyContext`). `RegisterJobType` now also
+  writes a process-wide registry so the poller resolves handlers owned by
+  other Service instances. `RunDue` splits handled vs unhandled BEFORE
+  `advance` — a flag-off deploy cannot consume job occurrences it can't run
+  (throttled 5-min warning per type). `runHandler` recovers panics → failed
+  run + backoff. Two scheduled-but-handlerless job types
+  (`health.appointment.reminder`, `health.vet.vaccination.reminder`) got
+  HasHandler-guarded loud-warn stubs — **health-team TODO**. Second finding
+  under this ID: `execute` post-handler bookkeeping moved to
+  `context.WithoutCancel` — a cancelled poll ctx (SIGTERM mid-execute) would
+  otherwise strand runs `pending` after side effects already applied (caught
+  by live-DB test). NOTE: `startInProcessWorkers` (router.go) remains a
+  separate, still-unwired seam.
+
+**P2 — closed:**
+- **E2E-FR-050** — `/readyz` reports `components:{db,redis}` with
+  `up|down|degraded|not_configured`; Redis unreachable ⇒ `degraded` + 200,
+  `REDIS_REQUIRED=true` ⇒ `down` + 503. `/healthz` unchanged.
+- **E2E-FR-051** — `notifications.Send` attempts all channels, structured
+  per-channel failure logs + `paymax.notification.enqueue` metric, aggregate
+  error return; `_ =` swallows fixed in finance_routes/estate/fractionalre.
+  Residuals: `internal/invest/service.go:1190`,
+  `internal/health/triage/care/service.go:325`.
+- **E2E-SEC-055** — `/api/auth/logout` was a silent no-op: it passed
+  `user.id` to `admin.signOut` which expects the caller **JWT**. Rewritten:
+  401 anon, `signOut(jwt,'global')` revokes all sessions, `sb-*` cookies
+  expired, `auth_logout` audit emitted. Residuals: access JWTs valid to exp;
+  Go-side `POST :8080/api/auth/logout` still doesn't revoke.
+- **E2E-SEC-056** — `go-common/httperr` `Write`/`WriteOK` now sanitize via
+  `publicMessage()`: verbatim only for safe 4xx copy; 5xx and
+  internal-signature messages (SQLSTATE, pgx/pq, unmarshal, panics, `.go:N`,
+  dial errors) → generic text, raw detail logged with request-id. Residual:
+  ~34 `m.Code(err)` hand-shaped call sites bypass the sanitizer.
+- **E2E-SEC-057** — security headers on both Next apps (nosniff,
+  X-Frame-Options SAMEORIGIN, Referrer-Policy, Permissions-Policy,
+  poweredByHeader off). CSP shipped **Report-Only** — enforcing blindly would
+  break env-driven Supabase origins, Paystack script+iframe, R2, Cloudinary,
+  Sentry.
+- **E2E-SEC-064** — `/api/v1/wallet*` + `/api/v1/kyc*` mounts now honor
+  explicitly-false `FEATURE_CONNECT_ENABLED` (new `FeatureConnectFlagSet`
+  presence flag); unset preserves legacy mounted behavior.
+- **E2E-ENV-001/011** — `.env.local` `:8095` → `:8080` in frontend-web +
+  frontend-admin.
+- **E2E-SOC-035/036** — `FEATURE_GROUPS_ENABLED=true` +
+  `FEATURE_P2P_MARKET_ENABLED=true` in frontend-web `.env.local`; P2P gate is
+  Go-side (`backend/.env` also set).
+
+**Still open after wave 2:** E2E-PERF-061 (`AUTH_JWT_LOCAL_VERIFY` +
+identity-cache enablement — revocation-window decision), E2E-MOB-047 (mobile
+bypasses Go entirely — architecture decision), PSP sandbox rails (paystack
+keys needed), seeded scoped roles, spray-BFF upstream-path mismatch
+(`/api/finance/spray/*` vs `/api/finance/p2p/spray*` — predates flags), Go-side
+logout revocation, ~34 unsanitized `m.Code` sites, and the commit/PR
+partitioning of the ~90-file worktree.
+
+**Live verification (rebuilt image, 2026-10-03):** `/readyz` →
+`{components:{db:up,redis:up},status:ready}`; `[scheduler] durable-job poller
+started (interval=5s)`; `/api/v1/wallet/summary` 401-mounted (flag unset) +
+`/wallet/fund` 404 (sub-gate); web headers all present incl. CSP-Report-Only;
+logout anon→401; `/api/admin/privileges` anon→401 + **admin→200** (was 500);
+`/api/v1/groups` 200 (flag on); auth e2e suite **14/14 green**; touched-package
+`go test` green incl. live-DB scheduler poller tests; `go build`/`go vet` clean.
+
+### E2E remediation wave 3 — 2026-10-03 (residual sweep)
+
+Second remediation wave closing the residuals left by wave 2. All verified on
+a rebuilt `spotlight-latest1-api` image.
+
+- **E2E-SEC-056 (raw error leakage) — FIXED at scale.** `httperr.Msg` /
+  `httperr.Sanitize` exported; `ginutil.Fail`/`FailOK` now sanitize `msg`
+  (~150 call sites fixed via the helper alone). Scripted sweep sanitized
+  ~1,867 `err.Error()`→`gin.H` sites across 199 files plus ~16 manual
+  shapes — **~2,030 sites total**. Status-code mapping preserved; safe 4xx
+  copy passes verbatim; 5xx/internal-signature text → generic + logged
+  raw with request-id. Residuals deliberately left: invest
+  `failure_reason` (stored order text, not an envelope), provider-health
+  `detail` (admin-gated), audit payload fields.
+- **E2E-SOC-036 — FIXED for real.** The `social.md` spray-path claim was stale,
+  but the audit surfaced two live bugs: spray+p2p BFF routes gated on
+  `socialPay` not `p2pMarket` (now a real `featureFlags.p2pMarket`), and a
+  Go double-mount — `RegisterP2PMarket(finance.Group("/p2p"))` on top of the
+  handler's own `/p2p` prefix produced `/api/finance/p2p/p2p/*` and
+  `/api/p2p/admin/p2p/*`. Canonicalized: p2p on bare `finance` →
+  `/api/finance/p2p/*`; spray on `member.Group("/p2p")` → keeps
+  `/api/finance/p2p/spray*` (the BFF contract); admin arbitrate →
+  `/api/p2p/admin/orders/:orderId/arbitrate`. BFF re-synced + unit tests.
+- **E2E-SEC-055 residual — Go-side logout revokes.** `LogoutUser` POSTs
+  `auth/v1/logout` with the caller JWT (upstream failure → 200 + logged,
+  per best-effort semantics); route moved to `apiAuthProtected` (anon→401);
+  session-hardening store revoked when enabled.
+- **E2E-FR-051 residuals — last two enqueue swallows** fixed: invest
+  `EvaluateAlerts` (log+aggregate to worker), triage-care `Notify`
+  (log+propagate; escalation deliberately stays `raised` on failed
+  hand-off — admin-visible, clean retry).
+- **`startInProcessWorkers` wired** — it's the marketplace search indexer for
+  single-instance deploys (ADR-026), now on the signal ctx behind
+  `RUN_WORKERS_INPROCESS` (default OFF). `cmd/marketplace-indexer` remains
+  the recommended path at scale.
+
+**Live verification (rebuilt image):** `/api/finance/p2p/listings`→401
+canonical, `/api/finance/p2p/p2p/*`→404 (double-mount gone),
+`/api/finance/p2p/spray/leaderboard`→401, `/api/p2p/admin/orders/x/arbitrate`→401,
+`POST /api/auth/logout` anon→401, scheduler poller running; auth e2e 14/14;
+`go build`/`go vet`/204-package `go test` green.
+
+**Open after wave 3:** E2E-PERF-061 (`AUTH_JWT_LOCAL_VERIFY` decision),
+E2E-MOB-047 (mobile bypasses Go — arch call), PSP sandbox keys, seeded
+scoped roles, health-reminder job handlers (health-team TODO), invest
+`failure_reason` stored-text sanitization (design call), and the commit/PR
+partitioning of the ~95-file worktree.

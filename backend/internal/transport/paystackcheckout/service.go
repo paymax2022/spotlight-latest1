@@ -34,9 +34,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/provider"
 	"spotlight/backend/internal/transport"
 )
+
+const keyMessage = "message"
 
 // intentRecord is the stored pending-intent row (public.transport_ride_paystack_intents).
 type intentRecord struct {
@@ -439,17 +442,17 @@ func (h *Handler) fail(c *gin.Context, err error) {
 	}
 	switch {
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrIdempotencyRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrUnknownReference):
-		c.JSON(http.StatusNotFound, gin.H{"error": "unknown_reference", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "unknown_reference", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrChargeNotSuccessful):
-		c.JSON(http.StatusConflict, gin.H{"error": "charge_not_successful", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "charge_not_successful", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrAmountMismatch):
-		c.JSON(http.StatusConflict, gin.H{"error": "amount_mismatch", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "amount_mismatch", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -491,21 +494,21 @@ func (h *Handler) Initiate(c *gin.Context) {
 	}
 	var req initiateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if hk := ginutil.IdempotencyKey(c); hk != "" {
 		req.IdempotencyKey = hk
 	}
 	if req.IdempotencyKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", "message": "Idempotency-Key is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", keyMessage: "Idempotency-Key is required"})
 		return
 	}
 	// Paystack-funded rides only support instant pricing — mirrors
 	// transport.requestRide's own guard, checked again here so a caller gets a
 	// clear 400 before ever quoting/charging anything.
 	if req.PricingMode == "offer" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": "Paystack-funded rides must use instant pricing, not offer mode"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: "Paystack-funded rides must use instant pricing, not offer mode"})
 		return
 	}
 

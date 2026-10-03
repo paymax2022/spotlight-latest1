@@ -225,12 +225,12 @@ func (h *Handler) Create(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req CreateGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	g, err := h.svc.Create(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, g)
@@ -245,7 +245,7 @@ func (h *Handler) List(c *gin.Context) {
 	}
 	groups, err := h.svc.List(c.Request.Context(), userID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": groups})
@@ -266,11 +266,11 @@ func (h *Handler) Invite(c *gin.Context) {
 		UserID string `json:"user_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.Invite(c.Request.Context(), c.Param("id"), inviterID, body.UserID); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -280,12 +280,12 @@ func (h *Handler) PayDues(c *gin.Context) {
 	memberID := ginutil.UserID(c)
 	var req PayDuesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	payment, err := h.svc.PayDues(c.Request.Context(), c.Param("id"), memberID, req)
 	if err != nil {
-		c.JSON(payDuesErrMap.Code(err), gin.H{keyError: err.Error()})
+		c.JSON(payDuesErrMap.Code(err), gin.H{keyError: httperr.Msg(c, payDuesErrMap.Code(err), err)})
 		return
 	}
 	c.JSON(http.StatusCreated, payment)
