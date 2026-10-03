@@ -1,4 +1,4 @@
-# ADR-PR<pr-number>: Contestant roster lives in `contestants`; discovery reads it
+# ADR-PR482: Contestant roster lives in `contestants`; discovery reads it
 
 - **Status:** Accepted (immediate decision); consolidation deferred
 - **Date:** 2026-10-01
