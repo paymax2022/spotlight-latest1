@@ -1223,6 +1223,7 @@ func (s *Service) EvaluateAlerts(ctx context.Context) (int, error) {
 	}
 	quoteCache := map[string]Quote{}
 	triggered := 0
+	var notifyErrs []error
 	for _, a := range alerts {
 		q, ok := quoteCache[a.Symbol]
 		if !ok {
@@ -1242,10 +1243,16 @@ func (s *Service) EvaluateAlerts(ctx context.Context) (int, error) {
 		if err := s.repo.MarkAlertTriggered(ctx, a.ID); err != nil {
 			continue
 		}
-		_ = s.notifier.AlertTriggered(ctx, a.UserID, a.Symbol, alertMessage(a, q))
+		// Delivery failures are logged per alert and reported to the worker in
+		// the aggregate — they must not abort the rest of the evaluation pass
+		// (E2E-FR-051).
+		if err := s.notifier.AlertTriggered(ctx, a.UserID, a.Symbol, alertMessage(a, q)); err != nil {
+			log.Printf("[invest] alert notification failed alert=%s user=%s symbol=%s err=%v", a.ID, a.UserID, a.Symbol, err)
+			notifyErrs = append(notifyErrs, err)
+		}
 		triggered++
 	}
-	return triggered, nil
+	return triggered, errors.Join(notifyErrs...)
 }
 
 // SetNotifier injects a real notifier (defaults to LogNotifier).
