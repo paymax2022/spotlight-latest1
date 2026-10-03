@@ -91,10 +91,21 @@ func TestPoll_ExecutesDueJob_LiveDB(t *testing.T) {
 	}
 	cancel()
 
+	// The handler firing and finishRun updating scheduler_runs are sequential on
+	// the poller goroutine, but the fired-channel receive unblocks the test the
+	// instant the handler sends — before finishRun's UPDATE lands. Poll the run
+	// row until the status settles instead of asserting immediately.
 	var status string
-	err = pool.QueryRow(ctx, `SELECT status FROM scheduler_runs WHERE job_id=$1`, job.ID).Scan(&status)
-	if err != nil {
-		t.Fatalf("read scheduler_runs: %v", err)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err = pool.QueryRow(ctx, `SELECT status FROM scheduler_runs WHERE job_id=$1`, job.ID).Scan(&status)
+		if err != nil {
+			t.Fatalf("read scheduler_runs: %v", err)
+		}
+		if status != string(RunPending) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	if status != string(RunSucceeded) {
 		t.Errorf("run status = %q, want %q", status, RunSucceeded)

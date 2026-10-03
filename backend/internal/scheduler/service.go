@@ -328,18 +328,24 @@ func (s *Service) execute(ctx context.Context, j Job) {
 		return
 	}
 
+	// wctx detaches the post-handler bookkeeping from caller cancellation: once
+	// the handler's side effect has run (or failed), the run outcome MUST be
+	// recorded — a cancelled poll ctx (e.g. SIGTERM mid-execute) must not strand
+	// the run in 'pending', which would read as "side effect never happened".
+	wctx := context.WithoutCancel(ctx)
+
 	hctx := runCtx{ctx: ctx, job: j, idemKey: runKey}
 	// runHandler recovers panics: a handler panic must mark THIS run failed and
 	// schedule a retry, never crash the process (execute runs inside the poller
 	// goroutine — an unrecovered panic would take the whole API server down).
 	if herr := runHandler(h, hctx); herr != nil {
-		s.finishRun(ctx, runKey, RunFailed, herr.Error())
-		s.scheduleRetry(ctx, j)
+		s.finishRun(wctx, runKey, RunFailed, herr.Error())
+		s.scheduleRetry(wctx, j)
 		return
 	}
-	s.finishRun(ctx, runKey, RunSucceeded, "")
+	s.finishRun(wctx, runKey, RunSucceeded, "")
 	// success clears the consecutive-failure backoff counter
-	_, _ = s.db.Exec(ctx, `UPDATE scheduler_jobs SET failure_count=0, updated_at=now() WHERE id=$1`, j.ID)
+	_, _ = s.db.Exec(wctx, `UPDATE scheduler_jobs SET failure_count=0, updated_at=now() WHERE id=$1`, j.ID)
 }
 
 func (s *Service) finishRun(ctx context.Context, runKey string, status RunStatus, errMsg string) {
