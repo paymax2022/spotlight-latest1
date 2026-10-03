@@ -21,7 +21,18 @@ import (
 	"time"
 )
 
+// NewRouter builds the engine. Kept for callers/tests that have no lifecycle
+// context; background loops started here (the durable-job poller) then live
+// for the process lifetime.
 func NewRouter(cfg config.Config) *gin.Engine {
+	return NewRouterWithContext(context.Background(), cfg)
+}
+
+// NewRouterWithContext is NewRouter plus a lifecycle context: the durable-job
+// poller (and any future in-process drain) stops ticking when ctx is
+// cancelled. main() passes the signal context so SIGTERM shuts the poller down
+// gracefully alongside the HTTP server.
+func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	// gin.SetMode is a package-level global, so this must run before
 	// gin.Default() constructs the engine's default logger. Nothing in this
 	// server ever set it (only the separate voting-test-server binary does),
@@ -58,26 +69,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 
 	health := handlers.NewHealthHandler()
 	supabase := integrations.NewSupabaseRestClient(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey)
-	// ADR-PR395: local JWT verification (AUTH_JWT_LOCAL_VERIFY). Removes the
-	// per-request GoTrue GET /auth/v1/user call — the measured capacity ceiling
-	// (200-VU run: ~50% 503 "authentication service unavailable" while Postgres
-	// was fine). ES256 tokens verify against Supabase's JWKS endpoint; HS256
-	// tokens need SUPABASE_JWT_SECRET. Revocation staleness is bounded by the
-	// token TTL; platform_users status still gates suspended/locked/deleted
-	// per request. Enabling with no verification material is a fatal
-	// misconfig on deployed tiers — same doctrine as the nil-pool guard below.
-	if cfg.AuthJWTLocalVerify {
-		if strings.TrimSpace(cfg.SupabaseURL) == "" && strings.TrimSpace(cfg.SupabaseJWTSecret) == "" {
-			if e := strings.ToLower(strings.TrimSpace(cfg.AppEnv)); e == "staging" || cfg.IsProd() {
-				log.Fatalf("[router] AUTH_JWT_LOCAL_VERIFY=true but neither SUPABASE_URL (for JWKS) nor SUPABASE_JWT_SECRET is set — refusing to start")
-			}
-			log.Printf("[router] WARN: AUTH_JWT_LOCAL_VERIFY set but no JWKS URL or JWT secret — remote GoTrue validation kept")
-		} else {
-			supabase.EnableLocalJWTVerify(cfg.SupabaseJWTSecret)
-			log.Printf("[router] AUTH_JWT_LOCAL_VERIFY: local JWT verification enabled (JWKS via SUPABASE_URL, HS256 secret %s)",
-				map[bool]string{true: "set", false: "unset"}[cfg.SupabaseJWTSecret != ""])
-		}
-	}
+	configureLocalJWTVerify(cfg, supabase)
 	adminRepo := repositories.NewAdminSupabaseRepository(supabase)
 	rbacRepo := repositories.NewRBACSupabaseRepository(supabase)
 	auditRepo := repositories.NewAuditSupabaseRepository(supabase)
@@ -488,6 +480,11 @@ func NewRouter(cfg config.Config) *gin.Engine {
 			sharedRedis = rc
 		}
 	}
+	// E2E-FR-050: /readyz reports a per-component verdict for Redis too.
+	// Required only when REDIS_REQUIRED=true — Redis is a latency optimization
+	// with DB-unique fallbacks, so by default a Redis outage marks the component
+	// "degraded" but does NOT fail readiness.
+	health.WithRedis(sharedRedis, cfg.RedisRequired)
 
 	// Shared SSE hub (one instance, one /api/v1/realtime/stream route regardless
 	// of which module publishes) — was previously built locally inside
@@ -534,9 +531,17 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	// Paymax Connect wallet endpoints (/api/v1/wallet/*, /api/v1/kyc/*, etc.)
 	// — member-facing wallet balance, gifting, tier progression, and payouts.
 	// All endpoints require authentication (Bearer token). Requires shared pool.
-	if sharedPool != nil {
+	// E2E-SEC-064: honor FEATURE_CONNECT_ENABLED when it is EXPLICITLY set —
+	// set-to-false unmounts the surface (404). When the flag is unset entirely
+	// the surface stays mounted: these routes predate the flag and deployments
+	// exist with it absent, so absence must not change behavior. An explicit
+	// non-empty value that doesn't parse as true counts as "set to off"
+	// (fail-closed for a money-touching surface).
+	if sharedPool != nil && connectWalletKYCMountAllowed(cfg) {
 		authMiddleware := middleware.RequireAuthContext(supabase, rbacService)
-		registerConnectWalletRoutes(r, supabase, rbacService, authMiddleware, sharedPool, auditService, kycVerifySvc)
+		registerConnectWalletRoutes(r, cfg, supabase, rbacService, authMiddleware, sharedPool, auditService, kycVerifySvc)
+	} else if sharedPool != nil {
+		log.Println("[connect] FEATURE_CONNECT_ENABLED is explicitly false — Connect wallet/KYC routes not mounted (E2E-SEC-064)")
 	}
 
 	// Admin console — unified /api/v1/admin/* endpoints for mobile admin UI
@@ -661,7 +666,49 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		RegisterInvestAIRoutes(r, cfg, supabase, rbacService, sharedPool)
 	}
 
+	// Durable-job poller (E2E-BE-005) — the missing drain for scheduler_jobs.
+	// Started LAST so every module's RegisterJobType has already landed before
+	// the first tick; unhandled job types are never consumed (see RunDue), and
+	// known handler-less producers get log-only stubs (scheduler_poller.go).
+	startSchedulerPoller(ctx, cfg, sharedPool)
+
 	return r
+}
+
+// configureLocalJWTVerify wires ADR-PR395 local JWT verification
+// (AUTH_JWT_LOCAL_VERIFY). Removes the per-request GoTrue GET /auth/v1/user
+// call — the measured capacity ceiling (200-VU run: ~50% 503 "authentication
+// service unavailable" while Postgres was fine). ES256 tokens verify against
+// Supabase's JWKS endpoint; HS256 tokens need SUPABASE_JWT_SECRET. Revocation
+// staleness is bounded by the token TTL; platform_users status still gates
+// suspended/locked/deleted per request. Enabling with no verification
+// material is a fatal misconfig on deployed tiers — same doctrine as the
+// nil-pool guard in NewRouterWithContext.
+func configureLocalJWTVerify(cfg config.Config, supabase *integrations.SupabaseRestClient) {
+	if !cfg.AuthJWTLocalVerify {
+		return
+	}
+	if strings.TrimSpace(cfg.SupabaseURL) == "" && strings.TrimSpace(cfg.SupabaseJWTSecret) == "" {
+		if e := strings.ToLower(strings.TrimSpace(cfg.AppEnv)); e == "staging" || cfg.IsProd() {
+			log.Fatalf("[router] AUTH_JWT_LOCAL_VERIFY=true but neither SUPABASE_URL (for JWKS) nor SUPABASE_JWT_SECRET is set — refusing to start")
+		}
+		log.Printf("[router] WARN: AUTH_JWT_LOCAL_VERIFY set but no JWKS URL or JWT secret — remote GoTrue validation kept")
+		return
+	}
+	supabase.EnableLocalJWTVerify(cfg.SupabaseJWTSecret)
+	log.Printf("[router] AUTH_JWT_LOCAL_VERIFY: local JWT verification enabled (JWKS via SUPABASE_URL, HS256 secret %s)",
+		map[bool]string{true: "set", false: "unset"}[cfg.SupabaseJWTSecret != ""])
+}
+
+// connectWalletKYCMountAllowed decides whether the Connect wallet/KYC surface
+// mounts (E2E-SEC-064). The surface predate FEATURE_CONNECT_ENABLED: unmounted
+// only when the flag is explicitly set to a false value. Unset ⇒ mounted —
+// preserves every existing deployment that never had the variable.
+func connectWalletKYCMountAllowed(cfg config.Config) bool {
+	if !cfg.FeatureConnectFlagSet {
+		return true // legacy behavior: flag absent → mount
+	}
+	return cfg.FeatureConnectEnabled
 }
 
 // startInProcessWorkers launches background worker loops INSIDE the API process when

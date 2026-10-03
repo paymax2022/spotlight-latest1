@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/scheduler"
 )
 
@@ -32,10 +33,27 @@ type AjoService struct {
 	led   *ledger.Service
 	sched *scheduler.Service
 	audit Auditor
+	tiers walletDebitLimiter // fail-closed KYC-tier / daily-debit gate on member debits
 }
 
 func NewAjoService(db *pgxpool.Pool, led *ledger.Service, sched *scheduler.Service, audit Auditor) *AjoService {
-	return &AjoService{db: db, led: led, sched: sched, audit: audit}
+	s := &AjoService{db: db, led: led, sched: sched, audit: audit}
+	// Tier-limit gate from the same pool — zero extra wiring at the call site
+	// (same convention as transport.NewService). A nil pool leaves the gate nil
+	// and enforceDebitLimit fails closed via ErrTierGateUnwired.
+	if db != nil {
+		s.tiers = tiers.NewService(db)
+	}
+	return s
+}
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *AjoService) WithTiers(t walletDebitLimiter) *AjoService {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
 }
 
 // RegisterCycleRunner wires the per-cycle auto-debit+payout handler.
@@ -215,6 +233,15 @@ func (s *AjoService) RunCycle(ctx context.Context, circleID, idemKey string) err
 	var collected int64
 	for _, m := range members {
 		legKey := fmt.Sprintf("%s:ajo:%s:c%d:debit:%s", idemKey, circleID, cy.CycleNumber, m.UserID)
+		// Tier guard per member leg (fail-closed, E2E-FIN-041): each cycle
+		// contribution is a member-funded wallet debit — the same
+		// EnforceWalletDebitLimit the transfer rail runs. A refusal is treated
+		// exactly like a failed debit: the member marks DEFAULTED (auditable,
+		// NL-12) and no leg posts — deterministic zero-leak without Paymax float.
+		if terr := enforceDebitLimit(s.tiers, ctx, m.UserID, c.ContributionKobo); terr != nil {
+			s.markDefault(ctx, circleID, m.UserID)
+			continue
+		}
 		// NL-1: peer funds only — Debit fails closed on insufficient balance; the
 		// shortfall is NOT covered by Paymax. A failing member is marked DEFAULTED.
 		derr := s.led.Debit(ctx, m.UserID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo)
@@ -289,6 +316,12 @@ func (s *AjoService) completeCycleAndRotate(ctx context.Context, c *Circle, cy *
 func (s *AjoService) MakeGood(ctx context.Context, circleID, userID string, cycleNumber int, idemKey string) error {
 	c, err := s.getCircle(ctx, circleID)
 	if err != nil {
+		return err
+	}
+	// Tier guard (fail-closed, E2E-FIN-041): the make-good is a member-funded
+	// wallet debit — the same EnforceWalletDebitLimit the transfer rail runs.
+	// Placed before the escrow lookup so an unwired gate still fails closed.
+	if err := enforceDebitLimit(s.tiers, ctx, userID, c.ContributionKobo); err != nil {
 		return err
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)

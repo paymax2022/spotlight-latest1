@@ -294,12 +294,49 @@ func (s *authService) phoneToEmail(nsn string) string {
 // hold the password, and it is the only way to offer the user a route forward.
 var ErrEmailNotConfirmed = errors.New("email not confirmed")
 
+// ErrAuthUnavailable means the login could not be EVALUATED at all — the
+// GoTrue token endpoint was unreachable, timed out, was rate-limited, or
+// answered something unparseable — so no credential verdict exists.
+//
+// E2E-FR-049: these used to fold into "invalid credentials", which both told
+// the user their (correct) password was wrong and counted a strike against
+// failed_login_attempts — a GoTrue outage became a mass lockout. Distinct from
+// ErrEmailNotConfirmed in the other direction too: that one is a definitive
+// answer about the credentials (they were right), this one is the absence of
+// any answer. Callers must not count it as a failed attempt.
+var ErrAuthUnavailable = errors.New("authentication service unavailable")
+
+// LoginFailureError wraps an error from LoginUser with the identity the service had
+// already resolved when the attempt failed — a phone identifier becomes the
+// account email, and the platform user id is known once platform_users has
+// answered. Login used to hand the handler a bare error, so every failed
+// login_activity row was anonymous (E2E-AUTH-007). Unwrap keeps
+// errors.Is(err, ErrEmailNotConfirmed) working through the wrapper.
+type LoginFailureError struct {
+	UserID string
+	Email  string
+	Err    error
+}
+
+func (e *LoginFailureError) Error() string { return e.Err.Error() }
+func (e *LoginFailureError) Unwrap() error { return e.Err }
+
 func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) {
 	email := s.resolveLoginEmail(in.Identifier, in.Email)
 	if email == "" {
 		// Same error the wrong-password path returns, deliberately: a distinct
 		// "no such account" would leak which phone numbers are registered.
 		return nil, fmt.Errorf("invalid credentials")
+	}
+	var user *platformUser
+	// fail reports err with whatever identity was resolved before the failure,
+	// so the handler can attribute the login_activity row.
+	fail := func(err error) error {
+		f := &LoginFailureError{Email: email, Err: err}
+		if user != nil {
+			f.UserID = user.ID
+		}
+		return f
 	}
 	user, err := s.findPlatformUserByEmail(email)
 	if err == nil {
@@ -314,10 +351,10 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 			// the bug: refuse instead, with the same generic message every other
 			// refusal on this path uses so this can't be told apart from a wrong
 			// password.
-			return nil, fmt.Errorf("invalid credentials")
+			return nil, fail(errors.New("invalid credentials"))
 		}
 		if err := s.validateLoginStatus(user); err != nil {
-			return nil, err
+			return nil, fail(err)
 		}
 	}
 	// err != nil here means the platform_users lookup itself failed (REST/network),
@@ -329,14 +366,20 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 	b, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/token?grant_type=password", bytes.NewReader(b))
 	if err != nil {
-		return nil, err
+		// A request that cannot even be built is a configuration failure, not a
+		// credential verdict.
+		return nil, fail(fmt.Errorf("%w: build token request: %w", ErrAuthUnavailable, err))
 	}
 	req.Header.Set("apikey", s.supabase.APIKey())
 	req.Header.Set("Authorization", "Bearer "+s.supabase.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := gotrueHTTPClient.Do(req)
 	if err != nil {
-		return nil, err
+		// Transport failure/timeout against GoTrue: no verdict was ever reached
+		// (E2E-FR-049). Must NOT land on the invalid-credentials path — the
+		// handler would log a false wrong-password row, and no strike may count
+		// against an account whose password was never evaluated.
+		return nil, fail(fmt.Errorf("%w: %w", ErrAuthUnavailable, err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
@@ -351,7 +394,17 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 		// doing nothing wrong, and the user cannot escape it: every retry is
 		// another strike, and the thing they need to fix is not their password.
 		if upstream.ErrorCode == "email_not_confirmed" {
-			return nil, ErrEmailNotConfirmed
+			return nil, fail(ErrEmailNotConfirmed)
+		}
+
+		// E2E-FR-049: an upstream failure is not a credential verdict. GoTrue
+		// answered (or its proxy did) but declined to evaluate — 5xx, or 429
+		// from its own rate limiter. Folding these into invalid_credentials
+		// counted outage seconds as wrong-password strikes: one degraded-IdP
+		// window then mass-locked accounts whose passwords were fine. Only a
+		// definitive 4xx credential rejection earns a bumpFailedLogin strike.
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			return nil, fail(fmt.Errorf("%w: token endpoint returned %d", ErrAuthUnavailable, resp.StatusCode))
 		}
 
 		if user != nil {
@@ -361,11 +414,13 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 				log.Printf("bumpFailedLogin(%s): %v", user.ID, err)
 			}
 		}
-		return nil, fmt.Errorf("invalid credentials")
+		return nil, fail(errors.New("invalid credentials"))
 	}
 	var out map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
+		// A 2xx we cannot decode is an upstream/version-compat failure, not a
+		// verdict on the password — same classification as a transport error.
+		return nil, fail(fmt.Errorf("%w: decode token response: %w", ErrAuthUnavailable, err))
 	}
 	// The ACCOUNT email, which is not the same as what the caller sent — login
 	// accepts a phone number and resolves it server-side. A second factor has to
@@ -442,7 +497,7 @@ func (s *authService) ChangePassword(accessToken, currentPassword, newPassword s
 		if errors.Is(err, integrations.ErrTokenInvalid) {
 			return errors.New("unauthorized")
 		}
-		return errors.New("authentication service unavailable")
+		return ErrAuthUnavailable
 	}
 	userID := asString(authUser["id"])
 	if strings.TrimSpace(userID) == "" {

@@ -98,14 +98,28 @@ func RegisterSavings(member *gin.RouterGroup, adminGroup *gin.RouterGroup, cfg c
 // RegisterSocialPay wires the Top-5 Phase-1 Social core (P2P send/request,
 // split-bill, group pool) onto the finance member group + a social admin group.
 // Called by the orchestrator under FeatureSocialPayEnabled.
-//   - member: /api/finance/social/*  (member-authenticated; user_id mirrored)
-//   - admin : /api/social/admin/*     (member-authenticated; per-route RBAC social.admin.*)
+//   - member: /api/finance/social/*        (member-authenticated; user_id mirrored)
+//   - alias : /api/finance/social/social/* (E2E-FIN-043 — see below)
+//   - admin : /api/social/admin/*           (member-authenticated; per-route RBAC social.admin.*)
 //
 // It internally builds the cashtag directory and an escrow core (both shared
 // spine). P2P/split/pool money moves through the reused finance ledger (NL-8),
-// is idempotent (NL-9) and is gated by AML velocity limits (NL-10). Object-level
-// authZ is enforced in the service (the session id is always the acting
-// identity, so a user can never request/pay/payout as someone else).
+// is idempotent (NL-9), passes the fail-closed KYC-tier/debit-limit gate
+// (tiers.EnforceWalletDebitLimit — the same gate the transfer rail runs;
+// E2E-FIN-041) and is gated by AML velocity limits (NL-10). Object-level authZ
+// is enforced in the service (the session id is always the acting identity, so
+// a user can never request/pay/payout as someone else).
+//
+// E2E-FIN-043 double-mount: social.Handler.Register adds its own "/social"
+// segment, so passing finance.Group("/social") here used to mount the module
+// ONLY at /api/finance/social/social/* while the documented canonical
+// /api/finance/social/* 404'd (the Next.js proxy and mobile clients call the
+// canonical path). The fix registers on the bare member group for the canonical
+// path AND re-registers under member.Group("/social") as a backward-compatible
+// alias — shipped e2e suites and clients still calling the doubled path keep
+// working. A second Register call is safe: member routes on the doubled prefix
+// are distinct paths (no gin duplicate-route panic) and admin routes are skipped
+// (nil group) so social.admin.* is registered exactly once.
 func RegisterSocialPay(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
 	if pool == nil {
 		log.Println("[social] nil pool — skipping social routes")
@@ -129,16 +143,32 @@ func RegisterSocialPay(member *gin.RouterGroup, adminGroup *gin.RouterGroup, poo
 	}
 
 	handler := social.NewHandler(svc, tags)
-	handler.Register(member, adminGroup, guard)
 
-	log.Println("[social] routes registered — cashtag / p2p / split / pool live")
+	// Canonical mount: handler.Register adds "/social" itself, so registering on
+	// the bare finance member group lands routes at /api/finance/social/*.
+	handler.Register(member, adminGroup, guard)
+	// Legacy alias: the doubled path the module was previously reachable at
+	// only. Admin group intentionally nil — admin routes register once above.
+	handler.Register(member.Group("/social"), nil, guard)
+
+	log.Println("[social] routes registered — cashtag / p2p / split / pool live (canonical + /social/social alias)")
 }
 
 // adminGroupTop5 builds an admin route group for a Top-5 module at the given
 // base path, applying the same authenticated-user guard the other admin groups
 // use (per-route RBAC permissions are applied inside each module's Register fn).
-func adminGroupTop5(r *gin.Engine, basePath string) *gin.RouterGroup {
+//
+// authMW MUST be the same RequireAuthContext middleware the finance group uses
+// (mapsAuth() in finance_routes.go): it validates the bearer token and mirrors
+// user_id into the gin context, and it must run BEFORE requireUserID —
+// requireUserID only reads the user_id that RequireAuthContext populates, so
+// mounting requireUserID alone 401s every admin route even with a valid token
+// (E2E-SOC-034; the same auth-ordering bug the finance/referral/insurance/
+// stays/events groups each hit and fixed). Taking authMW as a required
+// parameter makes that ordering impossible to omit at a call site.
+func adminGroupTop5(r *gin.Engine, basePath string, authMW gin.HandlerFunc) *gin.RouterGroup {
 	g := r.Group(basePath)
+	g.Use(authMW)
 	g.Use(requireUserID())
 	return g
 }
@@ -327,7 +357,8 @@ func RegisterCreators(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 // RaiseDispute, arbitration = Arbitrate (separation-of-duties enforced in escrow).
 // NL-6 (holds, never lends), NL-9 idempotent checkout. Called under
 // FeatureSocialPayEnabled. Also mounts the shared spray engine member endpoints.
-//   - member: /api/finance/p2p/*  +  /api/finance/spray/*
+//   - member: /api/finance/p2p/*  (incl. spray, mounted on the same group →
+//     /api/finance/p2p/spray* — the BFF /api/v1/spray proxies here)
 //   - admin : /api/p2p/admin/*  (both p2p AND spray admin routes share this one
 //     group — spray has no admin group of its own) (RBAC p2p.* / spray.*)
 func RegisterP2PMarket(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService) {

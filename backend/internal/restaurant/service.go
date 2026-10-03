@@ -33,6 +33,10 @@ const (
 	splitRiderPct    = 0.10
 	// splitProviderPctNoRider is splitProviderPct + splitRiderPct.
 	splitProviderPctNoRider = 0.90
+	// keyStatus is the JSON/audit-map key for an order-status value.
+	keyStatus = "status"
+	// keyReason is the notification/audit-map key for a human-readable reason.
+	keyReason = "reason"
 )
 
 // lagosTZ is the delivery locale used to decide the night-fee window. Loaded once;
@@ -116,6 +120,27 @@ type Service struct {
 	// refund logs for manual reconciliation instead of running incorrectly.
 	externalRefunder ExternalRefunder
 	disbursement     provider.DisbursementProvider // optional; nil ⇒ no account verification on bank-account add
+	// audit is the durable audit sink order transitions write through
+	// (recordOrderEvent). nil ⇒ transition events stay unwritten — the
+	// transition itself is unaffected either way.
+	audit OrderAuditor
+}
+
+// OrderAuditor is the nil-safe seam into the shared durable audit sink
+// (services.AuditService satisfies this signature — the app-wiring auditSink).
+// Modeled as a LOCAL interface (mirrors CommissionRecorder / Notifier /
+// ExternalRefunder) so restaurant never imports the services package at
+// compile time.
+type OrderAuditor interface {
+	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
+}
+
+// WithAudit attaches the durable audit sink used by recordOrderEvent so every
+// order FSM transition lands in audit_logs (E2E-X-030). Nil is accepted and
+// leaves recordOrderEvent a no-op — audit must never gate a transition.
+func (s *Service) WithAudit(a OrderAuditor) *Service {
+	s.audit = a
+	return s
 }
 
 // ExternalRefunder is the nil-safe seam restaurant.Service uses to correctly
@@ -1135,7 +1160,7 @@ func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, new
 	if newStatus == OrderCancelled {
 		return s.cancelAndRefund(ctx, orderID, actorID)
 	}
-	return s.transitionInternal(ctx, orderID, newStatus)
+	return s.transitionInternal(ctx, orderID, actorID, newStatus)
 }
 
 // transitionInternal performs the guarded lifecycle transition and its side effects
@@ -1143,7 +1168,11 @@ func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, new
 // assumed to have ALREADY been checked, or the caller is a trusted internal path such
 // as ConfirmHandoff (after it verifies the delivery-code POD). It is the ONLY place
 // `delivered` may be set.
-func (s *Service) transitionInternal(ctx context.Context, orderID string, newStatus OrderStatus) error {
+// actorID is the transitioning user (owner on confirm/prepare/ready, rider on
+// picked_up/delivered); it is recorded as the audit actor on the emitted
+// transition event — may be "" for system-driven re-drives, which audits as a
+// NULL actor rather than a wrong one.
+func (s *Service) transitionInternal(ctx context.Context, orderID, actorID string, newStatus OrderStatus) error {
 	var order Order
 	// settlement_id is a NULLABLE column; COALESCE to '' so a settlement-less order
 	// (e.g. one created outside the escrow path) scans cleanly instead of erroring —
@@ -1161,6 +1190,10 @@ func (s *Service) transitionInternal(ctx context.Context, orderID string, newSta
 	if _, err := s.db.Exec(ctx, `UPDATE orders SET status=$1 WHERE id=$2`, string(newStatus), orderID); err != nil {
 		return err
 	}
+
+	// Persist the transition audit event (best-effort — never fails the
+	// transition). order.Status is the state read above, i.e. the FROM side.
+	s.recordOrderEvent(ctx, orderID, actorID, order.Status, newStatus)
 
 	// On delivery, settle: 80% restaurant owner, 10% rider (stubbed to owner if no rider), 10% platform.
 	if newStatus == OrderDelivered {
@@ -1487,6 +1520,12 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 		return err
 	}
 
+	// Persist the transition audit event (best-effort). `status` above is the
+	// state the order was locked in — the FROM side. Centralised here so every
+	// caller of the cancel path (UpdateStatus, CancelOrder, the unaccepted-order
+	// sweep) is covered without each recording separately.
+	s.recordOrderEvent(ctx, orderID, actorID, OrderStatus(status), OrderCancelled)
+
 	// Notify the customer + rider (if assigned) and broadcast cancellation.
 	customer, _, rider, _ := s.orderParties(ctx, orderID)
 	if customer != "" && customer != actorID {
@@ -1541,12 +1580,22 @@ func (s *Service) refundEscrowOnce(ctx context.Context, orderID, settlementID, r
 	return err
 }
 
-// recordOrderEvent records an order's status transition in the audit log (best-effort).
-// Used by order FSM transitions (accept, reject, dispatch, delivery-fail, reassign, etc.)
-// for audit/analytics. Failures are silent to prevent status transitions from failing.
+// recordOrderEvent records an order's status transition in the durable audit
+// log (audit_logs via the shared services.AuditService — see WithAudit).
+// Used by order FSM transitions (accept, reject, dispatch, delivery-fail,
+// reassign, etc.) for audit/analytics. Best-effort and non-fatal: a nil sink
+// or a sink error can never fail a status transition — the orders row and the
+// ledger remain the records of truth (E2E-X-030: previously a TODO no-op, so
+// transitions wrote zero audit rows). The action names the terminal state
+// ("order.status.confirmed" etc.) and metadata carries {from,to}.
 func (s *Service) recordOrderEvent(ctx context.Context, orderID, actorID string, fromStatus, toStatus OrderStatus) {
-	// TODO: implement order event audit logging when audit infrastructure is wired.
-	// For now, this is a no-op stub that allows callers to record events.
+	if s.audit == nil {
+		return
+	}
+	s.audit.LogAction(actorID, "", "order.status."+string(toStatus), "restaurant", "order", orderID,
+		map[string]any{keyStatus: string(fromStatus)},
+		map[string]any{keyStatus: string(toStatus), "from": string(fromStatus), "to": string(toStatus)},
+		"", "", "info")
 }
 
 // refundAndClose handles the money-path return of escrowed order funds to the customer
@@ -1596,7 +1645,7 @@ func (s *Service) refundAndClose(ctx context.Context, orderID, actorID string, t
 	if customer != "" && customer != actorID {
 		s.notify(ctx, Notification{UserID: customer, Event: EventOrderCancelled, Title: "Order refunded",
 			Body: "Your order could not be fulfilled and has been refunded.",
-			Data: map[string]any{"order_id": orderID, "status": string(toStatus), "reason": reason}})
+			Data: map[string]any{"order_id": orderID, keyStatus: string(toStatus), keyReason: reason}})
 	}
 	if rider != "" && rider != actorID {
 		s.notify(ctx, Notification{UserID: rider, Event: EventOrderCancelled, Title: "Order closed",
@@ -1955,7 +2004,7 @@ func (s *Service) MarkDeliveryFailed(ctx context.Context, orderID, riderID, reas
 	s.recordOrderEvent(ctx, orderID, riderID, OrderStatus(status), OrderDeliveryFailed)
 	if customer != "" {
 		s.notify(ctx, Notification{UserID: customer, Event: EventOrderCancelled, Title: "Delivery problem",
-			Body: "We couldn't complete your delivery — support will reach out.", Data: map[string]any{"order_id": orderID, "reason": reason}})
+			Body: "We couldn't complete your delivery — support will reach out.", Data: map[string]any{"order_id": orderID, keyReason: reason}})
 	}
 	s.broadcastStatus(orderID, OrderDeliveryFailed)
 	return nil

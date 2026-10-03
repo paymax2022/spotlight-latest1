@@ -24,6 +24,7 @@ import (
 	"spotlight/backend/internal/arena/service"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 // querier is the subset of pgx used by the repos, satisfied directly by both
@@ -83,6 +84,23 @@ func (l *LedgerAdapter) StandingAccountID(ctx context.Context, accountType strin
 		return "", err
 	}
 	return acc.ID, nil
+}
+
+// DebitLimitAdapter implements service.DebitLimitPort over finance
+// tiers.Service — the SAME EnforceWalletDebitLimit the canonical transfer rail
+// runs (E2E-FIN-046). The Support rail injects it via WithDebitLimiter; absent
+// the adapter the rail fails closed on ErrTierGateUnwired.
+type DebitLimitAdapter struct{ svc *tiers.Service }
+
+// NewDebitLimitAdapter wraps a finance tiers.Service as an Arena DebitLimitPort.
+func NewDebitLimitAdapter(svc *tiers.Service) *DebitLimitAdapter { return &DebitLimitAdapter{svc: svc} }
+
+var _ service.DebitLimitPort = (*DebitLimitAdapter)(nil)
+
+// EnforceWalletDebitLimit delegates to the finance tiers service unwrapped so
+// the handler maps tiers.ErrWalletDisabled / tiers.ErrDailyLimitExceeded to 403.
+func (a *DebitLimitAdapter) EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
+	return a.svc.EnforceWalletDebitLimit(ctx, userID, amountKobo)
 }
 
 // TierAdapter implements service.TierPort by reading the user's KYC tier from the

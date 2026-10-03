@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -24,6 +25,7 @@ type Service struct {
 	gate      AccessGate
 	feeBps    int64
 	hurdleBps int64
+	tiers     walletDebitLimiter
 }
 
 // AccessGate is the Module-KYC access check (§16B.1). Deposits are refused unless
@@ -34,8 +36,51 @@ type AccessGate interface {
 	HasTradingAccess(ctx context.Context, userID string) (bool, error)
 }
 
+// walletDebitLimiter is the minimal seam the Subscribe money path depends on
+// for the fail-closed KYC-tier / daily-debit gate (E2E-FIN-046). *tiers.Service
+// satisfies it in production; unit tests inject a fake via WithTiers. The
+// AccessGate above only answers "may this account use the trading module" — it
+// does NOT bound how much cash may leave the wallet per day. A subscribe debit
+// moves cash out of the wallet into the fund clearing account, so the STRICT
+// gate is used: it is not a checkout purchase, so the Tier-0 checkout
+// allowance (ADR-043) does NOT apply here.
+type walletDebitLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// NewService builds the trading fund wallet service. The tier-limit gate is
+// constructed from the same pool (tiers.NewService needs only the DB), so no
+// extra wiring is required at the call site — same convention as
+// social.NewService. A nil pool leaves the gate nil, and the subscribe debit
+// then fails closed via ErrTierGateUnwired.
 func NewService(pool *pgxpool.Pool, led *ledger.Service, gate AccessGate, feeBps, hurdleBps int64) *Service {
-	return &Service{pool: pool, repo: NewRepository(pool), led: led, gate: gate, feeBps: feeBps, hurdleBps: hurdleBps}
+	s := &Service{pool: pool, repo: NewRepository(pool), led: led, gate: gate, feeBps: feeBps, hurdleBps: hurdleBps}
+	if pool != nil {
+		s.tiers = tiers.NewService(pool)
+	}
+	return s
+}
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *Service) WithTiers(t walletDebitLimiter) *Service {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
+}
+
+// enforceDebitLimit is the fail-closed guard applied before the subscribe
+// wallet debit (E2E-FIN-046): the same EnforceWalletDebitLimit the canonical
+// transfer rail (finance/transfers) runs. Tier 0 → ErrWalletDisabled, over
+// daily cap → ErrDailyLimitExceeded, gate/db errors refuse, and a missing gate
+// refuses via ErrTierGateUnwired. The error is propagated UNWRAPPED so the
+// handler maps the tier sentinels to 403 via errors.Is.
+func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	return s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo)
 }
 
 // Sentinel errors (mapped to HTTP by the handler).
@@ -53,6 +98,10 @@ var (
 	// units awaiting an idempotent re-drive of the payout).
 	ErrDebitPending  = errors.New("trading: deposit cash leg pending confirmation, retry")
 	ErrCreditPending = errors.New("trading: redemption payout pending confirmation, retry")
+	// ErrTierGateUnwired is returned when the service has no tier gate — a nil
+	// gate must fail CLOSED, never debit ungated (mirrors
+	// social.ErrTierGateUnwired; E2E-FIN-046).
+	ErrTierGateUnwired = errors.New("trading: money path requires a tier gate (not wired)")
 )
 
 // clearing returns the fund clearing standing account id.
@@ -174,6 +223,14 @@ func (s *Service) ensureSubscribeDebit(ctx context.Context, userID string, order
 		return err
 	} else if posted {
 		return nil // cash already durably moved on a prior attempt
+	}
+	// Tier gate (fail-closed, E2E-FIN-046): a subscribe debits the wallet into
+	// the fund clearing account, so the same EnforceWalletDebitLimit the
+	// transfer rail applies runs BEFORE money moves — a refused attempt posts
+	// zero ledger legs and mints no units. Replays whose leg already posted
+	// returned above, so a completed deposit never reaches this gate.
+	if err := s.enforceDebitLimit(ctx, userID, order.CashKobo); err != nil {
+		return err
 	}
 	err := s.led.Debit(ctx, userID, order.LedgerRef, walletKey, clearingAcct, order.CashKobo)
 	if err == nil {

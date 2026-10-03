@@ -38,7 +38,13 @@ func main() {
 	// Error tracking (Sentry) + tracing (OTel→Cloud Trace); no-op unless configured.
 	flushObservability := observability.Init(cfg.AppEnv)
 
-	r := app.NewRouter(cfg)
+	// Cloud Run (and most orchestrators) send SIGTERM before removing an instance.
+	// Created before the router so the signal context also drives the durable-job
+	// poller: on shutdown it stops ticking and lets the claim tx roll back.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	r := app.NewRouterWithContext(ctx, cfg)
 	srv := &http.Server{
 		Addr: ":" + cfg.Port,
 		// otelhttp wraps the whole engine: one span per request, exported to
@@ -51,11 +57,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	// Cloud Run (and most orchestrators) send SIGTERM before removing an instance.
 	// Drain in-flight requests/transactions instead of dropping them mid-flight.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	go func() {
 		log.Printf("backend listening on :%s", cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

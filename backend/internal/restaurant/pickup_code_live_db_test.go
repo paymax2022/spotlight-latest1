@@ -43,7 +43,7 @@ func TestLiveDB_ConfirmPickupRequiresPickupCode(t *testing.T) {
 		t.Fatalf("seed order: %v", err)
 	}
 
-	if err := svc.transitionInternal(ctx, oid, OrderReady); err != nil {
+	if err := svc.transitionInternal(ctx, oid, owner, OrderReady); err != nil {
 		t.Fatalf("transition to ready: %v", err)
 	}
 

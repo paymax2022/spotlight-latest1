@@ -8,12 +8,41 @@ import (
 	"spotlight/backend/internal/provider"
 )
 
-// audit writes an immutable audit trail entry for a money-path action. The ledger
+// audit writes an audit trail entry for a money-path action. The ledger
 // entries are the authoritative financial record (every leg carries reference +
 // idempotency key); this adds an action-level breadcrumb. Best-effort + non-fatal
 // (a logging failure must never abort the money path).
+//
+// E2E-X-029: this used to be stdout-only — a money mutation left zero durable
+// audit_logs rows. When a durable sink is wired (SetAuditor — the shared
+// services.AuditService over the Supabase audit_logs table), every audit() call
+// now also persists a row; the stdout line stays for log-tail debugging.
 func (s *Service) audit(ctx context.Context, userID, action, entityID, detail string) {
 	log.Printf("[audit][transfers] action=%s user=%s entity=%s detail=%s", action, userID, entityID, detail)
+	metadata := map[string]any{}
+	if detail != "" {
+		metadata["detail"] = detail
+	}
+	s.emitAudit(userID, "", action, entityID, metadata, "info")
+}
+
+// auditEvent is audit() with an explicit target user and structured metadata —
+// used where the audited action names a counterparty (e.g. a wallet transfer's
+// recipient) rather than a bare detail string. Same best-effort contract.
+func (s *Service) auditEvent(_ context.Context, actorID, targetID, action, entityID string, metadata map[string]any) {
+	log.Printf("[audit][transfers] action=%s user=%s target=%s entity=%s detail=%v", action, actorID, targetID, entityID, metadata)
+	s.emitAudit(actorID, targetID, action, entityID, metadata, "info")
+}
+
+// emitAudit is the single funnel onto the durable sink. Nil sink ⇒ the call is
+// a no-op (the stdout breadcrumb was already written by the caller above).
+// LogAction itself is fire-and-forget — the shared auditService swallows repo
+// errors — so an audit outage can never fail or reverse a transfer.
+func (s *Service) emitAudit(actorID, targetID, action, entityID string, metadata map[string]any, severity string) {
+	if s.auditSink == nil {
+		return
+	}
+	s.auditSink.LogAction(actorID, targetID, action, "transfers", "transfer", entityID, nil, metadata, "", "", severity)
 }
 
 // maskAccountNumber returns the trailing 4 digits of a bank account number,

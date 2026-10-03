@@ -170,7 +170,30 @@ func ownedMediaKeys(sellerID string, ids []string) []string {
 	return out
 }
 
-// GetListing returns a listing (public detail).
+// listingTombstoned reports whether a listing status is a soft-delete tombstone
+// that must be invisible on the PUBLIC read path (E2E-SOC-037): removed_user
+// (owner delete) and removed_policy (moderation reject). Search drops these
+// rows and every other public surface (SellerListings is active-only) already
+// hides them — only the detail read leaked them. The handler answers
+// ErrListingNotFound so a removed id is indistinguishable from one that never
+// existed (404, deliberately not 410: 410 would confirm the id once existed).
+//
+// The OTHER non-active statuses (draft, pending_review, paused, expired, sold)
+// stay readable deliberately: GET /listings/:id is auth-optional, so no
+// verified identity exists to widen visibility for — and the seller's own
+// detail view of a non-live listing comes through this same endpoint (the
+// SOC-004 e2e flow asserts pending_review reads at 200; the sell screens read
+// their drafts here). The seller's all-statuses list is authed
+// GET /my-listings; admins read the moderation queue — neither goes through
+// this method.
+func listingTombstoned(s ListingStatus) bool {
+	return s == ListingRemovedUser || s == ListingRemovedPolicy
+}
+
+// GetListing loads a listing by id (detail read). Callers on the PUBLIC read
+// path (Handler.GetListing) must apply listingTombstoned themselves — this
+// method is also the internal read-back used by tests and must stay a plain
+// fetch.
 func (s *Service) GetListing(ctx context.Context, id string) (*Listing, error) {
 	l, err := s.repo.GetListing(ctx, id)
 	if err != nil {

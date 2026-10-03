@@ -58,6 +58,22 @@ type Config struct {
 
 	// Redis URL for cache, Redlock, asynq, and WS pub/sub.
 	RedisURL string
+	// RedisRequired promotes Redis from a latency optimization to a hard
+	// readiness dependency: when true, /readyz reports 503 while Redis is
+	// unreachable (E2E-FR-050). DEFAULT OFF — Redis has a DB-unique fallback
+	// for idempotency and nil-safe degradation everywhere it is used, so when
+	// this is unset a down Redis reports "degraded" in the readiness components
+	// payload but the probe stays 200.
+	RedisRequired bool
+	// SchedulerEnabled runs the in-process durable-job poller
+	// (scheduler.Service.Poll) that drains scheduler_jobs. DEFAULT ON —
+	// without a poller, durable jobs are produced but never execute
+	// (E2E-BE-005). Set SCHEDULER_ENABLED=false only if an external process
+	// owns the drain (none exists today; the claim is SKIP LOCKED + UNIQUE run
+	// key, so per-replica pollers are safe anyway).
+	SchedulerEnabled bool
+	// SchedulerPollIntervalSeconds is the scheduler RunDue tick (default 5s).
+	SchedulerPollIntervalSeconds int
 
 	// Paystack credentials.
 	PaystackSecretKey  string
@@ -305,8 +321,23 @@ type Config struct {
 	FeatureAcademyFeesEnabled             bool // Academy EdTech Fees: invoices, vault, promotion, competition, scholarship, trust-score, compliance export
 	FeatureAcademyTuitionEnabled          bool // Academy tuition payment path (Phases 1–5 Go migration)
 	FeatureConnectEnabled                 bool // Paymax Connect (dating/networking) module
-	FeatureContestStageEvictionEnabled    bool // Voting contest stage eviction system (multi-stage, grace period, judge save)
-	FeatureContestantSocialEnabled        bool // Contestant likes + profile-share links (contestant_likes/contestant_shares)
+	// FeatureConnectFlagSet records whether FEATURE_CONNECT_ENABLED was present
+	// and non-empty in the environment at boot. Needed because the Connect
+	// wallet/KYC mounts (/api/v1/wallet, /api/v1/kyc, /api/v1/me/tier) predate
+	// the flag and must stay mounted when it is UNSET to avoid breaking
+	// existing deployments — they unmount only when the flag is explicitly set
+	// to a false value (E2E-SEC-064).
+	FeatureConnectFlagSet bool
+	// FeatureConnectWalletFundEnabled mounts POST /api/v1/wallet/fund, the
+	// Connect wallet top-up. DEFAULT OFF — E2E-SEC-052: the handler credits the
+	// user wallet from provider_clearing (the account reserved for verified
+	// Paystack webhooks) with no payment proof, so any authenticated user could
+	// mint money. The documented funding rail — debit the member's Paymax
+	// super-app wallet — was never implemented; keep the route unmounted until
+	// that design lands. When OFF the route 404s even for a valid session.
+	FeatureConnectWalletFundEnabled    bool
+	FeatureContestStageEvictionEnabled bool // Voting contest stage eviction system (multi-stage, grace period, judge save)
+	FeatureContestantSocialEnabled     bool // Contestant likes + profile-share links (contestant_likes/contestant_shares)
 	// Property Management suite (unification umbrella over estate + realtor):
 	// role context, rent passport, stay→gate-pass bridge. DEFAULT OFF. The estate
 	// and realtor modules keep their own flags; this gates only the /property/*
@@ -647,6 +678,14 @@ func getEnvBool(key string, fallback bool) bool {
 	return fallback
 }
 
+// envPresent reports whether the variable exists AND is non-empty. Used where
+// "unset" and "explicitly set" must be told apart (FEATURE_CONNECT_ENABLED —
+// E2E-SEC-064). An explicit empty value counts as unset.
+func envPresent(key string) bool {
+	v, ok := os.LookupEnv(key)
+	return ok && strings.TrimSpace(v) != ""
+}
+
 func Load() Config {
 	return Config{
 		AppEnv:                      getEnv("APP_ENV", "development"),
@@ -667,10 +706,15 @@ func Load() Config {
 		SuspiciousImpossibleKmH:        getEnvInt("AUTH_SUSPICIOUS_IMPOSSIBLE_KMH", 800),
 		SuspiciousEscalationPolicy:     getEnv("AUTH_SUSPICIOUS_ESCALATION_POLICY", "notify"),
 
-		DatabaseURL:        getEnv("DATABASE_URL", ""),
-		RedisURL:           getEnv("REDIS_URL", "redis://localhost:6379"),
-		PaystackSecretKey:  getEnv("PAYSTACK_SECRET_KEY", ""),
-		PaystackWebhookKey: getEnv("PAYSTACK_WEBHOOK_SECRET", ""),
+		DatabaseURL:   getEnv("DATABASE_URL", ""),
+		RedisURL:      getEnv("REDIS_URL", "redis://localhost:6379"),
+		RedisRequired: getEnvBool("REDIS_REQUIRED", false),
+		// Default ON: the durable-job poller is the only thing that drains
+		// scheduler_jobs; opt out only when an external worker owns it.
+		SchedulerEnabled:             getEnvBool("SCHEDULER_ENABLED", true),
+		SchedulerPollIntervalSeconds: getEnvInt("SCHEDULER_POLL_INTERVAL_SECONDS", 5),
+		PaystackSecretKey:            getEnv("PAYSTACK_SECRET_KEY", ""),
+		PaystackWebhookKey:           getEnv("PAYSTACK_WEBHOOK_SECRET", ""),
 
 		CryptoProvider:          getEnv("CRYPTO_PROVIDER", "mock"),
 		CryptoQuidaxTestKey:     getEnv("QUIDAX_TEST_API_KEY", ""),
@@ -792,6 +836,8 @@ func Load() Config {
 		FeatureAcademyFeesEnabled:                getEnvBool("FEATURE_ACADEMY_FEES_ENABLED", false),
 		FeatureAcademyTuitionEnabled:             getEnvBool("FEATURE_ACADEMY_TUITION_ENABLED", false),
 		FeatureConnectEnabled:                    getEnvBool("FEATURE_CONNECT_ENABLED", false),
+		FeatureConnectFlagSet:                    envPresent("FEATURE_CONNECT_ENABLED"),
+		FeatureConnectWalletFundEnabled:          getEnvBool("FEATURE_CONNECT_WALLET_FUND_ENABLED", false),
 		FeatureContestStageEvictionEnabled:       getEnvBool("FEATURE_CONTEST_STAGE_EVICTION_ENABLED", false),
 		FeatureContestantSocialEnabled:           getEnvBool("FEATURE_CONTESTANT_SOCIAL_ENABLED", false),
 		FeaturePropertySuiteEnabled:              getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),

@@ -195,7 +195,16 @@ func RegisterConnectLiveGame(member *gin.RouterGroup, admin *gin.RouterGroup, po
 // camera/SDK image capture, which the mobile app does not have yet
 // (src/features/kycverify/components/CaptureStub.tsx is an explicit sandbox
 // stub) — wiring those checks up would submit fake bytes to a REAL provider.
-func registerConnectWalletRoutes(r *gin.Engine, supabase any, rbac services.RBACService, authMiddleware gin.HandlerFunc, db *pgxpool.Pool, auditSvc services.AuditService, kycVerify *kycverify.Service) {
+//
+// POST /wallet/fund is additionally gated on cfg.FeatureConnectWalletFundEnabled
+// (FEATURE_CONNECT_WALLET_FUND_ENABLED, default OFF) — E2E-SEC-052. The handler
+// credits the user wallet from provider_clearing, the standing account reserved
+// for verified Paystack webhooks, with no payment proof: any authenticated user
+// could mint money, transfer it out, and queue a payout. The documented funding
+// rail ("fund FROM the Paymax super-app wallet", see the mobile fund screen)
+// was never implemented — the mint shipped instead. The route stays unmounted
+// (404) until a verified funding source lands.
+func registerConnectWalletRoutes(r *gin.Engine, cfg config.Config, _ any, _ services.RBACService, authMiddleware gin.HandlerFunc, db *pgxpool.Pool, auditSvc services.AuditService, kycVerify *kycverify.Service) {
 	// Create stores with pooled connections
 	walletStore := handlers.NewWalletStore(db)
 	giftingStore := handlers.NewGiftingStore(db)
@@ -219,7 +228,9 @@ func registerConnectWalletRoutes(r *gin.Engine, supabase any, rbac services.RBAC
 
 	walletGroup := v1.Group("/wallet")
 	walletGroup.GET("/summary", walletHandler.GetSummary)
-	walletGroup.POST("/fund", walletHandler.FundWallet)
+	if cfg.FeatureConnectWalletFundEnabled {
+		walletGroup.POST("/fund", walletHandler.FundWallet)
+	}
 	walletGroup.GET("/history", walletHandler.GetHistory)
 	walletGroup.GET("/history/:id", walletHandler.GetHistoryEntry)
 

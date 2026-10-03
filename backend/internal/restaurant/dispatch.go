@@ -198,7 +198,7 @@ func (s *Service) ConfirmHandoff(ctx context.Context, orderID, riderID, code str
 	// The delivery-code POD has been verified above, so advance to delivered via the
 	// internal transition (the public UpdateStatus forbids `delivered` to close the POD
 	// bypass). This runs the settlement split + notifies.
-	if err := s.transitionInternal(ctx, orderID, OrderDelivered); err != nil {
+	if err := s.transitionInternal(ctx, orderID, riderID, OrderDelivered); err != nil {
 		return err
 	}
 	customer, _, _, _ := s.orderParties(ctx, orderID)
@@ -333,7 +333,7 @@ func (s *Service) ReassignOrder(ctx context.Context, orderID, reason string) err
 	}
 	if rider != nil {
 		s.notify(ctx, Notification{UserID: *rider, Event: EventOrderCancelled, Title: "Delivery reassigned",
-			Body: "A delivery was reassigned.", Data: map[string]any{"order_id": orderID, "reason": reason}})
+			Body: "A delivery was reassigned.", Data: map[string]any{"order_id": orderID, keyReason: reason}})
 	}
 	s.recordOrderEvent(ctx, orderID, "", OrderStatus(status), OrderReady)
 	return s.DispatchOrder(ctx, orderID)

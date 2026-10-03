@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -217,7 +218,16 @@ func (h *Handler) Fund(c *gin.Context) {
 	}
 	mc, err := h.svc.Fund(c.Request.Context(), c.Param("mcid"), in.AmountKobo, idem)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
+		// unwired gate is a dependency failure → 503 (E2E-FIN-046).
+		switch {
+		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		case errors.Is(err, ErrTierGateUnwired):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		}
 		return
 	}
 	c.JSON(http.StatusOK, mc)

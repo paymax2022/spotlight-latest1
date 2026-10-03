@@ -46,6 +46,7 @@ import (
 	"spotlight/backend/internal/academy/tutor"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/integrations/rtc"
 	"spotlight/backend/internal/middleware"
 	providerInterfaces "spotlight/backend/internal/provider"
@@ -109,7 +110,12 @@ func (g academyApprovalGate) Authorize(ctx context.Context, userID, orderID stri
 // Admin base (RBAC per-route via guard):
 //   - identity/curriculum/commerce embed "/academy" → base = /api.
 //   - gamification/rewards/assessment/exam → base = /api/academy/admin.
-func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, ledgerSvc *ledger.Service, rtcIssuer *rtc.Issuer, bnplRail commerce.BNPLRail, disburseRail edupay.DisburseRail, billingRail schools.BillingRail, payoutRail tutor.PayoutRail, paymentProvider providerInterfaces.PaymentProvider, examEnabled, spineEnabled, eduPayEnabled, credentialsEnabled, liveEnabled, schoolsEnabled, tutorEnabled, feesEnabled, tuitionEnabled bool, webhookHandler *webhooks.PaystackHandler, internalAcademyAPIEnabled bool, serviceToken string) {
+//
+// adminAuthMW must be the same RequireAuthContext middleware the finance group
+// uses (mapsAuth()): adminGroupTop5 applies it before requireUserID, which only
+// reads the user_id it populates — without it every academy admin route 401s
+// even with a valid token (E2E-SOC-034).
+func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, adminAuthMW gin.HandlerFunc, ledgerSvc *ledger.Service, rtcIssuer *rtc.Issuer, bnplRail commerce.BNPLRail, disburseRail edupay.DisburseRail, billingRail schools.BillingRail, payoutRail tutor.PayoutRail, paymentProvider providerInterfaces.PaymentProvider, examEnabled, spineEnabled, eduPayEnabled, credentialsEnabled, liveEnabled, schoolsEnabled, tutorEnabled, feesEnabled, tuitionEnabled bool, webhookHandler *webhooks.PaystackHandler, internalAcademyAPIEnabled bool, serviceToken string) {
 	if pool == nil {
 		return
 	}
@@ -141,17 +147,17 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 	var payRail commerce.PaymentRail   // commerce one-off charge → wallet ledger
 	var collectRail edupay.CollectRail // edupay collection → wallet ledger
 	if ledgerSvc != nil {
-		lr := academyLedgerRail{ledger: ledgerSvc}
+		lr := academyLedgerRail{ledger: ledgerSvc, tiers: tiers.NewService(pool)}
 		payRail, collectRail = lr, lr
 	}
 	var liveRooms academylive.LiveRoomProvider // live RTC token → integrations/rtc
 	if rtcIssuer != nil && rtcIssuer.Enabled(rtc.ProviderVideoSDK) {
 		liveRooms = academyLiveRail{issuer: rtcIssuer}
 	}
-	memberFin := finance                                 // → /api/finance/academy/...
-	memberAcad := finance.Group("/academy")              // → /api/finance/academy/...
-	adminRoot := adminGroupTop5(r, "/api")               // identity/curriculum/commerce admin
-	adminAcad := adminGroupTop5(r, "/api/academy/admin") // bare-prefix admin packages
+	memberFin := finance                                              // → /api/finance/academy/...
+	memberAcad := finance.Group("/academy")                           // → /api/finance/academy/...
+	adminRoot := adminGroupTop5(r, "/api", adminAuthMW)               // identity/curriculum/commerce admin
+	adminAcad := adminGroupTop5(r, "/api/academy/admin", adminAuthMW) // bare-prefix admin packages
 
 	identity.RegisterAcademyIdentity(memberFin, adminRoot, pool, rbac)
 	curriculum.RegisterAcademyCurriculum(memberFin, adminRoot, pool, rbac)
@@ -349,7 +355,7 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	// ledger is available (a nil ledger would silently drop money legs — fail-closed
 	// by simply not registering the vault money surface).
 	if ledgerSvc != nil {
-		vaultSvc := feesvault.NewService(pool, feesVaultLedger{ledger: ledgerSvc}, feesVaultInvoice{ledger: ledgerSvc})
+		vaultSvc := feesvault.NewService(pool, feesVaultLedger{ledger: ledgerSvc, tiers: tiers.NewService(pool)}, feesVaultInvoice{ledger: ledgerSvc})
 		feesvault.RegisterFeesVault(member, vaultSvc)
 	}
 
@@ -357,7 +363,7 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	// payment application. Reuses finance/ledger + fees/invoice.Service.
 	if ledgerSvc != nil {
 		invSvc := feesinvoice.NewService(pool)
-		schSvc := feesscholarship.NewService(pool, feesScholarshipLedger{ledger: ledgerSvc}, feesScholarshipInvoice{inv: invSvc})
+		schSvc := feesscholarship.NewService(pool, feesScholarshipLedger{ledger: ledgerSvc, tiers: tiers.NewService(pool)}, feesScholarshipInvoice{inv: invSvc})
 		feesscholarship.RegisterFeesScholarship(member, schSvc, rbac)
 		// Admin gate for scholarship mutations (the package reserves RBAC to the caller).
 		// Member routes above are guardian/sponsor self-service; the admin oversight
@@ -392,7 +398,7 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 		invSvc := feesinvoice.NewService(pool)
 		paySvc := feespayment.NewService(
 			paymentProvider, // provider.PaymentProvider satisfies feespayment.Gateway as-is
-			feesPaymentLedger{ledger: ledgerSvc},
+			feesPaymentLedger{ledger: ledgerSvc, tiers: tiers.NewService(pool)},
 			feesPaymentInvoice{pool: pool, inv: invSvc},
 			feespayment.NewIntentStore(pool),
 		)
@@ -428,9 +434,17 @@ func (c feesPaymentConfirmer) OnChargeSuccess(ctx context.Context, reference, ga
 	return c.svc.OnChargeSuccess(ctx, reference, gatewayRef)
 }
 
-type feesPaymentLedger struct{ ledger *ledger.Service }
+type feesPaymentLedger struct {
+	ledger *ledger.Service
+	tiers  *tiers.Service
+}
 
 func (a feesPaymentLedger) MoveGuardianToSchool(ctx context.Context, guardianUserID, schoolID, reference, idempotencyKey string, amountMinor int64) (ledgerRef string, err error) {
+	// Tier gate (fail-closed, E2E-FIN-046): the same EnforceWalletDebitLimit the
+	// transfer rail applies — a refused attempt posts zero ledger legs.
+	if err := enforceAdapterDebitLimit(ctx, a.tiers, guardianUserID, amountMinor); err != nil {
+		return "", err
+	}
 	settlement, err := a.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
 	if err != nil {
 		return "", err
@@ -514,7 +528,10 @@ func (a feesPaymentInvoice) HasAnyPayment(ctx context.Context, invoiceID string)
 // shadow ledger. All monetary amounts are integers in minor units (kobo).
 
 // feesVaultLedger adapts finance/ledger.Service to fees/vault.LedgerService (SF-5).
-type feesVaultLedger struct{ ledger *ledger.Service }
+type feesVaultLedger struct {
+	ledger *ledger.Service
+	tiers  *tiers.Service
+}
 
 func (a feesVaultLedger) SegregatedAccountID(ctx context.Context, accountType string) (string, error) {
 	acct, err := a.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountType(accountType))
@@ -525,6 +542,11 @@ func (a feesVaultLedger) SegregatedAccountID(ctx context.Context, accountType st
 }
 
 func (a feesVaultLedger) DebitToVault(ctx context.Context, userID, reference, idempotencyKey, vaultAccountID string, amountKobo int64) error {
+	// Tier gate (fail-closed, E2E-FIN-046): the same EnforceWalletDebitLimit the
+	// transfer rail applies — a refused attempt posts zero ledger legs.
+	if err := enforceAdapterDebitLimit(ctx, a.tiers, userID, amountKobo); err != nil {
+		return err
+	}
 	// Debit the guardian wallet, crediting the segregated vault standing account.
 	// TOCTOU-safe + fail-closed on insufficient funds (ledger.Service.Debit).
 	return a.ledger.Debit(ctx, userID, reference, idempotencyKey, vaultAccountID, amountKobo)
@@ -561,9 +583,17 @@ func (a feesVaultInvoice) RecordPayment(ctx context.Context, invoiceID, guardian
 
 // feesScholarshipLedger adapts to fees/scholarship.LedgerPoster: post the sponsor
 // funding leg (sponsor wallet → settlement) idempotently, returning the ledger ref.
-type feesScholarshipLedger struct{ ledger *ledger.Service }
+type feesScholarshipLedger struct {
+	ledger *ledger.Service
+	tiers  *tiers.Service
+}
 
 func (a feesScholarshipLedger) PostFunding(ctx context.Context, sponsorIdentityID, reference, idempotencyKey string, amountMinor int64) (ledgerRef string, err error) {
+	// Tier gate (fail-closed, E2E-FIN-046): the same EnforceWalletDebitLimit the
+	// transfer rail applies — a refused attempt posts zero ledger legs.
+	if err := enforceAdapterDebitLimit(ctx, a.tiers, sponsorIdentityID, amountMinor); err != nil {
+		return "", err
+	}
 	settlement, err := a.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
 	if err != nil {
 		return "", err

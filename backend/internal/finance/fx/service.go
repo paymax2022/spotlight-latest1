@@ -21,6 +21,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/provider/maplerad"
 )
 
@@ -32,6 +33,21 @@ const (
 
 const quoteTTL = 5 * time.Minute
 
+// walletDebitLimiter is the minimal seam the FX money path depends on for the
+// fail-closed KYC-tier / daily-debit gate. *tiers.Service satisfies it in
+// production; unit tests inject a fake via WithTiers. Modeled as a local
+// interface — mirrors social's walletDebitLimiter. A conversion's source leg is
+// a wallet DEBIT (cash leaves the NGN wallet), so the STRICT gate is used: it
+// is not a checkout purchase, so the Tier-0 checkout allowance (ADR-043) does
+// NOT apply here.
+type walletDebitLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
+// must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
+var ErrTierGateUnwired = errors.New("fx: money path requires a tier gate (not wired)")
+
 // Service manages FX quotes, conversions, and currency wallets.
 type Service struct {
 	db         *pgxpool.Pool
@@ -40,10 +56,41 @@ type Service struct {
 	redis      *goredis.Client    // for quote reservation
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	markup     MarkupResolver     // Paymax FX markup; never nil after NewService
+	tiers      walletDebitLimiter
 }
 
+// NewService builds the FX service. The tier-limit gate is constructed from the
+// same pool (tiers.NewService needs only the DB), so no extra wiring is required
+// at the call site — same convention as social.NewService. A nil pool leaves the
+// gate nil, and enforceDebitLimit then fails closed via ErrTierGateUnwired.
 func NewService(db *pgxpool.Pool, ledger *ledger.Service, provider *maplerad.Client, redis *goredis.Client) *Service {
-	return &Service{db: db, ledger: ledger, provider: provider, redis: redis, markup: DefaultMarkup()}
+	s := &Service{db: db, ledger: ledger, provider: provider, redis: redis, markup: DefaultMarkup()}
+	if db != nil {
+		s.tiers = tiers.NewService(db)
+	}
+	return s
+}
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *Service) WithTiers(t walletDebitLimiter) *Service {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
+}
+
+// enforceDebitLimit is the fail-closed guard applied before the Convert source
+// debit (E2E-FIN-046): the same EnforceWalletDebitLimit the canonical transfer
+// rail (finance/transfers) runs. Tier 0 → ErrWalletDisabled, over daily cap →
+// ErrDailyLimitExceeded, gate/db errors refuse, and a missing gate refuses via
+// ErrTierGateUnwired. The error is propagated UNWRAPPED so the handler maps the
+// tier sentinels to 403 via errors.Is.
+func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	return s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo)
 }
 
 // SetMarkup overrides the Paymax FX markup resolver (app-wiring injects the
@@ -214,6 +261,15 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 
 	totalDebitKobo := q.SourceAmountKobo + q.FeeKobo
 	reference := "fx:" + uuid.New().String()
+
+	// Tier gate (fail-closed, E2E-FIN-046): the source leg debits the wallet by
+	// source+fee, so the same EnforceWalletDebitLimit the transfer rail applies
+	// runs on the TOTAL debit BEFORE money moves — a refused attempt posts zero
+	// ledger legs. Replays already returned the existing conversion above, so a
+	// completed key never reaches this gate.
+	if err := s.enforceDebitLimit(ctx, userID, totalDebitKobo); err != nil {
+		return nil, err
+	}
 
 	// idempotent on req.IdempotencyKey+":debit". ErrDuplicate on a replay is success.
 	fxSpreadAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountFXSpreadIncome)
@@ -530,7 +586,16 @@ func (h *Handler) Convert(c *gin.Context) {
 	}
 	conv, err := h.svc.Convert(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		// Tier-limit refusals → 403 (same mapping the transfer rail uses);
+		// an unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
+		switch {
+		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+			c.JSON(http.StatusForbidden, gin.H{keyError: err.Error()})
+		case errors.Is(err, ErrTierGateUnwired):
+			c.JSON(http.StatusServiceUnavailable, gin.H{keyError: err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		}
 		return
 	}
 	c.JSON(http.StatusOK, conv)

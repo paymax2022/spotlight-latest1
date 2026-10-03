@@ -21,6 +21,8 @@ import (
 
 const (
 	keyError           = "error"
+	keyReferrerID      = "referrer_id"
+	keyReferredUserID  = "referred_user_id"
 	msgUnauthenticated = "unauthenticated"
 )
 

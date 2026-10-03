@@ -9,6 +9,7 @@ import (
 
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/platform/r2"
 	platformWS "spotlight/backend/internal/platform/ws"
 )
@@ -19,6 +20,10 @@ import (
 var errMap = httperr.New(http.StatusInternalServerError,
 	httperr.R(http.StatusBadRequest, ErrIdempotencyRequired, ErrInvalidBallot, ErrInvalidInput),
 	httperr.R(http.StatusForbidden, ErrForbidden, ErrIneligible, ErrVotingClosed),
+	// Tier-limit refusals: 403 — the same mapping the canonical transfer rail
+	// uses (E2E-FIN-046). An unwired/degraded gate is a dependency failure: 503.
+	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
+	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
 	httperr.R(http.StatusConflict, ErrElectionState),
 	httperr.R(http.StatusNotFound, ErrNoMembership, pgx.ErrNoRows),
 )

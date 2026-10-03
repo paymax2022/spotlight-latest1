@@ -383,7 +383,8 @@ func (s *Service) SweepUnacceptedOrders(ctx context.Context, now time.Time) (int
 		if err := s.cancelAndRefund(ctx, id, owner); err != nil {
 			continue // best-effort; a locked/racing order is retried next sweep
 		}
-		s.recordOrderEvent(ctx, id, owner, OrderPending, OrderCancelled)
+		// cancelAndRefund emits the transition audit event itself now — a second
+		// recordOrderEvent here would double-write the same pending→cancelled row.
 		swept++
 	}
 	return swept, nil

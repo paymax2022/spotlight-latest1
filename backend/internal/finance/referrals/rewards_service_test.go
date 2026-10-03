@@ -653,3 +653,189 @@ func TestComputeReward_FloorsFractionalKobo(t *testing.T) {
 		})
 	}
 }
+
+// ── E2E-FIN-042 — Attribute late-claim semantics ────────────────────────────
+// POST /v1/referrals/attribute used to be a silent no-op for ~every codeless
+// signup: the §7A resolver always writes a referral_attributions row, so a
+// codeless user already had a global_house placeholder and the endpoint's plain
+// ON CONFLICT DO NOTHING insert never applied the code (200 {"referrer_id":""}).
+// These tests pin the fixed contract: a claimable house placeholder is REPLACED
+// by the real referrer; a real referrer already on the row always wins
+// (first-real-attribution); a no-longer-claimable house row is left alone and
+// the response is honest about it.
+
+// seedHousePlaceholder simulates the §7A signup resolver's codeless-signup
+// output: a referral_attributions row pointing at a house account
+// (referrer_id NULL, is_house). status/graceOpen pin whether the placeholder
+// is still claimable (mirrors ClaimCode's is_house + grace + open-window check).
+func seedHousePlaceholder(t *testing.T, pool *pgxpool.Pool, referredUserID, status string, graceOpen bool) {
+	t.Helper()
+	var houseID string
+	// The 20260706000000_referral_core.sql seed code; the upsert keeps the test
+	// working on a DB where the seed ran and on one where it did not.
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO referral_house_accounts (scope, code) VALUES ('global','SPOT-HOUSE')
+		 ON CONFLICT (code) DO UPDATE SET scope=EXCLUDED.scope
+		 RETURNING id`).Scan(&houseID); err != nil {
+		t.Fatalf("seed house account: %v", err)
+	}
+	grace := `now() + interval '72 hours'`
+	if !graceOpen {
+		grace = `now() - interval '1 hour'`
+	}
+	mustRewardExec(t, pool,
+		`INSERT INTO referral_attributions
+		   (referred_user_id, house_account_id, attribution_type, is_house, status, grace_expires_at)
+		 VALUES ($1,$2,'global_house',true,$3, `+grace+`)`,
+		referredUserID, houseID, status)
+}
+
+func attributionRow(t *testing.T, pool *pgxpool.Pool, referredUserID string) (*string, *string, bool) {
+	t.Helper()
+	var referrerID, houseAccountID *string
+	var isHouse bool
+	err := pool.QueryRow(context.Background(),
+		`SELECT referrer_id, house_account_id, is_house FROM referral_attributions
+		 WHERE referred_user_id=$1`, referredUserID).Scan(&referrerID, &houseAccountID, &isHouse)
+	if err != nil {
+		t.Fatalf("read attribution row: %v", err)
+	}
+	return referrerID, houseAccountID, isHouse
+}
+
+// A user whose only attribution is the default house placeholder (still in
+// grace) must get the real referrer — the placeholder is replaced, not left in
+// place (the reported bug: previously it survived and the response was empty).
+func TestAttribute_OverridesClaimableHousePlaceholder_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	svc, _ := newRewardSvc(pool)
+
+	referrer := seedRewardUser(t, pool)
+	referred := seedRewardUser(t, pool)
+	link, err := svc.GetOrCreateLink(ctx, referrer)
+	if err != nil {
+		t.Fatalf("GetOrCreateLink: %v", err)
+	}
+	seedHousePlaceholder(t, pool, referred, "grace", true)
+
+	got, attributed, err := svc.Attribute(ctx, referred, link.Code)
+	if err != nil {
+		t.Fatalf("Attribute: %v", err)
+	}
+	if got != referrer {
+		t.Fatalf("referrer_id = %q, want %q", got, referrer)
+	}
+	if !attributed {
+		t.Fatal("attributed = false, want true — the submitted code must be the attribution in effect")
+	}
+
+	refID, houseID, isHouse := attributionRow(t, pool, referred)
+	if refID == nil || *refID != referrer {
+		t.Fatalf("stored referrer_id = %v, want %q", refID, referrer)
+	}
+	if isHouse {
+		t.Fatal("is_house still true after late claim — placeholder not replaced")
+	}
+	if houseID != nil {
+		t.Fatal("house_account_id still set after late claim")
+	}
+}
+
+// A user already attributed to a REAL referrer keeps it: claiming a different
+// code must not steal the row (first-real-attribution wins), and the response
+// honestly reports the existing referrer with attributed=false.
+func TestAttribute_FirstRealAttributionWins_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	svc, _ := newRewardSvc(pool)
+
+	winner := seedRewardUser(t, pool)
+	challenger := seedRewardUser(t, pool)
+	referred := seedRewardUser(t, pool)
+	seedAttribution(t, pool, referred, winner) // already attributed to a real referrer
+	link, err := svc.GetOrCreateLink(ctx, challenger)
+	if err != nil {
+		t.Fatalf("GetOrCreateLink: %v", err)
+	}
+
+	got, attributed, err := svc.Attribute(ctx, referred, link.Code)
+	if err != nil {
+		t.Fatalf("Attribute: %v", err)
+	}
+	if got != winner {
+		t.Fatalf("referrer_id = %q, want existing referrer %q (first-real wins)", got, winner)
+	}
+	if attributed {
+		t.Fatal("attributed = true, want false — a different real referrer already holds the row")
+	}
+
+	refID, _, isHouse := attributionRow(t, pool, referred)
+	if refID == nil || *refID != winner {
+		t.Fatalf("stored referrer_id = %v, want unchanged %q", refID, winner)
+	}
+	if isHouse {
+		t.Fatal("is_house flipped — the real attribution must be untouched")
+	}
+}
+
+// A caller with NO attribution row at all gets a fresh code attribution — the
+// original happy path, unchanged.
+func TestAttribute_FreshInsert_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	svc, _ := newRewardSvc(pool)
+
+	referrer := seedRewardUser(t, pool)
+	referred := seedRewardUser(t, pool)
+	link, err := svc.GetOrCreateLink(ctx, referrer)
+	if err != nil {
+		t.Fatalf("GetOrCreateLink: %v", err)
+	}
+
+	got, attributed, err := svc.Attribute(ctx, referred, link.Code)
+	if err != nil {
+		t.Fatalf("Attribute: %v", err)
+	}
+	if got != referrer || !attributed {
+		t.Fatalf("Attribute = (%q, %v), want (%q, true)", got, attributed, referrer)
+	}
+}
+
+// A house placeholder whose grace window has closed (locked, or expired) is no
+// longer claimable — matching the §7A ClaimCode contract — so the code does
+// NOT apply and the response honestly says so (attributed=false, empty
+// referrer) instead of the old silent no-op.
+func TestAttribute_LockedHousePlaceholder_NotOverridden_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	svc, _ := newRewardSvc(pool)
+
+	referrer := seedRewardUser(t, pool)
+	referred := seedRewardUser(t, pool)
+	link, err := svc.GetOrCreateLink(ctx, referrer)
+	if err != nil {
+		t.Fatalf("GetOrCreateLink: %v", err)
+	}
+	seedHousePlaceholder(t, pool, referred, "locked", false)
+
+	got, attributed, err := svc.Attribute(ctx, referred, link.Code)
+	if err != nil {
+		t.Fatalf("Attribute: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("referrer_id = %q, want empty — locked house placeholder must not be overridden", got)
+	}
+	if attributed {
+		t.Fatal("attributed = true, want false — the house row is no longer claimable")
+	}
+
+	_, _, isHouse := attributionRow(t, pool, referred)
+	if !isHouse {
+		t.Fatal("locked house row was rewritten — a locked attribution is terminal")
+	}
+}

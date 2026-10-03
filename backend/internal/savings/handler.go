@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/finance/tiers"
 	"strconv"
 	"strings"
 	"time"
@@ -26,8 +27,12 @@ func NewHandler(v *VaultService, a *AjoService, t *TargetService) *Handler {
 
 // errMap carries the sentinel→status mapping shared by every savings handler;
 // WriteOK preserves the {"success": false, "error": ...} envelope.
+// Tier refusals map to 403 — the same status the canonical transfer rail's
+// errMap gives them; ErrTierGateUnwired is a 503 (service degraded, never a
+// silent pass).
 var errMap = httperr.New(http.StatusBadRequest,
-	httperr.R(http.StatusForbidden, ErrForbidden),
+	httperr.R(http.StatusForbidden, ErrForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
+	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
 	httperr.R(http.StatusNotFound, ErrNotFound),
 	httperr.R(http.StatusConflict, ErrLockedVault, ErrInsufficientVault, ErrReleaseRuleUnmet),
 )

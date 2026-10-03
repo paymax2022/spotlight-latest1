@@ -72,7 +72,7 @@ func TestFirewall_EndToEnd_SupportMovesPotNotMerit(t *testing.T) {
 
 	led := newFakeLedger()
 	supportRepo := &fakeSupportRepo{}
-	support := NewSupportService(supportRepo, led, fakeTier{3}, fakeCfg{Config{RequiredKYCTier: 1}}, &fakeAudit{})
+	support := NewSupportService(supportRepo, led, fakeTier{3}, fakeCfg{Config{RequiredKYCTier: 1}}, &fakeAudit{}).WithDebitLimiter(allowAllDebitLimit{})
 
 	// Backers gift k2 (the merit loser) 5× what k1 gets.
 	if err := support.Contribute(ctx, "backer-1", "idem-1", comp, "k2", 500000); err != nil {

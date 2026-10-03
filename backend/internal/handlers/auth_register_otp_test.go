@@ -19,6 +19,7 @@ type stubAuthService struct {
 	result   *services.RegisterResult
 	err      error
 	loginOut map[string]any
+	loginErr error
 
 	mu            sync.Mutex
 	registerCalls int
@@ -37,6 +38,9 @@ func (s *stubAuthService) RegisterUser(domain.RegisterRequest) (*services.Regist
 	return s.result, s.err
 }
 func (s *stubAuthService) LoginUser(domain.LoginRequest) (map[string]any, error) {
+	if s.loginErr != nil {
+		return nil, s.loginErr
+	}
 	// A fresh copy per call: the handler deletes the internal hints in place, and
 	// a shared map would make the second test in a run see them already gone.
 	out := map[string]any{}

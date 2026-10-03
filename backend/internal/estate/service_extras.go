@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -129,22 +130,28 @@ func notifDeepLink(notifType string) string {
 }
 
 // notify persists one in-app notification and enqueues a push to the recipient.
-// Fire-and-forget: errors are swallowed so a notification failure never breaks
-// the calling operation.
+// Fire-and-forget: errors never fail the calling operation, but they are no
+// longer swallowed silently (E2E-FR-051) — a failed push enqueue is logged with
+// user/type context (the enqueue layer additionally logs per-channel and
+// counts paymax.notification.enqueue).
 func (s *Service) notify(ctx context.Context, estateID, userID, notifType, title, body string, data map[string]any) {
 	if userID == "" {
 		return
 	}
 	deepLink := notifDeepLink(notifType)
-	_, _ = s.db.Exec(ctx,
+	if _, err := s.db.Exec(ctx,
 		`INSERT INTO estate_notifications (id, estate_id, user_id, category, title, body, deep_link)
 		 VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6)`,
-		estateID, userID, notifCategory(notifType), title, body, deepLink)
+		estateID, userID, notifCategory(notifType), title, body, deepLink); err != nil {
+		log.Printf("[estate] in-app notification persist failed user=%s type=%s err=%v", userID, notifType, err)
+	}
 	if s.notifier != nil {
-		_ = s.notifier.Notify(ctx, EstateNotification{
+		if err := s.notifier.Notify(ctx, EstateNotification{
 			EstateID: estateID, UserID: userID, Type: notifType,
 			Title: title, Body: body, DeepLink: deepLink, Data: data,
-		})
+		}); err != nil {
+			log.Printf("[estate] push notifier failed user=%s type=%s err=%v", userID, notifType, err)
+		}
 	}
 }
 

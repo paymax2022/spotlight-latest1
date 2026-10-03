@@ -2,6 +2,7 @@ package savings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/scheduler"
 )
 
@@ -30,6 +32,39 @@ const AutoSaveJobType = "savings.autosave"
 // any member could break a lock penalty-free by sending penalty_bps: 0.
 const DefaultEarlyBreakPenaltyBps int64 = 1000
 
+// walletDebitLimiter is the minimal seam every savings money path depends on
+// for the fail-closed KYC-tier / daily-debit gate (E2E-FIN-041). *tiers.Service
+// satisfies it in production; unit tests inject a fake via WithTiers. Modeled
+// as a local interface — mirrors transport's tierLimiter. Savings debits are
+// member-funded wallet DEBITS (deposits, target/pool contributions, Ajo legs),
+// so the STRICT EnforceWalletDebitLimit is used: they hold/move cash, they are
+// not a checkout purchase, so the Tier-0 checkout allowance (ADR-043)
+// deliberately does NOT apply here.
+type walletDebitLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// ErrTierGateUnwired is returned when a savings service has no tier gate — a
+// nil gate must fail CLOSED, never debit ungated (mirrors
+// groups.ErrTierGateUnwired).
+var ErrTierGateUnwired = errors.New("savings: money path requires a tier gate (not wired)")
+
+// enforceDebitLimit is the fail-closed guard applied before EVERY member-funded
+// wallet debit in this package (E2E-FIN-041): the same EnforceWalletDebitLimit
+// the canonical transfer rail (finance/transfers) runs. Tier 0 →
+// ErrWalletDisabled, over daily cap → ErrDailyLimitExceeded, gate/db errors
+// refuse, and a missing gate refuses via ErrTierGateUnwired. The error is
+// propagated UNWRAPPED so handlers map the tier sentinels to 403 via errors.Is.
+// Deliberately NOT applied to: the early-withdrawal penalty debit and any
+// escrow→wallet credits — the penalty is a charge levied while returning the
+// member's own funds; gating it would strand a Tier-0 member's savings forever.
+func enforceDebitLimit(t walletDebitLimiter, ctx context.Context, userID string, amountKobo int64) error {
+	if t == nil {
+		return ErrTierGateUnwired
+	}
+	return t.EnforceWalletDebitLimit(ctx, userID, amountKobo)
+}
+
 // VaultService owns the Vault sub-balance. The dedicated sub-balance is an
 // append-only ledger (savings_vault_ledger): balance is the SUM of its entries
 // (NL-8). Deposits move real money out of the user's main wallet (finance
@@ -42,16 +77,34 @@ type VaultService struct {
 	sched      *scheduler.Service
 	audit      Auditor
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	tiers      walletDebitLimiter // fail-closed KYC-tier / daily-debit gate on member debits
 
 	// earlyBreakPenaltyBps is policy, never caller input. See penaltyFor.
 	earlyBreakPenaltyBps int64
 }
 
 func NewVaultService(db *pgxpool.Pool, led *ledger.Service, sched *scheduler.Service, audit Auditor) *VaultService {
-	return &VaultService{
+	s := &VaultService{
 		db: db, led: led, sched: sched, audit: audit,
 		earlyBreakPenaltyBps: DefaultEarlyBreakPenaltyBps,
 	}
+	// The tier-limit gate is constructed from the same pool (tiers.NewService
+	// needs only the DB), so no extra wiring is required at the call site —
+	// same convention as transport.NewService. A nil pool leaves the gate nil,
+	// and enforceDebitLimit then fails closed via ErrTierGateUnwired.
+	if db != nil {
+		s.tiers = tiers.NewService(db)
+	}
+	return s
+}
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *VaultService) WithTiers(t walletDebitLimiter) *VaultService {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
 }
 
 // SetEarlyBreakPenaltyBps overrides the early-break rate from config. It fails
@@ -225,6 +278,13 @@ func (s *VaultService) Deposit(ctx context.Context, ownerID, vaultID string, amo
 	}
 	if v.State != VaultOpen {
 		return 0, fmt.Errorf("savings: cannot deposit to %s vault", v.State)
+	}
+	// Tier guard (fail-closed, E2E-FIN-041): a deposit debits the member's main
+	// wallet — the same EnforceWalletDebitLimit the transfer rail runs. The
+	// scheduled auto-save path (autoSaveRunner → Deposit) rides through this
+	// check too, so a downgraded member's recurring saves also refuse.
+	if err := enforceDebitLimit(s.tiers, ctx, ownerID, amountKobo); err != nil {
+		return 0, err
 	}
 	// Real money leaves the main wallet into the shared escrow/savings hold.
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)

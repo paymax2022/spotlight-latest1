@@ -7,6 +7,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/cashtag"
+	"spotlight/backend/internal/finance/tiers"
 	"strings"
 	"time"
 )
@@ -25,9 +26,11 @@ func NewHandler(svc *Service, tags *cashtag.Service) *Handler {
 }
 
 // errMap is the sentinel→status table for social handlers; WriteOK preserves
-// the {"success": false, "error": ...} envelope.
+// the {"success": false, "error": ...} envelope. Tier refusals map to 403 — the
+// same status the canonical transfer rail's errMap gives them.
 var errMap = httperr.New(http.StatusBadRequest,
-	httperr.R(http.StatusForbidden, ErrForbidden),
+	httperr.R(http.StatusForbidden, ErrForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
+	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
 	httperr.R(http.StatusNotFound, ErrNotFound, cashtag.ErrNotFound),
 	httperr.R(http.StatusTooManyRequests, ErrAMLSingleLimit, ErrAMLCountLimit, ErrAMLAmountLimit),
 )

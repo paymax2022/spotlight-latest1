@@ -190,9 +190,22 @@ func (h *CompetitionHandler) emitAudit(c *gin.Context, action, resourceType, res
 	if h.audit == nil {
 		return
 	}
+	// Actor resolution (E2E-X-028): the /api/v1/admin group authenticates via
+	// RequireAdmin → RequireAdminConsoleRole, whose resolveVerifiedIdentity stores
+	// the verified identity under the "adminUserID" context key — it never
+	// populates the authUser context GetAuthenticatedUser reads, so reading that
+	// key alone persisted every contest.openmic.create row with NULL
+	// actor_user_id (an AUTH-007 attribution breach). Prefer adminUserID here,
+	// falling back to the authenticated-user context for any caller mounted
+	// behind RequireAuthContext instead.
 	actorID := ""
-	if actor, ok := middleware.GetAuthenticatedUser(c); ok {
-		actorID = actor.ID
+	if v, ok := c.Get("adminUserID"); ok {
+		actorID, _ = v.(string)
+	}
+	if actorID == "" {
+		if actor, ok := middleware.GetAuthenticatedUser(c); ok {
+			actorID = actor.ID
+		}
 	}
 	h.audit.LogAction(actorID, "", action, "contest", resourceType, resourceID, nil, newValues, c.ClientIP(), c.Request.UserAgent(), severity)
 }

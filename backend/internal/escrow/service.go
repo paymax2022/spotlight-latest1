@@ -2,12 +2,14 @@ package escrow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"time"
 )
 
@@ -16,6 +18,20 @@ import (
 type Auditor interface {
 	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
 }
+
+// walletDebitLimiter is the minimal seam the Hold money path depends on for
+// the fail-closed KYC-tier / daily-debit gate. *tiers.Service satisfies it in
+// production; unit tests inject a fake via WithTiers. Modeled as a local
+// interface — mirrors social's walletDebitLimiter. A hold debits the payer's
+// wallet, so the STRICT gate is used: it is not a checkout purchase, so the
+// Tier-0 checkout allowance (ADR-043) does NOT apply here.
+type walletDebitLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
+// must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
+var ErrTierGateUnwired = errors.New("escrow: money path requires a tier gate (not wired)")
 
 // Service is a generic, ledger-backed funds-hold state machine reusable by
 // social / events / creators. It extends the finance ledger directly: a HELD
@@ -27,10 +43,41 @@ type Service struct {
 	db    *pgxpool.Pool
 	led   *ledger.Service
 	audit Auditor
+	tiers walletDebitLimiter
 }
 
+// NewService builds the escrow service. The tier-limit gate is constructed
+// from the same pool (tiers.NewService needs only the DB), so no extra wiring
+// is required at the call site — same convention as social.NewService. A nil
+// pool leaves the gate nil, and Hold then fails closed via ErrTierGateUnwired.
 func NewService(db *pgxpool.Pool, led *ledger.Service, audit Auditor) *Service {
-	return &Service{db: db, led: led, audit: audit}
+	s := &Service{db: db, led: led, audit: audit}
+	if db != nil {
+		s.tiers = tiers.NewService(db)
+	}
+	return s
+}
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *Service) WithTiers(t walletDebitLimiter) *Service {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
+}
+
+// enforceDebitLimit is the fail-closed guard applied before the Hold wallet
+// debit (E2E-FIN-046): the same EnforceWalletDebitLimit the canonical transfer
+// rail (finance/transfers) runs. Tier 0 → ErrWalletDisabled, over daily cap →
+// ErrDailyLimitExceeded, gate/db errors refuse, and a missing gate refuses via
+// ErrTierGateUnwired. The error is propagated UNWRAPPED so callers can map the
+// tier sentinels to 403 via errors.Is.
+func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	return s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo)
 }
 
 // Hold debits the payer's wallet into the escrow account and records a HELD hold.
@@ -47,6 +94,15 @@ func (s *Service) Hold(ctx context.Context, payerID, reference, moduleType, idem
 	// Replay: if a hold already exists for this key, return it (no double-debit).
 	if existing, err := s.getByIdem(ctx, idemKey); err == nil && existing != nil {
 		return existing, nil
+	}
+
+	// Tier gate (fail-closed, E2E-FIN-046): a hold is a wallet debit, so the
+	// same EnforceWalletDebitLimit the transfer rail applies runs BEFORE money
+	// moves — a refused attempt posts zero ledger legs and no hold row. Replays
+	// already returned the existing hold above, so a completed key never
+	// reaches this gate.
+	if err := s.enforceDebitLimit(ctx, payerID, amountKobo); err != nil {
+		return nil, err
 	}
 
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)

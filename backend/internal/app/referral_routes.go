@@ -9,6 +9,7 @@ import (
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/referrals"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/handlers"
 	"spotlight/backend/internal/middleware"
 	referralanalytics "spotlight/backend/internal/referral/analytics"
@@ -297,7 +298,8 @@ func RegisterReferralEcon(member *gin.RouterGroup, admin *gin.RouterGroup, pool 
 	network.Register(member, admin, netSvc, rbac)
 
 	// 4) Merchant-funded campaigns + partner API (settlement hook nil stub).
-	merchantSvc := merchant.NewService(merchant.NewRepository(pool), financeLedgerSvc, nil)
+	merchantSvc := merchant.NewService(merchant.NewRepository(pool), financeLedgerSvc, nil).
+		WithTiers(tiers.NewService(pool))
 	merchant.Register(admin, merchantSvc, rbac)
 	// Read-only member merchant self-view (dashboard/performance) on /merchant/*.
 	merchant.RegisterMember(member, merchantSvc)

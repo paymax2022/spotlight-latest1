@@ -79,6 +79,10 @@ func (s *VaultService) EarlyWithdraw(ctx context.Context, ownerID, vaultID strin
 	if penalty > 0 {
 		// Then debit the penalty from the member's wallet into the platform
 		// revenue standing account — value is redistributed, never minted (NL-2).
+		// NOTE (E2E-FIN-041): this debit is deliberately NOT tier-gated. It is a
+		// charge levied while returning the member's OWN funds; gating it with
+		// EnforceWalletDebitLimit would strand a Tier-0 member's vault balance —
+		// they could neither deposit (gated) nor withdraw what they already hold.
 		revAcc, rerr := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
 		if rerr != nil {
 			return 0, 0, rerr
@@ -246,6 +250,11 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 	}
 	if cy == nil {
 		return fmt.Errorf("savings: no pending cycle")
+	}
+	// Tier guard (fail-closed, E2E-FIN-041): a prepay debits the member's wallet —
+	// the same EnforceWalletDebitLimit the transfer rail runs.
+	if err := enforceDebitLimit(s.tiers, ctx, userID, c.ContributionKobo); err != nil {
+		return err
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {

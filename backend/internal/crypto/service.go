@@ -3,12 +3,30 @@ package crypto
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// walletDebitLimiter is the minimal seam the crypto money path depends on for
+// the fail-closed KYC-tier / daily-debit gate. *tiers.Service satisfies it in
+// production; unit tests inject a fake via WithTiers. Modeled as a local
+// interface — mirrors social's walletDebitLimiter — so the package never
+// depends on more of tiers than this one method. Every gated crypto debit is a
+// wallet DEBIT (buy cash leg, swap buy+spread legs, withdrawal fee), so the
+// STRICT gate is used: these move cash out of the wallet, not a checkout
+// purchase, so the Tier-0 checkout allowance (ADR-043) does NOT apply here.
+type walletDebitLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
+// must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
+var ErrTierGateUnwired = errors.New("crypto: money path requires a tier gate (not wired)")
 
 // Service is the crypto money-path orchestrator. It REUSES the finance ledger:
 // a BUY debits the user's main wallet into the shared escrow standing account and
@@ -24,15 +42,20 @@ type Service struct {
 	price    PriceProvider
 	audit    *auditLogger
 	withdraw WithdrawalProvider // pluggable on-chain broadcast seam (mock default)
+	tiers    walletDebitLimiter
 }
 
 // NewService builds the crypto service. If price is nil the deterministic
-// MockPriceProvider is used (mock-first, no network).
+// MockPriceProvider is used (mock-first, no network). The tier-limit gate is
+// constructed from the same pool (tiers.NewService needs only the DB), so no
+// extra wiring is required at the call site — same convention as
+// social.NewService. A nil pool leaves the gate nil, and enforceDebitLimit
+// then fails closed via ErrTierGateUnwired.
 func NewService(db *pgxpool.Pool, led *ledger.Service, price PriceProvider) *Service {
 	if price == nil {
 		price = NewMockPriceProvider()
 	}
-	return &Service{
+	s := &Service{
 		db:       db,
 		repo:     NewRepository(db),
 		led:      led,
@@ -40,6 +63,32 @@ func NewService(db *pgxpool.Pool, led *ledger.Service, price PriceProvider) *Ser
 		audit:    newAuditLogger(db),
 		withdraw: NewMockWithdrawalProvider(),
 	}
+	if db != nil {
+		s.tiers = tiers.NewService(db)
+	}
+	return s
+}
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *Service) WithTiers(t walletDebitLimiter) *Service {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
+}
+
+// enforceDebitLimit is the fail-closed guard applied before EVERY crypto wallet
+// debit (E2E-FIN-046): the same EnforceWalletDebitLimit the canonical transfer
+// rail (finance/transfers) runs. Tier 0 → ErrWalletDisabled, over daily cap →
+// ErrDailyLimitExceeded, gate/db errors refuse, and a missing gate refuses via
+// ErrTierGateUnwired. The error is propagated UNWRAPPED so handlers map the
+// tier sentinels to 403 via errors.Is.
+func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	return s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo)
 }
 
 // WithWithdrawalProvider overrides the default mock on-chain broadcast seam with a real
@@ -179,11 +228,26 @@ func (s *Service) Buy(ctx context.Context, userID, assetID string, cashKobo int6
 	//    standing account. Insufficient funds / tier limits reject here before any
 	//    holding moves. The ledger leg is idempotent on idemKey+":wallet" — a replay
 	//    returns ErrDuplicate, which we treat as already-done.
+	walletKey := idemKey + ":wallet"
+	// Tier gate (fail-closed, E2E-FIN-046): a buy is a wallet debit, so it runs
+	// the same EnforceWalletDebitLimit the transfer rail applies — Tier 0 and
+	// over-daily-cap buyers are refused BEFORE money moves (zero ledger legs).
+	// The gate is skipped only when this leg is already durably posted
+	// (led.Posted): a replay of a completed buy must return the filled order,
+	// not a fresh refusal — the ledger leg's own idempotency covers the debit
+	// either way, and RecordFill below is ON CONFLICT-safe.
+	if posted, err := s.led.Posted(ctx, walletKey); err != nil {
+		return nil, err
+	} else if !posted {
+		if err := s.enforceDebitLimit(ctx, userID, cashKobo); err != nil {
+			return nil, err
+		}
+	}
 	escrow, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.led.Debit(ctx, userID, o.Reference, idemKey+":wallet", escrow.ID, cashKobo); err != nil && err != ledger.ErrDuplicate {
+	if err := s.led.Debit(ctx, userID, o.Reference, walletKey, escrow.ID, cashKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, err
 	}
 	// 2) Record the order + credit the holding projection atomically. ON CONFLICT

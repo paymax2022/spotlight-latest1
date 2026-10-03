@@ -36,6 +36,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	goredis "github.com/redis/go-redis/v9"
 
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/platform/buildinfo"
@@ -323,20 +324,47 @@ func (h *AuditHandler) ExportAuditLogs(c *gin.Context) {
 type HealthHandler struct {
 	pool *pgxpool.Pool
 
+	// Redis component for /readyz (E2E-FR-050). redisRequired comes from
+	// REDIS_REQUIRED: Redis is a latency optimization with DB-unique fallbacks,
+	// so by default a Redis outage reports "degraded" and the probe stays 200;
+	// only when the operator marks Redis required does a ping failure 503.
+	redis         *goredis.Client
+	redisRequired bool
+
+	// Probe hooks — nil means "ping the real client". Overridable in tests so
+	// the up/down/degraded matrix can run without live infra.
+	pingDB    func(ctx context.Context) error
+	pingRedis func(ctx context.Context) error
+
 	// Readiness verdict is probed at most once per readyProbeInterval and
 	// cached in between. Without this, every load-balancer/uptime/k8s probe
 	// (and every VU in a loadtest) issues its own pool.Ping — under a saturated
 	// pool those pings queue behind real traffic, exceed their deadline, and
 	// flap the pod out of service exactly when load is highest. One probe per
 	// interval bounds the probe cost regardless of request rate and still
-	// reports a real outage within readyProbeInterval.
+	// reports a real outage within readyProbeInterval. The same window covers
+	// the Redis ping — one probe of each component, never more.
 	mu          sync.Mutex
 	lastReady   bool
 	lastReason  string
+	lastDB      string
+	lastRedis   string
 	lastProbeAt time.Time
 }
 
 const readyProbeInterval = 2 * time.Second
+
+// Readiness component verdicts, emitted under "components" in the payload.
+const (
+	componentUp            = "up"
+	componentDown          = "down"
+	componentDegraded      = "degraded"       // down, but not a required component
+	componentNotConfigured = "not_configured" // client never wired — nothing to ping
+
+	keyReadyStatus     = "status"
+	keyReadyReason     = "reason"
+	keyReadyComponents = "components"
+)
 
 func NewHealthHandler() *HealthHandler { return &HealthHandler{} }
 
@@ -345,6 +373,15 @@ func NewHealthHandler() *HealthHandler { return &HealthHandler{} }
 // are registered, so it arrives via a setter rather than the constructor.
 func (h *HealthHandler) WithPool(pool *pgxpool.Pool) *HealthHandler {
 	h.pool = pool
+	return h
+}
+
+// WithRedis supplies the shared Redis client for the readiness probe and
+// whether Redis is a required component (REDIS_REQUIRED). A nil client reports
+// the component "not_configured" and never affects the verdict.
+func (h *HealthHandler) WithRedis(client *goredis.Client, required bool) *HealthHandler {
+	h.redis = client
+	h.redisRequired = required
 	return h
 }
 
@@ -357,41 +394,110 @@ func (h *HealthHandler) PublicHealth(c *gin.Context) {
 // boots without DATABASE_URL) reports not-ready — on deployed tiers a failed
 // pool is fatal at boot anyway, so this state is only reachable locally.
 //
-// The DB ping itself is rate-limited (see the struct comment): concurrent
+// Per-component verdicts (E2E-FR-050) are reported under "components":
+//   - db:    up | down | not_configured — always a REQUIRED component; a
+//     failure (or nil pool) fails readiness with 503.
+//   - redis: up | degraded | down | not_configured — optional by default.
+//     When wired but unreachable it reports "degraded" (still 200 — every
+//     Redis consumer has a DB-unique or nil-safe fallback, so an outage is a
+//     latency loss, not a serving outage). Only when WithRedis(required=true)
+//     — REDIS_REQUIRED=true — does a Redis failure report "down" and fail the
+//     probe with 503.
+//
+// The DB+Redis ping pair is rate-limited (see the struct comment): concurrent
 // probes within readyProbeInterval share the previous verdict rather than each
 // acquiring a pool connection. The mutex is held across the ping so at most
 // one probe is ever in flight.
 func (h *HealthHandler) Ready(c *gin.Context) {
 	if h.pool == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "status": "not_ready", "reason": "database pool not configured"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false, keyReadyStatus: "not_ready", keyReadyReason: "database pool not configured",
+			keyReadyComponents: gin.H{"db": componentNotConfigured, "redis": h.redisComponentLabel()},
+		})
 		return
 	}
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if time.Since(h.lastProbeAt) < readyProbeInterval {
-		h.writeReady(c, h.lastReady, h.lastReason)
+		h.writeReady(c, h.lastReady, h.lastReason, h.lastDB, h.lastRedis)
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
-	err := h.pool.Ping(ctx)
+	dbErr := h.probeDB(ctx)
+	redisStatus := h.probeRedis(ctx)
 	cancel()
 	h.lastProbeAt = time.Now()
-	h.lastReady = err == nil
-	if err != nil {
-		h.lastReason = "database ping failed"
-	} else {
-		h.lastReason = ""
+
+	reason := ""
+	if dbErr != nil {
+		reason = "database ping failed"
 	}
-	h.writeReady(c, h.lastReady, h.lastReason)
+	h.lastDB = componentUp
+	if dbErr != nil {
+		h.lastDB = componentDown
+	}
+	h.lastRedis = redisStatus
+	h.lastReady = dbErr == nil && redisStatus != componentDown
+	if redisStatus == componentDown {
+		if reason != "" {
+			reason += "; "
+		}
+		reason += "redis ping failed (required component)"
+	}
+	h.lastReason = reason
+	h.writeReady(c, h.lastReady, h.lastReason, h.lastDB, h.lastRedis)
 }
 
-func (h *HealthHandler) writeReady(c *gin.Context, ready bool, reason string) {
+// probeDB pings Postgres, honoring the test override hook.
+func (h *HealthHandler) probeDB(ctx context.Context) error {
+	if h.pingDB != nil {
+		return h.pingDB(ctx)
+	}
+	return h.pool.Ping(ctx)
+}
+
+// probeRedis returns the component verdict for Redis. "down" is only produced
+// when the component is required; otherwise an unreachable Redis is "degraded".
+func (h *HealthHandler) probeRedis(ctx context.Context) string {
+	if h.redis == nil {
+		return componentNotConfigured
+	}
+	ping := h.pingRedis
+	if ping == nil {
+		ping = func(ctx context.Context) error { return h.redis.Ping(ctx).Err() }
+	}
+	if err := ping(ctx); err != nil {
+		if h.redisRequired {
+			return componentDown
+		}
+		return componentDegraded
+	}
+	return componentUp
+}
+
+// redisComponentLabel reports the Redis verdict without probing — used on the
+// early-return path where no probe has run (nil pool).
+func (h *HealthHandler) redisComponentLabel() string {
+	if h.redis == nil {
+		return componentNotConfigured
+	}
+	return "unknown"
+}
+
+func (h *HealthHandler) writeReady(c *gin.Context, ready bool, reason, db, redisStatus string) {
+	components := gin.H{"db": db, "redis": redisStatus}
+	if components["db"] == "" {
+		components["db"] = "unknown"
+	}
+	if components["redis"] == "" {
+		components["redis"] = h.redisComponentLabel()
+	}
 	if !ready {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "status": "not_ready", "reason": reason})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, keyReadyStatus: "not_ready", keyReadyReason: reason, keyReadyComponents: components})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "status": "ready"})
+	c.JSON(http.StatusOK, gin.H{"success": true, keyReadyStatus: "ready", keyReadyComponents: components})
 }
 
 func (h *HealthHandler) GenericHealth(c *gin.Context) {
