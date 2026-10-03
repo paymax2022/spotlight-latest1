@@ -62,6 +62,13 @@ jobs:
           cache-dependency-path: ${{ matrix.module }}/go.sum
       - name: Run govulncheck
         working-directory: ${{ matrix.module }}
+        env:
+          # setup-go pins GOTOOLCHAIN=local so the scan runs against the module's
+          # declared toolchain — keep that for the analysis. But govulncheck
+          # itself must BUILD with a toolchain at least as new as x/vuln
+          # requires, which can outrun a stale go directive, so let `go install`
+          # fetch one instead of failing on "requires go >= X.Y.0".
+          GOTOOLCHAIN: auto
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...

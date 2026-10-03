@@ -1,6 +1,6 @@
 module spotlight/backend
 
-go 1.26.6
+go 1.27.1
 
 require (
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.62.0
