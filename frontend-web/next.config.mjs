@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { withSentryConfig } from '@sentry/nextjs';
+import { withSentryConfig } from '@sentry/nextjs/config';
 import { imageHosts } from './image-hosts.config.mjs';
 
 // Anchors the standalone trace to this app. Next otherwise infers the workspace
