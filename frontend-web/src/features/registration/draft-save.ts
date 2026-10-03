@@ -1,13 +1,16 @@
 import type { RegistrationStepKey } from './types';
 
 /**
- * Draft-save contract for PATCH /api/registration/applications/[id].
+ * Draft-save contract for PATCH /api/registration/applications/[id]/step.
  *
- * The route forwards `{ stepKey, values }` to `saveRegistrationStep`, which
+ * The route forwards `{ stepKey, values}` to `saveRegistrationStep`, which
  * merges `values` into `formData` and then validates the NAMED step against
  * the merged data. Critical detail: when that step's validation fails, the
- * route still returns HTTP 200 (`success: true`, `validation.isValid: false`)
- * but the merged formData is NOT written — a silent non-persist.
+ * route returns HTTP 422 (`success: false`, `validation.isValid: false`,
+ * same validation payload) and the merged formData is NOT written.
+ * (The legacy PATCH on the parent `/[id]` route still answers 200 with
+ * `validation.isValid: false` — a silent non-persist; new callers should use
+ * `/step` so the HTTP status alone signals failure.)
  *
  * Bespoke wizards (e.g. RealityTvShowApplicationWizard) save the whole form on
  * every step transition, not one schema step at a time. Every reality-tv step
@@ -41,9 +44,9 @@ export function buildStepSaveBody(
 /**
  * A PATCH save only persisted when the response succeeded AND the named step
  * validated — `validation.isValid === false` means the server returned the
- * merged draft without writing it (see comment above). Anything else
- * (non-ok status, success !== true) is also a failure; callers pair this with
- * `res.ok`.
+ * merged draft without writing it (see comment above; the strict `/step`
+ * route also sends it with HTTP 422). Anything else (non-ok status,
+ * success !== true) is also a failure; callers pair this with `res.ok`.
  */
 export function draftSaveSucceeded(
   payload: { success?: boolean; validation?: { isValid?: boolean } | null } | null | undefined,

@@ -175,8 +175,16 @@ export async function getOrCreateLink(): Promise<ReferralLink> {
   return readJson<ReferralLink>(res);
 }
 
-/** Apply a referral code at signup (referred-user side). Idempotent per user. */
-export async function attribute(code: string): Promise<{ referrer_id: string; referred_user_id: string }> {
+/**
+ * Apply a referral code (referred-user side; signup or late claim). Idempotent
+ * per user. `attributed` is true only when the submitted code is the
+ * attribution now in effect — false when a different real referrer already won
+ * or the default house placeholder is no longer claimable — and `referrer_id`
+ * is the caller's ACTUAL current referrer (empty when still house-attributed).
+ */
+export async function attribute(
+  code: string
+): Promise<{ referrer_id: string; referred_user_id: string; attributed: boolean }> {
   const res = await authFetch(
     `${BASE}/attribute`,
     {
@@ -186,7 +194,7 @@ export async function attribute(code: string): Promise<{ referrer_id: string; re
     },
     { json: true }
   );
-  return readJson<{ referrer_id: string; referred_user_id: string }>(res);
+  return readJson<{ referrer_id: string; referred_user_id: string; attributed: boolean }>(res);
 }
 
 export async function getDashboard(): Promise<ReferralDashboard> {

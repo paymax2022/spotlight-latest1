@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { handleApiError } from '@/src/lib/api/responses';
-import { requireRequestUser } from '@/src/lib/auth/request';
+import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 
 const FACILITIES_PERMISSIONS = [
@@ -13,9 +13,16 @@ const FACILITIES_PERMISSIONS = [
 ];
 
 // PATCH /api/admin/modules/facilities-rbac/[roleId] — Update facilities permissions for a role
-export async function PATCH(request: Request, { params }: { params: { roleId: string } }) {
+// E2E-SEC-054: was gated on requireRequestUser only — this handler deletes and
+// inserts role_permissions rows via the service-role client, i.e. it was a raw
+// RBAC-permission forge endpoint for ANY authenticated user (it only 500'd on
+// the synchronous params read, a framework bug — the authz hole was latent).
+// Now requires roles:manage, and params is awaited (Promise on this Next
+// version), which is also what makes the route actually work.
+export async function PATCH(request: Request, { params }: { params: Promise<{ roleId: string }> }) {
+  const { roleId } = await params;
   try {
-    const user = await requireRequestUser(request);
+    await assertAdminPermission(request, 'roles:manage');
     const supabase = createAdminClient();
     const body = await request.json();
 
@@ -46,7 +53,7 @@ export async function PATCH(request: Request, { params }: { params: { roleId: st
     const { data: currentPerms, error: currentError } = await supabase
       .from('role_permissions')
       .select('id, permission_id, permissions(slug)')
-      .eq('role_id', params.roleId);
+      .eq('role_id', roleId);
 
     if (currentError) throw currentError;
 
@@ -87,7 +94,7 @@ export async function PATCH(request: Request, { params }: { params: { roleId: st
         const perm = (permsData ?? []).find((p: any) => p.slug === slug);
         if (perm) {
           toAdd.push({
-            role_id: params.roleId,
+            role_id: roleId,
             permission_id: perm.id,
           });
         }

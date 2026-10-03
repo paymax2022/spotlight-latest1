@@ -31,6 +31,8 @@ vi.mock('@/src/lib/feature-flags', () => ({ featureFlags: { wallet: () => true }
 vi.mock('@/src/lib/auth/request', () => ({ requireRequestUser: vi.fn() }));
 vi.mock('@/src/server/wallet/service', () => ({ debitWallet: vi.fn(), reverseWalletDebit: vi.fn() }));
 vi.mock('@/src/server/voting/totals.service', () => ({ incrementVoteTotals: vi.fn(), getVoteTotals: vi.fn(), getLeaderboard: vi.fn() }));
+// E2E-X-026: the leaderboard route now reads the bridge-owned service.
+vi.mock('@/src/server/voting-bridge/leaderboard.service', () => ({ getLeaderboard: vi.fn() }));
 vi.mock('@/src/server/voting/audit.service', () => ({ appendAuditLog: vi.fn() }));
 vi.mock('@/src/server/admin/auth', () => ({ assertAdminPermission: vi.fn() }));
 vi.mock('@/src/server/voting/visibility.service', () => ({ getEffectiveVisibility: vi.fn() }));
@@ -44,7 +46,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { getVotingSettings } from '@/src/server/voting/free-vote.service';
 import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
-import { getLeaderboard } from '@/src/server/voting/totals.service';
+import { getLeaderboard } from '@/src/server/voting-bridge/leaderboard.service';
 
 const LONG_STRING = 'A'.repeat(200_000);
 const SQLI_PAYLOAD = "'; DROP TABLE votes; --";

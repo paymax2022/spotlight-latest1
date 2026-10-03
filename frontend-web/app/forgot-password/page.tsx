@@ -47,7 +47,9 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { otpLength, distributeOtpInput, nextOtpFocus } from '@/src/features/auth/otp';
 
-type Step = 'request' | 'code' | 'password' | 'success';
+// 'sent' is the terminal step when server-issued codes are off: the email
+// carries only the reset link, so there is nothing to type in (E2E-AUTH-010).
+type Step = 'request' | 'code' | 'sent' | 'password' | 'success';
 
 const RESEND_COOLDOWN_S = 60;
 
@@ -81,6 +83,8 @@ export default function ForgotPasswordPage() {
     return () => clearTimeout(t);
   }, [cooldown]);
 
+  const [codeReset, setCodeReset] = useState(false);
+
   async function sendCode(targetEmail: string) {
     const res = await fetch('/api/auth/forgot-password', {
       method: 'POST',
@@ -99,8 +103,15 @@ export default function ForgotPasswordPage() {
     setBusy(true);
     setError('');
     try {
-      await sendCode(email.trim().toLowerCase());
-      setStep('code');
+      const res = await sendCode(email.trim().toLowerCase());
+      // The API reports whether this environment issues redeemable codes at
+      // all (FEATURE_OTP_EMAIL_ENABLED). When it does not, the email carries
+      // only the reset link — showing the code step anyway was an
+      // unsatisfiable dead end that could only ever 503 (E2E-AUTH-010).
+      const body = await res.json().catch(() => null);
+      const enabled = body?.codeReset === true;
+      setCodeReset(enabled);
+      setStep(enabled ? 'code' : 'sent');
     } catch (err) {
       setError(readableError(err));
     } finally {
@@ -125,7 +136,11 @@ export default function ForgotPasswordPage() {
     setError('');
     try {
       await sendCode(email.trim().toLowerCase());
-      setResendMessage('A new code is on its way if that address has an account.');
+      setResendMessage(
+        codeReset
+          ? 'A new code is on its way if that address has an account.'
+          : 'A new reset link is on its way if that address has an account.',
+      );
       // The project allows very few of these per hour (see verify-email's same
       // constant) — make the wait explicit rather than letting people burn the
       // quota on retries.
@@ -195,7 +210,7 @@ export default function ForgotPasswordPage() {
 
   const subtitle =
     step === 'request' ? "We'll help you get back in"
-    : step === 'code' ? 'Check your inbox'
+    : step === 'code' || step === 'sent' ? 'Check your inbox'
     : step === 'password' ? 'Choose a new password'
     : 'All set';
 
@@ -243,6 +258,17 @@ export default function ForgotPasswordPage() {
               busy={busy}
               error={error}
               onSubmit={handleRequestSubmit}
+            />
+          )}
+
+          {step === 'sent' && (
+            <SentStep
+              email={email}
+              resendBusy={resendBusy}
+              resendMessage={resendMessage}
+              cooldown={cooldown}
+              onResend={handleResend}
+              onChangeEmail={() => { setStep('request'); setError(''); }}
             />
           )}
 
@@ -418,8 +444,8 @@ function RequestStep({
     <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       <ChannelTabs />
       <p style={{ color: '#cbd5e1', fontSize: '0.85rem', margin: 0, lineHeight: 1.5 }}>
-        Enter the email address on your account and we&apos;ll send you a code to reset
-        your password.
+        Enter the email address on your account and we&apos;ll send you reset
+        instructions.
       </p>
 
       <div>
@@ -442,9 +468,57 @@ function RequestStep({
       <ErrorBanner message={error} />
 
       <button type="submit" disabled={busy || !email.trim()} style={primaryButtonStyle(busy || !email.trim())}>
-        {busy ? 'Sending…' : 'Send Code'}
+        {busy ? 'Sending…' : 'Send Reset Instructions'}
       </button>
     </form>
+  );
+}
+
+// The terminal step when server-issued codes are off (FEATURE_OTP_EMAIL_ENABLED
+// unset): the reset email carries only the Supabase link, so there is no code
+// to type — the user is told where to look instead of being shown a form that
+// can only ever fail (E2E-AUTH-010). Resend is still useful: it sends a fresh
+// link through the same endpoint.
+function SentStep({
+  email, resendBusy, resendMessage, cooldown, onResend, onChangeEmail,
+}: {
+  email: string;
+  resendBusy: boolean;
+  resendMessage: string;
+  cooldown: number;
+  onResend: () => void;
+  onChangeEmail: () => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      <p style={{ color: '#cbd5e1', fontSize: '0.85rem', margin: 0, lineHeight: 1.5 }}>
+        If an account exists for <strong style={{ color: '#f1f5f9' }}>{email}</strong>, a
+        password reset link was sent to that address. Open it to choose a new password —
+        it can take a few minutes, and check spam if you don&apos;t see it.
+      </p>
+
+      {resendMessage && (
+        <p style={{ color: '#86efac', fontSize: '0.8rem', margin: 0 }}>{resendMessage}</p>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
+        <button
+          type="button"
+          onClick={onChangeEmail}
+          style={secondaryLinkStyle}
+        >
+          Use a different email
+        </button>
+        <button
+          type="button"
+          onClick={onResend}
+          disabled={resendBusy || cooldown > 0}
+          style={{ ...secondaryLinkStyle, cursor: resendBusy || cooldown > 0 ? 'not-allowed' : 'pointer' }}
+        >
+          {cooldown > 0 ? `Resend in ${cooldown}s` : resendBusy ? 'Resending…' : 'Resend email'}
+        </button>
+      </div>
+    </div>
   );
 }
 

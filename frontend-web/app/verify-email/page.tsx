@@ -13,9 +13,10 @@
  * from the email and calls verifyOtp with type 'signup'.
  */
 
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 import { otpLength, distributeOtpInput, nextOtpFocus } from '@/src/features/auth/otp';
 
 const RESEND_COOLDOWN_S = 60;
@@ -35,6 +36,7 @@ function readableError(err: unknown, fallback: string): string {
 }
 
 function VerifyEmailInner() {
+  const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
   const params = useSearchParams();
   const email = (params?.get('email') || '').trim().toLowerCase();
@@ -101,7 +103,28 @@ function VerifyEmailInner() {
       // a mailbox is not proof of the password. Continuing to `next` without a
       // session would land on a page that bounces straight back to sign-in.
       if (body?.signedIn) {
-        router.replace(next);
+        // The BFF verify route runs persistSession:false, so the session it
+        // minted exists ONLY in this response body. Adopt it into the browser
+        // client — which writes the cookie middleware reads — exactly like the
+        // login page does, before navigating. Routing to `next` without this
+        // bounced straight back to /login (E2E-AUTH-009).
+        const tokens = body?.tokens;
+        let adopted = false;
+        if (tokens?.accessToken) {
+          const { error: sessionError } = await supabase.auth.setSession({
+            access_token: tokens.accessToken,
+            refresh_token: tokens.refreshToken ?? '',
+          });
+          adopted = !sessionError;
+        }
+        // The account IS verified even if adoption failed, and the code is
+        // consumed — retrying it cannot succeed, so fall back to a normal
+        // sign-in rather than trapping the user on a dead code.
+        router.replace(
+          adopted
+            ? next
+            : `/login?notice=${encodeURIComponent('Email verified. Please sign in.')}`,
+        );
       } else {
         router.replace(`/login?notice=${encodeURIComponent('Email verified. Please sign in.')}`);
       }

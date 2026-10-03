@@ -124,6 +124,97 @@ export function hasPermission(role: AdminRole, permission: AdminPermission) {
   return rolePermissions[role]?.includes(permission) ?? false;
 }
 
+// E2E-SEC-053: the AUTHORITATIVE role store is public.user_roles →
+// public.roles.slug — the same source the Go backend's RBACService reads
+// (rbac.GetUserRoles → user_roles?select=roles!inner(slug)&is_active=eq.true,
+// backend/internal/repositories/rbac_supabase_repository.go). Slugs there are
+// kebab-case ('super-admin', 'contest-manager', …); this map translates them
+// into this app's snake_case AdminRole names.
+//
+// 'system-admin' maps to super_admin deliberately: the Go admin-console gate
+// (RequireAdminConsoleRole, consoleAdminRoleSlugs) admits system-admin to
+// every admin route exactly like super-admin, and this app's AdminRole model
+// has no narrower platform-admin role to express it as.
+//
+// Slugs with no BFF admin-console meaning (registered-user, verified-user,
+// contestant, state-coordinator, estate-admin, sponsor-representative, …) are
+// intentionally ABSENT — they resolve to no role at all (fail closed).
+const rbacSlugToAdminRole: Record<string, AdminRole> = {
+  'super-admin': 'super_admin',
+  'system-admin': 'super_admin',
+  admin: 'super_admin',
+  'operations-manager': 'program_manager',
+  'program-manager': 'program_manager',
+  'contest-manager': 'contest_manager',
+  'voting-manager': 'voting_manager',
+  'finance-admin': 'finance_admin',
+  'finance-maker': 'finance_maker',
+  'finance-checker': 'finance_checker',
+  'finance-viewer': 'finance_viewer',
+  'content-manager': 'content_manager',
+  'media-manager': 'media_manager',
+  'sponsor-manager': 'sponsor_manager',
+  judge: 'judge',
+  reviewer: 'reviewer',
+  'event-manager': 'event_manager',
+  'support-agent': 'support_agent',
+  auditor: 'auditor',
+  'executive-readonly': 'executive_readonly',
+};
+
+// Precedence for REPORTING the effective role when a user holds several:
+// broadest first. Permission checks are union semantics (see
+// resolveAdminRoleFromRbacSlugs) — this order only decides which granting
+// role is reported for audit/display, never whether access is allowed.
+const ADMIN_ROLE_PRECEDENCE: AdminRole[] = [
+  'super_admin',
+  'finance_admin',
+  'contest_manager',
+  'voting_manager',
+  'program_manager',
+  'sponsor_manager',
+  'event_manager',
+  'content_manager',
+  'media_manager',
+  'finance_maker',
+  'finance_checker',
+  'finance_viewer',
+  'executive_readonly',
+  'auditor',
+  'judge',
+  'reviewer',
+  'support_agent',
+];
+
+// adminRoleFromRbacSlug maps ONE public.roles.slug to an AdminRole, or null
+// when the slug is not an admin-console role here.
+export function adminRoleFromRbacSlug(slug: string | null | undefined): AdminRole | null {
+  if (!slug) return null;
+  const normalized = slug.trim().toLowerCase().replace(/_/g, '-');
+  return rbacSlugToAdminRole[normalized] ?? null;
+}
+
+// resolveAdminRoleFromRbacSlugs answers the question assertAdminPermission
+// asks: "does any of this user's REAL RBAC role slugs grant `permission`, and
+// if so which AdminRole do we report?" Union semantics — a user holding both
+// 'judge' and 'finance-viewer' still gets scores:manage through judge even
+// though a single-role read would have picked only one. Returns 'no_access'
+// when no held role grants the permission (fail closed).
+export function resolveAdminRoleFromRbacSlugs(
+  slugs: Array<string | null | undefined>,
+  permission: AdminPermission,
+): AdminRole {
+  const held = new Set<AdminRole>();
+  for (const slug of slugs) {
+    const mapped = adminRoleFromRbacSlug(slug);
+    if (mapped) held.add(mapped);
+  }
+  for (const role of ADMIN_ROLE_PRECEDENCE) {
+    if (held.has(role) && hasPermission(role, permission)) return role;
+  }
+  return 'no_access';
+}
+
 // roleIsSubset reports whether every permission `role` holds is also held by
 // the shared API key) down to a weaker role without ever elevating past it.
 // NOTE: finance_admin is NOT a subset of super_admin (the finance:adjust:*

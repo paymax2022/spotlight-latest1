@@ -16,7 +16,8 @@
     "test:estate": "vitest run tests/unit/estate",
     "contract:check": "node scripts/contract-check.mjs",
     "sass": "sass --watch public/assets/scss/main.scss:public/assets/css/main.css",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1141.0",
@@ -45,6 +46,7 @@
     "yaml": "^2.9.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server';
 import { handleApiError } from '@/src/lib/api/responses';
-import { requireRequestUser } from '@/src/lib/auth/request';
+import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 
 // GET /api/admin/modules/facilities-rbac — Get facilities RBAC for all roles
+// E2E-SEC-054: was gated on requireRequestUser only — any signed-in user could
+// dump every role's estate.admin.facilities.* permission mapping. RBAC config
+// is roles:manage territory (same as /api/admin/users-roles).
 export async function GET(request: Request) {
   try {
-    const user = await requireRequestUser(request);
+    await assertAdminPermission(request, 'roles:manage');
     const supabase = createAdminClient();
 
     const { data: rolesData, error: rolesError } = await supabase

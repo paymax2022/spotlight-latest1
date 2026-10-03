@@ -58,6 +58,15 @@ vi.mock('@/src/server/registration/supabase-store', () => ({
   markRegistrationPaymentIntentStatus: vi.fn(async () => ({})),
 }));
 
+// Same residual intent probes for open-mic votes and academy fees — both
+// return no-match here; only vote_transactions fulfilment is under test.
+vi.mock('@/src/server/payments/openmic-vote-intents', () => ({
+  getOpenMicVoteIntentByReference: vi.fn(async () => null),
+}));
+vi.mock('@/src/server/payments/academy-fee-intents', () => ({
+  getAcademyFeeIntentByReference: vi.fn(async () => null),
+}));
+
 import { handleGatewayPaystackWebhook } from '../../../app/api/webhooks/paystack/gateway-handler';
 import { bridgedVerifyPaidVote } from '@/src/server/voting-bridge/bridge';
 

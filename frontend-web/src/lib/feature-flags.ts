@@ -151,6 +151,16 @@ export const featureFlags = {
 
   /** Group / Association membership — dues, directory, meetings, chat, AI notes */
   association: () => envFlag('FEATURE_ASSOCIATION_ENABLED'),
+
+  /**
+   * Server-issued OTP codes by email — MIRRORS the Go backend's
+   * FEATURE_OTP_EMAIL_ENABLED (backend/internal/config/config.go). While it is
+   * off, reset and verification emails carry only Supabase's link/code and
+   * code-entry UI that submits to Go's OTP endpoints is an unsatisfiable dead
+   * end — surfaces that offer it must hide it (E2E-AUTH-010). Keep the two
+   * envs in step when enabling.
+   */
+  otpEmail: () => envFlag('FEATURE_OTP_EMAIL_ENABLED'),
 } as const;
 
 export type FeatureName = keyof typeof featureFlags;
