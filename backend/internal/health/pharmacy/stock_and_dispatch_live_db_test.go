@@ -99,6 +99,7 @@ func seedStockFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sto
 			t.Fatalf("seed user: %v", err)
 		}
 		testsupport.CleanupUser(t, pool, u)
+		testsupport.SetKycTier(t, ctx, pool, u, testsupport.KycTierUnlimited)
 	}
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO health_providers (id, owner_user_id, domain, provider_type, display_name, status)

@@ -143,6 +143,7 @@ func TestLiveDB_Contribute_IdempotencyReplayWithDifferentAmountReturnsOriginal(t
 			ON CONFLICT (id) DO NOTHING`, id, "cf-uat-sec005-"+id+"@test.local"); err != nil {
 			t.Fatalf("seed user %s: %v", id, err)
 		}
+		testsupport.SetKycTier(t, ctx, pool, id, testsupport.KycTierUnlimited)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO campaigns (id, creator_id, title, goal_kobo, status, review_status, deadline)

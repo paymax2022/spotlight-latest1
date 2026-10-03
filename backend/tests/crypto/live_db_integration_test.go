@@ -124,6 +124,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, id)
+	testsupport.SetKycTier(t, ctx, pool, id, testsupport.KycTierUnlimited)
 	return id
 }
 

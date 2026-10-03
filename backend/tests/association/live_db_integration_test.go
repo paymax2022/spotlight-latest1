@@ -118,6 +118,7 @@ func seedActiveMembership(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, userID)
+	testsupport.SetKycTier(t, ctx, pool, userID, testsupport.KycTierUnlimited)
 	_, err := pool.Exec(ctx, `
 		INSERT INTO assoc_memberships (id, organisation_id, user_id, member_code, status, payment_standing, joined_at)
 		VALUES ($1, $2, $3, $4, 'ACTIVE', 'DUE', now())`,

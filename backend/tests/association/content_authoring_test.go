@@ -34,6 +34,7 @@ func seedFounder(t *testing.T, ctx context.Context, label string) (userID, orgID
 		pool.Close()
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.SetKycTier(t, ctx, pool, userID, testsupport.KycTierUnlimited)
 	res, err := svc.PublishOrganisation(ctx, userID, newTestDraft(label+" "+uuid.New().String()[:8]))
 	if err != nil {
 		testsupport.DeleteUser(context.Background(), pool, userID)
@@ -244,6 +245,7 @@ func TestRunDues_RaisesInvoicesAndIsReplaySafe(t *testing.T) {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, founder)
+	testsupport.SetKycTier(t, ctx, pool, founder, testsupport.KycTierUnlimited)
 	res, err := svc.PublishOrganisation(ctx, founder, newTestDraft("Dues Run "+uuid.New().String()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)
@@ -322,6 +324,7 @@ func TestCreateTask_RejectsCrossOrgAssignee(t *testing.T) {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, founder)
+	testsupport.SetKycTier(t, ctx, pool, founder, testsupport.KycTierUnlimited)
 	mine, err := svc.PublishOrganisation(ctx, founder, newTestDraft("Task Org "+uuid.New().String()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)
@@ -394,6 +397,7 @@ func TestFullDuesLifecycle_RunThenPayPostsBalancedLedger(t *testing.T) {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, founder)
+	testsupport.SetKycTier(t, ctx, pool, founder, testsupport.KycTierUnlimited)
 	org, err := svc.PublishOrganisation(ctx, founder, newTestDraft("Lifecycle "+uuid.New().String()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)
