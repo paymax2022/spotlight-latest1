@@ -37,3 +37,27 @@ export async function mockAmbientRequests(page: Page) {
     });
   });
 }
+
+/**
+ * Pin the published-module registry for gated surfaces.
+ *
+ * The root-layout guard (app/_layout.tsx → moduleKeyForSegments) reads
+ * GET /api/v1/modules/visibility and redirects gated routes (/mobility →
+ * 'transport', /stays → 'stays', /fractionalre → 'realtor') to
+ * /module-unavailable when the registry answers WITHOUT the key; the
+ * /property hub filters its pillars on the same answer. The call is
+ * skipAuthRedirect and fails OPEN when the registry is unreachable — but a
+ * live registry answering a list that lacks the key is a real redirect, so
+ * specs for gated surfaces stub the answer rather than trust the backend.
+ */
+export async function mockModuleVisibility(page: Page, modules: string[]) {
+  await page.route('**/api/v1/modules/visibility**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: { environment: 'e2e', modules, comingSoon: [] },
+      }),
+    });
+  });
+}
