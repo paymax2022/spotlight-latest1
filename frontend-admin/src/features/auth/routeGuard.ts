@@ -61,10 +61,9 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   // frontend-web, reached through /api/web-proxy, so its real permission
   // check is server-side there ('finance:view' / 'finance:adjust:initiate' —
   // frontend-web's colon-notation, not this file's dot-notation Go-style
-  // permissions). Listed here with the SAME colon-notation strings so the
-  // finance_admin/finance_maker/finance_checker/finance_viewer roles (see
-  // adminAuth.ts's FINANCE_ROLE_PERMISSIONS) can pass this client-side gate
-  // too — without an entry, this prefix falls through to the default-deny
+  // permissions). Listed here with the SAME colon-notation strings so a
+  // scoped finance operator role can pass this client-side gate too —
+  // without an entry, this prefix falls through to the default-deny
   // baseline below, which none of those roles hold, and the route is
   // unreachable for them even though the server would have allowed them in.
   { prefix: '/admin/payments-finance', permissions: ['finance:view', 'finance:adjust:initiate', 'finance:adjust:approve'] },
