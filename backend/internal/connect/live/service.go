@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 	"strconv"
@@ -15,6 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const keyError = "error"
 
 var (
 	ErrNotFound      = errors.New("connect: live session not found")
@@ -333,16 +336,16 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrNotHost):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrBadState), errors.Is(err, ErrCohostFull),
 		errors.Is(err, ErrBadModeration), errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrRTCUnconfig):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -350,7 +353,7 @@ func fail(c *gin.Context, err error) {
 func (h *Handler) Create(c *gin.Context) {
 	var in CreateSessionInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	sess, err := h.svc.CreateSession(c.Request.Context(), ginutil.UserID(c), in)
@@ -407,7 +410,7 @@ func (h *Handler) Get(c *gin.Context) {
 func (h *Handler) Cohost(c *gin.Context) {
 	var in CohostInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.Cohost(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
@@ -422,7 +425,7 @@ func (h *Handler) Cohost(c *gin.Context) {
 func (h *Handler) PK(c *gin.Context) {
 	var in PKInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.PK(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
@@ -437,7 +440,7 @@ func (h *Handler) PK(c *gin.Context) {
 func (h *Handler) Moderate(c *gin.Context) {
 	var in ModerateInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.Moderate(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in); err != nil {

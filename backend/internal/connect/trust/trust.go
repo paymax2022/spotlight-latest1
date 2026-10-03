@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"sort"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	connectsafety "spotlight/backend/internal/connect/safety"
 	"strconv"
 	"strings"
@@ -87,12 +88,12 @@ func (h *Handler) AIGenerate(c *gin.Context) {
 	}
 	var req AIRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.coach.Generate(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	// A blocked response is a normal, successful outcome (the guardrail worked).
@@ -110,7 +111,7 @@ func (h *Handler) ListShieldFlags(c *gin.Context) {
 	}
 	flags, err := h.shield.ListFlags(c.Request.Context(), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": flags})

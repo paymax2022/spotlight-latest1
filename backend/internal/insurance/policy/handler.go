@@ -3,6 +3,7 @@ package policy
 import (
 	"errors"
 	"net/http"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/insurance/gateway"
 	"strconv"
 
@@ -31,7 +32,7 @@ func mapErr(c *gin.Context, err error) {
 	case errors.Is(err, ErrConsentRequired):
 		c.JSON(http.StatusPreconditionRequired, gin.H{"error": "ndpa_consent_required", "code": "consent_required"})
 	case errors.Is(err, ErrBadState):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 	default:
 		// A provider rejecting the ANSWERS is the applicant's to fix, so it is a
 		// 422 carrying the insurer's own wording — the client attributes each
@@ -52,7 +53,7 @@ func mapErr(c *gin.Context, err error) {
 			}})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -68,7 +69,7 @@ func (h *Handler) CreateQuote(c *gin.Context) {
 		Inputs         map[string]any `json:"inputs"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	qr, err := h.svc.CreateQuote(c.Request.Context(), uid, body.ProductCode, body.SumInsuredKobo, body.Inputs)
@@ -105,7 +106,7 @@ func (h *Handler) Bind(c *gin.Context) {
 		QuoteID string `json:"quote_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.BindFromQuote(c.Request.Context(), uid, body.QuoteID, idemKey)
@@ -113,7 +114,7 @@ func (h *Handler) Bind(c *gin.Context) {
 		// A bind that auto-reversed returns the VOID policy plus an error; surface
 		// the policy state so the client can show "refunded".
 		if p != nil {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "data": p})
+			c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), "data": p})
 			return
 		}
 		mapErr(c, err)
@@ -183,7 +184,7 @@ func (h *Handler) AddBeneficiary(c *gin.Context) {
 		Phone        *string `json:"phone"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.AddBeneficiary(c.Request.Context(), ginutil.UserID(c), c.Param("id"), &Beneficiary{
@@ -215,7 +216,7 @@ func (h *Handler) AdminSearch(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	ps, err := h.svc.SearchAdmin(c.Request.Context(), c.Query("state"), c.Query("product_code"), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": ps})

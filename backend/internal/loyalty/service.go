@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/points"
 	"time"
 )
@@ -338,7 +339,7 @@ func (h *Handler) Me(c *gin.Context) {
 	}
 	m, err := h.svc.GetMembership(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "membership": m})
@@ -348,7 +349,7 @@ func (h *Handler) Me(c *gin.Context) {
 func (h *Handler) Tiers(c *gin.Context) {
 	tiers, err := h.svc.ListTiers(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "tiers": tiers})
@@ -362,7 +363,7 @@ func (h *Handler) Rewards(c *gin.Context) {
 	}
 	items, err := h.svc.ListCatalog(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "rewards": items})
@@ -380,7 +381,7 @@ func (h *Handler) Redeem(c *gin.Context) {
 	}
 	var req redeemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	red, err := h.svc.Redeem(c.Request.Context(), userID, req.SKU)
@@ -389,7 +390,7 @@ func (h *Handler) Redeem(c *gin.Context) {
 		if errors.Is(err, ErrTierTooLow) {
 			status = http.StatusForbidden
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "redemption": red})
@@ -398,7 +399,7 @@ func (h *Handler) Redeem(c *gin.Context) {
 func (h *Handler) AdminMembership(c *gin.Context) {
 	m, err := h.svc.GetMembership(c.Request.Context(), c.Param("userId"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "membership": m})

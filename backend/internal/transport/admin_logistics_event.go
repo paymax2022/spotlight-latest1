@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Generic, audited list/status helpers for business accounts, deliveries,
@@ -261,7 +262,7 @@ func (h *AdminHandler) AdminBusinessAccountStatus(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetBusinessAccountStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {
@@ -284,7 +285,7 @@ func (h *AdminHandler) AdminBusinessDeliveryStatus(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetDeliveryStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {
@@ -338,7 +339,7 @@ func (h *AdminHandler) AdminEventOfferStatus(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetEventOfferStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {

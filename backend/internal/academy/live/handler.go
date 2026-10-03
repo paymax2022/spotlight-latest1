@@ -9,9 +9,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyUnauthenticated = "unauthenticated"
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
+
+const keyIllegalTransition = "illegal_transition"
+
+const keyError = "error"
 
 // Handler exposes the academy live + community + moderation surface over Gin.
 //   - member: list/join live sessions, study groups, Q&A discussions, report content.
@@ -37,17 +48,17 @@ func authUserID(c *gin.Context) string {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: keyIllegalTransition, keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrChildSafety):
-		c.JSON(http.StatusForbidden, gin.H{"error": "child_safety_blocked", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: "child_safety_blocked", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrProvider):
-		c.JSON(http.StatusBadGateway, gin.H{"error": "provider_error", "message": err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{keyError: "provider_error", keyMessage: httperr.Msg(c, http.StatusBadGateway, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -110,7 +121,7 @@ func (h *Handler) GetSession(c *gin.Context) {
 func (h *Handler) JoinSession(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	sess, token, err := h.svc.JoinSession(c.Request.Context(), u, c.Param("id"))
@@ -134,12 +145,12 @@ func (h *Handler) ListGroups(c *gin.Context) {
 func (h *Handler) CreateGroup(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req CreateGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateGroup(c.Request.Context(), u, req)
@@ -153,7 +164,7 @@ func (h *Handler) CreateGroup(c *gin.Context) {
 func (h *Handler) JoinGroup(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	if err := h.svc.JoinGroup(c.Request.Context(), u, c.Param("id")); err != nil {
@@ -176,12 +187,12 @@ func (h *Handler) ListDiscussions(c *gin.Context) {
 func (h *Handler) PostDiscussion(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req PostDiscussionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.PostDiscussion(c.Request.Context(), u, req)
@@ -195,12 +206,12 @@ func (h *Handler) PostDiscussion(c *gin.Context) {
 func (h *Handler) ReportContent(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req ReportContentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.ReportContent(c.Request.Context(), u, req)
@@ -214,7 +225,7 @@ func (h *Handler) ReportContent(c *gin.Context) {
 func (h *Handler) AdminScheduleSession(c *gin.Context) {
 	var req ScheduleSessionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.ScheduleSession(c.Request.Context(), ginutil.UserID(c, authUserID), req)
@@ -291,7 +302,7 @@ func (h *Handler) AdminListReports(c *gin.Context) {
 func (h *Handler) AdminDecideReport(c *gin.Context) {
 	var req DecideReportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.DecideReport(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req.Action)

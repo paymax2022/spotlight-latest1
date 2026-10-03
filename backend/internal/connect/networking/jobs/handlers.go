@@ -9,9 +9,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyError = "error"
 
 type Handler struct{ svc *Service }
 
@@ -21,31 +24,31 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrMissingIdem):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "Idempotency-Key header required"})
 	case errors.Is(err, ErrInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrCompanyNotVerified):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrJobNotActive):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 	default:
 		// Wallet/ledger errors (insufficient funds, duplicate, tier) surface here.
 		msg := err.Error()
 		switch {
 		case strings.Contains(msg, "insufficient funds"):
-			c.JSON(http.StatusPaymentRequired, gin.H{"error": "insufficient wallet balance"})
+			c.JSON(http.StatusPaymentRequired, gin.H{keyError: "insufficient wallet balance"})
 		case strings.Contains(msg, "duplicate"):
-			c.JSON(http.StatusConflict, gin.H{"error": "duplicate request"})
+			c.JSON(http.StatusConflict, gin.H{keyError: "duplicate request"})
 		case strings.Contains(msg, "limit"):
-			c.JSON(http.StatusForbidden, gin.H{"error": "transaction limit exceeded"})
+			c.JSON(http.StatusForbidden, gin.H{keyError: "transaction limit exceeded"})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: msg})
 		}
 	}
 }
@@ -74,7 +77,7 @@ func (h *Handler) GetJob(c *gin.Context) {
 func (h *Handler) Apply(c *gin.Context) {
 	var in ApplyInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	a, err := h.svc.Apply(c.Request.Context(), ginutil.UserID(c), c.Param("jobId"), in)
@@ -109,7 +112,7 @@ func (h *Handler) WithdrawApplication(c *gin.Context) {
 func (h *Handler) OpenToWork(c *gin.Context) {
 	var in OpenToWorkInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetOpenToWork(c.Request.Context(), ginutil.UserID(c), in); err != nil {
@@ -123,7 +126,7 @@ func (h *Handler) OpenToWork(c *gin.Context) {
 func (h *Handler) CreateReferral(c *gin.Context) {
 	var in ReferInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.CreateReferral(c.Request.Context(), ginutil.UserID(c), c.Param("appId"), in)
@@ -148,7 +151,7 @@ func (h *Handler) MyReferrals(c *gin.Context) {
 func (h *Handler) ClaimCompanyPage(c *gin.Context) {
 	var in ClaimCompanyInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	cp, err := h.svc.ClaimCompanyPage(c.Request.Context(), ginutil.UserID(c), in)
@@ -182,7 +185,7 @@ func (h *Handler) FollowCompanyPage(c *gin.Context) {
 func (h *Handler) CreateJob(c *gin.Context) {
 	var in CreateJobInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	j, err := h.svc.CreateJob(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
@@ -217,7 +220,7 @@ func (h *Handler) Pipeline(c *gin.Context) {
 func (h *Handler) TransitionApplication(c *gin.Context) {
 	var in TransitionAppInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	a, err := h.svc.TransitionApplication(c.Request.Context(), ginutil.UserID(c), c.Param("id"), c.Param("appId"), AppState(in.State), ginutil.IdempotencyKey(c))
@@ -232,7 +235,7 @@ func (h *Handler) TransitionApplication(c *gin.Context) {
 func (h *Handler) GrantCapability(c *gin.Context) {
 	var in GrantAdminInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	a, err := h.svc.GrantCapability(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
@@ -258,7 +261,7 @@ func (h *Handler) ReviewClaim(c *gin.Context) {
 		State string `json:"state" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	cp, err := h.svc.ReviewClaim(c.Request.Context(), ginutil.UserID(c), c.Param("id"), ClaimState(in.State))

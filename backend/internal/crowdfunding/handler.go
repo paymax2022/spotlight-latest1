@@ -7,8 +7,13 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/tiers"
 )
+
+const keyCampaignNotFound = "campaign not found"
+
+const keyError = "error"
 
 type Handler struct{ svc *Service }
 
@@ -18,12 +23,12 @@ func (h *Handler) Create(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req CreateCampaignRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	camp, err := h.svc.Create(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, camp)
@@ -32,7 +37,7 @@ func (h *Handler) Create(c *gin.Context) {
 func (h *Handler) Get(c *gin.Context) {
 	camp, err := h.svc.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "campaign not found"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: keyCampaignNotFound})
 		return
 	}
 	c.JSON(http.StatusOK, camp)
@@ -41,7 +46,7 @@ func (h *Handler) Get(c *gin.Context) {
 func (h *Handler) Publish(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if err := h.svc.Publish(c.Request.Context(), c.Param("id"), userID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -51,7 +56,7 @@ func (h *Handler) Contribute(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req ContributeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	contrib, err := h.svc.Contribute(c.Request.Context(), c.Param("id"), userID, req)
@@ -60,18 +65,18 @@ func (h *Handler) Contribute(c *gin.Context) {
 		// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
 		// unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
 		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		case errors.Is(err, ErrTierGateUnwired):
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
 		case errors.Is(err, ErrCampaignNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		case errors.Is(err, ErrCampaignPaused),
 			errors.Is(err, ErrCampaignNotAccepting),
 			errors.Is(err, ErrCampaignNotReviewed),
 			errors.Is(err, ErrCampaignDeadline):
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		}
 		return
 	}
@@ -82,7 +87,7 @@ func (h *Handler) Release(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	result, err := h.svc.Release(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -96,7 +101,7 @@ func (h *Handler) Refund(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	result, err := h.svc.RefundAll(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -123,7 +128,7 @@ func parseQuery(c *gin.Context) CampaignQuery {
 func (h *Handler) ListCampaigns(c *gin.Context) {
 	items, err := h.svc.ListCampaigns(c.Request.Context(), parseQuery(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -133,7 +138,7 @@ func (h *Handler) ListCampaigns(c *gin.Context) {
 func (h *Handler) GetDetail(c *gin.Context) {
 	detail, err := h.svc.GetDetail(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "campaign not found"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: keyCampaignNotFound})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": detail})
@@ -143,7 +148,7 @@ func (h *Handler) GetDetail(c *gin.Context) {
 func (h *Handler) ListCategories(c *gin.Context) {
 	cats, err := h.svc.ListCategories(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": cats})
@@ -154,7 +159,7 @@ func (h *Handler) SubmitCampaign(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req SubmitCampaignRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.SubmitForReview(c.Request.Context(), userID, req)
@@ -163,10 +168,10 @@ func (h *Handler) SubmitCampaign(c *gin.Context) {
 		// milestone told the creator the server had failed when in fact their
 		// funding plan needed one field changed.
 		if errors.Is(err, ErrInvalidSubmission) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": res})
@@ -176,7 +181,7 @@ func (h *Handler) SubmitCampaign(c *gin.Context) {
 func (h *Handler) AdminListPending(c *gin.Context) {
 	items, err := h.svc.AdminListPending(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"campaigns": items})
@@ -186,7 +191,7 @@ func (h *Handler) AdminListPending(c *gin.Context) {
 func (h *Handler) AdminGetCampaign(c *gin.Context) {
 	detail, err := h.svc.AdminCampaignDetail(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "campaign not found"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: keyCampaignNotFound})
 		return
 	}
 	c.JSON(http.StatusOK, detail)
@@ -197,11 +202,11 @@ func (h *Handler) AdminDecide(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var req ReviewDecisionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.AdminDecide(c.Request.Context(), c.Param("id"), adminID, req.Decision, req.Note); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -211,7 +216,7 @@ func (h *Handler) AdminDecide(c *gin.Context) {
 func (h *Handler) AdminStats(c *gin.Context) {
 	st, err := h.svc.AdminStats(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, st)

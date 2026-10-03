@@ -12,6 +12,7 @@ import (
 
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // ErrKYBIncomplete is returned when a KYB submission is missing required fields or
@@ -301,7 +302,7 @@ func (h *Handler) GetKYB(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	k, docTypes, err := h.svc.GetKYB(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"kyb": k, "documents": docTypes})
@@ -312,12 +313,12 @@ func (h *Handler) SaveKYB(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var body KYB
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	k, err := h.svc.SaveKYB(c.Request.Context(), c.Param("id"), userID, body)
 	if err != nil {
-		c.JSON(kybErrCode(err), gin.H{"error": err.Error()})
+		c.JSON(kybErrCode(err), gin.H{keyError: httperr.Msg(c, kybErrCode(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"kyb": k})
@@ -333,11 +334,11 @@ func (h *Handler) AddKYBDocument(c *gin.Context) {
 		FileName string `json:"file_name"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.AddKYBDocument(c.Request.Context(), c.Param("id"), userID, body.DocType, body.FileURL, body.FileName); err != nil {
-		c.JSON(kybErrCode(err), gin.H{"error": err.Error()})
+		c.JSON(kybErrCode(err), gin.H{keyError: httperr.Msg(c, kybErrCode(err), err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"ok": true})
@@ -348,7 +349,7 @@ func (h *Handler) SubmitKYB(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	k, err := h.svc.SubmitKYB(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
-		c.JSON(kybErrCode(err), gin.H{"error": err.Error()})
+		c.JSON(kybErrCode(err), gin.H{keyError: httperr.Msg(c, kybErrCode(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"kyb": k})

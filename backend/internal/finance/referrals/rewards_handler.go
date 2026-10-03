@@ -10,7 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyInvalidBody = "invalid body"
 
 // RewardHandler exposes the Direct Referral Rewards ENGINE HTTP surface: the user
 // API (/v1/referrals), the admin console (/v1/admin/referrals), and the internal
@@ -39,7 +42,7 @@ func (h *RewardHandler) PostLink(c *gin.Context) {
 	}
 	link, err := h.svc.GetOrCreateLink(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, link)
@@ -62,12 +65,12 @@ func (h *RewardHandler) PostAttribute(c *gin.Context) {
 		Code string `json:"code"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	referrerID, attributed, err := h.svc.Attribute(c.Request.Context(), uid, req.Code)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -84,7 +87,7 @@ func (h *RewardHandler) GetDashboard(c *gin.Context) {
 	}
 	d, err := h.svc.GetDashboard(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, d)
@@ -101,7 +104,7 @@ func (h *RewardHandler) GetReferrals(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	list, err := h.svc.ListReferrals(c.Request.Context(), uid, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"referrals": list})
@@ -118,7 +121,7 @@ func (h *RewardHandler) GetEarnings(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	rewards, err := h.svc.ListEarnings(c.Request.Context(), uid, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"earnings": rewards})
@@ -133,7 +136,7 @@ func (h *RewardHandler) GetMilestones(c *gin.Context) {
 	}
 	achieved, upcoming, err := h.svc.ListMilestones(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"achieved": achieved, "upcoming": upcoming})
@@ -145,12 +148,12 @@ func (h *RewardHandler) GetMilestones(c *gin.Context) {
 // The header is X-Internal-Secret; compared in constant time.
 func (h *RewardHandler) requireInternalSecret(c *gin.Context) bool {
 	if h.internalSecret == "" {
-		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "internal endpoint disabled"})
+		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{keyError: "internal endpoint disabled"})
 		return false
 	}
 	got := c.GetHeader("X-Internal-Secret")
 	if subtle.ConstantTimeCompare([]byte(got), []byte(h.internalSecret)) != 1 {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid internal secret"})
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{keyError: "invalid internal secret"})
 		return false
 	}
 	return true
@@ -163,14 +166,14 @@ func (h *RewardHandler) PostPurchaseSettled(c *gin.Context) {
 	}
 	var in PurchaseSettled
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	if in.SettledAt.IsZero() {
 		in.SettledAt = time.Now()
 	}
 	if err := h.svc.OnPurchaseSettled(c.Request.Context(), in); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -183,14 +186,14 @@ func (h *RewardHandler) PostPurchaseRefunded(c *gin.Context) {
 	}
 	var in PurchaseRefunded
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	if in.RefundedAt.IsZero() {
 		in.RefundedAt = time.Now()
 	}
 	if err := h.svc.OnPurchaseRefunded(c.Request.Context(), in); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -203,7 +206,7 @@ func (h *RewardHandler) PostRecalcTiers(c *gin.Context) {
 		return
 	}
 	if err := h.svc.RecalculateTiers(c.Request.Context()); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -215,7 +218,7 @@ func (h *RewardHandler) PostRecalcTiers(c *gin.Context) {
 func (h *RewardHandler) AdminGetConfig(c *gin.Context) {
 	cfg, err := h.svc.GetActiveConfig(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, cfg)
@@ -230,7 +233,7 @@ func (h *RewardHandler) AdminPutConfig(c *gin.Context) {
 		EffectiveFrom  *time.Time      `json:"effective_from"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	var eff time.Time
@@ -239,7 +242,7 @@ func (h *RewardHandler) AdminPutConfig(c *gin.Context) {
 	}
 	cfg, err := h.svc.PublishConfig(c.Request.Context(), req.TierTable, req.MilestoneTable, eff, ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -252,7 +255,7 @@ func (h *RewardHandler) AdminPutConfig(c *gin.Context) {
 func (h *RewardHandler) AdminAnalytics(c *gin.Context) {
 	a, err := h.svc.GetAnalytics(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, a)
@@ -262,7 +265,7 @@ func (h *RewardHandler) AdminAnalytics(c *gin.Context) {
 func (h *RewardHandler) AdminFraudQueue(c *gin.Context) {
 	flags, err := h.svc.ListFraudQueue(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"flags": flags})
@@ -276,11 +279,11 @@ func (h *RewardHandler) AdminFraudAction(c *gin.Context) {
 		Note   string `json:"note"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	if err := h.svc.ActionFraudFlag(c.Request.Context(), req.FlagID, req.Action, req.Note, ginutil.UserID(c)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -292,7 +295,7 @@ func (h *RewardHandler) AdminLedger(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	rewards, err := h.svc.AdminListLedger(c.Request.Context(), c.Query("status"), c.Query("module"), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ledger": rewards})
@@ -303,7 +306,7 @@ func (h *RewardHandler) AdminGetCase(c *gin.Context) {
 	referrerID := c.Param("referrerId")
 	cv, err := h.svc.GetCase(c.Request.Context(), referrerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, cv)
@@ -315,7 +318,7 @@ func (h *RewardHandler) AdminAdjustCase(c *gin.Context) {
 	referrerID := c.Param("referrerId")
 	idem := ginutil.IdempotencyKey(c)
 	if idem == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "Idempotency-Key header required"})
 		return
 	}
 	var req struct {
@@ -323,11 +326,11 @@ func (h *RewardHandler) AdminAdjustCase(c *gin.Context) {
 		Reason     string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	if err := h.svc.AdjustCase(c.Request.Context(), referrerID, req.AdjustKobo, req.Reason, ginutil.UserID(c), idem); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -341,14 +344,14 @@ func (h *RewardHandler) AdminAdjustCase(c *gin.Context) {
 func (h *RewardHandler) AdminSetCode(c *gin.Context) {
 	referrerID := c.Param("referrerId")
 	if referrerID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "referrerId required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "referrerId required"})
 		return
 	}
 	var req struct {
 		Code string `json:"code"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	link, err := h.svc.SetLinkCode(c.Request.Context(), referrerID, req.Code)
@@ -356,12 +359,12 @@ func (h *RewardHandler) AdminSetCode(c *gin.Context) {
 	case errors.Is(err, ErrCodeTaken):
 		// 409, not 400: the request is well formed, the code is simply spoken
 		// for. The admin UI needs to tell those apart to say anything useful.
-		c.JSON(http.StatusConflict, gin.H{"error": "that referral code is already in use"})
+		c.JSON(http.StatusConflict, gin.H{keyError: "that referral code is already in use"})
 		return
 	case err != nil:
 		// Validation messages name the offending character on purpose — "invalid
 		// code" would leave an admin guessing which of five characters is wrong.
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"code": link.Code, keyReferrerID: link.ReferrerID})
@@ -373,7 +376,7 @@ func (h *RewardHandler) AdminMilestonesLog(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	log, err := h.svc.ListMilestonesLog(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"milestones": log})
@@ -383,7 +386,7 @@ func (h *RewardHandler) AdminMilestonesLog(c *gin.Context) {
 func (h *RewardHandler) AdminModuleStatus(c *gin.Context) {
 	mods, err := h.svc.ModuleStatus(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"modules": mods})

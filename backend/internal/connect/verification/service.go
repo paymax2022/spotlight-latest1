@@ -9,6 +9,7 @@ import (
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strings"
 	"time"
 
@@ -312,7 +313,7 @@ func (h *Handler) Selfie(c *gin.Context) {
 	}
 	var req selfieRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	level := VerificationLevel(req.Level)

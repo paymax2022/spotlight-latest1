@@ -19,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/httperr"
 )
 
 const (
@@ -144,7 +145,7 @@ func NewHandler(svc *Service, db *pgxpool.Pool) *Handler {
 func (h *Handler) GetGlobal(c *gin.Context) {
 	acc, err := h.svc.GetOrCreateGlobalHouse(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, acc)
@@ -156,7 +157,7 @@ func (h *Handler) GetGlobal(c *gin.Context) {
 func (h *Handler) Ledger(c *gin.Context) {
 	acc, err := h.svc.GetOrCreateGlobalHouse(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	ctx := c.Request.Context()
@@ -168,7 +169,7 @@ func (h *Handler) Ledger(c *gin.Context) {
 	var count int
 	var totalKobo int64
 	if err := h.db.QueryRow(ctx, aggQ, acc.ID).Scan(&count, &totalKobo); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 
@@ -181,7 +182,7 @@ func (h *Handler) Ledger(c *gin.Context) {
 		LIMIT 200`
 	rows, err := h.db.Query(ctx, rowsQ, acc.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	defer rows.Close()
@@ -199,7 +200,7 @@ func (h *Handler) Ledger(c *gin.Context) {
 		)
 		var createdAt any
 		if err := rows.Scan(&id, &referred, &kind, &state, &amount, &currency, &exclOv, &exclK, &createdAt); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 			return
 		}
 		entries = append(entries, gin.H{

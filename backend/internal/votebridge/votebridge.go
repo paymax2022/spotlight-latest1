@@ -7,9 +7,12 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/wallet"
 )
+
+const keyError = "error"
 
 // DebitForVotesRequest is the body for POST /api/finance/vote-bridge/debit.
 // The Next.js bridge calls this to debit the user's wallet before crediting votes.
@@ -47,7 +50,7 @@ func (h *Handler) DebitForVotes(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req DebitForVotesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -70,18 +73,18 @@ func (h *Handler) DebitForVotes(c *gin.Context) {
 				reversed, rerr := h.wallet.VoteDebitReversed(c.Request.Context(), userID, req.IdempotencyKey)
 				if rerr != nil {
 					// Fail closed: cannot prove the debit is still held.
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "could not verify reversal state"})
+					c.JSON(http.StatusInternalServerError, gin.H{keyError: "could not verify reversal state"})
 					return
 				}
 				if reversed {
-					c.JSON(http.StatusConflict, gin.H{"error": "this purchase was refunded — submit a new idempotency key"})
+					c.JSON(http.StatusConflict, gin.H{keyError: "this purchase was refunded — submit a new idempotency key"})
 					return
 				}
 				c.JSON(http.StatusOK, DebitForVotesResponse{OK: true, IdempotencyKey: req.IdempotencyKey})
 				return
 			}
 		}
-		c.JSON(http.StatusPaymentRequired, gin.H{"error": err.Error()})
+		c.JSON(http.StatusPaymentRequired, gin.H{keyError: httperr.Msg(c, http.StatusPaymentRequired, err)})
 		return
 	}
 
@@ -115,17 +118,17 @@ func (h *Handler) ReverseForVotes(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req ReverseForVotesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
 	ref := "vote-reversal:" + req.ContestID + ":" + req.ContestantID
 	if err := h.wallet.VoteDebitReverse(c.Request.Context(), userID, ref, req.IdempotencyKey); err != nil {
 		if errors.Is(err, wallet.ErrNoVoteDebit) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "no vote debit found for this idempotency key"})
+			c.JSON(http.StatusNotFound, gin.H{keyError: "no vote debit found for this idempotency key"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

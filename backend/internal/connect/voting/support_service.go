@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/httperr"
 )
 
 // SupportService handles voting support ticket operations
@@ -416,7 +417,7 @@ func respondErr(c *gin.Context, code int, errCode, msg string) {
 	c.JSON(code, gin.H{
 		"error": gin.H{
 			"code":    errCode,
-			"message": msg,
+			"message": httperr.Sanitize(c, code, msg),
 		},
 	})
 }

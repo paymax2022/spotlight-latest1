@@ -394,7 +394,7 @@ func (h *Handler) OpenConversation(c *gin.Context) {
 	}
 	convID, state, err := h.svc.OpenConversation(c.Request.Context(), c.Param("matchId"), userID)
 	if err != nil {
-		c.JSON(errMap.Code(err), gin.H{"error": err.Error()})
+		c.JSON(errMap.Code(err), gin.H{"error": httperr.Msg(c, errMap.Code(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"conversation_id": convID, "safety_state": state}})
@@ -415,7 +415,7 @@ func (h *Handler) ListMessages(c *gin.Context) {
 	}
 	msgs, err := h.svc.ListMessages(c.Request.Context(), c.Param("id"), userID, limit)
 	if err != nil {
-		c.JSON(errMap.Code(err), gin.H{"error": err.Error()})
+		c.JSON(errMap.Code(err), gin.H{"error": httperr.Msg(c, errMap.Code(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": msgs})
@@ -431,12 +431,12 @@ func (h *Handler) SendMessage(c *gin.Context) {
 	}
 	var req SendMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.SendMessage(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
-		c.JSON(errMap.Code(err), gin.H{"error": err.Error()})
+		c.JSON(errMap.Code(err), gin.H{"error": httperr.Msg(c, errMap.Code(err), err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": res})

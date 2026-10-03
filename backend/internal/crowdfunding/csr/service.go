@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/timeutil"
 )
 
@@ -477,7 +478,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	p, err := h.svc.GetProfile(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, p)
@@ -487,7 +488,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 func (h *Handler) GetMatchableCampaigns(c *gin.Context) {
 	items, err := h.svc.GetMatchableCampaigns(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: items})
@@ -501,7 +502,7 @@ func (h *Handler) GetMatchableCampaign(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, m)
@@ -512,7 +513,7 @@ func (h *Handler) GetMatches(c *gin.Context) {
 	sponsorID := ginutil.UserID(c)
 	items, err := h.svc.GetMatches(c.Request.Context(), sponsorID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: items})
@@ -528,12 +529,12 @@ func (h *Handler) SetupMatch(c *gin.Context) {
 	}
 	var in MatchSetupInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	m, err := h.svc.SetupMatch(c.Request.Context(), sponsorID, in, idemKey)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, m)
@@ -548,7 +549,7 @@ func (h *Handler) ApproveMatch(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, m)
@@ -559,7 +560,7 @@ func (h *Handler) GetInvoices(c *gin.Context) {
 	sponsorID := ginutil.UserID(c)
 	items, err := h.svc.GetInvoices(c.Request.Context(), sponsorID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: items})
@@ -570,7 +571,7 @@ func (h *Handler) GetImpactSummary(c *gin.Context) {
 	sponsorID := ginutil.UserID(c)
 	summary, err := h.svc.GetImpactSummary(c.Request.Context(), sponsorID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, summary)
@@ -581,7 +582,7 @@ func (h *Handler) GetEmployeeGiving(c *gin.Context) {
 	sponsorID := ginutil.UserID(c)
 	items, err := h.svc.GetEmployeeGiving(c.Request.Context(), sponsorID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: items})

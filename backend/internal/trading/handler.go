@@ -20,6 +20,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const keyStatus = "status"
+
+const keyNavPerUnitKobo = "nav_per_unit_kobo"
+
+const keyData = "data"
+
+const keySuccess = "success"
+
+const keyInvalidBody = "invalid body"
+
+const keyError = "error"
+
+const keyCode = "code"
+
 // Handler is the HTTP surface for the AI-trading module: Module-KYC (member +
 // admin), the paper fund wallet (member), the deterministic decision pipeline
 // (member, read-only — records nothing, executes nothing), and the §12 promotion
@@ -56,15 +70,15 @@ var errMap = httperr.New(http.StatusBadRequest,
 func httpErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, wallet.ErrNoAccess):
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": err.Error(), "code": "MODULE_KYC_REQUIRED"})
+		c.JSON(http.StatusForbidden, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusForbidden, err), keyCode: "MODULE_KYC_REQUIRED"})
 	case errors.Is(err, wallet.ErrDebitPending), errors.Is(err, wallet.ErrCreditPending):
-		c.JSON(http.StatusAccepted, gin.H{"success": false, "error": err.Error(), "retryable": true})
+		c.JSON(http.StatusAccepted, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusAccepted, err), "retryable": true})
 	case errors.Is(err, promotion.ErrDenied):
 		// A ladder gate rejection (illegal transition / unmet evidence) — the
 		// request was well-formed but the promotion is not permitted.
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": err.Error(), "code": "LADDER_DENIED"})
+		c.JSON(http.StatusForbidden, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusForbidden, err), keyCode: "LADDER_DENIED"})
 	case errors.Is(err, promotion.ErrVersionConflict):
-		c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error(), "retryable": true})
+		c.JSON(http.StatusConflict, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusConflict, err), "retryable": true})
 	default:
 		errMap.WriteOK(c, err)
 	}
@@ -77,7 +91,7 @@ func (h *Handler) KycStatus(c *gin.Context) {
 		return
 	}
 	access, _ := h.kyc.HasTradingAccess(c.Request.Context(), ginutil.UserID(c))
-	c.JSON(http.StatusOK, gin.H{"success": true, "status": rec.Status, "has_access": access, "bypass_expires_at": rec.BypassExpiresAt})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyStatus: rec.Status, "has_access": access, "bypass_expires_at": rec.BypassExpiresAt})
 }
 
 func (h *Handler) KycSubmit(c *gin.Context) {
@@ -85,7 +99,7 @@ func (h *Handler) KycSubmit(c *gin.Context) {
 		httpErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "status": kyc.StatusSubmitted})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyStatus: kyc.StatusSubmitted})
 }
 
 func (h *Handler) WalletPosition(c *gin.Context) {
@@ -94,7 +108,7 @@ func (h *Handler) WalletPosition(c *gin.Context) {
 		httpErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "units": units, "nav_per_unit_kobo": nav, "value_kobo": value})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "units": units, keyNavPerUnitKobo: nav, "value_kobo": value})
 }
 
 func (h *Handler) Subscribe(c *gin.Context) {
@@ -106,7 +120,7 @@ func (h *Handler) Subscribe(c *gin.Context) {
 		AmountKobo int64 `json:"amount_kobo"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keySuccess: false, keyError: keyInvalidBody})
 		return
 	}
 	o, err := h.wal.Subscribe(c.Request.Context(), ginutil.UserID(c), idem, body.AmountKobo)
@@ -114,7 +128,7 @@ func (h *Handler) Subscribe(c *gin.Context) {
 		httpErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "units_minted": o.UnitsDelta, "nav_per_unit_kobo": o.NAVPerUnitKobo})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "units_minted": o.UnitsDelta, keyNavPerUnitKobo: o.NAVPerUnitKobo})
 }
 
 func (h *Handler) Redeem(c *gin.Context) {
@@ -126,7 +140,7 @@ func (h *Handler) Redeem(c *gin.Context) {
 		Units int64 `json:"units"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keySuccess: false, keyError: keyInvalidBody})
 		return
 	}
 	o, err := h.wal.Redeem(c.Request.Context(), ginutil.UserID(c), idem, body.Units)
@@ -134,7 +148,7 @@ func (h *Handler) Redeem(c *gin.Context) {
 		httpErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "cash_kobo": o.CashKobo, "nav_per_unit_kobo": o.NAVPerUnitKobo})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "cash_kobo": o.CashKobo, keyNavPerUnitKobo: o.NAVPerUnitKobo})
 }
 
 func (h *Handler) AdminQueue(c *gin.Context) {
@@ -143,7 +157,7 @@ func (h *Handler) AdminQueue(c *gin.Context) {
 		httpErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": recs})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyData: recs})
 }
 
 func (h *Handler) AdminCase(c *gin.Context) {
@@ -152,7 +166,7 @@ func (h *Handler) AdminCase(c *gin.Context) {
 		httpErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "record": rec, "events": events})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "record": rec, "events": events})
 }
 
 func (h *Handler) AdminReview(c *gin.Context) {
@@ -160,7 +174,7 @@ func (h *Handler) AdminReview(c *gin.Context) {
 		httpErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "status": kyc.StatusUnderReview})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyStatus: kyc.StatusUnderReview})
 }
 
 func (h *Handler) AdminApprove(c *gin.Context) {
@@ -172,7 +186,7 @@ func (h *Handler) AdminApprove(c *gin.Context) {
 		httpErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "status": kyc.StatusApproved})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyStatus: kyc.StatusApproved})
 }
 
 func (h *Handler) AdminReject(c *gin.Context) {
@@ -180,14 +194,14 @@ func (h *Handler) AdminReject(c *gin.Context) {
 		ReasonCode string `json:"reason_code"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.ReasonCode) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "reason_code required"})
+		c.JSON(http.StatusBadRequest, gin.H{keySuccess: false, keyError: "reason_code required"})
 		return
 	}
 	if err := h.kyc.Reject(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.ReasonCode); err != nil {
 		httpErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "status": kyc.StatusRejected})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyStatus: kyc.StatusRejected})
 }
 
 // AdminBypass — the authenticated admin is the MAKER; checker_id (body) must
@@ -200,7 +214,7 @@ func (h *Handler) AdminBypass(c *gin.Context) {
 		ExposureCapKobo *int64 `json:"exposure_cap_kobo"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keySuccess: false, keyError: keyInvalidBody})
 		return
 	}
 	ttl := time.Duration(body.TTLDays) * 24 * time.Hour
@@ -208,7 +222,7 @@ func (h *Handler) AdminBypass(c *gin.Context) {
 		httpErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "status": kyc.StatusBypassed})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyStatus: kyc.StatusBypassed})
 }
 
 func (h *Handler) AdminBypassRegister(c *gin.Context) {
@@ -217,7 +231,7 @@ func (h *Handler) AdminBypassRegister(c *gin.Context) {
 		httpErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": rows})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyData: rows})
 }
 
 // Register wires the AI-trading module (paper/accounting only). The Module-KYC

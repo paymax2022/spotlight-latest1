@@ -14,6 +14,10 @@ import (
 	"spotlight/backend/go-common/httperr"
 )
 
+const keyUnauthorized = "unauthorized"
+
+const keyError = "error"
+
 // Handler exposes the member-facing and admin tuition payment endpoints.
 type Handler struct {
 	svc *Service
@@ -62,9 +66,9 @@ func writeErr(c *gin.Context, err error) {
 		code = "idempotency_collision"
 	}
 	status := errMap.Code(err)
-	body := gin.H{"error": err.Error()}
+	body := gin.H{keyError: httperr.Msg(c, status, err)}
 	if status == http.StatusInternalServerError {
-		body["error"] = "internal server error"
+		body[keyError] = "internal server error"
 	}
 	if code != "" {
 		body["code"] = code
@@ -78,22 +82,22 @@ func writeErr(c *gin.Context, err error) {
 func (h *Handler) ConfirmPayment(c *gin.Context) {
 	userID, err := requireUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthorized})
 		return
 	}
 
 	idempKey := ginutil.IdempotencyKey(c)
 	if idempKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Idempotency-Key header is required",
-			"code":  "idempotency_key_required",
+			keyError: "Idempotency-Key header is required",
+			"code":   "idempotency_key_required",
 		})
 		return
 	}
 
 	var req ConfirmPaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -120,7 +124,7 @@ func (h *Handler) ConfirmPayment(c *gin.Context) {
 func (h *Handler) ConfirmPaymentInternal(c *gin.Context) {
 	var req ConfirmPaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -145,13 +149,13 @@ func (h *Handler) ConfirmPaymentInternal(c *gin.Context) {
 func (h *Handler) ValidatePayment(c *gin.Context) {
 	userID, err := requireUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthorized})
 		return
 	}
 
 	var req ValidatePaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -170,13 +174,13 @@ func (h *Handler) ValidatePayment(c *gin.Context) {
 func (h *Handler) GetTuitionStatus(c *gin.Context) {
 	userID, err := requireUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthorized})
 		return
 	}
 
 	appID := c.Param("application_id")
 	if appID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "application_id is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "application_id is required"})
 		return
 	}
 
@@ -196,13 +200,13 @@ func (h *Handler) GetTuitionStatus(c *gin.Context) {
 func (h *Handler) WaiveTuition(c *gin.Context) {
 	userID, err := requireUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthorized})
 		return
 	}
 
 	paymentID := c.Param("id")
 	if paymentID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "payment id is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "payment id is required"})
 		return
 	}
 
@@ -224,13 +228,13 @@ func (h *Handler) WaiveTuition(c *gin.Context) {
 func (h *Handler) MarkPlanCompleted(c *gin.Context) {
 	userID, err := requireUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthorized})
 		return
 	}
 
 	planID := c.Param("id")
 	if planID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "plan id is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "plan id is required"})
 		return
 	}
 
@@ -251,7 +255,7 @@ func (h *Handler) MarkPlanCompleted(c *gin.Context) {
 func (h *Handler) CreatePlan(c *gin.Context) {
 	actorID, err := requireUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthorized})
 		return
 	}
 
@@ -259,7 +263,7 @@ func (h *Handler) CreatePlan(c *gin.Context) {
 		ApplicationID string `json:"applicationId" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 

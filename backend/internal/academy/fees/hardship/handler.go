@@ -8,9 +8,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyMessage = "message"
 
 // Handler exposes the SF-9 hardship/freeze request surface over Gin.
 //   - member: a guardian SUBMITS a hardship request (creates a `pending` review-queue item).
@@ -52,21 +55,21 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrMissingInvoice):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_invoice", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_invoice", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrMissingReason):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_reason", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_reason", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrAlreadyReviewed):
-		c.JSON(http.StatusConflict, gin.H{"error": "already_reviewed", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "already_reviewed", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrInvoiceNotFreezable):
-		c.JSON(http.StatusConflict, gin.H{"error": "invoice_not_freezable", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "invoice_not_freezable", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -120,7 +123,7 @@ func (h *Handler) Submit(c *gin.Context) {
 	}
 	var req SubmitRequestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.SubmitRequest(c.Request.Context(), u, req)

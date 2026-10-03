@@ -21,6 +21,10 @@ import (
 	"spotlight/backend/internal/provider"
 )
 
+const keyUnauthenticated = "unauthenticated"
+
+const keyError = "error"
+
 // Service is the Maplerad WaaS DOMAIN service (ADR-012, NGN v1). It orchestrates
 // the money path on top of:
 //   - the pgx repository (provider_customers / provider_reference / webhook_event
@@ -1102,7 +1106,7 @@ var errMap = httperr.New(http.StatusInternalServerError,
 )
 
 func writeErr(c *gin.Context, err error) {
-	body := gin.H{"error": err.Error()}
+	body := gin.H{keyError: httperr.Msg(c, errMap.Code(err), err)}
 	switch {
 	case errors.Is(err, ErrTierTooLow):
 		body["code"] = "tier_required"
@@ -1116,7 +1120,7 @@ func writeErr(c *gin.Context, err error) {
 func (h *Handler) CreateCustomer(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	cust, err := h.svc.EnsureCustomer(c.Request.Context(), userID)
@@ -1131,7 +1135,7 @@ func (h *Handler) CreateCustomer(c *gin.Context) {
 func (h *Handler) OpenVirtualAccount(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	acct, err := h.svc.OpenVirtualAccount(c.Request.Context(), userID)
@@ -1157,12 +1161,12 @@ type transferRequestBody struct {
 func (h *Handler) InitiateTransfer(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var body transferRequestBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid request body"})
 		return
 	}
 	ref := body.Ref
@@ -1187,7 +1191,7 @@ func (h *Handler) InitiateTransfer(c *gin.Context) {
 func (h *Handler) GetTransfer(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	rec, err := h.svc.GetTransfer(c.Request.Context(), userID, c.Param("ref"))
@@ -1210,12 +1214,12 @@ type billRequestBody struct {
 func (h *Handler) PurchaseBill(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var body billRequestBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid request body"})
 		return
 	}
 	ref := body.Ref

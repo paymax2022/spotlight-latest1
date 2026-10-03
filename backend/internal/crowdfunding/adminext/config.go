@@ -22,6 +22,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // CategoryConfig matches CfCategoryConfig.
@@ -228,7 +229,7 @@ func (s *Service) SetFlag(ctx context.Context, key, adminID string, enabled bool
 func (h *Handler) ListCategories(c *gin.Context) {
 	items, err := h.svc.ListCategories(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"categories": items})
@@ -238,11 +239,11 @@ func (h *Handler) ListCategories(c *gin.Context) {
 func (h *Handler) PatchCategory(c *gin.Context) {
 	var req CategoryPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.PatchCategory(c.Request.Context(), c.Param("id"), ginutil.UserID(c), req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -252,7 +253,7 @@ func (h *Handler) PatchCategory(c *gin.Context) {
 func (h *Handler) GetFees(c *gin.Context) {
 	res, err := h.svc.GetFees(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -262,12 +263,12 @@ func (h *Handler) GetFees(c *gin.Context) {
 func (h *Handler) UpdateFees(c *gin.Context) {
 	var req FeeConfig
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.UpdateFees(c.Request.Context(), ginutil.UserID(c), req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -277,7 +278,7 @@ func (h *Handler) UpdateFees(c *gin.Context) {
 func (h *Handler) ListFlags(c *gin.Context) {
 	items, err := h.svc.ListFlags(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"flags": items})
@@ -287,15 +288,15 @@ func (h *Handler) ListFlags(c *gin.Context) {
 func (h *Handler) PatchFlag(c *gin.Context) {
 	var req FlagPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if req.Enabled == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "enabled is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "enabled is required"})
 		return
 	}
 	if err := h.svc.SetFlag(c.Request.Context(), strings.TrimSpace(c.Param("key")), ginutil.UserID(c), *req.Enabled); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

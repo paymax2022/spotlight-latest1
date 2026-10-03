@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -74,7 +75,7 @@ func (h *Handler) MyStatus(c *gin.Context) {
 	}
 	st, err := h.svc.MyFraudStatus(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": st})
@@ -100,7 +101,7 @@ func (h *Handler) ReportAbuse(c *gin.Context) {
 				"error": "you have no referrer to report", "reason": "no_referrer"})
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"alert": a})
@@ -109,7 +110,7 @@ func (h *Handler) ReportAbuse(c *gin.Context) {
 func (h *Handler) Dashboard(c *gin.Context) {
 	d, err := h.svc.Dashboard(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"dashboard": d})
@@ -118,7 +119,7 @@ func (h *Handler) Dashboard(c *gin.Context) {
 func (h *Handler) ListAlerts(c *gin.Context) {
 	list, err := h.svc.ListAlerts(c.Request.Context(), c.Query("status"), 200)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"alerts": list})
@@ -134,7 +135,7 @@ func (h *Handler) SetAlertStatus(c *gin.Context) {
 		return
 	}
 	if err := h.svc.SetAlertStatus(c.Request.Context(), c.Param("id"), body.Status, body.CaseID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -143,7 +144,7 @@ func (h *Handler) SetAlertStatus(c *gin.Context) {
 func (h *Handler) ListRules(c *gin.Context) {
 	list, err := h.svc.ListRules(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"rules": list})
@@ -157,7 +158,7 @@ func (h *Handler) UpsertRule(c *gin.Context) {
 	}
 	r, err := h.svc.UpsertRule(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"rule": r})
@@ -172,7 +173,7 @@ func (h *Handler) SetRuleEnabled(c *gin.Context) {
 		return
 	}
 	if err := h.svc.SetRuleEnabled(c.Request.Context(), c.Param("id"), body.Enabled); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -189,7 +190,7 @@ func (h *Handler) Evaluate(c *gin.Context) {
 	}
 	res, err := h.svc.Evaluate(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"result": res})
@@ -198,7 +199,7 @@ func (h *Handler) Evaluate(c *gin.Context) {
 func (h *Handler) ListCases(c *gin.Context) {
 	list, err := h.svc.ListCases(c.Request.Context(), c.Query("status"), 200)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"cases": list})
@@ -216,7 +217,7 @@ func (h *Handler) OpenCase(c *gin.Context) {
 	}
 	cs, err := h.svc.OpenCase(c.Request.Context(), body.SubjectID, body.ReasonCodes, uid(c), body.Notes)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"case": cs})
@@ -225,7 +226,7 @@ func (h *Handler) OpenCase(c *gin.Context) {
 func (h *Handler) CaseWorkbench(c *gin.Context) {
 	cs, alerts, err := h.svc.CaseWorkbench(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"case": cs, "alerts": alerts})
@@ -241,7 +242,7 @@ func (h *Handler) UpdateCaseStatus(c *gin.Context) {
 		return
 	}
 	if err := h.svc.UpdateCaseStatus(c.Request.Context(), c.Param("id"), body.Status, body.Resolution, uid(c)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -250,7 +251,7 @@ func (h *Handler) UpdateCaseStatus(c *gin.Context) {
 func (h *Handler) ListBlocklist(c *gin.Context) {
 	list, err := h.svc.ListBlocklist(c.Request.Context(), c.Query("list_type"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"entries": list})
@@ -264,7 +265,7 @@ func (h *Handler) AddBlocklist(c *gin.Context) {
 	}
 	e, err := h.svc.AddBlocklist(c.Request.Context(), in, uid(c))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"entry": e})
@@ -272,7 +273,7 @@ func (h *Handler) AddBlocklist(c *gin.Context) {
 
 func (h *Handler) DeactivateBlocklist(c *gin.Context) {
 	if err := h.svc.DeactivateBlocklist(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -281,7 +282,7 @@ func (h *Handler) DeactivateBlocklist(c *gin.Context) {
 func (h *Handler) ListReviewQueue(c *gin.Context) {
 	list, err := h.svc.ListReviewQueue(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": list})
@@ -289,7 +290,7 @@ func (h *Handler) ListReviewQueue(c *gin.Context) {
 
 func (h *Handler) ApproveReview(c *gin.Context) {
 	if err := h.svc.ApproveReview(c.Request.Context(), c.Param("id"), uid(c)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -297,7 +298,7 @@ func (h *Handler) ApproveReview(c *gin.Context) {
 
 func (h *Handler) RejectReview(c *gin.Context) {
 	if err := h.svc.RejectReview(c.Request.Context(), c.Param("id"), uid(c)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -313,7 +314,7 @@ func (h *Handler) ExecuteClawback(c *gin.Context) {
 		in.IdempotencyKey = ginutil.IdempotencyKey(c)
 	}
 	if err := h.svc.ExecuteClawback(c.Request.Context(), in, uid(c)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -323,7 +324,7 @@ func (h *Handler) ExecuteClawback(c *gin.Context) {
 func (h *Handler) ClawbackHistory(c *gin.Context) {
 	list, err := h.svc.ListReviewQueue(c.Request.Context(), ReviewClawedBack)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"clawbacks": list})

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
@@ -119,7 +120,7 @@ func (h *AdminUsersHandler) Update(c *gin.Context) {
 	}
 	updated, err := h.svc.UpdateAdminUser(userID, patch)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(actor.ID, userID, "user.update", "users", "user", userID, nil, patch, c.ClientIP(), c.Request.UserAgent(), "high")

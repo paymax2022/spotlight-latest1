@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -293,7 +294,7 @@ func (h *Handler) Update(c *gin.Context) {
 	}
 	var in UpsertProfileInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.Update(c.Request.Context(), uid, in)
@@ -333,12 +334,12 @@ func (h *Handler) UpsertMode(c *gin.Context) {
 	}
 	var in UpsertModeInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	m, err := h.svc.UpsertMode(c.Request.Context(), uid, mode, in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: m})
@@ -359,12 +360,12 @@ func (h *Handler) AddMedia(c *gin.Context) {
 	}
 	var req mediaRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, status, err := h.svc.AddMedia(c.Request.Context(), uid, req.URL, req.Kind)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{keyData: gin.H{"id": id, "moderation_status": status}})

@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/kycverify"
 	"spotlight/backend/internal/finance/tiers"
@@ -310,17 +311,17 @@ func tier1Message(status provider.KycCheckStatus) string {
 func writeKycVerifyErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, kycverify.ErrConsentRequired):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "code": "consent_required"})
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err), "code": "consent_required"})
 	case errors.Is(err, kycverify.ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, kycverify.ErrInvalidRequest), errors.Is(err, kycverify.ErrInvalidTier):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, kycverify.ErrNoProvider), errors.Is(err, kycverify.ErrProviderUnavailable):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error(), "code": "no_provider"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err), "code": "no_provider"})
 	case errors.Is(err, kycverify.ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, kycverify.ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 	default:
 		log.Printf("[kyc_connect] internal error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})

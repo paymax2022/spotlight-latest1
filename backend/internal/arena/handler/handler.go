@@ -15,11 +15,14 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/arena"
 	"spotlight/backend/internal/arena/quiz"
 	"spotlight/backend/internal/arena/service"
 	"spotlight/backend/internal/finance/tiers"
 )
+
+const keyCode = "code"
 
 // entryHashHex hex-encodes a signed entry's hash for the response.
 func entryHashHex(e arena.SignedMeritEntry) string { return hex.EncodeToString(e.EntryHash) }
@@ -52,31 +55,31 @@ func mapErr(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrForbidden):
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 	case errors.Is(err, service.ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, service.ErrConflict), errors.Is(err, service.ErrReplay):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, service.ErrKYCTierTooLow):
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error(), "code": "KYC_TIER_TOO_LOW"})
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": httperr.Msg(c, http.StatusUnprocessableEntity, err), keyCode: "KYC_TIER_TOO_LOW"})
 	case errors.Is(err, service.ErrUnauthorizedSig):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "code": "MERIT_SIG_UNAUTHORIZED"})
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err), keyCode: "MERIT_SIG_UNAUTHORIZED"})
 	case errors.Is(err, service.ErrMissingIdem):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "IDEMPOTENCY_KEY_REQUIRED"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err), keyCode: "IDEMPOTENCY_KEY_REQUIRED"})
 	case errors.Is(err, service.ErrBadState):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "BAD_STATE"})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), keyCode: "BAD_STATE"})
 	case errors.Is(err, service.ErrPotState):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "POT_STATE"})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), keyCode: "POT_STATE"})
 	case errors.Is(err, service.ErrRateLimited):
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": httperr.Msg(c, http.StatusTooManyRequests, err)})
 	// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
 	// unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
 	case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, service.ErrTierGateUnwired):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err)})
 	case errors.Is(err, service.ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 

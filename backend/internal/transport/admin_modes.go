@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Generic, audited list/patch helpers for parcel/towing/mover/car-hire rows.
@@ -493,7 +494,7 @@ func (h *AdminHandler) AdminParcelStatus(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.PatchParcelStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {
@@ -516,7 +517,7 @@ func (h *AdminHandler) AdminTowingStatus(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.PatchTowingStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {
@@ -548,7 +549,7 @@ func (h *AdminHandler) AdminMoverStatus(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.PatchMoverStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {
@@ -571,7 +572,7 @@ func (h *AdminHandler) AdminCarHireStatus(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.PatchCarHireStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {

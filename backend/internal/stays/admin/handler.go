@@ -6,7 +6,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyError = "error"
 
 // Handler exposes the stays-admin control plane: supplier connectivity config, the
 // dedup mapping queue, and property moderation. Every route is RBAC-gated at the
@@ -24,7 +27,7 @@ func (h *Handler) ListSuppliers(c *gin.Context) {
 		SELECT id, source_rail, supplier_code, adapter, active, created_at
 		FROM public.stays_supplier_config ORDER BY source_rail, supplier_code`)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	defer rows.Close()
@@ -34,7 +37,7 @@ func (h *Handler) ListSuppliers(c *gin.Context) {
 		var active bool
 		var createdAt any
 		if err := rows.Scan(&id, &rail, &code, &adapter, &active, &createdAt); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 			return
 		}
 		out = append(out, gin.H{"id": id, "source_rail": rail, "supplier_code": code, "adapter": adapter, "active": active, "created_at": createdAt})
@@ -51,7 +54,7 @@ func (h *Handler) UpsertSupplier(c *gin.Context) {
 		Active       bool   `json:"active"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	_, err := h.db.Exec(c.Request.Context(), `
@@ -61,7 +64,7 @@ func (h *Handler) UpsertSupplier(c *gin.Context) {
 		DO UPDATE SET adapter = EXCLUDED.adapter, active = EXCLUDED.active, updated_at = now()`,
 		body.SourceRail, body.SupplierCode, body.Adapter, body.Active)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
@@ -82,7 +85,7 @@ func (h *Handler) ListMappingQueue(c *gin.Context) {
 		WHERE ($1 = '' OR status = $1)
 		ORDER BY confidence DESC LIMIT $2`, status, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	defer rows.Close()
@@ -92,7 +95,7 @@ func (h *Handler) ListMappingQueue(c *gin.Context) {
 		var conf float64
 		var mapped *string
 		if err := rows.Scan(&id, &rail, &code, &ref, &cRail, &cCode, &cRef, &conf, &st, &mapped); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 			return
 		}
 		out = append(out, gin.H{
@@ -111,7 +114,7 @@ func (h *Handler) DecideMapping(c *gin.Context) {
 		MappedPropertyID string `json:"mapped_property_id"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	_, err := h.db.Exec(c.Request.Context(), `
@@ -119,7 +122,7 @@ func (h *Handler) DecideMapping(c *gin.Context) {
 		SET status = $2, mapped_property_id = NULLIF($3,''), updated_at = now()
 		WHERE id = $1`, c.Param("id"), body.Status, body.MappedPropertyID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
@@ -131,18 +134,18 @@ func (h *Handler) ModerateProperty(c *gin.Context) {
 		Status string `json:"status" binding:"required"` // ACTIVE | SUSPENDED | PENDING_REVIEW | DRAFT
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ct, err := h.db.Exec(c.Request.Context(), `
 		UPDATE public.stays_property SET status = $2, updated_at = now() WHERE id = $1`,
 		c.Param("id"), body.Status)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	if ct.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "property not found"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "property not found"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})

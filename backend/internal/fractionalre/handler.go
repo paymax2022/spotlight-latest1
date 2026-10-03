@@ -91,7 +91,7 @@ func (h *Handler) RiskAck(c *gin.Context) {
 		ScrollCompleted bool    `json:"scroll_completed"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if !body.ScrollCompleted {
@@ -166,12 +166,12 @@ func (h *Handler) LimitCheck(c *gin.Context) {
 
 func (h *Handler) Subscribe(c *gin.Context) {
 	if ginutil.IdempotencyKey(c) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": ErrIdempotencyKey.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, ErrIdempotencyKey)})
 		return
 	}
 	var req SubscribeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	sub, err := h.svc.Subscribe(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), c.Param("id"), req)
@@ -254,7 +254,7 @@ func (h *Handler) CreateAutoInvest(c *gin.Context) {
 		AssetType  *string `json:"asset_type"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if body.Cadence == "" {
@@ -288,12 +288,12 @@ func (h *Handler) Market(c *gin.Context) {
 
 func (h *Handler) MarketList(c *gin.Context) {
 	if ginutil.IdempotencyKey(c) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": ErrIdempotencyKey.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, ErrIdempotencyKey)})
 		return
 	}
 	var req ListFractionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	l, err := h.svc.ListFraction(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req)
@@ -306,12 +306,12 @@ func (h *Handler) MarketList(c *gin.Context) {
 
 func (h *Handler) MarketBuy(c *gin.Context) {
 	if ginutil.IdempotencyKey(c) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": ErrIdempotencyKey.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, ErrIdempotencyKey)})
 		return
 	}
 	var req BuyFractionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	o, err := h.svc.BuyFraction(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), c.Param("id"), req)
@@ -366,7 +366,7 @@ func (h *Handler) CreateGoal(c *gin.Context) {
 		TargetDate string `json:"target_date"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	td := timeutil.ParseDatePtr(body.TargetDate)
@@ -581,7 +581,7 @@ func (h *Handler) AddBeneficiary(c *gin.Context) {
 		SharePct     int    `json:"share_pct" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.AddBeneficiary(c.Request.Context(), ginutil.UserID(c), body.Name, body.Relationship, body.SharePct)

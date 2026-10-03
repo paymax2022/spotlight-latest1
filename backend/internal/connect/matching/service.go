@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strconv"
 	"time"
 
@@ -334,7 +335,7 @@ func (h *Handler) Like(c *gin.Context) {
 	}
 	var req LikeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.Like(c.Request.Context(), uid, req.ToProfile, req.Kind)
@@ -349,7 +350,7 @@ func (h *Handler) Like(c *gin.Context) {
 		case errors.Is(err, ErrBlocked), errors.Is(err, ErrRestricted), errors.Is(err, ErrIneligibleTarget):
 			c.JSON(http.StatusForbidden, gin.H{keyError: "not allowed"})
 		default:
-			c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		}
 		return
 	}

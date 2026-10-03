@@ -47,11 +47,11 @@ func (h *Handler) ClaimHandle(c *gin.Context) {
 	if err != nil {
 		switch err {
 		case cashtag.ErrTaken, cashtag.ErrAlreadyClaimed:
-			c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
+			c.JSON(http.StatusConflict, gin.H{"success": false, "error": httperr.Msg(c, http.StatusConflict, err)})
 		case cashtag.ErrReserved, cashtag.ErrImpersonation:
-			c.JSON(http.StatusForbidden, gin.H{"success": false, "error": err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "error": httperr.Msg(c, http.StatusForbidden, err)})
 		default:
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		}
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -222,7 +223,7 @@ func (h *Handler) ListProducts(c *gin.Context) {
 	q.Limit, q.Offset = ginutil.PageParams(c, 20, 0)
 	products, err := h.svc.ListProducts(c.Request.Context(), q)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": products})
@@ -233,7 +234,7 @@ func (h *Handler) GetCart(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	items, err := h.svc.GetCart(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -244,7 +245,7 @@ func (h *Handler) AddToCart(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req AddToCartRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if req.IdempotencyKey == "" {
@@ -252,7 +253,7 @@ func (h *Handler) AddToCart(c *gin.Context) {
 	}
 	item, err := h.svc.AddToCart(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": item})
@@ -264,12 +265,12 @@ func (h *Handler) UpdateCartItem(c *gin.Context) {
 	productID := c.Param("product_id")
 	var req UpdateCartItemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	item, err := h.svc.UpdateCartItem(c.Request.Context(), userID, productID, req.Quantity)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": item})
@@ -279,7 +280,7 @@ func (h *Handler) UpdateCartItem(c *gin.Context) {
 func (h *Handler) RemoveFromCart(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if err := h.svc.RemoveFromCart(c.Request.Context(), userID, c.Param("product_id")); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -289,7 +290,7 @@ func (h *Handler) RemoveFromCart(c *gin.Context) {
 func (h *Handler) ClearCart(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if err := h.svc.ClearCart(c.Request.Context(), userID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

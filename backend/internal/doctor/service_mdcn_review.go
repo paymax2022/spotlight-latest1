@@ -256,7 +256,7 @@ var reviewErrMap = httperr.New(http.StatusBadRequest,
 func (h *MDCNReviewHandler) Queue(c *gin.Context) {
 	items, err := h.svc.ListQueue(c.Request.Context(), 0)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
@@ -266,7 +266,7 @@ func (h *MDCNReviewHandler) Queue(c *gin.Context) {
 func (h *MDCNReviewHandler) GetRecord(c *gin.Context) {
 	rec, err := h.svc.GetForReview(c.Request.Context(), c.Param("verificationId"))
 	if err != nil {
-		c.JSON(reviewErrMap.Code(err), gin.H{"error": err.Error()})
+		c.JSON(reviewErrMap.Code(err), gin.H{keyError: httperr.Msg(c, reviewErrMap.Code(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, rec)
@@ -277,7 +277,7 @@ func (h *MDCNReviewHandler) DocURL(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	url, err := h.svc.DocSignedURL(c.Request.Context(), uid, c.Param("docId"), true)
 	if err != nil {
-		c.JSON(reviewErrMap.Code(err), gin.H{"error": err.Error()})
+		c.JSON(reviewErrMap.Code(err), gin.H{keyError: httperr.Msg(c, reviewErrMap.Code(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"url": url})
@@ -293,14 +293,14 @@ func (h *MDCNReviewHandler) Decide(c *gin.Context) {
 		Notes         string `json:"notes"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	in := MDCNDecision{Action: body.Action, Notes: body.Notes}
 	if body.LicenceExpiry != "" {
 		t, perr := time.Parse("2006-01-02", body.LicenceExpiry)
 		if perr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "licence_expiry must be YYYY-MM-DD"})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: "licence_expiry must be YYYY-MM-DD"})
 			return
 		}
 		in.LicenceExpiry = &t
@@ -310,7 +310,7 @@ func (h *MDCNReviewHandler) Decide(c *gin.Context) {
 	}
 	rec, err := h.svc.Decide(c.Request.Context(), uid, c.Param("verificationId"), in)
 	if err != nil {
-		c.JSON(reviewErrMap.Code(err), gin.H{"error": err.Error()})
+		c.JSON(reviewErrMap.Code(err), gin.H{keyError: httperr.Msg(c, reviewErrMap.Code(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, rec)

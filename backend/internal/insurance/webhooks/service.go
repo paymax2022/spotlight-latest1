@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/insurance/claims"
 	"spotlight/backend/internal/insurance/gateway"
@@ -268,7 +269,7 @@ func (h *Handler) ingest(c *gin.Context, provider string) {
 			// Reject unverified events (do NOT 200 — provider must retry/alert).
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid signature"})
 		default:
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		}
 		return
 	}

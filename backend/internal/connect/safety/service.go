@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/ptr"
 	"time"
 
@@ -286,7 +287,7 @@ func (h *Handler) Block(c *gin.Context) {
 	}
 	var req BlockRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.Block(c.Request.Context(), blockerID, req)
@@ -329,7 +330,7 @@ func (h *Handler) Report(c *gin.Context) {
 	}
 	var req ReportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if !ValidCaseType(req.Type) {
@@ -358,7 +359,7 @@ func (h *Handler) Report(c *gin.Context) {
 func (h *Handler) ListCases(c *gin.Context) {
 	cases, err := h.svc.ListCases(c.Request.Context(), c.Query("status"), ptr.DerefZero(ginutil.IntParam(c, "limit")))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": cases})
@@ -379,12 +380,12 @@ func (h *Handler) UpdateCase(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var req UpdateCaseInput
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	cs, err := h.svc.UpdateCase(c.Request.Context(), c.Param("id"), adminID, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, cs)
@@ -394,7 +395,7 @@ func (h *Handler) UpdateCase(c *gin.Context) {
 func (h *Handler) ListAudit(c *gin.Context) {
 	entries, err := h.svc.ListAudit(c.Request.Context(), ptr.DerefZero(ginutil.IntParam(c, "limit")))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": entries})

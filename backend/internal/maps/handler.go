@@ -310,7 +310,7 @@ func (h *Handler) Nearby(c *gin.Context) {
 	}
 	out, err := h.svc.FindNearbyOwn(c.Request.Context(), in.EntityType, in.Point, in.RadiusM, in.Limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"results": out})
@@ -338,7 +338,7 @@ func (h *Handler) InZone(c *gin.Context) {
 	}
 	inside, err := h.svc.IsInZone(c.Request.Context(), in.Point, in.ZoneID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"in_zone": inside})
@@ -384,7 +384,7 @@ func (h *Handler) UpsertLocation(c *gin.Context) {
 		OwnEntity{EntityID: in.EntityID, Lat: in.Lat, Lng: in.Lng},
 		in.EntityType, plus)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "plus_code": plus})
@@ -442,7 +442,7 @@ func (h *Handler) Usage(c *gin.Context) {
 	}
 	rows, err := h.svc.UsageSnapshot(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"month": currentMonth(), "usage": rows})

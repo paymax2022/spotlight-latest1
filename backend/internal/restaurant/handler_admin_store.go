@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Admin store & menu management for /api/restaurant/admin/restaurants/*.
@@ -48,7 +49,7 @@ func (h *Handler) AdminListRestaurants(c *gin.Context) {
 		Offset: queryInt(c, "offset"),
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, page)
@@ -66,7 +67,7 @@ func (h *Handler) AdminListRestaurants(c *gin.Context) {
 func (h *Handler) AdminListOrders(c *gin.Context) {
 	if !ValidateStatus(c.Query("status")) {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":            "unknown status filter",
+			keyError:           "unknown status filter",
 			"allowed_statuses": AdminOrderStatuses,
 		})
 		return
@@ -84,7 +85,7 @@ func (h *Handler) AdminListOrders(c *gin.Context) {
 		Offset:       queryInt(c, "offset"),
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, page)
@@ -96,7 +97,7 @@ func (h *Handler) AdminListOrders(c *gin.Context) {
 func (h *Handler) AdminGetRestaurant(c *gin.Context) {
 	detail, err := h.svc.GetRestaurantDetail(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	c.JSON(http.StatusOK, detail)
@@ -107,12 +108,12 @@ func (h *Handler) AdminGetRestaurant(c *gin.Context) {
 func (h *Handler) AdminUpdateRestaurant(c *gin.Context) {
 	var req UpdateRestaurantRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.UpdateRestaurant(adminCtx(c), c.Param("id"), ginutil.UserID(c), req)
 	if err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, r)
@@ -124,7 +125,7 @@ func (h *Handler) AdminUpdateRestaurant(c *gin.Context) {
 func (h *Handler) AdminModerationQueue(c *gin.Context) {
 	list, err := h.svc.PendingListings(adminCtx(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"listings": list, "count": len(list)})
@@ -140,7 +141,7 @@ func (h *Handler) AdminDecideListing(c *gin.Context) {
 		Reason   string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	var to ListingReviewStatus
@@ -152,11 +153,11 @@ func (h *Handler) AdminDecideListing(c *gin.Context) {
 	case "changes":
 		to = ListingChangesRequested
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "decision must be approve|reject|changes"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "decision must be approve|reject|changes"})
 		return
 	}
 	if err := h.svc.DecideListing(adminCtx(c), c.Param("id"), ginutil.UserID(c), to, body.Reason); err != nil {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -170,7 +171,7 @@ func (h *Handler) AdminDecideListing(c *gin.Context) {
 func (h *Handler) AdminUnclaimedRestaurants(c *gin.Context) {
 	list, err := h.svc.UnclaimedRestaurants(adminCtx(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"restaurants": list, "count": len(list)})
@@ -184,12 +185,12 @@ func (h *Handler) AdminSetAvailability(c *gin.Context) {
 		IsOpen *bool `json:"is_open" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || body.IsOpen == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "is_open is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "is_open is required"})
 		return
 	}
 	r, err := h.svc.SetAvailability(adminCtx(c), c.Param("id"), ginutil.UserID(c), *body.IsOpen)
 	if err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, r)
@@ -201,12 +202,12 @@ func (h *Handler) AdminCreateCategory(c *gin.Context) {
 		Name string `json:"name" binding:"required,min=1,max=120"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	cat, err := h.svc.CreateCategory(adminCtx(c), c.Param("id"), ginutil.UserID(c), body.Name)
 	if err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusCreated, cat)
@@ -215,7 +216,7 @@ func (h *Handler) AdminCreateCategory(c *gin.Context) {
 // AdminDeleteCategory → DELETE /api/restaurant/admin/restaurants/:id/menu/categories/:categoryId
 func (h *Handler) AdminDeleteCategory(c *gin.Context) {
 	if err := h.svc.DeleteCategory(adminCtx(c), c.Param("id"), ginutil.UserID(c), c.Param("categoryId")); err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
@@ -225,12 +226,12 @@ func (h *Handler) AdminDeleteCategory(c *gin.Context) {
 func (h *Handler) AdminCreateItem(c *gin.Context) {
 	var req CreateItemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	it, err := h.svc.CreateItem(adminCtx(c), c.Param("id"), ginutil.UserID(c), req)
 	if err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusCreated, it)
@@ -242,12 +243,12 @@ func (h *Handler) AdminCreateItem(c *gin.Context) {
 func (h *Handler) AdminUpdateItem(c *gin.Context) {
 	var req UpdateItemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	it, err := h.svc.UpdateItem(adminCtx(c), c.Param("id"), ginutil.UserID(c), c.Param("itemId"), req)
 	if err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, it)
@@ -256,7 +257,7 @@ func (h *Handler) AdminUpdateItem(c *gin.Context) {
 // AdminDeleteItem → DELETE /api/restaurant/admin/restaurants/:id/menu/items/:itemId
 func (h *Handler) AdminDeleteItem(c *gin.Context) {
 	if err := h.svc.DeleteItem(adminCtx(c), c.Param("id"), ginutil.UserID(c), c.Param("itemId")); err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{keyError: httperr.Msg(c, ownerErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"deleted": true})

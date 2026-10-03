@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/httperr"
 )
 
 const (
@@ -142,14 +144,15 @@ func IntParam(c *gin.Context, name string) *int {
 }
 
 // Fail writes the {"error": msg} envelope — the most common error shape.
+// msg runs through httperr.Sanitize so raw internals never reach the client.
 func Fail(c *gin.Context, status int, msg string) {
-	c.JSON(status, gin.H{errKey: msg})
+	c.JSON(status, gin.H{errKey: httperr.Sanitize(c, status, msg)})
 }
 
 // FailOK writes the {"success": false, "error": msg} envelope used by modules
-// whose success responses carry a success flag.
+// whose success responses carry a success flag. Sanitized like Fail.
 func FailOK(c *gin.Context, status int, msg string) {
-	c.JSON(status, gin.H{successKey: false, errKey: msg})
+	c.JSON(status, gin.H{successKey: false, errKey: httperr.Sanitize(c, status, msg)})
 }
 
 // AdminID reads the admin identity key set by admin-auth middleware —

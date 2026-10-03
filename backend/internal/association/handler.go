@@ -14,6 +14,8 @@ import (
 	platformWS "spotlight/backend/internal/platform/ws"
 )
 
+const keyError = "error"
+
 // errMap is the package-wide domain-error→HTTP mapping previously spelled
 // statusFor: validation sentinels are 400, access/ineligibility 403, illegal
 // election moves 409, missing rows/memberships 404, everything else 500.
@@ -56,7 +58,7 @@ func (h *Handler) GetDues(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	dues, err := h.svc.GetDues(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, dues)
@@ -67,7 +69,7 @@ func (h *Handler) PayInvoice(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req PayInvoiceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	req.IdempotencyKey = ginutil.IdempotencyKey(c)
@@ -95,7 +97,7 @@ func (h *Handler) DecideApplication(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var req ApprovalDecisionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	req.IdempotencyKey = ginutil.IdempotencyKey(c)
@@ -111,7 +113,7 @@ func (h *Handler) ListOrganisations(c *gin.Context) {
 	limit, offset := ginutil.LimitOffset(c)
 	orgs, err := h.svc.GetOrganisations(c.Request.Context(), c.Query("search"), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, orgs)
@@ -153,7 +155,7 @@ func (h *Handler) GetCard(c *gin.Context) {
 func (h *Handler) VerifyCard(c *gin.Context) {
 	var req VerifyCardRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.VerifyCard(c.Request.Context(), req.Token)
@@ -188,7 +190,7 @@ func (h *Handler) GetPrivacy(c *gin.Context) {
 func (h *Handler) UpdatePrivacy(c *gin.Context) {
 	var req PrivacySettings
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ps, err := h.svc.UpdatePrivacy(c.Request.Context(), ginutil.UserID(c), req)
@@ -203,7 +205,7 @@ func (h *Handler) UpdatePrivacy(c *gin.Context) {
 func (h *Handler) GetActivity(c *gin.Context) {
 	entries, err := h.svc.GetActivity(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, entries)
@@ -213,7 +215,7 @@ func (h *Handler) GetActivity(c *gin.Context) {
 func (h *Handler) GetAdminAccess(c *gin.Context) {
 	access, err := h.svc.GetAdminAccess(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, access)
@@ -223,12 +225,12 @@ func (h *Handler) GetAdminAccess(c *gin.Context) {
 func (h *Handler) ListMembers(c *gin.Context) {
 	var q MemberDirectoryQuery
 	if err := c.ShouldBindQuery(&q); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	members, err := h.svc.GetDirectory(c.Request.Context(), ginutil.UserID(c), q)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, members)
@@ -248,7 +250,7 @@ func (h *Handler) GetMember(c *gin.Context) {
 func (h *Handler) ListAnnouncements(c *gin.Context) {
 	list, err := h.svc.GetAnnouncements(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, list)
@@ -258,7 +260,7 @@ func (h *Handler) ListAnnouncements(c *gin.Context) {
 func (h *Handler) ListNotifications(c *gin.Context) {
 	list, err := h.svc.GetNotifications(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, list)
@@ -268,7 +270,7 @@ func (h *Handler) ListNotifications(c *gin.Context) {
 func (h *Handler) ListMeetings(c *gin.Context) {
 	list, err := h.svc.GetMeetings(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, list)
@@ -290,7 +292,7 @@ func (h *Handler) ListTasks(c *gin.Context) {
 func (h *Handler) ListDocuments(c *gin.Context) {
 	list, err := h.svc.GetDocuments(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, list)
@@ -300,7 +302,7 @@ func (h *Handler) ListDocuments(c *gin.Context) {
 func (h *Handler) ListCommittees(c *gin.Context) {
 	list, err := h.svc.GetCommittees(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, list)
@@ -310,7 +312,7 @@ func (h *Handler) ListCommittees(c *gin.Context) {
 func (h *Handler) ListEvents(c *gin.Context) {
 	list, err := h.svc.GetEvents(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, list)

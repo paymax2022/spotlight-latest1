@@ -8,9 +8,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyUnauthenticated = "unauthenticated"
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
+
+const keyError = "error"
 
 // Handler exposes the credentials + earning-bridge surface over Gin.
 //   - member: own credentials, public-ish verify, eligible opportunities, apply.
@@ -35,15 +44,15 @@ func authUserID(c *gin.Context) string {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrNotEligible):
-		c.JSON(http.StatusForbidden, gin.H{"error": "not_eligible", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: "not_eligible", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -87,7 +96,7 @@ func RegisterAcademyCredentials(member, admin *gin.RouterGroup, pool *pgxpool.Po
 func (h *Handler) ListMine(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.ListMine(c.Request.Context(), u)
@@ -105,7 +114,7 @@ func (h *Handler) ListMine(c *gin.Context) {
 func (h *Handler) GetOne(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.GetMine(c.Request.Context(), u, c.Param("id"))
@@ -131,7 +140,7 @@ func (h *Handler) Verify(c *gin.Context) {
 func (h *Handler) ListEligible(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.EvaluateBridge(c.Request.Context(), u)
@@ -148,7 +157,7 @@ func (h *Handler) ListEligible(c *gin.Context) {
 func (h *Handler) GetOpportunity(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	out, err := h.svc.GetEligibleOpportunity(c.Request.Context(), u, c.Param("id"))
@@ -162,12 +171,12 @@ func (h *Handler) GetOpportunity(c *gin.Context) {
 func (h *Handler) Apply(c *gin.Context) {
 	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req ApplyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	// Prefer the header idempotency key; fall back to the body field.
@@ -186,7 +195,7 @@ func (h *Handler) Apply(c *gin.Context) {
 func (h *Handler) AdminRevoke(c *gin.Context) {
 	var req RevokeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Revoke(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req.Reason)
@@ -209,7 +218,7 @@ func (h *Handler) AdminListOpportunities(c *gin.Context) {
 func (h *Handler) AdminCreateOpportunity(c *gin.Context) {
 	var req CreateOpportunityRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateOpportunity(c.Request.Context(), ginutil.UserID(c, authUserID), req)
@@ -223,7 +232,7 @@ func (h *Handler) AdminCreateOpportunity(c *gin.Context) {
 func (h *Handler) AdminUpdateOpportunity(c *gin.Context) {
 	var req UpdateOpportunityRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpdateOpportunity(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)

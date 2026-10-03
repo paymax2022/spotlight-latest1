@@ -105,14 +105,32 @@ func genericMessage(status int) string {
 // string and the raw detail is logged server-side tagged with the request id,
 // so operators keep the detail and clients keep the envelope.
 func (m *Mapper) publicMessage(c *gin.Context, status int, err error) string {
-	raw := err.Error()
+	return Msg(c, status, err)
+}
+
+// Msg sanitizes err for a client response at the given status — the exported
+// form of publicMessage for handlers that read m.Code(err) and shape their own
+// body (E2E-SEC-056). nil err yields "".
+func Msg(c *gin.Context, status int, err error) string {
+	if err == nil {
+		return ""
+	}
+	return Sanitize(c, status, err.Error())
+}
+
+// Sanitize is the string form of Msg for callers holding an already-built
+// message (ginutil.Fail/FailOK, fmt.Sprintf-prefixed copy, coded-envelope
+// fields). A nil *gin.Context is tolerated — the raw detail is still logged.
+func Sanitize(c *gin.Context, status int, raw string) string {
 	if status < 500 && !internalSignature.MatchString(raw) {
 		return raw
 	}
-	reqID := c.Writer.Header().Get("X-Request-Id")
-	method, path := "", ""
-	if c.Request != nil && c.Request.URL != nil {
-		method, path = c.Request.Method, c.Request.URL.Path
+	reqID, method, path := "", "", ""
+	if c != nil {
+		reqID = c.Writer.Header().Get("X-Request-Id")
+		if c.Request != nil && c.Request.URL != nil {
+			method, path = c.Request.Method, c.Request.URL.Path
+		}
 	}
 	log.Printf("[httperr] sanitized %d response for %s %s (request_id=%s): %v",
 		status, method, path, reqID, raw)

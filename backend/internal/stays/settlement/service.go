@@ -10,8 +10,11 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
 )
+
+const keyError = "error"
 
 // Service owns the stays money-back-office: Naira hotel payouts (direct rail),
 // supplier remittance reconciliation (Rail A), and the commission ledger. It REUSES
@@ -255,13 +258,13 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func mapErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrPayoutHeld):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "PAYOUT_HELD"})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), "code": "PAYOUT_HELD"})
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not found"})
 	case errors.Is(err, ErrBadAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -306,7 +309,7 @@ func (h *Handler) QueuePayout(c *gin.Context) {
 		IdempotencyKey string `json:"idempotency_key"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	key := b.IdempotencyKey
@@ -314,7 +317,7 @@ func (h *Handler) QueuePayout(c *gin.Context) {
 		key = ginutil.IdempotencyKey(c)
 	}
 	if key == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "Idempotency-Key required"})
 		return
 	}
 	id, err := h.svc.QueuePayout(c.Request.Context(), b.PropertyID, b.HotelierUserID, b.ReservationID, b.AmountKobo, key)
@@ -352,7 +355,7 @@ func (h *Handler) AccrueCommission(c *gin.Context) {
 		IdempotencyKey string `json:"idempotency_key" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, err := h.svc.AccrueCommission(c.Request.Context(), b.ReservationID, b.AmountKobo, b.IdempotencyKey)
@@ -369,7 +372,7 @@ func (h *Handler) ReverseCommission(c *gin.Context) {
 		IdempotencyKey string `json:"idempotency_key" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, err := h.svc.ReverseCommission(c.Request.Context(), b.ReservationID, b.IdempotencyKey)
@@ -399,7 +402,7 @@ func (h *Handler) IngestRemittance(c *gin.Context) {
 		IdempotencyKey string `json:"idempotency_key" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, status, err := h.svc.IngestRemittance(c.Request.Context(), b.SupplierCode, b.ReservationID, b.ExternalRef, b.RemittedKobo, b.IdempotencyKey)

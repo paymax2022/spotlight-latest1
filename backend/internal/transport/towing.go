@@ -13,6 +13,7 @@ import (
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // State machine:
@@ -424,7 +425,7 @@ func (s *Service) operatorOwnedTowing(ctx context.Context, id, driverUserID stri
 func (h *Handler) TowingEstimate(c *gin.Context) {
 	var req TowingEstimateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	est, err := h.svc.EstimateTowing(c.Request.Context(), req)
@@ -440,7 +441,7 @@ func (h *Handler) TowingBook(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req TowingBookRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	j, err := h.svc.BookTowing(c.Request.Context(), userID, req, ginutil.IdempotencyKey(c))
@@ -522,7 +523,7 @@ func (h *Handler) TowingVerifyPin(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req VerifyPinRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.VerifyTowingPin(c.Request.Context(), c.Param("id"), userID, req.Pin); err != nil {

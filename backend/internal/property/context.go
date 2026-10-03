@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Service is the Property Management suite aggregation service. All reads are
@@ -432,7 +433,7 @@ func (h *Handler) GetContext(c *gin.Context) {
 	}
 	resp, err := h.svc.GetContext(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -451,14 +452,14 @@ func (h *Handler) SwitchContext(c *gin.Context) {
 		ContextID   string `json:"contextId" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ref, err := h.svc.SwitchContext(c.Request.Context(), userID, req.ContextType, req.ContextID)
 	if err != nil {
 		// Membership / validation failures are 403/400-shaped; surface as 403 since
 		// the common case is "no role in that context" (fail-closed).
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"activeContext": ref})
@@ -474,7 +475,7 @@ func (h *Handler) GetMyRentPassport(c *gin.Context) {
 	}
 	rp, err := h.svc.GetRentPassport(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, rp)
@@ -491,7 +492,7 @@ func (h *Handler) LookupRentPassport(c *gin.Context) {
 	}
 	rp, err := h.svc.GetRentPassport(c.Request.Context(), target)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, rp)

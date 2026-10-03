@@ -7,7 +7,10 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyError = "error"
 
 // AdminHandler is the admin control-plane HTTP surface. Every route is gated by
 // RBAC at the router (RequirePermission); SoD invariants (maker!=checker,
@@ -36,7 +39,7 @@ func (h *AdminHandler) ListSponsors(c *gin.Context) {
 func (h *AdminHandler) CreateSponsor(c *gin.Context) {
 	var sp Sponsor
 	if err := c.ShouldBindJSON(&sp); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateSponsor(c.Request.Context(), ginutil.UserID(c), &sp)
@@ -60,7 +63,7 @@ func (h *AdminHandler) ListAssets(c *gin.Context) {
 func (h *AdminHandler) CreateAsset(c *gin.Context) {
 	var a Asset
 	if err := c.ShouldBindJSON(&a); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateAsset(c.Request.Context(), ginutil.UserID(c), &a)
@@ -87,7 +90,7 @@ func (h *AdminHandler) PatchAsset(c *gin.Context) {
 		Location    *string `json:"location"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.PatchAsset(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.NAVKobo, body.Description, body.Location); err != nil {
@@ -105,7 +108,7 @@ func (h *AdminHandler) TitleVerify(c *gin.Context) {
 		Ref   string `json:"ref"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	a, err := h.svc.TitleVerify(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Clear, body.Ref)
@@ -121,7 +124,7 @@ func (h *AdminHandler) Transition(c *gin.Context) {
 		To string `json:"to" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	a, err := h.svc.Transition(c.Request.Context(), ginutil.UserID(c), c.Param("id"), AssetStatus(body.To))
@@ -149,7 +152,7 @@ func (h *AdminHandler) CapTableTransfer(c *gin.Context) {
 		Units    int64  `json:"units" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.TransferCapTable(c.Request.Context(), ginutil.UserID(c), body.AssetID, body.FromUser, body.ToUser, body.Units); err != nil {
@@ -162,7 +165,7 @@ func (h *AdminHandler) CapTableTransfer(c *gin.Context) {
 func (h *AdminHandler) CreateRound(c *gin.Context) {
 	var o Offering
 	if err := c.ShouldBindJSON(&o); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	o.AssetID = c.Param("id")
@@ -206,7 +209,7 @@ func (h *AdminHandler) ExtendRound(c *gin.Context) {
 		ExtraDays int `json:"extra_days" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	o, err := h.svc.ExtendOffering(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.ExtraDays)
@@ -304,7 +307,7 @@ func (h *AdminHandler) LimitOverride(c *gin.Context) {
 		ExpiresAt    string `json:"expires_at"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	var exp *time.Time
@@ -326,7 +329,7 @@ func (h *AdminHandler) Classify(c *gin.Context) {
 		IncomeKobo     int64  `json:"declared_annual_income_kobo"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.ClassifyInvestor(c.Request.Context(), ginutil.UserID(c), c.Param("id"), Classification(body.Classification), body.IncomeKobo); err != nil {
@@ -350,12 +353,12 @@ func (h *AdminHandler) ComplianceDashboard(c *gin.Context) {
 
 func (h *AdminHandler) ScheduleDistribution(c *gin.Context) {
 	if ginutil.IdempotencyKey(c) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": ErrIdempotencyKey.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, ErrIdempotencyKey)})
 		return
 	}
 	var req ScheduleDistributionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	d, err := h.svc.ScheduleDistribution(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req)
@@ -433,7 +436,7 @@ func (h *AdminHandler) MarketControls(c *gin.Context) {
 		FeeBps         int  `json:"fee_bps"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.UpdateMarketControls(c.Request.Context(), ginutil.UserID(c), body.TradingEnabled, body.FeeBps); err != nil {
@@ -477,7 +480,7 @@ func (h *AdminHandler) PresignDocument(c *gin.Context) {
 		ContentType string `json:"content_type"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if body.ContentType == "" {

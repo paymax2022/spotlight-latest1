@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	referralevents "spotlight/backend/internal/referral/events"
 	"spotlight/backend/internal/services"
@@ -291,7 +292,7 @@ func Register(member, admin *gin.RouterGroup, svc *Service, rbac services.RBACSe
 func (h *Handler) MemberList(c *gin.Context) {
 	list, err := h.svc.ListActive(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"campaigns": list})
@@ -313,7 +314,7 @@ func (h *Handler) MemberGet(c *gin.Context) {
 func (h *Handler) AdminList(c *gin.Context) {
 	list, err := h.svc.ListAll(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"campaigns": list})
@@ -336,7 +337,7 @@ func (h *Handler) AdminCreate(c *gin.Context) {
 	}
 	camp, err := h.svc.Create(c.Request.Context(), in, ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, camp)
@@ -350,7 +351,7 @@ func (h *Handler) AdminUpdate(c *gin.Context) {
 	}
 	camp, err := h.svc.Update(c.Request.Context(), c.Param("id"), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, camp)
@@ -362,7 +363,7 @@ func (h *Handler) AdminEnd(c *gin.Context)      { h.lifecycle(c, h.svc.End) }
 
 func (h *Handler) lifecycle(c *gin.Context, fn func(ctx context.Context, id string) error) {
 	if err := fn(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -377,7 +378,7 @@ func (h *Handler) AdminThrottle(c *gin.Context) {
 		return
 	}
 	if err := h.svc.Throttle(c.Request.Context(), c.Param("id"), body.Pct); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "throttle_pct": body.Pct})
@@ -391,7 +392,7 @@ func (h *Handler) AdminSetBudget(c *gin.Context) {
 	}
 	b, err := h.svc.SetBudget(c.Request.Context(), c.Param("id"), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, b)
@@ -400,7 +401,7 @@ func (h *Handler) AdminSetBudget(c *gin.Context) {
 func (h *Handler) AdminAnalytics(c *gin.Context) {
 	a, err := h.svc.Analytics(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, a)
@@ -413,7 +414,7 @@ func (h *Handler) AdminEvaluate(c *gin.Context) {
 	_ = c.ShouldBindJSON(&body)
 	a, err := h.svc.EvaluateGuardrails(c.Request.Context(), c.Param("id"), body.FraudBps)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, a)

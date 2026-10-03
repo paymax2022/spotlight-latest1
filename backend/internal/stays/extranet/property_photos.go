@@ -22,6 +22,7 @@ import (
 
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/platform/r2"
 )
 
@@ -296,7 +297,7 @@ func (h *Handler) PresignPhoto(c *gin.Context) {
 		MimeType string `json:"mime_type" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	uploadURL, key, err := h.svc.PresignPhotoUpload(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), b.MimeType)
@@ -319,7 +320,7 @@ func (h *Handler) CreatePhoto(c *gin.Context) {
 		Caption    string `json:"caption"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	photo, err := h.svc.ConfirmPhotoUpload(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), b.StorageKey, b.RoomTypeID, b.Caption)
@@ -350,7 +351,7 @@ func (h *Handler) UpdatePhoto(c *gin.Context) {
 		IsCover   *bool   `json:"is_cover"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	propertyID, photoID := c.Param("propertyId"), c.Param("photoId")

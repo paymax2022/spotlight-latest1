@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -51,7 +52,7 @@ func (h *Handler) MyAmbassador(c *gin.Context) {
 	}
 	a, err := h.svc.MyAmbassador(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ambassador": a})
@@ -70,7 +71,7 @@ func (h *Handler) Apply(c *gin.Context) {
 	}
 	a, err := h.svc.Apply(c.Request.Context(), uid, in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, a)
@@ -84,7 +85,7 @@ func (h *Handler) MyNetworks(c *gin.Context) {
 	}
 	nets, err := h.svc.MyNetworks(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"networks": nets})
@@ -98,7 +99,7 @@ func (h *Handler) NetworkMembers(c *gin.Context) {
 	}
 	members, err := h.svc.NetworkMembers(c.Request.Context(), c.Param("id"), uid, false)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"members": members})
@@ -112,7 +113,7 @@ func (h *Handler) MyOverrides(c *gin.Context) {
 	}
 	rows, err := h.svc.MyOverrides(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"overrides": rows})
@@ -121,7 +122,7 @@ func (h *Handler) MyOverrides(c *gin.Context) {
 func (h *Handler) Directory(c *gin.Context) {
 	list, err := h.svc.Directory(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ambassadors": list})
@@ -136,7 +137,7 @@ func (h *Handler) SetStatus(c *gin.Context) {
 		return
 	}
 	if err := h.svc.SetStatus(c.Request.Context(), c.Param("id"), body.Status, ginutil.UserID(c)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -147,7 +148,7 @@ func (h *Handler) SetStatus(c *gin.Context) {
 func (h *Handler) ListNetworks(c *gin.Context) {
 	list, err := h.svc.ListNetworks(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"networks": list})
@@ -156,7 +157,7 @@ func (h *Handler) ListNetworks(c *gin.Context) {
 func (h *Handler) ListPolicies(c *gin.Context) {
 	list, err := h.svc.ListPolicies(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"policies": list})
@@ -170,7 +171,7 @@ func (h *Handler) SetPolicy(c *gin.Context) {
 	}
 	p, err := h.svc.SetPolicy(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, p)
@@ -189,7 +190,7 @@ func (h *Handler) AccrueOverride(c *gin.Context) {
 	}
 	o, err := h.svc.AccrueOverride(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if o == nil {

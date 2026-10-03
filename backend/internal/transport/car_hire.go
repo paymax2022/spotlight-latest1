@@ -12,6 +12,7 @@ import (
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // State machine:
@@ -456,7 +457,7 @@ func (s *Service) ListCarHire(ctx context.Context, userID string) ([]map[string]
 func (h *Handler) CarHireQuote(c *gin.Context) {
 	var req CarHireQuoteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	q, err := h.svc.QuoteCarHire(c.Request.Context(), req)
@@ -472,7 +473,7 @@ func (h *Handler) CarHireBook(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req CarHireBookRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.BookCarHire(c.Request.Context(), userID, req, ginutil.IdempotencyKey(c))
@@ -520,7 +521,7 @@ func (h *Handler) CarHireExtend(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req CarHireExtendRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	key := ginutil.IdempotencyKey(c)

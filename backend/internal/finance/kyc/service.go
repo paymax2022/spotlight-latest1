@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/argon2"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // VAProvisioner provisions a user's virtual account on tier upgrade. Kept as a
@@ -276,7 +277,7 @@ func (h *Handler) GetMe(c *gin.Context) {
 	}
 	profile, err := h.svc.GetProfile(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, profile)

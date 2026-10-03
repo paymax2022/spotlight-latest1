@@ -8,11 +8,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	feesschool "spotlight/backend/internal/academy/fees/school"
 	feessession "spotlight/backend/internal/academy/fees/session"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
+
+const keyError = "error"
 
 // Handler serves the flat admin oversight surface at /api/academy/admin/fees/*. It is
 // read-heavy: list/aggregate GETs plus a handful of config writes that have real backing
@@ -44,7 +51,7 @@ func actorID(c *gin.Context) string {
 }
 
 func (h *Handler) fail(c *gin.Context, err error) {
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+	c.JSON(http.StatusInternalServerError, gin.H{keyError: "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 }
 
 // RegisterFeesAdminAPI mounts the flat admin oversight surface under the passed admin
@@ -171,7 +178,7 @@ func (h *Handler) ListFeeSchedules(c *gin.Context) {
 func (h *Handler) CreateFeeSchedule(c *gin.Context) {
 	var req CreateFeeScheduleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	feeItemsJSON := "[]"
@@ -217,7 +224,7 @@ func (h *Handler) CreateSchool(c *gin.Context) {
 	}
 	var req CreateSchoolAdminRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.schoolSvc.Create(c.Request.Context(), actorID(c), feesschool.CreateSchoolRequest{
@@ -243,7 +250,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	}
 	var req CreateSessionAdminRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.sessionSvc.CreateSession(c.Request.Context(), actorID(c), req.SchoolID, feessession.CreateSessionRequest{
@@ -268,7 +275,7 @@ func (h *Handler) CreateClass(c *gin.Context) {
 	}
 	var req CreateClassAdminRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.sessionSvc.CreateClass(c.Request.Context(), actorID(c), req.SchoolID, feessession.CreateClassRequest{
@@ -289,14 +296,14 @@ func (h *Handler) CreateClass(c *gin.Context) {
 func (h *Handler) failCreate(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, feesschool.ErrUnauthenticated), errors.Is(err, feessession.ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, feesschool.ErrMissingName), errors.Is(err, feessession.ErrMissingName),
 		errors.Is(err, feessession.ErrInvalidDate):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, feessession.ErrSchoolMismatch):
-		c.JSON(http.StatusConflict, gin.H{"error": "school_mismatch", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "school_mismatch", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, feessession.ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	default:
 		h.fail(c, err)
 	}
@@ -310,7 +317,7 @@ func (h *Handler) IssueFeeSchedule(c *gin.Context) {
 		return
 	}
 	if !found {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": "fee schedule not found"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: "fee schedule not found"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": FeeScheduleIssueResult{
@@ -375,7 +382,7 @@ func (h *Handler) ListGovOptIns(c *gin.Context) {
 func (h *Handler) SetGovOptIn(c *gin.Context) {
 	var req SetGovOptInRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.repo.SetGovOptIn(c.Request.Context(), req.SchoolID, req.Category, actorID(c), req.OptedIn)

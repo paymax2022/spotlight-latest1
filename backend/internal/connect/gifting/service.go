@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strings"
 	"time"
 
@@ -203,7 +204,7 @@ func mapMoneyError(c *gin.Context, err error) {
 	case errors.Is(err, ErrGiftNotFound):
 		c.JSON(http.StatusNotFound, gin.H{keyError: "gift not found or inactive"})
 	case errors.Is(err, ErrInvalidAmount), errors.Is(err, ErrAmbiguousAmount), errors.Is(err, ErrSelfGift):
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
 		msg := err.Error()
 		switch {
@@ -228,7 +229,7 @@ func (h *Handler) SendGift(c *gin.Context) {
 	}
 	var req SendGiftRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	g, err := h.svc.Send(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
@@ -244,7 +245,7 @@ func (h *Handler) ListSent(c *gin.Context) {
 	limit, _ := ginutil.LimitOffset(c)
 	gifts, err := h.svc.ListSent(c.Request.Context(), ginutil.UserID(c), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: gifts})
@@ -255,7 +256,7 @@ func (h *Handler) ListReceived(c *gin.Context) {
 	limit, _ := ginutil.LimitOffset(c)
 	gifts, err := h.svc.ListReceived(c.Request.Context(), ginutil.UserID(c), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: gifts})
@@ -265,7 +266,7 @@ func (h *Handler) ListReceived(c *gin.Context) {
 func (h *Handler) Catalog(c *gin.Context) {
 	items, err := h.svc.Catalog(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: items})

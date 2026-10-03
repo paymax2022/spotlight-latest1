@@ -13,6 +13,7 @@ import (
 
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // State machine:
@@ -593,7 +594,7 @@ func (s *Service) courierOwnedParcel(ctx context.Context, id, driverUserID strin
 func (h *Handler) ParcelEstimate(c *gin.Context) {
 	var req ParcelEstimateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	est, err := h.svc.EstimateParcel(c.Request.Context(), req)
@@ -609,7 +610,7 @@ func (h *Handler) ParcelBook(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req ParcelBookRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.BookParcel(c.Request.Context(), userID, req, ginutil.IdempotencyKey(c))
@@ -681,7 +682,7 @@ func (h *Handler) ParcelVerifyPickupPin(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req VerifyPinRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.VerifyParcelPickupPin(c.Request.Context(), c.Param("id"), userID, req.Pin); err != nil {
@@ -708,7 +709,7 @@ func (h *Handler) ParcelVerifyDropoff(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req ParcelVerifyDropoffRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.VerifyParcelDropoff(c.Request.Context(), c.Param("id"), userID, req.Pin, req.ProofURL); err != nil {

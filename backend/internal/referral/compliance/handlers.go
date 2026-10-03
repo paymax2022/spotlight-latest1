@@ -6,9 +6,14 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyInvalidBody = "invalid body"
+
+const keyError = "error"
 
 // Handler exposes member + admin compliance endpoints.
 type Handler struct {
@@ -58,11 +63,11 @@ func uid(c *gin.Context) string {
 func (h *Handler) ActiveDisclosure(c *gin.Context) {
 	d, err := h.svc.ActiveDisclosure(c.Request.Context(), c.Param("slug"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if d == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no active disclosure"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "no active disclosure"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"disclosure": d})
@@ -71,12 +76,12 @@ func (h *Handler) ActiveDisclosure(c *gin.Context) {
 func (h *Handler) MyConsents(c *gin.Context) {
 	id := uid(c)
 	if id == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "unauthenticated"})
 		return
 	}
 	list, err := h.svc.MyConsents(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"consents": list})
@@ -85,17 +90,17 @@ func (h *Handler) MyConsents(c *gin.Context) {
 func (h *Handler) RecordConsent(c *gin.Context) {
 	id := uid(c)
 	if id == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "unauthenticated"})
 		return
 	}
 	var in ConsentInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	cons, err := h.svc.RecordConsent(c.Request.Context(), id, in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"consent": cons})
@@ -104,7 +109,7 @@ func (h *Handler) RecordConsent(c *gin.Context) {
 func (h *Handler) ListDisclosures(c *gin.Context) {
 	list, err := h.svc.ListDisclosures(c.Request.Context(), c.Query("slug"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"disclosures": list})
@@ -113,12 +118,12 @@ func (h *Handler) ListDisclosures(c *gin.Context) {
 func (h *Handler) PublishDisclosure(c *gin.Context) {
 	var in DisclosureInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	d, err := h.svc.PublishDisclosure(c.Request.Context(), in, uid(c))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"disclosure": d})
@@ -127,7 +132,7 @@ func (h *Handler) PublishDisclosure(c *gin.Context) {
 func (h *Handler) ListAML(c *gin.Context) {
 	list, err := h.svc.ListAML(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"flags": list})
@@ -136,12 +141,12 @@ func (h *Handler) ListAML(c *gin.Context) {
 func (h *Handler) RaiseAML(c *gin.Context) {
 	var in AMLFlagInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	f, err := h.svc.RaiseAML(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"flag": f})
@@ -153,11 +158,11 @@ func (h *Handler) SetAMLStatus(c *gin.Context) {
 		ReportedRef string `json:"reported_ref"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	if err := h.svc.SetAMLStatus(c.Request.Context(), c.Param("id"), body.Status, body.ReportedRef); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -166,7 +171,7 @@ func (h *Handler) SetAMLStatus(c *gin.Context) {
 func (h *Handler) UserConsents(c *gin.Context) {
 	list, err := h.svc.UserConsents(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"consents": list})
@@ -175,7 +180,7 @@ func (h *Handler) UserConsents(c *gin.Context) {
 func (h *Handler) GetPolicy(c *gin.Context) {
 	p, err := h.svc.GetPolicy(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"policy": p})
@@ -184,12 +189,12 @@ func (h *Handler) GetPolicy(c *gin.Context) {
 func (h *Handler) UpdatePolicy(c *gin.Context) {
 	var in PolicyInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
 	p, err := h.svc.UpdatePolicy(c.Request.Context(), in, uid(c))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"policy": p})
@@ -198,7 +203,7 @@ func (h *Handler) UpdatePolicy(c *gin.Context) {
 func (h *Handler) ClaimReview(c *gin.Context) {
 	list, err := h.svc.ClaimReview(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"claims": list})
@@ -207,7 +212,7 @@ func (h *Handler) ClaimReview(c *gin.Context) {
 func (h *Handler) RegulatoryExport(c *gin.Context) {
 	rows, err := h.svc.RegulatoryExport(c.Request.Context(), c.Query("since"), c.Query("until"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"rows": rows})

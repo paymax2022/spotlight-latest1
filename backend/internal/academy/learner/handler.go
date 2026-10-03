@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Handler exposes the per-learner surface over Gin. All routes are member-scoped
@@ -78,7 +79,7 @@ func (h *Handler) CreateBookmark(c *gin.Context) {
 	}
 	var req CreateBookmarkRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateBookmark(c.Request.Context(), ginutil.UserID(c), req)
@@ -118,7 +119,7 @@ func (h *Handler) CreateNote(c *gin.Context) {
 	}
 	var req CreateNoteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreateNote(c.Request.Context(), ginutil.UserID(c), req)

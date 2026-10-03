@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/escrow"
 	"spotlight/backend/internal/finance/tiers"
 	"strings"
@@ -1656,7 +1657,7 @@ func failCreateOrder(c *gin.Context, err error) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"success":     false,
 			"code":        CodeQtyCapExceeded,
-			"error":       qe.Error(),
+			"error":       httperr.Msg(c, http.StatusUnprocessableEntity, qe),
 			"product_id":  qe.ProductID,
 			"max_qty":     qe.MaxQty,
 			"window_days": qe.WindowDays,

@@ -17,6 +17,8 @@ import (
 	"spotlight/backend/internal/services"
 )
 
+const keyError = "error"
+
 // Handler exposes the business-registry API over Gin.
 type Handler struct{ svc *Service }
 
@@ -51,18 +53,18 @@ var errMap = httperr.New(http.StatusInternalServerError,
 
 func (h *Handler) fail(c *gin.Context, err error) {
 	code := errMap.Code(err)
-	body := gin.H{"error": err.Error()}
+	body := gin.H{keyError: httperr.Msg(c, code, err)}
 	switch {
 	case errors.Is(err, ErrNotFound):
-		body["error"] = "not found"
+		body[keyError] = "not found"
 	case errors.Is(err, ErrCertNotReady):
-		body["error"] = "certificate not available yet"
+		body[keyError] = "certificate not available yet"
 	case errors.Is(err, ErrForbidden):
-		body["error"] = "forbidden"
+		body[keyError] = "forbidden"
 	case errors.Is(err, ErrDuplicate):
-		body["error"] = "a business with this registration number already exists"
+		body[keyError] = "a business with this registration number already exists"
 	case errors.Is(err, ErrProvider):
-		body["error"] = "business registry provider error"
+		body[keyError] = "business registry provider error"
 	}
 	c.JSON(code, body)
 }
@@ -70,7 +72,7 @@ func (h *Handler) fail(c *gin.Context, err error) {
 func (h *Handler) CheckName(c *gin.Context) {
 	var req NameCheckRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.CheckName(c.Request.Context(), userID(c), req)
@@ -84,7 +86,7 @@ func (h *Handler) CheckName(c *gin.Context) {
 func (h *Handler) ReserveName(c *gin.Context) {
 	var req ReserveRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	prof, err := h.svc.ReserveName(c.Request.Context(), userID(c), userEmail(c), "", req.BusinessID)
@@ -98,7 +100,7 @@ func (h *Handler) ReserveName(c *gin.Context) {
 func (h *Handler) VerifyExisting(c *gin.Context) {
 	var req VerifyExistingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	prof, err := h.svc.StartVerifyExisting(c.Request.Context(), userID(c), req)
@@ -112,7 +114,7 @@ func (h *Handler) VerifyExisting(c *gin.Context) {
 func (h *Handler) RegisterNew(c *gin.Context) {
 	var req RegisterNewRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	prof, err := h.svc.StartRegisterNew(c.Request.Context(), userID(c), req)
@@ -250,7 +252,7 @@ func (h *Handler) AdminApprove(c *gin.Context) {
 func (h *Handler) AdminReject(c *gin.Context) {
 	var req RejectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "reason is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "reason is required"})
 		return
 	}
 	prof, err := h.svc.AdminReject(c.Request.Context(), userID(c), c.Param("id"), req.Reason)

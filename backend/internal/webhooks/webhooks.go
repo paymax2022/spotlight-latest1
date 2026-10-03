@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"io"
 	"net/http"
+	"spotlight/backend/go-common/httperr"
 	mapleraddomain "spotlight/backend/internal/finance/maplerad"
 	"spotlight/backend/internal/finance/transfers"
 	"spotlight/backend/internal/finance/va"
@@ -15,6 +16,8 @@ import (
 	"strings"
 	"time"
 )
+
+const keyError = "error"
 
 // MapleradHandler is the single hardened Maplerad webhook endpoint (ADR-012
 // settlement backbone). Pipeline: read raw body → verify signature → parse →
@@ -63,7 +66,7 @@ func (h *MapleradHandler) Handle(c *gin.Context) {
 	if err := h.svc.HandleWebhookEvent(ctx, ev); err != nil {
 		// Deterministic processing failure → still 200 so Maplerad stops retrying;
 		// the event is recorded in webhook_event with status=failed for follow-up.
-		c.JSON(http.StatusOK, gin.H{"ok": false, "error": err.Error()})
+		c.JSON(http.StatusOK, gin.H{"ok": false, keyError: httperr.Msg(c, http.StatusOK, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -106,7 +109,7 @@ func (h *MonnifyHandler) Handle(c *gin.Context) {
 
 	if err := h.xferSvc.HandleProviderWebhook(ctx, ev); err != nil {
 		// Always 200 for deterministic failures so Monnify stops retrying.
-		c.JSON(http.StatusOK, gin.H{"ok": false, "error": err.Error()})
+		c.JSON(http.StatusOK, gin.H{"ok": false, keyError: httperr.Msg(c, http.StatusOK, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -286,7 +289,7 @@ func (h *PaystackHandler) Handle(c *gin.Context) {
 	// Errors are logged but we always return 200 to stop Paystack retrying
 	// for deterministic failures (e.g. unknown reference).
 	if dispatchErr != nil {
-		c.JSON(http.StatusOK, gin.H{"ok": false, "error": dispatchErr.Error()})
+		c.JSON(http.StatusOK, gin.H{"ok": false, keyError: httperr.Msg(c, http.StatusOK, dispatchErr)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

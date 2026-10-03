@@ -24,6 +24,7 @@ import (
 
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/strutil"
 	cfgpkg "spotlight/backend/internal/referral/config"
 	"spotlight/backend/internal/referral/events"
@@ -435,7 +436,7 @@ func (h *Handler) MyAttribution(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, att)
@@ -480,7 +481,7 @@ func (h *Handler) ClaimCode(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{
 				"error": "no attribution to claim", "reason": "no_attribution"})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		}
 		return
 	}
@@ -497,7 +498,7 @@ func (h *Handler) ListReassignments(c *gin.Context) {
 		LIMIT 200`
 	rows, err := h.db.Query(c.Request.Context(), q)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	defer rows.Close()
@@ -512,7 +513,7 @@ func (h *Handler) ListReassignments(c *gin.Context) {
 		)
 		if err := rows.Scan(&id, &attrID, &fromP, &toP, &reason, &reqBy, &cosign,
 			&benefitsHouse, &status, &createdAt, &decidedAt); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 			return
 		}
 		out = append(out, gin.H{
@@ -560,7 +561,7 @@ func (h *Handler) Reassign(c *gin.Context) {
 		case errors.Is(err, ErrNoAttribution):
 			c.JSON(http.StatusNotFound, gin.H{"error": "attribution not found"})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		}
 		return
 	}

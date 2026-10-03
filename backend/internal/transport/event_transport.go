@@ -11,6 +11,7 @@ import (
 
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Organizer (event owner) publishes event_transport_offers tied to a Spotlight
@@ -419,7 +420,7 @@ func (h *Handler) EventOfferCreate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req EventOfferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	offer, err := h.svc.CreateEventOffer(c.Request.Context(), userID, req)
@@ -445,7 +446,7 @@ func (h *Handler) EventBook(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req EventBookRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	booking, err := h.svc.BookEventTransport(c.Request.Context(), userID, c.Param("id"), req, ginutil.IdempotencyKey(c))
@@ -484,7 +485,7 @@ func (h *Handler) EventValidate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req EventValidateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.ValidateEventBooking(c.Request.Context(), userID, req.QRCode)

@@ -10,9 +10,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyError = "error"
 
 // estate_admin_routes.go — Paymax Estate super-app PLATFORM admin oversight.
 // WHY THIS FILE EXISTS
@@ -136,7 +139,7 @@ func limitOf(c *gin.Context, def int) int {
 func (h *estateAdminHandler) jsonRows(c *gin.Context, sql string, args []any, scan func(rows pgxRows) (map[string]any, error)) {
 	rows, err := h.pool.Query(c.Request.Context(), sql, args...)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	defer rows.Close()
@@ -144,13 +147,13 @@ func (h *estateAdminHandler) jsonRows(c *gin.Context, sql string, args []any, sc
 	for rows.Next() {
 		m, err := scan(rows)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 			return
 		}
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -586,7 +589,7 @@ SELECT
 	var ballots, distinct, candidates int64
 	var status *string
 	if err := h.pool.QueryRow(c.Request.Context(), q, electionID).Scan(&ballots, &distinct, &candidates, &status); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{

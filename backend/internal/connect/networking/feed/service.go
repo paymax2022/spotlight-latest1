@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
@@ -16,6 +17,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const keyError = "error"
 
 var (
 	ErrNotFound     = errors.New("connect: post not found")
@@ -481,13 +484,13 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrMissingIdem):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "Idempotency-Key header required"})
 	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -495,7 +498,7 @@ func fail(c *gin.Context, err error) {
 func (h *Handler) Compose(c *gin.Context) {
 	var in ComposePostInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.Compose(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), in)
@@ -525,7 +528,7 @@ func (h *Handler) PostDetail(c *gin.Context) {
 func (h *Handler) React(c *gin.Context) {
 	var in ReactInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.React(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), c.Param("id"), in)
@@ -540,7 +543,7 @@ func (h *Handler) React(c *gin.Context) {
 func (h *Handler) Comment(c *gin.Context) {
 	var in CommentInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	cm, err := h.svc.Comment(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), c.Param("id"), in)
@@ -577,7 +580,7 @@ func (h *Handler) HashtagFeed(c *gin.Context) {
 func (h *Handler) Moderate(c *gin.Context) {
 	var in ModerationInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.Moderate(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)

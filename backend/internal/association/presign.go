@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/internal/platform/r2"
@@ -140,7 +141,7 @@ func (h *Handler) PresignLogoUpload(c *gin.Context) {
 
 	var req PresignLogoUploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -242,7 +243,7 @@ func (h *Handler) PresignDocumentUpload(c *gin.Context) {
 
 	var req PresignLogoUploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ct := strings.ToLower(strings.TrimSpace(req.ContentType))

@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/insurance/gateway"
@@ -18,6 +19,8 @@ import (
 	"strings"
 	"time"
 )
+
+const keyError = "error"
 
 // Notifier emits user-facing notifications (cover bound / top-up offer).
 type Notifier interface {
@@ -356,7 +359,7 @@ func (h *Handler) Trigger(c *gin.Context) {
 		Inputs         map[string]any `json:"inputs"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	uid := body.UserID
@@ -364,7 +367,7 @@ func (h *Handler) Trigger(c *gin.Context) {
 		uid = ginutil.UserID(c)
 	}
 	if uid == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "user_id required"})
 		return
 	}
 	res, err := h.svc.Handle(c.Request.Context(), EmbeddedEvent{
@@ -375,7 +378,7 @@ func (h *Handler) Trigger(c *gin.Context) {
 		Inputs:         body.Inputs,
 	})
 	if err != nil {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": res})

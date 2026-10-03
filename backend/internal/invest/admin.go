@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/jsonx"
 	"strconv"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 )
+
+const keyError = "error"
 
 // Admin repository methods (RBAC-gated; every mutation is audited by the service)
 
@@ -199,7 +202,7 @@ func NewAdminHandler(svc *Service) *AdminHandler { return &AdminHandler{svc: svc
 func (h *AdminHandler) Overview(c *gin.Context) {
 	counts, err := h.svc.repo.OverviewCounts(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, counts)
@@ -208,7 +211,7 @@ func (h *AdminHandler) Overview(c *gin.Context) {
 func (h *AdminHandler) ListAssets(c *gin.Context) {
 	assets, err := h.svc.repo.ListAllAssets(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": assets})
@@ -217,16 +220,16 @@ func (h *AdminHandler) ListAssets(c *gin.Context) {
 func (h *AdminHandler) CreateAsset(c *gin.Context) {
 	var a StockAsset
 	if err := c.ShouldBindJSON(&a); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if a.Symbol == "" || a.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "symbol and name are required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "symbol and name are required"})
 		return
 	}
 	created, err := h.svc.repo.CreateAsset(c.Request.Context(), a)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	_ = h.svc.repo.InsertAudit(c.Request.Context(), ginutil.AdminID(c), "asset.create", "stock_asset", created.ID, "", nil, created)
@@ -247,12 +250,12 @@ func (h *AdminHandler) UpdateAsset(c *gin.Context) {
 		Reason             string  `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	before, err := h.svc.repo.GetStockByID(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "asset not found"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "asset not found"})
 		return
 	}
 	fields := map[string]any{}
@@ -279,7 +282,7 @@ func (h *AdminHandler) UpdateAsset(c *gin.Context) {
 	}
 	updated, err := h.svc.repo.UpdateAssetFields(c.Request.Context(), id, fields)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	_ = h.svc.repo.InsertAudit(c.Request.Context(), ginutil.AdminID(c), "asset.update", "stock_asset", id, body.Reason, before, updated)
@@ -290,7 +293,7 @@ func (h *AdminHandler) ListOrders(c *gin.Context) {
 	limit, offset := adminPage(c, 50)
 	orders, err := h.svc.repo.ListAllOrders(c.Request.Context(), c.Query("status"), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": orders})
@@ -300,7 +303,7 @@ func (h *AdminHandler) FailedOrders(c *gin.Context) {
 	limit, offset := adminPage(c, 50)
 	orders, err := h.svc.repo.ListAllOrders(c.Request.Context(), "Failed", limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": orders})
@@ -310,7 +313,7 @@ func (h *AdminHandler) PendingSettlements(c *gin.Context) {
 	limit, _ := adminPage(c, 100)
 	orders, err := h.svc.repo.DueSettlements(c.Request.Context(), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	// Also surface all PendingSettlement (not just due) for visibility.
@@ -322,7 +325,7 @@ func (h *AdminHandler) PendingSettlements(c *gin.Context) {
 func (h *AdminHandler) RunSettlement(c *gin.Context) {
 	n, err := h.svc.ProcessDueSettlements(c.Request.Context(), 200)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	_ = h.svc.repo.InsertAudit(c.Request.Context(), ginutil.AdminID(c), "settlement.run", "settlement", "", "", nil, gin.H{"processed": n})
@@ -332,7 +335,7 @@ func (h *AdminHandler) RunSettlement(c *gin.Context) {
 func (h *AdminHandler) GetFees(c *gin.Context) {
 	fc, err := h.svc.repo.GetFeeConfig(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, fc)
@@ -345,17 +348,17 @@ func (h *AdminHandler) UpdateFees(c *gin.Context) {
 		Reason        string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if body.CommissionBPS < 0 || body.CommissionBPS > 1000 || body.MinFeeKobo < 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "fee out of allowed range"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "fee out of allowed range"})
 		return
 	}
 	before, _ := h.svc.repo.GetFeeConfig(c.Request.Context())
 	fc := FeeConfig{CommissionBPS: body.CommissionBPS, MinFeeKobo: body.MinFeeKobo}
 	if err := h.svc.repo.UpdateFeeConfig(c.Request.Context(), fc, ginutil.AdminID(c)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	_ = h.svc.repo.InsertAudit(c.Request.Context(), ginutil.AdminID(c), "fees.update", "fee_config", "", body.Reason, before, fc)
@@ -366,7 +369,7 @@ func (h *AdminHandler) AuditLog(c *gin.Context) {
 	limit, offset := adminPage(c, 50)
 	logs, err := h.svc.repo.ListAudit(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": logs})
@@ -494,7 +497,7 @@ func (h *AdminHandler) ListDividends(c *gin.Context) {
 	limit, offset := adminPage(c, 50)
 	d, err := h.svc.repo.ListDividends(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": d})
@@ -510,7 +513,7 @@ func (h *AdminHandler) CreateDividend(c *gin.Context) {
 		Source             string `json:"source"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, err := h.svc.repo.InsertDividend(c.Request.Context(), body.Symbol, body.AmountPerShareKobo,
@@ -527,7 +530,7 @@ func (h *AdminHandler) ListCorporateActions(c *gin.Context) {
 	limit, offset := adminPage(c, 50)
 	a, err := h.svc.repo.ListCorporateActions(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": a})
@@ -545,7 +548,7 @@ func (h *AdminHandler) CreateCorporateAction(c *gin.Context) {
 		Source        string `json:"source"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	id, err := h.svc.repo.InsertCorporateAction(c.Request.Context(), body.Symbol, strings.ToLower(body.Type),

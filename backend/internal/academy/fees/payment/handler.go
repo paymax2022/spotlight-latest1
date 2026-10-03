@@ -7,8 +7,11 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 )
+
+const keyMessage = "message"
 
 // Handler exposes the fees PAYMENT-INTENT routes over Gin. It exposes ONLY the intent-creation
 // endpoints (checkout session start); the confirmation path (OnChargeSuccess) is NOT an HTTP
@@ -45,25 +48,25 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrUnknownReference):
-		c.JSON(http.StatusNotFound, gin.H{"error": "unknown_reference", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "unknown_reference", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrMissingInvoice):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_invoice", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_invoice", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrIdempotencyRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrDisclosureRequired):
-		c.JSON(http.StatusConflict, gin.H{"error": "disclosure_required", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "disclosure_required", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrChargeNotSuccessful):
-		c.JSON(http.StatusConflict, gin.H{"error": "charge_not_successful", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "charge_not_successful", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrAmountMismatch):
-		c.JSON(http.StatusConflict, gin.H{"error": "amount_mismatch", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "amount_mismatch", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -99,7 +102,7 @@ func (h *Handler) CreateIntent(c *gin.Context) {
 	}
 	var req CreatePaymentIntentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreatePaymentIntent(c.Request.Context(), u, req, ginutil.IdempotencyKey(c))
@@ -117,7 +120,7 @@ func (h *Handler) PayInstallment(c *gin.Context) {
 	}
 	var req PayInstallmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.PayInstallment(c.Request.Context(), u, req, ginutil.IdempotencyKey(c))

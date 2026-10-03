@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // BusRoutes searches routes by origin/dest.
@@ -38,7 +39,7 @@ func (h *Handler) BusBook(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req BusBookRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ticket, err := h.svc.BookBusTicket(c.Request.Context(), userID, req, ginutil.IdempotencyKey(c))
@@ -108,7 +109,7 @@ func (h *Handler) BusProviderRegister(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req BusProviderRegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	prov, err := h.svc.RegisterBusProvider(c.Request.Context(), userID, req)
@@ -134,7 +135,7 @@ func (h *Handler) BusProviderUpdate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req BusProviderUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	prov, err := h.svc.UpdateMyBusProvider(c.Request.Context(), userID, req)
@@ -150,7 +151,7 @@ func (h *Handler) BusProviderRouteCreate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req BusProviderRouteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	route, err := h.svc.CreateProviderRoute(c.Request.Context(), userID, req)
@@ -166,7 +167,7 @@ func (h *Handler) BusProviderRouteUpdate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req BusProviderRoutePatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	route, err := h.svc.UpdateProviderRoute(c.Request.Context(), userID, c.Param("id"), req)
@@ -182,7 +183,7 @@ func (h *Handler) BusProviderScheduleCreate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req BusProviderScheduleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	sched, err := h.svc.CreateProviderSchedule(c.Request.Context(), userID, c.Param("id"), req)
@@ -213,7 +214,7 @@ func (h *Handler) BusProviderTemplateCreate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req BusDepartureTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	tmpl, err := h.svc.CreateDepartureTemplate(c.Request.Context(), userID, req.RouteID, req)
@@ -239,7 +240,7 @@ func (h *Handler) BusProviderTemplateSetActive(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req BusDepartureTemplateActiveRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	tmpl, err := h.svc.SetDepartureTemplateActive(c.Request.Context(), userID, c.Param("id"), req.Active)
@@ -264,7 +265,7 @@ func (h *Handler) BusValidate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req BusValidateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.ValidateBusTicket(c.Request.Context(), userID, req.QRCode)
@@ -290,7 +291,7 @@ func (h *AdminHandler) AdminBusCreateRoute(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var req BusRouteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	r, err := h.svc.CreateBusRoute(c.Request.Context(), adminID, req)
@@ -306,7 +307,7 @@ func (h *AdminHandler) AdminBusCreateSchedule(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var req BusScheduleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	sch, err := h.svc.CreateBusSchedule(c.Request.Context(), adminID, req)

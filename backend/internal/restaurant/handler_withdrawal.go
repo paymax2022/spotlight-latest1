@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 )
@@ -31,12 +32,12 @@ func (h *Handler) AddBankAccount(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req AddBankAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.AddBankAccount(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, b)
@@ -46,7 +47,7 @@ func (h *Handler) ListBankAccounts(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	list, err := h.svc.ListBankAccounts(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": list})
@@ -55,7 +56,7 @@ func (h *Handler) ListBankAccounts(c *gin.Context) {
 func (h *Handler) SetDefaultBankAccount(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if err := h.svc.SetDefaultBankAccount(c.Request.Context(), userID, c.Param("accountId")); err != nil {
-		c.JSON(ownerErrStatusWithdraw(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatusWithdraw(err), gin.H{keyError: httperr.Msg(c, ownerErrStatusWithdraw(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"updated": true})
@@ -64,7 +65,7 @@ func (h *Handler) SetDefaultBankAccount(c *gin.Context) {
 func (h *Handler) DeleteBankAccount(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if err := h.svc.DeleteBankAccount(c.Request.Context(), userID, c.Param("accountId")); err != nil {
-		c.JSON(ownerErrStatusWithdraw(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatusWithdraw(err), gin.H{keyError: httperr.Msg(c, ownerErrStatusWithdraw(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
@@ -76,12 +77,12 @@ func (h *Handler) VerifyBankAccount(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req AddBankAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	result, err := h.svc.VerifyBankAccount(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -111,7 +112,7 @@ func (h *Handler) RequestWithdrawal(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	idem := ginutil.IdempotencyKey(c)
 	if idem == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "Idempotency-Key is required"})
 		return
 	}
 	var body struct {
@@ -119,7 +120,7 @@ func (h *Handler) RequestWithdrawal(c *gin.Context) {
 		BankAccountID string `json:"bank_account_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	w, err := h.svc.RequestWithdrawal(c.Request.Context(), userID, RequestWithdrawalInput{
@@ -128,7 +129,7 @@ func (h *Handler) RequestWithdrawal(c *gin.Context) {
 		IdempotencyKey: idem,
 	})
 	if err != nil {
-		c.JSON(withdrawalErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(withdrawalErrStatus(err), gin.H{keyError: httperr.Msg(c, withdrawalErrStatus(err), err)})
 		return
 	}
 	// An idempotent replay returns 200 (already processed); a fresh reserve is 201.
@@ -143,7 +144,7 @@ func (h *Handler) ListWithdrawals(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	list, err := h.svc.ListWithdrawals(c.Request.Context(), userID, 50)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": list})
@@ -153,7 +154,7 @@ func (h *Handler) GetWithdrawal(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	w, err := h.svc.GetWithdrawal(c.Request.Context(), userID, c.Param("withdrawalId"))
 	if err != nil {
-		c.JSON(withdrawalErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(withdrawalErrStatus(err), gin.H{keyError: httperr.Msg(c, withdrawalErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": w})
@@ -165,7 +166,7 @@ func (h *Handler) AdminListWithdrawals(c *gin.Context) {
 	status := c.Query("status")
 	list, err := h.svc.AdminListWithdrawals(c.Request.Context(), status, 100)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": list})
@@ -175,7 +176,7 @@ func (h *Handler) AdminListWithdrawals(c *gin.Context) {
 func (h *Handler) AdminGetWithdrawal(c *gin.Context) {
 	w, err := h.svc.AdminGetWithdrawal(c.Request.Context(), c.Param("withdrawalId"))
 	if err != nil {
-		c.JSON(withdrawalErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(withdrawalErrStatus(err), gin.H{keyError: httperr.Msg(c, withdrawalErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": w})
@@ -188,7 +189,7 @@ func (h *Handler) AdminSettleWithdrawal(c *gin.Context) {
 	_ = c.ShouldBindJSON(&body)
 	w, err := h.svc.MarkWithdrawalPaid(c.Request.Context(), c.Param("withdrawalId"), body.ProviderReference, ginutil.IdempotencyKey(c))
 	if err != nil {
-		c.JSON(withdrawalErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(withdrawalErrStatus(err), gin.H{keyError: httperr.Msg(c, withdrawalErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": w})
@@ -201,7 +202,7 @@ func (h *Handler) AdminReverseWithdrawal(c *gin.Context) {
 	_ = c.ShouldBindJSON(&body)
 	w, err := h.svc.MarkWithdrawalFailed(c.Request.Context(), c.Param("withdrawalId"), body.Reason, ginutil.IdempotencyKey(c))
 	if err != nil {
-		c.JSON(withdrawalErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(withdrawalErrStatus(err), gin.H{keyError: httperr.Msg(c, withdrawalErrStatus(err), err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": w})

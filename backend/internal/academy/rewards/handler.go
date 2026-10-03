@@ -8,9 +8,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
+
+const keyInternal = "internal"
 
 // Handler exposes the rewards surface over Gin.
 //   - member: own balance + history reads, catalog read, points redemption.
@@ -83,7 +90,7 @@ func (h *Handler) GetBalance(c *gin.Context) {
 	}
 	bal, err := h.svc.Balance(c.Request.Context(), u)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": keyInternal, keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"balance_minor": bal}})
@@ -98,7 +105,7 @@ func (h *Handler) GetHistory(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	out, err := h.svc.History(c.Request.Context(), u, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": keyInternal, keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -107,7 +114,7 @@ func (h *Handler) GetHistory(c *gin.Context) {
 func (h *Handler) GetCatalog(c *gin.Context) {
 	out, err := h.svc.Catalog(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": keyInternal, keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -126,7 +133,7 @@ func (h *Handler) Redeem(c *gin.Context) {
 	}
 	var req redeemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.RedeemPoints(c.Request.Context(), u, req.SKU, req.IdempotencyKey)
@@ -135,7 +142,7 @@ func (h *Handler) Redeem(c *gin.Context) {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "rejected", "reason": reason})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": keyInternal, keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -144,7 +151,7 @@ func (h *Handler) Redeem(c *gin.Context) {
 func (h *Handler) AdminListPools(c *gin.Context) {
 	out, err := h.svc.ListPools(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": keyInternal, keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -153,12 +160,12 @@ func (h *Handler) AdminListPools(c *gin.Context) {
 func (h *Handler) AdminCreatePool(c *gin.Context) {
 	var req CreatePoolRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.CreatePool(c.Request.Context(), req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": keyInternal, keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": out})
@@ -167,7 +174,7 @@ func (h *Handler) AdminCreatePool(c *gin.Context) {
 func (h *Handler) AdminFundPool(c *gin.Context) {
 	var req FundPoolRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.FundPool(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), req)
@@ -176,7 +183,7 @@ func (h *Handler) AdminFundPool(c *gin.Context) {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "rejected", "reason": reason})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": keyInternal, keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -186,7 +193,7 @@ func (h *Handler) AdminPoolLedger(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	out, err := h.svc.PoolLedger(c.Request.Context(), c.Param("id"), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": keyInternal, keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -197,7 +204,7 @@ func (h *Handler) AdminGlobalLedger(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	out, err := h.svc.GlobalLedger(c.Request.Context(), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": keyInternal, keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -206,7 +213,7 @@ func (h *Handler) AdminGlobalLedger(c *gin.Context) {
 func (h *Handler) AdminListCatalog(c *gin.Context) {
 	out, err := h.svc.ListCatalogAdmin(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": keyInternal, keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -215,12 +222,12 @@ func (h *Handler) AdminListCatalog(c *gin.Context) {
 func (h *Handler) AdminUpsertCatalog(c *gin.Context) {
 	var req UpsertCatalogRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.UpsertCatalog(c.Request.Context(), req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": keyInternal, keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})

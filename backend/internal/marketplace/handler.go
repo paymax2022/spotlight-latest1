@@ -12,6 +12,7 @@ import (
 	"path"
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/platform/r2"
 	"strconv"
 	"strings"
@@ -100,7 +101,7 @@ func fail(c *gin.Context, err error) {
 	}
 	c.JSON(ce.Status, gin.H{"error": gin.H{
 		"code":       ce.Code,
-		"message":    ce.Message,
+		"message":    httperr.Sanitize(c, ce.Status, ce.Message),
 		"field":      ce.Field,
 		"request_id": requestID,
 	}})

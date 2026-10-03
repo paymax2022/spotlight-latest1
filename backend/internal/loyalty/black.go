@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/credential"
 	"time"
 )
@@ -308,7 +309,7 @@ func (h *BlackHandler) Me(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"success": true, "is_black": false})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "is_black": true, "member": m})
@@ -317,7 +318,7 @@ func (h *BlackHandler) Me(c *gin.Context) {
 func (h *BlackHandler) Perks(c *gin.Context) {
 	perks, err := h.svc.ListPerks(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "perks": perks})
@@ -336,7 +337,7 @@ func (h *BlackHandler) Redeem(c *gin.Context) {
 	}
 	var req redeemPerkRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	red, err := h.svc.RedeemPerk(c.Request.Context(), userID, req.PerkCode, req.ContextRef)
@@ -348,7 +349,7 @@ func (h *BlackHandler) Redeem(c *gin.Context) {
 		case errors.Is(err, ErrPerkCapReached):
 			status = http.StatusTooManyRequests
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "redemption": red})
@@ -362,7 +363,7 @@ type enrollRequest struct {
 func (h *BlackHandler) AdminEnroll(c *gin.Context) {
 	var req enrollRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	var exp *time.Time
@@ -376,7 +377,7 @@ func (h *BlackHandler) AdminEnroll(c *gin.Context) {
 	}
 	m, err := h.svc.Enroll(c.Request.Context(), req.UserID, exp)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "member": m})
@@ -389,11 +390,11 @@ type cancelRequest struct {
 func (h *BlackHandler) AdminCancel(c *gin.Context) {
 	var req cancelRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.Cancel(c.Request.Context(), req.UserID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -408,12 +409,12 @@ type partnerSettlementRequest struct {
 func (h *BlackHandler) AdminPartnerSettlement(c *gin.Context) {
 	var req partnerSettlementRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ps, err := h.svc.RecordPartnerSettlement(c.Request.Context(), req.PartnerID, req.OfferID, req.AmountKobo)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "settlement": ps})

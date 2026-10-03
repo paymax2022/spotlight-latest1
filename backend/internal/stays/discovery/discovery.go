@@ -12,7 +12,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyUnauthenticated = "unauthenticated"
+
+const keyError = "error"
 
 // Handler exposes member discovery routes under /api/finance/stays.
 type Handler struct {
@@ -73,7 +78,7 @@ func (h *Handler) listDestinations(c *gin.Context, q string, limit int) ([]Desti
 func (h *Handler) Destinations(c *gin.Context) {
 	out, err := h.listDestinations(c, strings.TrimSpace(c.Query("q")), 20)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -124,7 +129,7 @@ func (h *Handler) Deals(c *gin.Context) {
 		LIMIT 20`
 	rows, err := h.db.Query(c.Request.Context(), sql)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	defer rows.Close()
@@ -137,14 +142,14 @@ func (h *Handler) Deals(c *gin.Context) {
 			&p.Name, &p.City, &p.Area, &p.Star, &p.PropertyType,
 			&p.LeadPriceKobo, &p.WasPriceKobo, &p.Currency, &p.CoverURL,
 			&p.ReviewScore, &p.ReviewCount, &p.FreeCancellation); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 			return
 		}
 		d.Property = p
 		out = append(out, d)
 	}
 	if err := rows.Err(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -156,13 +161,13 @@ func (h *Handler) Deals(c *gin.Context) {
 func (h *Handler) Saved(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	const sql = `SELECT property_key FROM public.stays_saved WHERE user_id=$1 ORDER BY created_at DESC`
 	rows, err := h.db.Query(c.Request.Context(), sql, uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	defer rows.Close()
@@ -170,13 +175,13 @@ func (h *Handler) Saved(c *gin.Context) {
 	for rows.Next() {
 		var k string
 		if err := rows.Scan(&k); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 			return
 		}
 		keys = append(keys, k)
 	}
 	if err := rows.Err(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": keys})
@@ -189,14 +194,14 @@ func (h *Handler) Saved(c *gin.Context) {
 func (h *Handler) ToggleSaved(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	key := c.Param("key")
 	ctx := c.Request.Context()
 	tag, err := h.db.Exec(ctx, `DELETE FROM public.stays_saved WHERE user_id=$1 AND property_key=$2`, uid, key)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	saved := false
@@ -204,7 +209,7 @@ func (h *Handler) ToggleSaved(c *gin.Context) {
 		if _, err := h.db.Exec(ctx,
 			`INSERT INTO public.stays_saved (user_id, property_key) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 			uid, key); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 			return
 		}
 		saved = true
@@ -262,7 +267,7 @@ func tierFor(inWindow int) staysTier {
 func (h *Handler) Loyalty(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	ctx := c.Request.Context()
@@ -308,7 +313,7 @@ type HomeFeed struct {
 func (h *Handler) Home(c *gin.Context) {
 	trending, err := h.listDestinations(c, "", 8)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": HomeFeed{
@@ -338,7 +343,7 @@ type SavedGuest struct {
 func (h *Handler) ListSavedGuests(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	const sql = `
@@ -348,7 +353,7 @@ func (h *Handler) ListSavedGuests(c *gin.Context) {
 		ORDER BY created_at`
 	rows, err := h.db.Query(c.Request.Context(), sql, uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	defer rows.Close()
@@ -357,14 +362,14 @@ func (h *Handler) ListSavedGuests(c *gin.Context) {
 		var g SavedGuest
 		var createdAt any
 		if err := rows.Scan(&g.ID, &g.FullName, &g.Email, &g.Phone, &g.IsLead, &createdAt); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 			return
 		}
 		g.CreatedAt = timeString(createdAt)
 		out = append(out, g)
 	}
 	if err := rows.Err(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -375,7 +380,7 @@ func (h *Handler) ListSavedGuests(c *gin.Context) {
 func (h *Handler) AddSavedGuest(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var body struct {
@@ -385,11 +390,11 @@ func (h *Handler) AddSavedGuest(c *gin.Context) {
 		IsLead   bool   `json:"is_lead"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if body.FullName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "full_name required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "full_name required"})
 		return
 	}
 	const sql = `
@@ -400,7 +405,7 @@ func (h *Handler) AddSavedGuest(c *gin.Context) {
 	var createdAt any
 	if err := h.db.QueryRow(c.Request.Context(), sql, uid, body.FullName, body.Email, body.Phone, body.IsLead).
 		Scan(&g.ID, &g.FullName, &g.Email, &g.Phone, &g.IsLead, &createdAt); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	g.CreatedAt = timeString(createdAt)
@@ -412,13 +417,13 @@ func (h *Handler) AddSavedGuest(c *gin.Context) {
 func (h *Handler) RemoveSavedGuest(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	id := c.Param("id")
 	if _, err := h.db.Exec(c.Request.Context(),
 		`DELETE FROM public.stays_saved_guests WHERE user_id=$1 AND id=$2`, uid, id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})

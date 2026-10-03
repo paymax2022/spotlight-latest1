@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Handler exposes the normalized FX API over Gin.
@@ -56,6 +57,7 @@ func writeErr(c *gin.Context, e *APIError) {
 	if e.RequestID == "" {
 		e.RequestID = c.GetString("request_id")
 	}
+	e.Message = httperr.Sanitize(c, e.HTTPStatus(), e.Message)
 	c.JSON(e.HTTPStatus(), gin.H{"error": e})
 }
 

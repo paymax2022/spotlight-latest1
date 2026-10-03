@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // handler_ops.go — Wave 4 (operational) Gin handlers.
@@ -48,7 +49,7 @@ func (h *Handler) SendChatMessage(c *gin.Context) {
 	}
 	var req SendChatMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.SendChatMessage(c.Request.Context(), uid, c.Param("threadId"), ginutil.IdempotencyKey(c), req)

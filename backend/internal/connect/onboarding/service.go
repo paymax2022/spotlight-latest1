@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/timeutil"
 	connectsafety "spotlight/backend/internal/connect/safety"
 	"time"
@@ -15,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const keyError = "error"
 
 // Service runs the age gate and routes suspected minors to the underage queue.
 type Service struct {
@@ -139,13 +142,13 @@ func (h *Handler) AgeGate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req AgeGateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
 	res, err := h.svc.AgeGate(c.Request.Context(), userID, req.DOB, c.ClientIP())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 
@@ -164,12 +167,12 @@ func (h *Handler) Consent(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req ConsentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	st, err := h.svc.RecordConsent(c.Request.Context(), userID, req.Kind, req.Version, c.ClientIP())
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, st)
@@ -179,7 +182,7 @@ func (h *Handler) Consent(c *gin.Context) {
 func (h *Handler) Status(c *gin.Context) {
 	st, err := h.svc.GetStatus(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, st)

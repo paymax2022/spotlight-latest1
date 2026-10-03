@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/ptr"
 	"time"
 
@@ -210,7 +211,7 @@ func (a *AIService) GenerateNoteSummary(ctx context.Context, userID, idemKey str
 
 	rawJSON, err := a.gen.GenerateJSON(ctx, system, user)
 	if err != nil {
-		return errorEnvelope("Failed to generate note summary: " + err.Error()), nil
+		return errorEnvelope("Failed to generate note summary: " + httperr.Sanitize(nil, http.StatusBadGateway, err.Error())), nil
 	}
 	var out AiNoteSummaryOutput
 	if err := json.Unmarshal(rawJSON, &out); err != nil {
@@ -272,7 +273,7 @@ func (a *AIService) CheckPrescriptionSafety(ctx context.Context, userID, idemKey
 
 	rawJSON, err := a.gen.GenerateJSON(ctx, system, user)
 	if err != nil {
-		return errorEnvelope("Failed to run prescription safety check: " + err.Error()), nil
+		return errorEnvelope("Failed to run prescription safety check: " + httperr.Sanitize(nil, http.StatusBadGateway, err.Error())), nil
 	}
 	var out AiSafetyOutput
 	if err := json.Unmarshal(rawJSON, &out); err != nil {
@@ -312,7 +313,7 @@ func (a *AIService) ExplainLabResult(ctx context.Context, userID, idemKey string
 
 	rawJSON, err := a.gen.GenerateJSON(ctx, system, user)
 	if err != nil {
-		return errorEnvelope("Failed to explain lab result: " + err.Error()), nil
+		return errorEnvelope("Failed to explain lab result: " + httperr.Sanitize(nil, http.StatusBadGateway, err.Error())), nil
 	}
 	var out AiLabExplanationOutput
 	if err := json.Unmarshal(rawJSON, &out); err != nil {

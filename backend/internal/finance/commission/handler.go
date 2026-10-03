@@ -11,11 +11,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/timeutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyConfig = "config"
+
+const keySuccess = "success"
+
+const keyError = "error"
 
 // Handler exposes the commission config, calculation, and reporting endpoints.
 type Handler struct {
@@ -34,7 +41,7 @@ func (h *Handler) ListConfig(c *gin.Context) {
 
 	configs, err := h.svc.ListConfig(c.Request.Context(), category, activeOnly)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 
@@ -42,26 +49,26 @@ func (h *Handler) ListConfig(c *gin.Context) {
 	for _, cfg := range configs {
 		grouped[cfg.ServiceCategory] = append(grouped[cfg.ServiceCategory], cfg)
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "configs": configs, "grouped": grouped, "count": len(configs)})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "configs": configs, "grouped": grouped, "count": len(configs)})
 }
 
 // CreateConfig handles POST /finance/commission/config.
 func (h *Handler) CreateConfig(c *gin.Context) {
 	var in ConfigInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if !validFeeModel(in.FeeModel) || !validFeePayer(in.FeePayer) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid fee_model or fee_payer"})
+		c.JSON(http.StatusBadRequest, gin.H{keySuccess: false, keyError: "invalid fee_model or fee_payer"})
 		return
 	}
 	saved, err := h.svc.CreateConfig(c.Request.Context(), in, ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"success": true, "config": saved})
+	c.JSON(http.StatusCreated, gin.H{keySuccess: true, keyConfig: saved})
 }
 
 // UpdateConfig handles PUT /finance/commission/config/:id.
@@ -69,23 +76,23 @@ func (h *Handler) UpdateConfig(c *gin.Context) {
 	id := c.Param("id")
 	var in ConfigInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if !validFeeModel(in.FeeModel) || !validFeePayer(in.FeePayer) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid fee_model or fee_payer"})
+		c.JSON(http.StatusBadRequest, gin.H{keySuccess: false, keyError: "invalid fee_model or fee_payer"})
 		return
 	}
 	saved, err := h.svc.UpdateConfig(c.Request.Context(), id, in, ginutil.UserID(c))
 	if err != nil {
 		if errors.Is(err, ErrConfigNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "config not found"})
+			c.JSON(http.StatusNotFound, gin.H{keySuccess: false, keyError: "config not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "config": saved})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyConfig: saved})
 }
 
 // ToggleConfig handles POST /finance/commission/config/:id/toggle.
@@ -104,62 +111,62 @@ func (h *Handler) ToggleConfig(c *gin.Context) {
 	case c.Query("active") != "":
 		active = c.Query("active") == "true"
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "active flag required"})
+		c.JSON(http.StatusBadRequest, gin.H{keySuccess: false, keyError: "active flag required"})
 		return
 	}
 
 	saved, err := h.svc.SetActive(c.Request.Context(), id, active, ginutil.UserID(c))
 	if err != nil {
 		if errors.Is(err, ErrConfigNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "config not found"})
+			c.JSON(http.StatusNotFound, gin.H{keySuccess: false, keyError: "config not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "config": saved})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyConfig: saved})
 }
 
 // Calculate handles POST /finance/commission/calculate.
 func (h *Handler) Calculate(c *gin.Context) {
 	var req CalcRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.Calculate(c.Request.Context(), req.ServiceCategory, req.Service, req.ServiceSubtype, req.AmountKobo)
 	if err != nil {
 		if errors.Is(err, ErrConfigNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "no active config for service"})
+			c.JSON(http.StatusNotFound, gin.H{keySuccess: false, keyError: "no active config for service"})
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "result": res})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "result": res})
 }
 
 // Report handles GET /finance/commission/report?from&to&groupBy=category|service|day.
 func (h *Handler) Report(c *gin.Context) {
 	from, to, err := parseRange(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	groupBy := c.DefaultQuery("groupBy", "category")
 	rows, err := h.svc.ProfitReport(c.Request.Context(), from, to, groupBy)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "groupBy": groupBy, "from": from, "to": to, "rows": rows})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "groupBy": groupBy, "from": from, "to": to, "rows": rows})
 }
 
 // ListEarnings handles GET /finance/commission/earnings?from&to&category&limit.
 func (h *Handler) ListEarnings(c *gin.Context) {
 	from, to, err := parseRange(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	category := c.Query("category")
@@ -169,10 +176,10 @@ func (h *Handler) ListEarnings(c *gin.Context) {
 	}
 	earnings, err := h.svc.ListEarnings(c.Request.Context(), from, to, category, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keySuccess: false, keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "earnings": earnings, "count": len(earnings), "limit": limit})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "earnings": earnings, "count": len(earnings), "limit": limit})
 }
 
 // parseRange reads ?from & ?to (RFC3339 or YYYY-MM-DD). Defaults to the last 30

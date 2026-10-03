@@ -15,6 +15,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const keyUnauthenticated = "unauthenticated"
+
+const keyError = "error"
+
 var (
 	ErrNotFound  = errors.New("investai: session not found")
 	ErrForbidden = errors.New("investai: not your session")
@@ -297,22 +301,22 @@ var errMap = httperr.New(http.StatusInternalServerError,
 // internals never leak to the client.
 func httpErr(c *gin.Context, err error) {
 	if code := errMap.Code(err); code != http.StatusInternalServerError {
-		c.JSON(code, gin.H{"error": err.Error()})
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "something went wrong"})
+	c.JSON(http.StatusInternalServerError, gin.H{keyError: "something went wrong"})
 }
 
 // Chat — POST /chat  { prompt, context?, session_id? } → { session_id, text, refused, disclaimer }
 func (h *Handler) Chat(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid body"})
 		return
 	}
 	res, err := h.svc.Chat(c.Request.Context(), uid, req)
@@ -327,12 +331,12 @@ func (h *Handler) Chat(c *gin.Context) {
 func (h *Handler) ExplainAsset(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req ExplainAssetRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid body"})
 		return
 	}
 	res, err := h.svc.ExplainAsset(c.Request.Context(), req.Symbol)
@@ -347,7 +351,7 @@ func (h *Handler) ExplainAsset(c *gin.Context) {
 func (h *Handler) ListSessions(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	sessions, err := h.svc.ListSessions(c.Request.Context(), uid)
@@ -362,7 +366,7 @@ func (h *Handler) ListSessions(c *gin.Context) {
 func (h *Handler) GetHistory(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	msgs, err := h.svc.GetHistory(c.Request.Context(), c.Param("id"), uid)

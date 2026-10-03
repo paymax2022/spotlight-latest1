@@ -8,9 +8,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyMessage = "message"
 
 // Handler exposes Invoice + Payment routes over Gin. Router registration into
 // RegisterAcademy is owned by the QA/integration task — see RegisterFeesInvoice for the
@@ -43,31 +46,31 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrMissingStudent):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_student", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_student", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrMissingFeeSchedule):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_fee_schedule", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_fee_schedule", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidDate):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_date", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_date", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrIdempotencyRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrOverpayment):
-		c.JSON(http.StatusConflict, gin.H{"error": "overpayment", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "overpayment", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrIdempotencyKeyConflict):
-		c.JSON(http.StatusConflict, gin.H{"error": "idempotency_key_conflict", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "idempotency_key_conflict", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrInvoiceNotPayable):
-		c.JSON(http.StatusConflict, gin.H{"error": "invoice_not_payable", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "invoice_not_payable", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrAlreadyIssued):
-		c.JSON(http.StatusConflict, gin.H{"error": "already_issued", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "already_issued", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -107,7 +110,7 @@ func (h *Handler) Issue(c *gin.Context) {
 	}
 	var req IssueInvoiceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Issue(c.Request.Context(), u, req)
@@ -143,7 +146,7 @@ func (h *Handler) RecordPayment(c *gin.Context) {
 	}
 	var req RecordPaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	// The guardian recording the payment is the authenticated user (member route).

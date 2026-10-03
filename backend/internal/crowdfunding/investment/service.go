@@ -671,7 +671,7 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) GetProfile(c *gin.Context) {
 	p, err := h.svc.GetProfile(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, p)
@@ -681,7 +681,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 func (h *Handler) CompleteOnboarding(c *gin.Context) {
 	var req OnboardingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.CompleteOnboardingStep(c.Request.Context(), ginutil.UserID(c), req.Step, req.RiskProfile)
@@ -696,7 +696,7 @@ func (h *Handler) CompleteOnboarding(c *gin.Context) {
 func (h *Handler) GetOffers(c *gin.Context) {
 	items, err := h.svc.GetOffers(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: items})
@@ -716,7 +716,7 @@ func (h *Handler) GetOffer(c *gin.Context) {
 func (h *Handler) GetEducation(c *gin.Context) {
 	items, err := h.svc.GetEducation(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: items})
@@ -726,7 +726,7 @@ func (h *Handler) GetEducation(c *gin.Context) {
 func (h *Handler) GetQuiz(c *gin.Context) {
 	items, err := h.svc.GetQuiz(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: items})
@@ -742,7 +742,7 @@ func (h *Handler) Subscribe(c *gin.Context) {
 	}
 	var in InvestmentSubscriptionInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	cert, err := h.svc.Subscribe(c.Request.Context(), ginutil.UserID(c), in, idemKey)
@@ -757,7 +757,7 @@ func (h *Handler) Subscribe(c *gin.Context) {
 func (h *Handler) GetPortfolio(c *gin.Context) {
 	items, err := h.svc.GetPortfolio(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: items})

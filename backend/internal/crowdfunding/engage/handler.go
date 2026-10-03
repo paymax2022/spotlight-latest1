@@ -11,6 +11,8 @@ import (
 	"spotlight/backend/go-common/httperr"
 )
 
+const keyError = "error"
+
 // Handler exposes the engagement endpoints over gin.
 type Handler struct{ svc *Service }
 
@@ -21,7 +23,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) GetHelp(c *gin.Context) {
 	articles, err := h.svc.GetHelp(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": articles})
@@ -32,7 +34,7 @@ func (h *Handler) ListTickets(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	tickets, err := h.svc.ListTickets(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": tickets})
@@ -42,7 +44,7 @@ func (h *Handler) ListTickets(c *gin.Context) {
 func (h *Handler) GetTicket(c *gin.Context) {
 	ticket, err := h.svc.GetTicket(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "ticket not found"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "ticket not found"})
 		return
 	}
 	c.JSON(http.StatusOK, ticket)
@@ -53,12 +55,12 @@ func (h *Handler) CreateTicket(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var in CreateTicketInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ticket, err := h.svc.CreateTicket(c.Request.Context(), userID, in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, ticket)
@@ -68,12 +70,12 @@ func (h *Handler) CreateTicket(c *gin.Context) {
 func (h *Handler) ReplyTicket(c *gin.Context) {
 	var in ReplyTicketInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ticket, err := h.svc.ReplyTicket(c.Request.Context(), c.Param("id"), in.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, ticket)
@@ -84,7 +86,7 @@ func (h *Handler) GetNotifications(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	items, err := h.svc.GetNotifications(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -94,7 +96,7 @@ func (h *Handler) GetNotifications(c *gin.Context) {
 func (h *Handler) MarkNotificationsRead(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if err := h.svc.MarkNotificationsRead(c.Request.Context(), userID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -105,7 +107,7 @@ func (h *Handler) GetNotificationPrefs(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	prefs, err := h.svc.GetNotificationPrefs(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, prefs)
@@ -116,12 +118,12 @@ func (h *Handler) UpdateNotificationPrefs(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var prefs NotificationPrefs
 	if err := c.ShouldBindJSON(&prefs); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	saved, err := h.svc.UpdateNotificationPrefs(c.Request.Context(), userID, prefs)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, saved)
@@ -141,7 +143,7 @@ func (h *Handler) RecordCampaignEvent(c *gin.Context) {
 		AnonymousID string `json:"anonymousId"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid body"})
 		return
 	}
 
@@ -151,10 +153,10 @@ func (h *Handler) RecordCampaignEvent(c *gin.Context) {
 
 	if err := h.svc.RecordCampaignEvent(c.Request.Context(), campaignID, body.Type, body.Source, userID, body.AnonymousID); err != nil {
 		if errors.Is(err, ErrInvalidEvent) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "type must be VIEW or SHARE"})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: "type must be VIEW or SHARE"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -164,7 +166,7 @@ func (h *Handler) RecordCampaignEvent(c *gin.Context) {
 func (h *Handler) Broadcast(c *gin.Context) {
 	var in BroadcastInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.BroadcastToContributors(c.Request.Context(), c.Param("id"), ginutil.UserID(c), in)
@@ -207,7 +209,7 @@ func (h *Handler) ListComments(c *gin.Context) {
 func (h *Handler) PostComment(c *gin.Context) {
 	var in PostCommentInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.PostComment(c.Request.Context(), c.Param("id"), ginutil.UserID(c), in)
@@ -222,7 +224,7 @@ func (h *Handler) PostComment(c *gin.Context) {
 func (h *Handler) ReplyComment(c *gin.Context) {
 	var in ReplyCommentInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.ReplyComment(c.Request.Context(), c.Param("commentId"), ginutil.UserID(c), in)
@@ -256,7 +258,7 @@ func (h *Handler) ListDocuments(c *gin.Context) {
 func (h *Handler) AttachDocument(c *gin.Context) {
 	var in AttachDocumentInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.AttachDocument(c.Request.Context(), c.Param("id"), ginutil.UserID(c), in)
@@ -284,7 +286,7 @@ func (h *Handler) ListUpdates(c *gin.Context) {
 func (h *Handler) PostUpdate(c *gin.Context) {
 	var in PostUpdateInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.PostUpdate(c.Request.Context(), c.Param("id"), ginutil.UserID(c), in)

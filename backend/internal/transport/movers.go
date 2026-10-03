@@ -13,6 +13,7 @@ import (
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // State machine:
@@ -480,7 +481,7 @@ func (h *Handler) MoverQuote(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req MoverQuoteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	j, err := h.svc.RequestMoverQuote(c.Request.Context(), userID, req)
@@ -519,7 +520,7 @@ func (h *Handler) MoverAcceptBid(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req MoverAcceptBidRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	key := ginutil.IdempotencyKey(c)
@@ -572,7 +573,7 @@ func (h *Handler) MoverBid(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req MoverBidRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	bid, err := h.svc.SubmitMoverBid(c.Request.Context(), c.Param("id"), userID, req.AmountKobo, req.Note)

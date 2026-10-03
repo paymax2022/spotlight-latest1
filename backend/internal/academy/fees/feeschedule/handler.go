@@ -8,9 +8,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyMessage = "message"
 
 // Handler exposes FeeSchedule routes over Gin. The router mounts create under
 // /internal/edtech-fees/schools/{id}/fee-schedules (build-spec §6). Router registration
@@ -43,20 +46,20 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrMissingName):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_name", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_name", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidDate):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_date", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_date", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrFeeScheduleImmutable):
 		// SF-1: the schedule is locked or referenced by an invoice — 409 Conflict.
-		c.JSON(http.StatusConflict, gin.H{"error": "fee_schedule_immutable", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "fee_schedule_immutable", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -96,7 +99,7 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	var req CreateFeeScheduleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	// Bind the school id from the path when present (route is per-school).
@@ -136,7 +139,7 @@ func (h *Handler) Update(c *gin.Context) {
 	}
 	var req UpdateFeeScheduleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.svc.Update(c.Request.Context(), u, c.Param("id"), req)

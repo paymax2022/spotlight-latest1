@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 )
+
+const keyError = "error"
 
 // admin_service.go — TELEMEDICINE-004: admin console backend. Additive to
 // service.go; does not change any member-facing method's behavior or SQL.
@@ -395,7 +398,7 @@ func (s *Service) VerifyDoctor(ctx context.Context, reviewerID, doctorUserID str
 func (h *Handler) AdminGetDashboard(c *gin.Context) {
 	dash, err := h.svc.GetAdminDashboard(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": dash})
@@ -405,12 +408,12 @@ func (h *Handler) AdminGetDashboard(c *gin.Context) {
 func (h *Handler) AdminListDoctors(c *gin.Context) {
 	var q AdminDoctorListQuery
 	if err := c.ShouldBindQuery(&q); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	items, total, err := h.svc.ListAdminDoctors(c.Request.Context(), q)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items, "total": total, "limit": q.Limit, "offset": q.Offset})
@@ -420,12 +423,12 @@ func (h *Handler) AdminListDoctors(c *gin.Context) {
 func (h *Handler) AdminListAppointments(c *gin.Context) {
 	var q AdminAppointmentListQuery
 	if err := c.ShouldBindQuery(&q); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	items, total, err := h.svc.ListAdminAppointments(c.Request.Context(), q)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items, "total": total, "limit": q.Limit, "offset": q.Offset})
@@ -437,18 +440,18 @@ func (h *Handler) AdminVerifyDoctor(c *gin.Context) {
 	reviewerID := ginutil.UserID(c)
 	var req AdminVerifyDoctorRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	item, err := h.svc.VerifyDoctor(c.Request.Context(), reviewerID, doctorUserID, req)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrVerifyReasonRequired):
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		case errors.Is(err, ErrVerifyIllegalTransition):
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
 		default:
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		}
 		return
 	}

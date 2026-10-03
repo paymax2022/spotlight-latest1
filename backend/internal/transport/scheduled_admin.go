@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Mounted under `adminTr` → /api/finance/admin/transport/scheduled*. Every
@@ -209,7 +210,7 @@ func (h *AdminHandler) AdminScheduledForceDispatch(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var body scheduledAdminReason
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.ForceDispatchScheduled(c.Request.Context(), adminID, c.Param("id"), body.ReasonCode)
@@ -225,7 +226,7 @@ func (h *AdminHandler) AdminScheduledReassign(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var body scheduledAdminReason
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.ReassignScheduled(c.Request.Context(), adminID, c.Param("id"), body.DriverID, body.ReasonCode)
@@ -241,7 +242,7 @@ func (h *AdminHandler) AdminScheduledCancel(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	var body scheduledAdminReason
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	b, err := h.svc.CancelScheduledAdmin(c.Request.Context(), adminID, c.Param("id"), body.ReasonCode)

@@ -31,7 +31,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) FinanceSummary(c *gin.Context) {
 	res, err := h.svc.GetFinanceSummary(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -41,7 +41,7 @@ func (h *Handler) FinanceSummary(c *gin.Context) {
 func (h *Handler) ListRefunds(c *gin.Context) {
 	items, err := h.svc.ListRefunds(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"refunds": items})
@@ -57,7 +57,7 @@ func (h *Handler) decideRefund(c *gin.Context, approve bool) {
 	var req NoteRequest
 	_ = c.ShouldBindJSON(&req)
 	if err := h.svc.DecideRefund(c.Request.Context(), c.Param("id"), ginutil.UserID(c), approve, req.Note); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -67,7 +67,7 @@ func (h *Handler) decideRefund(c *gin.Context, approve bool) {
 func (h *Handler) ListSettlements(c *gin.Context) {
 	items, err := h.svc.ListSettlements(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"batches": items})
@@ -77,7 +77,7 @@ func (h *Handler) ListSettlements(c *gin.Context) {
 func (h *Handler) ListDisputes(c *gin.Context) {
 	items, err := h.svc.ListDisputes(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"disputes": items})
@@ -87,11 +87,11 @@ func (h *Handler) ListDisputes(c *gin.Context) {
 func (h *Handler) ResolveDispute(c *gin.Context) {
 	var req ResolveDisputeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.ResolveDispute(c.Request.Context(), c.Param("id"), ginutil.UserID(c), req.Resolution, req.Note); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -101,7 +101,7 @@ func (h *Handler) ResolveDispute(c *gin.Context) {
 func (h *Handler) ListWithdrawals(c *gin.Context) {
 	items, err := h.svc.ListWithdrawals(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"withdrawals": items})
@@ -114,7 +114,7 @@ func (h *Handler) ListWithdrawals(c *gin.Context) {
 func (h *Handler) ApproveWithdrawal(c *gin.Context) {
 	idempotencyKey := ginutil.IdempotencyKey(c)
 	if idempotencyKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "Idempotency-Key header is required"})
 		return
 	}
 	res, err := h.svc.ApproveWithdrawal(c.Request.Context(), c.Param("id"), ginutil.UserID(c), idempotencyKey)
@@ -132,7 +132,7 @@ func (h *Handler) decideWithdrawal(c *gin.Context, approve bool) {
 	var req NoteRequest
 	_ = c.ShouldBindJSON(&req)
 	if err := h.svc.DecideWithdrawal(c.Request.Context(), c.Param("id"), ginutil.UserID(c), approve, req.Note); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -142,7 +142,7 @@ func (h *Handler) decideWithdrawal(c *gin.Context, approve bool) {
 func (h *Handler) ListFraudAlerts(c *gin.Context) {
 	items, err := h.svc.ListFraudAlerts(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"alerts": items})
@@ -158,7 +158,7 @@ func (h *Handler) setFreeze(c *gin.Context, freeze bool) {
 	var req NoteRequest
 	_ = c.ShouldBindJSON(&req)
 	if err := h.svc.SetCampaignFreeze(c.Request.Context(), c.Param("id"), ginutil.UserID(c), freeze, req.Note); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -168,7 +168,7 @@ func (h *Handler) setFreeze(c *gin.Context, freeze bool) {
 func (h *Handler) ListKyc(c *gin.Context) {
 	items, err := h.svc.ListKyc(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"cases": items})
@@ -184,7 +184,7 @@ func (h *Handler) decideKyc(c *gin.Context, approve bool) {
 	var req NoteRequest
 	_ = c.ShouldBindJSON(&req)
 	if err := h.svc.DecideKyc(c.Request.Context(), c.Param("id"), ginutil.UserID(c), approve, req.Note); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -194,7 +194,7 @@ func (h *Handler) decideKyc(c *gin.Context, approve bool) {
 func (h *Handler) ComplianceSummary(c *gin.Context) {
 	res, err := h.svc.GetComplianceSummary(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -204,7 +204,7 @@ func (h *Handler) ComplianceSummary(c *gin.Context) {
 func (h *Handler) ListAuditLogs(c *gin.Context) {
 	items, err := h.svc.ListAuditLogs(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"logs": items})
@@ -214,7 +214,7 @@ func (h *Handler) ListAuditLogs(c *gin.Context) {
 func (h *Handler) ListDataRequests(c *gin.Context) {
 	items, err := h.svc.ListDataRequests(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"requests": items})
@@ -223,7 +223,7 @@ func (h *Handler) ListDataRequests(c *gin.Context) {
 // FulfilDataRequest — POST /compliance/data-requests/:id/fulfil.
 func (h *Handler) FulfilDataRequest(c *gin.Context) {
 	if err := h.svc.FulfilDataRequest(c.Request.Context(), c.Param("id"), ginutil.UserID(c)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -234,7 +234,7 @@ func (h *Handler) ListUsers(c *gin.Context) {
 	page, err := h.svc.ListUsers(c.Request.Context(), c.Query("role"), c.Query("status"), c.Query("search"),
 		atoiOr(c.Query("page"), 1), atoiOr(c.Query("limit"), 25))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	// The "users" key is preserved so any existing caller reading it keeps
@@ -246,11 +246,11 @@ func (h *Handler) ListUsers(c *gin.Context) {
 func (h *Handler) SetUserStatus(c *gin.Context) {
 	var req SetUserStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetUserStatus(c.Request.Context(), c.Param("id"), ginutil.UserID(c), req.Status, req.Note); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -261,7 +261,7 @@ func (h *Handler) SetUserStatus(c *gin.Context) {
 func (h *Handler) ListFeatured(c *gin.Context) {
 	items, err := h.svc.ListFeaturedCandidates(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"campaigns": items})
@@ -271,7 +271,7 @@ func (h *Handler) ListFeatured(c *gin.Context) {
 func (h *Handler) FeaturedReport(c *gin.Context) {
 	res, err := h.svc.GetFeaturedReport(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -285,7 +285,7 @@ func (h *Handler) FeaturedReport(c *gin.Context) {
 func (h *Handler) PatchCampaignFlags(c *gin.Context) {
 	var req CampaignFlagsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.SetCampaignFlags(c.Request.Context(), c.Param("id"), ginutil.UserID(c), req)
@@ -301,7 +301,7 @@ func (h *Handler) PatchCampaignFlags(c *gin.Context) {
 func (h *Handler) ListFeatureRequests(c *gin.Context) {
 	items, err := h.svc.ListFeatureRequests(c.Request.Context(), c.Query("status"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"requests": items})

@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/middleware"
@@ -85,9 +86,9 @@ func (h *Handler) fail(c *gin.Context, err error) {
 	case errors.Is(err, ledger.ErrInsufficientFunds):
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "insufficient available balance"})
 	case errors.Is(err, ErrIdempotencyRequired), errors.Is(err, ErrInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -280,7 +281,7 @@ func (h *Handler) SubmitVerification(c *gin.Context) {
 	}
 	var req SubmitVerificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.SubmitVerification(c.Request.Context(), uid, req)
@@ -298,7 +299,7 @@ func (h *Handler) UpdateAvailability(c *gin.Context) {
 	}
 	var req UpdateAvailabilityRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.UpdateAvailability(c.Request.Context(), uid, req)
@@ -316,7 +317,7 @@ func (h *Handler) UpdateAppointmentStatus(c *gin.Context) {
 	}
 	var req UpdateAppointmentStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.UpdateAppointmentStatus(c.Request.Context(), uid, c.Param("appointmentId"), req)
@@ -334,7 +335,7 @@ func (h *Handler) SaveNote(c *gin.Context) {
 	}
 	var req SaveNoteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.SaveNote(c.Request.Context(), uid, c.Param("appointmentId"), ginutil.IdempotencyKey(c), req)
@@ -352,7 +353,7 @@ func (h *Handler) CreatePrescription(c *gin.Context) {
 	}
 	var req CreatePrescriptionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.CreatePrescription(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
@@ -370,7 +371,7 @@ func (h *Handler) CreateLabOrder(c *gin.Context) {
 	}
 	var req CreateLabOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.CreateLabOrder(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)
@@ -388,7 +389,7 @@ func (h *Handler) ReviewLabResult(c *gin.Context) {
 	}
 	var req ReviewLabResultRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.ReviewLabResult(c.Request.Context(), uid, c.Param("resultId"), ginutil.IdempotencyKey(c), req)
@@ -406,7 +407,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 	var req UpdateSettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.UpdateSettings(c.Request.Context(), uid, req)
@@ -438,7 +439,7 @@ func (h *Handler) RequestPayout(c *gin.Context) {
 	}
 	var req RequestPayoutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.RequestPayout(c.Request.Context(), uid, ginutil.IdempotencyKey(c), req)

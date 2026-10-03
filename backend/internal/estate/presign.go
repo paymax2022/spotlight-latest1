@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/internal/platform/r2"
@@ -100,13 +101,13 @@ func (h *Handler) PresignUpload(c *gin.Context) {
 
 	var req PresignUploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
 	// Membership check: only an estate member may mint upload URLs for that estate.
 	if err := h.svc.assertResident(c.Request.Context(), estateID, userID); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
 
@@ -172,12 +173,12 @@ func (h *Handler) DocumentDownloadURL(c *gin.Context) {
 	if err != nil {
 		switch {
 		case err == ErrDocumentForbidden:
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 		case err == ErrDocumentNotFound:
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 		default:
 			// roleIn failure (not an estate member) → forbidden.
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 		}
 		return
 	}
