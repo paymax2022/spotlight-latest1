@@ -137,7 +137,6 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 
 		apiAuth.POST("/register", loginLimiter.Middleware(), authHandler.Register)
 		apiAuth.POST("/login", loginLimiter.Middleware(), authHandler.Login)
-		apiAuth.POST("/logout", authHandler.Logout)
 		apiAuth.POST("/request-password-reset", resetLimiter.Middleware(), authHandler.RequestPasswordReset)
 		apiAuth.POST("/reset-password", resetLimiter.Middleware(), authHandler.ResetPassword)
 		// Email verification is OTP CODES, not links (decided 2026-08-25). The former
@@ -147,6 +146,9 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 		apiAuthProtected := apiAuth.Group("")
 		apiAuthProtected.Use(middleware.RequireAuthContextWithSessions(supabase, rbacService, sessionService, cfg.FeatureSessionHardeningEnabled))
 		apiAuthProtected.GET("/me", authHandler.Me)
+		// Logout lives behind auth: it revokes the caller's GoTrue session
+		// server-side (E2E-SEC-055), so an anonymous call has nothing to revoke.
+		apiAuthProtected.POST("/logout", authHandler.Logout)
 		apiAuthProtected.POST("/change-password", authHandler.ChangePassword)
 		apiAuthProtected.POST("/complete-profile", authHandler.CompleteProfile)
 		// Self-service session management (feature-flagged; 503 when OFF).

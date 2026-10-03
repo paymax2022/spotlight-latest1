@@ -22,6 +22,7 @@ import (
 type AuthService interface {
 	RegisterUser(in domain.RegisterRequest) (*RegisterResult, error)
 	LoginUser(in domain.LoginRequest) (map[string]any, error)
+	LogoutUser(accessToken string) error
 	RequestPasswordReset(email string) error
 	ChangePassword(accessToken, currentPassword, newPassword string) error
 	CompleteProfile(userID string, profileType string, metadata map[string]any) error
@@ -451,6 +452,30 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 		_ = s.createSession(user, out)
 	}
 	return out, nil
+}
+
+// LogoutUser revokes the caller's own GoTrue session — POST /auth/v1/logout
+// with the user's access token (default scope: this session only). Called by
+// the logout handler; without it logout only cleared the client (E2E-SEC-055).
+func (s *authService) LogoutUser(accessToken string) error {
+	if strings.TrimSpace(accessToken) == "" {
+		return errors.New("access token required")
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/logout", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Apikey", s.supabase.APIKey())
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	resp, err := gotrueHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("gotrue logout returned %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (s *authService) RequestPasswordReset(email string) error {

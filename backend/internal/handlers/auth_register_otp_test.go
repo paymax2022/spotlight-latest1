@@ -16,13 +16,16 @@ import (
 )
 
 type stubAuthService struct {
-	result   *services.RegisterResult
-	err      error
-	loginOut map[string]any
-	loginErr error
+	result    *services.RegisterResult
+	err       error
+	loginOut  map[string]any
+	loginErr  error
+	logoutErr error
 
 	mu            sync.Mutex
 	registerCalls int
+	logoutCalls   int
+	logoutToken   string
 }
 
 func (s *stubAuthService) registered() int {
@@ -48,6 +51,13 @@ func (s *stubAuthService) LoginUser(domain.LoginRequest) (map[string]any, error)
 		out[k] = v
 	}
 	return out, nil
+}
+func (s *stubAuthService) LogoutUser(token string) error {
+	s.mu.Lock()
+	s.logoutCalls++
+	s.logoutToken = token
+	s.mu.Unlock()
+	return s.logoutErr
 }
 func (s *stubAuthService) RequestPasswordReset(string) error                    { return nil }
 func (s *stubAuthService) ResetPassword(string, string) error                   { return nil }

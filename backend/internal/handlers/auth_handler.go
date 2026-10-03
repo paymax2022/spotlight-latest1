@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/middleware"
@@ -415,10 +416,39 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "user": u})
 }
 
+// Logout revokes the caller's session server-side (E2E-SEC-055): the bearer
+// token goes to GoTrue's /auth/v1/logout so the session stops validating, and
+// the tracked auth_sessions row is revoked when session hardening is on (it is
+// the enforcement gate for locally-verified tokens). A GoTrue outage still
+// answers 200 — the client's local logout must not depend on upstream health —
+// but the failure is logged and carried in the audit row.
 func (h *AuthHandler) Logout(c *gin.Context) {
-	if u, ok := middleware.GetAuthenticatedUser(c); ok {
-		h.audit.LogAction(u.ID, u.ID, "logout", "auth", "session", "", nil, nil, c.ClientIP(), c.Request.UserAgent(), "info")
+	u, ok := middleware.GetAuthenticatedUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
+		return
 	}
+	token := c.GetString(middleware.AuthTokenContextKey)
+	if token == "" {
+		if ah := strings.TrimSpace(c.GetHeader("Authorization")); strings.HasPrefix(strings.ToLower(ah), "bearer ") {
+			token = strings.TrimSpace(ah[7:])
+		}
+	}
+	revoked := false
+	if token != "" {
+		if err := h.auth.LogoutUser(token); err != nil {
+			log.Printf("[auth] logout: GoTrue session revoke failed for user %s: %v", u.ID, err)
+		} else {
+			revoked = true
+		}
+		if h.sessionHardening && h.sessions != nil {
+			if sess, err := h.sessions.ValidateAccess(token); err == nil && sess != nil {
+				_ = h.sessions.RevokeOne(u.ID, u.ID, sess.ID, "logout")
+			}
+		}
+	}
+	h.audit.LogAction(u.ID, u.ID, "logout", "auth", "session", "", nil,
+		map[string]any{"upstream_revoked": revoked}, c.ClientIP(), c.Request.UserAgent(), "info")
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Logged out"})
 }
 
@@ -542,7 +572,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 	if err := h.auth.ChangePassword(authz[7:], in.CurrentPassword, in.NewPassword); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(u.ID, u.ID, "password.change", "auth", "user", u.ID, nil, nil, c.ClientIP(), c.Request.UserAgent(), "high")
@@ -564,7 +594,7 @@ func (h *AuthHandler) CompleteProfile(c *gin.Context) {
 		return
 	}
 	if err := h.auth.CompleteProfile(u.ID, in.ProfileType, in.Metadata); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(u.ID, u.ID, "profile.complete", "auth", "profile", u.ID, nil, map[string]any{"profileType": in.ProfileType}, c.ClientIP(), c.Request.UserAgent(), "info")
@@ -635,7 +665,7 @@ func (h *SessionHandler) RevokeMySession(c *gin.Context) {
 	}
 	id := strings.TrimSpace(c.Param("id"))
 	if err := h.sessions.RevokeOne(u.ID, u.ID, id, "self_revoke"); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "session revoked"})
