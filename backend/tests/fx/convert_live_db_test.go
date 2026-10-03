@@ -83,6 +83,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, id)
+	testsupport.SetKycTier(t, ctx, pool, id, testsupport.KycTierUnlimited)
 	t.Cleanup(func() {
 		ctx := context.Background()
 		_, _ = pool.Exec(ctx, `DELETE FROM public.fx_conversions WHERE user_id=$1`, id)

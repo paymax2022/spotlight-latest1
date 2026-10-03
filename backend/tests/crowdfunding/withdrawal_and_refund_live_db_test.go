@@ -84,6 +84,7 @@ func seedFundedContribution(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 			ON CONFLICT (id) DO NOTHING`, id, "cf-uat-"+id+"@test.local"); err != nil {
 			t.Fatalf("seed user %s: %v", id, err)
 		}
+		testsupport.SetKycTier(t, ctx, pool, id, testsupport.KycTierUnlimited)
 	}
 
 	if _, err := pool.Exec(ctx, `

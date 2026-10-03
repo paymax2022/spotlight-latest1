@@ -67,6 +67,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, id)
+	testsupport.SetKycTier(t, ctx, pool, id, testsupport.KycTierUnlimited)
 	return id
 }
 
@@ -93,6 +94,7 @@ func TestLiveDB_TradingWallet_MoneyPath(t *testing.T) {
 	fundWallet(t, ctx, led, userB, 10_000_000)
 
 	walA0, _ := led.GetBalance(ctx, userA)
+	clearing0, _ := led.GetAccountBalance(ctx, clearing.ID)
 	oA, err := svc.Subscribe(ctx, userA, run+"sub:A1", 1_000_000)
 	if err != nil {
 		t.Fatalf("A subscribe: %v", err)
@@ -103,8 +105,10 @@ func TestLiveDB_TradingWallet_MoneyPath(t *testing.T) {
 	if walA, _ := led.GetBalance(ctx, userA); walA != walA0-1_000_000 {
 		t.Fatalf("A wallet not debited: before=%d after=%d", walA0, walA)
 	}
-	if cb, _ := led.GetAccountBalance(ctx, clearing.ID); cb != 1_000_000 {
-		t.Fatalf("clearing balance = %d, want 1_000_000", cb)
+	// Delta, not absolute: other packages' live suites share this standing
+	// account when go test runs them in parallel against one database.
+	if cb, _ := led.GetAccountBalance(ctx, clearing.ID); cb != clearing0+1_000_000 {
+		t.Fatalf("clearing balance = %d, want %d", cb, clearing0+1_000_000)
 	}
 	assertReconciled(t, svc, ctx)
 
