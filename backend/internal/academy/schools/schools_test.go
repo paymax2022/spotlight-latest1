@@ -240,7 +240,7 @@ func TestBulkEnroll_SeatCapped(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
 	inst, _ := store.InsertInstitution(ctx, "Acme", "school", "admin-1", nil, "va-1")
-	store.InsertLicence(ctx, inst.ID, "pro", 3, 100000, nil, nil)
+	_, _ = store.InsertLicence(ctx, inst.ID, "pro", 3, 100000, nil, nil)
 	svc := newServiceWithStore(store, newFakeBillingRail())
 
 	// 5 learners, only 3 seats → first 3 seated, then seat_limit_exceeded.
@@ -269,7 +269,7 @@ func TestBulkEnroll_IdempotentReplay(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
 	inst, _ := store.InsertInstitution(ctx, "Beta", "school", "admin-1", nil, "")
-	store.InsertLicence(ctx, inst.ID, "pro", 10, 0, nil, nil)
+	_, _ = store.InsertLicence(ctx, inst.ID, "pro", 10, 0, nil, nil)
 	svc := newServiceWithStore(store, newFakeBillingRail())
 
 	learners := []string{"l1", "l2", "l3"}
@@ -302,7 +302,7 @@ func TestRemoveEnrollment_FreesSeat(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
 	inst, _ := store.InsertInstitution(ctx, "Gamma", "school", "admin-1", nil, "")
-	store.InsertLicence(ctx, inst.ID, "pro", 1, 0, nil, nil)
+	_, _ = store.InsertLicence(ctx, inst.ID, "pro", 1, 0, nil, nil)
 	svc := newServiceWithStore(store, newFakeBillingRail())
 
 	if _, err := svc.BulkEnroll(ctx, "admin-1", BulkEnrollRequest{InstitutionID: inst.ID, LearnerIDs: []string{"l1"}}, "b"); err != nil {

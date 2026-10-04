@@ -151,7 +151,7 @@ func (r *Repository) DecrementAllotment(ctx context.Context, roomTypeID string, 
 	if err != nil {
 		return DecrementResult{}, fmt.Errorf("ari: begin decrement tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock + validate every night under FOR UPDATE before any write. Iterating one
 	// night at a time keeps a deterministic lock order (ascending date) which avoids
@@ -209,7 +209,7 @@ func (r *Repository) ReleaseAllotment(ctx context.Context, roomTypeID string, dr
 	if err != nil {
 		return fmt.Errorf("ari: begin release tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	for _, n := range nights {
 		if _, err := tx.Exec(ctx, `
 			UPDATE public.stays_availability_day

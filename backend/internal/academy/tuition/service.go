@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -265,7 +266,7 @@ func (s *Service) ConfirmPayment(ctx context.Context, idempotencyKey, planID, pa
 	isCompleted := HasCompletePayment(updatedPayments)
 	if isCompleted && plan.Status != PlanStatusCompleted {
 		if err := s.repo.MarkPlanCompleted(ctx, planID); err != nil {
-			fmt.Printf("warning: couldn't mark plan complete: %v\n", err)
+			log.Printf("warning: couldn't mark plan complete: %v", err)
 		}
 		if s.auditor != nil {
 			s.auditor.LogAction(userID, userID, actionPlanCompleted, auditModule,
@@ -426,7 +427,7 @@ func (s *Service) WaiveTuition(ctx context.Context, paymentID, actorUserID strin
 	}
 	if HasCompletePayment(payments) {
 		if err := s.repo.MarkPlanCompleted(ctx, plan.ID); err != nil {
-			fmt.Printf("warning: couldn't mark plan complete after waiver: %v\n", err)
+			log.Printf("warning: couldn't mark plan complete after waiver: %v", err)
 		}
 	}
 

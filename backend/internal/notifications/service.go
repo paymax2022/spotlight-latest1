@@ -254,7 +254,7 @@ func (w *workerHandler) handlePush(ctx context.Context, t *asynq.Task) error {
 	if err != nil {
 		return fmt.Errorf("push worker: http: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("push worker: expo returned %d: %s", resp.StatusCode, string(b))
@@ -309,7 +309,7 @@ func (w *workerHandler) handleEmail(ctx context.Context, t *asynq.Task) error {
 	if err != nil {
 		return fmt.Errorf("email worker: http: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("email worker: resend returned %d: %s", resp.StatusCode, string(b))
@@ -366,7 +366,7 @@ func (w *workerHandler) handleSMS(ctx context.Context, t *asynq.Task) error {
 	if err != nil {
 		return fmt.Errorf("sms worker: http: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("sms worker: termii returned %d: %s", resp.StatusCode, string(b))

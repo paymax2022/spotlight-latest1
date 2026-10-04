@@ -482,7 +482,7 @@ func (s *Service) SubmitForReview(ctx context.Context, creatorID string, req Sub
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, ins,
 		id, creatorID, req.Title, req.Summary, req.Story, req.Type, req.Category, req.GoalKobo,

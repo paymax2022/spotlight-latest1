@@ -74,7 +74,7 @@ func seedAuthUser(t *testing.T, pool *pgxpool.Pool) string {
 		id, id+"@property-test.invalid"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id) })
 	return id
 }
 
@@ -98,7 +98,7 @@ func TestLiveDB_GetContext_MergesDualRolesOnOneEntity(t *testing.T) {
 		estateID, user); err != nil {
 		t.Fatalf("seed estate: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO estate_residents (estate_id, user_id, role) VALUES ($1, $2, 'resident')`,
 		estateID, user); err != nil {
@@ -113,7 +113,7 @@ func TestLiveDB_GetContext_MergesDualRolesOnOneEntity(t *testing.T) {
 		propID, estateID, user); err != nil {
 		t.Fatalf("seed estate_properties: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estate_properties WHERE id=$1`, propID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM estate_properties WHERE id=$1`, propID) })
 
 	resp, err := svc.GetContext(ctx, user)
 	if err != nil {
@@ -162,8 +162,8 @@ func TestLiveDB_GetContext_AggregatesAllFourSources(t *testing.T) {
 
 	// E1: resident only.
 	e1 := uuid.NewString()
-	pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'E1',$2)`, e1, otherAdmin)
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, e1) })
+	_, _ = pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'E1',$2)`, e1, otherAdmin)
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, e1) })
 	if _, err := pool.Exec(ctx, `INSERT INTO estate_residents (estate_id, user_id, role) VALUES ($1,$2,'resident')`, e1, user); err != nil {
 		t.Fatalf("seed E1 resident: %v", err)
 	}
@@ -173,24 +173,24 @@ func TestLiveDB_GetContext_AggregatesAllFourSources(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'E2',$2)`, e2, user); err != nil {
 		t.Fatalf("seed E2: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, e2) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, e2) })
 
 	// P1: landlord assignment, on a third estate so it doesn't collide with E1/E2.
 	e3 := uuid.NewString()
-	pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'E3',$2)`, e3, otherAdmin)
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, e3) })
+	_, _ = pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'E3',$2)`, e3, otherAdmin)
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, e3) })
 	p1 := uuid.NewString()
 	if _, err := pool.Exec(ctx, `INSERT INTO estate_properties (id, estate_id, unit_label, landlord_id) VALUES ($1,$2,'P1',$3)`, p1, e3, user); err != nil {
 		t.Fatalf("seed P1: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estate_properties WHERE id=$1`, p1) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM estate_properties WHERE id=$1`, p1) })
 
 	// A1: agency/portfolio ownership.
 	a1 := uuid.NewString()
 	if _, err := pool.Exec(ctx, `INSERT INTO realtor_portfolios (id, owner_id, name) VALUES ($1,$2,'A1')`, a1, user); err != nil {
 		t.Fatalf("seed A1: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM realtor_portfolios WHERE id=$1`, a1) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM realtor_portfolios WHERE id=$1`, a1) })
 
 	resp, err := svc.GetContext(ctx, user)
 	if err != nil {
@@ -261,7 +261,7 @@ func TestLiveDB_SwitchContext_SucceedsIntoHeldContext(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Held Estate',$2)`, estateID, admin); err != nil {
 		t.Fatalf("seed estate: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
 	if _, err := pool.Exec(ctx, `INSERT INTO estate_residents (estate_id, user_id, role) VALUES ($1,$2,'resident')`, estateID, user); err != nil {
 		t.Fatalf("seed estate_residents: %v", err)
 	}

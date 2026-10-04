@@ -39,11 +39,11 @@ func processRunPool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping payout ProcessRun live-DB tests")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	if err := pool.Ping(context.Background()); err != nil {
+	if err := pool.Ping(t.Context()); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
 	return pool
@@ -68,7 +68,7 @@ func prSeedRestaurant(t *testing.T, ctx context.Context, pool *pgxpool.Pool, own
 		restID, ownerID); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM restaurants WHERE id=$1`, restID) })
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM restaurants WHERE id=$1`, restID) })
 	return restID
 }
 
@@ -190,7 +190,7 @@ func newProcessRunService(pool *pgxpool.Pool) *Service {
 func TestLiveDB_ProcessRunHappyPath(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := newProcessRunService(pool)
 
 	owner := uuid.New().String()
@@ -272,7 +272,7 @@ func TestLiveDB_ProcessRunHappyPath(t *testing.T) {
 func TestLiveDB_ProcessRunNeverDoublePays(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := newProcessRunService(pool)
 
 	owner := uuid.New().String()
@@ -346,7 +346,7 @@ func TestLiveDB_ProcessRunNeverDoublePays(t *testing.T) {
 func TestLiveDB_ProcessRunMixedProviderBatch(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := newProcessRunService(pool)
 
 	owner := uuid.New().String()
@@ -412,7 +412,7 @@ func TestLiveDB_ProcessRunMixedProviderBatch(t *testing.T) {
 func TestLiveDB_ProcessRunConcurrentClaimIsSingleWinner(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := newProcessRunService(pool)
 
 	owner := uuid.New().String()
@@ -478,7 +478,7 @@ func TestLiveDB_ProcessRunConcurrentClaimIsSingleWinner(t *testing.T) {
 func TestLiveDB_ProcessRunUnknownRunFailsCleanly(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := newProcessRunService(pool)
 
 	if _, err := svc.ProcessRun(ctx, uuid.New().String(), "idem-unknown-run"); !errors.Is(err, ErrPayoutRunNotFound) {
@@ -504,7 +504,7 @@ func TestLiveDB_ProcessRunUnknownRunFailsCleanly(t *testing.T) {
 func TestLiveDB_ProcessRunRecoversFromCrashBetweenPostAndFinalise(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := newProcessRunService(pool)
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 

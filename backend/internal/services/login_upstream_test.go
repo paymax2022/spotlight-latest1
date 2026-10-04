@@ -82,7 +82,7 @@ func TestLoginUser_GoTrue5xxIsUnavailableAndCountsNoStrike(t *testing.T) {
 	}), &rpcCalls)
 	defer srv.Close()
 
-	_, err := loginUpstreamSvc(srv).LoginUser(domain.LoginRequest{Email: "u@x.com", Password: "correct-horse-battery"})
+	_, err := loginUpstreamSvc(srv).LoginUser(t.Context(), domain.LoginRequest{Email: "u@x.com", Password: "correct-horse-battery"})
 	assertAuthUnavailable(t, err)
 	if got := rpcCalls.Load(); got != 0 {
 		t.Fatalf("bump_failed_login_attempts was called %d times — a GoTrue outage must not count as a wrong password", got)
@@ -98,7 +98,7 @@ func TestLoginUser_GoTrue429IsUnavailableAndCountsNoStrike(t *testing.T) {
 	}), &rpcCalls)
 	defer srv.Close()
 
-	_, err := loginUpstreamSvc(srv).LoginUser(domain.LoginRequest{Email: "u@x.com", Password: "correct-horse-battery"})
+	_, err := loginUpstreamSvc(srv).LoginUser(t.Context(), domain.LoginRequest{Email: "u@x.com", Password: "correct-horse-battery"})
 	assertAuthUnavailable(t, err)
 	if got := rpcCalls.Load(); got != 0 {
 		t.Fatalf("bump_failed_login_attempts was called %d times on a 429 — GoTrue's own rate limiter is not a credential verdict", got)
@@ -125,7 +125,7 @@ func TestLoginUser_GoTrueTransportErrorIsUnavailableAndCountsNoStrike(t *testing
 	}), &rpcCalls)
 	defer srv.Close()
 
-	_, err := loginUpstreamSvc(srv).LoginUser(domain.LoginRequest{Email: "u@x.com", Password: "correct-horse-battery"})
+	_, err := loginUpstreamSvc(srv).LoginUser(t.Context(), domain.LoginRequest{Email: "u@x.com", Password: "correct-horse-battery"})
 	assertAuthUnavailable(t, err)
 	if got := rpcCalls.Load(); got != 0 {
 		t.Fatalf("bump_failed_login_attempts was called %d times on a transport failure", got)
@@ -142,7 +142,7 @@ func TestLoginUser_GoTrueUndecodable2xxIsUnavailable(t *testing.T) {
 	}), &rpcCalls)
 	defer srv.Close()
 
-	_, err := loginUpstreamSvc(srv).LoginUser(domain.LoginRequest{Email: "u@x.com", Password: "correct-horse-battery"})
+	_, err := loginUpstreamSvc(srv).LoginUser(t.Context(), domain.LoginRequest{Email: "u@x.com", Password: "correct-horse-battery"})
 	assertAuthUnavailable(t, err)
 	if got := rpcCalls.Load(); got != 0 {
 		t.Fatalf("bump_failed_login_attempts was called %d times on an undecodable response", got)
@@ -162,7 +162,7 @@ func TestLoginUser_GoTrue4xxStillCountsAStrikeAndReadsInvalidCredentials(t *test
 			_, _ = w.Write([]byte(`{"error":"invalid_grant","error_code":"invalid_credentials"}`))
 		}), &rpcCalls)
 
-		_, err := loginUpstreamSvc(srv).LoginUser(domain.LoginRequest{Email: "u@x.com", Password: "wrong-password"})
+		_, err := loginUpstreamSvc(srv).LoginUser(t.Context(), domain.LoginRequest{Email: "u@x.com", Password: "wrong-password"})
 		srv.Close()
 		if err == nil {
 			t.Fatalf("status %d: a credential rejection must still fail", status)
@@ -192,7 +192,7 @@ func TestLoginUser_EmailNotConfirmedNeverCountsAStrike(t *testing.T) {
 	}), &rpcCalls)
 	defer srv.Close()
 
-	_, err := loginUpstreamSvc(srv).LoginUser(domain.LoginRequest{Email: "u@x.com", Password: "correct-horse-battery"})
+	_, err := loginUpstreamSvc(srv).LoginUser(t.Context(), domain.LoginRequest{Email: "u@x.com", Password: "correct-horse-battery"})
 	if !errors.Is(err, ErrEmailNotConfirmed) {
 		t.Fatalf("err = %v, want ErrEmailNotConfirmed", err)
 	}

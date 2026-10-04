@@ -23,11 +23,11 @@ func dispatchLivePool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping live-DB dispatch test")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	if err := pool.Ping(context.Background()); err != nil {
+	if err := pool.Ping(t.Context()); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
 	return pool
@@ -55,7 +55,7 @@ func seedDriver(t *testing.T, ctx context.Context, pool *pgxpool.Pool, lat, lng 
 func TestLiveDB_DispatchFairnessAndSLA(t *testing.T) {
 	pool := dispatchLivePool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := NewService(pool, nil)
 
 	// Isolate this test's fairness assertions from drivers left online by other runs

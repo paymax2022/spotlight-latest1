@@ -49,7 +49,7 @@ func (r *Repository) PublishDisclosure(ctx context.Context, in DisclosureInput, 
 	if err != nil {
 		return nil, fmt.Errorf("compliance: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE referral_disclosures SET active = false WHERE slug = $1 AND jurisdiction = $2 AND active = true`,

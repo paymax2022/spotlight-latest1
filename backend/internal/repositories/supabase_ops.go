@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,7 +55,7 @@ func (r *HandoffSupabaseRepository) List(limit int, status string, sessionID str
 	}
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +67,7 @@ func (r *HandoffSupabaseRepository) List(limit int, status string, sessionID str
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("handoff query failed: %d", resp.StatusCode)
@@ -106,7 +107,7 @@ func (r *HandoffSupabaseRepository) UpdateStatus(id, status string) error {
 	q.Set("id", "eq."+id)
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodPatch, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -120,7 +121,7 @@ func (r *HandoffSupabaseRepository) UpdateStatus(id, status string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("handoff update failed: %d", resp.StatusCode)
@@ -165,7 +166,7 @@ func (r *LeadSupabaseRepository) List(limit int, sessionID string) ([]domain.Lea
 	}
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +178,7 @@ func (r *LeadSupabaseRepository) List(limit int, sessionID string) ([]domain.Lea
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("lead query failed: %d", resp.StatusCode)
@@ -240,7 +241,7 @@ func (r *LeadSupabaseRepository) UpdateStatus(id, status string) error {
 	q.Set("id", "eq."+leadID)
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodPatch, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -254,7 +255,7 @@ func (r *LeadSupabaseRepository) UpdateStatus(id, status string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("lead update failed: %d", resp.StatusCode)

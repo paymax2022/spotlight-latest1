@@ -112,7 +112,7 @@ func TestHTTP_CreateOrder_QtyCap422Shape(t *testing.T) {
 		c.JSON(http.StatusCreated, gin.H{"success": true})
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/orders", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/orders", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -152,7 +152,7 @@ func TestHTTP_CreateOrder_GenericErrorKeepsPlainEnvelope(t *testing.T) {
 	r.POST("/orders", func(c *gin.Context) {
 		failCreateOrder(c, errors.New("pharmacy: product not found in this pharmacy catalog"))
 	})
-	req := httptest.NewRequest(http.MethodPost, "/orders", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/orders", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusUnprocessableEntity {

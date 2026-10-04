@@ -183,7 +183,7 @@ func (s *Service) SetVisibility(ctx context.Context, key string, env Environment
 	if err != nil {
 		return Module{}, fmt.Errorf("modules: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := s.upsertEnv(ctx, tx, key, env, status, note, actorID); err != nil {
 		return Module{}, err
@@ -227,7 +227,7 @@ func (s *Service) SetLifecycle(ctx context.Context, key string, lc Lifecycle, no
 	if err != nil {
 		return Module{}, fmt.Errorf("modules: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE public.platform_modules SET lifecycle=$2, updated_at=now() WHERE key=$1`,

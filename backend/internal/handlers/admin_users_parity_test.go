@@ -116,7 +116,7 @@ func TestBulkAssignRolesToUser_SuccessAudited(t *testing.T) {
 	r.POST("/users/:id/roles/bulk", withActor("admin-1"), h.BulkAssignRoles)
 
 	body := `{"roleIds":["r1","r2"],"scopeType":"global"}`
-	req := httptest.NewRequest(http.MethodPost, "/users/u9/roles/bulk", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/users/u9/roles/bulk", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -148,7 +148,7 @@ func TestBulkAssignRoleToUsers_ScopeDeniedDroppedAndAudited(t *testing.T) {
 	r.POST("/users/bulk-roles", withActor("coord-1"), h.BulkAssignRoleToUsers)
 
 	body := `{"roleId":"r1","userIds":["u1","u2"],"scopeType":"global"}`
-	req := httptest.NewRequest(http.MethodPost, "/users/bulk-roles", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/users/bulk-roles", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -172,7 +172,7 @@ func TestAdminUserExport_Audited(t *testing.T) {
 	r := gin.New()
 	r.GET("/users/export", withActor("admin-1"), h.Export)
 
-	req := httptest.NewRequest(http.MethodGet, "/users/export", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/users/export", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -196,7 +196,7 @@ func TestAdminUserSessions_FeatureDisabled503(t *testing.T) {
 	r := gin.New()
 	r.GET("/users/:id/sessions", withActor("admin-1"), h.Sessions)
 
-	req := httptest.NewRequest(http.MethodGet, "/users/u1/sessions", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/users/u1/sessions", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -218,7 +218,7 @@ func TestBulkAssignRoles_MissingBody400(t *testing.T) {
 	r := gin.New()
 	r.POST("/users/:id/roles/bulk", withActor("admin-1"), h.BulkAssignRoles)
 
-	req := httptest.NewRequest(http.MethodPost, "/users/u9/roles/bulk", bytes.NewBufferString(`{}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/users/u9/roles/bulk", bytes.NewBufferString(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

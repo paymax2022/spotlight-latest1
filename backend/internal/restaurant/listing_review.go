@@ -225,10 +225,10 @@ func (s *Service) recomputeRestaurantRating(ctx context.Context, restaurantID st
 	var avg float64
 	// Hidden (moderated-away) reviews are excluded so a suppressed fake review can't
 	// skew the average.
-	s.db.QueryRow(ctx,
+	_ = s.db.QueryRow(ctx,
 		`SELECT COALESCE(AVG(restaurant_stars),5.0) FROM restaurant_ratings WHERE restaurant_id=$1 AND moderation_status <> 'hidden'`,
 		restaurantID).Scan(&avg)
-	s.db.Exec(ctx, `UPDATE restaurants SET rating=$1, updated_at=NOW() WHERE id=$2`, avg, restaurantID)
+	_, _ = s.db.Exec(ctx, `UPDATE restaurants SET rating=$1, updated_at=NOW() WHERE id=$2`, avg, restaurantID)
 }
 
 // PublicReview is a review as shown publicly — anonymized (no rater identity, SEC-009)

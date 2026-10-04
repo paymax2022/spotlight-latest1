@@ -170,7 +170,7 @@ func (r *Repository) TransitionLesson(ctx context.Context, actor, id string, to 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from PublishStatus
 	err = tx.QueryRow(ctx, `SELECT status FROM public.academy_edu_lessons WHERE id = $1 FOR UPDATE`, id).Scan(&from)
@@ -255,7 +255,7 @@ func (r *Repository) TransitionBundle(ctx context.Context, actor, id string, to 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from PublishStatus
 	var lessonIDs []string
@@ -415,7 +415,7 @@ func (r *Repository) AdvanceProduction(ctx context.Context, actor, id string, to
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from ProductionStage
 	err = tx.QueryRow(ctx, `SELECT stage FROM public.academy_content_productions WHERE id = $1 FOR UPDATE`, id).Scan(&from)
@@ -460,7 +460,7 @@ func (r *Repository) BlockProduction(ctx context.Context, actor, id string) (*Pr
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from ProductionStatus
 	err = tx.QueryRow(ctx, `SELECT status FROM public.academy_content_productions WHERE id = $1 FOR UPDATE`, id).Scan(&from)

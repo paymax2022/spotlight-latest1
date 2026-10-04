@@ -312,7 +312,7 @@ func (s *Service) RequestPayout(ctx context.Context, estateID, userID, jobID, id
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	ct, err := tx.Exec(ctx,
 		`UPDATE vendor_jobs SET status='paid', paid_at=NOW(), payout_ref=$1, payout_idempotency_key=$2
 		 WHERE id=$3 AND estate_id=$4 AND status='completed'`,

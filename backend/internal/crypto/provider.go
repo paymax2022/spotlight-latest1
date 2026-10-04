@@ -208,7 +208,7 @@ func (q *quidaxProvider) do(ctx context.Context, method, path string, body any) 
 	if err != nil {
 		return 0, nil, fmt.Errorf("quidax: transport: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	return resp.StatusCode, raw, nil
 }

@@ -87,7 +87,7 @@ func (r *Repository) AdminTransitionWithdrawal(
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const upd = `UPDATE crypto_withdrawals
 		SET status=$2,
@@ -139,7 +139,7 @@ func (r *Repository) AdminTransitionWithdrawalProvider(
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const upd = `UPDATE crypto_withdrawals
 		SET status=$2,

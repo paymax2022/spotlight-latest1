@@ -153,7 +153,7 @@ func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeI
 	if err != nil {
 		return fmt.Errorf("escrow: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var h Hold
 	var state string

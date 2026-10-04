@@ -214,7 +214,7 @@ func TestLoginUser_ExpiredAutoLockClearsStatusToActive(t *testing.T) {
 		supabase: integrations.NewSupabaseRestClient(srv.URL, "key"),
 		cfg:      config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30},
 	}
-	if _, err := svc.LoginUser(domain.LoginRequest{Email: "u@x.com", Password: "pw"}); err != nil {
+	if _, err := svc.LoginUser(t.Context(), domain.LoginRequest{Email: "u@x.com", Password: "pw"}); err != nil {
 		t.Fatalf("expired auto-lock must allow login, got: %v", err)
 	}
 	if patch["status"] != "active" {
@@ -239,7 +239,7 @@ func TestLoginUser_NonLockedLoginDoesNotTouchStatus(t *testing.T) {
 		supabase: integrations.NewSupabaseRestClient(srv.URL, "key"),
 		cfg:      config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30},
 	}
-	if _, err := svc.LoginUser(domain.LoginRequest{Email: "u@x.com", Password: "pw"}); err != nil {
+	if _, err := svc.LoginUser(t.Context(), domain.LoginRequest{Email: "u@x.com", Password: "pw"}); err != nil {
 		t.Fatalf("active user login must succeed, got: %v", err)
 	}
 	if _, present := patch["status"]; present {
@@ -367,7 +367,7 @@ func TestLoginUser_MissingPlatformUsersRowRefusesLogin(t *testing.T) {
 		supabase: integrations.NewSupabaseRestClient(srv.URL, "key"),
 		cfg:      config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30},
 	}
-	_, err := svc.LoginUser(domain.LoginRequest{Email: "ghost@example.com", Password: "correct-horse-battery"})
+	_, err := svc.LoginUser(t.Context(), domain.LoginRequest{Email: "ghost@example.com", Password: "correct-horse-battery"})
 	if err == nil {
 		t.Fatal("LoginUser must refuse when the account has zero platform_users rows, got nil error")
 	}

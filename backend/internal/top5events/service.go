@@ -170,7 +170,7 @@ func (s *Service) transition(ctx context.Context, eventID string, from, to Event
 	if err != nil {
 		return fmt.Errorf("events: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var organiser, state string
 	if err := tx.QueryRow(ctx, `SELECT organiser_id, state FROM events WHERE id=$1 FOR UPDATE`, eventID).Scan(&organiser, &state); err != nil {
@@ -382,7 +382,7 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	if err != nil {
 		return nil, fmt.Errorf("events: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var price int64
 	var capacity, sold int
@@ -578,7 +578,7 @@ func (s *Service) expireOrder(ctx context.Context, orderID, tierID string) {
 	if err != nil {
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var status string
 	if err := tx.QueryRow(ctx, `SELECT status FROM event_orders WHERE id=$1 FOR UPDATE`, orderID).Scan(&status); err != nil {
 		return
@@ -642,7 +642,7 @@ func (s *Service) GiftTicket(ctx context.Context, ownerID, ticketID, recipientHa
 	if err != nil {
 		return nil, fmt.Errorf("events: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var owner, state, eventID, oldCred string
 	if err := tx.QueryRow(ctx, `SELECT owner_id, state, event_id, credential_id FROM event_tickets WHERE id=$1 FOR UPDATE`, ticketID).Scan(&owner, &state, &eventID, &oldCred); err != nil {
@@ -945,7 +945,7 @@ func (s *Service) TapCharge(ctx context.Context, callerID, vendorID, walletID st
 	if err != nil {
 		return nil, fmt.Errorf("events: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Idempotency: a replayed tap returns the existing charge.
 	var existing string
@@ -1003,7 +1003,7 @@ func (s *Service) CloseWallet(ctx context.Context, walletID string) error {
 	if err != nil {
 		return fmt.Errorf("events: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var owner, state string
 	if err := tx.QueryRow(ctx, `SELECT owner_id, state FROM event_wallets WHERE id=$1 FOR UPDATE`, walletID).Scan(&owner, &state); err != nil {
@@ -1143,7 +1143,7 @@ func (s *Service) SettleVendor(ctx context.Context, eventID, vendorID, idemKey s
 	if err != nil {
 		return 0, fmt.Errorf("events: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Sum unsettled vendor float under a row lock. The lock is held across the
 	// ledger posts below, so a concurrent SettleVendor for the same vendor blocks

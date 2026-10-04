@@ -244,7 +244,7 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 	if err != nil {
 		return nil, fmt.Errorf("transfers: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const lock = `SELECT pg_advisory_xact_lock(hashtext($1))`
 	if _, err := tx.Exec(ctx, lock, "wallet:"+senderID); err != nil {
@@ -375,7 +375,7 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 	if err != nil {
 		return nil, fmt.Errorf("bank_transfer: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const lock = `SELECT pg_advisory_xact_lock(hashtext($1))`
 	if _, err := tx.Exec(ctx, lock, "wallet:"+userID); err != nil {

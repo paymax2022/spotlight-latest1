@@ -80,7 +80,7 @@ func (s *Service) Grant(ctx context.Context, userID, creditType, idempotencyKey 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	ct, err := tx.Exec(ctx,
 		`INSERT INTO connect_credit_txns (idempotency_key, user_id, credit_type, delta, reason)
@@ -116,7 +116,7 @@ func (s *Service) Consume(ctx context.Context, userID, creditType, idempotencyKe
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Idempotency: record the spend txn first. A duplicate key means this exact
 	// spend already happened — return success without decrementing again.

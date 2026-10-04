@@ -305,7 +305,7 @@ func (s *Service) ReassignOrder(ctx context.Context, orderID, reason string) err
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var status string
 	var rider *string

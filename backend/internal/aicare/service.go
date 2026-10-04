@@ -88,7 +88,7 @@ func (s *Service) SendMessage(ctx context.Context, sessionID, userID string, req
 			Content:   aiReply,
 			CreatedAt: time.Now(),
 		}
-		s.db.Exec(ctx, insertMsg, aiMsg.ID, aiMsg.SessionID, string(aiMsg.Role), aiMsg.Content)
+		_, _ = s.db.Exec(ctx, insertMsg, aiMsg.ID, aiMsg.SessionID, string(aiMsg.Role), aiMsg.Content)
 	}
 
 	return userMsg, aiMsg, nil
@@ -105,7 +105,7 @@ func (s *Service) Escalate(ctx context.Context, sessionID, userID string, req Es
 		return errors.New("aicare: session not found or already escalated/resolved")
 	}
 	if req.Reason != "" {
-		s.db.Exec(ctx, `INSERT INTO support_messages (id, session_id, role, content) VALUES ($1,$2,'user',$3)`,
+		_, _ = s.db.Exec(ctx, `INSERT INTO support_messages (id, session_id, role, content) VALUES ($1,$2,'user',$3)`,
 			uuid.New().String(), sessionID, "Escalation reason: "+req.Reason)
 	}
 	return nil
@@ -210,7 +210,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) CreateSession(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req CreateSessionRequest
-	c.ShouldBindJSON(&req)
+	_ = c.ShouldBindJSON(&req)
 	sess, err := h.svc.CreateSession(c.Request.Context(), userID, req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
@@ -247,7 +247,7 @@ func (h *Handler) GetHistory(c *gin.Context) {
 func (h *Handler) Escalate(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req EscalateRequest
-	c.ShouldBindJSON(&req)
+	_ = c.ShouldBindJSON(&req)
 	if err := h.svc.Escalate(c.Request.Context(), c.Param("id"), userID, req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
@@ -333,7 +333,7 @@ func (p *AnthropicProvider) Reply(ctx context.Context, history []Message, userMe
 	if err != nil {
 		return "", fmt.Errorf("aicare: http: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, _ := io.ReadAll(resp.Body)
 	var ar anthropicResponse

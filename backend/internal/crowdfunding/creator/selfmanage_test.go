@@ -137,7 +137,7 @@ func TestUpdateAssignments_ExplicitEmptyStringIsAWrite(t *testing.T) {
 func TestUpdateAssignments_AllFields(t *testing.T) {
 	as := updateAssignments(CampaignUpdateRequest{
 		Title: new("T"), Summary: new("S"), Story: new("St"),
-		Category: new("medical"), CoverImage: new("c"), GoalKobo: i64p(500),
+		Category: new("medical"), CoverImage: new("c"), GoalKobo: new(int64(500)),
 	})
 	want := []string{"title", "summary", "story", "category", "cover_url", "goal_kobo"}
 	if len(as) != len(want) {
@@ -203,10 +203,10 @@ func TestValidateUpdate(t *testing.T) {
 		{"title too long", CampaignUpdateRequest{Title: new(strings.Repeat("x", 201))}, ErrInvalidTitle},
 		{"title at max is fine", CampaignUpdateRequest{Title: new(strings.Repeat("x", 200))}, nil},
 		{"title at min is fine", CampaignUpdateRequest{Title: new("ab")}, nil},
-		{"goal below the 100 kobo floor", CampaignUpdateRequest{GoalKobo: i64p(99)}, ErrInvalidGoal},
-		{"goal of zero", CampaignUpdateRequest{GoalKobo: i64p(0)}, ErrInvalidGoal},
-		{"negative goal", CampaignUpdateRequest{GoalKobo: i64p(-1)}, ErrInvalidGoal},
-		{"goal at the floor is fine", CampaignUpdateRequest{GoalKobo: i64p(100)}, nil},
+		{"goal below the 100 kobo floor", CampaignUpdateRequest{GoalKobo: new(int64(99))}, ErrInvalidGoal},
+		{"goal of zero", CampaignUpdateRequest{GoalKobo: new(int64(0))}, ErrInvalidGoal},
+		{"negative goal", CampaignUpdateRequest{GoalKobo: new(int64(-1))}, ErrInvalidGoal},
+		{"goal at the floor is fine", CampaignUpdateRequest{GoalKobo: new(int64(100))}, nil},
 		{"blank category", CampaignUpdateRequest{Category: new("  ")}, ErrUnknownCategory},
 	}
 	for _, c := range cases {
@@ -226,13 +226,13 @@ func TestValidateUpdate(t *testing.T) {
 // campaign permanently over 100% funded — how a stalled campaign is dressed up
 // as a successful one. All comparisons are integer kobo.
 func TestGuardGoalNotBelowRaised(t *testing.T) {
-	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{GoalKobo: i64p(500_00)}, 900_00); !errors.Is(err, ErrGoalBelowRaised) {
+	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{GoalKobo: new(int64(500_00))}, 900_00); !errors.Is(err, ErrGoalBelowRaised) {
 		t.Fatalf("lowering the goal under the raised total must be refused, got %v", err)
 	}
-	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{GoalKobo: i64p(900_00)}, 900_00); err != nil {
+	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{GoalKobo: new(int64(900_00))}, 900_00); err != nil {
 		t.Fatalf("a goal exactly equal to raised is legal, got %v", err)
 	}
-	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{GoalKobo: i64p(1_000_00)}, 900_00); err != nil {
+	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{GoalKobo: new(int64(1_000_00))}, 900_00); err != nil {
 		t.Fatalf("raising the goal is always legal, got %v", err)
 	}
 	// Absent goal key: the raised total is irrelevant.
@@ -387,7 +387,7 @@ func mustJSONSummary(t *testing.T, s CampaignSummary) string {
 // suspicious edit is greppable — but never mirrors free-text user content.
 func TestAuditUpdateTarget(t *testing.T) {
 	got := auditUpdateTarget("camp-1", CampaignUpdateRequest{
-		Title: new("New title"), GoalKobo: i64p(100),
+		Title: new("New title"), GoalKobo: new(int64(100)),
 	})
 	if !strings.Contains(got, "camp-1") {
 		t.Errorf("audit target must name the campaign: %q", got)

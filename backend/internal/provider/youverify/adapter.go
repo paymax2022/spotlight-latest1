@@ -217,7 +217,7 @@ func (c *Client) do(req *http.Request, dst any) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("youverify: http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("youverify: read response: %w", err)

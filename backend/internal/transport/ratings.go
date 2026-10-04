@@ -27,7 +27,7 @@ func (s *Service) RateTrip(ctx context.Context, tripID, raterID string, req Rate
 	var role, rateeID string
 	var driverUserID string
 	if t.DriverID != nil {
-		s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *t.DriverID).Scan(&driverUserID)
+		_ = s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *t.DriverID).Scan(&driverUserID)
 	}
 	switch raterID {
 	case t.RiderID:
@@ -93,11 +93,11 @@ func (s *Service) recomputeRating(ctx context.Context, rateeID, raterRole string
 	// raterRole 'rider' means the ratee is a driver; 'driver' means ratee is a rider.
 	var avg float64
 	if raterRole == "rider" {
-		s.db.QueryRow(ctx, `SELECT COALESCE(AVG(stars),5.0) FROM trip_ratings WHERE ratee_id=$1 AND role='rider'`, rateeID).Scan(&avg)
-		s.db.Exec(ctx, `UPDATE drivers SET rating=$1, updated_at=NOW() WHERE user_id=$2`, avg, rateeID)
+		_ = s.db.QueryRow(ctx, `SELECT COALESCE(AVG(stars),5.0) FROM trip_ratings WHERE ratee_id=$1 AND role='rider'`, rateeID).Scan(&avg)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET rating=$1, updated_at=NOW() WHERE user_id=$2`, avg, rateeID)
 	} else {
-		s.db.QueryRow(ctx, `SELECT COALESCE(AVG(stars),5.0) FROM trip_ratings WHERE ratee_id=$1 AND role='driver'`, rateeID).Scan(&avg)
-		s.db.Exec(ctx, `UPDATE mobility_profiles SET rating=$1, updated_at=NOW() WHERE user_id=$2`, avg, rateeID)
+		_ = s.db.QueryRow(ctx, `SELECT COALESCE(AVG(stars),5.0) FROM trip_ratings WHERE ratee_id=$1 AND role='driver'`, rateeID).Scan(&avg)
+		_, _ = s.db.Exec(ctx, `UPDATE mobility_profiles SET rating=$1, updated_at=NOW() WHERE user_id=$2`, avg, rateeID)
 	}
 }
 
@@ -177,13 +177,13 @@ func (s *Service) recomputeModeRating(ctx context.Context, providerUserID string
 	var avg float64
 	s.db.QueryRow(ctx,
 		`SELECT COALESCE(AVG(stars),5.0) FROM mode_ratings WHERE ratee_id=$1`, providerUserID).Scan(&avg)
-	s.db.Exec(ctx, `UPDATE drivers SET rating=$1, updated_at=NOW() WHERE user_id=$2`, avg, providerUserID)
+	_, _ = s.db.Exec(ctx, `UPDATE drivers SET rating=$1, updated_at=NOW() WHERE user_id=$2`, avg, providerUserID)
 }
 
 // providerUserID resolves a driver row id to its owning auth user id.
 func (s *Service) providerUserID(ctx context.Context, driverID string) string {
 	var userID string
-	s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, driverID).Scan(&userID)
+	_ = s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, driverID).Scan(&userID)
 	return userID
 }
 
@@ -277,10 +277,10 @@ func (s *Service) RateBusTrip(ctx context.Context, ticketID, raterID string, req
 func (s *Service) recomputeBusRating(ctx context.Context, providerID, ownerUserID string) {
 	var avg float64
 	var cnt int
-	s.db.QueryRow(ctx,
+	_ = s.db.QueryRow(ctx,
 		`SELECT COALESCE(AVG(stars),0), COUNT(*) FROM mode_ratings WHERE ratee_id=$1 AND mode='bus'`,
 		ownerUserID).Scan(&avg, &cnt)
-	s.db.Exec(ctx, `UPDATE bus_providers SET rating_avg=$1, rating_count=$2, updated_at=NOW() WHERE id=$3`,
+	_, _ = s.db.Exec(ctx, `UPDATE bus_providers SET rating_avg=$1, rating_count=$2, updated_at=NOW() WHERE id=$3`,
 		avg, cnt, providerID)
 }
 

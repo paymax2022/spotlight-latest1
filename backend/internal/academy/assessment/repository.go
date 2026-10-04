@@ -186,7 +186,7 @@ func (r *Repository) TransitionItemStatus(ctx context.Context, actor, id string,
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from ItemStatus
 	err = tx.QueryRow(ctx, `SELECT status FROM public.academy_question_items WHERE id = $1 FOR UPDATE`, id).Scan(&from)
@@ -368,7 +368,7 @@ func (r *Repository) ApplyProgression(ctx context.Context, userID, objectiveID s
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Seed the record if absent (default not_started), then lock + read.
 	const seed = `

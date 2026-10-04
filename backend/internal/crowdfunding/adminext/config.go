@@ -101,7 +101,7 @@ func (s *Service) PatchCategory(ctx context.Context, id, adminID string, req Cat
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var slug string
 	if err := tx.QueryRow(ctx, `SELECT slug FROM crowdfunding_categories WHERE id=$1 FOR UPDATE`, id).Scan(&slug); err != nil {
@@ -152,7 +152,7 @@ func (s *Service) UpdateFees(ctx context.Context, adminID string, f FeeConfig) (
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var prevPlatform int
 	if err := tx.QueryRow(ctx, `SELECT platform_fee_bps FROM cf_fee_config WHERE id=1 FOR UPDATE`).Scan(&prevPlatform); err != nil {
@@ -204,7 +204,7 @@ func (s *Service) SetFlag(ctx context.Context, key, adminID string, enabled bool
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var locked bool
 	if err := tx.QueryRow(ctx, `SELECT locked FROM cf_feature_flags WHERE key=$1 FOR UPDATE`, key).Scan(&locked); err != nil {

@@ -184,7 +184,7 @@ func TestStemMutationsEmitAudit(t *testing.T) {
 			r := gin.New()
 			r.Handle(tc.method, tc.route, tc.bind(h))
 
-			req := httptest.NewRequest(tc.method, tc.path, bytes.NewBufferString(tc.body))
+			req := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, bytes.NewBufferString(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, req)
@@ -212,7 +212,7 @@ func TestStemMutationNilAuditSafe(t *testing.T) {
 	h := NewStemHandler(stemAuditService{}) // no WithAudit
 	r := gin.New()
 	r.POST("/contests", h.CreateContest)
-	req := httptest.NewRequest(http.MethodPost, "/contests", bytes.NewBufferString(`{"name":"X","slug":"x"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/contests", bytes.NewBufferString(`{"name":"X","slug":"x"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

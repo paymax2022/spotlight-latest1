@@ -304,7 +304,7 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 	if err != nil {
 		return nil, fmt.Errorf("fx: begin conversion tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insertConv = `
 		INSERT INTO fx_conversions (id, user_id, quote_id, provider_txn_id, source_currency, target_currency,

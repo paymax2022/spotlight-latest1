@@ -232,7 +232,7 @@ func (r *Repository) WithTx(ctx context.Context, fn func(tx Tx) error) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := fn(&txAdapter{tx: tx}); err != nil {
 		return err
 	}

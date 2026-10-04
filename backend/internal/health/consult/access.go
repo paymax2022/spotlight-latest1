@@ -175,7 +175,7 @@ func (s *Service) WithdrawRecordingConsent(ctx context.Context, actorID, consult
 	if err != nil {
 		return fmt.Errorf("consult: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `DELETE FROM health_consult_recording_consents WHERE consult_id=$1 AND user_id=$2`, consultID, actorID); err != nil {
 		return fmt.Errorf("consult: withdraw recording consent: %w", err)
 	}

@@ -471,7 +471,7 @@ func TestAdminListTransactions_RBAC(t *testing.T) {
 
 	t.Run("denied without the permission", func(t *testing.T) {
 		r := buildRouter(false)
-		req := httptest.NewRequest(http.MethodGet, "/api/finance/admin/transactions?search="+f.tag, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/finance/admin/transactions?search="+f.tag, nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusForbidden {
@@ -481,7 +481,7 @@ func TestAdminListTransactions_RBAC(t *testing.T) {
 
 	t.Run("allowed with the permission returns real rows", func(t *testing.T) {
 		r := buildRouter(true)
-		req := httptest.NewRequest(http.MethodGet, "/api/finance/admin/transactions?search="+f.tag, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/finance/admin/transactions?search="+f.tag, nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
@@ -650,7 +650,7 @@ func TestAdminGetTransaction_NotFound(t *testing.T) {
 		middleware.RequirePermission(&fakeAdminTxRBAC{allow: true}, "finance.admin.transactions.view"),
 		h.GetTransaction)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/finance/admin/transactions/"+uuid.NewString(), nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/finance/admin/transactions/"+uuid.NewString(), nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
@@ -659,7 +659,7 @@ func TestAdminGetTransaction_NotFound(t *testing.T) {
 
 	// And the happy path through the real HTTP handler, to prove the route
 	// wiring + JSON envelope (not just the service method).
-	req2 := httptest.NewRequest(http.MethodGet, "/api/finance/admin/transactions/"+f.rowB, nil)
+	req2 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/finance/admin/transactions/"+f.rowB, nil)
 	w2 := httptest.NewRecorder()
 	r.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusOK {

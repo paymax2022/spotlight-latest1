@@ -323,7 +323,7 @@ func (r *Repository) TransferUnits(ctx context.Context, assetID, sellerID, buyer
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var sellerUnits int64
 	if err := tx.QueryRow(ctx, `SELECT units FROM fre_cap_table WHERE asset_id=$1 AND user_id=$2 FOR UPDATE`, assetID, sellerID).

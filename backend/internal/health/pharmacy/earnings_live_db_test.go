@@ -40,8 +40,8 @@ func seedEarnings(t *testing.T, ctx context.Context, f inboxFixture, pharmacyID,
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		f.pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE id=$1`, orderID)
-		f.pool.Exec(bg, `DELETE FROM escrow_holds WHERE id=$1`, escrowID)
+		_, _ = f.pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE id=$1`, orderID)
+		_, _ = f.pool.Exec(bg, `DELETE FROM escrow_holds WHERE id=$1`, escrowID)
 	})
 	return orderID
 }

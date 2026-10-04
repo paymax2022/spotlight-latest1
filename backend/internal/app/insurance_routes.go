@@ -417,7 +417,7 @@ func (h *insuranceUploadHandler) Upload(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	contentType := header.Header.Get("Content-Type")
 	ext, ok := allowedInsuranceUploadTypes[contentType]
@@ -459,7 +459,7 @@ func (h *insuranceUploadHandler) Upload(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "could not upload file"})
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "could not upload file"})
 		return

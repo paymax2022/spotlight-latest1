@@ -156,7 +156,7 @@ func TestGiftingAdminLedger_ListsRealRowsEnforcesRBACAndFilters(t *testing.T) {
 
 	doReq := func(t *testing.T, caller, query string) (*httptest.ResponseRecorder, []giftingAdminRow) {
 		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, "/api/connect/admin/gifts"+query, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/connect/admin/gifts"+query, nil)
 		req.Header.Set("X-Test-User", caller)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)

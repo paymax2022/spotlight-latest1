@@ -29,7 +29,7 @@ func serve(t *testing.T, h gin.HandlerFunc, path string) *httptest.ResponseRecor
 	r.Use(h)
 	r.Any("/*any", func(c *gin.Context) { c.String(http.StatusOK, "reached") })
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 	return w
 }
 

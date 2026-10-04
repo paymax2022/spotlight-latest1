@@ -315,7 +315,7 @@ func TestVerifyWithADifferentPurposeFails(t *testing.T) {
 // An address that was never issued a code must answer exactly like a wrong code.
 // Any other answer is a user-enumeration oracle.
 func TestVerifyUnknownAddressLooksLikeAWrongCode(t *testing.T) {
-	svc, _, _, _ := newTestService(t, nil)
+	svc, _, _, _ := newTestService(t, nil) //nolint:dogsled // tuple: only svc needed
 	err := svc.Verify(context.Background(), "nobody@nowhere.com", PurposeLogin, "123456", "")
 	if !errors.Is(err, ErrInvalidCode) {
 		t.Fatalf("error = %v, want ErrInvalidCode", err)
@@ -393,7 +393,7 @@ func TestIssueIsAlsoLimitedPerIP(t *testing.T) {
 
 func TestVerifyIsLimitedPerIP(t *testing.T) {
 	ctx := context.Background()
-	svc, _, _, _ := newTestService(t, func(c *Config) { c.MaxVerifyPerIP = 2 })
+	svc, _, _, _ := newTestService(t, func(c *Config) { c.MaxVerifyPerIP = 2 }) //nolint:dogsled // tuple: only svc needed
 	for i := range 2 {
 		if err := svc.Verify(ctx, "a@b.com", PurposeLogin, "000000", "8.8.8.8"); !errors.Is(err, ErrInvalidCode) {
 			t.Fatalf("attempt %d error = %v", i, err)

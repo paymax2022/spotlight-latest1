@@ -539,7 +539,7 @@ func (n *resendNotifier) deliver(userID, email, eventType string) {
 		"text":    body,
 	}
 	b, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(b))
 	if err != nil {
 		return
 	}

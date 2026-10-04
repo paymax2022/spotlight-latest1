@@ -35,13 +35,13 @@ func (s *stubAuthService) registered() int {
 	return s.registerCalls
 }
 
-func (s *stubAuthService) RegisterUser(domain.RegisterRequest) (*services.RegisterResult, error) {
+func (s *stubAuthService) RegisterUser(context.Context, domain.RegisterRequest) (*services.RegisterResult, error) {
 	s.mu.Lock()
 	s.registerCalls++
 	s.mu.Unlock()
 	return s.result, s.err
 }
-func (s *stubAuthService) LoginUser(domain.LoginRequest) (map[string]any, error) {
+func (s *stubAuthService) LoginUser(context.Context, domain.LoginRequest) (map[string]any, error) {
 	if s.loginErr != nil {
 		return nil, s.loginErr
 	}
@@ -58,8 +58,8 @@ func (s *stubAuthService) LogoutUser(token string) error {
 	s.mu.Unlock()
 	return s.logoutErr
 }
-func (s *stubAuthService) RequestPasswordReset(string) error  { return nil }
-func (s *stubAuthService) ResetPassword(string, string) error { return nil }
+func (s *stubAuthService) RequestPasswordReset(context.Context, string) error { return nil }
+func (s *stubAuthService) ResetPassword(string, string) error                 { return nil }
 func (s *stubAuthService) ChangePassword(context.Context, string, string, string) error {
 	return nil
 }

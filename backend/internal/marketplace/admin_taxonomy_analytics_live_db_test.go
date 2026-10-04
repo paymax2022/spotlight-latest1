@@ -38,7 +38,7 @@ func TestLiveDBAdminTaxonomyCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert category: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_categories WHERE id=$1`, created.ID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_categories WHERE id=$1`, created.ID) })
 
 	if created.RiskTier != 1 || created.CommissionBps != 300 || !created.IsActive {
 		t.Fatalf("created category fields wrong: %+v", created)
@@ -138,7 +138,7 @@ func TestLiveDBAdminTaxonomyDuplicateSlugConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert first category: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_categories WHERE id=$1`, first.ID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_categories WHERE id=$1`, first.ID) })
 
 	_, err = repo.AdminInsertCategory(ctx, Category{
 		MarketID: DefaultMarketID, Slug: slug, Name: "Duplicate slug", RiskTier: 0, CommissionBps: 200, IsActive: true,
@@ -173,7 +173,7 @@ func TestLiveDBAdminAnalyticsRevenueAndFunnel(t *testing.T) {
 		retainedBoostID, listingID, sellerID, "analytics-test-"+retainedBoostID); err != nil {
 		t.Fatalf("seed retained boost: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, retainedBoostID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, retainedBoostID) })
 
 	// Rejected boost: 300,000 kobo, status 'rejected_with_reason' — must be
 	// EXCLUDED from revenue (mirrors AdminMetrics.TotalGMVKobo's own filter).
@@ -184,7 +184,7 @@ func TestLiveDBAdminAnalyticsRevenueAndFunnel(t *testing.T) {
 		rejectedBoostID, listingID, sellerID, "analytics-test-"+rejectedBoostID); err != nil {
 		t.Fatalf("seed rejected boost: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, rejectedBoostID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, rejectedBoostID) })
 
 	// One contact reveal (real funnel.contacts signal — mkt_contact_reveals.revealed_at).
 	if _, err := pool.Exec(ctx, `
@@ -193,7 +193,7 @@ func TestLiveDBAdminAnalyticsRevenueAndFunnel(t *testing.T) {
 		t.Fatalf("seed contact reveal: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM mkt_contact_reveals WHERE listing_id=$1`, listingID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM mkt_contact_reveals WHERE listing_id=$1`, listingID)
 	})
 
 	// One thread marked "met" (real funnel.deals signal — mkt_threads.met_at).
@@ -204,7 +204,7 @@ func TestLiveDBAdminAnalyticsRevenueAndFunnel(t *testing.T) {
 		threadID, listingID, buyerID, sellerID); err != nil {
 		t.Fatalf("seed met thread: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_threads WHERE id=$1`, threadID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_threads WHERE id=$1`, threadID) })
 
 	a, err := repo.AdminAnalytics(ctx, DefaultMarketID, 30)
 	if err != nil {
@@ -295,7 +295,7 @@ func TestLiveDBAdminAnalyticsNewAndActiveListings(t *testing.T) {
 		        500000,'NGN','used','draft',true,'Lagos')`, draftID, sellerID, categoryID); err != nil {
 		t.Fatalf("seed draft listing: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_listings WHERE id=$1`, draftID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_listings WHERE id=$1`, draftID) })
 	_ = activeID
 
 	after, err := repo.AdminAnalytics(ctx, DefaultMarketID, 1)

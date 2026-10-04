@@ -334,7 +334,7 @@ func TestGetQuote_ForwardsPaymentPlanToTheProvider(t *testing.T) {
 		if f, ok := in.Body["payment_plan"].(float64); ok {
 			plan = int(f)
 		}
-		fmt.Fprintf(w, `{"responseCode":1,"responseText":"ok","data":{"price":%d}}`, 4000*plan)
+		_, _ = fmt.Fprintf(w, `{"responseCode":1,"responseText":"ok","data":{"price":%d}}`, 4000*plan)
 	}))
 	defer srv.Close()
 

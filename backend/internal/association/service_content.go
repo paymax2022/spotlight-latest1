@@ -80,7 +80,7 @@ func (s *Service) CreateAnnouncement(ctx context.Context, adminID, orgID string,
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	author := s.actorName(ctx, adminID)
 	if _, err := tx.Exec(ctx, `
@@ -175,7 +175,7 @@ func (s *Service) CreateMeeting(ctx context.Context, adminID, orgID string, r Me
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_meetings
 		  (id, organisation_id, title, description, mode, starts_at, ends_at, location, state, agenda, attendance_code, created_by)
@@ -283,7 +283,7 @@ func (s *Service) CreateDocument(ctx context.Context, adminID, orgID string, r D
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_documents
 		  (id, organisation_id, title, category, kind, storage_key, size_label, version,
@@ -381,7 +381,7 @@ func (s *Service) CreateEvent(ctx context.Context, adminID, orgID string, r Even
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_events
 		  (id, organisation_id, title, description, starts_at, ends_at, location,
@@ -502,7 +502,7 @@ func (s *Service) CreateTask(ctx context.Context, adminID, orgID string, r TaskR
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_tasks
 		  (id, organisation_id, title, description, status, priority, due_date,
@@ -652,7 +652,7 @@ func (s *Service) RunDues(ctx context.Context, adminID, orgID string, r DuesRunR
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_dues_runs
@@ -770,7 +770,7 @@ func (s *Service) CreateInvoice(ctx context.Context, adminID string, r InvoiceRe
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_dues_runs (id, organisation_id, title, scope, invoiced, total_kobo, idempotency_key, created_by)
 		VALUES ($1,$2,$3,$4,1,$5,$6,$7)`,
@@ -807,7 +807,7 @@ func (s *Service) simpleUpdate(ctx context.Context, adminID, orgID, action, subj
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := fn(tx); err != nil {
 		return fmt.Errorf("association: %s: %w", strings.ToLower(action), err)
 	}
@@ -914,7 +914,7 @@ func (s *Service) ProposeMeeting(ctx context.Context, userID string, r MeetingRe
 	if err != nil {
 		return "", "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_meetings
@@ -980,7 +980,7 @@ func (s *Service) DecideMeeting(ctx context.Context, adminID, meetingID string, 
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Conditional on still being PENDING so two admins deciding at once cannot
 	// both write a decision — the second finds no row and is told it is decided.
@@ -1071,7 +1071,7 @@ func (s *Service) InviteToEvent(ctx context.Context, adminID, eventID string, me
 	if err != nil {
 		return 0, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// One statement: the SELECT filters the supplied ids down to memberships that
 	// actually belong to this event's organisation, so a foreign id inserts
@@ -1144,7 +1144,7 @@ func (s *Service) AddCommitteeMembers(ctx context.Context, adminID, committeeID 
 	if err != nil {
 		return 0, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO assoc_committee_members (committee_id, membership_id, role, status, joined_at)
@@ -1182,7 +1182,7 @@ func (s *Service) DecideCommitteeRequest(ctx context.Context, adminID, committee
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var tag interface{ RowsAffected() int64 }
 	if approve {
@@ -1224,7 +1224,7 @@ func (s *Service) RemoveCommitteeMember(ctx context.Context, adminID, committeeI
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	tag, err := tx.Exec(ctx,
 		`DELETE FROM assoc_committee_members WHERE committee_id=$1 AND membership_id=$2`, committeeID, membershipID)
@@ -1255,7 +1255,7 @@ func (s *Service) SetCommitteeMemberRole(ctx context.Context, adminID, committee
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Only an ACTIVE member can hold a position: giving a chair's title to
 	// somebody whose request has not been accepted would put a name on the

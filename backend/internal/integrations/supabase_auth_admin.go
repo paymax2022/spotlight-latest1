@@ -49,7 +49,7 @@ func (c *SupabaseRestClient) AdminConfirmEmail(ctx context.Context, userID strin
 	if err != nil {
 		return fmt.Errorf("supabase: confirm email: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		// The body can name the reason (e.g. a missing service-role key). The
 		// address is NOT included — an error string that carries it ends up in
@@ -180,7 +180,7 @@ func (c *SupabaseRestClient) adminUserPatch(ctx context.Context, userID string, 
 	if err != nil {
 		return fmt.Errorf("supabase: %s: %w", what, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<10))
 		return fmt.Errorf("supabase: %s failed: %d: %s", what, resp.StatusCode, strings.TrimSpace(string(msg)))
@@ -205,7 +205,7 @@ func (c *SupabaseRestClient) authPost(ctx context.Context, path string, body map
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<10))
 		return fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
@@ -252,7 +252,7 @@ func (c *SupabaseRestClient) SignupDisabled(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("supabase: read auth settings: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
 		return false, fmt.Errorf("supabase: auth settings returned %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))

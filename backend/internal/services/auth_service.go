@@ -20,10 +20,10 @@ import (
 )
 
 type AuthService interface {
-	RegisterUser(in domain.RegisterRequest) (*RegisterResult, error)
-	LoginUser(in domain.LoginRequest) (map[string]any, error)
+	RegisterUser(ctx context.Context, in domain.RegisterRequest) (*RegisterResult, error)
+	LoginUser(ctx context.Context, in domain.LoginRequest) (map[string]any, error)
 	LogoutUser(accessToken string) error
-	RequestPasswordReset(email string) error
+	RequestPasswordReset(ctx context.Context, email string) error
 	ChangePassword(ctx context.Context, accessToken, currentPassword, newPassword string) error
 	CompleteProfile(userID string, profileType string, metadata map[string]any) error
 }
@@ -106,7 +106,7 @@ func extractSignupUserID(body []byte) string { return parseSignupResponse(body).
 // admin creation path — which GoTrue does not gate for us — refuses on its behalf.
 var ErrSignupDisabled = errors.New("signups are disabled")
 
-func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, error) {
+func (s *authService) RegisterUser(ctx context.Context, in domain.RegisterRequest) (*RegisterResult, error) {
 	// Only when the client actually sent it — see domain.RegisterRequest.
 	if strings.TrimSpace(in.ConfirmPassword) != "" && in.Password != in.ConfirmPassword {
 		return nil, errors.New("password confirmation mismatch")
@@ -164,7 +164,7 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, 
 	}
 
 	b, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+path, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+path, bytes.NewReader(b))
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
 		// The handler does not echo this: a distinguishable "already registered"
@@ -293,7 +293,7 @@ type LoginFailureError struct {
 func (e *LoginFailureError) Error() string { return e.Err.Error() }
 func (e *LoginFailureError) Unwrap() error { return e.Err }
 
-func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) {
+func (s *authService) LoginUser(ctx context.Context, in domain.LoginRequest) (map[string]any, error) {
 	email := s.resolveLoginEmail(in.Identifier, in.Email)
 	if email == "" {
 		// Same error the wrong-password path returns, deliberately: a distinct
@@ -336,7 +336,7 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 
 	payload := map[string]any{"email": email, "password": in.Password}
 	b, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/token?grant_type=password", bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/token?grant_type=password", bytes.NewReader(b))
 	if err != nil {
 		// A request that cannot even be built is a configuration failure, not a
 		// credential verdict.
@@ -353,7 +353,7 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 		// against an account whose password was never evaluated.
 		return nil, fail(fmt.Errorf("%w: %w", ErrAuthUnavailable, err))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		errBody, _ := io.ReadAll(resp.Body)
 		var upstream struct {
@@ -449,10 +449,10 @@ func (s *authService) LogoutUser(accessToken string) error {
 	return nil
 }
 
-func (s *authService) RequestPasswordReset(email string) error {
+func (s *authService) RequestPasswordReset(ctx context.Context, email string) error {
 	payload := map[string]any{"email": strings.TrimSpace(strings.ToLower(email))}
 	b, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/recover", bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/recover", bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -463,7 +463,7 @@ func (s *authService) RequestPasswordReset(email string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// A 4xx is EXPECTED and must stay quiet: Supabase answers this way for an
 	// address with no account, and the endpoint deliberately does not disclose

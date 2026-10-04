@@ -172,7 +172,7 @@ func (s *Service) AuthorizeRefills(ctx context.Context, prescriberID, rxID strin
 	if err != nil {
 		return nil, fmt.Errorf("rx: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var owner, state string
 	if err := tx.QueryRow(ctx, `SELECT prescriber_id, state FROM health_prescriptions WHERE id=$1 FOR UPDATE`, rxID).
@@ -206,7 +206,7 @@ func (s *Service) DispenseRefill(ctx context.Context, pharmacistID, rxID string)
 	if err != nil {
 		return nil, fmt.Errorf("rx: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var state string
 	var verifiedBy *string

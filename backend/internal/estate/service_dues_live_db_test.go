@@ -84,7 +84,7 @@ func seedEstate(t *testing.T, ctx context.Context, pool *pgxpool.Pool, adminID s
 	if _, err := pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Dues Test Estate',$2)`, estateID, adminID); err != nil {
 		t.Fatalf("seed estate: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM estates WHERE id=$1`, estateID) })
 	seedResident(t, ctx, pool, estateID, adminID, "estate_admin")
 	return estateID
 }
@@ -167,7 +167,7 @@ func seedInvoice(t *testing.T, ctx context.Context, pool *pgxpool.Pool, estateID
 		invID, estateID, residentID, amountKobo, status); err != nil {
 		t.Fatalf("seed invoice: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estate_dues_invoices WHERE id=$1`, invID) })
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM estate_dues_invoices WHERE id=$1`, invID) })
 	return invID
 }
 

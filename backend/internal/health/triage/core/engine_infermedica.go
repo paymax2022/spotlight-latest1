@@ -186,7 +186,7 @@ func (e *InfermedicaEngine) post(ctx context.Context, path string, reqBody any, 
 	if err != nil {
 		return fmt.Errorf("core: infermedica %s request: %w", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {

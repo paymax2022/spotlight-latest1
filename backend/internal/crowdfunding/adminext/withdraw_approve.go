@@ -192,7 +192,7 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverI
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// PENDING → APPROVED (skipped/no-op if already APPROVED from a prior attempt).
 	if _, err := tx.Exec(ctx,

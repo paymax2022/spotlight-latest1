@@ -111,7 +111,7 @@ func (s *MockExamService) GetExamProgress(ctx context.Context, attemptID string)
 
 	var currentAnswers map[string]any
 	if attempt.Answers != nil {
-		json.Unmarshal(attempt.Answers, &currentAnswers)
+		_ = json.Unmarshal(attempt.Answers, &currentAnswers)
 	}
 	if currentAnswers == nil {
 		currentAnswers = make(map[string]any)
@@ -173,7 +173,7 @@ func (s *MockExamService) SubmitExam(ctx context.Context, attemptID string, answ
 // gradeExam evaluates learner answers against marking scheme
 func (s *MockExamService) gradeExam(ctx context.Context, instance *MockExamInstance, answers map[string]any) *ExamGradingResult {
 	var markingScheme map[string]any
-	json.Unmarshal(instance.MarkingScheme, &markingScheme)
+	_ = json.Unmarshal(instance.MarkingScheme, &markingScheme)
 
 	totalMarks := 100.0
 	if v, ok := markingScheme["total_marks"].(float64); ok && v > 0 {

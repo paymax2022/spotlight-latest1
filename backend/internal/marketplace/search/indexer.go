@@ -130,7 +130,7 @@ func (i *Indexer) applyUpsert(ctx context.Context, r outboxRow) error {
 	if err != nil {
 		return &ErrSearchUnavailable{Op: "upsert document", Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		return &ErrSearchUnavailable{Op: "upsert document", Err: fmt.Errorf("status %d for listing %s", resp.StatusCode, r.ListingID)}
 	}
@@ -156,7 +156,7 @@ func (i *Indexer) applyDelete(ctx context.Context, r outboxRow) error {
 	if err != nil {
 		return &ErrSearchUnavailable{Op: "delete document", Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotFound {
 		return &ErrSearchUnavailable{Op: "delete document", Err: fmt.Errorf("status %d for listing %s", resp.StatusCode, r.ListingID)}
 	}

@@ -171,7 +171,7 @@ func (s *Service) SetBusinessHours(ctx context.Context, restaurantID, userID str
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `DELETE FROM restaurant_business_hours WHERE restaurant_id=$1`, restaurantID); err != nil {
 		return nil, err
 	}

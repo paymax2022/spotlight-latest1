@@ -198,7 +198,7 @@ func (s *RegistrationAdminStore) SetStatus(ctx context.Context, id, newStatus, n
 	if err != nil {
 		return nil, fmt.Errorf("begin status change: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock the row so two reviewers acting at once serialise rather than both
 	// reading the same old status and writing conflicting audit trails.

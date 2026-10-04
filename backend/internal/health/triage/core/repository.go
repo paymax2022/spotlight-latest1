@@ -171,7 +171,7 @@ func (r *repository) appendEvidence(ctx context.Context, sessionID string, ev []
 		batch.Queue(q, uuid.New().String(), sessionID, e.Kind, e.Code, dbutil.NullStr(e.Value), strutil.FirstNonEmpty(e.Source, "user"))
 	}
 	br := r.db.SendBatch(ctx, batch)
-	defer br.Close()
+	defer func() { _ = br.Close() }()
 	for range ev {
 		if _, err := br.Exec(); err != nil {
 			return fmt.Errorf("core: append evidence: %w", err)

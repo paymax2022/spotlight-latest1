@@ -52,7 +52,7 @@ func (s *Service) RaiseDispute(ctx context.Context, escrowID, raisedBy, evidence
 	if err != nil {
 		return nil, fmt.Errorf("escrow: dispute begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var payerID string
 	var payeeID *string

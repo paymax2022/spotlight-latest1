@@ -104,7 +104,7 @@ func (h *Handler) ToggleConfig(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&body)
 
-	active := true
+	var active bool
 	switch {
 	case body.Active != nil:
 		active = *body.Active

@@ -123,7 +123,7 @@ func TestRequirePermissionDeniedByDefault(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil))
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", w.Code)
 	}
@@ -141,7 +141,7 @@ func TestRequirePermissionAllowsWhenGranted(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -164,7 +164,7 @@ func TestRequirePermissionReusesRequestPermissions(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -189,7 +189,7 @@ func TestRequirePermissionSuperAdminSkipsRPC(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 for super-admin, got %d", w.Code)
 	}
@@ -211,7 +211,7 @@ func TestRequirePermissionFallsBackToRPCOnMiss(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 via RPC fallback, got %d", w.Code)
 	}

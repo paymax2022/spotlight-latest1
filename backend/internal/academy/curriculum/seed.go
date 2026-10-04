@@ -32,7 +32,7 @@ func Seed(ctx context.Context, pool *pgxpool.Pool) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := seedVersions(ctx, tx); err != nil {
 		return err

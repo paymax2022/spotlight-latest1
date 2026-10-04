@@ -574,7 +574,7 @@ func (r *Repository) InsertResponses(ctx context.Context, attemptID string, inpu
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const q = `
 		INSERT INTO public.academy_responses

@@ -164,7 +164,7 @@ func (c *Client) ProductSchemaFor(ctx context.Context, productID string) (*Produ
 	if err != nil {
 		return nil, fmt.Errorf("mycover: product details: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("mycover: product details for %s: http %d", productID, resp.StatusCode)
 	}

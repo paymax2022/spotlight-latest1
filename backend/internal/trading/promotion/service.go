@@ -290,7 +290,7 @@ func (r *Repository) Register(ctx context.Context, strategyID string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO public.trading_strategy_promotions (strategy_id) VALUES ($1)
 		ON CONFLICT (strategy_id) DO NOTHING`, strategyID)
@@ -326,7 +326,7 @@ func (r *Repository) Apply(ctx context.Context, strategyID string, from ladder.S
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	tag, err := tx.Exec(ctx, `
 		UPDATE public.trading_strategy_promotions
@@ -355,7 +355,7 @@ func (r *Repository) SetReadiness(ctx context.Context, strategyID string, expect
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `
 		UPDATE public.trading_strategy_promotions
 		SET validation_passed=$2, track_record_days=$3, circuit_tripped=$4, version=version+1, updated_at=now()

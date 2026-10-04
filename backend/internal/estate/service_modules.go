@@ -182,7 +182,7 @@ func (s *Service) AddRepairUpdate(ctx context.Context, estateID, userID, repairI
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	u := &RepairUpdate{ID: uuid.New().String(), RequestID: repairID, Status: req.Status, Note: req.Note, ByUser: &userID, CreatedAt: time.Now()}
 	if _, err := tx.Exec(ctx,

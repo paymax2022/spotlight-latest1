@@ -434,7 +434,7 @@ func (s *Service) UpdateCampaign(ctx context.Context, ownerID, campaignID string
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	st, err := lockCampaign(ctx, tx, campaignID)
 	if err != nil {
@@ -494,7 +494,7 @@ func (s *Service) SetPaused(ctx context.Context, ownerID, campaignID string, pau
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	st, err := lockCampaign(ctx, tx, campaignID)
 	if err != nil {
@@ -556,7 +556,7 @@ func (s *Service) DeleteCampaign(ctx context.Context, ownerID, campaignID string
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	st, err := lockCampaign(ctx, tx, campaignID)
 	if err != nil {
@@ -608,7 +608,7 @@ func (s *Service) RequestFeature(ctx context.Context, ownerID, campaignID, note 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	st, err := lockCampaign(ctx, tx, campaignID)
 	if err != nil {
@@ -660,7 +660,7 @@ func (s *Service) WithdrawFeatureRequest(ctx context.Context, ownerID, campaignI
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	st, err := lockCampaign(ctx, tx, campaignID)
 	if err != nil {
@@ -696,7 +696,7 @@ func (s *Service) Unfeature(ctx context.Context, ownerID, campaignID string) (*C
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	st, err := lockCampaign(ctx, tx, campaignID)
 	if err != nil {

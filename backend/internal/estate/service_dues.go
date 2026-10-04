@@ -290,7 +290,7 @@ func (s *Service) payDues(ctx context.Context, estateID, payerID string, req Pay
 	if err != nil {
 		return nil, fmt.Errorf("estate: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	pay := &DuesPayment{
 		ID: uuid.New().String(), EstateID: estateID, InvoiceID: &req.InvoiceID,

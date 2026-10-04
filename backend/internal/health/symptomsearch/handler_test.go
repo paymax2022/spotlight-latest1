@@ -51,7 +51,7 @@ func newSearchRouter(h *Handler, uid string, mw ...gin.HandlerFunc) *gin.Engine 
 
 func doJSON(t *testing.T, r *gin.Engine, method, path, body string, header map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range header {
 		req.Header.Set(k, v)

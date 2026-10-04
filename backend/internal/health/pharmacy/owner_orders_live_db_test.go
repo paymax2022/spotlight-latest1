@@ -101,10 +101,10 @@ func newInboxFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inbo
 		// `uuid = ANY(text[])` has no operator — the delete errors, the error is
 		// ignored here, and the fixture survives as a real APPROVED pharmacy that
 		// DiscoverPharmacies then serves to customers.
-		pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE id IN ($1,$2)`, f.orderID, f.rivalID)
-		pool.Exec(bg, `DELETE FROM pharmacy_products WHERE pharmacy_provider_id IN ($1,$2)`, f.pharmacy, f.rival)
-		pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE pharmacy_provider_id IN ($1,$2)`, f.pharmacy, f.rival)
-		pool.Exec(bg, `DELETE FROM health_providers WHERE id IN ($1,$2)`, f.pharmacy, f.rival)
+		_, _ = pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE id IN ($1,$2)`, f.orderID, f.rivalID)
+		_, _ = pool.Exec(bg, `DELETE FROM pharmacy_products WHERE pharmacy_provider_id IN ($1,$2)`, f.pharmacy, f.rival)
+		_, _ = pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE pharmacy_provider_id IN ($1,$2)`, f.pharmacy, f.rival)
+		_, _ = pool.Exec(bg, `DELETE FROM health_providers WHERE id IN ($1,$2)`, f.pharmacy, f.rival)
 	})
 	return f
 }

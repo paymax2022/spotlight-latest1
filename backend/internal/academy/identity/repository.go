@@ -248,7 +248,7 @@ func (r *Repository) RecordConsentAndActivate(
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	scopeJSON, err := json.Marshal(scope)
 	if err != nil {

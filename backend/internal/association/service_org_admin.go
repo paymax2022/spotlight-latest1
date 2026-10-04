@@ -262,7 +262,7 @@ func (s *Service) UpdateOrganisation(ctx context.Context, adminID, orgID string,
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	q := fmt.Sprintf(`UPDATE assoc_organisations SET %s WHERE id=$1`, strings.Join(sets, ", "))
 	tag, err := tx.Exec(ctx, q, args...)
@@ -305,7 +305,7 @@ func (s *Service) SetOrganisationFlag(ctx context.Context, adminID, orgID, flag 
 		if err != nil {
 			return fmt.Errorf("association: begin tx: %w", err)
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }()
 		status, at := "ACTIVE", "NULL"
 		if on {
 			status, at = "SUSPENDED", "now()"
@@ -328,7 +328,7 @@ func (s *Service) SetOrganisationFlag(ctx context.Context, adminID, orgID, flag 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, fmt.Sprintf(
 		`UPDATE assoc_organisations SET %s=$2, updated_at=now() WHERE id=$1`, col), orgID, on); err != nil {
 		return fmt.Errorf("association: set %s: %w", col, err)
@@ -387,7 +387,7 @@ func (s *Service) UpdateOrganisationSettings(ctx context.Context, adminID, orgID
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
 		`UPDATE assoc_organisations SET settings=$2, updated_at=now() WHERE id=$1`, orgID, blob); err != nil {
 		return nil, fmt.Errorf("association: update settings: %w", err)
@@ -430,7 +430,7 @@ func (s *Service) CreateChapter(ctx context.Context, adminID, orgID string, req 
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO assoc_chapters (id, organisation_id, name, level) VALUES ($1,$2,$3,$4)`,
 		id, orgID, req.Name, level); err != nil {
@@ -459,7 +459,7 @@ func (s *Service) UpdateChapter(ctx context.Context, adminID, chapterID string, 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
 		`UPDATE assoc_chapters SET name=$2, level=$3 WHERE id=$1`, chapterID, req.Name, level); err != nil {
 		return fmt.Errorf("association: update chapter: %w", err)
@@ -494,7 +494,7 @@ func (s *Service) DeleteChapter(ctx context.Context, adminID, chapterID string) 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `UPDATE assoc_chapter_leaders SET chapter_id=NULL WHERE chapter_id=$1`, chapterID); err != nil {
 		return fmt.Errorf("association: detach chapter leaders: %w", err)
 	}
@@ -516,7 +516,7 @@ func (s *Service) CreateCommittee(ctx context.Context, adminID, orgID string, re
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO assoc_committees (id, organisation_id, name, purpose) VALUES ($1,$2,$3,$4)`,
 		id, orgID, req.Name, req.Description); err != nil {
@@ -541,7 +541,7 @@ func (s *Service) UpdateCommittee(ctx context.Context, adminID, committeeID stri
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
 		`UPDATE assoc_committees SET name=$2, purpose=$3 WHERE id=$1`,
 		committeeID, req.Name, req.Description); err != nil {
@@ -566,7 +566,7 @@ func (s *Service) DeleteCommittee(ctx context.Context, adminID, committeeID stri
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `DELETE FROM assoc_committee_members WHERE committee_id=$1`, committeeID); err != nil {
 		return fmt.Errorf("association: clear committee members: %w", err)
 	}
@@ -601,7 +601,7 @@ func (s *Service) CreateCategory(ctx context.Context, adminID, orgID string, req
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO assoc_membership_categories (id, organisation_id, label, description, dues_kobo, cadence)
 		 VALUES ($1,$2,$3,$4,$5,$6)`,
@@ -646,7 +646,7 @@ func (s *Service) UpdateCategory(ctx context.Context, adminID, categoryID string
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
 		`UPDATE assoc_membership_categories SET label=$2, description=$3, dues_kobo=$4, cadence=$5 WHERE id=$1`,
 		categoryID, req.Label, req.Description, req.DuesKobo, cadence); err != nil {
@@ -683,7 +683,7 @@ func (s *Service) DeleteCategory(ctx context.Context, adminID, categoryID string
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `DELETE FROM assoc_membership_categories WHERE id=$1`, categoryID); err != nil {
 		return fmt.Errorf("association: delete category: %w", err)
 	}
@@ -702,7 +702,7 @@ func (s *Service) CreateRule(ctx context.Context, adminID, orgID string, req Rul
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO assoc_organisation_rules (id, organisation_id, body, position) VALUES ($1,$2,$3,$4)`,
 		id, orgID, req.Body, req.Position); err != nil {
@@ -726,7 +726,7 @@ func (s *Service) UpdateRule(ctx context.Context, adminID, ruleID string, req Ru
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
 		`UPDATE assoc_organisation_rules SET body=$2, position=$3 WHERE id=$1`,
 		ruleID, req.Body, req.Position); err != nil {
@@ -750,7 +750,7 @@ func (s *Service) DeleteRule(ctx context.Context, adminID, ruleID string) error 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `DELETE FROM assoc_organisation_rules WHERE id=$1`, ruleID); err != nil {
 		return fmt.Errorf("association: delete rule: %w", err)
 	}

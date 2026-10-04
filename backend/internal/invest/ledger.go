@@ -118,7 +118,7 @@ func (l *InvestLedger) AvailableCash(ctx context.Context, userID string) (int64,
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	acc, err := l.accountID(ctx, tx, userID, AcctCash, "NGN")
 	if err != nil {
 		return 0, err
@@ -137,7 +137,7 @@ func (l *InvestLedger) Balances(ctx context.Context, userID string) (cash, locke
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	for _, p := range []struct {
 		acct string
 		dst  *int64
@@ -382,7 +382,7 @@ func (l *InvestLedger) tx(ctx context.Context, fn func(pgx.Tx) error) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := fn(tx); err != nil {
 		return err
 	}

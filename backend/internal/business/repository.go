@@ -140,7 +140,7 @@ func (r *Repository) transition(ctx context.Context, id string, to Status, from 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Read current status under the row (FOR UPDATE serialises concurrent transitions).
 	var cur Status
@@ -198,7 +198,7 @@ func (r *Repository) updateFields(ctx context.Context, id, actor, event string, 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var cur Status
 	if err := tx.QueryRow(ctx, `SELECT status FROM business_profiles WHERE id = $1 FOR UPDATE`, id).Scan(&cur); err != nil {

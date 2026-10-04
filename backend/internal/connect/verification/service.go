@@ -148,7 +148,7 @@ func (s *StatusService) SubmitSelfie(ctx context.Context, req LivenessRequest) (
 	if err != nil {
 		return nil, fmt.Errorf("connect: begin verification tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Load (or create as 'none') the current state, locking the row.
 	var current string

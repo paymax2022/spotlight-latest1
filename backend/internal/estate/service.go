@@ -61,7 +61,7 @@ func (s *Service) CreateEstate(ctx context.Context, adminID string, req CreateEs
 	if err != nil {
 		return nil, fmt.Errorf("estate: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insertEstate = `INSERT INTO estates (id, name, address, admin_id) VALUES ($1,$2,$3,$4)`
 	if _, err := tx.Exec(ctx, insertEstate, e.ID, e.Name, e.Address, e.AdminID); err != nil {
@@ -184,7 +184,7 @@ func (s *Service) CreateElection(ctx context.Context, estateID, creatorID string
 	if err != nil {
 		return nil, fmt.Errorf("estate: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insertEl = `INSERT INTO elections (id, estate_id, title, description, starts_at, ends_at, status, created_by) VALUES ($1,$2,$3,$4,$5,$6,'draft',$7)`
 	if _, err := tx.Exec(ctx, insertEl, el.ID, el.EstateID, el.Title, el.Description, el.StartsAt, el.EndsAt, el.CreatedBy); err != nil {
@@ -238,7 +238,7 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 		if err != nil || !ok {
 			return nil, errors.New("estate: vote lock contention — try again")
 		}
-		defer platformRedis.ReleaseLock(ctx, s.redis, lockKey, token)
+		defer func() { _ = platformRedis.ReleaseLock(ctx, s.redis, lockKey, token) }()
 	}
 
 	v := &Vote{
@@ -379,7 +379,7 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	_, err = tx.Exec(ctx,
 		`UPDATE visitor_access_codes SET used_count=used_count+1,
@@ -1139,7 +1139,7 @@ func (s *Service) JoinWithInviteCode(ctx context.Context, userID, code string) (
 	if err != nil {
 		return nil, fmt.Errorf("estate: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var ic InviteCode
 	const lookup = `
@@ -1214,7 +1214,7 @@ func (s *Service) ReviewJoinRequest(ctx context.Context, estateID, adminID, requ
 	if err != nil {
 		return nil, fmt.Errorf("estate: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	jr := &JoinRequest{}
 	now := time.Now()

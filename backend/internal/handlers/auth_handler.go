@@ -194,7 +194,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		}
 	}
 
-	res, err := h.auth.RegisterUser(in)
+	res, err := h.auth.RegisterUser(c.Request.Context(), in)
 	if err != nil {
 		h.audit.LogAction("", "", "register.failed", "auth", "user", "", nil, map[string]any{"email": in.Email}, c.ClientIP(), c.Request.UserAgent(), "medium")
 
@@ -274,7 +274,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid payload"})
 		return
 	}
-	out, err := h.auth.LoginUser(in)
+	out, err := h.auth.LoginUser(c.Request.Context(), in)
 	if err != nil {
 		// LoginUser wraps its errors with the identity it resolved before
 		// failing — a phone identifier becomes the account email, and the
@@ -444,7 +444,7 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 		Email string `json:"email" binding:"required,email"`
 	}
 	if err := c.ShouldBindJSON(&in); err == nil {
-		if err := h.auth.RequestPasswordReset(in.Email); err != nil {
+		if err := h.auth.RequestPasswordReset(c.Request.Context(), in.Email); err != nil {
 			// Log the address NEVER — only that the upstream failed. The response
 			// below is byte-identical either way, because varying it would reveal
 			// which addresses have accounts.

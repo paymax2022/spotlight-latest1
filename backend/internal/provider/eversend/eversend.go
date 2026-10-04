@@ -59,7 +59,7 @@ func (c *Client) ensureToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
 		return "", fmt.Errorf("eversend: auth token %d: %s", resp.StatusCode, string(body))
@@ -113,7 +113,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 			continue
 		}
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode >= 500 {
 			lastErr = fmt.Errorf("eversend: %s %s -> %d: %s", method, path, resp.StatusCode, string(body))
 			continue // server error — retry

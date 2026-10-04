@@ -283,7 +283,7 @@ func (s *Service) Moderate(ctx context.Context, contentID string, decision Moder
 	if err != nil {
 		return fmt.Errorf("creators: moderate begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	published := decision == ModApproved
 	const upd = `UPDATE creator_content SET moderation_state=$2, published=$3 WHERE id=$1 AND moderation_state='PENDING'`

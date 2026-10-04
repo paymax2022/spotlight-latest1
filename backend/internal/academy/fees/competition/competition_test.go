@@ -272,7 +272,7 @@ func TestSF7_List_MixedMinorAdult(t *testing.T) {
 
 // Legal linear path succeeds end-to-end.
 func TestCompetition_LegalPath(t *testing.T) {
-	svc, _, _, _ := newService()
+	svc, _, _, _ := newService() //nolint:dogsled // tuple: only svc needed
 	ctx := context.Background()
 	c, err := svc.Create(ctx, CreateCompetitionRequest{Name: "Cup", Scope: "national"})
 	if err != nil {
@@ -305,7 +305,7 @@ func TestCompetition_LegalPath(t *testing.T) {
 
 // Illegal skip (draft -> start) is rejected.
 func TestCompetition_IllegalSkip_Rejected(t *testing.T) {
-	svc, _, _, _ := newService()
+	svc, _, _, _ := newService() //nolint:dogsled // tuple: only svc needed
 	ctx := context.Background()
 	c, _ := svc.Create(ctx, CreateCompetitionRequest{Name: "Cup", Scope: "national"})
 	if _, err := svc.Transition(ctx, c.ID, "start"); err == nil {
@@ -317,7 +317,7 @@ func TestCompetition_IllegalSkip_Rejected(t *testing.T) {
 
 // Backward move is rejected.
 func TestCompetition_Backward_Rejected(t *testing.T) {
-	svc, _, _, _ := newService()
+	svc, _, _, _ := newService() //nolint:dogsled // tuple: only svc needed
 	ctx := context.Background()
 	c, _ := svc.Create(ctx, CreateCompetitionRequest{Name: "Cup", Scope: "national"})
 	if _, err := svc.Transition(ctx, c.ID, "open_registration"); err != nil {
@@ -337,7 +337,7 @@ func TestCompetition_Backward_Rejected(t *testing.T) {
 
 // Registration is allowed only while open_registration; rejected after close.
 func TestCompetition_RegistrationAfterClose_Rejected(t *testing.T) {
-	svc, _, _, _ := newService()
+	svc, _, _, _ := newService() //nolint:dogsled // tuple: only svc needed
 	ctx := context.Background()
 	c, _ := svc.Create(ctx, CreateCompetitionRequest{Name: "Cup", Scope: "national"})
 
@@ -418,7 +418,7 @@ func TestScoringLock_RejectedAtResultsPending(t *testing.T) {
 
 // Scores stay locked at completed and archived (later states).
 func TestScoringLock_RejectedAtCompletedAndArchived(t *testing.T) {
-	svc, _, _, _ := newService()
+	svc, _, _, _ := newService() //nolint:dogsled // tuple: only svc needed
 	ctx := context.Background()
 	c, _ := svc.Create(ctx, CreateCompetitionRequest{Name: "Cup", Scope: "national"})
 	advanceTo(t, svc, ctx, c.ID, "open_registration", "close_registration", "start", "pend_results", "complete")
@@ -489,7 +489,7 @@ func TestLeaderboard_ReuseAndSerialize(t *testing.T) {
 
 // Invalid scope is rejected at both write and read.
 func TestLeaderboard_InvalidScope_Rejected(t *testing.T) {
-	svc, _, _, _ := newService()
+	svc, _, _, _ := newService() //nolint:dogsled // tuple: only svc needed
 	ctx := context.Background()
 	c, _ := svc.Create(ctx, CreateCompetitionRequest{Name: "Cup", Scope: "national"})
 	advanceTo(t, svc, ctx, c.ID, "open_registration", "close_registration", "start")

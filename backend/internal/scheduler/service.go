@@ -217,7 +217,7 @@ func (s *Service) RunDue(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("scheduler: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	rows, err := tx.Query(ctx, claim)
 	if err != nil {

@@ -53,7 +53,7 @@ func keysFromDotEnv(t *testing.T) (key, base string) {
 		if err != nil {
 			continue
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		sc := bufio.NewScanner(f)
 		for sc.Scan() {
 			line := strings.TrimSpace(sc.Text())

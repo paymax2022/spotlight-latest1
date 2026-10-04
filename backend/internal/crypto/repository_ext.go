@@ -25,7 +25,7 @@ func (r *Repository) RecordSwapFill(ctx context.Context, o SwapOrder) (string, b
 	if err != nil {
 		return "", false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insOrder = `INSERT INTO crypto_swap_orders
 		(user_id, from_asset_id, to_asset_id, status, from_units, to_units,
@@ -267,7 +267,7 @@ func (r *Repository) CreateWithdrawal(ctx context.Context, w Withdrawal) (string
 	if err != nil {
 		return "", false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const ins = `INSERT INTO crypto_withdrawals
 		(user_id, asset_id, address_id, status, units, network_fee_units, fee_kobo,
@@ -330,7 +330,7 @@ func (r *Repository) TransitionWithdrawal(
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const upd = `UPDATE crypto_withdrawals
 		SET status=$3,

@@ -155,7 +155,7 @@ func TestNF004_ClaimFreeVote_GoConnect_FailurePartwayLeavesNoSideEffects(t *test
 		OptionRef:      contestant,
 		Paid:           false,
 		Quantity:       1,
-		IdempotencyKey: strPtr(dupKey), // forces a unique_violation on INSERT
+		IdempotencyKey: new(string(dupKey)), // forces a unique_violation on INSERT
 	}, 5)
 	if err == nil {
 		t.Fatalf("expected ClaimFreeVote to fail on a duplicate idempotency_key, got ok=%v err=nil", ok)

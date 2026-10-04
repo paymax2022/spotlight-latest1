@@ -48,7 +48,7 @@ func seedPropertyMoneyUser(t *testing.T, pool *pgxpool.Pool) string {
 		`INSERT INTO auth.users (id, email, created_at) VALUES ($1,$2,NOW())`, id, id+"@property-money.invalid"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id) })
 	testsupport.CleanupUser(t, pool, id)
 	return id
 }
@@ -123,14 +123,14 @@ func seedRealtorPayment(t *testing.T, pool *pgxpool.Pool, tenant string, amountK
 
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM realtor_payments WHERE id=$1`, payID)
-		pool.Exec(bg, `DELETE FROM realtor_invoices WHERE id=$1`, invoiceID)
-		pool.Exec(bg, `DELETE FROM realtor_leases WHERE id=$1`, leaseID)
-		pool.Exec(bg, `DELETE FROM realtor_rental_applications WHERE id=$1`, appID)
-		pool.Exec(bg, `DELETE FROM realtor_listings WHERE id=$1`, listingID)
-		pool.Exec(bg, `DELETE FROM realtor_units WHERE id=$1`, unitID)
-		pool.Exec(bg, `DELETE FROM realtor_properties WHERE id=$1`, propID)
-		pool.Exec(bg, `DELETE FROM realtor_portfolios WHERE id=$1`, portfolioID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_payments WHERE id=$1`, payID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_invoices WHERE id=$1`, invoiceID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_leases WHERE id=$1`, leaseID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_rental_applications WHERE id=$1`, appID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_listings WHERE id=$1`, listingID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_units WHERE id=$1`, unitID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_properties WHERE id=$1`, propID)
+		_, _ = pool.Exec(bg, `DELETE FROM realtor_portfolios WHERE id=$1`, portfolioID)
 	})
 }
 
@@ -144,7 +144,9 @@ func seedEstatePayment(t *testing.T, pool *pgxpool.Pool, payer, estateID string,
 		invoiceID, estateID, payer, amountKobo, dueDate); err != nil {
 		t.Fatalf("seed estate_dues_invoices: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estate_dues_invoices WHERE id=$1`, invoiceID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM estate_dues_invoices WHERE id=$1`, invoiceID)
+	})
 
 	payID := uuid.NewString()
 	if _, err := pool.Exec(ctx,
@@ -153,7 +155,7 @@ func seedEstatePayment(t *testing.T, pool *pgxpool.Pool, payer, estateID string,
 		payID, estateID, invoiceID, payer, amountKobo, createdAt); err != nil {
 		t.Fatalf("seed estate_payments: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estate_payments WHERE id=$1`, payID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM estate_payments WHERE id=$1`, payID) })
 }
 
 // TestLiveDB_RentPassport_TotalPaidKobo_ExactSumAcrossEstateAndRealtor is
@@ -174,7 +176,7 @@ func TestLiveDB_RentPassport_TotalPaidKobo_ExactSumAcrossEstateAndRealtor(t *tes
 	if _, err := pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Money Inv Estate',$2)`, estateID, admin); err != nil {
 		t.Fatalf("seed estate: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
 
 	// Deliberately awkward kobo amounts: 100000003 kobo (₦1,000,000.03) has a
 	// fractional-naira remainder, and 233333337 kobo is not a multiple of any
@@ -228,7 +230,7 @@ func TestLiveDB_RentPassport_RecentPaymentsCapAndOrder(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Cap Order Estate',$2)`, estateID, admin); err != nil {
 		t.Fatalf("seed estate: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
 
 	const rowCount = 25
 	base := time.Now().Add(-time.Duration(rowCount) * time.Hour)

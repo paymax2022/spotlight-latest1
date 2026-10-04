@@ -243,7 +243,7 @@ func (s *Service) PayInvoice(ctx context.Context, userID, invoiceID string, req 
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	paymentID := uuid.New().String()
 	const insPayment = `
@@ -351,7 +351,7 @@ func (s *Service) DecideApplication(ctx context.Context, adminID, appID string, 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `UPDATE assoc_applications SET status=$2 WHERE id=$1`, appID, next); err != nil {
 		return fmt.Errorf("association: update application: %w", err)

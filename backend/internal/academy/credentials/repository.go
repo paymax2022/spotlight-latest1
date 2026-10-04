@@ -159,7 +159,7 @@ func (r *Repository) IssueCredential(ctx context.Context, actor string, c Creden
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	id := uuid.New().String()
 	now := time.Now()
@@ -229,7 +229,7 @@ func (r *Repository) RevokeCredential(ctx context.Context, actor, id, reason str
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from CredState
 	var verificationID string

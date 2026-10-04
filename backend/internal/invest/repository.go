@@ -448,7 +448,7 @@ func (r *Repository) UpdateOrder(ctx context.Context, o *Order, fromStatus Order
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const q = `UPDATE invest_orders SET status=$1, executed_price_kobo=$2, filled_quantity=$3,
 		fees_kobo=$4, total_amount_kobo=$5, locked_cash_kobo=$6, locked_quantity=$7,
 		provider_reference=$8, failure_reason=$9, settlement_due_at=$10, submitted_at=$11,
@@ -609,7 +609,7 @@ func (r *Repository) ReducePosition(ctx context.Context, userID, assetID string,
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var quantity float64
 	var avg int64
 	if err := tx.QueryRow(ctx, `SELECT quantity, average_cost_kobo FROM invest_positions

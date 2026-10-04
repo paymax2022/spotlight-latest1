@@ -281,7 +281,7 @@ func (s *AdminService) CreateQuiz(ctx context.Context, actor string, in AdminQui
 	if err != nil {
 		return nil, fmt.Errorf("learn admin: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `INSERT INTO learn_quizzes (id, lesson_id) VALUES ($1,$2)`, id, in.LessonID); err != nil {
 		return nil, fmt.Errorf("learn admin: create quiz: %w", err)
@@ -303,7 +303,7 @@ func (s *AdminService) UpdateQuiz(ctx context.Context, actor, id string, in Admi
 	if err != nil {
 		return nil, fmt.Errorf("learn admin: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	ct, err := tx.Exec(ctx, `UPDATE learn_quizzes SET lesson_id=$2 WHERE id=$1`, id, in.LessonID)
 	if err != nil {

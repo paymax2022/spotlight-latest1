@@ -317,7 +317,7 @@ func TestLiveDB_AdminSettlePayouts_RBACBlocksNonAdmin(t *testing.T) {
 
 	// Non-admin caller: must be refused BEFORE the handler runs (403), and the
 	// payout must be untouched.
-	req := httptest.NewRequest(http.MethodPost, "/api/connect/admin/payouts/"+p.ID+"/settle",
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/connect/admin/payouts/"+p.ID+"/settle",
 		strings.NewReader(`{"settlementRef":"manual-bank-ref-1"}`))
 	req.Header.Set("X-Test-User", nonAdmin)
 	req.Header.Set("Content-Type", "application/json")
@@ -337,7 +337,7 @@ func TestLiveDB_AdminSettlePayouts_RBACBlocksNonAdmin(t *testing.T) {
 
 	// Admin caller with the permission: must succeed and the DB row must move
 	// to 'settled' with the supplied settlement ref stamped.
-	req2 := httptest.NewRequest(http.MethodPost, "/api/connect/admin/payouts/"+p.ID+"/settle",
+	req2 := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/connect/admin/payouts/"+p.ID+"/settle",
 		strings.NewReader(`{"settlementRef":"manual-bank-ref-1"}`))
 	req2.Header.Set("X-Test-User", admin)
 	req2.Header.Set("Content-Type", "application/json")

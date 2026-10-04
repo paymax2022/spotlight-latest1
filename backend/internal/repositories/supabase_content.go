@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -46,7 +47,7 @@ func (r *ChatSupabaseRepository) ListSessions(limit int) ([]domain.ChatSession, 
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +59,7 @@ func (r *ChatSupabaseRepository) ListSessions(limit int) ([]domain.ChatSession, 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("chat session query failed: %d", resp.StatusCode)
 	}
@@ -135,7 +136,7 @@ func (r *ChatSupabaseRepository) GetSessionDetail(id string) (domain.ChatSession
 	}
 
 	getAndDecode := func(targetURL string, out any) error {
-		req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, targetURL, nil)
 		if err != nil {
 			return err
 		}
@@ -144,7 +145,7 @@ func (r *ChatSupabaseRepository) GetSessionDetail(id string) (domain.ChatSession
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode >= 400 {
 			return fmt.Errorf("chat detail query failed: %d", resp.StatusCode)
 		}
@@ -249,7 +250,7 @@ func (r *RealityTVSupabaseRepository) getActiveSeason() (map[string]any, error) 
 	q.Set("limit", "1")
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +262,7 @@ func (r *RealityTVSupabaseRepository) getActiveSeason() (map[string]any, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("active season query failed: %d", resp.StatusCode)
 	}
@@ -285,7 +286,7 @@ func (r *RealityTVSupabaseRepository) getVoteSums() (int, int, error) {
 	q.Set("select", "vote_count,payment_id")
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -297,7 +298,7 @@ func (r *RealityTVSupabaseRepository) getVoteSums() (int, int, error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return 0, 0, fmt.Errorf("vote query failed: %d", resp.StatusCode)
 	}

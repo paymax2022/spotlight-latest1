@@ -165,7 +165,7 @@ func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminI
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: begin dispute refund: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	// Lowercased: the DB backstop trigger takes this SAME lock keyed on
 	// lower(order_id::text), and the two must be byte-identical or they serialise in
 	// separate namespaces and neither protects the other. orderID comes from

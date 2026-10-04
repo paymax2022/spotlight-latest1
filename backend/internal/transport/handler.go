@@ -412,7 +412,7 @@ func (s *Service) tripParties(ctx context.Context, tripID string) (string, strin
 		return "", "", codedErr(http.StatusNotFound, CodeNotFound, "trip not found")
 	}
 	if driverRowID != nil {
-		s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *driverRowID).Scan(&driverUserID)
+		_ = s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *driverRowID).Scan(&driverUserID)
 	}
 	return riderID, driverUserID, nil
 }

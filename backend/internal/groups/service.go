@@ -70,7 +70,7 @@ func (s *Service) Create(ctx context.Context, creatorID string, req CreateGroupR
 	if err != nil {
 		return nil, fmt.Errorf("groups: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insert = `
 		INSERT INTO groups (id, name, description, created_by, avatar_url, is_public)

@@ -19,7 +19,7 @@ func TestNew_ValidURL_ReturnsClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error for well-formed URL, got: %v", err)
 	}
-	c.Close()
+	_ = c.Close()
 }
 
 func TestNew_WithPassword_ReturnsClient(t *testing.T) {
@@ -27,5 +27,5 @@ func TestNew_WithPassword_ReturnsClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error for URL with password, got: %v", err)
 	}
-	c.Close()
+	_ = c.Close()
 }

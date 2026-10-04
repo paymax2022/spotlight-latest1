@@ -100,7 +100,7 @@ func TestLiveDB_PayInvoice_RetryAfterDebitButBeforeCommit(t *testing.T) {
 			"the invoice can never be marked PAID from this state; the member paid but has no receipt and an eternally-DUE invoice", err)
 
 		var stuckStatus string
-		pool.QueryRow(ctx, `SELECT status FROM assoc_dues_invoices WHERE id=$1`, invoiceID).Scan(&stuckStatus)
+		_ = pool.QueryRow(ctx, `SELECT status FROM assoc_dues_invoices WHERE id=$1`, invoiceID).Scan(&stuckStatus)
 		t.Logf("invoice status after the failed retry: %q (money already left the wallet)", stuckStatus)
 		return
 	}

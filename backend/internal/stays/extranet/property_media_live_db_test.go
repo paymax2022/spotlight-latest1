@@ -75,10 +75,10 @@ func newMediaFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) medi
 
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM public.stays_property_photo WHERE property_id = $1`, property)
-		pool.Exec(bg, `DELETE FROM public.stays_hotelier_profile WHERE property_id = $1`, property)
-		pool.Exec(bg, `DELETE FROM public.stays_property WHERE id = $1`, property)
-		pool.Exec(bg, `DELETE FROM auth.users WHERE id = $1`, owner)
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_property_photo WHERE property_id = $1`, property)
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_hotelier_profile WHERE property_id = $1`, property)
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_property WHERE id = $1`, property)
+		_, _ = pool.Exec(bg, `DELETE FROM auth.users WHERE id = $1`, owner)
 	})
 	return mediaFixture{svc: svc, pool: pool, owner: owner, property: property}
 }

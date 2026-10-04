@@ -538,7 +538,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	if err != nil {
 		return failAfterHold(fmt.Errorf("pharmacy: begin: %w", err))
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var deliveryAddr *string
 	if in.FulfilmentMethod == FulfilDelivery {
@@ -1240,7 +1240,7 @@ func (s *Service) transition(ctx context.Context, actorID, orderID string, to Or
 	if err != nil {
 		return nil, fmt.Errorf("pharmacy: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	o, err := lockOrder(ctx, tx, orderID)
 	if err != nil {

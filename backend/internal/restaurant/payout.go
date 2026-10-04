@@ -129,7 +129,7 @@ func (s *Service) BuildRun(ctx context.Context, periodKey, providerType, provide
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: payout build begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Resolve (or create) the single draft run for this provider+period. The unique
 	// (provider_type, provider_id, period_key) index makes this idempotent — a

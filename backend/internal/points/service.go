@@ -137,7 +137,7 @@ func (s *Service) Redeem(ctx context.Context, userID, sku string) (*Redemption, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("points: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Recompute balance inside the tx and lock against concurrent redemptions by
 	// serialising on the user's latest ledger rows.

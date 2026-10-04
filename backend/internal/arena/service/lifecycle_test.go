@@ -31,13 +31,13 @@ func (f *fakeContestantRepo) GetByUser(context.Context, string, string) (*Contes
 func (f *fakeContestantRepo) ListByState(context.Context, string, arena.ContestantState) ([]Contestant, error) {
 	return nil, nil
 }
-func (f *fakeContestantRepo) UpdateState(_ context.Context, id string, from, to arena.ContestantState, sideEffect func(ctx context.Context) error) error {
+func (f *fakeContestantRepo) UpdateState(ctx context.Context, id string, from, to arena.ContestantState, sideEffect func(ctx context.Context) error) error {
 	c, ok := f.byID[id]
 	if !ok || c.State != from {
 		return ErrConflict
 	}
 	if sideEffect != nil {
-		if err := sideEffect(context.Background()); err != nil {
+		if err := sideEffect(ctx); err != nil {
 			return err
 		}
 	}
@@ -54,11 +54,11 @@ func TestLifecycle_GuardRejectsIllegalJump(t *testing.T) {
 	svc := NewContestantService(repo, nil, nil, nil, nil, fakeTier{3}, fakeCfg{Config{}}, &fakeAudit{}, nil)
 
 	// APPLIED → CROWNED is an illegal jump.
-	if err := svc.Transition(context.Background(), "actor", "c1", "k1", arena.StCrowned, "x"); !errors.Is(err, ErrBadState) {
+	if err := svc.Transition(t.Context(), "actor", "c1", "k1", arena.StCrowned, "x"); !errors.Is(err, ErrBadState) {
 		t.Fatalf("illegal jump must be ErrBadState, got %v", err)
 	}
 	// A legal non-advancement move (APPLIED → SCREENED) passes the guard (no merit read).
-	if err := svc.Transition(context.Background(), "actor", "c1", "k1", arena.StScreened, "ok"); err != nil {
+	if err := svc.Transition(t.Context(), "actor", "c1", "k1", arena.StScreened, "ok"); err != nil {
 		t.Fatalf("legal transition must pass: %v", err)
 	}
 	if c.State != arena.StScreened {

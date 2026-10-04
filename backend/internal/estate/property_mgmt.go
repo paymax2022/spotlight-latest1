@@ -221,7 +221,7 @@ func (s *Service) ReviewPropertyTransfer(ctx context.Context, estateID, adminID,
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var r PropertyTransferRequest
 	const load = `SELECT id, estate_id, property_id, requested_by, to_user_id, transfer_type, COALESCE(reason,''), status

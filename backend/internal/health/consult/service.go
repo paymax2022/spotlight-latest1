@@ -177,7 +177,7 @@ func (s *Service) Complete(ctx context.Context, providerOwnerID, consultID strin
 	if err != nil {
 		return nil, nil, fmt.Errorf("consult: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	c, providerOwner, err := lockConsult(ctx, tx, consultID)
 	if err != nil {
@@ -277,7 +277,7 @@ func (s *Service) transition(ctx context.Context, actorID, consultID string, to 
 	if err != nil {
 		return nil, fmt.Errorf("consult: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	c, providerOwner, err := lockConsult(ctx, tx, consultID)
 	if err != nil {

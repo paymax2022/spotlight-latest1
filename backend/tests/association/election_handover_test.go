@@ -116,12 +116,12 @@ func TestLiveDB_Handover_GrantsWinnerRevokesOutgoing(t *testing.T) {
 	}
 	// Audited + timestamped.
 	var auditN int
-	pool.QueryRow(ctx, `SELECT count(*) FROM assoc_audit_log WHERE action='ROLE_HANDOVER' AND subject_type='election_position'`).Scan(&auditN)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM assoc_audit_log WHERE action='ROLE_HANDOVER' AND subject_type='election_position'`).Scan(&auditN)
 	if auditN < 1 {
 		t.Fatal("no ROLE_HANDOVER audit row")
 	}
 	var handoverAt *string
-	pool.QueryRow(ctx, `SELECT handover_at::text FROM assoc_elections WHERE id=$1`, electionID).Scan(&handoverAt)
+	_ = pool.QueryRow(ctx, `SELECT handover_at::text FROM assoc_elections WHERE id=$1`, electionID).Scan(&handoverAt)
 	if handoverAt == nil {
 		t.Fatal("handover_at not set")
 	}

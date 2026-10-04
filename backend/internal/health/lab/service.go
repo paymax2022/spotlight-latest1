@@ -381,7 +381,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	if err != nil {
 		return nil, fmt.Errorf("lab: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insOrder = `
 		INSERT INTO lab_orders
@@ -477,7 +477,7 @@ func (s *Service) Collect(ctx context.Context, collectorID, orderID, note string
 	if err != nil {
 		return nil, fmt.Errorf("lab: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insSample = `
 		INSERT INTO lab_samples (id, order_id, state, collection_method, custodian_id, barcode_ref, collected_by)
@@ -610,7 +610,7 @@ func (s *Service) Accession(ctx context.Context, scientistID, sampleID, scannedB
 	if err != nil {
 		return nil, fmt.Errorf("lab: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Re-read sample under lock to defend against a concurrent breach.
 	locked, err := lockSample(ctx, tx, sampleID)
@@ -710,7 +710,7 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID, scanne
 	if err != nil {
 		return nil, fmt.Errorf("lab: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	for _, r := range results {
 		if r.Status != ResultNormal && r.Status != ResultAbnormal && r.Status != ResultCritical {
@@ -1032,7 +1032,7 @@ func (s *Service) transition(ctx context.Context, actorID, orderID string, to Or
 	if err != nil {
 		return nil, fmt.Errorf("lab: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	o, err := lockOrder(ctx, tx, orderID)
 	if err != nil {
@@ -1088,7 +1088,7 @@ func (s *Service) transitionSample(ctx context.Context, actorID, sampleID string
 	if err != nil {
 		return nil, fmt.Errorf("lab: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	sm, err := lockSample(ctx, tx, sampleID)
 	if err != nil {
@@ -1409,7 +1409,7 @@ func (s *Service) AmendResult(ctx context.Context, scientistID, orderID string, 
 	if err != nil {
 		return nil, fmt.Errorf("lab: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock the current (non-superseded) version of the test's result so two
 	// concurrent amendments serialize and the version chain stays linear.

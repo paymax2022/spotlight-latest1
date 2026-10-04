@@ -6,6 +6,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -85,12 +86,12 @@ func TestLiveDB_TripChatIsScopedToParticipants(t *testing.T) {
 	// A stranger may neither read nor post.
 	if _, err := svc.ListMessages(ctx, tripID, stranger); err == nil {
 		t.Error("expected a stranger to be rejected from ListMessages")
-	} else if ce, ok := err.(*CodedError); !ok || ce.Code != CodeForbidden {
+	} else if ce := new(CodedError); !errors.As(err, &ce) || ce.Code != CodeForbidden {
 		t.Errorf("expected CodeForbidden, got %v", err)
 	}
 	if _, err := svc.SendMessage(ctx, tripID, stranger, SendTripMessageRequest{Body: "hi"}); err == nil {
 		t.Error("expected a stranger to be rejected from SendMessage")
-	} else if ce, ok := err.(*CodedError); !ok || ce.Code != CodeForbidden {
+	} else if ce := new(CodedError); !errors.As(err, &ce) || ce.Code != CodeForbidden {
 		t.Errorf("expected CodeForbidden, got %v", err)
 	}
 

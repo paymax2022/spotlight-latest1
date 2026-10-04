@@ -180,7 +180,7 @@ func (s *Service) transition(ctx context.Context, ownerID, applicationID string,
 	if err != nil {
 		return nil, fmt.Errorf("providers: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	app, err := lockApplication(ctx, tx, applicationID)
 	if err != nil {
@@ -215,7 +215,7 @@ func (s *Service) transitionAdmin(ctx context.Context, adminID, applicationID st
 	if err != nil {
 		return nil, fmt.Errorf("providers: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	app, err := lockApplication(ctx, tx, applicationID)
 	if err != nil {

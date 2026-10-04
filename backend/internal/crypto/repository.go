@@ -159,7 +159,7 @@ func (r *Repository) RecordFill(ctx context.Context, o Order, deltaUnits int64) 
 	if err != nil {
 		return "", false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insOrder = `INSERT INTO crypto_orders
 		(user_id, asset_id, side, status, cash_kobo, units, price_kobo, idempotency_key, reference)

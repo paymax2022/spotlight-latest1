@@ -191,7 +191,7 @@ func (c *BrevoClient) SendOTP(ctx context.Context, to, name, code string, ttl ti
 		}
 		return fmt.Errorf("brevo: transport: %w: %w", err, ErrTransient)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK {
 		// Drain so the connection returns to the idle pool instead of being closed.

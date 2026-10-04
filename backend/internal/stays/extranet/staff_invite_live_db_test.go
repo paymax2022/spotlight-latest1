@@ -88,9 +88,9 @@ func newInviteFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inv
 
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM public.stays_staff_invite WHERE property_id = $1`, property)
-		pool.Exec(bg, `DELETE FROM public.stays_hotelier_profile WHERE property_id = $1`, property)
-		pool.Exec(bg, `DELETE FROM public.stays_property WHERE id = $1`, property)
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_staff_invite WHERE property_id = $1`, property)
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_hotelier_profile WHERE property_id = $1`, property)
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_property WHERE id = $1`, property)
 	})
 	return inviteFixture{svc: svc, pool: pool, mailer: mailer, owner: owner, property: property}
 }
@@ -106,7 +106,7 @@ func seedPlatformUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ema
 		t.Fatalf("seed auth user: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, id)
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM public.platform_users WHERE id = $1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM public.platform_users WHERE id = $1`, id) })
 	return id
 }
 
@@ -162,7 +162,7 @@ func TestLiveDB_InviteExistingPlatformUserGrantsImmediately(t *testing.T) {
 	}
 
 	var pending int
-	pool.QueryRow(ctx, `SELECT count(*) FROM public.stays_staff_invite WHERE property_id = $1`, f.property).Scan(&pending)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM public.stays_staff_invite WHERE property_id = $1`, f.property).Scan(&pending)
 	if pending != 0 {
 		t.Errorf("pending invite rows = %d, want 0 — an immediate grant needs no invite record", pending)
 	}
@@ -245,7 +245,7 @@ func TestLiveDB_AcceptStaffInviteBindsToEmailAndIsSingleUse(t *testing.T) {
 	}
 
 	var inviteStatus string
-	pool.QueryRow(ctx, `SELECT status FROM public.stays_staff_invite WHERE property_id = $1 AND email = $2`,
+	_ = pool.QueryRow(ctx, `SELECT status FROM public.stays_staff_invite WHERE property_id = $1 AND email = $2`,
 		f.property, strings.ToLower(email)).Scan(&inviteStatus)
 	if inviteStatus != "ACCEPTED" {
 		t.Errorf("invite status = %s, want ACCEPTED", inviteStatus)
@@ -296,7 +296,7 @@ func TestLiveDB_InviteRejectsOwnerRole(t *testing.T) {
 		t.Error("inviting OWNER succeeded — it must mirror the property creator only")
 	}
 	var n int
-	pool.QueryRow(ctx, `SELECT count(*) FROM public.stays_staff_invite WHERE property_id = $1`, f.property).Scan(&n)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM public.stays_staff_invite WHERE property_id = $1`, f.property).Scan(&n)
 	if n != 0 {
 		t.Errorf("invite rows created for a rejected OWNER invite = %d, want 0", n)
 	}

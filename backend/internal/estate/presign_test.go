@@ -63,7 +63,7 @@ func TestPresignUploadFailsClosedWhenUnconfigured(t *testing.T) {
 	h := NewHandler(nil) // no presigner, no service needed: the guard runs first
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost,
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost,
 		"/api/finance/estate/e1/uploads/presign",
 		strings.NewReader(`{"kind":"document","fileName":"a.pdf","contentType":"application/pdf"}`))
 	c.Request.Header.Set("Content-Type", "application/json")

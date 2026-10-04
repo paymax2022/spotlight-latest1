@@ -60,8 +60,8 @@ func TestLiveDB_Contribute_IdempotentReplayReturnsSameContribution(t *testing.T)
 		t.Fatalf("seed campaign: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(ctx, `DELETE FROM contributions WHERE campaign_id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
+		_, _ = pool.Exec(ctx, `DELETE FROM contributions WHERE campaign_id = $1`, campaignID)
+		_, _ = pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
 	})
 
 	// Fund the contributor's ledger wallet directly (standing in for a real

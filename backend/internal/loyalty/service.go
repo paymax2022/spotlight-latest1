@@ -81,7 +81,7 @@ func (s *Service) ReevaluateTier(ctx context.Context, userID string, delta int64
 	if err != nil {
 		return "", fmt.Errorf("loyalty: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var lifetime int64
 	var curTier string

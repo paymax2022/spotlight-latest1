@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -198,7 +199,7 @@ func (h *RegistrationHandler) SubmitApplication(c *gin.Context) {
 	if err := h.store.RecordStatusChange(c.Request.Context(), id, "draft", "submitted",
 		"Application submitted for review", "public_user"); err != nil {
 		// Log but don't fail the request
-		fmt.Printf("failed to record status change: %v\n", err)
+		log.Printf("failed to record status change: %v", err)
 	}
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "submit_application", "registration", "application",
@@ -274,7 +275,7 @@ func (h *RegistrationHandler) WithdrawApplication(c *gin.Context) {
 
 	if err := h.store.RecordStatusChange(c.Request.Context(), id, "submitted", "withdrawn",
 		body.Note, "public_user"); err != nil {
-		fmt.Printf("failed to record status change: %v\n", err)
+		log.Printf("failed to record status change: %v", err)
 	}
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "withdraw_application", "registration", "application",

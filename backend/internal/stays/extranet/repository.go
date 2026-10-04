@@ -638,7 +638,7 @@ func (r *Repository) CreateProperty(ctx context.Context, ownerUserID, name, prop
 	if err != nil {
 		return "", fmt.Errorf("extranet: begin create-property tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var propertyID string
 	err = tx.QueryRow(ctx, `

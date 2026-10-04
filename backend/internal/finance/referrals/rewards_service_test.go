@@ -360,7 +360,7 @@ func TestOnPurchaseRefunded_ReversesCredited_Integration(t *testing.T) {
 		t.Fatalf("OnPurchaseRefunded: %v", err)
 	}
 
-	_, status, _, _, _ := rewardRow(t, pool, txnID)
+	_, status, _, _, _ := rewardRow(t, pool, txnID) //nolint:dogsled // tuple: only status asserted
 	if status != referrals.RewardStatusReversed {
 		t.Fatalf("status after refund = %q, want REVERSED", status)
 	}
@@ -377,7 +377,7 @@ func TestOnPurchaseRefunded_ReversesCredited_Integration(t *testing.T) {
 	if err := svc.OnPurchaseRefunded(ctx, referrals.PurchaseRefunded{TransactionID: txnID}); err != nil {
 		t.Fatalf("OnPurchaseRefunded replay: %v", err)
 	}
-	_, status2, _, _, _ := rewardRow(t, pool, txnID)
+	_, status2, _, _, _ := rewardRow(t, pool, txnID) //nolint:dogsled // tuple: only status asserted
 	if status2 != referrals.RewardStatusReversed {
 		t.Fatalf("status after replayed refund = %q, want REVERSED", status2)
 	}
@@ -418,7 +418,7 @@ func TestOnPurchaseRefunded_PendingReward_NoOp_Integration(t *testing.T) {
 		t.Fatalf("OnPurchaseRefunded: %v", err)
 	}
 
-	_, status, _, _, _ := rewardRow(t, pool, txnID)
+	_, status, _, _, _ := rewardRow(t, pool, txnID) //nolint:dogsled // tuple: only status asserted
 	if status != referrals.RewardStatusPending {
 		t.Fatalf("status = %q, want PENDING unchanged (refund on a never-credited reward is a no-op)", status)
 	}

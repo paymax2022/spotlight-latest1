@@ -148,7 +148,7 @@ func TestLiveDB_AdminApproveWithNoKYBRowMakesOutletPayable(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'No-KYB Kitchen','1 St',FALSE)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM restaurants WHERE id=$1`, restID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM restaurants WHERE id=$1`, restID) })
 
 	// Sanity: reproduces the ORIGINAL bug's starting point — no restaurant_kyb row.
 	if _, hasKYB, err := svc.loadKYB(ctx, restID); err != nil || hasKYB {

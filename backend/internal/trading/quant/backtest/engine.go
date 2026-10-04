@@ -84,7 +84,6 @@ func Run(prices []float64, cfg Config, decide DecisionFunc) Result {
 		// A. Execute the pending decision from the previous bar (fill at THIS price).
 		if pending != nil {
 			t := *pending
-			pending = nil
 			if t.Dir != pos {
 				if pos != Flat {
 					closePosition(price, "signal")

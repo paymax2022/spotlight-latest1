@@ -188,7 +188,7 @@ func (s *Service) SetupMatch(ctx context.Context, sponsorID string, in MatchSetu
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Idempotency: short-circuit if a match already exists for this key.
 	if existing, ok, err := s.findByIdemKey(ctx, tx, idemKey); err != nil {
@@ -275,7 +275,7 @@ func (s *Service) ApproveMatch(ctx context.Context, sponsorID, matchID string) (
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var current string
 	err = tx.QueryRow(ctx,

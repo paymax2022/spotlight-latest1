@@ -230,7 +230,7 @@ func (h *HTTPProvider) Healthy(ctx context.Context) (bool, string) {
 	if err != nil {
 		return false, err.Error()
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return false, fmt.Sprintf("status %d", resp.StatusCode)
 	}
@@ -273,7 +273,7 @@ func (h *HTTPProvider) do(req *http.Request, dst any) error {
 	if err != nil {
 		return fmt.Errorf("maps: http provider: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("maps: http provider %d from %s: %s", resp.StatusCode, redact(req.URL.String()), string(body))
@@ -369,7 +369,7 @@ func doGetJSON(ctx context.Context, url string, dst any) (bool, error) {
 	if err != nil {
 		return true, err // network/transport error — safe to retry an idempotent GET
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		httpErr := fmt.Errorf("maps: http %d from %s: %s", resp.StatusCode, redact(url), string(body))

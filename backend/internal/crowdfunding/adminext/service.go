@@ -327,7 +327,7 @@ func (s *Service) decideLegacyRefund(ctx context.Context, id, adminID string, ap
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var current, reference string
 	if err := tx.QueryRow(ctx, `SELECT status, reference FROM cf_refunds WHERE id=$1 FOR UPDATE`, id).Scan(&current, &reference); err != nil {
@@ -424,7 +424,7 @@ func (s *Service) ResolveDispute(ctx context.Context, id, adminID, resolution, n
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var current, reference string
 	if err := tx.QueryRow(ctx, `SELECT status, reference FROM cf_disputes WHERE id=$1 FOR UPDATE`, id).Scan(&current, &reference); err != nil {
@@ -520,7 +520,7 @@ func (s *Service) DecideWithdrawal(ctx context.Context, id, adminID string, appr
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var current, reference string
 	if err := tx.QueryRow(ctx, `SELECT status, reference FROM cf_withdrawals WHERE id=$1 FOR UPDATE`, id).Scan(&current, &reference); err != nil {
@@ -588,7 +588,7 @@ func (s *Service) SetCampaignFreeze(ctx context.Context, campaignID, adminID str
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	alertStatus := "INVESTIGATING"
 	if freeze {
@@ -803,7 +803,7 @@ func (s *Service) FulfilDataRequest(ctx context.Context, id, adminID string) err
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var current, userName string
 	if err := tx.QueryRow(ctx, `SELECT status, user_name FROM cf_data_requests WHERE id=$1 FOR UPDATE`, id).Scan(&current, &userName); err != nil {
@@ -1020,7 +1020,7 @@ func (s *Service) SetUserStatus(ctx context.Context, id, adminID, status, note s
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var name string
 	if err := tx.QueryRow(ctx,

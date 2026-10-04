@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -141,7 +142,7 @@ func (r *StemSupabaseRepository) listSchoolsFromApplications(limit int) ([]domai
 	q.Set("limit", "1500")
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +154,7 @@ func (r *StemSupabaseRepository) listSchoolsFromApplications(limit int) ([]domai
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("stem school query failed: %d", resp.StatusCode)
 	}
@@ -264,7 +265,7 @@ func (r *StemSupabaseRepository) CreateSchool(input domain.StemSchoolCreateInput
 	q.Set("select", "id,school_name,state,verification_status")
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return domain.StemSchool{}, err
 	}
@@ -277,7 +278,7 @@ func (r *StemSupabaseRepository) CreateSchool(input domain.StemSchoolCreateInput
 	if err != nil {
 		return domain.StemSchool{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemSchool{}, fmt.Errorf("school create failed: %d", resp.StatusCode)
 	}
@@ -347,7 +348,7 @@ func (r *StemSupabaseRepository) schoolVerificationStatus(schoolID string) (stri
 	currentQ.Set("limit", "1")
 	currentURL.RawQuery = currentQ.Encode()
 
-	currentReq, err := http.NewRequest(http.MethodGet, currentURL.String(), nil)
+	currentReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, currentURL.String(), nil)
 	if err != nil {
 		return "", err
 	}
@@ -358,7 +359,7 @@ func (r *StemSupabaseRepository) schoolVerificationStatus(schoolID string) (stri
 	if err != nil {
 		return "", err
 	}
-	defer currentResp.Body.Close()
+	defer func() { _ = currentResp.Body.Close() }()
 
 	prevStatus := ""
 	if currentResp.StatusCode < 400 {
@@ -392,7 +393,7 @@ func (r *StemSupabaseRepository) patchSchoolVerification(schoolID, status, reaso
 	updateQ.Set("id", "eq."+schoolID)
 	updateURL.RawQuery = updateQ.Encode()
 
-	updateReq, err := http.NewRequest(http.MethodPatch, updateURL.String(), bytes.NewReader(updateBody))
+	updateReq, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, updateURL.String(), bytes.NewReader(updateBody))
 	if err != nil {
 		return err
 	}
@@ -405,7 +406,7 @@ func (r *StemSupabaseRepository) patchSchoolVerification(schoolID, status, reaso
 	if err != nil {
 		return err
 	}
-	defer updateResp.Body.Close()
+	defer func() { _ = updateResp.Body.Close() }()
 	if updateResp.StatusCode >= 400 {
 		return fmt.Errorf("school verification update failed: %d", updateResp.StatusCode)
 	}
@@ -425,7 +426,7 @@ func (r *StemSupabaseRepository) logSchoolVerification(schoolID, prevStatus, sta
 		return err
 	}
 	verificationURL := strings.TrimRight(r.client.BaseURL(), "/") + "/rest/v1/stem_school_verifications"
-	verificationReq, err := http.NewRequest(http.MethodPost, verificationURL, bytes.NewReader(verificationBody))
+	verificationReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, verificationURL, bytes.NewReader(verificationBody))
 	if err != nil {
 		return err
 	}
@@ -438,7 +439,7 @@ func (r *StemSupabaseRepository) logSchoolVerification(schoolID, prevStatus, sta
 	if err != nil {
 		return err
 	}
-	defer verificationResp.Body.Close()
+	defer func() { _ = verificationResp.Body.Close() }()
 	if verificationResp.StatusCode >= 400 {
 		return fmt.Errorf("school verification log failed: %d", verificationResp.StatusCode)
 	}
@@ -456,7 +457,7 @@ func (r *StemSupabaseRepository) listSchoolsFromDedicatedTable(limit int) ([]dom
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +468,7 @@ func (r *StemSupabaseRepository) listSchoolsFromDedicatedTable(limit int) ([]dom
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("stem schools table query failed: %d", resp.StatusCode)
 	}
@@ -515,7 +516,7 @@ func (r *StemSupabaseRepository) ListEmergingInnovators(limit int) ([]domain.Ste
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -526,7 +527,7 @@ func (r *StemSupabaseRepository) ListEmergingInnovators(limit int) ([]domain.Ste
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("stem emerging query failed: %d", resp.StatusCode)
 	}
@@ -613,7 +614,7 @@ func (r *StemSupabaseRepository) CreateEmergingInnovator(input domain.StemEmergi
 	q.Set("select", "id,full_name,email,phone,state,current_status,innovation_track,team_name,prototype_available,verification_status")
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return domain.StemEmergingInnovator{}, err
 	}
@@ -626,7 +627,7 @@ func (r *StemSupabaseRepository) CreateEmergingInnovator(input domain.StemEmergi
 	if err != nil {
 		return domain.StemEmergingInnovator{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemEmergingInnovator{}, fmt.Errorf("emerging innovator create failed: %d", resp.StatusCode)
 	}
@@ -683,7 +684,7 @@ func (r *StemSupabaseRepository) GetSchoolDashboard(schoolID string) (domain.Ste
 	q.Set("limit", "1")
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return out, err
 	}
@@ -694,7 +695,7 @@ func (r *StemSupabaseRepository) GetSchoolDashboard(schoolID string) (domain.Ste
 	if err != nil {
 		return out, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return out, fmt.Errorf("school dashboard query failed: %d", resp.StatusCode)
 	}
@@ -737,7 +738,7 @@ func (r *StemSupabaseRepository) fillSchoolDashboardStats(out *domain.StemSchool
 	appQ.Set("limit", "1500")
 	appURL.RawQuery = appQ.Encode()
 
-	appReq, err := http.NewRequest(http.MethodGet, appURL.String(), nil)
+	appReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, appURL.String(), nil)
 	if err != nil {
 		return err
 	}
@@ -746,7 +747,7 @@ func (r *StemSupabaseRepository) fillSchoolDashboardStats(out *domain.StemSchool
 
 	appResp, err := (&http.Client{Timeout: 10 * time.Second}).Do(appReq)
 	if err == nil {
-		defer appResp.Body.Close()
+		defer func() { _ = appResp.Body.Close() }()
 		if appResp.StatusCode < 400 {
 			var apps []struct {
 				Status          string         `json:"status"`
@@ -794,7 +795,7 @@ func (r *StemSupabaseRepository) ListSchoolProfiles(limit int) ([]domain.StemSch
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -804,7 +805,7 @@ func (r *StemSupabaseRepository) ListSchoolProfiles(limit int) ([]domain.StemSch
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("school profiles query failed: %d", resp.StatusCode)
 	}
@@ -859,7 +860,7 @@ func (r *StemSupabaseRepository) CreateSchoolProfile(input domain.StemSchoolProf
 	q := u.Query()
 	q.Set("select", "id,school_id,user_id,role_type,full_name,email,phone,grade_level,specialization,status")
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return domain.StemSchoolProfile{}, err
 	}
@@ -871,7 +872,7 @@ func (r *StemSupabaseRepository) CreateSchoolProfile(input domain.StemSchoolProf
 	if err != nil {
 		return domain.StemSchoolProfile{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemSchoolProfile{}, fmt.Errorf("create school profile failed: %d", resp.StatusCode)
 	}
@@ -918,7 +919,7 @@ func (r *StemSupabaseRepository) ListSchoolTeams(limit int) ([]domain.StemSchool
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -928,7 +929,7 @@ func (r *StemSupabaseRepository) ListSchoolTeams(limit int) ([]domain.StemSchool
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("school teams query failed: %d", resp.StatusCode)
 	}
@@ -977,7 +978,7 @@ func (r *StemSupabaseRepository) CreateSchoolTeam(input domain.StemSchoolTeamCre
 	q := u.Query()
 	q.Set("select", "id,school_id,team_name,contest_category,coach_name,project_title,team_size")
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return domain.StemSchoolTeam{}, err
 	}
@@ -989,7 +990,7 @@ func (r *StemSupabaseRepository) CreateSchoolTeam(input domain.StemSchoolTeamCre
 	if err != nil {
 		return domain.StemSchoolTeam{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemSchoolTeam{}, fmt.Errorf("create school team failed: %d", resp.StatusCode)
 	}
@@ -1033,7 +1034,7 @@ func (r *StemSupabaseRepository) ListEmergingTeams(limit int) ([]domain.StemEmer
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1043,7 +1044,7 @@ func (r *StemSupabaseRepository) ListEmergingTeams(limit int) ([]domain.StemEmer
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("emerging teams query failed: %d", resp.StatusCode)
 	}
@@ -1088,7 +1089,7 @@ func (r *StemSupabaseRepository) CreateEmergingTeam(input domain.StemEmergingTea
 	q := u.Query()
 	q.Set("select", "id,innovator_id,team_name,innovation_track,team_size")
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return domain.StemEmergingTeam{}, err
 	}
@@ -1100,7 +1101,7 @@ func (r *StemSupabaseRepository) CreateEmergingTeam(input domain.StemEmergingTea
 	if err != nil {
 		return domain.StemEmergingTeam{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemEmergingTeam{}, fmt.Errorf("create emerging team failed: %d", resp.StatusCode)
 	}
@@ -1142,7 +1143,7 @@ func (r *StemSupabaseRepository) ListEmergingProjects(limit int) ([]domain.StemE
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1152,7 +1153,7 @@ func (r *StemSupabaseRepository) ListEmergingProjects(limit int) ([]domain.StemE
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("emerging projects query failed: %d", resp.StatusCode)
 	}
@@ -1198,7 +1199,7 @@ func (r *StemSupabaseRepository) CreateEmergingProject(input domain.StemEmerging
 	q := u.Query()
 	q.Set("select", "id,team_id,project_title,category,status")
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return domain.StemEmergingProject{}, err
 	}
@@ -1210,7 +1211,7 @@ func (r *StemSupabaseRepository) CreateEmergingProject(input domain.StemEmerging
 	if err != nil {
 		return domain.StemEmergingProject{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemEmergingProject{}, fmt.Errorf("create emerging project failed: %d", resp.StatusCode)
 	}
@@ -1251,7 +1252,7 @@ func (r *StemSupabaseRepository) ListContests(limit int) ([]domain.StemContest, 
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1261,7 +1262,7 @@ func (r *StemSupabaseRepository) ListContests(limit int) ([]domain.StemContest, 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("stem contests query failed: %d", resp.StatusCode)
 	}
@@ -1324,7 +1325,7 @@ func (r *StemSupabaseRepository) CreateContest(input domain.StemContestCreateInp
 	q := u.Query()
 	q.Set("select", "id,name,slug,contest_type,contest_mode,eligible_participant_types,eligible_school_levels,eligible_states,allow_mixed_channels,ranking_formula,stage_lifecycle,stage_transitions,status")
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return domain.StemContest{}, err
 	}
@@ -1336,7 +1337,7 @@ func (r *StemSupabaseRepository) CreateContest(input domain.StemContestCreateInp
 	if err != nil {
 		return domain.StemContest{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemContest{}, fmt.Errorf("create stem contest failed: %d", resp.StatusCode)
 	}
@@ -1402,7 +1403,7 @@ func (r *StemSupabaseRepository) GetContestByID(contestID string) (domain.StemCo
 	q.Set("id", "eq."+contestID)
 	q.Set("limit", "1")
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return out, err
 	}
@@ -1412,7 +1413,7 @@ func (r *StemSupabaseRepository) GetContestByID(contestID string) (domain.StemCo
 	if err != nil {
 		return out, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return out, fmt.Errorf("stem contest lookup failed: %d", resp.StatusCode)
 	}
@@ -1468,7 +1469,7 @@ func (r *StemSupabaseRepository) ListLeaderboard(contestID string, limit int) ([
 	q.Set("order", "rank_position.asc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1478,7 +1479,7 @@ func (r *StemSupabaseRepository) ListLeaderboard(contestID string, limit int) ([
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("stem leaderboard query failed: %d", resp.StatusCode)
 	}
@@ -1529,7 +1530,7 @@ func (r *StemSupabaseRepository) GetLeaderboardRankSnapshot(contestID string) (m
 	q.Set("order", "captured_at.desc")
 	q.Set("limit", "1")
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return out, err
 	}
@@ -1539,7 +1540,7 @@ func (r *StemSupabaseRepository) GetLeaderboardRankSnapshot(contestID string) (m
 	if err != nil {
 		return out, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return out, fmt.Errorf("stem rank snapshot query failed: %d", resp.StatusCode)
 	}
@@ -1572,7 +1573,7 @@ func (r *StemSupabaseRepository) SaveLeaderboardRankSnapshot(contestID string, r
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodPost, u, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -1584,7 +1585,7 @@ func (r *StemSupabaseRepository) SaveLeaderboardRankSnapshot(contestID string, r
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("stem rank snapshot insert failed: %d", resp.StatusCode)
 	}
@@ -1657,7 +1658,7 @@ func (r *StemSupabaseRepository) ListSubmissions(limit int, status string) ([]do
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1667,7 +1668,7 @@ func (r *StemSupabaseRepository) ListSubmissions(limit int, status string) ([]do
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("stem submissions query failed: %d", resp.StatusCode)
 	}
@@ -1718,7 +1719,7 @@ func (r *StemSupabaseRepository) UpdateSubmissionStatus(submissionID string, sta
 	q := u.Query()
 	q.Set("id", "eq."+submissionID)
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodPatch, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -1730,7 +1731,7 @@ func (r *StemSupabaseRepository) UpdateSubmissionStatus(submissionID string, sta
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("submission status update failed: %d", resp.StatusCode)
 	}
@@ -1778,7 +1779,7 @@ func (r *StemSupabaseRepository) UpsertJudgingScore(score domain.StemJudgingScor
 	q := u.Query()
 	q.Set("select", "id,application_id,reviewer_id,innovation_score,technical_depth_score,impact_score,overall_score,notes,review_status,is_locked,lock_reason,locked_at,locked_by,has_conflict,conflict_reason")
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return domain.StemJudgingScore{}, err
 	}
@@ -1790,7 +1791,7 @@ func (r *StemSupabaseRepository) UpsertJudgingScore(score domain.StemJudgingScor
 	if err != nil {
 		return domain.StemJudgingScore{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemJudgingScore{}, fmt.Errorf("judging score create failed: %d", resp.StatusCode)
 	}
@@ -1848,7 +1849,7 @@ func (r *StemSupabaseRepository) ListJudgingScores(applicationID string, limit i
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1858,7 +1859,7 @@ func (r *StemSupabaseRepository) ListJudgingScores(applicationID string, limit i
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("judging score query failed: %d", resp.StatusCode)
 	}
@@ -1922,7 +1923,7 @@ func (r *StemSupabaseRepository) UpdateJudgingScoreReviewState(scoreID string, r
 	q := u.Query()
 	q.Set("id", "eq."+scoreID)
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodPatch, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -1934,7 +1935,7 @@ func (r *StemSupabaseRepository) UpdateJudgingScoreReviewState(scoreID string, r
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("score review state update failed: %d", resp.StatusCode)
 	}
@@ -1978,7 +1979,7 @@ func (r *StemSupabaseRepository) CreateJudgingRubric(
 	q := u.Query()
 	q.Set("select", "id,contest_id,name,description,status")
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return domain.StemJudgingRubric{}, nil, err
 	}
@@ -1990,7 +1991,7 @@ func (r *StemSupabaseRepository) CreateJudgingRubric(
 	if err != nil {
 		return domain.StemJudgingRubric{}, nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemJudgingRubric{}, nil, fmt.Errorf("judging rubric create failed: %d", resp.StatusCode)
 	}
@@ -2048,7 +2049,7 @@ func (r *StemSupabaseRepository) CreateJudgingRubric(
 	cq := cu.Query()
 	cq.Set("select", "id,rubric_id,criterion_key,label,weight_pct,max_score,description")
 	cu.RawQuery = cq.Encode()
-	creq, err := http.NewRequest(http.MethodPost, cu.String(), bytes.NewReader(criteriaBody))
+	creq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, cu.String(), bytes.NewReader(criteriaBody))
 	if err != nil {
 		return domain.StemJudgingRubric{}, nil, err
 	}
@@ -2060,7 +2061,7 @@ func (r *StemSupabaseRepository) CreateJudgingRubric(
 	if err != nil {
 		return domain.StemJudgingRubric{}, nil, err
 	}
-	defer cresp.Body.Close()
+	defer func() { _ = cresp.Body.Close() }()
 	if cresp.StatusCode >= 400 {
 		return domain.StemJudgingRubric{}, nil, fmt.Errorf("judging criteria create failed: %d", cresp.StatusCode)
 	}
@@ -2120,7 +2121,7 @@ func (r *StemSupabaseRepository) ListJudgingRubrics(contestID string, limit int)
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2130,7 +2131,7 @@ func (r *StemSupabaseRepository) ListJudgingRubrics(contestID string, limit int)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("judging rubric query failed: %d", resp.StatusCode)
 	}
@@ -2176,7 +2177,7 @@ func (r *StemSupabaseRepository) ListJudgingCriteria(rubricID string, limit int)
 	q.Set("order", "created_at.asc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2186,7 +2187,7 @@ func (r *StemSupabaseRepository) ListJudgingCriteria(rubricID string, limit int)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("judging criteria query failed: %d", resp.StatusCode)
 	}
@@ -2234,7 +2235,7 @@ func (r *StemSupabaseRepository) CreateJudgeAssignment(assignment domain.StemJud
 	q := u.Query()
 	q.Set("select", "id,contest_id,application_id,judge_user_id,status,has_conflict,conflict_reason")
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return domain.StemJudgeAssignment{}, err
 	}
@@ -2246,7 +2247,7 @@ func (r *StemSupabaseRepository) CreateJudgeAssignment(assignment domain.StemJud
 	if err != nil {
 		return domain.StemJudgeAssignment{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemJudgeAssignment{}, fmt.Errorf("judge assignment create failed: %d", resp.StatusCode)
 	}
@@ -2314,7 +2315,7 @@ func (r *StemSupabaseRepository) ListJudgeAssignments(contestID string, applicat
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2324,7 +2325,7 @@ func (r *StemSupabaseRepository) ListJudgeAssignments(contestID string, applicat
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("judge assignment query failed: %d", resp.StatusCode)
 	}
@@ -2376,7 +2377,7 @@ func (r *StemSupabaseRepository) UpdateJudgeAssignmentConflict(assignmentID stri
 	q := u.Query()
 	q.Set("id", "eq."+assignmentID)
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodPatch, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -2388,7 +2389,7 @@ func (r *StemSupabaseRepository) UpdateJudgeAssignmentConflict(assignmentID stri
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("assignment conflict update failed: %d", resp.StatusCode)
 	}
@@ -2422,7 +2423,7 @@ func (r *StemSupabaseRepository) UpsertVotingRule(rule domain.StemVotingRule) (d
 	q.Set("select", "id,contest_id,voting_status,voting_mode,daily_vote_limit,one_user_one_vote,allow_paid_votes")
 	q.Set("contest_id", "eq."+strings.TrimSpace(rule.ContestID))
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
@@ -2431,7 +2432,7 @@ func (r *StemSupabaseRepository) UpsertVotingRule(rule domain.StemVotingRule) (d
 	if err != nil {
 		return domain.StemVotingRule{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemVotingRule{}, fmt.Errorf("voting rule upsert failed: %d", resp.StatusCode)
 	}
@@ -2470,14 +2471,14 @@ func (r *StemSupabaseRepository) ListVotingRules(contestID string, limit int) ([
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		return out, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return out, fmt.Errorf("voting rules query failed: %d", resp.StatusCode)
 	}
@@ -2512,7 +2513,7 @@ func (r *StemSupabaseRepository) CreateVotePackage(pkg domain.StemVotePackage) (
 	q := u.Query()
 	q.Set("select", "id,contest_id,name,votes,amount_ngn,is_active")
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
@@ -2521,7 +2522,7 @@ func (r *StemSupabaseRepository) CreateVotePackage(pkg domain.StemVotePackage) (
 	if err != nil {
 		return domain.StemVotePackage{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemVotePackage{}, fmt.Errorf("vote package create failed: %d", resp.StatusCode)
 	}
@@ -2556,14 +2557,14 @@ func (r *StemSupabaseRepository) ListVotePackages(contestID string, limit int) (
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		return out, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return out, fmt.Errorf("vote package query failed: %d", resp.StatusCode)
 	}
@@ -2603,7 +2604,7 @@ func (r *StemSupabaseRepository) CreateVoteTransaction(tx domain.StemVoteTransac
 	q := u.Query()
 	q.Set("select", "id,contest_id,application_id,package_id,voter_ref,payment_reference,amount_ngn,votes_allocated,status")
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
@@ -2612,7 +2613,7 @@ func (r *StemSupabaseRepository) CreateVoteTransaction(tx domain.StemVoteTransac
 	if err != nil {
 		return domain.StemVoteTransaction{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemVoteTransaction{}, fmt.Errorf("vote tx create failed: %d", resp.StatusCode)
 	}
@@ -2654,14 +2655,14 @@ func (r *StemSupabaseRepository) ListVoteTransactions(contestID string, limit in
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		return out, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return out, fmt.Errorf("vote tx query failed: %d", resp.StatusCode)
 	}
@@ -2695,7 +2696,7 @@ func (r *StemSupabaseRepository) CreateBootcampCohort(cohort domain.StemBootcamp
 	q := u.Query()
 	q.Set("select", "id,contest_id,name,status,start_date,end_date")
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
@@ -2704,7 +2705,7 @@ func (r *StemSupabaseRepository) CreateBootcampCohort(cohort domain.StemBootcamp
 	if err != nil {
 		return domain.StemBootcampCohort{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemBootcampCohort{}, fmt.Errorf("cohort create failed: %d", resp.StatusCode)
 	}
@@ -2739,14 +2740,14 @@ func (r *StemSupabaseRepository) ListBootcampCohorts(contestID string, limit int
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		return out, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return out, fmt.Errorf("cohort query failed: %d", resp.StatusCode)
 	}
@@ -2789,7 +2790,7 @@ func (r *StemSupabaseRepository) CreateBootcampTask(task domain.StemBootcampTask
 	q := u.Query()
 	q.Set("select", "id,cohort_id,title,description,day_number,max_score")
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return domain.StemBootcampTask{}, err
 	}
@@ -2801,7 +2802,7 @@ func (r *StemSupabaseRepository) CreateBootcampTask(task domain.StemBootcampTask
 	if err != nil {
 		return domain.StemBootcampTask{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemBootcampTask{}, fmt.Errorf("create stem bootcamp task failed: %d", resp.StatusCode)
 	}
@@ -2847,7 +2848,7 @@ func (r *StemSupabaseRepository) ListBootcampTasks(cohortID string, limit int) (
 	q.Set("order", "day_number.asc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2857,7 +2858,7 @@ func (r *StemSupabaseRepository) ListBootcampTasks(cohortID string, limit int) (
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("stem bootcamp tasks query failed: %d", resp.StatusCode)
 	}
@@ -2904,7 +2905,7 @@ func (r *StemSupabaseRepository) UpsertBootcampScore(score domain.StemBootcampSc
 	q := u.Query()
 	q.Set("select", "id,cohort_id,task_id,application_id,score,note")
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return domain.StemBootcampScore{}, err
 	}
@@ -2916,7 +2917,7 @@ func (r *StemSupabaseRepository) UpsertBootcampScore(score domain.StemBootcampSc
 	if err != nil {
 		return domain.StemBootcampScore{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemBootcampScore{}, fmt.Errorf("upsert stem bootcamp score failed: %d", resp.StatusCode)
 	}
@@ -2965,7 +2966,7 @@ func (r *StemSupabaseRepository) ListBootcampScores(cohortID string, application
 	q.Set("order", "updated_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2975,7 +2976,7 @@ func (r *StemSupabaseRepository) ListBootcampScores(cohortID string, application
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("stem bootcamp scores query failed: %d", resp.StatusCode)
 	}
@@ -3010,7 +3011,7 @@ func (r *StemSupabaseRepository) CreateSponsor(sponsor domain.StemSponsor) (doma
 	q := u.Query()
 	q.Set("select", "id,name,sponsor_type,logo_url,website_url,campaign_message,cta_url,is_active")
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
@@ -3019,7 +3020,7 @@ func (r *StemSupabaseRepository) CreateSponsor(sponsor domain.StemSponsor) (doma
 	if err != nil {
 		return domain.StemSponsor{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemSponsor{}, fmt.Errorf("sponsor create failed: %d", resp.StatusCode)
 	}
@@ -3053,14 +3054,14 @@ func (r *StemSupabaseRepository) ListSponsors(limit int) ([]domain.StemSponsor, 
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		return out, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return out, fmt.Errorf("sponsors query failed: %d", resp.StatusCode)
 	}
@@ -3093,7 +3094,7 @@ func (r *StemSupabaseRepository) CreateCertificate(cert domain.StemCertificate) 
 	q := u.Query()
 	q.Set("select", "id,application_id,certificate_type,certificate_number,issued_at,file_url")
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
@@ -3102,7 +3103,7 @@ func (r *StemSupabaseRepository) CreateCertificate(cert domain.StemCertificate) 
 	if err != nil {
 		return domain.StemCertificate{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemCertificate{}, fmt.Errorf("certificate create failed: %d", resp.StatusCode)
 	}
@@ -3134,14 +3135,14 @@ func (r *StemSupabaseRepository) ListCertificates(limit int) ([]domain.StemCerti
 	q.Set("order", "issued_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		return out, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return out, fmt.Errorf("certificates query failed: %d", resp.StatusCode)
 	}
@@ -3172,7 +3173,7 @@ func (r *StemSupabaseRepository) CreateBadge(badge domain.StemBadge) (domain.Ste
 	q := u.Query()
 	q.Set("select", "id,name,description,icon_url")
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
@@ -3181,7 +3182,7 @@ func (r *StemSupabaseRepository) CreateBadge(badge domain.StemBadge) (domain.Ste
 	if err != nil {
 		return domain.StemBadge{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemBadge{}, fmt.Errorf("badge create failed: %d", resp.StatusCode)
 	}
@@ -3211,14 +3212,14 @@ func (r *StemSupabaseRepository) ListBadges(limit int) ([]domain.StemBadge, erro
 	q.Set("order", "created_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		return out, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return out, fmt.Errorf("badges query failed: %d", resp.StatusCode)
 	}
@@ -3247,7 +3248,7 @@ func (r *StemSupabaseRepository) AwardBadge(award domain.StemBadgeAward) (domain
 	q := u.Query()
 	q.Set("select", "id,badge_id,application_id,awarded_at,note")
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
@@ -3256,7 +3257,7 @@ func (r *StemSupabaseRepository) AwardBadge(award domain.StemBadgeAward) (domain
 	if err != nil {
 		return domain.StemBadgeAward{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.StemBadgeAward{}, fmt.Errorf("badge award failed: %d", resp.StatusCode)
 	}
@@ -3290,14 +3291,14 @@ func (r *StemSupabaseRepository) ListBadgeAwards(applicationID string, limit int
 	q.Set("order", "awarded_at.desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		return out, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return out, fmt.Errorf("badge awards query failed: %d", resp.StatusCode)
 	}
@@ -3360,7 +3361,7 @@ func (r *StemSupabaseRepository) GetReportBuckets(kind string, contestID string,
 	if limit > 300 {
 		limit = 300
 	}
-	groupCol := "status"
+	var groupCol string
 	table := "stem_vote_transactions"
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "vote_status":
@@ -3384,14 +3385,14 @@ func (r *StemSupabaseRepository) GetReportBuckets(kind string, contestID string,
 	}
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
-	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("report buckets query failed: %d", resp.StatusCode)
 	}
@@ -3482,7 +3483,7 @@ func (r *StemSupabaseRepository) logAdminAuditAction(
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -3494,7 +3495,7 @@ func (r *StemSupabaseRepository) logAdminAuditAction(
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("admin audit log insert failed: %d", resp.StatusCode)
 	}

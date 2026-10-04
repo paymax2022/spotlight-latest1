@@ -246,7 +246,7 @@ func scanContribution(scan func(dest ...any) error) (Contribution, error) {
 	// deduction, so before settlement we project the split that Settle WILL apply.
 	// The projection reads the same constant the settlement splits by, so the two
 	// cannot drift the way the old hardcoded 2.5% did.
-	fee, net := int64(0), paid
+	var fee, net int64
 	if settledAt != nil && settFee != nil && settProvider != nil {
 		fee, net = *settFee, *settProvider
 	} else {
@@ -298,7 +298,7 @@ func (s *Service) RequestRefund(ctx context.Context, contributionID, callerID, r
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var exists bool
 	if err := tx.QueryRow(ctx,

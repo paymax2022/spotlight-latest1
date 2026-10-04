@@ -55,9 +55,9 @@ func TestLiveDB_CreateApplication_ModuleClosedEnforced(t *testing.T) {
 		t.Fatalf("seed type: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM onb_application WHERE merchant_type_id=$1`, typeID)
-		pool.Exec(context.Background(), `DELETE FROM onb_merchant_type WHERE id=$1`, typeID)
-		pool.Exec(context.Background(), `DELETE FROM onb_module WHERE id=$1`, modID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM onb_application WHERE merchant_type_id=$1`, typeID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM onb_merchant_type WHERE id=$1`, typeID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM onb_module WHERE id=$1`, modID)
 	})
 
 	// Open type, CLOSED module → must be rejected (the fix).

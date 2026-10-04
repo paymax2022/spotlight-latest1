@@ -162,7 +162,7 @@ func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID stri
 	if err != nil {
 		return nil, fmt.Errorf("rx: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	p := &Prescription{
 		ID:           uuid.New().String(),
@@ -316,7 +316,7 @@ func (s *Service) transition(ctx context.Context, actorID, rxID string, to State
 	if err != nil {
 		return nil, fmt.Errorf("rx: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	p, err := lockPrescription(ctx, tx, rxID)
 	if err != nil {

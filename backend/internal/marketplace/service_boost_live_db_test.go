@@ -96,7 +96,7 @@ func seedBoostCategory(t *testing.T, ctx context.Context, pool *pgxpool.Pool) st
 		id, "boost-test-"+id); err != nil {
 		t.Fatalf("seed category: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_categories WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM mkt_categories WHERE id=$1`, id) })
 	return id
 }
 
@@ -112,7 +112,7 @@ func seedActiveListing(t *testing.T, ctx context.Context, pool *pgxpool.Pool, se
 	if _, err := pool.Exec(ctx, q, id, sellerID, categoryID); err != nil {
 		t.Fatalf("seed listing: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_listings WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM mkt_listings WHERE id=$1`, id) })
 	return id
 }
 
@@ -415,7 +415,7 @@ func TestLiveDB_RejectBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, fakeSeller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed boost: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
 
 	_, err := svc.RejectBoost(ctx, admin, boostID, "policy_violation")
 	if err == nil {
@@ -483,7 +483,7 @@ func TestLiveDB_RejectBoost_ResumesFromStrandedRejectedWithReasonRow(t *testing.
 	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, seller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed stranded boost: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
 
 	sellerBalBefore := boostWalletBalance(t, ctx, pool, seller)
 
@@ -752,7 +752,7 @@ func TestLiveDB_CancelBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, fakeSeller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed boost: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
 
 	_, err := svc.CancelBoost(ctx, fakeSeller, boostID)
 	if err == nil {
@@ -816,7 +816,7 @@ func TestLiveDB_CancelBoost_ResumesFromStrandedCancelledBySellerRow(t *testing.T
 	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, seller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed stranded boost: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
 
 	sellerBalBefore := boostWalletBalance(t, ctx, pool, seller)
 

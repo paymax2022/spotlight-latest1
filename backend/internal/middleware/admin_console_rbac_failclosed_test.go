@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -65,7 +66,7 @@ func TestRequireAdminConsoleRole_FailClosed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newAdminConsoleTestRouter(t)
 
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/overview-like", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/admin/overview-like", nil)
 			for k, v := range tc.headers {
 				req.Header.Set(k, v)
 			}
@@ -86,7 +87,7 @@ func TestRequireAdminConsoleRole_FailClosed(t *testing.T) {
 func TestRequireAdminConsoleRole_AuthBackendUnavailableReturns503(t *testing.T) {
 	r := newAdminConsoleTestRouter(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/overview-like", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/admin/overview-like", nil)
 	req.Header.Set("Authorization", "Bearer not-a-real-token")
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	w := httptest.NewRecorder()
@@ -110,7 +111,7 @@ func TestRequireAdminConsoleRole_RejectedTokenReturns401(t *testing.T) {
 	r.Use(RequireAdminConsoleRole(supabase, nil))
 	r.GET("/api/v1/admin/overview-like", func(c *gin.Context) { c.Status(http.StatusOK) })
 
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/overview-like", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/admin/overview-like", nil)
 	req.Header.Set("Authorization", "Bearer rejected-token")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -167,7 +168,7 @@ func consoleRouterWithRBAC(t *testing.T, userID string, rbac services.RBACServic
 }
 
 func doAuthedGet(r *gin.Engine) int {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/overview-like", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/admin/overview-like", nil)
 	req.Header.Set("Authorization", "Bearer any-token-the-fake-server-accepts")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

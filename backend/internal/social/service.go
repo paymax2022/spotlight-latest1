@@ -276,7 +276,7 @@ func (s *Service) CreateSplit(ctx context.Context, organiserID, title string, to
 	if err != nil {
 		return nil, nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	bill := &SplitBill{
 		ID: uuid.New().String(), OrganiserID: organiserID, Title: title,

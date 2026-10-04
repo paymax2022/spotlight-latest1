@@ -62,7 +62,7 @@ func seedVirtualAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, s
 		t.Fatalf("seed virtual account: %v", err)
 	}
 	t.Cleanup(func() {
-		c := context.Background()
+		c := t.Context()
 		_, _ = pool.Exec(c, `DELETE FROM orch_collection_events WHERE virtual_account_id=$1`, va.ID)
 		_, _ = pool.Exec(c, `DELETE FROM orch_collections WHERE id=$1`, va.ID)
 	})
@@ -111,7 +111,7 @@ func itoa(v int64) string {
 
 func TestLiveDB_OrchCollection_CreditsTheUSDWallet(t *testing.T) {
 	pool := livePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	user := seedUser(t, ctx, pool)
 	cleanupOrch(t, pool, user)
@@ -133,7 +133,7 @@ func TestLiveDB_OrchCollection_CreditsTheUSDWallet(t *testing.T) {
 
 func TestLiveDB_OrchCollection_NGNCreditsTheMainWallet(t *testing.T) {
 	pool := livePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	user := seedUser(t, ctx, pool)
 	cleanupOrch(t, pool, user)
@@ -155,7 +155,7 @@ func TestLiveDB_OrchCollection_NGNCreditsTheMainWallet(t *testing.T) {
 
 func TestLiveDB_OrchCollection_ReplayCreditsOnce(t *testing.T) {
 	pool := livePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	user := seedUser(t, ctx, pool)
 	cleanupOrch(t, pool, user)
@@ -180,7 +180,7 @@ func TestLiveDB_OrchCollection_ReplayCreditsOnce(t *testing.T) {
 
 func TestLiveDB_OrchCollection_UnmatchedReferenceCreditsNothing(t *testing.T) {
 	pool := livePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	user := seedUser(t, ctx, pool)
 	cleanupOrch(t, pool, user)
@@ -203,7 +203,7 @@ func TestLiveDB_OrchCollection_UnmatchedReferenceCreditsNothing(t *testing.T) {
 
 func TestLiveDB_OrchCollection_CurrencyMismatchIsRefused(t *testing.T) {
 	pool := livePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	user := seedUser(t, ctx, pool)
 	cleanupOrch(t, pool, user)
@@ -229,7 +229,7 @@ func TestLiveDB_OrchCollection_CurrencyMismatchIsRefused(t *testing.T) {
 
 func TestLiveDB_OrchCollection_AppearsOnTheCollectionsFeed(t *testing.T) {
 	pool := livePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	user := seedUser(t, ctx, pool)
 	cleanupOrch(t, pool, user)
@@ -268,7 +268,7 @@ func TestLiveDB_OrchCollection_AppearsOnTheCollectionsFeed(t *testing.T) {
 // collection account. The feed must carry real deposits, fully populated.
 func TestLiveDB_OrchCollection_FeedRowIsAFullyFormedDeposit(t *testing.T) {
 	pool := livePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	user := seedUser(t, ctx, pool)
 	cleanupOrch(t, pool, user)

@@ -228,7 +228,7 @@ func (s *Service) reservePromoRedemption(ctx context.Context, promoID, orderID, 
 	if err != nil {
 		return fmt.Errorf("restaurant: begin promo reservation: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var usageLimit, perUserLimit *int
 	if err := tx.QueryRow(ctx,

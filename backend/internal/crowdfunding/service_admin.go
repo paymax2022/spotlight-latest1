@@ -117,7 +117,7 @@ func (s *Service) AdminDecide(ctx context.Context, campaignID, adminID, decision
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var current string
 	if err := tx.QueryRow(ctx, `SELECT review_status FROM campaigns WHERE id=$1 FOR UPDATE`, campaignID).Scan(&current); err != nil {

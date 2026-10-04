@@ -95,7 +95,7 @@ func (r *Repository) SettleOrder(ctx context.Context, idem string) (alreadySettl
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var userID string
 	var delta int64
@@ -136,7 +136,7 @@ func (r *Repository) RecordRedeem(ctx context.Context, o FundOrder) (dup bool, e
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	ct, err := tx.Exec(ctx, `
 		INSERT INTO public.trading_fund_orders
@@ -191,7 +191,7 @@ func (r *Repository) RecordFeeAccrual(ctx context.Context, a FeeAccrual) (dup bo
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	ct, err := tx.Exec(ctx, `
 		INSERT INTO public.trading_fee_accruals

@@ -25,11 +25,11 @@ func vetAdminDashboardPool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping vet admin-dashboard live-DB tests")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
-	if err := pool.Ping(context.Background()); err != nil {
+	if err := pool.Ping(t.Context()); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
 	t.Cleanup(pool.Close)
@@ -109,14 +109,14 @@ func newVetAdminFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) v
 	}
 
 	t.Cleanup(func() {
-		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM vet_appointment_payments WHERE appointment_id IN ($1,$2,$3)`,
+		bg := t.Context()
+		_, _ = pool.Exec(bg, `DELETE FROM vet_appointment_payments WHERE appointment_id IN ($1,$2,$3)`,
 			f.requestedID, f.completedID, f.cancelledID)
-		pool.Exec(bg, `DELETE FROM health_appointments WHERE id IN ($1,$2,$3)`,
+		_, _ = pool.Exec(bg, `DELETE FROM health_appointments WHERE id IN ($1,$2,$3)`,
 			f.requestedID, f.completedID, f.cancelledID)
-		pool.Exec(bg, `DELETE FROM pets WHERE id=$1`, petID)
-		pool.Exec(bg, `DELETE FROM vet_services WHERE id=$1`, f.serviceID)
-		pool.Exec(bg, `DELETE FROM health_providers WHERE id=$1`, f.provider)
+		_, _ = pool.Exec(bg, `DELETE FROM pets WHERE id=$1`, petID)
+		_, _ = pool.Exec(bg, `DELETE FROM vet_services WHERE id=$1`, f.serviceID)
+		_, _ = pool.Exec(bg, `DELETE FROM health_providers WHERE id=$1`, f.provider)
 	})
 	return f
 }
@@ -129,7 +129,7 @@ func newVetAdminFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) v
 // at zero. Mirrors healthlab's TestLiveDB_AdminDashboard_CountsAndTotalsAreExact.
 func TestLiveDB_AdminDashboard_CountsAndTotalsAreExact(t *testing.T) {
 	pool := vetAdminDashboardPool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	svc := healthvet.NewService(pool, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
@@ -192,7 +192,7 @@ func TestLiveDB_AdminDashboard_CountsAndTotalsAreExact(t *testing.T) {
 // different vertical's appointment) and asserts it is never counted.
 func TestLiveDB_AdminDashboard_ExcludesNonVetAppointments(t *testing.T) {
 	pool := vetAdminDashboardPool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := healthvet.NewService(pool, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	before, err := svc.AdminDashboard(ctx)
@@ -226,7 +226,7 @@ func TestLiveDB_AdminDashboard_ExcludesNonVetAppointments(t *testing.T) {
 		t.Fatalf("seed foreign provider: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM health_providers WHERE id=$1`, foreignProviderID)
+		_, _ = pool.Exec(t.Context(), `DELETE FROM health_providers WHERE id=$1`, foreignProviderID)
 	})
 
 	foreignApptID := uuid.New().String()
@@ -238,7 +238,7 @@ func TestLiveDB_AdminDashboard_ExcludesNonVetAppointments(t *testing.T) {
 		t.Fatalf("seed foreign appointment: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM health_appointments WHERE id=$1`, foreignApptID)
+		_, _ = pool.Exec(t.Context(), `DELETE FROM health_appointments WHERE id=$1`, foreignApptID)
 	})
 
 	after, err := svc.AdminDashboard(ctx)

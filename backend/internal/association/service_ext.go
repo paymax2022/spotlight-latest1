@@ -219,7 +219,7 @@ func (s *Service) CreateTicket(ctx context.Context, userID string, in CreateTick
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `INSERT INTO assoc_support_tickets (id, membership_id, subject, category, status) VALUES ($1,$2,$3,$4,'OPEN')`,
 		id, mid, in.Subject, in.Category); err != nil {
 		return "", fmt.Errorf("association: create ticket: %w", err)
@@ -598,7 +598,7 @@ func (s *Service) SetAiNoteStatus(ctx context.Context, adminID, noteID, status, 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `UPDATE assoc_ai_notes SET status=$2 WHERE id=$1`, noteID, status); err != nil {
 		return fmt.Errorf("association: ai note status: %w", err)
 	}
@@ -713,7 +713,7 @@ func (s *Service) SubmitApplication(ctx context.Context, userID string, d JoinDr
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const q = `INSERT INTO assoc_applications (id, organisation_id, user_id, category_id, chapter_id, sponsor_name, status)
 	           VALUES ($1,$2,$3,$4,$5,$6,$7)`
@@ -911,7 +911,7 @@ func (s *Service) ConfirmImport(ctx context.Context, adminID, batchID string, se
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	imported, skipped, invited = 0, 0, 0
 	for _, row := range rows {
@@ -1033,7 +1033,7 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	graceDays := 30
 	if d.Restrictions.GraceDays != nil && *d.Restrictions.GraceDays >= 0 {

@@ -18,7 +18,7 @@ func TestDeliveryCoords_Normalization(t *testing.T) {
 	}
 
 	// Flat takes precedence over nested when both are present.
-	req := PlaceOrderRequest{DeliveryLat: f64(1), DeliveryLng: f64(2), DeliveryLocation: &LatLng{Lat: 9, Lng: 9}}
+	req := PlaceOrderRequest{DeliveryLat: new(float64(1)), DeliveryLng: new(float64(2)), DeliveryLocation: &LatLng{Lat: 9, Lng: 9}}
 	if lat, lng, ok := req.DeliveryCoords(); !ok || lat != 1 || lng != 2 {
 		t.Fatalf("flat should win: got (%v,%v,%v)", lat, lng, ok)
 	}

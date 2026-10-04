@@ -911,7 +911,7 @@ func (c *Client) do(req *http.Request, dst any) error {
 	if err != nil {
 		return fmt.Errorf("maplerad: http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("maplerad: read response: %w", err)

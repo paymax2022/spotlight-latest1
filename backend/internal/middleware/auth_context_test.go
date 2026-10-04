@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -40,7 +41,7 @@ func authUserServer(t *testing.T, status int, body string) *httptest.Server {
 
 func doRequest(r *gin.Engine, authHeader string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", nil)
 	if authHeader != "" {
 		req.Header.Set("Authorization", authHeader)
 	}

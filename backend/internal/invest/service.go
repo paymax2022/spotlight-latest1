@@ -704,7 +704,7 @@ func (s *Service) Buy(ctx context.Context, userID, idem string, req BuyOrderRequ
 
 	if res.Status != "filled" {
 		// Resting (limit) order — cash stays locked; no fill yet.
-		s.repo.UpdateOrder(ctx, o, StatusAccepted, "resting limit order")
+		_ = s.repo.UpdateOrder(ctx, o, StatusAccepted, "resting limit order")
 		return s.receipt(o), nil
 	}
 
@@ -837,7 +837,7 @@ func (s *Service) Sell(ctx context.Context, userID, idem string, req SellOrderRe
 		return nil, err
 	}
 	if res.Status != "filled" {
-		s.repo.UpdateOrder(ctx, o, StatusAccepted, "resting limit order")
+		_ = s.repo.UpdateOrder(ctx, o, StatusAccepted, "resting limit order")
 		return s.receipt(o), nil
 	}
 

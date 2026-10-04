@@ -519,7 +519,7 @@ func (r *RBACSupabaseRepository) GetAdminUser(userID string) (domain.AdminUser, 
 	if len(rows) == 0 {
 		return domain.AdminUser{}, errors.New("user not found")
 	}
-	user, _, _, _, _, _ := adminUserFromRow(rows[0])
+	user, _, _, _, _, _ := adminUserFromRow(rows[0]) //nolint:dogsled // row tuple; only the user is needed
 	return user, nil
 }
 

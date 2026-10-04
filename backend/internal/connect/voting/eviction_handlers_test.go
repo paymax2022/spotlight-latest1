@@ -82,7 +82,7 @@ func TestEvictionHandlersParameterBinding(t *testing.T) {
 				t.Fatalf("failed to marshal request: %v", err)
 			}
 
-			req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(body))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/test", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 
 			w := httptest.NewRecorder()

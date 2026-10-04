@@ -139,7 +139,7 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 	if err != nil {
 		return fmt.Errorf("settlement: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := tx.QueryRow(ctx, q, settlementID).Scan(
 		&sett.ID, &sett.Reference, &sett.PayerID, &sett.TotalKobo, &sett.Status,

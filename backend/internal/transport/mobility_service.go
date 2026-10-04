@@ -183,7 +183,7 @@ func (s *Service) requestRide(ctx context.Context, riderID string, req RequestRi
 	// restaurant's OnChargeSuccess) issues a real Paystack refund instead.
 	refundOnFailure := func(reason string, err error) error {
 		if settlementID != nil && !external {
-			s.settlement.Refund(ctx, *settlementID, reason)
+			_ = s.settlement.Refund(ctx, *settlementID, reason)
 		}
 		return err
 	}
@@ -198,7 +198,7 @@ func (s *Service) requestRide(ctx context.Context, riderID string, req RequestRi
 	if err != nil {
 		return nil, refundOnFailure("trip_tx_begin_failed", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const q = `
 		INSERT INTO trips
@@ -301,10 +301,10 @@ func (s *Service) RiderOffer(ctx context.Context, tripID, riderID string, offer 
 		return nil, err
 	}
 	if t.Phase == PhaseRequested {
-		s.db.Exec(ctx, `UPDATE trips SET phase='fare_negotiating', updated_at=NOW() WHERE id=$1 AND phase='requested'`, tripID)
+		_, _ = s.db.Exec(ctx, `UPDATE trips SET phase='fare_negotiating', updated_at=NOW() WHERE id=$1 AND phase='requested'`, tripID)
 		s.recordEvent(ctx, tripID, "fare_negotiating", riderID, PhaseRequested, PhaseFareNegotiating, nil)
 	}
-	s.db.Exec(ctx, `UPDATE trips SET fare_kobo=$1 WHERE id=$2`, offer, tripID)
+	_, _ = s.db.Exec(ctx, `UPDATE trips SET fare_kobo=$1 WHERE id=$2`, offer, tripID)
 	return s.loadFareOffer(ctx, tripID)
 }
 
@@ -333,7 +333,7 @@ func (s *Service) AcceptCounter(ctx context.Context, tripID, riderID string) (*F
 	// Re-check profit floor at acceptance (driver tier may have changed).
 	tier := "standard"
 	if t.DriverID != nil {
-		s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, *t.DriverID).Scan(&tier)
+		_ = s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, *t.DriverID).Scan(&tier)
 	}
 	if err := s.validateAcceptedFare(ctx, accepted, fo.SystemFareKobo, tier, cfg); err != nil {
 		return nil, err
@@ -341,8 +341,8 @@ func (s *Service) AcceptCounter(ctx context.Context, tripID, riderID string) (*F
 	if err := s.adjustEscrow(ctx, &t, accepted); err != nil {
 		return nil, err
 	}
-	s.db.Exec(ctx, `UPDATE fare_offers SET accepted_fare_kobo=$1, status='accepted', updated_at=NOW() WHERE trip_id=$2`, accepted, tripID)
-	s.db.Exec(ctx, `UPDATE trips SET fare_kobo=$1, final_fare_kobo=$1 WHERE id=$2`, accepted, tripID)
+	_, _ = s.db.Exec(ctx, `UPDATE fare_offers SET accepted_fare_kobo=$1, status='accepted', updated_at=NOW() WHERE trip_id=$2`, accepted, tripID)
+	_, _ = s.db.Exec(ctx, `UPDATE trips SET fare_kobo=$1, final_fare_kobo=$1 WHERE id=$2`, accepted, tripID)
 	s.recordEvent(ctx, tripID, "counter_accepted", riderID, t.Phase, t.Phase, map[string]any{"accepted_kobo": accepted})
 	return s.loadFareOffer(ctx, tripID)
 }
@@ -364,14 +364,14 @@ func (s *Service) adjustEscrow(ctx context.Context, t *tripRow, newFare int64) e
 	}
 	if isPaystackFunded(t.PaymentMethod) {
 		var held int64
-		s.db.QueryRow(ctx, `SELECT COALESCE(SUM(total_kobo),0) FROM settlements WHERE reference LIKE $1 AND status='escrowed'`, "trip:"+t.ID+"%").Scan(&held)
+		_ = s.db.QueryRow(ctx, `SELECT COALESCE(SUM(total_kobo),0) FROM settlements WHERE reference LIKE $1 AND status='escrowed'`, "trip:"+t.ID+"%").Scan(&held)
 		if newFare > held {
 			return codedErr(http.StatusConflict, CodeInvalidState, "this ride's fare is fixed — a Paystack-funded ride cannot be renegotiated to a higher amount")
 		}
 		return nil
 	}
 	var held int64
-	s.db.QueryRow(ctx, `SELECT COALESCE(SUM(total_kobo),0) FROM settlements WHERE reference LIKE $1 AND status='escrowed'`, "trip:"+t.ID+"%").Scan(&held)
+	_ = s.db.QueryRow(ctx, `SELECT COALESCE(SUM(total_kobo),0) FROM settlements WHERE reference LIKE $1 AND status='escrowed'`, "trip:"+t.ID+"%").Scan(&held)
 	delta := newFare - held
 	if delta <= 0 {
 		return nil
@@ -428,7 +428,7 @@ func (s *Service) CancelRide(ctx context.Context, tripID, riderID, reason string
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := s.transitionPhase(ctx, tx, tripID, riderID, t.Phase, PhaseCancelled, "cancelled", map[string]any{"reason": reason}); err != nil {
 		return err
 	}
@@ -440,7 +440,7 @@ func (s *Service) CancelRide(ctx context.Context, tripID, riderID, reason string
 	}
 	s.refundTrip(ctx, &t, "trip_cancelled")
 	if t.DriverID != nil {
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *t.DriverID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *t.DriverID)
 	}
 	return nil
 }
@@ -461,7 +461,7 @@ func (s *Service) refundTrip(ctx context.Context, t *tripRow, reason string) {
 	var ids []string
 	for rows.Next() {
 		var id string
-		rows.Scan(&id)
+		_ = rows.Scan(&id)
 		ids = append(ids, id)
 	}
 	rows.Close()
@@ -477,7 +477,7 @@ func (s *Service) refundTrip(ctx context.Context, t *tripRow, reason string) {
 			}
 			continue
 		}
-		s.settlement.Refund(ctx, id, reason)
+		_ = s.settlement.Refund(ctx, id, reason)
 	}
 }
 
@@ -533,7 +533,7 @@ func (s *Service) TripDetail(ctx context.Context, tripID, callerID string, inclu
 			return nil, codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
 		var ownerUser string
-		s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *driverID).Scan(&ownerUser)
+		_ = s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *driverID).Scan(&ownerUser)
 		if ownerUser != callerID {
 			return nil, codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
@@ -556,7 +556,7 @@ func (s *Service) TripDetail(ctx context.Context, tripID, callerID string, inclu
 		var dname string
 		var drating float64
 		var dphone, dphoto *string
-		s.db.QueryRow(ctx, `SELECT name, rating, phone, photo_url FROM drivers WHERE id=$1`, *driverID).Scan(&dname, &drating, &dphone, &dphoto)
+		_ = s.db.QueryRow(ctx, `SELECT name, rating, phone, photo_url FROM drivers WHERE id=$1`, *driverID).Scan(&dname, &drating, &dphone, &dphoto)
 		dm["id"] = *driverID
 		dm["name"] = dname
 		dm["rating"] = drating

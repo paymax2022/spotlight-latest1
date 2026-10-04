@@ -54,7 +54,7 @@ func TestValidateSubmission_AllValid(t *testing.T) {
 	schema := oneStepSchema(
 		Field{Key: "name", Type: "text", Label: "Name", Required: true},
 		Field{Key: "email", Type: "email", Label: "Email", Required: true},
-		Field{Key: "age", Type: "number", Label: "Age", Min: fptr(18), Max: fptr(120)},
+		Field{Key: "age", Type: "number", Label: "Age", Min: new(float64(18)), Max: new(float64(120))},
 	)
 	data := map[string]any{
 		"name":  "Ada",
@@ -258,9 +258,9 @@ func TestValidateField(t *testing.T) {
 		// number / currency
 		{"number ok", Field{Type: "number"}, float64(10), ""},
 		{"number not a number", Field{Type: "number"}, "ten", "must be a number"},
-		{"number below min", Field{Type: "number", Min: fptr(5)}, float64(4), "must be >= 5"},
-		{"number above max", Field{Type: "number", Max: fptr(5)}, float64(6), "must be <= 5"},
-		{"number at min", Field{Type: "number", Min: fptr(5)}, float64(5), ""},
+		{"number below min", Field{Type: "number", Min: new(float64(5))}, float64(4), "must be >= 5"},
+		{"number above max", Field{Type: "number", Max: new(float64(5))}, float64(6), "must be <= 5"},
+		{"number at min", Field{Type: "number", Min: new(float64(5))}, float64(5), ""},
 		{"currency ok int", Field{Type: "currency"}, 100, ""},
 
 		// boolean

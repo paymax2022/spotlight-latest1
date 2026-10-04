@@ -264,7 +264,7 @@ func TestChaos_TwoBuyersRaceListing_LiveConcurrentCreate(t *testing.T) {
 func TestChaos_EditListingWithActiveOrder_GuardOnlyBlocksPriceChanges(t *testing.T) {
 	t.Skip(adr023ChaosSkip) // the active-ORDER edit guard is dead: no orders exist post-ADR-023 (listings still ship).
 	// Only PriceKobo triggers the active-order guard; Title/Description/Attrs do not.
-	priceOnly := mkt.UpdateListingInput{PriceKobo: int64Ptr(5_000_00)}
+	priceOnly := mkt.UpdateListingInput{PriceKobo: new(int64(5_000_00))}
 	descOnly := mkt.UpdateListingInput{Description: new("fixed a typo in the description")}
 
 	if priceOnly.PriceKobo == nil {

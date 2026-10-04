@@ -141,7 +141,7 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (SearchResults, 
 	if err != nil {
 		return SearchResults{}, &ErrSearchUnavailable{Op: "request", Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -282,7 +282,7 @@ func (c *Client) EnsureTemplate(ctx context.Context) error {
 	if err != nil {
 		return &ErrSearchUnavailable{Op: "put index template", Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
 		return &ErrSearchUnavailable{Op: "put index template", Err: fmt.Errorf("status %d: %s", resp.StatusCode, string(respBody))}

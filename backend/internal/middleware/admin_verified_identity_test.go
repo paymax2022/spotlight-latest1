@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,7 +30,7 @@ func newVerifiedIdentityTestRouter(t *testing.T) *gin.Engine {
 
 func TestRequireVerifiedIdentity_FailClosedWithNoToken(t *testing.T) {
 	r := newVerifiedIdentityTestRouter(t)
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -42,7 +43,7 @@ func TestRequireVerifiedIdentity_FailClosedWithNoToken(t *testing.T) {
 // test client has no baseURL) is a 503 outage signal, not a 401 rejection.
 func TestRequireVerifiedIdentity_AuthBackendUnavailableReturns503(t *testing.T) {
 	r := newVerifiedIdentityTestRouter(t)
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", nil)
 	req.Header.Set("Authorization", "Bearer not-a-real-token")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -67,7 +68,7 @@ func verifiedIdentityRouterWithRBAC(t *testing.T, userID string, rbac *fakeConso
 }
 
 func doVerifiedIdentityGet(r *gin.Engine) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", nil)
 	req.Header.Set("Authorization", "Bearer any-token-the-fake-server-accepts")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

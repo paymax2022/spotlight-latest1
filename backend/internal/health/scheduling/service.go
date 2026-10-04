@@ -118,7 +118,7 @@ func (s *Service) Request(ctx context.Context, patientID, providerID, subjectTyp
 	if err != nil {
 		return nil, fmt.Errorf("scheduling: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	lockKey := providerID + "|" + start.UTC().Format(time.RFC3339Nano)
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, lockKey); err != nil {
@@ -177,7 +177,7 @@ func (s *Service) Transition(ctx context.Context, actorID, apptID string, to Sta
 	if err != nil {
 		return nil, fmt.Errorf("scheduling: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	a, providerOwner, err := lockAppointment(ctx, tx, apptID)
 	if err != nil {

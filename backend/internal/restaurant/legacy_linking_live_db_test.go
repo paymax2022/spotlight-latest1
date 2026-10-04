@@ -49,9 +49,9 @@ func TestLiveDB_LinkingGrandfathersAnUnlinkedOwner(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
-		pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
-		pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, owner)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
+		_, _ = pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, owner)
 	})
 
 	if _, err := svc.LinkLegacyOwners(ctx); err != nil {
@@ -114,9 +114,9 @@ func TestLiveDB_LinkingIsIdempotent(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
-		pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
-		pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, owner)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
+		_, _ = pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, owner)
 	})
 
 	if _, err := svc.LinkLegacyOwners(ctx); err != nil {
@@ -217,9 +217,9 @@ func TestLiveDB_LegacyProfilesAreDistinguishableFromReviewedOnes(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
-		pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
-		pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, legacyOwner)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
+		_, _ = pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, legacyOwner)
 	})
 	if _, err := svc.LinkLegacyOwners(ctx); err != nil {
 		t.Fatalf("LinkLegacyOwners: %v", err)
@@ -248,8 +248,8 @@ func TestLiveDB_LegacyProfilesAreDistinguishableFromReviewedOnes(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, reviewedOwner)
-		pool.Exec(bg, `DELETE FROM onb_application WHERE id=$1`, appID)
+		_, _ = pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, reviewedOwner)
+		_, _ = pool.Exec(bg, `DELETE FROM onb_application WHERE id=$1`, appID)
 	})
 
 	//       "grandfathered in" from "we vetted this one". If grandfathering ever
@@ -346,8 +346,8 @@ func TestLiveDB_UnclaimedRestaurantsAreDetectable(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, orphanShop)
-		pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, orphanShop)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, orphanShop)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, orphanShop)
 	})
 
 	svc := NewService(pool, nil)
@@ -378,7 +378,7 @@ func TestLiveDB_UnclaimedRestaurantsAreDetectable(t *testing.T) {
 		t.Fatalf("link owner: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM onb_merchant_profile WHERE user_id=$1`, orphanOwner)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM onb_merchant_profile WHERE user_id=$1`, orphanOwner)
 	})
 
 	after, err := svc.UnclaimedRestaurants(ctx)

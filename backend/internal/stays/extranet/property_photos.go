@@ -104,7 +104,7 @@ func (r *Repository) SetCoverPhoto(ctx context.Context, propertyID, photoID stri
 	if err != nil {
 		return fmt.Errorf("extranet: begin set-cover tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `UPDATE public.stays_property_photo SET is_cover = false WHERE property_id = $1`, propertyID); err != nil {
 		return err
 	}
@@ -142,7 +142,7 @@ func (r *Repository) DeletePropertyPhoto(ctx context.Context, propertyID, photoI
 	if err != nil {
 		return "", fmt.Errorf("extranet: begin delete-photo tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var wasCover bool
 	if err := tx.QueryRow(ctx, `

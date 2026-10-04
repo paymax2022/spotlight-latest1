@@ -376,7 +376,6 @@ func (r *Repository) ReviewQueue(ctx context.Context, moduleID, typeID, status s
 	if maxAgeHours > 0 {
 		q += " AND a.submitted_at >= $" + strconv.Itoa(i)
 		args = append(args, time.Now().Add(-time.Duration(maxAgeHours)*time.Hour))
-		i++
 	}
 	q += " ORDER BY a.submitted_at ASC NULLS LAST, a.created_at ASC LIMIT 200"
 	rows, err := r.db.Query(ctx, q, args...)

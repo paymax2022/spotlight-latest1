@@ -51,7 +51,7 @@ func getTierStatusFor(t *testing.T, pool *pgxpool.Pool, userID string) tierStatu
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/me/tier", nil)
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/tier", nil)
 	c.Set("user_id", userID)
 	h.GetTierStatus(c)
 

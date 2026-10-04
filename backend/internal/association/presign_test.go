@@ -31,7 +31,7 @@ func postPresign(t *testing.T, h *Handler, userID, body string) *httptest.Respon
 	t.Helper()
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/uploads/logo/presign", strings.NewReader(body))
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/uploads/logo/presign", strings.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	if userID != "" {
 		c.Set("user_id", userID)

@@ -170,9 +170,9 @@ func TestLiveDB_Election_OneMemberOneVote_Idempotent(t *testing.T) {
 		t.Fatalf("second vote not idempotent: alreadyCast=%v receiptMatch=%v", second.AlreadyCast, second.Receipt == first.Receipt)
 	}
 	var casts, votes, forB int
-	pool.QueryRow(ctx, `SELECT count(*) FROM assoc_election_ballots_cast WHERE position_id=$1 AND voter_membership_id=$2`, f.positionID, voterMembership).Scan(&casts)
-	pool.QueryRow(ctx, `SELECT count(*) FROM assoc_election_votes WHERE position_id=$1`, f.positionID).Scan(&votes)
-	pool.QueryRow(ctx, `SELECT count(*) FROM assoc_election_votes WHERE candidate_id=$1`, f.candB).Scan(&forB)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM assoc_election_ballots_cast WHERE position_id=$1 AND voter_membership_id=$2`, f.positionID, voterMembership).Scan(&casts)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM assoc_election_votes WHERE position_id=$1`, f.positionID).Scan(&votes)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM assoc_election_votes WHERE candidate_id=$1`, f.candB).Scan(&forB)
 	if casts != 1 || votes != 1 || forB != 0 {
 		t.Fatalf("double vote leaked: casts=%d votes=%d forB=%d (want 1/1/0)", casts, votes, forB)
 	}
@@ -202,8 +202,8 @@ func TestLiveDB_Election_ConcurrentDoubleVote_ExactlyOne(t *testing.T) {
 	wg.Wait()
 
 	var casts, votes int
-	pool.QueryRow(ctx, `SELECT count(*) FROM assoc_election_ballots_cast WHERE election_id=$1 AND position_id=$2`, f.electionID, f.positionID).Scan(&casts)
-	pool.QueryRow(ctx, `SELECT count(*) FROM assoc_election_votes WHERE election_id=$1 AND position_id=$2`, f.electionID, f.positionID).Scan(&votes)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM assoc_election_ballots_cast WHERE election_id=$1 AND position_id=$2`, f.electionID, f.positionID).Scan(&casts)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM assoc_election_votes WHERE election_id=$1 AND position_id=$2`, f.electionID, f.positionID).Scan(&votes)
 	if casts != 1 || votes != 1 {
 		t.Fatalf("concurrency leaked votes: casts=%d votes=%d (want exactly 1/1)", casts, votes)
 	}
@@ -265,7 +265,7 @@ func TestLiveDB_Election_Eligibility_FailClosed(t *testing.T) {
 	}
 	// No stray ballots were recorded.
 	var casts int
-	pool.QueryRow(ctx, `SELECT count(*) FROM assoc_election_ballots_cast WHERE election_id=$1`, f.electionID).Scan(&casts)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM assoc_election_ballots_cast WHERE election_id=$1`, f.electionID).Scan(&casts)
 	if casts != 0 {
 		t.Fatalf("ineligible attempts recorded %d ballots (want 0)", casts)
 	}
@@ -287,7 +287,7 @@ func TestLiveDB_Election_VotingWindow_FailClosed(t *testing.T) {
 		t.Fatalf("CreateElection: %v", err)
 	}
 	var pid string
-	pool.QueryRow(ctx, `SELECT id FROM assoc_election_positions WHERE election_id=$1`, electionID).Scan(&pid)
+	_ = pool.QueryRow(ctx, `SELECT id FROM assoc_election_positions WHERE election_id=$1`, electionID).Scan(&pid)
 	cand, _ := svc.AddCandidate(ctx, officer, electionID, association.AddCandidateInput{PositionID: pid, MembershipID: candM})
 	voter, _ := seedActiveMembership(t, ctx, pool, org)
 

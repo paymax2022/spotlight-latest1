@@ -260,7 +260,7 @@ func TestLiveDB_MockExamNonDivisorGradingAndResultsReadBack(t *testing.T) {
 	router.GET("/results/:attempt_id", h.GetResults)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/results/"+attempt.ID, nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/results/"+attempt.ID, nil)
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {

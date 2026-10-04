@@ -59,7 +59,7 @@ func NewHub(rdb *goredis.Client) *Hub {
 // (process restart re-establishes it).
 func (h *Hub) runRedis() {
 	ps := h.rdb.PSubscribe(context.Background(), channelPrefix+"*")
-	defer ps.Close()
+	defer func() { _ = ps.Close() }()
 	for msg := range ps.Channel() {
 		userID := strings.TrimPrefix(msg.Channel, channelPrefix)
 		var ev Event
@@ -172,7 +172,7 @@ func (h *Hub) StreamHandler(userIDKey string) gin.HandlerFunc {
 		c.Writer.WriteHeader(http.StatusOK)
 
 		// Open the stream with a comment so the client fires 'open' immediately.
-		fmt.Fprint(c.Writer, ": connected\n\n")
+		_, _ = fmt.Fprint(c.Writer, ": connected\n\n")
 		flusher.Flush()
 
 		heartbeat := time.NewTicker(heartbeatInterval)
@@ -187,10 +187,10 @@ func (h *Hub) StreamHandler(userIDKey string) gin.HandlerFunc {
 				if !open {
 					return
 				}
-				fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", ev.Type, ev.Data)
+				_, _ = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", ev.Type, ev.Data)
 				flusher.Flush()
 			case <-heartbeat.C:
-				fmt.Fprint(c.Writer, ": ping\n\n")
+				_, _ = fmt.Fprint(c.Writer, ": ping\n\n")
 				flusher.Flush()
 			}
 		}

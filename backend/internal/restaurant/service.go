@@ -867,7 +867,7 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 		s.releasePromoReservationSafe(ctx, promoID, orderID)
 		return nil, fmt.Errorf("restaurant: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	order := &Order{
 		ID:               orderID,
@@ -1195,7 +1195,7 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 				Data: map[string]any{"order_id": orderID}})
 		}
 		var assigned *string
-		s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&assigned)
+		_ = s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&assigned)
 		if assigned == nil {
 			if derr := s.DispatchOrder(ctx, orderID); derr != nil {
 				// A dispatch hiccup must not roll back the ready transition; the
@@ -1339,7 +1339,7 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 		}
 	}
 	var ownerID string
-	s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID)
+	_ = s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID)
 	split := settlement.Split{
 		ProviderID:  ownerID,
 		ProviderPct: splitProviderPct,
@@ -1401,7 +1401,7 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 	// A recorder failure is logged and swallowed — it must never fail the settle.
 	var grossKobo int64
 	var customerID string
-	s.db.QueryRow(ctx, `SELECT total_kobo, customer_id FROM orders WHERE id=$1`, orderID).Scan(&grossKobo, &customerID)
+	_ = s.db.QueryRow(ctx, `SELECT total_kobo, customer_id FROM orders WHERE id=$1`, orderID).Scan(&grossKobo, &customerID)
 	grossKobo = grossKobo - split.TipKobo - split.ServiceFeeKobo + split.DiscountKobo
 	s.recordCommissionSafe(ctx, "Lifestyle", "Restaurant", "", grossKobo, orderID, &customerID)
 
@@ -1441,7 +1441,7 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 	if err != nil {
 		return fmt.Errorf("restaurant: begin cancel tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var status, settlementID string
 	// COALESCE the nullable settlement_id so a settlement-less order scans cleanly
@@ -1567,7 +1567,7 @@ func (s *Service) refundAndClose(ctx context.Context, orderID, actorID string, t
 	if err != nil {
 		return fmt.Errorf("restaurant: begin refund tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var status, settlementID string
 	if err := tx.QueryRow(ctx,

@@ -367,7 +367,7 @@ func (h *Handler) ImportPreview(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: "multipart file 'file' required"})
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	fileName := ""
 	if header != nil {
 		fileName = header.Filename

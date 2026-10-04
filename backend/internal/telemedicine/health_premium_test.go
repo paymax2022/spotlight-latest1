@@ -241,7 +241,7 @@ func TestListSpecialtiesAuthGuard(t *testing.T) {
 		h.ListSpecialties(c)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/specialties", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/specialties", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -258,7 +258,7 @@ func TestBookAppointmentBadBody(t *testing.T) {
 
 	// Body missing required doctor_id and scheduled_at.
 	body := `{"notes": "headache"}`
-	req := httptest.NewRequest(http.MethodPost, "/appointments", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/appointments", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "test-key-001")
 	w := httptest.NewRecorder()
@@ -276,7 +276,7 @@ func TestRegisterDoctorV2BadBody(t *testing.T) {
 	r.POST("/doctor/register", setUserID("user-abc"), h.RegisterDoctorV2)
 
 	body := `{"full_name": "Dr. Test"}` // missing email, phone, specialty, mdcn_number
-	req := httptest.NewRequest(http.MethodPost, "/doctor/register", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/doctor/register", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -293,7 +293,7 @@ func TestSubmitSOAPNoteBadBody(t *testing.T) {
 	r.POST("/doctor/notes", setUserID("user-abc"), h.SubmitSOAPNote)
 
 	body := `{"subjective": "headache"}` // missing appointment_id, assessment, plan
-	req := httptest.NewRequest(http.MethodPost, "/doctor/notes", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/doctor/notes", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -310,7 +310,7 @@ func TestUploadLicenceBadBody(t *testing.T) {
 	r.POST("/doctor/licence", setUserID("user-abc"), h.UploadLicenceDoc)
 
 	body := `{"base64": "aGVsbG8="}` // missing document_type and filename
-	req := httptest.NewRequest(http.MethodPost, "/doctor/licence", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/doctor/licence", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -326,7 +326,7 @@ func TestToggleAvailabilityBadBody(t *testing.T) {
 	r := newTestGin()
 	r.PATCH("/doctor/availability", setUserID("user-abc"), h.ToggleAvailability)
 
-	req := httptest.NewRequest(http.MethodPatch, "/doctor/availability", bytes.NewBufferString("not-json"))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/doctor/availability", bytes.NewBufferString("not-json"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -347,7 +347,7 @@ func TestIdempotencyKeyHeaderFallback(t *testing.T) {
 		// idempotency_key deliberately omitted from body
 	}
 	b, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPost, "/appointments", bytes.NewBuffer(b))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/appointments", bytes.NewBuffer(b))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "from-header-001")
 

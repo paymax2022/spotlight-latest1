@@ -70,7 +70,7 @@ func (s *TargetService) Create(ctx context.Context, creatorID, name string, targ
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const insT = `INSERT INTO group_targets (id, creator_user_id, name, target_kobo, withdrawal_rule, target_date, state)
 	              VALUES ($1,$2,$3,$4,$5,$6,'OPEN')`
 	if _, err := tx.Exec(ctx, insT, t.ID, t.CreatorUserID, t.Name, t.TargetKobo, string(t.Rule), t.TargetDate); err != nil {

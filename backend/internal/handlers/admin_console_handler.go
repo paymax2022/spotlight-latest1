@@ -93,10 +93,10 @@ func (h *AdminConsoleHandler) GetUsers(c *gin.Context) {
 	limit := 50
 	offset := 0
 	if l := c.Query("limit"); l != "" {
-		fmt.Sscanf(l, "%d", &limit)
+		_, _ = fmt.Sscanf(l, "%d", &limit)
 	}
 	if o := c.Query("offset"); o != "" {
-		fmt.Sscanf(o, "%d", &offset)
+		_, _ = fmt.Sscanf(o, "%d", &offset)
 	}
 
 	users, total, err := h.store.ListUsers(c.Request.Context(), limit, offset)

@@ -148,7 +148,7 @@ func TestLiveDB_VendorsForEvent_AnyAuthenticatedUserCanRead(t *testing.T) {
 		eventID, organiser); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, eventID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, eventID) })
 
 	if _, err := svc.AddVendor(ctx, organiser, eventID, top5events.Vendor{UserID: vendorUser, Name: "Suya Spot"}); err != nil {
 		t.Fatalf("AddVendor: %v", err)
@@ -178,7 +178,7 @@ func TestLiveDB_WalletEntries_OwnerOnly(t *testing.T) {
 		eventID, owner); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, eventID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, eventID) })
 
 	wallet, err := svc.OpenWallet(ctx, owner, eventID)
 	if err != nil {

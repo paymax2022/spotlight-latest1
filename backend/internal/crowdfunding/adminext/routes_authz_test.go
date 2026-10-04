@@ -70,7 +70,7 @@ func TestRegisterAdmin_EveryRouteRequiresPermission(t *testing.T) {
 
 			before := len(rbac.asked)
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest(ri.Method, path, strings.NewReader("{}"))
+			req := httptest.NewRequestWithContext(t.Context(), ri.Method, path, strings.NewReader("{}"))
 			req.Header.Set("Content-Type", "application/json")
 			// An ungated route reaches its handler with a nil pool: it panics, or it
 			// answers 2xx/4xx/5xx. Any of those fails this assertion, which is the point.
@@ -113,7 +113,7 @@ func TestRegisterAdmin_ReadsAndWritesUseDistinctPermissions(t *testing.T) {
 			RegisterAdmin(grp, nil, nil, nil, rbac)
 
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader("{}"))
+			req := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader("{}"))
 			req.Header.Set("Content-Type", "application/json")
 			r.ServeHTTP(w, req)
 

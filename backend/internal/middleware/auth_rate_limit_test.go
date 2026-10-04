@@ -91,7 +91,7 @@ func TestMiddlewareReturns429WithRetryAfter(t *testing.T) {
 
 	call := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/auth/login", nil)
 		req.RemoteAddr = "203.0.113.9:1234"
 		r.ServeHTTP(w, req)
 		return w
@@ -125,7 +125,7 @@ func TestClientSuppliedHeadersCannotResetTheBudget(t *testing.T) {
 
 	send := func(role string) int {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/auth/login", nil)
 		req.RemoteAddr = "203.0.113.10:9999"
 		if role != "" {
 			req.Header.Set("x-stem-role", role)

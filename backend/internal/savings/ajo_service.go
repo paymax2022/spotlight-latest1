@@ -88,7 +88,7 @@ func (s *AjoService) CreateCircle(ctx context.Context, creatorID, name string, c
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const insC = `INSERT INTO ajo_circles (id, creator_user_id, name, contribution_kobo, interval_secs, state)
 	              VALUES ($1,$2,$3,$4,$5,'FORMING')`
 	if _, err := tx.Exec(ctx, insC, c.ID, c.CreatorUserID, c.Name, c.ContributionKobo, c.IntervalSecs); err != nil {
@@ -120,7 +120,7 @@ func (s *AjoService) Join(ctx context.Context, circleID, userID string) (*Circle
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var nextOrder int
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(rotation_order)+1,0) FROM ajo_members WHERE circle_id=$1`, circleID).Scan(&nextOrder); err != nil {
 		return nil, err
@@ -167,7 +167,7 @@ func (s *AjoService) Activate(ctx context.Context, actorID, circleID string) err
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const upd = `UPDATE ajo_circles SET state='ACTIVE', total_cycles=$2, current_cycle=1, updated_at=now()
 	             WHERE id=$1 AND state='FORMING'`
 	ct, err := tx.Exec(ctx, upd, circleID, len(members))
@@ -281,7 +281,7 @@ func (s *AjoService) completeCycleAndRotate(ctx context.Context, c *Circle, cy *
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const payCy = `UPDATE ajo_cycles SET status='PAID', collected_kobo=$2, payout_kobo=$2, paid_at=now()
 	               WHERE id=$1 AND status<>'PAID'`

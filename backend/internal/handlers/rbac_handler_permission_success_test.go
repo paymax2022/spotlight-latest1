@@ -91,7 +91,7 @@ func TestCreatePermission_Success(t *testing.T) {
 	r.POST("/permissions", h.CreatePermission)
 
 	body := `{"name":"View Users","slug":"users.view","module":"users","resource":"profile","action":"view","description":"Can view"}`
-	req := httptest.NewRequest(http.MethodPost, "/permissions", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/permissions", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -117,7 +117,7 @@ func TestUpdatePermission_Success(t *testing.T) {
 	r.PATCH("/permissions/:permissionId", h.UpdatePermission)
 
 	body := `{"name":"Edit Users","module":"users","resource":"profile","action":"update","description":"Can edit"}`
-	req := httptest.NewRequest(http.MethodPatch, "/permissions/perm-1", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/permissions/perm-1", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

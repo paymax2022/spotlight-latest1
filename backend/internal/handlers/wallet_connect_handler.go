@@ -172,10 +172,10 @@ func (h *WalletConnectHandler) GetHistory(c *gin.Context) {
 	limit := 50
 	offset := 0
 	if l := c.Query("limit"); l != "" {
-		fmt.Sscanf(l, "%d", &limit)
+		_, _ = fmt.Sscanf(l, "%d", &limit)
 	}
 	if o := c.Query("offset"); o != "" {
-		fmt.Sscanf(o, "%d", &offset)
+		_, _ = fmt.Sscanf(o, "%d", &offset)
 	}
 
 	txns, err := h.walletSvc.ListTransactions(c.Request.Context(), userID, limit, offset)

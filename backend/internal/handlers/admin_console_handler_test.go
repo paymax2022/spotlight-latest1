@@ -252,7 +252,7 @@ func seedInvestOrder(t *testing.T, pool *pgxpool.Pool, userID, status, side stri
 func adminGet(t *testing.T, r *gin.Engine, path, role string) *httptest.ResponseRecorder {
 	t.Helper()
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, path, nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 	req.Header.Set("X-Admin-Role", role)
 	r.ServeHTTP(w, req)
 	return w
@@ -424,7 +424,7 @@ func TestAdminConsole_GetUser(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/users/usr_001", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/users/usr_001", nil)
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	r.ServeHTTP(w, req)
 
@@ -484,7 +484,7 @@ func TestAdminConsole_ReviewKyc(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"decision":"approve","reason":"All checks passed"}`)
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/admin/kyc/kyc_001/review", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/admin/kyc/kyc_001/review", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "ComplianceAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
@@ -500,7 +500,7 @@ func TestAdminConsole_GetAssets(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/assets", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/assets", nil)
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	r.ServeHTTP(w, req)
 
@@ -520,7 +520,7 @@ func TestAdminConsole_UpdateAsset(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"buyEnabled":false,"feeBps":100}`)
-	req, _ := http.NewRequest(http.MethodPatch, "/api/v1/admin/assets/ast_001", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/admin/assets/ast_001", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "RiskAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
@@ -688,7 +688,7 @@ func TestAdminConsole_ReviewWithdrawal(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"decision":"approve","reason":"Risk score acceptable"}`)
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/admin/withdrawals/WD-001-XYZ/review", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/admin/withdrawals/WD-001-XYZ/review", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
@@ -704,7 +704,7 @@ func TestAdminConsole_GetReconciliation(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/reconciliation", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/reconciliation", nil)
 	req.Header.Set("X-Admin-Role", "FinanceAdmin")
 	r.ServeHTTP(w, req)
 
@@ -719,7 +719,7 @@ func TestAdminConsole_GetProviders(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/providers", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/providers", nil)
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	r.ServeHTTP(w, req)
 
@@ -735,7 +735,7 @@ func TestAdminConsole_GetRiskLimits(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/risk-limits", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/risk-limits", nil)
 	req.Header.Set("X-Admin-Role", "RiskAdmin")
 	r.ServeHTTP(w, req)
 
@@ -751,7 +751,7 @@ func TestAdminConsole_UpdateRiskLimit(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"valueMinor":20000000}`)
-	req, _ := http.NewRequest(http.MethodPatch, "/api/v1/admin/risk-limits/rl_001", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/admin/risk-limits/rl_001", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "RiskAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
@@ -767,7 +767,7 @@ func TestAdminConsole_GetFees(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/fees", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/fees", nil)
 	req.Header.Set("X-Admin-Role", "FinanceAdmin")
 	r.ServeHTTP(w, req)
 
@@ -783,7 +783,7 @@ func TestAdminConsole_UpdateFee(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"bps":100}`)
-	req, _ := http.NewRequest(http.MethodPatch, "/api/v1/admin/fees/fee_001", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/admin/fees/fee_001", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "FinanceAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
@@ -799,7 +799,7 @@ func TestAdminConsole_GetFeatureFlags(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/feature-flags", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/feature-flags", nil)
 	req.Header.Set("X-Admin-Role", "ProductAdmin")
 	r.ServeHTTP(w, req)
 
@@ -815,7 +815,7 @@ func TestAdminConsole_SetFeatureFlag(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"enabled":true}`)
-	req, _ := http.NewRequest(http.MethodPatch, "/api/v1/admin/feature-flags/ENABLE_STOCK_TRADING", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/admin/feature-flags/ENABLE_STOCK_TRADING", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "ProductAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
@@ -831,7 +831,7 @@ func TestAdminConsole_GetApprovals(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/approvals", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/approvals", nil)
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	r.ServeHTTP(w, req)
 
@@ -848,7 +848,7 @@ func TestAdminConsole_Approve(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{}`)
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/admin/approvals/app_001/approve", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/admin/approvals/app_001/approve", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
@@ -865,7 +865,7 @@ func TestAdminConsole_RejectApproval(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"reason":"Insufficient supporting documentation"}`)
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/admin/approvals/app_001/reject", bytes.NewBuffer(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/admin/approvals/app_001/reject", bytes.NewBuffer(body))
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
@@ -920,7 +920,7 @@ func TestAdminConsole_GetAdmins(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/admins", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/admins", nil)
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	r.ServeHTTP(w, req)
 
@@ -935,7 +935,7 @@ func TestAdminConsole_MissingRole(t *testing.T) {
 	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/dashboard", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/dashboard", nil)
 	// No X-Admin-Role header
 	r.ServeHTTP(w, req)
 

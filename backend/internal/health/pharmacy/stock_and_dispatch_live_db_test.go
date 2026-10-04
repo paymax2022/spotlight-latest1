@@ -115,9 +115,9 @@ func seedStockFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sto
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE pharmacy_provider_id=$1`, pharmacyID)
-		pool.Exec(bg, `DELETE FROM pharmacy_products WHERE id=$1`, productID)
-		pool.Exec(bg, `DELETE FROM health_providers WHERE id=$1`, pharmacyID)
+		_, _ = pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE pharmacy_provider_id=$1`, pharmacyID)
+		_, _ = pool.Exec(bg, `DELETE FROM pharmacy_products WHERE id=$1`, productID)
+		_, _ = pool.Exec(bg, `DELETE FROM health_providers WHERE id=$1`, pharmacyID)
 	})
 	return patientID, pharmacyID, productID
 }

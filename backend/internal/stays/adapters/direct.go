@@ -516,7 +516,7 @@ func (a *DirectInventoryAdapter) checkAvailability(ctx context.Context, roomType
 	if err != nil {
 		return false, fmt.Errorf("direct: begin availability check: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	for _, n := range nights { // ascending date order → deterministic lock order
 		var allotment, sold int
@@ -559,7 +559,7 @@ func (a *DirectInventoryAdapter) commitDecrement(ctx context.Context, supplierRe
 	if err != nil {
 		return fmt.Errorf("direct: begin decrement tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Idempotency guard: claim the decrement ledger row FIRST. ON CONFLICT DO
 	// NOTHING → 0 rows means this supplier_ref already decremented (a replay); skip
@@ -635,7 +635,7 @@ func (a *DirectInventoryAdapter) releaseDecrement(ctx context.Context, supplierR
 	if err != nil {
 		return fmt.Errorf("direct: begin release tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock the ledger row; only proceed if it exists and is not already released.
 	var roomTypeID string

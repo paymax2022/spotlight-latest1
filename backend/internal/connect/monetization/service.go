@@ -208,7 +208,7 @@ func (s *Service) recordPurchase(ctx context.Context, userID string, plan *Plan,
 	if err != nil {
 		return nil, nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	orderID := uuid.New().String()
 	const insOrder = `INSERT INTO connect_orders
@@ -369,7 +369,7 @@ func (s *Service) Refund(ctx context.Context, orderID, adminID, reason string) (
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
 		`UPDATE connect_orders SET status = 'refunded' WHERE id = $1 AND status = 'paid'`, o.ID); err != nil {
 		return nil, fmt.Errorf("connect: mark order refunded: %w", err)

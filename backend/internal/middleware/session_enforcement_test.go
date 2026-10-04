@@ -56,7 +56,7 @@ func TestSessionEnforcementRejectsRevoked(t *testing.T) {
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 	req.Header.Set("Authorization", "Bearer validtoken")
 	r.ServeHTTP(w, req)
 
@@ -76,7 +76,7 @@ func TestSessionEnforcementAllowsActive(t *testing.T) {
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 	req.Header.Set("Authorization", "Bearer validtoken")
 	r.ServeHTTP(w, req)
 
@@ -98,7 +98,7 @@ func TestSessionEnforcementNoOpWhenDisabled(t *testing.T) {
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 	req.Header.Set("Authorization", "Bearer validtoken")
 	r.ServeHTTP(w, req)
 

@@ -466,13 +466,13 @@ func (s *Service) RefundAll(ctx context.Context, campaignID, creatorID string) (
 
 func (s *Service) checkAndMarkFunded(ctx context.Context, campaignID string) {
 	var goalKobo, raisedKobo int64
-	s.db.QueryRow(ctx, `
+	_ = s.db.QueryRow(ctx, `
 		SELECT c.goal_kobo,
 		       COALESCE(SUM(co.amount_kobo) FILTER (WHERE co.status IN ('escrowed','released')), 0)
 		FROM campaigns c LEFT JOIN contributions co ON co.campaign_id=c.id
 		WHERE c.id=$1 GROUP BY c.id`, campaignID).Scan(&goalKobo, &raisedKobo)
 	if raisedKobo >= goalKobo {
-		s.db.Exec(ctx, `UPDATE campaigns SET status='funded' WHERE id=$1 AND status='active'`, campaignID)
+		_, _ = s.db.Exec(ctx, `UPDATE campaigns SET status='funded' WHERE id=$1 AND status='active'`, campaignID)
 	}
 }
 

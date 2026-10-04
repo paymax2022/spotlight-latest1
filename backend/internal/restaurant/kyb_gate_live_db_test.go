@@ -14,7 +14,6 @@ package restaurant
 // Skipped unless TEST_DATABASE_URL is set.
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -31,7 +30,7 @@ import (
 func TestLiveDB_SetAvailability_RequiresApprovedKYBToOpen(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
 
@@ -48,7 +47,7 @@ func TestLiveDB_SetAvailability_RequiresApprovedKYBToOpen(t *testing.T) {
 		restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM restaurants WHERE id=$1`, restID) })
+	t.Cleanup(func() { _, _ = pool.Exec(t.Context(), `DELETE FROM restaurants WHERE id=$1`, restID) })
 
 	if _, err := svc.SetAvailability(ctx, restID, owner, true); !errors.Is(err, ErrKYBNotApproved) {
 		t.Fatalf("open with no KYB row: want ErrKYBNotApproved, got %v", err)
@@ -96,7 +95,7 @@ func TestLiveDB_SetAvailability_RequiresApprovedKYBToOpen(t *testing.T) {
 func TestLiveDB_AdminListApplications_StatusReflectsRealKYBState(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
 
@@ -113,7 +112,7 @@ func TestLiveDB_AdminListApplications_StatusReflectsRealKYBState(t *testing.T) {
 			id, owner, "Gate-"+id, status); err != nil {
 			t.Fatalf("seed restaurant: %v", err)
 		}
-		t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM restaurants WHERE id=$1`, id) })
+		t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM restaurants WHERE id=$1`, id) })
 		return id
 	}
 

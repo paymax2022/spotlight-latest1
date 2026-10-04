@@ -556,11 +556,11 @@ func TestLiveDB_Admin_ProductCreateUpdateListRoundTrip(t *testing.T) {
 		Name:                "Admin Prepaid",
 		Code:                code,
 		AmountType:          "variable",
-		MinAmountKobo:       ptrI64(100_000),
-		MaxAmountKobo:       ptrI64(10_000_000),
-		ConvenienceFeeKobo:  ptrI64(10_000),
-		MarkupBps:           ptrI64(150),
-		ProviderDiscountBps: ptrI64(200),
+		MinAmountKobo:       new(int64(100_000)),
+		MaxAmountKobo:       new(int64(10_000_000)),
+		ConvenienceFeeKobo:  new(int64(10_000)),
+		MarkupBps:           new(int64(150)),
+		ProviderDiscountBps: new(int64(200)),
 		Status:              "active",
 	})
 	if err != nil {
@@ -582,7 +582,7 @@ func TestLiveDB_Admin_ProductCreateUpdateListRoundTrip(t *testing.T) {
 	}
 
 	updated, err := f.svc.UpdateProduct(ctx, f.actor, created.ID, utilitybills.ProductPatch{
-		MarkupBps: ptrI64(325),
+		MarkupBps: new(int64(325)),
 	})
 	if err != nil {
 		t.Fatalf("UpdateProduct: %v", err)
@@ -663,9 +663,9 @@ func TestLiveDB_Admin_ProductImportUpsertsOnCode(t *testing.T) {
 
 	base := []utilitybills.ProductInput{
 		{BillerID: billerID, Category: "airtime", Name: "Import A", Code: codeA,
-			AmountType: "fixed", AmountKobo: ptrI64(100_000), MarkupBps: ptrI64(100)},
+			AmountType: "fixed", AmountKobo: new(int64(100_000)), MarkupBps: new(int64(100))},
 		{BillerID: billerID, Category: "airtime", Name: "Import B", Code: codeB,
-			AmountType: "fixed", AmountKobo: ptrI64(200_000), MarkupBps: ptrI64(200)},
+			AmountType: "fixed", AmountKobo: new(int64(200_000)), MarkupBps: new(int64(200))},
 	}
 	imported, err := f.svc.ImportProducts(ctx, f.actor, base)
 	if err != nil {
@@ -680,8 +680,8 @@ func TestLiveDB_Admin_ProductImportUpsertsOnCode(t *testing.T) {
 
 	// Re-import the SAME codes with new prices: an upsert, not a duplicate.
 	base[0].Name = "Import A v2"
-	base[0].AmountKobo = ptrI64(150_000)
-	base[0].MarkupBps = ptrI64(500)
+	base[0].AmountKobo = new(int64(150_000))
+	base[0].MarkupBps = new(int64(500))
 	reimported, err := f.svc.ImportProducts(ctx, f.actor, base)
 	if err != nil {
 		t.Fatalf("re-import: %v", err)
@@ -716,7 +716,7 @@ func TestLiveDB_Admin_ProductImportUpsertsOnCode(t *testing.T) {
 	badCode := "import-bad-" + uuid.New().String()[:8]
 	_, err = f.svc.ImportProducts(ctx, f.actor, []utilitybills.ProductInput{
 		{BillerID: billerID, Category: "airtime", Name: "Good", Code: badCode,
-			AmountType: "fixed", AmountKobo: ptrI64(100_000)},
+			AmountType: "fixed", AmountKobo: new(int64(100_000))},
 		{BillerID: billerID, Category: "water", Name: "Bad", Code: "x-" + badCode},
 	})
 	if err == nil {
@@ -775,7 +775,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 
 	product, err := f.svc.CreateProduct(ctx, f.actor, utilitybills.ProductInput{
 		BillerID: biller.ID, Category: "cable_tv", Name: "Admin Bouquet",
-		Code: "admin-bouquet-" + suffix, AmountType: "fixed", AmountKobo: ptrI64(500_000),
+		Code: "admin-bouquet-" + suffix, AmountType: "fixed", AmountKobo: new(int64(500_000)),
 	})
 	if err != nil {
 		t.Fatalf("CreateProduct: %v", err)
@@ -786,7 +786,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	mapping, err := f.svc.CreateMapping(ctx, f.actor, utilitybills.MappingInput{
 		ProviderID: prov.ID, ProductID: product.ID,
 		ProviderProductCode: "dstv-padi", ProviderBillerCode: "dstv",
-		ProviderCostKobo: ptrI64(480_000), ProviderDiscountBps: ptrI64(250),
+		ProviderCostKobo: new(int64(480_000)), ProviderDiscountBps: new(int64(250)),
 	})
 	if err != nil {
 		t.Fatalf("CreateMapping: %v", err)
@@ -813,7 +813,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	// Routing rule — the table with no prior Go representation at all.
 	rule, err := f.svc.CreateRoutingRule(ctx, f.actor, utilitybills.RoutingRuleInput{
 		Category: "cable_tv", ProductID: product.ID, ProviderID: prov.ID,
-		Priority: new(5), MinAmountKobo: ptrI64(100_000),
+		Priority: new(5), MinAmountKobo: new(int64(100_000)),
 	})
 	if err != nil {
 		t.Fatalf("CreateRoutingRule: %v", err)
@@ -870,7 +870,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	})
 
 	patched, err := f.svc.UpdateCategorySetting(ctx, f.actor, "cable_tv",
-		utilitybills.CategorySettingPatch{Enabled: new(false), DailyLimitKobo: ptrI64(7_777_777)})
+		utilitybills.CategorySettingPatch{Enabled: new(false), DailyLimitKobo: new(int64(7_777_777))})
 	if err != nil {
 		t.Fatalf("UpdateCategorySetting: %v", err)
 	}

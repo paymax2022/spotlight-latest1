@@ -51,9 +51,9 @@ func TestLiveDB_CSR_SetupMatch_RequiresIdempotencyKey(t *testing.T) {
 		t.Fatalf("seed campaign: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(ctx, `DELETE FROM cf_csr_matches WHERE campaign_id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM cf_csr_profiles WHERE user_id = $1`, sponsorID)
+		_, _ = pool.Exec(ctx, `DELETE FROM cf_csr_matches WHERE campaign_id = $1`, campaignID)
+		_, _ = pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
+		_, _ = pool.Exec(ctx, `DELETE FROM cf_csr_profiles WHERE user_id = $1`, sponsorID)
 	})
 
 	_, err := svc.SetupMatch(ctx, sponsorID, csr.MatchSetupInput{
@@ -114,9 +114,9 @@ func TestLiveDB_CSR_SetupMatch_CapExceedingBudgetIsRefused(t *testing.T) {
 		t.Fatalf("seed csr profile: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(ctx, `DELETE FROM cf_csr_matches WHERE campaign_id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM cf_csr_profiles WHERE user_id = $1`, sponsorID)
+		_, _ = pool.Exec(ctx, `DELETE FROM cf_csr_matches WHERE campaign_id = $1`, campaignID)
+		_, _ = pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
+		_, _ = pool.Exec(ctx, `DELETE FROM cf_csr_profiles WHERE user_id = $1`, sponsorID)
 	})
 
 	_, err := svc.SetupMatch(ctx, sponsorID, csr.MatchSetupInput{
@@ -180,9 +180,9 @@ func TestLiveDB_CSR_SetupThenApprove_FullIntegrationFlow(t *testing.T) {
 		t.Fatalf("seed csr profile: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(ctx, `DELETE FROM cf_csr_matches WHERE campaign_id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM cf_csr_profiles WHERE user_id = $1`, sponsorID)
+		_, _ = pool.Exec(ctx, `DELETE FROM cf_csr_matches WHERE campaign_id = $1`, campaignID)
+		_, _ = pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
+		_, _ = pool.Exec(ctx, `DELETE FROM cf_csr_profiles WHERE user_id = $1`, sponsorID)
 	})
 
 	idemKey := "cf-uat-csr-flow-key-" + campaignID

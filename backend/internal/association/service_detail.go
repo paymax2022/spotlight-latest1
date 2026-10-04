@@ -326,7 +326,7 @@ func (s *Service) RegenerateAiNoteSummary(ctx context.Context, adminID, noteID s
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `UPDATE assoc_ai_notes SET status='PROCESSING' WHERE id=$1`, noteID)
 	if err != nil {
 		return fmt.Errorf("association: regenerate ai note: %w", err)

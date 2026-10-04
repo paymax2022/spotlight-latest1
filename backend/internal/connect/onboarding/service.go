@@ -206,7 +206,7 @@ func (s *Service) markAgeVerified(ctx context.Context, userID string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO connect_onboarding (user_id, age_verified) VALUES ($1, true)
 		 ON CONFLICT (user_id) DO UPDATE SET age_verified = true`, userID); err != nil {
@@ -232,7 +232,7 @@ func (s *Service) RecordConsent(ctx context.Context, userID, kind, version, ip s
 	if err != nil {
 		return OnboardingStatus{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO connect_consents (user_id, consent_kind, version, accepted, accepted_at)

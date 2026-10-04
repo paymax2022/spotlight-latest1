@@ -151,7 +151,7 @@ func TestLiveDB_GetQuiz_AnswerKeyNeverSerialized(t *testing.T) {
 
 	pathID := seedPath(t, ctx, pool)
 	lessonID := seedLesson(t, ctx, pool, pathID)
-	_, _, correctOptID, _ := seedQuizWithOneQuestion(t, ctx, pool, lessonID)
+	_, _, correctOptID, _ := seedQuizWithOneQuestion(t, ctx, pool, lessonID) //nolint:dogsled // tuple: only correctOptID needed
 
 	quiz, err := svc.GetQuiz(ctx, lessonID)
 	if err != nil {

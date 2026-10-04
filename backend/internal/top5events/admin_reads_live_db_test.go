@@ -30,7 +30,7 @@ func TestLiveDB_AdminListEvents_SeesAllStatesNotJustPublic(t *testing.T) {
 		draftID, organiser); err != nil {
 		t.Fatalf("seed draft event: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, draftID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, draftID) })
 
 	got, err := svc.AdminListEvents(ctx, "", "Admin Reads Draft Event")
 	if err != nil {
@@ -63,7 +63,7 @@ func TestLiveDB_AdminListEvents_StatusFilterUppercasesForTheDBEnum(t *testing.T)
 		eventID, organiser); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, eventID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, eventID) })
 
 	got, err := svc.AdminListEvents(ctx, "suspended", "")
 	if err != nil {
@@ -93,7 +93,7 @@ func TestLiveDB_AdminGetEvent_RealAggregatesAndNoFabricatedTimeline(t *testing.T
 		eventID, organiser); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, eventID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, eventID) })
 
 	tierID := uuid.New().String()
 	if _, err := pool.Exec(ctx,
@@ -101,7 +101,7 @@ func TestLiveDB_AdminGetEvent_RealAggregatesAndNoFabricatedTimeline(t *testing.T
 		tierID, eventID); err != nil {
 		t.Fatalf("seed tier: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM event_ticket_tiers WHERE id=$1`, tierID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM event_ticket_tiers WHERE id=$1`, tierID) })
 
 	got, err := svc.AdminGetEvent(ctx, eventID)
 	if err != nil {

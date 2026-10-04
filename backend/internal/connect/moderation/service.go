@@ -102,7 +102,7 @@ func (s *Service) RecordDecision(ctx context.Context, adminID string, req Decisi
 	if err != nil {
 		return nil, fmt.Errorf("connect: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const ins = `INSERT INTO connect_moderation_decisions
 		(target_type, target_id, decision, reason_codes, reviewer_id, case_id)

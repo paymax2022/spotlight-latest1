@@ -185,7 +185,7 @@ func (h *railHTTP) create(ctx context.Context, idemKey string, body railCreateRe
 	if err != nil {
 		return "", fmt.Errorf("academy rail: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 		return "", fmt.Errorf("academy rail: status %d: %s", resp.StatusCode, string(snippet))

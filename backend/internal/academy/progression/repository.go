@@ -242,7 +242,7 @@ func (r *Repository) CreatePathWithSteps(ctx context.Context, actor, userID, sub
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Idempotency: lock on the unique pair. INSERT ... ON CONFLICT DO NOTHING then
 	// read back; if it pre-existed we leave its steps untouched.
@@ -316,7 +316,7 @@ func (r *Repository) UpdatePathStepState(ctx context.Context, actor, userID, pat
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	tag, err := tx.Exec(ctx, `
 		UPDATE public.academy_path_steps
@@ -443,7 +443,7 @@ func (r *Repository) ReplaceRecommendations(ctx context.Context, userID string, 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `DELETE FROM public.academy_recommendations WHERE user_id = $1`, userID); err != nil {
 		return nil, err

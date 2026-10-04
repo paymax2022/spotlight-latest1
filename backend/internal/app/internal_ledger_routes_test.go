@@ -81,7 +81,7 @@ func newInternalLedgerRouter(pool *pgxpool.Pool) (*gin.Engine, *financeledger.Se
 func postJournal(t *testing.T, r *gin.Engine, token string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	buf, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/internal/finance/ledger/journal", bytes.NewReader(buf))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/internal/finance/ledger/journal", bytes.NewReader(buf))
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -183,7 +183,7 @@ func TestInternalLedgerAPI_PostMovesBalance_Integration(t *testing.T) {
 	}
 
 	// Balance endpoint reflects the same projected wallet balance.
-	req := httptest.NewRequest(http.MethodGet, "/internal/finance/ledger/balance?userId="+uid+"&account=user_wallet", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/internal/finance/ledger/balance?userId="+uid+"&account=user_wallet", nil)
 	req.Header.Set("Authorization", "Bearer "+testServiceToken)
 	bw := httptest.NewRecorder()
 	r.ServeHTTP(bw, req)

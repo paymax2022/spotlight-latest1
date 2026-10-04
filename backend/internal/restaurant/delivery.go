@@ -593,7 +593,7 @@ func (s *Service) AcceptDelivery(ctx context.Context, orderID, riderID string) e
 	if err != nil {
 		return fmt.Errorf("restaurant: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var candidate *string
 	var existingRider *string
@@ -869,7 +869,7 @@ func (s *Service) AddAddress(ctx context.Context, userID string, a SavedAddress)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var count int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM customer_addresses WHERE user_id=$1`, userID).Scan(&count); err != nil {
@@ -922,7 +922,7 @@ func (s *Service) SetDefaultAddress(ctx context.Context, userID, addressID strin
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `SELECT 1 FROM customer_addresses WHERE id=$1 AND user_id=$2`, addressID, userID)
 	if err != nil {
 		return err

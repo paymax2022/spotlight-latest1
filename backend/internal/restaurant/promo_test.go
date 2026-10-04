@@ -18,7 +18,7 @@ func TestComputeDiscount(t *testing.T) {
 	}{
 		{"10% of 100k", Promo{Kind: PromoPercent, ValueBp: 1000}, 100_000, 10_000},
 		{"7.5% floors", Promo{Kind: PromoPercent, ValueBp: 750}, 10_005, 750}, // 10005*750/10000 = 750.375 → 750
-		{"percent capped", Promo{Kind: PromoPercent, ValueBp: 5000, MaxDiscountKobo: ptrKobo(20_000)}, 100_000, 20_000},
+		{"percent capped", Promo{Kind: PromoPercent, ValueBp: 5000, MaxDiscountKobo: new(int64(20_000))}, 100_000, 20_000},
 		{"fixed", Promo{Kind: PromoFixed, AmountKobo: 15_000}, 100_000, 15_000},
 		{"fixed clamped to subtotal", Promo{Kind: PromoFixed, AmountKobo: 200_000}, 50_000, 50_000},
 		{"percent clamped to subtotal (100%)", Promo{Kind: PromoPercent, ValueBp: 10000}, 30_000, 30_000},
@@ -44,7 +44,7 @@ func TestComputeDiscountNeverExceedsSubtotal(t *testing.T) {
 		for _, p := range []Promo{
 			{Kind: PromoPercent, ValueBp: 10000},
 			{Kind: PromoFixed, AmountKobo: 1 << 40},
-			{Kind: PromoPercent, ValueBp: 9999, MaxDiscountKobo: ptrKobo(1 << 40)},
+			{Kind: PromoPercent, ValueBp: 9999, MaxDiscountKobo: new(int64(1 << 40))},
 		} {
 			if d := computeDiscount(p, sub); d < 0 || d > sub {
 				t.Errorf("discount %d out of [0,%d] for %+v", d, sub, p)

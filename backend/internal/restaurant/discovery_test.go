@@ -42,10 +42,10 @@ func TestValidateAddress(t *testing.T) {
 		t.Errorf("valid address rejected: %v", err)
 	}
 	bad := []SavedAddress{
-		{Label: "", Address: "1 Test Street"},                      // empty label
-		{Label: "Home", Address: "x"},                              // too short
-		{Label: "Home", Address: "1 Test Street", Lat: fptr(200)},  // lat out of range
-		{Label: "Home", Address: "1 Test Street", Lng: fptr(-999)}, // lng out of range
+		{Label: "", Address: "1 Test Street"},                              // empty label
+		{Label: "Home", Address: "x"},                                      // too short
+		{Label: "Home", Address: "1 Test Street", Lat: new(float64(200))},  // lat out of range
+		{Label: "Home", Address: "1 Test Street", Lng: new(float64(-999))}, // lng out of range
 	}
 	for i, a := range bad {
 		if err := validateAddress(a); err == nil {

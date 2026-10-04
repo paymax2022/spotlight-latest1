@@ -28,7 +28,7 @@ func staffPool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping staff resolution live-DB tests")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -78,9 +78,9 @@ func newStaffFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) staf
 		t.Fatalf("seed manager: %v", err)
 	}
 	t.Cleanup(func() {
-		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id IN ($1,$2)`, f.lekki, f.ikeja)
-		pool.Exec(bg, `DELETE FROM restaurants WHERE id IN ($1,$2)`, f.lekki, f.ikeja)
+		bg := t.Context()
+		_, _ = pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id IN ($1,$2)`, f.lekki, f.ikeja)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id IN ($1,$2)`, f.lekki, f.ikeja)
 	})
 	return f
 }
@@ -88,7 +88,7 @@ func newStaffFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) staf
 func TestLiveDB_OwnerKeepsFullControl(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	// The regression that would matter most: an owner losing their own shop.
@@ -102,7 +102,7 @@ func TestLiveDB_OwnerKeepsFullControl(t *testing.T) {
 func TestLiveDB_StaffAuthorityIsPerOutlet(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	// Granted at Lekki…
@@ -121,7 +121,7 @@ func TestLiveDB_StaffAuthorityIsPerOutlet(t *testing.T) {
 func TestLiveDB_ManagerCannotTouchBanking(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	// A manager runs the shop; they do not get to move where the money lands.
@@ -133,7 +133,7 @@ func TestLiveDB_ManagerCannotTouchBanking(t *testing.T) {
 func TestLiveDB_StrangersGetNothing(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	for _, p := range allPermissions() {
@@ -146,7 +146,7 @@ func TestLiveDB_StrangersGetNothing(t *testing.T) {
 func TestLiveDB_SuspendedStaffLoseAccessImmediately(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	if _, err := pool.Exec(ctx,
@@ -164,7 +164,7 @@ func TestLiveDB_SuspendedStaffLoseAccessImmediately(t *testing.T) {
 func TestLiveDB_ResolutionAgreesWithOwnerCheck(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	// The migration path: the resolver must answer exactly what assertOwner
@@ -197,7 +197,7 @@ func TestLiveDB_ResolutionAgreesWithOwnerCheck(t *testing.T) {
 func TestLiveDB_ManagerCanRunTheirOutletThroughTheRealMethods(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	// Menu — the daily work of a branch manager.
@@ -216,7 +216,7 @@ func TestLiveDB_ManagerCanRunTheirOutletThroughTheRealMethods(t *testing.T) {
 		t.Errorf("manager could not close their own outlet: %v", err)
 	}
 	if _, err := f.svc.UpdateRestaurant(ctx, f.lekki, f.manager, UpdateRestaurantRequest{
-		PackagingFeeKobo: ptrInt64Staff(25_000),
+		PackagingFeeKobo: new(int64(25_000)),
 	}); err != nil {
 		t.Errorf("manager could not set the packaging price: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestLiveDB_ManagerCanRunTheirOutletThroughTheRealMethods(t *testing.T) {
 func TestLiveDB_ManagerIsRefusedAtOtherOutletsAndOnBanking(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	// A different branch of the same brand — the manager has no grant there.

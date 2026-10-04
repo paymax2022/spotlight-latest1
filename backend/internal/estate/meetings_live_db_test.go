@@ -60,7 +60,7 @@ func seedMeeting(t *testing.T, ctx context.Context, pool *pgxpool.Pool, estateID
 		id, estateID, status, adminID); err != nil {
 		t.Fatalf("seed meeting: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estate_meetings WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM estate_meetings WHERE id=$1`, id) })
 	return id
 }
 
@@ -239,7 +239,7 @@ func seedOpenElection(t *testing.T, ctx context.Context, pool *pgxpool.Pool, est
 		electionID, estateID, adminID); err != nil {
 		t.Fatalf("seed election: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM elections WHERE id=$1`, electionID) })
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM elections WHERE id=$1`, electionID) })
 
 	candidateID = uuid.New().String()
 	if _, err := pool.Exec(ctx,

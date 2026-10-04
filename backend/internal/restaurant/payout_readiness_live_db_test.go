@@ -33,7 +33,7 @@ func readinessPool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping payout-readiness live-DB tests")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -89,8 +89,8 @@ func newReadinessFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 		}
 	}
 	t.Cleanup(func() {
-		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM restaurants WHERE id IN ($1,$2,$3,$4)`, f.approved, f.pending, f.noKyb, f.rival)
+		bg := t.Context()
+		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id IN ($1,$2,$3,$4)`, f.approved, f.pending, f.noKyb, f.rival)
 	})
 	return f
 }
@@ -98,7 +98,7 @@ func newReadinessFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 func TestLiveDB_ReadinessMirrorsThePayoutGate(t *testing.T) {
 	pool := readinessPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newReadinessFixture(t, ctx, pool)
 
 	got, err := f.svc.PayoutReadinessForOwner(ctx, f.owner)
@@ -127,7 +127,7 @@ func TestLiveDB_ReadinessMirrorsThePayoutGate(t *testing.T) {
 func TestLiveDB_ReadinessExplainsWhyAnOutletCannotBePaid(t *testing.T) {
 	pool := readinessPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newReadinessFixture(t, ctx, pool)
 
 	got, err := f.svc.PayoutReadinessForOwner(ctx, f.owner)
@@ -161,7 +161,7 @@ func TestLiveDB_ReadinessExplainsWhyAnOutletCannotBePaid(t *testing.T) {
 func TestLiveDB_ReadinessIsScopedToTheOwner(t *testing.T) {
 	pool := readinessPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newReadinessFixture(t, ctx, pool)
 
 	got, err := f.svc.PayoutReadinessForOwner(ctx, f.owner)
@@ -189,7 +189,7 @@ func TestLiveDB_ReadinessIsScopedToTheOwner(t *testing.T) {
 func TestLiveDB_ReadinessReportsMoneyAlreadyStuck(t *testing.T) {
 	pool := readinessPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newReadinessFixture(t, ctx, pool)
 
 	got, err := f.svc.PayoutReadinessForOwner(ctx, f.owner)

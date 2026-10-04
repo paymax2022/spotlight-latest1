@@ -364,7 +364,7 @@ func (r *Repository) InsertPrescription(ctx context.Context, userID, idemKey str
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insRx = `
 		INSERT INTO doctor_prescriptions
@@ -447,7 +447,7 @@ func (r *Repository) InsertLabOrder(ctx context.Context, userID, idemKey string,
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insOrder = `
 		INSERT INTO doctor_lab_orders
@@ -558,7 +558,7 @@ func (r *Repository) ReviewLabResult(ctx context.Context, userID, resultID, idem
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const upd = `
 		UPDATE doctor_lab_results SET reviewed = true, reviewed_at = now(), updated_at = now()
@@ -781,7 +781,7 @@ func (r *Repository) InsertPayoutWithAudit(ctx context.Context, userID, idemKey,
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insPayout = `
 		INSERT INTO doctor_payouts

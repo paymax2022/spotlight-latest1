@@ -196,9 +196,6 @@ func (f *fakeStore) ReassignFeeSchedule(_ context.Context, schoolID, studentID, 
 
 func (f *fakeStore) WriteAudit(_ context.Context, _, _, _, _, _, _ string, _ any) error { return nil }
 
-//go:fix inline
-func f64(v float64) *float64 { return new(v) }
-
 func itoa(n int) string {
 	if n == 0 {
 		return "0"

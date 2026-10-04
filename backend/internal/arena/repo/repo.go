@@ -252,7 +252,7 @@ func (r *CompetitionRepo) PublishConfig(ctx context.Context, competitionID, publ
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var next int
 	err = tx.QueryRow(ctx, `
@@ -483,7 +483,7 @@ func (r *ContestantRepo) UpdateState(ctx context.Context, contestantID string, f
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var current string
 	err = tx.QueryRow(ctx, `SELECT state FROM arena_contestant WHERE id = $1 FOR UPDATE`, contestantID).Scan(&current)
@@ -832,7 +832,7 @@ func (r *PotRepo) State(ctx context.Context, competitionID string) (string, int,
 	err := r.pool.QueryRow(ctx, `
 		SELECT status FROM arena_pot_disbursement WHERE competition_id = $1`, competitionID).Scan(&status)
 	if errors.Is(err, pgx.ErrNoRows) {
-		status, err = "PENDING", nil
+		status = "PENDING"
 	} else if err != nil {
 		return "", 0, err
 	}
@@ -870,7 +870,7 @@ func (r *PotRepo) MarkDisbursed(ctx context.Context, competitionID, idemKey stri
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock (or create) the control row.
 	if _, err := tx.Exec(ctx, `

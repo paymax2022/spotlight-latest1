@@ -43,7 +43,7 @@ func (e *WebhookEmitter) OutboundEndpoint() string {
 // SignPayload returns the hex HMAC-SHA256 of `t.payload` under secret.
 func SignPayload(secret string, t int64, payload []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	fmt.Fprintf(mac, "%d.", t)
+	_, _ = fmt.Fprintf(mac, "%d.", t)
 	mac.Write(payload)
 	return hex.EncodeToString(mac.Sum(nil))
 }
@@ -78,7 +78,7 @@ func (e *WebhookEmitter) Emit(ctx context.Context, eventType string, data any) e
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("orchestration: webhook delivery to %s returned %d", e.endpoint, resp.StatusCode)
 	}

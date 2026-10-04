@@ -266,7 +266,7 @@ func (s *Service) CreateRoom(ctx context.Context, ownerID string, in RoomInput) 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	id := uuid.New().String()
 	const q = `INSERT INTO connect_rooms (id, owner_id, name, topic, visibility)
 		VALUES ($1,$2,$3,$4,$5)

@@ -90,7 +90,7 @@ func seedIssuedTicket(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cre
 		eventID, ownerID, time.Now().Add(24*time.Hour), time.Now().Add(30*time.Hour)); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, eventID) })
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM events WHERE id=$1`, eventID) })
 
 	typeID := uuid.New().String()
 	if _, err := pool.Exec(ctx,
@@ -134,7 +134,7 @@ func seedIssuedTicket(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cre
 		ticketID, eventID, typeID, tierID, orderID, ownerID, c.ID, "itest-"+ticketID); err != nil {
 		t.Fatalf("seed ticket: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM event_tickets WHERE id=$1`, ticketID) })
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM event_tickets WHERE id=$1`, ticketID) })
 
 	return ticketID
 }
