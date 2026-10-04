@@ -138,6 +138,17 @@ func reminderSeedVaccination(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	return id
 }
 
+func reminderSeedDeviceToken(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID string) {
+	t.Helper()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO device_push_tokens (user_id, token, platform) VALUES ($1,$2,'ios')`,
+		userID, "ExponentPushToken["+uuid.NewString()+"]"); err != nil {
+		t.Fatalf("seed device_push_tokens: %v", err)
+	}
+	// Rides CleanupUser's cascade (device_push_tokens.user_id FKs auth.users ON
+	// DELETE CASCADE) — no separate cleanup needed.
+}
+
 // nilNotifier stands in for an unreachable queue: Send always returns an
 // error, so a nil handler error PROVES the send path was skipped.
 func nilNotifier() *notifications.Service { return notifications.NewService(nil) }
@@ -159,12 +170,26 @@ func TestLiveDB_HealthReminder_ConfirmedAppointmentAttemptsDelivery(t *testing.T
 	pool := healthReminderPool(t)
 	ctx := context.Background()
 	uid := reminderSeedUser(t, ctx, pool)
+	reminderSeedDeviceToken(t, ctx, pool, uid)
 	provID := reminderSeedProvider(t, ctx, pool, uid)
 	apptID := reminderSeedAppointment(t, ctx, pool, uid, provID, "CONFIRMED")
 
 	h := appointmentReminderHandler(pool, nilNotifier())
 	if err := h(fakeHctx{ctx: ctx, idem: "k", job: fakeJobView{id: "j2", entity: apptID}}); err == nil {
 		t.Fatal("confirmed appointment reminder returned nil with a nil queue client — the run must see the enqueue failure so it retries")
+	}
+}
+
+func TestLiveDB_HealthReminder_NoDeviceIsConsumedUndeliverable(t *testing.T) {
+	pool := healthReminderPool(t)
+	ctx := context.Background()
+	uid := reminderSeedUser(t, ctx, pool) // no device_push_tokens row
+	provID := reminderSeedProvider(t, ctx, pool, uid)
+	apptID := reminderSeedAppointment(t, ctx, pool, uid, provID, "CONFIRMED")
+
+	h := appointmentReminderHandler(pool, nilNotifier())
+	if err := h(fakeHctx{ctx: ctx, idem: "k", job: fakeJobView{id: "j6", entity: apptID}}); err != nil {
+		t.Fatalf("no-device reminder returned %v — a user with zero registered devices is undeliverable, not retryable", err)
 	}
 }
 
@@ -195,6 +220,7 @@ func TestLiveDB_HealthReminder_PendingVaccinationAttemptsDelivery(t *testing.T) 
 	pool := healthReminderPool(t)
 	ctx := context.Background()
 	uid := reminderSeedUser(t, ctx, pool)
+	reminderSeedDeviceToken(t, ctx, pool, uid)
 	petID := reminderSeedPet(t, ctx, pool, uid)
 	vaccID := reminderSeedVaccination(t, ctx, pool, petID, uid, false)
 

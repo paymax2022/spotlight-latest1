@@ -10,6 +10,7 @@ package app
 // so the run retries (a transient queue outage must not eat the reminder).
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -35,6 +36,44 @@ func healthReminderNotifier(redisURL string) *notifications.Service {
 		return notifications.NewService(qc)
 	}
 	return notifications.NewService(nil)
+}
+
+// deliverToUser resolves the member's registered Expo push tokens and enqueues
+// one notification per device — the same fan-out the estate notifier uses
+// (finance_routes.go). ChannelInApp is not platform-deliverable (there is no
+// in-app task type — domains persist their own feed rows and health has none),
+// so push is the only real channel. Zero tokens means undeliverable: consumed
+// with a log — a retry cannot mint a device registration within the run's
+// retry window.
+func deliverToUser(ctx context.Context, pool *pgxpool.Pool, notif *notifications.Service, n notifications.Notification) error {
+	rows, err := pool.Query(ctx, `SELECT token FROM device_push_tokens WHERE user_id=$1`, n.UserID)
+	if err != nil {
+		return fmt.Errorf("reminder %s: resolve push tokens: %w", n.Event, err)
+	}
+	var tokens []string
+	for rows.Next() {
+		var tok string
+		if rows.Scan(&tok) == nil {
+			tokens = append(tokens, tok)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("reminder %s: scan push tokens: %w", n.Event, err)
+	}
+	if len(tokens) == 0 {
+		log.Printf("[scheduler] reminder %s user=%s: no device_push_tokens — consumed undeliverable", n.Event, n.UserID)
+		return nil
+	}
+	n.Channels = []notifications.Channel{notifications.ChannelPush}
+	var errs []error
+	for _, tok := range tokens {
+		n.PushToken = tok
+		if err := notif.Send(ctx, n); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // appointmentReminderHandler delivers the 1-hour-early appointment reminder to
@@ -65,7 +104,7 @@ func appointmentReminderHandler(pool *pgxpool.Pool, notif *notifications.Service
 		if kind == "" {
 			kind = "appointment"
 		}
-		return notif.Send(ctx, notifications.Notification{
+		return deliverToUser(ctx, pool, notif, notifications.Notification{
 			UserID: patientID,
 			Event:  notifications.EventAppointmentReminder,
 			Title:  "Appointment in 1 hour",
@@ -102,7 +141,7 @@ func vaccinationReminderHandler(pool *pgxpool.Pool, notif *notifications.Service
 			log.Printf("[scheduler] vaccination reminder job=%s vacc=%s: already administered — skipping", hctx.Job().ID(), vaccID)
 			return nil
 		}
-		return notif.Send(ctx, notifications.Notification{
+		return deliverToUser(ctx, pool, notif, notifications.Notification{
 			UserID: ownerID,
 			Event:  notifications.EventVaccinationReminder,
 			Title:  "Vaccination due tomorrow",
