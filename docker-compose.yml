@@ -22,6 +22,15 @@ services:
       REDIS_URL: redis://redis:6379
       # Local Supabase REST API
       SUPABASE_URL: http://host.docker.internal:54321
+      # E2E-PERF-061 (local close): verify JWTs locally instead of a per-request
+      # GoTrue GET /auth/v1/user — the per-request call opens a fresh Postgres
+      # connection through GoTrue every request and was the measured authed
+      # ceiling (~50–100 req/s, ephemeral-port exhaustion at ~25 VU). ES256
+      # verifies against the JWKS at SUPABASE_URL above. Safe locally: the only
+      # trade-off is GoTrue logout/password-change staleness bounded by the
+      # access-token TTL, and platform_users status still gates per request.
+      # PROD stays a deliberate decision — see jwt_local.go's revocation note.
+      AUTH_JWT_LOCAL_VERIFY: "true"
     depends_on:
       redis:
         condition: service_healthy
