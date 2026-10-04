@@ -36,8 +36,6 @@ func isExclusionViolation(err error) bool {
 	return false
 }
 
-// Zones
-
 const zoneCols = `id, code, label, layout_type, capacity, base_daily_rate_kobo,
 	tier_multiplier, position, is_active, creative_spec, rate_version`
 
@@ -91,8 +89,6 @@ func (r *Repository) ListZones(ctx context.Context) ([]Zone, error) {
 	}
 	return out, rows.Err()
 }
-
-// Campaigns
 
 const campaignCols = `id, merchant_id, subject_type, subject_id, zone_code,
 	window_start, window_end, duration_days, creative, quoted_price_kobo, rate_version,
@@ -470,8 +466,6 @@ func jsonbOrNil(m map[string]any) any {
 	return m
 }
 
-// Scheduler sweep helpers
-
 // DueForActivation returns SCHEDULED campaigns whose window_start has arrived.
 func (r *Repository) DueForActivation(ctx context.Context, now time.Time, limit int) ([]Campaign, error) {
 	if limit <= 0 || limit > 500 {
@@ -548,8 +542,6 @@ func collectCampaigns(rows pgx.Rows) ([]Campaign, error) {
 	}
 	return out, rows.Err()
 }
-
-// small helpers
 
 func orMap(m map[string]any) map[string]any {
 	if m == nil {

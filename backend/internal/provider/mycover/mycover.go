@@ -697,8 +697,6 @@ const QuotePath = pathComputePrice
 // wrong — which is why v1's refusal to quote instalment plans is gone.
 const FieldPaymentPlan = "payment_plan"
 
-// gateway.UnderwriterGateway
-
 // providerBody turns the member's stored answers into the body MyCover expects.
 // It is the OUTBOUND MONEY BOUNDARY for form inputs. Every value the internal
 // contract carries — including every money field — is INTEGER KOBO; MyCover's
@@ -1305,8 +1303,6 @@ func normaliseStatus(s string) string {
 		return strings.ToLower(strings.TrimSpace(s))
 	}
 }
-
-// HTTP
 
 func (c *Client) postIdem(ctx context.Context, path, idemKey string, body any) (envelope, error) {
 	b, err := json.Marshal(body)

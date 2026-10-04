@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/visitor/visitor.service';
 import { mapBlacklist } from '@/src/server/visitor/gate.service';
 
-// GET /api/v1/visitor/blacklist — list all blacklist entries for the estate.
+// List all blacklist entries for the estate.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -26,7 +26,6 @@ export async function GET(request: Request) {
   }
 }
 
-// POST /api/v1/visitor/blacklist — add a blacklist entry.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

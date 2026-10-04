@@ -55,20 +55,14 @@ func ariErr(c *gin.Context, err error) {
 // The extranet aggregator applies stays.hotelier.* RBAC at the route; these handlers
 // add the object-level property scope check.
 func (h *Handler) RegisterExtranet(g *gin.RouterGroup) {
-	// Calendar reads.
 	g.GET("/rate-plans/:ratePlanId/calendar", h.GetRateCalendar)
 	g.GET("/room-types/:roomTypeId/availability", h.GetAvailabilityCalendar)
-	// Single-cell writes.
 	g.PUT("/rate-plans/:ratePlanId/calendar", h.SetRateDay)
 	g.PUT("/room-types/:roomTypeId/availability", h.SetAvailabilityDay)
-	// Bulk date-range edits.
 	g.POST("/rate-plans/:ratePlanId/calendar/bulk", h.BulkEditRates)
 	g.POST("/room-types/:roomTypeId/availability/bulk", h.BulkEditAvailability)
-	// Restrictions (min/max LOS, CTA/CTD, stop-sell over a range).
 	g.POST("/rate-plans/:ratePlanId/restrictions", h.SetRestrictions)
-	// Derived / linked rates (rule-driven cascade).
 	g.POST("/rate-plans/:ratePlanId/derive", h.ApplyDerivedRate)
-	// Promotions.
 	g.GET("/properties/:propertyId/promotions", h.ListPromotions)
 	g.POST("/properties/:propertyId/promotions", h.CreatePromotion)
 	g.POST("/properties/:propertyId/promotions/:promoId/active", h.SetPromotionActive)

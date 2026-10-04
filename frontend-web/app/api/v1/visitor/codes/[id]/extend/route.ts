@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { ACCESS_CODE_COLUMNS, mapAccessCode } from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/codes/{id}/extend — extend an active code's validity.
+// Extend an active code's validity.
 // Body: { validityEnd }. Code value/QR are unchanged.
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {

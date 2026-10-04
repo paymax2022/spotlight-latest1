@@ -92,16 +92,12 @@ func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *p
 		// the real notifications + audit sinks.
 	})
 
-	// When the commission feature is on, inject a nil-safe recorder so realized
-	// stays profit (the CONFIRMED booking's charge/settle point) lands in
-	// commission_earnings for the profit report under Property/Hotel (seeded 10%).
-	// The recorder is built WITHOUT a ledger (nil) on purpose: stays' own settle
-	// split already posts the commission cut to ledger.AccountCommission, so a second
-	// ledger post would double-count — RecordFor therefore appends the earning ROW
-	// only. Recording is best-effort + idempotent (reservation id as key) and can
-	// never fail or reverse a booking/payout (see reservation.recordCommissionSafe).
-	// Flag off ⇒ no recorder is set ⇒ the seam stays nil ⇒ silent no-op ⇒ stays
-	// unchanged. Reuses the shared commissionRecorderAdapter (marketplace_routes.go).
+	// Commission recording for stays profit under Property/Hotel (the CONFIRMED
+	// booking's charge/settle point; seeded 10%). Ledger-less recorder — the
+	// settle split already posts the cut to ledger.AccountCommission, so
+	// RecordFor appends the earning ROW only; best-effort + idempotent
+	// (reservation id key), never fails a booking (recordCommissionSafe).
+	// Flag off ⇒ nil-safe no-op.
 	if cfg.FeatureCommissionEnabled {
 		staysCommission := withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)
 		reservationSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: staysCommission})

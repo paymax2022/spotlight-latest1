@@ -37,16 +37,12 @@ type Hub struct {
 // New creates a new Hub. originAllowed reports whether a browser-sent Origin
 // header is trusted; pass nil to allow every origin (only appropriate for a
 // hub no browser client ever reaches).
-// nhooyr's default Origin check only accepts an Origin that is byte-identical
-// to the request's own Host — i.e. "the frontend page and this WS endpoint are
-// the exact same origin". That is never true here: the browser/RN-web client
-// always lives on a different port (dev: :8083 vs :8091) or a different
-// subdomain entirely (staging/prod: frontend-web-* vs backend-*). Left on the
-// default, EVERY real browser WebSocket connection 403s at the handshake while
-// curl (which sends no Origin header) succeeds — the split that made this look
-// like a client bug rather than a server one. originAllowed lets callers reuse
-// the same allowlist as the HTTP CORS middleware (CORS_ALLOW_ORIGINS + the
-// dev-only loopback/LAN patterns) instead.
+// nhooyr's default Origin check only accepts an Origin byte-identical to the
+// request's own Host, which no real client ever satisfies here (different port
+// in dev, different subdomain in prod): every browser WebSocket would 403 at
+// the handshake while Origin-less curl succeeds. originAllowed lets callers
+// reuse the HTTP CORS allowlist (CORS_ALLOW_ORIGINS + the dev-only
+// loopback/LAN patterns) instead.
 func New(originAllowed func(origin string) bool) *Hub {
 	return &Hub{clients: make(map[string][]*client), originAllowed: originAllowed}
 }

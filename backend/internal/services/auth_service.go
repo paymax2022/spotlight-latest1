@@ -34,17 +34,12 @@ type AuthService interface {
 var gotrueHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 type authService struct {
-	// otpOperational is true only when the OTP service was ACTUALLY BUILT — flag
-	// on AND pepper AND Brevo credentials AND a database. It is not the flag.
-	//
-	// Branching on the flag alone produced accounts nobody could ever verify: with
-	// the flag on but credentials missing, this service took the silent admin
-	// creation path (so GoTrue sent nothing) while the register handler, which
-	// checks the WIRED ISSUER rather than the flag, sent nothing either. The
-	// account existed, unconfirmed, with no code and no way to request one —
-	// /api/auth/otp/request answers 503 in that state. Login refused it forever.
-	//
-	// The two decisions must be made from the same signal, so this carries it.
+	// otpOperational is true only when the OTP service was ACTUALLY BUILT —
+	// flag on AND pepper AND Brevo credentials AND a database. Branching on the
+	// flag alone produced unverifiable accounts: the silent admin creation path
+	// sent nothing and neither did the register handler (which checks the wired
+	// issuer), leaving a permanently unconfirmed account. The two decisions must
+	// share this one signal.
 	otpOperational bool
 
 	supabase *integrations.SupabaseRestClient
@@ -132,48 +127,24 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, 
 	email := strings.TrimSpace(strings.ToLower(in.Email))
 
 	// WHICH GOTRUE ENDPOINT CREATES THE ACCOUNT — and why it depends on a flag.
-	//
-	// /auth/v1/signup sends GoTrue's own confirmation email. There is no setting
-	// that keeps the account unconfirmed while suppressing that mail:
-	// enable_confirmations (mailer_autoconfirm on cloud) governs BOTH, so turning
-	// the mailer off auto-confirms every signup and removes email verification
-	// altogether. Disabling SMTP wholesale is not an option either — the
-	// password-reset LINK deliberately still goes through it.
-	//
-	// /auth/v1/admin/users creates the same row and sends NOTHING. With
-	// email_confirm false the account is unconfirmed exactly as before, login
-	// still answers 403 email_not_confirmed, and our own code (issued by the
-	// register handler) becomes the single verification email.
-	//
-	// Only when the OTP feature is ON. With it off there would be no code, and an
-	// account nobody can ever confirm is worse than a duplicate email.
-	//
-	// Two behaviours differ on the admin path and are accepted deliberately:
-	//   - GoTrue's sign_in_sign_ups rate limit does not apply. The /register route
-	//     already carries middleware.AuthRateLimiter (AUTH_RATE_LIMIT_PER_MIN).
-	//   - GoTrue's own enable_signup switch does not apply. If signups are ever
-	//     closed at the project level, this path must be closed here too.
-	//
-	// Note the metadata key: /signup takes "data", the admin endpoint takes
-	// "user_metadata". Both land in raw_user_meta_data, which is what
-	// handle_new_user reads for full_name — send the wrong one and every profile
-	// is created nameless.
+	// /auth/v1/signup sends GoTrue's own confirmation email; there is no setting
+	// that keeps the account unconfirmed while suppressing it
+	// (enable_confirmations governs BOTH, and SMTP must stay up for the
+	// password-reset link).
+	// /auth/v1/admin/users sends NOTHING — our own OTP becomes the single
+	// verification email, so it is used only when OTP is operational.
+	// Accepted differences on the admin path: GoTrue's sign_in_sign_ups rate
+	// limit does not apply (the route carries AuthRateLimiter), and the project's
+	// enable_signup switch is enforced manually below.
+	// Metadata key differs: /signup takes "data", admin takes "user_metadata";
+	// the wrong one leaves every profile nameless.
 	path := "/auth/v1/signup"
 	payload := map[string]any{"email": email, "password": in.Password, "data": meta}
 	if s.otpOperational {
-		// The admin endpoint is not gated by the project's enable_signup switch —
-		// that is the price of a creation call that sends no mail. Enforce the
-		// policy here instead, from GoTrue's own /settings, so there is one source
-		// of truth rather than a mirrored flag that drifts.
-		//
-		// Read on every attempt rather than cached: registration is already
-		// throttled per IP by middleware.AuthRateLimiter, and a cache is a window
-		// in which a door the project just closed is still open.
-		//
-		// Fails CLOSED. /settings and /admin/users are the same service, so a
-		// settings read that fails is a strong signal the create would fail too;
-		// treating the error as "signups are open" would let a partial outage
-		// reopen the door.
+		// The admin endpoint bypasses the project's enable_signup switch, so the
+		// policy is enforced here from GoTrue's own /settings — read fresh every
+		// attempt (a cache is a window a just-closed door stays open through).
+		// Fails CLOSED: a settings read that fails signals the create would too.
 		disabled, err := s.supabase.SignupDisabled(context.Background())
 		if err != nil {
 			log.Printf("[auth] register: could not read the project signup policy, refusing: %v", err)

@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext } from '@/src/server/visitor/gate.service';
 import { ACCESS_CODE_COLUMNS, mapAccessCode } from '@/src/server/visitor/visitor.service';
 
-// GET /api/v1/visitor/gate/lookup?code= — find an access code by numeric_code or id prefix.
+// Find an access code by numeric_code or id prefix.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

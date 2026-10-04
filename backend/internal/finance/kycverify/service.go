@@ -190,7 +190,6 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 		}
 	}
 
-	// Route through the gateway (failover + breaker + facial gate).
 	table := s.routingTable(ctx)
 	gw := NewGateway(s.reg, table)
 	gr, gerr := gw.Run(ctx, ct, req)
@@ -215,7 +214,6 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 		rawRef = ref
 	}
 
-	// Guarded per-check status write.
 	if err := applyCheckTransition(stored.Status, gr.Result.Status); err != nil {
 		return nil, err
 	}
@@ -233,7 +231,6 @@ func (s *Service) RunCheck(ctx context.Context, userID, sessionID string, ct pro
 	s.audit(ctx, "kycverify.check.completed", userID, stored.ID,
 		fmt.Sprintf("type=%s provider=%s status=%s", ct, gr.Provider, stored.Status))
 
-	// Recompute the session (may elevate the tier when the full set passed).
 	if _, err := s.orch.Recompute(ctx, sessionID); err != nil {
 		// The check itself is persisted; surface the orchestration error so the
 		// caller can retry (Recompute is idempotent).
@@ -597,8 +594,8 @@ func (o *Orchestrator) Recompute(ctx context.Context, sessionID string) (Session
 		return resolved, nil
 	}
 
-	// Guard every session write. An unexpected edge is a hard error (never a
-	// silent skip) so illegal orchestration is caught, not swallowed.
+	// An unexpected edge is a hard error, never a silent skip — illegal
+	// orchestration is caught, not swallowed.
 	if !CanTransitionSession(sess.Status, resolved) {
 		return "", fmt.Errorf("%w: session %s→%s", ErrIllegalTransition, sess.Status, resolved)
 	}
@@ -608,14 +605,11 @@ func (o *Orchestrator) Recompute(ctx context.Context, sessionID string) (Session
 	}
 	o.audit(ctx, "kycverify.session.transition", sess.UserID, sessionID, string(resolved))
 
-	// GUARD: elevate the tier ONLY on a fully-passed required set. This is the
-	// single place a tier is raised, and it is unreachable unless resolved is
-	// exactly TIER_VERIFIED (never on PENDING/REVIEW/FAILED).
+	// Tier elevation happens ONLY here and ONLY on TIER_VERIFIED.
 	if resolved == SessTierVerified {
 		if err := o.elevate(ctx, sess.UserID, sess.TargetTier, nil); err != nil {
-			// Elevation failure must NOT leave the session claiming verified while
-			// the profile lags — but the ledger/profile UPDATE is idempotent and
-			// self-heals; log loudly and surface the error so the caller retries.
+			// The profile UPDATE is idempotent and self-heals — surface the
+			// error so the caller retries rather than claiming verified.
 			return resolved, fmt.Errorf("kycverify: tier elevation for user=%s tier=%d: %w", sess.UserID, sess.TargetTier, err)
 		}
 	}
@@ -767,7 +761,6 @@ func ResolveSessionStatus(targetTier int, statusByType map[provider.KycCheckType
 		return SessUnverified
 	}
 
-	// Any review among relevant checks halts to human review.
 	for _, g := range groups {
 		for _, ct := range g {
 			if statusByType[ct] == provider.KycReview {

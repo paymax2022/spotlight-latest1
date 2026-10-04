@@ -197,25 +197,11 @@ export async function removeBackground(sourceUrl: string): Promise<BackgroundRem
       sourceUrl,
       {
         background_removal: 'cloudinary_ai',
-        // IMG-010 / D-006 — EXIF/GPS stripping.
-        // Conclusion (documented here since this determines whether D-006 can
-        // be marked closed): Cloudinary's upload API does NOT strip
-        // EXIF/GPS from the stored original by default — `image_metadata`
-        // defaults to false only in the sense that it *withholds returning*
-        // metadata in the JSON response, it does not delete it from the
-        // asset. The delivery URL Cloudinary hands back for a
-        // transformation-based asset (which this is, since
-        // background_removal is itself a transformation) by default already
-        // omits EXIF on the delivered bytes because Cloudinary's transformed
-        // derivatives do not carry the original's metadata unless the
-        // `fl_keep_iptc` flag is explicitly added — we never add that flag,
-        // so the cutout URL returned here should already be EXIF-stripped.
-        // We do NOT rely on that alone: we pass `flags: 'stripprofile'`
-        // explicitly below to force removal of any ICC/EXIF/XMP profile data
-        // on the delivered asset regardless of the above, per Cloudinary's
-        // documented `fl_stripprofile` transformation flag. This is
-        // belt-and-suspenders and should be verified against a live account
-        // once real credentials exist.
+        // IMG-010 / D-006 — EXIF/GPS stripping. Cloudinary's upload API does
+        // NOT strip metadata from the stored original, and transformed
+        // derivatives only omit it by default; `stripprofile` forces removal
+        // of ICC/EXIF/XMP on the delivered asset regardless. Verify against a
+        // live account once real credentials exist.
         flags: 'stripprofile',
       },
       env

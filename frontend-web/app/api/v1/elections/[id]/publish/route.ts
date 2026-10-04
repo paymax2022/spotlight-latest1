@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext, mapElection } from '@/src/server/elections/elections.service';
 
-// POST /api/v1/elections/{id}/publish — publish results (estate admin, after close).
+// Publish results (estate admin, after close).
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireRequestUser(request);

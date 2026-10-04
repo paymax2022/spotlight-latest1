@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext, genNumericCode, toDbCodeType } from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/codes/import — bulk-create access codes from a CSV file.
+// Bulk-create access codes from a CSV file.
 // CSV columns (header row required): visitor_name,code_type,valid_from,valid_until,unit_label
 export async function POST(request: Request) {
   try {

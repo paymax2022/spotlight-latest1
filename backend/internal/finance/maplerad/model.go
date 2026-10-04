@@ -198,22 +198,16 @@ type TransitionResult struct {
 // DecideTransition is the single guard for the transfer/bill state machine.
 // Legal forward edges:
 //
-//	INITIATED → PENDING                       (post the hold)
-//	PENDING   → SUCCESS | FAILED | REVERSED   (finalize / reverse-hold / reverse-hold)
-//	SUCCESS   → REVERSED                       (provider recall/chargeback after settle)
+//	INITIATED → PENDING                      (post the hold)
+//	PENDING   → SUCCESS | FAILED | REVERSED  (finalize / reverse-hold / reverse-hold)
+//	SUCCESS   → REVERSED                     (provider recall/chargeback after settle)
 //
-// Everything else is rejected:
-//   - INITIATED → SUCCESS/FAILED/REVERSED (skipping the webhook/PENDING) — REJECTED
-//   - SUCCESS → PENDING/FAILED/INITIATED                                  — REJECTED
-//   - FAILED/REVERSED → anything                                         — REJECTED (truly terminal)
-//   - PENDING → INITIATED (backwards)                                    — REJECTED
-//
-// REVERSED effect depends on the prior state: from PENDING the funds are still
-// held in suspense (EffectReverseHold); from SUCCESS the debit already settled
-// and must be compensated (EffectCompensate). Real provider reversals arrive
-// AFTER success, so SUCCESS→REVERSED is a first-class edge — not a rejection.
-// Idempotent replays (from == to, including terminal == same terminal) return
-// NoOp=true, Allowed=true so the caller short-circuits without a second effect.
+// Everything else is rejected — terminal states are truly terminal, and a
+// terminal can only be reached via PENDING.
+// REVERSED effect depends on the prior state: from PENDING funds are still in
+// suspense (EffectReverseHold); from SUCCESS the settled debit must be
+// compensated (EffectCompensate). Idempotent replays (from == to) return
+// NoOp=true, Allowed=true.
 func DecideTransition(from, to OpStatus) TransitionResult {
 	// Idempotent replay of the same state is always a benign no-op.
 	if from == to {

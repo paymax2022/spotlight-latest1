@@ -231,7 +231,6 @@ func (s *Service) ToggleDoctorAvailability(ctx context.Context, userID string, i
 
 // GetDoctorDashboard returns aggregated stats and schedule for a doctor.
 func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*DoctorDashboard, error) {
-	// Verify doctor exists and get ID/rating/online status.
 	var doctorID string
 	var rating float64
 	var isOnline bool
@@ -260,7 +259,6 @@ func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*Docto
 		return nil, fmt.Errorf("telemedicine: compute weekly revenue: %w", err)
 	}
 
-	// Prior-week revenue for growth %.
 	var priorRevenue int64
 	if err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(fee_kobo - (fee_kobo * 15 / 100)), 0)
@@ -277,7 +275,6 @@ func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*Docto
 		growthPct = float64(weeklyRevenue-priorRevenue) / float64(priorRevenue) * 100
 	}
 
-	// Today's patient count (completed this week).
 	var patientsSeen int
 	_ = s.db.QueryRow(ctx, `
 		SELECT COUNT(*) FROM appointments
@@ -314,7 +311,6 @@ func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*Docto
 		pending = append(pending, pr)
 	}
 
-	// Today's confirmed/in-progress appointments.
 	apptRows, err := s.db.Query(ctx, `
 		SELECT a.id, a.scheduled_at, a.consultation_type, a.notes, a.status
 		FROM appointments a
@@ -729,7 +725,6 @@ func (s *Service) GetPrescription(ctx context.Context, appointmentID, callerUser
 
 // SubmitSOAPNote saves a SOAP consultation note for a completed appointment.
 func (s *Service) SubmitSOAPNote(ctx context.Context, doctorUserID string, req SubmitSOAPNoteRequest) (*SOAPNote, error) {
-	// Verify appointment & doctor.
 	var patientID, doctorID string
 	if err := s.db.QueryRow(ctx,
 		`SELECT patient_id, doctor_id FROM appointments WHERE id=$1`,

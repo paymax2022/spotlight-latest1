@@ -3,7 +3,7 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { payInvoice } from '@/src/server/realtor/invoices';
 
-// POST /api/v1/realtor/invoices/[id]/pay — pay a realtor lease invoice.
+// Pay a realtor lease invoice.
 // This route (plus src/server/realtor/invoices.ts) is now the ONLY supported
 // way to pay a realtor invoice — the Supabase RPC `realtor_pay_invoice` it
 // calls internally is locked to service_role (see

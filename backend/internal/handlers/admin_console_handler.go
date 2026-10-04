@@ -47,15 +47,15 @@ func (h *AdminConsoleHandler) Dashboard(c *gin.Context) {
 	dashboard := gin.H{
 		"users":              stats.TotalUsers,
 		"openKyc":            stats.KYCPending,
-		"pendingWithdrawals": 15, // Phase 2: query payouts table
+		"pendingWithdrawals": 15, // stub
 		"failedOrders":       stats.FailedTxns,
-		"reconExceptions":    0, // Phase 2: query reconciliation_exceptions table
+		"reconExceptions":    0, // stub
 		"revenueToday": gin.H{
-			keyAmount:  0, // Phase 2: sum fees from last 24h
+			keyAmount:  0, // stub
 			"currency": "NGN",
 		},
 		"revenueMonth": gin.H{
-			keyAmount:  0, // Phase 2: sum fees from last 30 days
+			keyAmount:  0, // stub
 			"currency": "NGN",
 		},
 		"tradingVolume": gin.H{
@@ -129,7 +129,7 @@ func (h *AdminConsoleHandler) GetUsers(c *gin.Context) {
 func (h *AdminConsoleHandler) GetUser(c *gin.Context) {
 	userID := c.Param("id")
 
-	// TODO: Query detailed user record from users + ledger + kyc tables
+	// TODO: stub — real user detail not yet queried (users + ledger + kyc)
 	user := gin.H{
 		"id":        userID,
 		"name":      "Alice Johnson",
@@ -172,7 +172,7 @@ func (h *AdminConsoleHandler) GetKycQueue(c *gin.Context) {
 			"status":      e.Status,
 			"tier":        e.Tier,
 			"submittedAt": e.SubmittedAt,
-			"riskFlags":   []string{}, // Phase 2: query aml_checks table
+			"riskFlags":   []string{}, // stub
 		})
 	}
 
@@ -194,7 +194,7 @@ func (h *AdminConsoleHandler) ReviewKyc(c *gin.Context) {
 		return
 	}
 
-	// TODO: Update kyc_sessions status; emit audit event; trigger tier upgrade if approved
+	// TODO: stub — review not yet persisted (kyc_sessions + audit + tier upgrade)
 	updatedCase := gin.H{
 		"id":          caseID,
 		"userId":      "usr_042",
@@ -210,7 +210,7 @@ func (h *AdminConsoleHandler) ReviewKyc(c *gin.Context) {
 // GetAssetControls returns the list of tradable assets and their admin controls.
 // GET /api/v1/admin/assets
 func (h *AdminConsoleHandler) GetAssetControls(c *gin.Context) {
-	// TODO: Query asset_controls table (or compute from feature flags + config)
+	// TODO: stub — asset controls not yet persisted/queried
 	assets := []gin.H{
 		{
 			"id":                "ast_001",
@@ -264,7 +264,7 @@ func (h *AdminConsoleHandler) UpdateAssetControl(c *gin.Context) {
 		return
 	}
 
-	// TODO: Update asset_controls table; emit audit event
+	// TODO: stub — update not yet persisted (asset_controls + audit)
 	updated := gin.H{
 		"id":                assetID,
 		keySymbol:           valBtc,
@@ -337,11 +337,11 @@ func (h *AdminConsoleHandler) GetWithdrawalQueue(c *gin.Context) {
 		result = append(result, gin.H{
 			"reference": w.ID,
 			"user":      w.Email,
-			keySymbol:   valBtc, // Phase 2: extract currency
+			keySymbol:   valBtc, // stub
 			keyAmount:   gin.H{keyAmount: w.Amount, "currency": "NGN"},
 			"address":   w.Account,
-			"network":   "bitcoin", // Phase 2: from withdrawal_network column
-			"riskScore": 0,         // Phase 2: calculate from transaction history
+			"network":   "bitcoin", // stub
+			"riskScore": 0,         // stub
 			"status":    w.Status,
 			"createdAt": w.CreatedAt,
 		})
@@ -365,7 +365,7 @@ func (h *AdminConsoleHandler) ReviewWithdrawal(c *gin.Context) {
 		return
 	}
 
-	// TODO: Update withdrawal status; emit audit; trigger broadcast if approved
+	// TODO: stub — decision not yet persisted (withdrawal status + audit)
 	updated := gin.H{
 		"reference": ref,
 		"user":      "Alice Johnson",
@@ -383,7 +383,7 @@ func (h *AdminConsoleHandler) ReviewWithdrawal(c *gin.Context) {
 // GetReconciliation returns open reconciliation exceptions.
 // GET /api/v1/admin/reconciliation
 func (h *AdminConsoleHandler) GetReconciliation(c *gin.Context) {
-	// TODO: Query reconciliation exceptions table; compute deltas between internal ledger and external provider balances
+	// TODO: stub — reconciliation exceptions not yet queried/computed
 	recon := gin.H{
 		"asset":       valBtc,
 		"generatedAt": time.Now().Format(time.RFC3339),
@@ -405,7 +405,7 @@ func (h *AdminConsoleHandler) GetReconciliation(c *gin.Context) {
 // GetProviders returns health status of all integrated providers (Paystack, Binance, etc).
 // GET /api/v1/admin/providers
 func (h *AdminConsoleHandler) GetProviders(c *gin.Context) {
-	// TODO: Query provider health endpoints in parallel; record latency + status
+	// TODO: stub — provider health is hard-coded, not probed
 	providers := []gin.H{
 		{
 			"name":      "Paystack",
@@ -435,7 +435,7 @@ func (h *AdminConsoleHandler) GetProviders(c *gin.Context) {
 // GetRiskLimits returns the current risk limit configuration.
 // GET /api/v1/admin/risk-limits
 func (h *AdminConsoleHandler) GetRiskLimits(c *gin.Context) {
-	// TODO: Query risk_limits table or load from config
+	// TODO: stub — risk limits are hard-coded, not queried
 	limits := []gin.H{
 		{
 			"id":         "rl_001",
@@ -475,7 +475,7 @@ func (h *AdminConsoleHandler) UpdateRiskLimit(c *gin.Context) {
 		return
 	}
 
-	// TODO: Update risk_limits table; emit audit event
+	// TODO: stub — limit update not yet persisted (risk_limits + audit)
 	updated := gin.H{
 		"id":         limitID,
 		"label":      "Daily withdrawal limit per user",
@@ -489,7 +489,7 @@ func (h *AdminConsoleHandler) UpdateRiskLimit(c *gin.Context) {
 // GetFees returns the current fee configuration.
 // GET /api/v1/admin/fees
 func (h *AdminConsoleHandler) GetFees(c *gin.Context) {
-	// TODO: Query fee_config table
+	// TODO: stub — fee config is hard-coded, not queried
 	fees := []gin.H{
 		{
 			"id":    "fee_001",
@@ -526,7 +526,7 @@ func (h *AdminConsoleHandler) UpdateFee(c *gin.Context) {
 		return
 	}
 
-	// TODO: Update fee_config table; emit audit event
+	// TODO: stub — fee update not yet persisted (fee_config + audit)
 	updated := gin.H{
 		"id":    feeID,
 		"label": "Crypto trading fee",
@@ -539,7 +539,7 @@ func (h *AdminConsoleHandler) UpdateFee(c *gin.Context) {
 // GetFeatureFlags returns the list of feature flags and their enabled status.
 // GET /api/v1/admin/feature-flags
 func (h *AdminConsoleHandler) GetFeatureFlags(c *gin.Context) {
-	// TODO: Query feature_flags table or environment config
+	// TODO: stub — flags are hard-coded, not queried
 	flags := []gin.H{
 		{
 			"key":     "ENABLE_CRYPTO_TRADING",
@@ -578,7 +578,7 @@ func (h *AdminConsoleHandler) SetFeatureFlag(c *gin.Context) {
 		return
 	}
 
-	// TODO: Update feature_flags table; emit audit event; possibly reload config in-process
+	// TODO: stub — flag update not yet persisted (feature_flags + audit)
 	updated := gin.H{
 		"key":     key,
 		"label":   "Crypto trading",
@@ -590,7 +590,7 @@ func (h *AdminConsoleHandler) SetFeatureFlag(c *gin.Context) {
 // GetApprovals returns pending approvals requiring a checker.
 // GET /api/v1/admin/approvals
 func (h *AdminConsoleHandler) GetApprovals(c *gin.Context) {
-	// TODO: Query approvals table where status = 'pending'
+	// TODO: stub — approvals are hard-coded, not queried
 	approvals := []gin.H{
 		{
 			"id":          "app_001",
@@ -622,7 +622,7 @@ func (h *AdminConsoleHandler) GetApprovals(c *gin.Context) {
 func (h *AdminConsoleHandler) Approve(c *gin.Context) {
 	approvalID := c.Param("id")
 
-	// TODO: Update approval status to 'approved'; record checker; emit audit; execute the change
+	// TODO: stub — approval not yet persisted/executed (checker + audit)
 	updated := gin.H{
 		"id":          approvalID,
 		keyType:       strAssetUpdate,
@@ -649,7 +649,7 @@ func (h *AdminConsoleHandler) RejectApproval(c *gin.Context) {
 		return
 	}
 
-	// TODO: Update approval status to 'rejected'; record checker + reason; emit audit
+	// TODO: stub — rejection not yet persisted (checker + reason + audit)
 	updated := gin.H{
 		"id":          approvalID,
 		keyType:       strAssetUpdate,
@@ -693,7 +693,7 @@ func (h *AdminConsoleHandler) GetAudit(c *gin.Context) {
 // GetAdmins returns a list of all admin users and their roles.
 // GET /api/v1/admin/admins
 func (h *AdminConsoleHandler) GetAdmins(c *gin.Context) {
-	// TODO: Query admin users table (or users table where role != null) with RBAC role info
+	// TODO: stub — admin list is hard-coded, not queried with RBAC roles
 	admins := []gin.H{
 		{
 			"id":     "adm_001",

@@ -8,7 +8,6 @@ import { mapJob } from '../../route';
 const COLS = 'id, estate_id, vendor_id, repair_request_id, status, amount_kobo, created_at';
 const STATUSES = ['available', 'accepted', 'rejected', 'en_route', 'in_progress', 'completed', 'paid'];
 
-// POST /api/v1/estate/vendors/jobs/[id]/status
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;
   try {

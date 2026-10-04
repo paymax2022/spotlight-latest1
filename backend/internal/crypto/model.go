@@ -154,19 +154,15 @@ type AdminWithdrawal struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
-// AdminAddress is an allow-list entry enriched with a derived review verdict. The
-// crypto_addresses table has no dedicated review column yet, so review_status is
-// derived from (is_active, verified_at):
+// AdminAddress is an allow-list entry enriched with a derived review verdict —
+// crypto_addresses has no review column, so review_status is derived:
 //
-//	is_active=true                      → approved (usable as a withdrawal target)
-//	is_active=false AND verified_at NULL → pending  (awaiting compliance review)
-//	is_active=false AND verified_at set  → rejected (reviewed and blocked)
+//	is_active=true                       → approved (usable withdrawal target)
+//	is_active=false AND verified_at NULL → pending (awaiting compliance review)
+//	is_active=false AND verified_at set  → rejected
 //
-// TODO(crypto-admin): if the product needs a first-class address review workflow
-// (distinct "pending" vs "auto-active on add"), add a review_status column in an
-// additive migration and stop deriving. Today AddAddress activates on insert, so
-// most rows read as "approved"; the derivation keeps the console honest without
-// schema change.
+// TODO(crypto-admin): a first-class review workflow needs a review_status
+// column; AddAddress currently activates on insert so most rows read approved.
 type AdminAddress struct {
 	ID              string     `json:"id"`
 	UserID          string     `json:"user_id"`

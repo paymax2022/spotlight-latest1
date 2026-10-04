@@ -541,7 +541,6 @@ func (s *Service) Handover(ctx context.Context, actorID, sampleID, toCustodianID
 	target := sm.State
 	switch target {
 	case SampleCollected, SampleInCustody:
-		// ok
 	default:
 		return nil, fmt.Errorf("lab: sample not in a handover-able state, is %s", sm.State)
 	}

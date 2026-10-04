@@ -29,9 +29,7 @@ import (
 	"testing"
 )
 
-// ===========================================================================
 // 1. Event state machine — mirrors Service.transition / Suspend / Close guards.
-// ===========================================================================
 
 type mirrorEventState string
 
@@ -195,9 +193,7 @@ func TestEventStateMachine_NonOrganiserCannotGoLiveOrClose(t *testing.T) {
 	}
 }
 
-// ===========================================================================
 // 2. Ticket state machine — mirrors ScanTicket / GiftTicket guards.
-// ===========================================================================
 
 type mirrorTicketState string
 
@@ -325,9 +321,7 @@ func TestTicketStateMachine_IssuedToRefunded(t *testing.T) {
 	}
 }
 
-// ===========================================================================
 // 3. EventWallet lifecycle — mirrors OpenWallet/TopUp/TapCharge/CloseWallet.
-// ===========================================================================
 
 type mirrorWalletState string
 
@@ -562,10 +556,8 @@ func TestWalletLifecycle_ChargeRejectsInsufficientFloat(t *testing.T) {
 	}
 }
 
-// ===========================================================================
 // 4. Idempotency — Purchase / TopUp / TapCharge / VendorCharge (SettleVendor)
 //    must not double-issue / double-debit / double-charge on retried requests.
-// ===========================================================================
 
 // mirrorTicketInventory replicates Service.Purchase's reserve-then-issue path,
 // including the compensating rollback on a failed debit.
@@ -758,9 +750,7 @@ func TestVendorChargeIdempotency_SettleReplayNoDoublePayout(t *testing.T) {
 	}
 }
 
-// ===========================================================================
 // 5. Object-level authorization.
-// ===========================================================================
 
 func TestAuthZ_WalletOwnershipEnforcedOnGetAndClose(t *testing.T) {
 	// Mirrors Service.GetWallet: w.OwnerID != ownerID -> ErrForbidden.
@@ -831,9 +821,7 @@ func TestAuthZ_AddTierAddPromoAddVendorRequireOrganiserOwnership(t *testing.T) {
 	}
 }
 
-// ===========================================================================
 // 6. Money correctness — integer kobo, vendor settlement fee_bps math.
-// ===========================================================================
 
 func TestMoney_SettlementFeeMathIsExactIntegerKobo(t *testing.T) {
 	cases := []struct {

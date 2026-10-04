@@ -123,19 +123,16 @@ async function processSlot(
 
     let processed = sharp(rawBuffer).resize(slotWidth, slotHeight, { fit });
 
-    // Apply rotation if needed
     if (slot.rotation !== 0) {
       processed = processed.rotate(slot.rotation, { background: { r: 0, g: 0, b: 0, alpha: 0 } });
     }
 
-    // Convert to PNG for transparency support
     // Annotated as the general Buffer: sharp 0.35's toBuffer() returns the
     // narrower Buffer<ArrayBuffer>, but applyBorderRadius below returns a plain
     // Buffer (Buffer<ArrayBufferLike>), which will not assign into the narrowed
     // inferred type.
     let processedBuffer: Buffer = await processed.png().toBuffer();
 
-    // Apply border radius (circular frames etc.)
     if (slot.border_radius > 0) {
       processedBuffer = await applyBorderRadius(
         processedBuffer,
@@ -145,7 +142,6 @@ async function processSlot(
       );
     }
 
-    // Apply opacity via raw pixel manipulation if < 1
     if (slot.opacity < 1) {
       const opacityValue = Math.round(slot.opacity * 255);
       const meta = await sharp(processedBuffer).metadata();

@@ -108,14 +108,10 @@ func (s *Service) WithReferralEmitter(e ReferralEmitter) *Service {
 }
 
 // billMarginKobo is the platform margin (kobo) attributed to a settled bill for
-// referral-reward purposes.
-// CALIBRATION POINT (PRD §7.1 margin source): Maplerad bills in v1 post NO ledger
-// hold and the domain computes NO explicit bill fee/commission/markup — the only
-// fee schedule the module exposes is TransferFee (the banded money-movement fee).
-// We reuse it here as the CLOSEST-AVAILABLE margin proxy so the referral share is
-// non-zero and deterministic. This is a known over-/under-estimate: when a real
-// per-bill margin (biller commission minus provider cost) is wired, replace this
-// single function. Flagged for ledger-auditor.
+// referral-reward purposes. Maplerad bills in v1 post no ledger hold and carry
+// no explicit margin, so the banded TransferFee is reused as the closest proxy
+// (PRD §7.1). Replace with a true per-bill margin when one exists.
+// Flagged for ledger-auditor.
 func billMarginKobo(amountKobo int64) int64 {
 	return TransferFee(amountKobo)
 }
@@ -150,17 +146,14 @@ func (s *Service) EnsureCustomer(ctx context.Context, userID string) (*CustomerR
 	if s.identity == nil {
 		return nil, ErrProviderUnavailable
 	}
-	// Fast path: already mapped.
 	if existing, err := s.repo.GetCustomer(ctx, userID); err != nil {
 		return nil, err
 	} else if existing != nil {
 		return existing, nil
 	}
-	// Gate BEFORE the adapter call.
 	if err := s.requireTier(ctx, userID, RequiredTransferTier); err != nil {
 		return nil, err
 	}
-	// Read the KYC-bearing identity from the store (BVN/NIN never logged).
 	kr, err := s.loadKYC(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -251,14 +244,12 @@ func (s *Service) InitiateTransfer(ctx context.Context, userID string, req Trans
 	fee := TransferFee(req.AmountKobo)
 	total := req.AmountKobo + fee
 
-	// KYC-tier + daily-limit gate (fail-closed) BEFORE any adapter call.
 	if err := s.requireTier(ctx, userID, RequiredTransferTier); err != nil {
 		return nil, err
 	}
 	if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, total); err != nil {
 		return nil, err
 	}
-	// Derived balance must cover amount + fee.
 	bal, err := s.ledger.GetBalance(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("maplerad: read balance: %w", err)
@@ -267,8 +258,6 @@ func (s *Service) InitiateTransfer(ctx context.Context, userID string, req Trans
 		return nil, ledger.ErrInsufficientFunds
 	}
 
-	// Persist the ref at INITIATED BEFORE the call. Idempotent on the UNIQUE ref:
-	// a duplicate returns the stored row and we short-circuit.
 	row := RefRow{
 		Ref:        req.Ref,
 		OpType:     "transfer",
@@ -292,7 +281,6 @@ func (s *Service) InitiateTransfer(ctx context.Context, userID string, req Trans
 		return s.toTransferRecord(stored, fee), nil
 	}
 
-	// Resolve + register counterparty, then initiate the payout.
 	recipientCode := req.AccountNumber
 	if _, rerr := s.disbursement.ResolveAccount(ctx, req.BankCode, req.AccountNumber); rerr != nil {
 		s.failTransfer(ctx, req.Ref, "account resolution failed")
@@ -324,8 +312,6 @@ func (s *Service) InitiateTransfer(ctx context.Context, userID string, req Trans
 		providerRef = payout.Reference
 	}
 
-	// Advance INITIATED→PENDING through the guard; this posts the hold to the
-	// ledger (DR user_wallet → CR suspense) keyed by ref.
 	if err := s.applyTransition(ctx, req.Ref, StatusPending, providerRef); err != nil {
 		return nil, err
 	}
@@ -425,10 +411,8 @@ func (s *Service) applyTransition(ctx context.Context, ref string, target OpStat
 			return err
 		}
 	case EffectNone:
-		// nothing to post
 	}
 
-	// Persist the new state after the ledger effect succeeded.
 	if err := s.repo.SetStatus(ctx, ref, target, providerRef, ""); err != nil {
 		return err
 	}
@@ -462,7 +446,6 @@ func (s *Service) applyLegs(ctx context.Context, userID, ref string, legs []Plan
 				return fmt.Errorf("maplerad: post journal leg %s: %w", leg.IdempotencyKey, err)
 			}
 		case LegReversalPair:
-			// RestoreAccount is credited back (+balance); ReleaseAccount drained.
 			restoreID, err := s.resolveAccount(ctx, userID, leg.RestoreAccount, leg.RestoreIsUserWallet)
 			if err != nil {
 				return err
@@ -727,19 +710,12 @@ func (s *Service) resolveBill(ctx context.Context, ev *provider.WebhookEvent) er
 	}
 	s.audit(ctx, "maplerad.bill.resolved", row.UserID, ref, row.AmountKobo)
 
-	// The bill's terminal state is now committed. Only a SUCCESSFUL settlement is a
-	// revenue-bearing purchase; a FAILED bill posts no reward. We emit SYNCHRONOUSLY
-	// here (right after the settle commits) with MarginKobo from billMarginKobo (see
-	// the calibration note on that function). The engine is idempotent on the bill
-	// reference (TransactionID), so a redelivered webhook is safe; the error is
-	// swallowed so the referral engine can never fail bill reconciliation.
-	// LEDGER-AUDITOR NOTE: (1) MarginKobo is a PROXY (billMarginKobo → TransferFee),
-	// not a true per-bill platform margin — recalibrate when a real bill-margin field
-	// exists. (2) Maplerad bills v1 have NO reversal/refund state (a settled bill is
-	// terminal-once; there is no SUCCESS→REVERSED edge), so there is currently NO
-	// OnPurchaseRefunded call-site for bills — add one here if/when a bill refund path
-	// is introduced. (3) The PRD's "same-transaction reversal" ideal is APPROXIMATED
-	// by this synchronous idempotent post-commit call (reward is a separate posting).
+	// Only a SUCCESSFUL settlement is a revenue-bearing purchase. Emit
+	// synchronously post-commit (approximating the PRD's same-transaction
+	// reversal ideal); the engine is idempotent on TransactionID and errors are
+	// swallowed so rewards can never fail reconciliation. LEDGER-AUDITOR:
+	// MarginKobo is a TransferFee proxy, and bills v1 have no reversal state, so
+	// there is no OnPurchaseRefunded call-site — add one if refunds arrive.
 	if target == StatusSuccess && row.UserID != "" {
 		if s.referralEmitter != nil {
 			if emErr := s.referralEmitter.OnPurchaseSettled(ctx, referrals.PurchaseSettled{
@@ -829,11 +805,6 @@ func (s *Service) SweepOrphans(ctx context.Context, ttl time.Duration) error {
 func (s *Service) audit(_ context.Context, event, userID, ref string, amountKobo int64) {
 	log.Printf("audit maplerad event=%s user=%s ref=%s amount_kobo=%d", event, userID, ref, amountKobo)
 }
-
-// Background reconciliation jobs (ADR-012 reconciliation.md). Both follow the
-// goroutine+ticker pattern used by orchestration/monitor.go: they run on an
-// interval and stop when ctx is cancelled. All work is idempotent (drift is
-// quarantined, never auto-corrected; orphan transitions go through the guard).
 
 // StartReconcile runs daily full reconciliation of internal derived balances vs
 // Maplerad custody balances. Drift → quarantine + alert (never auto-correct).
@@ -1171,7 +1142,7 @@ func (h *Handler) InitiateTransfer(c *gin.Context) {
 	}
 	ref := body.Ref
 	if k := ginutil.IdempotencyKey(c); k != "" {
-		ref = k // header Idempotency-Key wins (it IS the ref).
+		ref = k
 	}
 	rec, err := h.svc.InitiateTransfer(c.Request.Context(), userID, TransferRequest{
 		BankCode:      body.BankCode,

@@ -14,7 +14,7 @@ function mapDoc(row: any, names: Record<string, string>) {
   };
 }
 
-// GET /api/v1/estate/documents — restricted docs only for estate admins.
+// Restricted docs only for estate admins.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -30,7 +30,7 @@ export async function GET(request: Request) {
   } catch (error) { return handleApiError(error, 'Failed to list documents'); }
 }
 
-// POST /api/v1/estate/documents — estate admin records a document.
+// Estate admin records a document.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

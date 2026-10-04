@@ -269,8 +269,6 @@ func vtpassRequestID(idempotencyKey string, date time.Time) string {
 	return lagosRequestPrefix(date) + suffix
 }
 
-// Auth
-
 // authHeaders builds VTpass's auth headers: api-key always; public-key for GET;
 // secret-key for POST. Matches the TS source's authHeaders(method, credentials).
 func (c *Client) authHeaders(method string) (http.Header, error) {
@@ -293,8 +291,6 @@ func (c *Client) authHeaders(method string) (http.Header, error) {
 	}
 	return h, nil
 }
-
-// Wire types
 
 // vtpassResponse mirrors the TS source's VtpassResponse interface. code is
 // decoded as json.RawMessage because VTpass sends it as either a quoted string
@@ -344,8 +340,6 @@ func codeString(raw json.RawMessage) string {
 	}
 	return strings.Trim(string(raw), `"`)
 }
-
-// Response normalization
 
 // normalizeProviderStatus maps a VTpass response onto provider.Bill's Status
 // enum, replicating the TS source's normalizeProviderStatus (which returns
@@ -586,8 +580,6 @@ func (c *Client) sandboxPurchase(req provider.BillRequest, requestID string) *pr
 	return &base
 }
 
-// provider.BillsProvider
-
 // PurchaseBill implements provider.BillsProvider. It calls VTpass's POST /pay
 // (or, in sandbox, simulates it locally per the meter table above) and returns
 // the full result including the vended token (ports.go's Bill.Token). Matches
@@ -644,8 +636,6 @@ func (c *Client) GetBill(ctx context.Context, ref string) (*provider.Bill, error
 	}
 	return normalizePurchase(payload, provider.BillRequest{}, ref, raw), nil
 }
-
-// HTTP
 
 func (c *Client) post(ctx context.Context, path string, body map[string]any) (vtpassResponse, []byte, error) {
 	return c.do(ctx, http.MethodPost, path, body)
@@ -709,27 +699,17 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 }
 
 // health.go implements the OPTIONAL provider.HealthChecker capability, ported
-// from frontend-web/src/server/utility/adapters/vtpass.ts's healthCheck():
-//	async healthCheck() {
-//	  try {
-//	    const payload = await vtpassFetch('balance', 'GET');
-//	    if (String(payload.code) === '1' && typeof payload.contents?.balance === 'number') {
-//	      return { status: 'healthy', message: `Balance: ${payload.contents.balance}` };
-//	    }
-//	    return { status: 'degraded', message: payload.response_description || 'Unable to confirm VTPass balance.' };
-//	  } catch (error) {
-//	    return { status: 'down', message: ... };
-//	  }
-//	}
-// Two details of that source are load-bearing and easy to get wrong:
+// from frontend-web/src/server/utility/adapters/vtpass.ts's healthCheck().
+// Three details of that source are load-bearing and easy to get wrong:
 //   - the success code here is "1", NOT the "000" that the purchase/requery
 //     endpoints use. VTpass's balance endpoint has its own code vocabulary.
 //   - the balance lives under `contents` (plural), not the `content` key every
 //     other VTpass endpoint uses — which is why this file decodes the raw body
 //     itself rather than reusing vtpassResponse.Content.
-// It also must be a number. A VTpass balance arriving as the STRING "1500.00"
-// is not a confirmed balance, and the TS source's `typeof === 'number'` guard
-// rejects it into 'degraded'; that guard is reproduced exactly.
+//   - it must be a JSON number. A VTpass balance arriving as the STRING
+//     "1500.00" is not a confirmed balance — the TS source's
+//     `typeof === 'number'` guard rejects it into 'degraded', and that guard
+//     is reproduced exactly.
 
 // compile-time proof the client satisfies the optional capability. Without this
 // a signature drift would only surface as a silent type-assertion miss at

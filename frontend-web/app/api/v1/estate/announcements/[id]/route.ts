@@ -6,7 +6,7 @@ import { getResidentContext, resolveNames } from '@/src/server/estate/resident';
 
 const COLS = 'id, estate_id, title, body, kind, created_by, created_at';
 
-// GET /api/v1/estate/announcements/{id} — returns the notice and marks it read.
+// Returns the notice and marks it read.
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireRequestUser(request);

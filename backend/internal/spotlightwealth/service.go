@@ -122,7 +122,6 @@ func (s *Service) JoinChallenge(ctx context.Context, userID, id string) (*Challe
 	if err != nil {
 		return nil, err
 	}
-	// Reject joining a challenge that has already ended.
 	if ends, perr := time.Parse(time.RFC3339, ch.EndsAt); perr == nil && time.Now().After(ends) {
 		return nil, ErrChallengeEnded
 	}

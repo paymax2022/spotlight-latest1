@@ -190,20 +190,15 @@ func RegisterConnectLiveGame(member *gin.RouterGroup, admin *gin.RouterGroup, po
 // kycVerify is the KYC verification gateway (nil unless FEATURE_KYC_VERIFY_ENABLED
 // — see registerFinanceRoutes), threaded through so SubmitTier1 can run a real
 // Dojah/Smile ID/Youverify check instead of writing an unverified pending status.
-// SubmitTier2/3 stay on the old no-check path (see kyc_connect_handler.go) —
-// their kycverify equivalents (liveness/facial/document checks) require real
-// camera/SDK image capture, which the mobile app does not have yet
-// (src/features/kycverify/components/CaptureStub.tsx is an explicit sandbox
-// stub) — wiring those checks up would submit fake bytes to a REAL provider.
+// SubmitTier2/3 stay on the old no-check path (see kyc_connect_handler.go):
+// their kycverify equivalents need real camera/SDK capture the app lacks —
+// wiring them today would submit fake bytes to a real provider.
 //
 // POST /wallet/fund is additionally gated on cfg.FeatureConnectWalletFundEnabled
 // (FEATURE_CONNECT_WALLET_FUND_ENABLED, default OFF) — E2E-SEC-052. The handler
-// credits the user wallet from provider_clearing, the standing account reserved
-// for verified Paystack webhooks, with no payment proof: any authenticated user
-// could mint money, transfer it out, and queue a payout. The documented funding
-// rail ("fund FROM the Paymax super-app wallet", see the mobile fund screen)
-// was never implemented — the mint shipped instead. The route stays unmounted
-// (404) until a verified funding source lands.
+// credits the user wallet from provider_clearing with no payment proof: any
+// authenticated user could mint money. The documented funding rail was never
+// implemented — the route stays unmounted (404) until a verified source lands.
 func registerConnectWalletRoutes(r *gin.Engine, cfg config.Config, _ any, _ services.RBACService, authMiddleware gin.HandlerFunc, db *pgxpool.Pool, auditSvc services.AuditService, kycVerify *kycverify.Service) {
 	walletStore := handlers.NewWalletStore(db)
 	giftingStore := handlers.NewGiftingStore(db)
@@ -374,13 +369,11 @@ func registerConnectNetworkRoutes(member, admin *gin.RouterGroup, cfg config.Con
 
 	revenue := &networkRevenueResolver{ledger: ledgerSvc}
 
-	// commission feature is on, build a nil-safe recorder so a paid job activation's
-	// realized profit lands in commission_earnings under Community/Job. Built WITHOUT a
-	// ledger (nil) on purpose: the paid-posting fee debit already books the full fee
-	// into paymax_revenue, so a second ledger post would double-count — RecordFor
-	// appends the earning ROW only. Flag off ⇒ the seam stays nil ⇒ silent no-op.
-	// Declared through the connectjobs.CommissionRecorder interface so the zero value
-	// is a true nil interface (avoids the typed-nil trap).
+	// Commission recording for a paid job activation's realized profit under
+	// Community/Job. Ledger-less recorder — the posting fee debit already books
+	// into paymax_revenue, so RecordFor appends the earning ROW only. Flag off ⇒
+	// nil-safe no-op. Declared via connectjobs.CommissionRecorder so the zero
+	// value is a true nil interface (avoids the typed-nil trap).
 	var jobsCommission connectjobs.CommissionRecorder
 	if cfg.FeatureCommissionEnabled {
 		jobsCommission = commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)}
@@ -830,13 +823,10 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, publi
 
 	voteSvc := connectvoting.NewService(
 		connectvoting.NewRepository(pool), walletSvc, revenue, audit, amlSvc)
-	// When the commission feature is on, inject a nil-safe recorder so realized
-	// paid-vote profit lands in commission_earnings for the profit report. The
-	// recorder is built WITHOUT a ledger (nil ledgerService) on purpose: the paid-vote
-	// debit already posts the money into paymax_revenue, so a second ledger post would
-	// double-count. RecordFor therefore appends the earning ROW only. Recording is
-	// best-effort and can never fail or reverse a vote (see recordCommissionSafe). Flag
-	// off ⇒ no recorder is set ⇒ the seam stays nil ⇒ silent no-op.
+	// Commission recording for realized paid-vote profit. Ledger-less recorder —
+	// the vote debit already posts into paymax_revenue, so RecordFor appends the
+	// earning ROW only; best-effort, never fails a vote (recordCommissionSafe).
+	// Flag off ⇒ nil-safe no-op.
 	if cfg.FeatureCommissionEnabled {
 		voteSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 		log.Println("[connect-money] commission recording wired → Contest/Voting (earning-row only; no ledger re-post)")

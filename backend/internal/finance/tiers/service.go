@@ -58,13 +58,10 @@ type Usage struct {
 	RemainingKobo  int64 // -1 when unlimited
 	WalletDisabled bool
 
-	// ── Checkout allowance (ADR-043) ─────────────────────────────────────────
-	// A Tier-0 account whose wallet is otherwise disabled may still spend a capped
-	// amount ON PURCHASES. These are reported SEPARATELY rather than folded into
-	// the fields above, because the two are not interchangeable: this allowance
-	// buys goods and services, and buys nothing else — transfers and withdrawals
-	// still see WalletDisabled and refuse. Collapsing them into one number would
-	// tell a customer they have money to send that they cannot send.
+	// Checkout allowance (ADR-043): a Tier-0 account may still spend a capped
+	// amount ON PURCHASES. Reported separately because it is not
+	// interchangeable with daily debit allowance — transfers and withdrawals
+	// still see WalletDisabled and refuse.
 	CheckoutEnabled       bool  // the allowance applies to this caller
 	CheckoutAllowanceKobo int64 // rolling-window cap
 	CheckoutRemainingKobo int64 // cap − spend in the window, floored at 0
@@ -103,10 +100,9 @@ func (s *Service) GetUsage(ctx context.Context, userID string) (Usage, error) {
 		}
 	}
 
-	// A Tier-0 caller with the allowance on can still buy things. Reported so a
-	// client pre-check agrees with EnforceCheckoutDebitLimit — without it the
-	// checkout sheet reads WalletDisabled and refuses to open a rail the server
-	// would have accepted, which is the funded-but-blocked trap in mirror image.
+	// Reported so a client pre-check agrees with EnforceCheckoutDebitLimit —
+	// otherwise the checkout sheet reads WalletDisabled and refuses a rail the
+	// server would have accepted.
 	if u.WalletDisabled && s.checkoutAllowance {
 		spent, err := s.debitedSince(ctx, userID, time.Now().UTC().Add(-checkoutWindow))
 		if err != nil {
@@ -149,28 +145,18 @@ func (s *Service) EnforceWalletDebitLimit(ctx context.Context, userID string, am
 }
 
 // ── Checkout spend allowance for unverified accounts (ADR-043) ───────────────
-// ADR-042 let a Tier-0 account fund its wallet by card for a purchase it is
-// completing right now, under a capped allowance. That only helps if the SPEND is
-// also permitted: the tier-gated modules call EnforceWalletDebitLimit, which
-// refuses Tier 0 outright, so a Tier-0 customer would have been charged, credited,
-// and then blocked at escrow — holding money they cannot spend and (Tier 0) cannot
-// withdraw. Strictly worse than the clean "complete KYC" refusal they got before.
-// EnforceCheckoutDebitLimit is the spend-side half. It is a SEPARATE method, not a
-// relaxation of EnforceWalletDebitLimit, so that the call sites which must keep the
-// strict gate cannot inherit the weaker one by accident, and so `grep` shows
-// exactly which money paths run relaxed. Deliberately NOT using it:
-//   - restaurant merchant withdrawals  — cash OUT
-//   - wallet-to-wallet + bank transfers — cash OUT
-//   - fractionalre subscribe / secondary — investment purchases, which warrant
-//     stricter KYC than consumer spending, not looser
-// The whole justification in ADR-042 is that a Tier-0 account cannot get value
-// back out. Relaxing any cash-out path would void it.
-
-// Checkout allowance for Tier 0. These MIRROR the top-up side in
-// frontend-web/src/server/wallet/topup-gate.ts (CHECKOUT_TOPUP_MAX_SINGLE_KOBO /
-// CHECKOUT_TOPUP_ALLOWANCE_KOBO). They are COMPLIANCE parameters — change them
-// together, or a customer can be funded for an amount they are then unable to
-// spend, which is the exact trap this file exists to close.
+// ADR-042 lets Tier 0 fund a wallet by card for a purchase in flight; without a
+// matching spend-side allowance that customer is charged, credited, then blocked
+// at escrow — holding money they cannot spend or (Tier 0) withdraw.
+// EnforceCheckoutDebitLimit is a SEPARATE method, not a relaxation of
+// EnforceWalletDebitLimit, so strict-gate call sites cannot inherit the weaker
+// rule by accident. Deliberately excluded: any cash-out path (merchant
+// withdrawals, wallet/bank transfers) and investment purchases (fractionalre)
+// — ADR-042's justification is that Tier 0 cannot get value back out.
+//
+// These constants MIRROR the top-up side in
+// frontend-web/src/server/wallet/topup-gate.ts — they are COMPLIANCE
+// parameters; change them together.
 const (
 	CheckoutMaxSingleKobo int64 = 1_000_000 // ₦10,000 per purchase
 	CheckoutAllowanceKobo int64 = 2_000_000 // ₦20,000 per rolling 24h
@@ -206,12 +192,11 @@ func (s *Service) EnforceCheckoutDebitLimit(ctx context.Context, userID string, 
 	if err != nil {
 		return fmt.Errorf("tiers: enforce checkout limit (fail closed): %w", err)
 	}
-	// Everything above Tier 0 keeps the ordinary daily limits. Routing it through
-	// the same method means this cannot drift from the strict gate.
+	// Tier 1+ delegates to the strict gate so the two can never drift.
 	if tier != Tier0 {
 		return s.EnforceWalletDebitLimit(ctx, userID, amountKobo)
 	}
-	// Cheap refusals first, so an obviously oversized request costs no history read.
+	// Cheap refusals first, so an oversized request costs no history read.
 	if err := checkoutDecision(s.checkoutAllowance, amountKobo, 0); err != nil {
 		return err
 	}
@@ -223,10 +208,9 @@ func (s *Service) EnforceCheckoutDebitLimit(ctx context.Context, userID string, 
 	return checkoutDecision(s.checkoutAllowance, amountKobo, used)
 }
 
-// checkoutDecision is the whole Tier-0 rule, with the two DB reads (tier, window
-// spend) already resolved by the caller. It is a real production function rather
-// than logic inlined above so tests exercise THIS code — a test that re-implements
-// the rule passes just as happily when the rule changes underneath it.
+// checkoutDecision is the whole Tier-0 rule with the DB reads resolved by the
+// caller — kept as a real function so tests exercise THIS code rather than a
+// re-implementation.
 func checkoutDecision(enabled bool, amountKobo, usedKobo int64) error {
 	if !enabled {
 		return ErrWalletDisabled
