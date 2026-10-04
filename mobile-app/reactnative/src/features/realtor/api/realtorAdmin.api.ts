@@ -1,7 +1,7 @@
 // Mock-flagged. The operations control plane lives in the admin web portal in
 // production; this is a lightweight mobile moderation queue for on-call admins.
 
-import { createSupabaseClient } from '@/lib/supabase';
+import { api } from '@/api/client';
 import { REALTOR_USE_MOCK } from './realtorEnv';
 import type { Kobo, VerificationLevel, PropertyType, TransactionMode } from '../types/realtor.types';
 
@@ -51,31 +51,28 @@ const queue: ModerationItem[] = [
   },
 ];
 
+// Live path goes through the Go admin control plane (/api/realtor/admin,
+// RBAC-gated + audited) via the BFF proxy — realtor_listings has no write
+// policy, so a direct PostgREST update is denied for every caller including
+// admins.
 export async function getModerationQueue(): Promise<ModerationItem[]> {
   if (USE_MOCK) { await delay(); return [...queue]; }
-  const supabase = createSupabaseClient();
-  const { data, error } = await supabase
-    .from('realtor_listings')
-    .select(`id, title, mode, verification, price_kobo, media, created_at,
-             unit:realtor_units!unit_id(property_type, property:realtor_properties!property_id(area, city)),
-             agent:user_profiles!agent_id(full_name)`)
-    .eq('status', 'pending_verification')
-    .order('created_at', { ascending: true });
-  if (error) throw error;
-  return (data ?? []).map((r: any) => ({
+  const { data } = await api.get('/api/realtor/admin/listings/pending');
+  const rows = (data?.data ?? data ?? []) as any[];
+  return rows.map((r: any) => ({
     id: r.id,
     title: r.title,
-    area: r.unit?.property?.area ?? '',
-    city: r.unit?.property?.city ?? '',
-    coverUrl: Array.isArray(r.media) ? (r.media[0] ?? '') : '',
+    area: r.area ?? '',
+    city: r.city ?? '',
+    coverUrl: r.coverUrl ?? '',
     mode: r.mode,
-    propertyType: r.unit?.property_type ?? 'apartment',
-    price: Number(r.price_kobo ?? 0),
+    propertyType: r.propertyType ?? 'apartment',
+    price: Number(r.priceKobo ?? 0),
     verification: r.verification,
-    ownerName: r.agent?.full_name ?? 'Owner',
-    ownerVerified: r.verification === 'verified',
-    riskFlags: r.verification === 'unverified' ? ['Owner not yet verified'] : [],
-    submittedAt: r.created_at,
+    ownerName: r.ownerName ?? 'Owner',
+    ownerVerified: r.ownerVerified === true,
+    riskFlags: Array.isArray(r.riskFlags) ? r.riskFlags : [],
+    submittedAt: r.submittedAt,
   }));
 }
 
@@ -86,11 +83,7 @@ export async function decideModeration(id: string, decision: ModerationDecision)
     if (idx >= 0) queue.splice(idx, 1);   // remove from queue once actioned
     return { id };
   }
-  const supabase = createSupabaseClient();
-  const status = decision === 'approve' ? 'published' : decision === 'reject' ? 'suspended' : 'draft';
-  const patch: Record<string, unknown> = { status, updated_at: new Date().toISOString() };
-  if (decision === 'approve') patch.verification = 'verified';
-  const { error } = await supabase.from('realtor_listings').update(patch).eq('id', id);
-  if (error) throw error;
-  return { id };
+  const goDecision = decision === 'approve' ? 'approved' : decision === 'reject' ? 'rejected' : 'changes_requested';
+  const { data } = await api.post(`/api/realtor/admin/listings/${id}/decision`, { decision: goDecision });
+  return { id: data?.id ?? id };
 }

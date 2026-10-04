@@ -68,7 +68,9 @@ type AdminListing struct {
 	Title         string   `json:"title"`
 	Area          string   `json:"area"`
 	City          string   `json:"city"`
+	CoverURL      string   `json:"coverUrl"`
 	Mode          string   `json:"mode"`
+	PropertyType  string   `json:"propertyType"`
 	PriceKobo     int64    `json:"priceKobo"`
 	Verification  string   `json:"verification"`
 	OwnerName     string   `json:"ownerName"`
@@ -80,7 +82,8 @@ type AdminListing struct {
 // PendingListings returns listings awaiting moderation (status pending_verification).
 func (r *Repository) PendingListings(ctx context.Context, limit, offset int) ([]AdminListing, error) {
 	const q = `
-		SELECT l.id, l.title, COALESCE(p.area,''), COALESCE(p.city,''), l.mode, l.price_kobo,
+		SELECT l.id, l.title, COALESCE(p.area,''), COALESCE(p.city,''),
+		       COALESCE(l.media->>0,''), l.mode, COALESCE(u.property_type,''), l.price_kobo,
 		       l.verification, COALESCE(pf.name,''),
 		       (l.verification IN ('document_backed','inspected','verified')) AS owner_verified,
 		       l.created_at
@@ -100,7 +103,8 @@ func (r *Repository) PendingListings(ctx context.Context, limit, offset int) ([]
 	for rows.Next() {
 		var a AdminListing
 		var submitted time.Time
-		if err := rows.Scan(&a.ID, &a.Title, &a.Area, &a.City, &a.Mode, &a.PriceKobo,
+		if err := rows.Scan(&a.ID, &a.Title, &a.Area, &a.City, &a.CoverURL, &a.Mode,
+			&a.PropertyType, &a.PriceKobo,
 			&a.Verification, &a.OwnerName, &a.OwnerVerified, &submitted); err != nil {
 			return nil, err
 		}
