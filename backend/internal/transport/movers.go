@@ -202,7 +202,6 @@ func (s *Service) AcceptMoverBid(ctx context.Context, jobID, userID, bidID, idem
 	if m.EscrowStatus != "none" {
 		return nil, codedErr(http.StatusConflict, CodeInvalidState, "job already funded")
 	}
-	// Load the chosen bid and its provider.
 	var providerID string
 	var amount int64
 	var bidStatus string

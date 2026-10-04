@@ -2,6 +2,7 @@ package adminext
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -11,17 +12,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/timeutil"
+	"spotlight/backend/internal/crowdfunding"
 	financekyc "spotlight/backend/internal/finance/kyc"
 	financeledger "spotlight/backend/internal/finance/ledger"
+	financesettlement "spotlight/backend/internal/finance/settlement"
 )
 
 // Service is the crowdfunding admin domain service. It reads/writes the cf_*
 // admin tables via a pgx pool (the money-path access pattern). It is transactional
 // for every guarded transition and writes an audit row on each decision.
 type Service struct {
-	db     *pgxpool.Pool
-	ledger *financeledger.Service // optional; required only for the withdrawal payout money-path
-	kyc    *financekyc.Service    // optional; required only for the KYC queue (reuses the platform's shared KYC, not a bespoke crowdfunding dataset)
+	db         *pgxpool.Pool
+	ledger     *financeledger.Service     // optional; required only for the withdrawal/refund money-paths
+	kyc        *financekyc.Service        // optional; required only for the KYC queue (reuses the platform's shared KYC, not a bespoke crowdfunding dataset)
+	settlement *financesettlement.Service // optional; required only for the refund-approval money-path (escrow refunds)
 }
 
 // NewService constructs the admin service. The finance ledger is optional here;
@@ -29,9 +33,17 @@ type Service struct {
 func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
 
 // WithLedger injects the finance ledger used by the withdrawal payout money-path
-// (ApproveWithdrawal). Non-breaking: existing NewService(db) callers keep a nil
-// ledger and the money-path fails closed until one is wired.
+// (ApproveWithdrawal) and the refund clawback leg (DecideRefund approve).
+// Non-breaking: existing NewService(db) callers keep a nil ledger and the
+// money-path fails closed until one is wired.
 func (s *Service) WithLedger(l *financeledger.Service) *Service { s.ledger = l; return s }
+
+// WithSettlement injects the settlement escrow rail used by DecideRefund's
+// approve path. The refund money-path fails closed without it.
+func (s *Service) WithSettlement(st *financesettlement.Service) *Service {
+	s.settlement = st
+	return s
+}
 
 // WithKYC injects the platform's shared KYC service. Crowdfunding creators go
 // through the same tiered identity verification as every other vertical
@@ -101,25 +113,23 @@ func (s *Service) GetFinanceSummary(ctx context.Context) (*FinanceSummary, error
 		return nil, fmt.Errorf("finance summary: gmv/escrow: %w", err)
 	}
 
-	// Platform revenue: what was actually booked, not a percentage of GMV.
-	// This was `out.GmvKobo / 40` — an assumed 2.5%. The only authority for the
-	// crowdfunding split is crowdfunding.PlatformFeePct = 0.10, and the money path
-	// posts that 10% through settlement.Split and records the realized profit into
-	// commission_earnings. So the card understated booked revenue fourfold, and
-	// being a constant divided into GMV it would have kept doing so through any
-	// fee change. Reading the registry means the number is measured, and it is the
-	// same figure the central commission reporting shows.
-	// A module with no earnings rows now reads ₦0 rather than a plausible-looking
-	// fraction of GMV. That is the point: unbooked revenue is a real condition,
-	// and ReconciliationMismatches below names it instead of papering over it.
+	// Platform revenue: what was actually booked (commission_earnings), not a
+	// percentage of GMV — the split authority is crowdfunding.PlatformFeePct.
 	if err := s.db.QueryRow(ctx, SQLPlatformRevenue).Scan(&out.PlatformRevenueKobo); err != nil {
 		return nil, fmt.Errorf("finance summary: platform revenue: %w", err)
 	}
 
-	// Refunds pending (REQUESTED) from the admin refunds table.
+	// Refunds pending = live member requests (cf_refund_requests joined to
+	// their contribution for the amount) + legacy cf_refunds rows.
 	if err := s.db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount_kobo),0), COUNT(*)
-		FROM cf_refunds WHERE status='REQUESTED'`).Scan(&out.RefundsPendingKobo, &out.RefundsPendingCount); err != nil {
+		SELECT COALESCE(SUM(amount_kobo),0), COUNT(*) FROM (
+			SELECT co.amount_kobo
+			  FROM cf_refund_requests r
+			  JOIN contributions co ON co.id = r.contribution_id
+			 WHERE r.status = 'REFUND_REQUESTED'
+			UNION ALL
+			SELECT amount_kobo FROM cf_refunds WHERE status='REQUESTED'
+		) pending`).Scan(&out.RefundsPendingKobo, &out.RefundsPendingCount); err != nil {
 		return nil, fmt.Errorf("finance summary: refunds pending: %w", err)
 	}
 
@@ -132,34 +142,29 @@ func (s *Service) GetFinanceSummary(ctx context.Context) (*FinanceSummary, error
 	}
 
 	// Chargebacks: derived from rejected refunds that were already processed
-	// (indicative). Kept simple + deterministic.
+	// (indicative) — live rejections + legacy rows. Kept simple + deterministic.
 	if err := s.db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount_kobo),0), COUNT(*)
-		FROM cf_refunds WHERE status='REJECTED'`).Scan(&out.ChargebacksKobo, &out.ChargebacksCount); err != nil {
+		SELECT COALESCE(SUM(amount_kobo),0), COUNT(*) FROM (
+			SELECT co.amount_kobo
+			  FROM cf_refund_requests r
+			  JOIN contributions co ON co.id = r.contribution_id
+			 WHERE r.status = 'REJECTED'
+			UNION ALL
+			SELECT amount_kobo FROM cf_refunds WHERE status='REJECTED'
+		) rejected`).Scan(&out.ChargebacksKobo, &out.ChargebacksCount); err != nil {
 		return nil, fmt.Errorf("finance summary: chargebacks: %w", err)
 	}
 
 	// Reconciliation: released contributions whose revenue was never booked.
-	// This field was the literal 0. The card reads as the result of a check, so it
-	// told every operator the books balanced without ever looking.
-	// The condition it now checks is a real, known failure mode rather than a
-	// hypothetical one. Contribute() settles the 90/10 split and then calls
-	// recordCommissionSafe, which is best-effort by design: a registry failure is
-	// logged and swallowed so it can never fail or reverse a release (see
-	// crowdfunding/service.go). That is the right call for the money path and it
-	// leaves exactly this residue — the contributor was charged, the creator was
-	// paid, and Spotlight's cut exists in the ledger with no earnings row naming
-	// it. Nothing else in the system notices.
-	// Gross rather than the missing fee: computing the unbooked fee would mean
-	// assuming a rate, which is the habit this change is removing.
+	// Contribute()'s recordCommissionSafe is best-effort by design, so a
+	// registry failure leaves a paid release with no earnings row — count the
+	// gross behind those gaps rather than assuming a fee rate.
 	if err := s.db.QueryRow(ctx, SQLReconciliationGaps).Scan(&out.ReconciliationMismatches, &out.UnbookedGrossKobo); err != nil {
 		return nil, fmt.Errorf("finance summary: reconciliation: %w", err)
 	}
 
-	// How much of the refund queue and settlement table is seed data. Both tables
-	// have exactly one writer in the repository — the 20260622050000 seed block —
-	// so today this is all of it; the console says so rather than presenting
-	// fixtures beside live GMV in identical styling.
+	// How much of the refund queue and settlement table is seed data (the
+	// 20260622050000 seed block is their only writer).
 	if err := s.db.QueryRow(ctx, SQLDemoRowCounts).Scan(&out.DemoRefundRows, &out.DemoSettlementRows); err != nil {
 		return nil, fmt.Errorf("finance summary: demo row counts: %w", err)
 	}
@@ -167,17 +172,60 @@ func (s *Service) GetFinanceSummary(ctx context.Context) (*FinanceSummary, error
 	return out, nil
 }
 
-// ListRefunds returns refund requests, optionally filtered by status.
-func (s *Service) ListRefunds(ctx context.Context, status string) ([]RefundRequest, error) {
-	q := `SELECT id, reference, campaign_title, contributor_name, amount_kobo, reason, status, requested_at, refund_eligible, is_demo
-	      FROM cf_refunds`
-	args := []any{}
-	if status != "" {
-		q += ` WHERE status=$1`
-		args = append(args, status)
+// mapAdminRefundStatus translates the admin console's status vocabulary to the
+// live table's: cf_refund_requests uses REFUND_REQUESTED/REFUNDED where the
+// console's CfRefundStatus union says REQUESTED/PROCESSED.
+func mapAdminRefundStatus(status string) string {
+	switch status {
+	case "REQUESTED":
+		return "REFUND_REQUESTED"
+	case "PROCESSED":
+		return "REFUNDED"
 	}
-	q += ` ORDER BY requested_at DESC`
-	rows, err := s.db.Query(ctx, q, args...)
+	return status
+}
+
+// ListRefunds returns refund requests, optionally filtered by status.
+// The queue reads the UNION of the live table and the legacy one:
+//   - cf_refund_requests — what the member refund-request endpoint writes.
+//   - cf_refunds — legacy seed-only table, surfaced marked is_demo; DecideRefund
+//     still services them (status flip only — a demo row names no contribution).
+//
+// Live rows project into the RefundRequest shape with a deterministic
+// SPL-RF- reference and statuses mapped to the CfRefundStatus vocabulary.
+func (s *Service) ListRefunds(ctx context.Context, status string) ([]RefundRequest, error) {
+	liveStatus := mapAdminRefundStatus(status)
+	q := `
+		SELECT id, reference, campaign_title, contributor_name, amount_kobo, reason,
+		       status, requested_at, refund_eligible, is_demo
+		  FROM (
+		    SELECT r.id,
+		           'SPL-RF-' || UPPER(LEFT(REPLACE(r.id::text,'-',''),12)) AS reference,
+		           COALESCE(c.title,'') AS campaign_title,
+		           COALESCE(NULLIF(btrim(u.first_name || ' ' || u.last_name),''), u.email, 'Contributor') AS contributor_name,
+		           co.amount_kobo,
+		           r.reason,
+		           CASE r.status
+		             WHEN 'REFUND_REQUESTED' THEN 'REQUESTED'
+		             WHEN 'REFUNDED'         THEN 'PROCESSED'
+		             ELSE r.status
+		           END AS status,
+		           r.created_at AS requested_at,
+		           (co.status <> 'refunded') AS refund_eligible,
+		           FALSE AS is_demo
+		      FROM cf_refund_requests r
+		      JOIN contributions co ON co.id = r.contribution_id
+		      LEFT JOIN campaigns c ON c.id = co.campaign_id
+		      LEFT JOIN public.platform_users u ON u.id = r.requester_id
+		     WHERE ($1 = '' OR r.status = $2)
+		    UNION ALL
+		    SELECT id, reference, campaign_title, contributor_name, amount_kobo, reason,
+		           status, requested_at, refund_eligible, is_demo
+		      FROM cf_refunds
+		     WHERE ($1 = '' OR status = $1)
+		  ) q
+		 ORDER BY requested_at DESC`
+	rows, err := s.db.Query(ctx, q, status, liveStatus)
 	if err != nil {
 		return nil, err
 	}
@@ -196,12 +244,85 @@ func (s *Service) ListRefunds(ctx context.Context, status string) ([]RefundReque
 	return out, rows.Err()
 }
 
-// DecideRefund applies a guarded REQUESTED→APPROVED/REJECTED transition.
-// A note is REQUIRED to reject. Writes an audit row.
+// DecideRefund applies a guarded refund decision. Live cf_refund_requests rows
+// run the real money-path via crowdfunding.RefundContribution (escrow refund or
+// settled-split clawback) before flipping to REFUNDED; legacy cf_refunds rows
+// get the status flip only (no contribution to move money against).
+// A note is REQUIRED to reject. Writes an audit row on every decision.
 func (s *Service) DecideRefund(ctx context.Context, id, adminID string, approve bool, note string) error {
 	if !approve && strings.TrimSpace(note) == "" {
 		return fmt.Errorf("adminext: a note is required to reject a refund")
 	}
+	var live bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM cf_refund_requests WHERE id=$1)`, id).Scan(&live); err != nil {
+		return err
+	}
+	if live {
+		return s.decideLiveRefund(ctx, id, adminID, approve, note)
+	}
+	return s.decideLegacyRefund(ctx, id, adminID, approve, note)
+}
+
+// decideLiveRefund decides a member-filed cf_refund_requests row. APPROVE posts
+// the balanced reversal through the shared executor; a posting failure
+// propagates and the request stays REFUND_REQUESTED — never "approved but
+// unpaid". The row lock serialises concurrent decisions; the executor is a
+// no-op once the contribution is refunded.
+func (s *Service) decideLiveRefund(ctx context.Context, id, adminID string, approve bool, note string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var current, contributionID string
+	if err := tx.QueryRow(ctx,
+		`SELECT status, contribution_id::text FROM cf_refund_requests WHERE id=$1 FOR UPDATE`, id,
+	).Scan(&current, &contributionID); err != nil {
+		return errors.New("adminext: refund not found")
+	}
+	if current != "REFUND_REQUESTED" {
+		return fmt.Errorf("adminext: cannot decide a refund in %s state", current)
+	}
+
+	if !approve {
+		if _, err := tx.Exec(ctx, `UPDATE cf_refund_requests SET status='REJECTED' WHERE id=$1`, id); err != nil {
+			return err
+		}
+		if err := s.audit(ctx, tx, adminID, "refund.reject", contributionID+" "+note); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+
+	// Fail closed: approve must never produce "approved, money went nowhere".
+	if s.settlement == nil || s.ledger == nil {
+		return ErrLedgerUnavailable
+	}
+	outcome, err := crowdfunding.RefundContribution(ctx, s.db, s.ledger, s.settlement, contributionID, "admin_refund:"+id)
+	if err != nil {
+		return fmt.Errorf("adminext: execute refund: %w", err)
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE cf_refund_requests SET status='REFUNDED' WHERE id=$1 AND status='REFUND_REQUESTED'`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("adminext: cannot decide a refund in %s state", current)
+	}
+	if err := s.audit(ctx, tx, adminID, "refund.approve.payout",
+		fmt.Sprintf("%s via %s %d kobo %s", contributionID, outcome.Via, outcome.RefundedKobo, note)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// decideLegacyRefund keeps the guarded REQUESTED→APPROVED/REJECTED transition
+// for cf_refunds (seed-only table). No money moves — a legacy row carries no
+// contribution link to reverse.
+func (s *Service) decideLegacyRefund(ctx context.Context, id, adminID string, approve bool, note string) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err

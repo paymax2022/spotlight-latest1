@@ -550,9 +550,36 @@ func (s *authService) ChangePassword(accessToken, currentPassword, newPassword s
 	return nil
 }
 
+// allowedProfileTypes mirrors frontend-web's SpotlightProfileType union (plus
+// "general", a legacy value still present on rows). E2E-SEC-060: an unchecked
+// write let arbitrary strings — including "<script>alert(1)</script>" — land
+// in profile_type where admin UIs may render them.
+var allowedProfileTypes = map[string]bool{
+	"artist": true, "student": true, "school_representative": true,
+	"sme_founder": true, "football_talent": true, "actor": true,
+	"content_creator": true, "parent_guardian": true,
+	"general_applicant": true, "general": true,
+}
+
+// profileMetadataAdminKeys are keys whose values only an admin path may set —
+// a caller self-asserting them is a privilege claim (E2E-SEC-060 flagged
+// program_id, which admin surfaces read back).
+var profileMetadataAdminKeys = map[string]bool{
+	"program_id": true, "role": true, "status": true,
+	"is_admin": true, "permissions": true, "verified": true,
+}
+
 func (s *authService) CompleteProfile(userID string, profileType string, metadata map[string]any) error {
 	if strings.TrimSpace(userID) == "" || strings.TrimSpace(profileType) == "" {
 		return fmt.Errorf("user and profile type are required")
+	}
+	if !allowedProfileTypes[profileType] {
+		return errors.New("invalid profile type")
+	}
+	for k := range metadata {
+		if profileMetadataAdminKeys[k] {
+			delete(metadata, k)
+		}
 	}
 	payload := map[string]any{
 		"user_id":          userID,

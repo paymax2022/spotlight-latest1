@@ -78,6 +78,9 @@ func writeErr(c *gin.Context, err error) {
 	case errors.Is(err, ErrNotEligibleForReversal),
 		errors.Is(err, ErrNotDisputable):
 		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+	case errors.Is(err, ErrCategoryExists):
+		// 409 + stable code for a duplicate category setting (PK collision).
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), keyCode: "category_exists"})
 	case errors.Is(err, ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrCategoryDailyLimit):

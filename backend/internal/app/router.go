@@ -68,6 +68,23 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	r.Use(middleware.CORSMiddleware(cfg.CORSAllowOrigins, cfg.AppEnv))
 
 	health := handlers.NewHealthHandler()
+	// Shared Redis client for idempotency fast-paths (arena ledger, etc.). nil when
+	// REDIS_URL is unset or the connection fails — callers fall back to DB-unique
+	// constraints, so Redis is a latency optimization, never a correctness
+	// dependency. Declared this early because the auth limiters (E2E-BE-032)
+	// capture it by closure before their routes mount.
+	var sharedRedis *goredis.Client
+	if cfg.RedisURL != "" {
+		if rc, err := platformRedis.New(cfg.RedisURL); err != nil {
+			log.Printf("[router] WARN: could not connect to Redis: %v — idempotency uses DB-unique fallback", err)
+		} else {
+			sharedRedis = rc
+		}
+	}
+	// E2E-BE-032: stem route limiters share their budgets across replicas when
+	// Redis is up; resolved per request so a Redis outage degrades to the
+	// bounded in-memory store rather than disabling the protection.
+	middleware.BindStemRateRedis(func() *platformRedis.Client { return sharedRedis })
 	supabase := integrations.NewSupabaseRestClient(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey)
 	configureLocalJWTVerify(cfg, supabase)
 	adminRepo := repositories.NewAdminSupabaseRepository(supabase)
@@ -132,8 +149,10 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 		// tighter, hourly budget because each attempt spends from the project's
 		// small verification-email quota, so flooding it is a denial of service
 		// against everyone else's sign-up.
-		loginLimiter := middleware.NewAuthRateLimiter(cfg.AuthRateLimitPerMin, time.Minute)
-		resetLimiter := middleware.NewAuthRateLimiter(cfg.AuthResetRateLimitPerHour, time.Hour)
+		loginLimiter := middleware.NewAuthRateLimiter(cfg.AuthRateLimitPerMin, time.Minute).
+			WithRedis(func() *platformRedis.Client { return sharedRedis }, "login")
+		resetLimiter := middleware.NewAuthRateLimiter(cfg.AuthResetRateLimitPerHour, time.Hour).
+			WithRedis(func() *platformRedis.Client { return sharedRedis }, "reset")
 
 		apiAuth.POST("/register", loginLimiter.Middleware(), authHandler.Register)
 		apiAuth.POST("/login", loginLimiter.Middleware(), authHandler.Login)
@@ -416,18 +435,14 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 		webhooks.GET("/health", health.GenericHealth)
 	}
 
-	// Single shared pgx pool for all DB-backed module aggregators. Created once
-	// here (was previously opened twice — finance + connect each called
-	// platformDB.New). nil when DATABASE_URL is unset or the connection fails;
-	// each aggregator skips its routes on a nil pool.
+	// Single shared pgx pool for all DB-backed module aggregators. nil when
+	// DATABASE_URL is unset or the connection fails; each aggregator skips its
+	// routes on a nil pool.
 	// Outside development a nil pool is FATAL, not a warning. A degraded boot
 	// still binds :8080 and answers /api/v1/public/health with 200, so Railway
 	// marks the deployment SUCCESS, replaces the previous (working) one, and
 	// every DB-backed route — all of /api/finance/*, wallet, KYC, restaurant,
-	// association, health — 404s for as long as that deployment lives. That is
-	// exactly what happened on staging on 2026-09-28: an auto-deployed build
-	// ran 13 hours with no finance routes behind a green health check, and the
-	// only symptom was "Couldn't load …" on every module in the app. Refusing
+	// association, health — 404s for as long as that deployment lives. Refusing
 	// to start turns that into a FAILED deployment that Railway keeps rolled
 	// back (restartPolicyType ON_FAILURE), which is the outcome we want. Same
 	// doctrine as the ASSOC_CARD_SIGNING_SECRET guard in finance_routes.go:
@@ -471,17 +486,6 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 		}
 	}
 
-	// Shared Redis client for idempotency fast-paths (arena ledger, etc.). nil when
-	// REDIS_URL is unset or the connection fails — callers fall back to DB-unique
-	// constraints, so Redis is a latency optimization, never a correctness dependency.
-	var sharedRedis *goredis.Client
-	if cfg.RedisURL != "" {
-		if rc, err := platformRedis.New(cfg.RedisURL); err != nil {
-			log.Printf("[router] WARN: could not connect to Redis: %v — idempotency uses DB-unique fallback", err)
-		} else {
-			sharedRedis = rc
-		}
-	}
 	// E2E-FR-050: /readyz reports a per-component verdict for Redis too.
 	// Required only when REDIS_REQUIRED=true — Redis is a latency optimization
 	// with DB-unique fallbacks, so by default a Redis outage marks the component
@@ -489,11 +493,9 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	health.WithRedis(sharedRedis, cfg.RedisRequired)
 
 	// Shared SSE hub (one instance, one /api/v1/realtime/stream route regardless
-	// of which module publishes) — was previously built locally inside
-	// RegisterMarketplace, which meant marketplace was the only module that
-	// could ever reach the mobile client's one SSE connection. Built here so
-	// events (and any future module) can share it. Nil-Redis-safe (falls back
-	// to in-process fan-out); see platform/realtime.Hub's own doc comment.
+	// of which module publishes) — the mobile client holds one SSE connection,
+	// so every publishing module must reach the same hub. Nil-Redis-safe (falls
+	// back to in-process fan-out); see platform/realtime.Hub's own doc comment.
 	rtHub := realtime.NewHub(sharedRedis)
 
 	// Server-issued email OTP (Brevo). Always registered so the surface answers
@@ -643,7 +645,7 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 
 	// Paymax Marketplace (Jiji-style classifieds + escrow checkout). Feature-flagged,
 	// default off. Reuses the finance double-entry ledger for escrow; app-wiring
-	// injects Agent B's *search.Client via svc.SetSearcher when search is available.
+	// injects the *search.Client via svc.SetSearcher when search is available.
 	if cfg.FeatureMarketplaceEnabled {
 		RegisterMarketplace(r, cfg, supabase, rbacService, sharedPool, sharedRedis, rtHub, referralRewardsSvc)
 	}

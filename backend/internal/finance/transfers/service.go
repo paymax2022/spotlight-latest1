@@ -102,10 +102,9 @@ func NewService(db *pgxpool.Pool, ledgerSvc *ledger.Service, tiersSvc *tiers.Ser
 // ResolvePaymaxUser returns masked identity for a phone number (wallet-to-wallet recipient lookup).
 // Returns ErrRecipientNotFound (→404) when no Paymax user matches the phone, and
 // ErrAmbiguousRecipient (→409) when more than one account carries the number.
-// Matches on the 10-digit NSN, not the raw string. Stored phones were never
+// Matches on the 10-digit NSN, not the raw string — stored phones were never
 // normalised (a row may hold "8159491618", "08159491618" or "+2348159491618"),
-// so the previous `WHERE phone = $1` missed the recipient unless the sender
-// typed the exact stored spelling.
+// so an exact-match lookup would miss most recipients.
 func (s *Service) ResolvePaymaxUser(ctx context.Context, phone string) (*WalletTransferResolveResponse, error) {
 	nsn := NormalizeRecipientPhone(phone)
 	if nsn == "" {
@@ -326,12 +325,10 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 	if fee > 0 {
 		s.recordCommissionSafe(ctx, "Money Transfer", wt.AmountKobo, wt.FeeKobo, wt.ID, &wt.SenderID)
 	}
-	// E2E-X-029: wallet-to-wallet sends previously wrote NO durable audit row at
-	// all (the audit() path was stdout-only and never called here). Emit the
-	// action-level event: actor = sender, target = recipient, entity = the
-	// transfer row, metadata = {amount, fee, reference}. Best-effort — an audit
-	// failure can never fail or reverse the committed transfer. Replays return
-	// early above, so a duplicate Idempotency-Key cannot double-emit.
+	// Action-level audit event (E2E-X-029): actor = sender, target = recipient,
+	// entity = the transfer row. Best-effort — an audit failure can never fail
+	// or reverse the committed transfer. Replays return early above, so a
+	// duplicate Idempotency-Key cannot double-emit.
 	s.auditEvent(ctx, senderID, wt.RecipientID, "wallet.transfer.send", wt.ID, map[string]any{
 		"amount_kobo": wt.AmountKobo,
 		"fee_kobo":    wt.FeeKobo,
@@ -538,7 +535,7 @@ func (s *Service) InitiateBankToBank(ctx context.Context, userID string, req Ban
 		return nil, ErrInvalidAmount
 	}
 	if !looksLikeNUBAN(req.AccountNumber) || strings.TrimSpace(req.BankCode) == "" {
-		return nil, ErrInvalidAccount
+		return nil, ErrInvalidAccountNumber // malformed request → 400, not the 404 lookup sentinel
 	}
 	if s.registry == nil {
 		return nil, ErrProviderUnavailable

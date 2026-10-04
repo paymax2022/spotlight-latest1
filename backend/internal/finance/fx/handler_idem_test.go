@@ -11,11 +11,9 @@ import (
 	"spotlight/backend/internal/finance/fx"
 )
 
-// AUD-BE-011: ConvertRequest required `idempotency_key` in the body and never
-// read the Idempotency-Key header at all — the documented header contract
-// 400'd before the service ran. Pin: header-only accepted, no key 400s.
-// Nil service on purpose: reaching the service is the signal; a bind
-// rejection answers 400 first.
+// AUD-BE-011: pin the header contract — a header-only Idempotency-Key is
+// accepted and a missing key 400s. Nil service on purpose: reaching the
+// service is the signal; a bind rejection answers 400 first.
 
 func engine() *gin.Engine {
 	gin.SetMode(gin.TestMode)

@@ -244,7 +244,6 @@ func (a *AdminService) DispatchLive(ctx context.Context) (map[string]any, error)
 	if err != nil {
 		return nil, err
 	}
-	// Filter to in-flight phases.
 	var inflight []map[string]any
 	for _, t := range activeTrips {
 		switch t["phase"] {
@@ -425,7 +424,6 @@ func (a *AdminService) PatchIncident(ctx context.Context, adminID, incidentID st
 		WHERE id=$1`, incidentID, req.Status, req.AssignedAdmin, req.ResolutionNote); err != nil {
 		return err
 	}
-	// Clear the trip safety hold if the incident is resolved.
 	if req.Status == "resolved" || req.Status == "closed" {
 		db.Exec(ctx, `UPDATE trips SET safety_status='resolved' WHERE id=(SELECT trip_id FROM safety_incidents WHERE id=$1)`, incidentID)
 	}

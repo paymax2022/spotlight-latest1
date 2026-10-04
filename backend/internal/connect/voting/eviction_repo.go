@@ -250,8 +250,6 @@ func (r *Repository) GetEvictions(ctx context.Context, contestID string, stageNu
 
 // AdminVote records an admin vote (no ledger debit)
 func (r *Repository) AdminVote(ctx context.Context, contestID, contestantID, actorID string, voteQuantity int) (*Vote, error) {
-	// For now, insert directly into votes table
-	// In production, you might want to use a dedicated admin_votes table or a flag
 	const ins = `
 		INSERT INTO connect_votes
 		(contest_id, voter_id, option_ref, paid, quantity, amount_kobo, ledger_ref, created_at)

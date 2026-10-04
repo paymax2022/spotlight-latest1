@@ -157,7 +157,7 @@ func (g *Gazetteer) Upsert(ctx context.Context, e GazetteerEntry) error {
 
 	// $1 h3, $2 lng, $3 lat, $4 normalized_addr, $5 components(jsonb),
 	// $6 plus_code, $7 source, $8 verified_by(uuid|null), $9 verified_at, $10 encrypted_pii.
-	// ST_MakePoint(lng, lat) per PostGIS convention (see ).
+	// ST_MakePoint(lng, lat) — PostGIS is lng-first.
 	const q = `
 		INSERT INTO public.map_gazetteer
 			(h3, geog, lat, lng, normalized_addr, components, plus_code, source, verified_by, verified_at, encrypted_pii)

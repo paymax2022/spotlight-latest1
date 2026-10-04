@@ -193,8 +193,6 @@ func (s *Service) Submit(ctx context.Context, merchantID, campaignID string) (*C
 	if err := s.checkEligibility(ctx, c); err != nil {
 		return nil, err
 	}
-	// DRAFT→SUBMITTED then SUBMITTED→UNDER_REVIEW (NEEDS_MORE_INFO resubmits straight
-	// to UNDER_REVIEW).
 	if c.State == StateDraft {
 		if err := s.transition(ctx, c, StateSubmitted, merchantID, "placement.submit"); err != nil {
 			return nil, err
@@ -227,7 +225,6 @@ func (s *Service) Cancel(ctx context.Context, merchantID, campaignID string) (*C
 			// Window already started — must use early-cancel (pro-rata) instead.
 			return nil, fmt.Errorf("%w: window already started; use early cancel", ErrBadState)
 		}
-		// Full refund of the escrow hold back to the merchant wallet.
 		if err := s.refundFull(ctx, c); err != nil {
 			return nil, err
 		}
@@ -361,7 +358,6 @@ func (s *Service) Approve(ctx context.Context, adminID, campaignID string) (*Cam
 	if err := s.checkEligibility(ctx, c); err != nil {
 		return nil, err
 	}
-	// Settle payment now.
 	if err := s.holdEscrow(ctx, c); err != nil {
 		if errors.Is(err, ErrInsufficient) {
 			// Approved-but-unpaid: park in PENDING_PAYMENT for a pay retry.
@@ -374,7 +370,6 @@ func (s *Service) Approve(ctx context.Context, adminID, campaignID string) (*Cam
 		}
 		return nil, err
 	}
-	// Record the approval decision + flip to SCHEDULED, then reserve the slot.
 	if err := s.repo.SetReview(ctx, c.ID, StateScheduled, adminID, "approved", "", c.Version); err != nil {
 		return nil, err
 	}
@@ -614,7 +609,6 @@ func (s *Service) reserveAndSchedule(ctx context.Context, c *Campaign, actorID s
 // checkEligibility runs the full eligibility gate: self-owned (cap, cooldown,
 // creative) + external (merchant, subject). Returns an error wrapping ErrIneligible.
 func (s *Service) checkEligibility(ctx context.Context, c *Campaign) error {
-	// Concurrent-campaign cap.
 	if s.cfg.MaxConcurrentCampaigns > 0 {
 		n, err := s.repo.CountActiveByMerchant(ctx, c.MerchantID, c.ID)
 		if err != nil {
@@ -624,7 +618,6 @@ func (s *Service) checkEligibility(ctx context.Context, c *Campaign) error {
 			return fmt.Errorf("%w: concurrent campaign cap (%d) reached", ErrIneligible, s.cfg.MaxConcurrentCampaigns)
 		}
 	}
-	// Per-zone cooldown.
 	if s.cfg.PerZoneCooldownDays > 0 {
 		last, err := s.repo.LastWindowEndInZone(ctx, c.MerchantID, c.ZoneCode, c.ID)
 		if err != nil {
@@ -637,7 +630,6 @@ func (s *Service) checkEligibility(ctx context.Context, c *Campaign) error {
 			}
 		}
 	}
-	// Creative pre-checks against the zone spec.
 	zone, err := s.repo.GetZone(ctx, c.ZoneCode)
 	if err != nil {
 		return err
@@ -645,7 +637,6 @@ func (s *Service) checkEligibility(ctx context.Context, c *Campaign) error {
 	if err := validateCreative(zone, c.Creative, s.cfg.BannedWords); err != nil {
 		return err
 	}
-	// External: merchant + subject.
 	if err := s.ext.CheckMerchant(ctx, c.MerchantID, c.ZoneCode); err != nil {
 		return fmt.Errorf("%w: %v", ErrIneligible, err)
 	}

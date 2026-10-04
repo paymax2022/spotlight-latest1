@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	platformRedis "spotlight/backend/internal/platform/redis"
 )
 
 // RequestIDHeader is the correlation header honored on inbound requests and
@@ -226,6 +229,8 @@ type AuthRateLimiter struct {
 	maxKeys   int
 	lastSweep time.Time
 	now       func() time.Time // injectable so the tests do not sleep
+	redisGet  func() *platformRedis.Client
+	redisNS   string
 }
 
 // NewAuthRateLimiter builds a limiter. A non-positive limit or window falls back
@@ -271,9 +276,55 @@ func (l *AuthRateLimiter) evictLocked(n int) {
 	}
 }
 
+// WithRedis makes the limit shared across replicas: a fixed-window counter in
+// Redis instead of the per-instance map, so N replicas can't hand an attacker
+// N× the budget (E2E-BE-032). get is resolved per request (lazy because route
+// registration runs before the shared Redis client is built); a nil result or
+// any Redis error falls back to the in-memory map — protection degrades to
+// per-instance, never disappears. ns namespaces the counter per mount (login
+// vs reset can share a limiter type but not a budget).
+func (l *AuthRateLimiter) WithRedis(get func() *platformRedis.Client, ns string) *AuthRateLimiter {
+	l.redisGet = get
+	l.redisNS = ns
+	return l
+}
+
+// allowRedis records the attempt in the shared counter. The last return value
+// is false on a Redis failure — the caller falls back to the local bucket path.
+func (l *AuthRateLimiter) allowRedis(ctx context.Context, key string) (bool, int, int, bool) {
+	r := l.redisGet()
+	if r == nil {
+		return false, 0, 0, false
+	}
+	now := l.now()
+	bucket := now.Unix() / int64(l.window.Seconds())
+	sum := sha256.Sum256([]byte(key))
+	rkey := fmt.Sprintf("rl:authl:%s:%x:%d", l.redisNS, sum[:8], bucket)
+	n, err := r.Incr(ctx, rkey).Result()
+	if err != nil {
+		return false, 0, 0, false
+	}
+	if n == 1 {
+		_ = r.Expire(ctx, rkey, l.window+time.Minute).Err()
+	}
+	reset := time.Duration((bucket+1)*int64(l.window.Seconds())-now.Unix()) * time.Second
+	return n <= int64(l.limit), max(int(int64(l.limit)-n), 0), int(reset.Seconds()), true
+}
+
 // Allow records an attempt and reports whether it is permitted, plus the seconds
 // until the window resets.
 func (l *AuthRateLimiter) Allow(key string) (bool, int, int) {
+	return l.AllowCtx(context.Background(), key)
+}
+
+// AllowCtx is Allow with the caller's request context so a hung Redis can't
+// outlive the request.
+func (l *AuthRateLimiter) AllowCtx(ctx context.Context, key string) (bool, int, int) {
+	if l.redisGet != nil {
+		if ok, remaining, resetIn, hit := l.allowRedis(ctx, key); hit {
+			return ok, remaining, resetIn
+		}
+	}
 	var remaining int
 	var resetIn int
 
@@ -319,7 +370,7 @@ func (l *AuthRateLimiter) Allow(key string) (bool, int, int) {
 func (l *AuthRateLimiter) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := c.FullPath() + "|" + c.Request.Method + "|" + c.ClientIP()
-		allowed, remaining, resetIn := l.Allow(key)
+		allowed, remaining, resetIn := l.AllowCtx(c.Request.Context(), key)
 
 		c.Header("X-RateLimit-Limit", strconv.Itoa(l.limit))
 		c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
@@ -359,14 +410,14 @@ var (
 	stemRateMu        sync.Mutex
 	stemRateStore     = map[string]*stemRateBucket{}
 	stemRateLastSweep time.Time
-	// Bounds for the shared store. The key is derived from route + method +
-	// client IP, so an attacker rotating source IPs must not be able to grow
-	// the map without limit (AUD-BE-004 residual: previously it NEVER evicted,
-	// and it also mixed the caller-set `x-stem-role` header into the key — a
-	// second bypass axis, since each distinct header value minted a fresh
-	// bucket). Vars (not consts) so tests can shrink them.
+	// Bounds for the shared store (AUD-BE-004). The key is derived from route +
+	// method + client IP — an attacker rotating source IPs must not be able to
+	// grow the map without limit, and the caller-set `x-stem-role` header must
+	// NOT be part of the key (each distinct value would mint a fresh bucket).
+	// Vars (not consts) so tests can shrink them.
 	stemRateMaxKeys       = 100_000
 	stemRateSweepInterval = time.Minute
+	stemRateLimitError    = "rate limit exceeded"
 )
 
 // sweepStemRateStoreLocked drops buckets whose owning window has passed. The
@@ -392,12 +443,44 @@ func evictStemRateStoreLocked(n int) {
 	}
 }
 
-// StemRateLimit enforces a simple in-memory fixed-window rate limit per
-// route+client key. The store is shared across all mount points and is bounded:
-// stale buckets are swept periodically on write, and the map never exceeds
-// stemRateMaxKeys. The key deliberately excludes the caller-set `x-stem-role`
-// header — it is dead for authz since roles resolve via RBAC (ADR-056), and as
-// a key component it let any caller mint a fresh bucket per request.
+// stemRateRedisGet is bound once by BindStemRateRedis (route setup time).
+// Resolved per request so a nil or errored client always falls back to the
+// local store — protection degrades to per-instance, never disappears
+// (E2E-BE-032 residual).
+var stemRateRedisGet func() *platformRedis.Client
+
+// BindStemRateRedis makes every StemRateLimit handler share its budget across
+// replicas through Redis fixed-window counters. Call once at startup; handlers
+// mounted before the call still pick it up because the getter is resolved at
+// request time.
+func BindStemRateRedis(get func() *platformRedis.Client) {
+	stemRateRedisGet = get
+}
+
+// stemAllowRedis mirrors AuthRateLimiter.allowRedis for the shared stem store.
+// Returns (allowed, remaining, resetSeconds, handled) — handled=false means the
+// caller must use the local path.
+func stemAllowRedis(ctx context.Context, r *platformRedis.Client, key string, limit int, window time.Duration, now time.Time) (bool, int, int, bool) {
+	bucket := now.Unix() / int64(window.Seconds())
+	sum := sha256.Sum256([]byte(key))
+	rkey := fmt.Sprintf("rl:stem:%x:%d", sum[:8], bucket)
+	n, err := r.Incr(ctx, rkey).Result()
+	if err != nil {
+		return false, 0, 0, false
+	}
+	if n == 1 {
+		_ = r.Expire(ctx, rkey, window+time.Minute).Err()
+	}
+	reset := time.Duration((bucket+1)*int64(window.Seconds())-now.Unix()) * time.Second
+	return n <= int64(limit), max(int(int64(limit)-n), 0), int(reset.Seconds()), true
+}
+
+// StemRateLimit enforces a fixed-window rate limit per route+client key. With
+// BindStemRateRedis the budget is shared across replicas; otherwise it uses
+// the bounded in-memory store (shared across all mount points). The key
+// deliberately excludes the caller-set `x-stem-role` header — it is dead for
+// authz since roles resolve via RBAC (ADR-056), and as a key component it let
+// any caller mint a fresh bucket per request.
 func StemRateLimit(limit int, window time.Duration) gin.HandlerFunc {
 	if limit <= 0 {
 		limit = 60
@@ -409,6 +492,24 @@ func StemRateLimit(limit int, window time.Duration) gin.HandlerFunc {
 		key := c.FullPath() + "|" + c.Request.Method + "|" + c.ClientIP()
 
 		now := time.Now()
+		if stemRateRedisGet != nil {
+			if r := stemRateRedisGet(); r != nil {
+				if allowed, remaining, resetIn, hit := stemAllowRedis(c.Request.Context(), r, key, limit, window, now); hit {
+					c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
+					c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
+					c.Header("X-RateLimit-Reset", strconv.Itoa(resetIn))
+					if !allowed {
+						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+							"success": false,
+							"error":   stemRateLimitError,
+						})
+						return
+					}
+					c.Next()
+					return
+				}
+			}
+		}
 		stemRateMu.Lock()
 		if now.Sub(stemRateLastSweep) >= stemRateSweepInterval {
 			sweepStemRateStoreLocked(now)
@@ -439,7 +540,7 @@ func StemRateLimit(limit int, window time.Duration) gin.HandlerFunc {
 		if current > limit {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"success": false,
-				"error":   "rate limit exceeded",
+				"error":   stemRateLimitError,
 			})
 			return
 		}

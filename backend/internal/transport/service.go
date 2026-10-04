@@ -470,11 +470,10 @@ func (s *Service) settleTrip(ctx context.Context, t *tripRow) error {
 // settlementPendingStatus is the queryable marker written to trips.settlement_status
 // when settlement fails after completion. It MUST match the value permitted by the
 // trips.settlement_status CHECK constraint (migration 20260710000000:
-// 'settled' | 'settlement_pending' | 'settlement_failed'); previously this was the
-// bare string "pending", which violated the CHECK — so the mirror UPDATE silently
-// affected 0 rows and the reconciler's flag index was never populated. The
-// authoritative recovery signal is still the settlements table (see reconciler.go),
-// but the flag must be a legal value so the mirror + partial index work.
+// 'settled' | 'settlement_pending' | 'settlement_failed') — any other value makes
+// the mirror UPDATE silently affect 0 rows. The authoritative recovery signal is
+// still the settlements table (see reconciler.go), but the flag must be a legal
+// value so the mirror + partial index work.
 const settlementPendingStatus = "settlement_pending"
 
 // settlementPendingEvent is the immutable trip_events event_type for the same.
@@ -497,9 +496,9 @@ func (s *Service) markSettlementPending(ctx context.Context, t *tripRow, cause e
 	// Durable audit marker (immutable trip_events row).
 	s.recordEvent(ctx, t.ID, settlementPendingEvent, "", "", "", settlementPendingMarker(t, cause))
 	// Mirror a queryable flag on the trip. settlement_status is an additive column;
-	// if the migrations agent has not yet added it this UPDATE affects 0 rows and is
-	// a harmless no-op (the trip_events marker above is still durable). NEEDED COLUMN:
-	// trips.settlement_status TEXT DEFAULT 'settled' (see cross-agent note).
+	// if the migration has not yet added it this UPDATE affects 0 rows and is a
+	// harmless no-op (the trip_events marker above is still durable). Expected
+	// column: trips.settlement_status TEXT DEFAULT 'settled'.
 	s.db.Exec(ctx, `UPDATE trips SET settlement_status=$2, updated_at=NOW() WHERE id=$1`, t.ID, settlementPendingStatus)
 }
 

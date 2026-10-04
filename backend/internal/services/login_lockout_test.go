@@ -65,8 +65,8 @@ func TestValidateLoginStatus_ExpiredLockDoesNotRefuse(t *testing.T) {
 // status=="locked" with LockedUntil==nil means an indefinite lock (no
 // expiry) and must refuse — this is exactly the state the admin console's
 // "Lock User" action produces (RBACSupabaseRepository.LockUser sets
-// status=locked but never sets locked_until). AUTH-021: this used to NOT
-// refuse, which meant every admin-initiated manual lock had zero effect.
+// status=locked but never sets locked_until). AUTH-021: if this did not
+// refuse, every admin-initiated manual lock would have zero effect.
 func TestValidateLoginStatus_LockedWithNilLockedUntilRefuses(t *testing.T) {
 	u := &platformUser{ID: "u1", Status: "locked", LockedUntil: nil}
 	if err := (&authService{}).validateLoginStatus(u); err == nil {

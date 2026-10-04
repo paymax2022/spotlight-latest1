@@ -42,6 +42,11 @@ func startSchedulerPoller(ctx context.Context, cfg config.Config, pool *pgxpool.
 	}
 
 	svc := scheduler.NewService(pool)
+	// Real handlers for the health reminder job types — registered here (not
+	// in route wiring) so reminders still deliver if a health feature flag is
+	// flipped off after jobs were already enqueued.
+	//nolint:contextcheck // handlers draw their ctx from scheduler.HandlerCtx at fire time; a registration-scope ctx would die with boot
+	registerHealthReminderJobs(svc, pool, cfg.RedisURL)
 	registerSchedulerStubHandlers(svc)
 
 	interval := time.Duration(cfg.SchedulerPollIntervalSeconds) * time.Second
@@ -53,19 +58,11 @@ func startSchedulerPoller(ctx context.Context, cfg config.Config, pool *pgxpool.
 // ever registered a handler for. Each gets a stub that logs a loud
 // not-implemented warning and returns success — "complete-with-note" — so the
 // poller does not churn them as failed runs on every tick. These stubs only
-// fill gaps (HasHandler guard): if the owning module later registers a real
-// handler it overwrites the stub.
-//
-// OWNED-BY-HEALTH-TEAM TODOs:
-//   - "health.appointment.reminder" (internal/health/scheduling): scheduled 1h
-//     before each appointment; should deliver a patient notification (most
-//     likely via internal/notifications). No delivery path exists yet.
-//   - "health.vet.vaccination.reminder" (internal/health/vet): scheduled 24h
-//     before a pet vaccination due date; same — needs a notification handler.
-var schedulerStubJobTypes = []string{
-	"health.appointment.reminder",
-	"health.vet.vaccination.reminder",
-}
+// fill gaps (HasHandler guard): if a real handler is registered — e.g. by
+// registerHealthReminderJobs above — it takes precedence and the stub is
+// skipped. The list is currently empty; add entries here for any new producer
+// whose delivery path is not yet implemented.
+var schedulerStubJobTypes []string
 
 func registerSchedulerStubHandlers(svc *scheduler.Service) {
 	for _, jt := range schedulerStubJobTypes {

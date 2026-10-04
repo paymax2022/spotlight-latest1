@@ -166,8 +166,6 @@ func (s *Service) campaignDocuments(ctx context.Context, campaignID string) []ma
 // given — which is the honest answer for a campaign raising for its own creator,
 // and is what the client renders as "no beneficiary block" rather than an empty
 // card.
-// This was a hardcoded nil, so "raising for my mother" and "raising for myself"
-// looked identical to everyone who visited the page.
 func (s *Service) campaignBeneficiary(ctx context.Context, campaignID string) any {
 	var id, name, relationship string
 	var description *string
@@ -268,11 +266,6 @@ func (s *Service) campaignRewardTiers(ctx context.Context, campaignID string) []
 }
 
 // campaignMilestones returns the campaign's funding plan in display order.
-// This was a literal empty array, so the Milestones screen showed "No milestones —
-// this campaign releases funds without milestone gating" for every campaign,
-// including ones whose creator had entered a full plan in the wizard. That message
-// is a statement about how the campaign disburses money, and it was being made on
-// no evidence.
 // Degrades to an empty list on a read failure rather than failing the page: the
 // story, goal and Contribute button do not depend on the plan rendering.
 func (s *Service) campaignMilestones(ctx context.Context, campaignID string) []map[string]any {

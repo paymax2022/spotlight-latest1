@@ -349,8 +349,6 @@ const (
 
 // RevealSellerContact returns the seller's phone for a listing, subject to a
 // per-viewer hourly budget, and records who was given the number.
-// The listing screen previously had a reveal control that only flipped local
-// state — no number was ever fetched. This is the endpoint behind it.
 // Deliberately available to ANY signed-in viewer rather than only to someone with
 // an open thread: requiring a conversation first would mean messaging a seller to
 // get the number you needed in order to call instead of messaging, which is the
@@ -416,20 +414,13 @@ func (s *Service) RevealSellerContact(ctx context.Context, viewerID, listingID s
 }
 
 // Request wire shapes for the offers/threads negotiation endpoints.
-// These are named types rather than anonymous structs inside the handlers so
-// the decoding can be tested against the exact bytes the mobile client emits —
-// which is the half that was never checked, and the reason every one of these
-// endpoints was unreachable in production:
 // The mobile client (mobile-app/reactnative/src/features/marketplace/api/
 // client.ts) transforms in BOTH directions — deepSnake on every outbound body
-// and query, deepCamel on every response. The handlers here were written with
-// camelCase request tags, reasoning from the camelCase RESPONSE type. Responses
-// survived that (deepCamel accepts either), but no camelCase REQUEST field could
-// ever be populated, so offers bound an empty listing and a zero price.
-// Canonical names are the contract's (contracts/openapi.yaml
-// MktOfferCreateRequest: listing_id, offer_price_kobo). The camelCase aliases
-// accept builds that predate this fix; they cost one field each and mean an
-// older app degrades to working rather than to a silent zero.
+// and query, deepCamel on every response — so a camelCase-only request tag here
+// can never be populated. Canonical names are the contract's
+// (contracts/openapi.yaml MktOfferCreateRequest: listing_id, offer_price_kobo);
+// the camelCase aliases keep older app builds working rather than binding a
+// silent zero.
 
 // createOfferRequest is the POST /offers body.
 type createOfferRequest struct {

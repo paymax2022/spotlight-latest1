@@ -50,7 +50,7 @@ var errMap = httperr.New(http.StatusInternalServerError,
 	httperr.R(http.StatusBadRequest, ErrZeroPayment, ErrInvalidPlanType, ErrInvalidPaymentAmount),
 	httperr.R(http.StatusForbidden, ErrForbidden),
 	httperr.R(http.StatusPaymentRequired, ErrPaymentNotConfirmed),
-	httperr.R(http.StatusConflict, ErrReferenceReused, ErrDuplicate),
+	httperr.R(http.StatusConflict, ErrReferenceReused, ErrDuplicate, ErrNoPendingInstallments),
 	httperr.R(http.StatusNotFound, ErrApplicationNotFound, ErrBatchNotFound, ErrPlanNotFound, ErrNotFound),
 )
 

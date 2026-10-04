@@ -54,12 +54,10 @@ func reviewTransition(current, decision string) (string, bool) {
 // AdminCampaignSummary is the review-queue shape: everything the public list
 // carries, plus the two fields the moderation console needs and the public one
 // must never expose.
-// submittedAt and riskLevel were already SELECTed by the discovery query and
-// then dropped by toSummary, so the admin console rendered blanks for both —
-// including the queue's sort key. They are added here rather than on
-// CampaignSummary because that type is also the PUBLIC discovery payload, and
-// riskLevel is an internal fraud signal: putting it there would publish the
-// platform's own risk assessment of every campaign to anyone browsing.
+// submittedAt and riskLevel live here rather than on CampaignSummary because
+// that type is also the PUBLIC discovery payload, and riskLevel is an internal
+// fraud signal: putting it there would publish the platform's own risk
+// assessment of every campaign to anyone browsing.
 type AdminCampaignSummary struct {
 	CampaignSummary
 	SubmittedAt string `json:"submittedAt"`
@@ -186,7 +184,11 @@ func (s *Service) AdminStats(ctx context.Context) (*AdminStats, error) {
 	_ = s.db.QueryRow(ctx, `
 		SELECT COUNT(*), COALESCE(SUM(amount_kobo),0) FROM cf_withdrawals WHERE status='PENDING'`,
 	).Scan(&st.WithdrawalsPending, &st.WithdrawalsPendingKobo)
-	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_refunds WHERE status='REQUESTED'`).Scan(&st.RefundRequests)
+	// Refund queue depth = live member requests (cf_refund_requests) plus
+	// legacy seed-only cf_refunds rows still pending.
+	_ = s.db.QueryRow(ctx, `
+		SELECT (SELECT COUNT(*) FROM cf_refund_requests WHERE status='REFUND_REQUESTED')
+		     + (SELECT COUNT(*) FROM cf_refunds WHERE status='REQUESTED')`).Scan(&st.RefundRequests)
 	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_fraud_alerts WHERE status IN ('OPEN','INVESTIGATING')`).Scan(&st.FraudAlerts)
 	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_support_tickets WHERE status IN ('OPEN','PENDING')`).Scan(&st.OpenTickets)
 

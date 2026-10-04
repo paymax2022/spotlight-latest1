@@ -164,7 +164,6 @@ func (s *GiftingStore) SendGift(ctx context.Context, senderID string, recipientI
 		return nil, fmt.Errorf("send gift: %w", err)
 	}
 
-	// Query sender and recipient names for response
 	s.enrichGiftTransaction(ctx, &gt)
 	return &gt, nil
 }

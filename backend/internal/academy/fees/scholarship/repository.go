@@ -149,15 +149,19 @@ func (r *Repository) AppendAward(ctx context.Context, a Award) (*Award, bool, er
 func appendAward(ctx context.Context, q querier, a Award) (*Award, bool, error) {
 	id := uuid.New().String()
 	now := time.Now()
+	// uq_academy_scholaward_idem is a partial unique index, so the arbiter must
+	// repeat the index predicate — a bare ON CONFLICT (idempotency_key) matches
+	// no index and raises 42P10.
 	const ins = `INSERT INTO academy_scholarship_awards
-	    (id, pledge_id, user_id, fee_schedule_id, amount_minor, state, idempotency_key, created_at)
-	    VALUES ($1,$2,$3,NULL,$4,'applied',$5,$6)
-	    ON CONFLICT (idempotency_key) DO NOTHING`
+	    (id, pledge_id, user_id, fee_schedule_id, amount_minor, state, idempotency_key, invoice_payment_id, created_at)
+	    VALUES ($1,$2,$3,NULL,$4,'applied',$5,$6,$7)
+	    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
 	// pledge_id references the funding pledge (academy_scholarship_pledges). scholarship_id
 	// is left NULL for pledge-funded awards (migration 20260920000500 drops its NOT NULL and
 	// widens the state CHECK to admit 'applied'). user_id carries the invoice's
-	// guardian/student party for traceability.
-	tag, err := q.Exec(ctx, ins, id, a.PledgeID, a.StudentID, a.AmountMinor, a.IdempotencyKey, now)
+	// guardian-of-record — an auth.users FK; invoice_payment_id links the award
+	// to the appended invoice payment.
+	tag, err := q.Exec(ctx, ins, id, a.PledgeID, a.UserID, a.AmountMinor, a.IdempotencyKey, dbutil.NullUUID(dbutil.DerefString(a.InvoicePaymentID)), now)
 	if err != nil {
 		return nil, false, err
 	}
@@ -173,11 +177,11 @@ func appendAward(ctx context.Context, q querier, a Award) (*Award, bool, error) 
 }
 
 func getAwardByIdem(ctx context.Context, q querier, idemKey string) (*Award, error) {
-	const sel = `SELECT id, pledge_id, user_id, amount_minor, state, idempotency_key, created_at
+	const sel = `SELECT id, pledge_id, user_id, amount_minor, state, idempotency_key, invoice_payment_id, created_at
 	             FROM academy_scholarship_awards WHERE idempotency_key = $1`
 	var a Award
 	var state string
-	err := q.QueryRow(ctx, sel, idemKey).Scan(&a.ID, &a.PledgeID, &a.StudentID, &a.AmountMinor, &state, &a.IdempotencyKey, &a.CreatedAt)
+	err := q.QueryRow(ctx, sel, idemKey).Scan(&a.ID, &a.PledgeID, &a.UserID, &a.AmountMinor, &state, &a.IdempotencyKey, &a.InvoicePaymentID, &a.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -189,7 +193,7 @@ func getAwardByIdem(ctx context.Context, q querier, idemKey string) (*Award, err
 }
 
 func (r *Repository) ListAwardsByPledge(ctx context.Context, pledgeID string) ([]Award, error) {
-	const q = `SELECT id, pledge_id, user_id, amount_minor, state, idempotency_key, created_at
+	const q = `SELECT id, pledge_id, user_id, amount_minor, state, idempotency_key, invoice_payment_id, created_at
 	           FROM academy_scholarship_awards WHERE pledge_id = $1 ORDER BY created_at DESC`
 	rows, err := r.db.Query(ctx, q, pledgeID)
 	if err != nil {
@@ -200,7 +204,7 @@ func (r *Repository) ListAwardsByPledge(ctx context.Context, pledgeID string) ([
 	for rows.Next() {
 		var a Award
 		var state string
-		if err := rows.Scan(&a.ID, &a.PledgeID, &a.StudentID, &a.AmountMinor, &state, &a.IdempotencyKey, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.PledgeID, &a.UserID, &a.AmountMinor, &state, &a.IdempotencyKey, &a.InvoicePaymentID, &a.CreatedAt); err != nil {
 			return nil, err
 		}
 		a.State = AwardState(state)

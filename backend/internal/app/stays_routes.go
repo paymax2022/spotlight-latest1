@@ -251,14 +251,13 @@ func RegisterStaysExtranet(member *gin.RouterGroup, admin *gin.RouterGroup, extr
 		// proven live by the restaurant module (POST /api/finance/restaurant has
 		// no RBAC guard either; ownership is stamped from the JWT at creation and
 		// checked server-side on every subsequent call).
-		// This was previously gated on stays.hotelier.* RBAC permissions, but those
-		// are seeded ONLY onto super-admin/system-admin (20260715000000_stays_ari.sql)
-		// with no self-service grant path — so no property owner could ever pass the
-		// gate, regardless of holding a real ACTIVE grant. CreateProperty (below) is
-		// the only way to acquire that grant, and it has no permission to hold before
-		// it runs. Removing the redundant outer gate is what makes self-service work;
-		// the object-scope check the design doc already called the "complementing"
-		// layer is now the ONLY layer, same as restaurant.
+		// stays.hotelier.* RBAC permissions are seeded ONLY onto
+		// super-admin/system-admin (20260715000000_stays_ari.sql) with no
+		// self-service grant path — an outer RBAC gate would lock out every
+		// property owner regardless of holding a real ACTIVE grant.
+		// CreateProperty (below) is the only way to acquire that grant, and it has
+		// no permission to hold before it runs. The object-scope check is the ONLY
+		// layer, same as restaurant.
 		eg := extranetGroup.Group("")
 		extranetHandler.Register(eg)
 

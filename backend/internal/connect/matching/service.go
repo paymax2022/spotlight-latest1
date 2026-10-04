@@ -214,7 +214,6 @@ func (s *Service) Like(ctx context.Context, fromUserID, toProfileID, kind string
 
 	res := &LikeResult{Liked: true, Kind: kind, Replayed: replayed}
 
-	// Mutual check: does the target already like the actor back?
 	var reciprocal bool
 	if err := tx.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM connect_likes WHERE from_profile = $1 AND to_profile = $2)`,

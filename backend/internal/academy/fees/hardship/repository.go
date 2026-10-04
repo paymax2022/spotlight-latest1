@@ -53,6 +53,25 @@ type querier interface {
 
 const hardshipCols = `id, invoice_id, guardian_user_id, reason, requested_at, status, reviewed_by, reviewed_at, review_note`
 
+// The schema CHECK admits 'rejected' while the API enum says 'denied' — the
+// repository translates at the seam (writes denied→'rejected', reads back).
+// Widening the CHECK would need a non-additive DROP, which migrations forbid.
+const dbStatusRejected = "rejected"
+
+func statusForDB(s RequestStatus) string {
+	if s == StatusDenied {
+		return dbStatusRejected
+	}
+	return string(s)
+}
+
+func statusFromDB(s string) RequestStatus {
+	if s == dbStatusRejected {
+		return StatusDenied
+	}
+	return RequestStatus(s)
+}
+
 func scanHardship(row pgx.Row) (*HardshipRequest, error) {
 	var r HardshipRequest
 	var status string
@@ -60,7 +79,7 @@ func scanHardship(row pgx.Row) (*HardshipRequest, error) {
 		&status, &r.ReviewedBy, &r.ReviewedAt, &r.ReviewNote); err != nil {
 		return nil, err
 	}
-	r.Status = RequestStatus(status)
+	r.Status = statusFromDB(status)
 	return &r, nil
 }
 
@@ -120,7 +139,7 @@ func (r *Repository) SetReviewed(ctx context.Context, id, reviewerID string, sta
 	const upd = `UPDATE academy_hardship_requests
 	             SET status = $2, reviewed_by = $3, reviewed_at = $4, review_note = $5
 	             WHERE id = $1 AND status = 'pending'`
-	tag, err := r.db.Exec(ctx, upd, id, string(status), dbutil.NullStr(reviewerID), now, dbutil.NullStr(note))
+	tag, err := r.db.Exec(ctx, upd, id, statusForDB(status), dbutil.NullStr(reviewerID), now, dbutil.NullStr(note))
 	if err != nil {
 		return nil, err
 	}

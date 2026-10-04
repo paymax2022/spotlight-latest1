@@ -154,6 +154,15 @@ func (h *Handler) Book(c *gin.Context) {
 	if err != nil {
 		// A book that auto-released returns the VOID reservation plus an error.
 		if res != nil {
+			// Insufficient funds → 402, checked before the generic 409.
+			if errors.Is(err, reservation.ErrInsufficient) {
+				c.JSON(http.StatusPaymentRequired, gin.H{
+					"error": httperr.Msg(c, http.StatusPaymentRequired, err),
+					"code":  "INSUFFICIENT_FUNDS",
+					"data":  res,
+				})
+				return
+			}
 			c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), "data": res})
 			return
 		}

@@ -42,8 +42,8 @@ type InsuranceBinder interface {
 }
 
 // WithInsurance injects the insurance seam. Optional: a nil binder (the
-// default) simply means every parcel books and delivers with no cover, exactly
-// as before this feature existed — never a startup requirement.
+// default) simply means every parcel books and delivers with no cover —
+// never a startup requirement.
 func (s *Service) WithInsurance(b InsuranceBinder) *Service {
 	s.insurance = b
 	return s

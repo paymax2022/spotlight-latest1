@@ -366,6 +366,18 @@ func (l *InvestLedger) Transactions(ctx context.Context, userID string, limit, o
 	return out, rows.Err()
 }
 
+// Posted reports whether the balanced pair for baseIdempotencyKey is durably
+// written — checks the ":credit" side, matching the main ledger's convention.
+func (l *InvestLedger) Posted(ctx context.Context, baseIdempotencyKey string) (bool, error) {
+	var exists bool
+	if err := l.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM invest_ledger_entries WHERE idempotency_key=$1)`,
+		baseIdempotencyKey+":credit").Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 // tx is a helper that runs fn inside a transaction with rollback-on-error.
 func (l *InvestLedger) tx(ctx context.Context, fn func(pgx.Tx) error) error {
 	tx, err := l.db.Begin(ctx)

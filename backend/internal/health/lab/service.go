@@ -932,7 +932,7 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 // patientID is surfaced as-is, not a resolved name — this package has no
 // cross-schema user-lookup today (name resolution for other lists in this app
 // happens client-side against user_profiles); resolving a display name here is
-// a follow-up, not attempted in this pass.
+// a follow-up.
 func (s *Service) ListProviderOrders(ctx context.Context, ownerID, providerID string) ([]ProviderOrderSummary, error) {
 	if providerID == "" {
 		return nil, fmt.Errorf("lab: lab_provider_id required")

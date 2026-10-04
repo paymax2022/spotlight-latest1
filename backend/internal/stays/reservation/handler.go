@@ -199,6 +199,16 @@ func (h *Handler) Book(c *gin.Context) {
 		// A book that auto-released returns the VOID reservation plus an error;
 		// surface the state so the client can show "released".
 		if res != nil {
+			// Insufficient funds is the documented 402 contract — check the
+			// sentinel before the generic res-plus-error 409.
+			if errors.Is(err, ErrInsufficient) {
+				c.JSON(http.StatusPaymentRequired, gin.H{
+					"error": httperr.Msg(c, http.StatusPaymentRequired, err),
+					"code":  "INSUFFICIENT_FUNDS",
+					"data":  res,
+				})
+				return
+			}
 			c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), "data": res})
 			return
 		}

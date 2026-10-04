@@ -38,20 +38,55 @@ func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
 }
 
 // GetOrCreateCode returns the user's referral code, creating one if needed.
+//
+// E2E-FIN-044: this service and the rewards engine mint into DIFFERENT tables
+// (finance_referral_codes vs referral_links), so a user could hold two codes
+// and see a different one depending on which surface they opened. Rule: the
+// FIRST-MINTED code is canonical. When both tables hold a code for the user
+// and they differ, the older one wins and this row self-repairs to it; when
+// only referral_links has one, it is adopted here before a new one is drawn.
+// Resolution already cross-checks both tables (RewardService.resolveCode), so
+// attribution is unaffected by which table's copy a signup used.
 func (s *Service) GetOrCreateCode(ctx context.Context, userID string) (*Code, error) {
 	const q = `SELECT code, created_at FROM finance_referral_codes WHERE user_id = $1`
 	var c Code
 	c.UserID = userID
 	err := s.db.QueryRow(ctx, q, userID).Scan(&c.Code, &c.CreatedAt)
 	if err == nil {
+		var linkCode string
+		var linkAt time.Time
+		if lerr := s.db.QueryRow(ctx,
+			`SELECT code, created_at FROM referral_links WHERE referrer_id = $1`,
+			userID).Scan(&linkCode, &linkAt); lerr == nil && linkCode != c.Code && linkAt.Before(c.CreatedAt) {
+			// Referral_links minted first — converge this row onto it. A
+			// unique-violation (code held by another user) leaves the row.
+			if _, uerr := s.db.Exec(ctx,
+				`UPDATE finance_referral_codes SET code = $2 WHERE user_id = $1`,
+				userID, linkCode); uerr == nil {
+				c.Code = linkCode
+				c.CreatedAt = linkAt
+			}
+		}
 		return &c, nil
 	}
-	// Generate a new code. GenerateCode() below is the SAME generator System
-	// B's referral_links uses — REF-004: this used to be a locally-defined
-	// 8-char lowercase hex generator, incompatible with both referral_links'
-	// format and the frontend's SPOT-XXXXXX format, even though all three wrote
-	// into/read from finance_referral_codes-shaped data. One alphabet, one
-	// length, one case, regardless of which stack issues the code.
+	// No row here: adopt the referral_links code if one was minted there first.
+	var adopted string
+	var adoptedAt time.Time
+	if aerr := s.db.QueryRow(ctx,
+		`SELECT code, created_at FROM referral_links WHERE referrer_id = $1`,
+		userID).Scan(&adopted, &adoptedAt); aerr == nil {
+		if ierr := s.db.QueryRow(ctx, `
+			INSERT INTO finance_referral_codes (user_id, code)
+			VALUES ($1, $2)
+			ON CONFLICT (user_id) DO NOTHING
+			RETURNING code, created_at`, userID, adopted).Scan(&c.Code, &c.CreatedAt); ierr == nil {
+			return &c, nil
+		}
+		return s.GetOrCreateCode(ctx, userID)
+	}
+	// GenerateCode() is the shared generator referral_links also uses (REF-004):
+	// one alphabet, one length, one case, regardless of which stack issues the
+	// code — every writer produces the frontend's SPOT-XXXXXX shape.
 	code, err := GenerateCode()
 	if err != nil {
 		return nil, fmt.Errorf("referrals: generate code: %w", err)

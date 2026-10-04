@@ -25,10 +25,9 @@ var cashOutPaths = map[string]string{
 	"internal/finance/transfers/service.go":      "wallet-to-wallet and bank transfers — money leaves the wallet",
 	"internal/fractionalre/service_subscribe.go": "investment purchase — warrants stricter KYC, not looser",
 	"internal/fractionalre/service_secondary.go": "investment purchase — warrants stricter KYC, not looser",
-	// RequestPayout withdraws a doctor's wallet balance to a bank account. ADR-043
-	// originally listed this file as "consultation payment" and moved it onto the
-	// relaxed gate; internal/doctor has no consultation money path at all. A
-	// ledger-auditor review caught it. Listed here so the mistake cannot recur.
+	// RequestPayout withdraws a doctor's wallet balance to a bank account — a
+	// cash-out, NOT a "consultation payment" (internal/doctor has no consultation
+	// money path at all). Listed here so that misclassification cannot recur.
 	"internal/doctor/service.go": "doctor payout to a bank account — money leaves the platform",
 }
 

@@ -1,4 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
+import dotenv from 'dotenv';
+
+// Load the app env so specs can reach SUPABASE_SERVICE_ROLE_KEY for
+// per-spec user provisioning (TEST-013). dotenv does NOT override vars that
+// are already exported, so shell env always wins.
+dotenv.config({ path: '.env.local' });
 
 const baseURL = process.env.E2E_BASE_URL || 'http://localhost:3000';
 

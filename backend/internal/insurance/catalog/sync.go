@@ -306,12 +306,8 @@ func (s *Syncer) closeRun(ctx context.Context, res *SyncResult) {
 //	OPERATOR-GOVERNED (respected once ruled on): active.
 //	  `active` is sync-managed by DEFAULT and operator-owned ONCE AN ADMIN HAS
 //	  RULED. An admin flip stamps active_overridden_at; after that a sync leaves
-//	  visibility alone.
-//	  The earlier "never clobber active" rule produced the exact failure it was
-//	  meant to prevent: all 69 real products landed inactive and stayed inactive,
-//	  while nine fictional scaffolding rows were already active — so the member
-//	  catalog served invented cover and none of the real cover. Safe-by-default
-//	  is only safe if something eventually turns the real products on.
+//	  visibility alone. Sync-managing by default is load-bearing: a
+//	  never-clobber rule would leave every newly synced product inactive forever.
 //	  One thing overrides everything, including an admin: a product that is not
 //	  PURCHASABLE is forced inactive. Nobody may offer cover the provider cannot
 //	  issue.

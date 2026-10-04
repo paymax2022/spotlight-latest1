@@ -34,17 +34,11 @@ func TestQuizPassRatio_IsSevenTenths(t *testing.T) {
 	}
 }
 
-// scoreQuiz mirrors Service.SubmitQuiz's exact scoring loop and pass formula,
-// transcribed verbatim from backend/internal/learn/service.go:240-254:
-//
-//	for _, qq := range quiz.Questions {
-//	    for _, o := range qq.Options {
-//	    }
-//	}
-//
-// This helper operates on the SAME learn.QuizQuestion/QuizOption/QuizAnswers
-// exported types SubmitQuiz uses internally, so the transcription cannot drift
-// on shape — only on formula, which is what these tests lock.
+// scoreQuiz mirrors Service.SubmitQuiz's exact scoring loop and pass formula
+// (backend/internal/learn/service.go). It operates on the SAME
+// learn.QuizQuestion/QuizOption/QuizAnswers exported types SubmitQuiz uses
+// internally, so the transcription cannot drift on shape — only on formula,
+// which is what these tests lock.
 func scoreQuiz(questions []learn.QuizQuestion, answers learn.QuizAnswers) (score, total int, passed bool) {
 	total = len(questions)
 	for _, qq := range questions {

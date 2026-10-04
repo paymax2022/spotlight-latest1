@@ -229,11 +229,11 @@ func (f *realReplayLedger) StandingAccountID(context.Context, string) (string, e
 	return "acct-pot", nil
 }
 
-// TestSupport_ReplayReturnsSuccessNotRawLedgerError locks the fix: a
+// TestSupport_ReplayReturnsSuccessNotRawLedgerError locks the contract: a
 // Contribute call replayed with the same idempotency key against a ledger
 // that returns the REAL ledger.ErrDuplicate signal must succeed (nil), not
-// bubble the raw internal error — found live via UAT, where this surfaced as
-// an unmapped 500 on a genuine client retry.
+// bubble the raw internal error into an unmapped 500 on a genuine client
+// retry.
 func TestSupport_ReplayReturnsSuccessNotRawLedgerError(t *testing.T) {
 	led := newRealReplayLedger()
 	repo := &fakeSupportRepo{}

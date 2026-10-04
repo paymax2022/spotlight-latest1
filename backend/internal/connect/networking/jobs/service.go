@@ -441,7 +441,6 @@ func (s *Service) PayReferralBounty(ctx context.Context, actorID, bountyID strin
 	case BountyPaid:
 		return b, nil // already paid — idempotent no-op
 	case BountyHireConfirmed, BountyPayable:
-		// payable — proceed
 	default:
 		return nil, ErrIllegalTransition
 	}

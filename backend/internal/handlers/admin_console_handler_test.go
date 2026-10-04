@@ -280,7 +280,6 @@ func setupAdminConsoleRouterWithPool(t *testing.T, pool *pgxpool.Pool) *gin.Engi
 		c.Next()
 	})
 
-	// Register all routes
 	admin := r.Group("/api/v1/admin")
 	admin.GET("/dashboard", handler.Dashboard)
 	admin.GET("/users", handler.GetUsers)

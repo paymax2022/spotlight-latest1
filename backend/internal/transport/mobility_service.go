@@ -93,7 +93,6 @@ func (s *Service) requestRide(ctx context.Context, riderID string, req RequestRi
 	}
 	cfg, route, systemFare := pricing.cfg, pricing.route, pricing.systemFare
 
-	// Determine the escrow amount + initial phase.
 	escrowKobo := systemFare
 	phase := PhaseRequested
 	offerStatus := "pending"
@@ -141,9 +140,9 @@ func (s *Service) requestRide(ctx context.Context, riderID string, req RequestRi
 	tripID := uuid.New().String()
 
 	// Cash rides settle in-vehicle — the rider pays the driver directly, out of
-	// band, so NOTHING is escrowed from the rider's wallet here (that used to
-	// happen unconditionally, silently wallet-debiting "cash" riders with no
-	// visible authorization). The platform instead collects its commission by
+	// band, so NOTHING is escrowed from the rider's wallet here (a wallet debit
+	// on a cash ride would be an unauthorized charge). The platform instead
+	// collects its commission by
 	// debiting the DRIVER's wallet at trip completion (settleCashTrip); a
 	// driver whose balance can't cover that fee is filtered out of the open
 	// requests feed and blocked from accepting (see driverCanCoverCashFee).
@@ -176,9 +175,9 @@ func (s *Service) requestRide(ctx context.Context, riderID string, req RequestRi
 	// created at all. e.g. an offer inside the app's own [floor,ceiling]
 	// range can still trip the DB's separate, absolute
 	// trips_fare_kobo_check constraint, which the app-level
-	// validateFareInRange call above does not know about. Found live via
-	// UAT: without this, such an offer escrowed the rider's wallet and then
-	// failed the trip INSERT, leaving a real settlements row in 'escrowed'
+	// validateFareInRange call above does not know about. Without this, such
+	// an offer escrows the rider's wallet and then fails the trip INSERT,
+	// leaving a real settlements row in 'escrowed'
 	// state with no owning trip — no FSM state, no cancel path (cancel needs
 	// a trip id), and outside the reconciler's reach (it only re-drives
 	// completed trips). Mirrors this same package's own established pattern
@@ -420,8 +419,7 @@ func (s *Service) adjustEscrow(ctx context.Context, t *tripRow, newFare int64) e
 //     the SAME key (a safe ledger no-op via unique idempotency key), and
 //   - a genuinely higher target fare produces a DIFFERENT key (a distinct escrow).
 //
-// This is the fix for the original double-charge bug (the key used to embed
-// time.Now().UnixNano(), minting a fresh key on every retry). Extracted as a pure
+// A per-retry key (e.g. timestamp-seeded) would double-charge. Extracted as a pure
 // function so the invariant is provable in a unit test without a database.
 func deltaEscrowKey(tripID string, newFare int64) string {
 	return fmt.Sprintf("trip:%s:delta:%d", tripID, newFare)
@@ -453,7 +451,6 @@ func (s *Service) CancelRide(ctx context.Context, tripID, riderID, reason string
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	// Refund all escrowed settlements for this trip.
 	s.refundTrip(ctx, &t, "trip_cancelled")
 	if t.DriverID != nil {
 		s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *t.DriverID)

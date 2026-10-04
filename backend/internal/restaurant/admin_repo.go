@@ -66,14 +66,18 @@ type AdminDispatchOrder struct {
 // status is derived from is_open (no separate KYC column exists on `restaurants`
 // yet — see report; a richer KYC record would live on onb_application).
 type AdminApplication struct {
-	ID             string    `json:"id"`
-	RestaurantName string    `json:"restaurant_name"`
-	OwnerID        string    `json:"owner_id"`
-	Address        string    `json:"address,omitempty"`
-	Status         string    `json:"status"`    // pending|in_review|approved|rejected (FOOD-010: derived from the REAL restaurant_kyb state, not is_open)
-	Documents      []any     `json:"documents"` // empty: no KYC doc store on restaurants yet
-	SubmittedAt    time.Time `json:"submitted_at"`
-	ReviewNote     *string   `json:"review_note,omitempty"`
+	ID             string `json:"id"`
+	RestaurantName string `json:"restaurant_name"`
+	OwnerID        string `json:"owner_id"`
+	Address        string `json:"address,omitempty"`
+	Status         string `json:"status"` // pending|in_review|approved|rejected (FOOD-010: derived from the REAL restaurant_kyb state, not is_open)
+	// KYBStatus is the raw restaurants.kyb_status (E2E-PROV-020): Status alone
+	// maps both "never submitted" (NULL) and "submitted, awaiting review" to
+	// 'pending', which made them indistinguishable in the queue.
+	KYBStatus   *string   `json:"kyb_status,omitempty"`
+	Documents   []any     `json:"documents"` // empty: no KYC doc store on restaurants yet
+	SubmittedAt time.Time `json:"submitted_at"`
+	ReviewNote  *string   `json:"review_note,omitempty"`
 }
 
 // AdminPayoutRun is a READ-ONLY reconciliation view of settled food-delivery
@@ -176,6 +180,7 @@ func (s *Service) AdminListApplications(ctx context.Context, status string) ([]A
 			return nil, err
 		}
 		a.Status = kybStatusToApplicationStatus(kybStatus)
+		a.KYBStatus = kybStatus
 		// No KYC review-note column exists on `restaurants` yet (see report); the
 		// review note supplied on reject is delivered to the owner, not persisted.
 		a.Documents = []any{}

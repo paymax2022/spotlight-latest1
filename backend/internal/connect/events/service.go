@@ -177,7 +177,6 @@ func (s *Service) ScanQR(ctx context.Context, scannerID, eventID, qr string) (st
 	if organizer != scannerID {
 		return "", fmt.Errorf("connect: only the organiser may scan tickets")
 	}
-	// Resolve ticket + holder from QR within the event.
 	var ticketID, ownerID, status string
 	if err := s.db.QueryRow(ctx,
 		`SELECT id, owner_id, status FROM event_tickets WHERE qr_code=$1 AND event_id=$2`,

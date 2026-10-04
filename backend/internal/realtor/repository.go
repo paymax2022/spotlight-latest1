@@ -144,8 +144,6 @@ func (r *Repository) DecideListing(ctx context.Context, id, decision string) (st
 	default:
 		return "", errors.New("realtor: invalid decision")
 	}
-	// Additive moderation transition: updates only the listing status/verification
-	// columns (never a money/ledger column). The decision is audited by the caller.
 	ct, err := r.db.Exec(ctx,
 		`UPDATE realtor_listings SET status=$2, verification=$3, updated_at=now() WHERE id=$1`,
 		id, newStatus, newVerification)
@@ -375,21 +373,14 @@ func isValidEscrowDecision(d string) bool {
 }
 
 // ResolveEscrow applies an admin decision to a refundable lease deposit held in
-// the shared 'settlement' standing account (ADR-040 pattern — deposits are NOT
-// held in a dedicated per-deposit account; realtor_escrow_deposits is the
-// bookkeeping record of what is earmarked). Money mutation Iron Rules:
-//   - idempotency: PostReversal/PostJournal are called with a deterministic key
-//     derived from the deposit id, so a retried admin call is a safe no-op
-//     (ledger.ErrDuplicate).
-//   - balanced double-entry: PostReversal / PostJournal always post a balanced
-//     pair; no balance column is ever written directly.
-//   - fail-closed inspection gate: released_to_tenant / forfeited_to_landlord
-//     REQUIRE a realtor_move_outs row with submitted_at set — this is the whole
-//     point of "inspection-gated release" (PROPMGMT-002). 'disputed' does not
-//     require a move-out submission (an admin may flag a dispute proactively)
-//     and leaves the deposit resolvable again later (only status='released' is
-//     a terminal state — see the guard below).
-//   - audit: every branch writes an immutable realtor_admin_audit_log row.
+// the shared 'settlement' standing account (ADR-040: realtor_escrow_deposits is
+// the earmark bookkeeping record, not a per-deposit ledger account). Ledger posts
+// use deterministic idempotency keys derived from the deposit id, so a retried
+// admin call is a safe ledger.ErrDuplicate no-op. released_to_tenant /
+// forfeited_to_landlord REQUIRE a realtor_move_outs row with submitted_at set
+// (inspection-gated release, PROPMGMT-002); 'disputed' does not and is
+// non-terminal — only status='released' is terminal. Every branch writes an
+// immutable realtor_admin_audit_log row.
 func (r *Repository) ResolveEscrow(ctx context.Context, id, decision, note, adminID string) (*EscrowResolution, error) {
 	if !isValidEscrowDecision(decision) {
 		return nil, ErrInvalidEscrowDecision

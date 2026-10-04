@@ -470,9 +470,8 @@ func (s *Service) Confirm(ctx context.Context, actorID, apptID string) (*Appoint
 	// ownership check — but if the CALLER is the vet, their VCN approval must
 	// still be re-verified here, not just at Accept time. A vet accepted while
 	// APPROVED and suspended before confirming must not be able to advance
-	// the appointment toward a money release. Found live via UAT: neither
-	// Confirm nor CompleteConsult re-checked VCN status, letting a suspended
-	// vet confirm and complete an appointment and receive the escrow release.
+	// the appointment toward a money release. Both Confirm and CompleteConsult
+	// re-check VCN status for this reason.
 	if s.prov != nil {
 		vetOwner, operr := s.providerOwner(ctx, a.ProviderID)
 		if operr == nil && actorID == vetOwner {
@@ -663,8 +662,7 @@ func (s *Service) CompleteConsult(ctx context.Context, vetOwnerID, apptID string
 	}
 	// HL-2: ownership alone is not the same as current VCN approval — a vet
 	// accepted while APPROVED and suspended before completing must not be
-	// able to trigger the escrow release. Found live via UAT (see Confirm's
-	// identical fix above for the full defect description).
+	// able to trigger the escrow release (see Confirm's identical guard above).
 	if s.prov != nil {
 		ok, perr := s.prov.VerifiedVetOwner(ctx, vetOwnerID, a.ProviderID)
 		if perr != nil {
@@ -1099,9 +1097,9 @@ func (s *Service) AdminDashboard(ctx context.Context) (*AdminDashboard, error) {
 		return nil, err
 	}
 
-	// See AdminDashboard.PlatformRevenueKoboWeek's doc comment (admin_model.go)
-	// for why this is a direct read of the commission module's own recorded
-	// earning rows, in pure integer kobo, rather than a recomputed percentage.
+	// See AdminDashboard.PlatformRevenueKoboWeek's doc comment below for why
+	// this is a direct read of the commission module's own recorded earning
+	// rows, in pure integer kobo, rather than a recomputed percentage.
 	if err := s.db.QueryRow(ctx,
 		`SELECT COALESCE(SUM(spotlight_revenue_kobo), 0) FROM commission_earnings
 		 WHERE source_module = 'health.vet' AND created_at >= now() - interval '7 days'`,
@@ -1254,9 +1252,8 @@ type Vaccination struct {
 
 // request/response types for the admin console dashboard.
 // Additive to model.go; nothing here changes the member-facing shapes.
-// Mirrors healthlab's admin_model.go (Lab's a0905c1b dashboard fix) and
-// healthpharmacy's admin_model.go (PHARMACY-001) exactly in shape and
-// discipline.
+// Mirrors healthlab's admin.go and healthpharmacy's admin.go exactly in shape
+// and discipline.
 
 // AdminDashboard aggregates platform-wide KPIs for the vet admin console.
 // Contrast with the owner/vet-scoped views (model.go), which are scoped to
@@ -1269,25 +1266,13 @@ type AdminDashboard struct {
 	AppointmentsByState map[string]int64 `json:"appointments_by_state"`
 	// PlatformRevenueKoboWeek is Spotlight's realized commission on vet
 	// appointments completed in the trailing 7 days.
-	// This is a direct READ of already-recorded rows, not a recomputation:
-	// the vet service's own completion path (recordCommissionSafe, service.go
-	// line 772) does NOT itself know the commission split — the breakdown is
-	// resolved server-side by the central commission module's rate card
-	// (commission.Service.RecordFor / computeBreakdown), and vet deliberately
-	// never imports that package (see CommissionRecorder's doc comment in
-	// service.go — the interface seam exists precisely so vet stays ignorant
-	// of the rate, which can be changed by admins at any time via the
-	// rate-card UI). Recomputing a % here would mean hardcoding a rate that
-	// can silently drift from the live config — exactly the class of bug
-	// PHARMACY-002/003 and Telemedicine's TELEMEDICINE-002 float bug both
-	// were. Summing commission_earnings.spotlight_revenue_kobo (an
-	// append-only, integer-kobo ledger of exactly what recordCommissionSafe
-	// recorded) for source_module='health.vet' (service.go's
-	// recordCommissionSafe call site, line 772) is therefore the only
-	// accurate, integer-only source of this figure. If the commission
-	// feature is off (FeatureCommissionEnabled=false ⇒
-	// SetCommissionRecorder is never called), no rows are ever written for
-	// this module and this is honestly 0 — not fabricated, not estimated.
+	// Direct READ of already-recorded rows, NOT a recomputation: the split is
+	// resolved server-side by the central commission module's rate card, and
+	// vet deliberately never imports that package — recomputing a % here would
+	// hardcode a rate that can drift from the live config. Summing
+	// commission_earnings.spotlight_revenue_kobo (append-only integer-kobo
+	// ledger) for source_module='health.vet' is the only accurate source.
+	// When the commission feature is off no rows are written and this is 0.
 	PlatformRevenueKoboWeek int64 `json:"platform_revenue_kobo_week"`
 	// TotalVets mirrors the exact APPROVED-vet predicate used by
 	// vetProviderGateAdapter.IsApprovedVet (backend/internal/app/health_vet_routes.go)

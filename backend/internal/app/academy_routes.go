@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/academy/assessment"
@@ -27,6 +28,7 @@ import (
 	feesscholarship "spotlight/backend/internal/academy/fees/scholarship"
 	feesschool "spotlight/backend/internal/academy/fees/school"
 	feessession "spotlight/backend/internal/academy/fees/session"
+	feesstatemachine "spotlight/backend/internal/academy/fees/statemachine"
 	feesstudent "spotlight/backend/internal/academy/fees/student"
 	feestrustscore "spotlight/backend/internal/academy/fees/trustscore"
 	feesvault "spotlight/backend/internal/academy/fees/vault"
@@ -335,7 +337,16 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	feesinvoice.RegisterFeesInvoice(member, admin, pool, rbac)      // /invoices (SF-2 derived balance)
 	feespromotion.RegisterFeesPromotion(member, admin, pool, rbac)  // /promotions (SF-3 two-approval)
 	feesroles.RegisterFeesRoles(admin, pool, rbac)                  // /schools/:schoolId/staff (RequireScopedPermission academy.fees.roles.assign)
-	feeshardship.RegisterFeesHardship(member, admin, pool, rbac)    // /invoices hardship review queue (SF-9, no money)
+
+	// Hardship (SF-9): inject the real ports so the review queue is actionable —
+	// the InvoiceFreezer drives overdue→frozen through the guarded invoice state
+	// machine, and the ReviewerAuthorizer checks academy.fees.hardship.review at
+	// global or the invoice's school scope, fail-closed.
+	{
+		invSvc := feesinvoice.NewService(pool)
+		hardshipSvc := feeshardship.NewService(pool, feesHardshipFreezer{inv: invSvc}, feesHardshipAuthz{rbac: rbac, pool: pool})
+		feeshardship.RegisterFeesHardship(member, admin, hardshipSvc, rbac)
+	}
 
 	// Flat admin oversight surface for the school-admin console (SC-29…SC-40): read-heavy
 	// list/aggregate views ACROSS schools at /api/academy/admin/fees/* (distinct from the
@@ -619,6 +630,63 @@ func (a feesScholarshipInvoice) RecordPayment(ctx context.Context, actorID, invo
 	return res.Payment.ID, res.Replayed, nil
 }
 
+// feesHardshipFreezer adapts fees/invoice.Service to feeshardship.InvoiceFreezer
+// — Freeze runs through the invoice's guarded state machine, never a raw write.
+type feesHardshipFreezer struct{ inv *feesinvoice.Service }
+
+func (a feesHardshipFreezer) CurrentStatus(ctx context.Context, invoiceID string) (feesstatemachine.InvoiceState, error) {
+	inv, err := a.inv.GetInvoice(ctx, invoiceID)
+	if err != nil {
+		return "", err
+	}
+	return inv.Status, nil
+}
+
+func (a feesHardshipFreezer) Freeze(ctx context.Context, actorID, invoiceID string) (feesstatemachine.InvoiceState, error) {
+	inv, err := a.inv.Freeze(ctx, actorID, invoiceID)
+	if err != nil {
+		return "", err
+	}
+	return inv.Status, nil
+}
+
+// feesHardshipAuthz adapts the RBAC service to feeshardship.ReviewerAuthorizer:
+// a reviewer may act with academy.fees.hardship.review at global scope or at the
+// invoice's school scope (invoice → student → school spine). Fail-closed.
+type feesHardshipAuthz struct {
+	rbac services.RBACService
+	pool *pgxpool.Pool
+}
+
+func (a feesHardshipAuthz) CanReview(ctx context.Context, reviewerID, invoiceID string) (bool, error) {
+	if a.rbac == nil {
+		return false, nil
+	}
+	ok, err := a.rbac.CheckPermission(reviewerID, "academy.fees.hardship.review", "global", "")
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		return true, nil
+	}
+	var schoolID string
+	if a.pool == nil {
+		return false, nil
+	}
+	if err := a.pool.QueryRow(ctx,
+		`SELECT s.school_id
+		   FROM public.academy_invoices i
+		   JOIN public.academy_students s ON s.id = i.student_id
+		  WHERE i.id = $1`, invoiceID).Scan(&schoolID); err != nil {
+		return false, nil // school scope unresolvable ⇒ deny (fail-closed)
+	}
+	allowed, err := a.rbac.CheckPermission(reviewerID, "academy.fees.hardship.review", "school", schoolID)
+	if err != nil {
+		return false, err
+	}
+	return allowed, nil
+}
+
 // feesGamificationLadder adapts academy/gamification.Service to
 // fees/competition.GamificationLadder (money-free engagement ladder, SF-4).
 // academyGamifierAdapter bridges academy/gamification.Service to the nil-safe
@@ -720,6 +788,11 @@ func (m feesTrustMetrics) TrustInputs(ctx context.Context, schoolID string) (fee
 	if m.pool == nil {
 		return in, nil
 	}
+	// schoolID feeds uuid-typed columns — an unparseable param would leak 22P02
+	// as a 500, so answer the input sentinel.
+	if _, err := uuid.Parse(schoolID); err != nil {
+		return in, feestrustscore.ErrMissingSchool
+	}
 	const q = `
 	SELECT
 	  (SELECT COALESCE(SUM(i.total_amount_minor),0)
@@ -759,6 +832,10 @@ type feesTrustOverrides struct{ pool *pgxpool.Pool }
 func (o feesTrustOverrides) SaveOverride(ctx context.Context, schoolID, actorID string, score float64, reason string) error {
 	if o.pool == nil {
 		return nil
+	}
+	// Same 22P02 guard as TrustInputs — school_id is uuid-typed.
+	if _, err := uuid.Parse(schoolID); err != nil {
+		return feestrustscore.ErrMissingSchool
 	}
 	_, err := o.pool.Exec(ctx,
 		`INSERT INTO academy_fees_trust_overrides (school_id, actor_id, score, reason) VALUES ($1,$2,$3,$4)`,

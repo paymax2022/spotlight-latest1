@@ -28,7 +28,13 @@ export async function GET(
       .in('status', ['approved', 'active']);
 
     if (search) {
-      query = query.or(`stage_name.ilike.%${search}%,category.ilike.%${search}%`);
+      // E2E-SEC-060: strip PostgREST filter-grammar metacharacters before
+      // interpolating into .or() — unescaped commas/parens let a caller
+      // reshape the filter (e.g. append ",other_col.eq.x").
+      const term = search.replace(/[(),."\\]/g, '').slice(0, 80);
+      if (term) {
+        query = query.or(`stage_name.ilike.%${term}%,category.ilike.%${term}%`);
+      }
     }
 
     const { data: enrollments, error } = await query;

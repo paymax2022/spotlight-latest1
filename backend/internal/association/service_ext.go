@@ -1039,14 +1039,10 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 	if d.Restrictions.GraceDays != nil && *d.Restrictions.GraceDays >= 0 {
 		graceDays = *d.Restrictions.GraceDays
 	}
-	// requires_payment was derived from fee>0 alone, so a PAID group with a zero
-	// registration fee stored requires_payment=false and contradicted itself.
+	// requires_payment follows group_type too: fee>0 alone would store false for
+	// a PAID group with a zero registration fee, contradicting itself.
 	requiresPayment := d.RegistrationFeeKobo > 0 || d.GroupType == "PAID"
 
-	// founded_year / location / website have existed on this table since the
-	// schema was written and the admin console has always edited them, but this
-	// INSERT never wrote them — so every organisation the wizard published had
-	// them NULL and the founder had no way to set them at all.
 	const insOrg = `
 		INSERT INTO assoc_organisations
 		  (id, name, acronym, category, description, logo_url, group_type, approval_rule,

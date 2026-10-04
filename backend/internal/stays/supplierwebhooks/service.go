@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -15,7 +16,9 @@ import (
 
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/stays/ari"
+	"spotlight/backend/internal/stays/reservation"
 )
 
 const (
@@ -207,26 +210,105 @@ func (s *Service) applyStopSell(ctx context.Context, ev Event) error {
 	return err
 }
 
-// applyReservation handles reservation.* sync events (e.g. supplier-side cancel).
-// Payload: {reservation_id, state}. State changes are applied directly (the supplier
-// is authoritative for its own reservation lifecycle on Rail B inbound).
+// allowedInboundStates is the set of lifecycle targets a supplier may drive
+// inbound. CANCELLED_BY_GUEST is deliberately absent — a supplier cannot speak
+// for the guest.
+var allowedInboundStates = map[string]bool{
+	string(reservation.StateCancelledByHotel): true,
+	string(reservation.StateConfirmed):        true,
+	string(reservation.StateCompleted):        true,
+	string(reservation.StateNoShow):           true,
+}
+
+// applyReservation handles reservation.* sync events. The write is FSM-guarded:
+// the update carries an `AND state = <current>` predicate derived from
+// reservation.InboundSources, so an event can only move a row along a legal
+// edge. A stale/duplicate event on a dead row is a consumed no-op; an illegal
+// edge off a live row fails the event so ops sees it. A hotel-side cancel
+// drives the shared refund machinery before the terminal flip.
 func (s *Service) applyReservation(ctx context.Context, ev Event) error {
 	rid := str(ev.Payload, "reservation_id")
 	state := str(ev.Payload, "state")
 	if rid == "" || state == "" {
 		return fmt.Errorf("reservation.*: reservation_id + state required")
 	}
-	// Only allow transitions into safe inbound states (supplier-driven).
-	switch state {
-	case "CANCELLED_BY_HOTEL", "CONFIRMED", "COMPLETED", "NO_SHOW":
-	default:
+	if !allowedInboundStates[state] {
 		return fmt.Errorf("reservation.*: unsupported inbound state %q", state)
 	}
-	_, err := s.db.Exec(ctx, `
+	target := reservation.State(state)
+	sources := reservation.InboundSources(target)
+
+	var cur string
+	if err := s.db.QueryRow(ctx,
+		`SELECT state FROM public.stays_reservation WHERE id = $1`, rid).Scan(&cur); err != nil {
+		return fmt.Errorf("reservation.*: reservation %s lookup: %w", rid, err)
+	}
+	if !slices.Contains(sources, cur) {
+		// Already-target or terminal source: stale/duplicate event — consume it.
+		if cur == state || reservation.State(cur).IsTerminal() {
+			return nil
+		}
+		// Illegal transition on a live row: protocol violation — fail the event.
+		return fmt.Errorf("reservation.*: illegal transition %s → %s", cur, state)
+	}
+	if target == reservation.StateCancelledByHotel {
+		return s.applyHotelCancel(ctx, rid, str(ev.Payload, "reason"))
+	}
+	// Non-cancel flips take the same reservation advisory lock the refund
+	// sagas hold — otherwise a flip can commit between a saga's leg posts and
+	// its terminal update, leaving a payable-looking row with posted refund
+	// legs. State is re-read under the lock.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("reservation.*: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext($1))`, "stays:reservation:"+rid); err != nil {
+		return fmt.Errorf("reservation.*: lock %s: %w", rid, err)
+	}
+	if err := tx.QueryRow(ctx,
+		`SELECT state FROM public.stays_reservation WHERE id = $1`, rid).Scan(&cur); err != nil {
+		return fmt.Errorf("reservation.*: reservation %s lookup: %w", rid, err)
+	}
+	if !slices.Contains(sources, cur) {
+		// The row moved while we waited on the lock — re-apply the same rules:
+		// already-target or terminal ⇒ consume; illegal on a live row ⇒ fail.
+		if cur == state || reservation.State(cur).IsTerminal() {
+			return nil
+		}
+		return fmt.Errorf("reservation.*: illegal transition %s → %s", cur, state)
+	}
+	ct, err := tx.Exec(ctx, `
 		UPDATE public.stays_reservation
 		SET state = $2, version = version + 1, updated_at = now()
-		WHERE id = $1`, rid, state)
+		WHERE id = $1 AND state = $3`, rid, state, cur)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		// The row moved between lock-read and write — consume the event.
+		return nil
+	}
+	return tx.Commit(ctx)
+}
+
+// applyHotelCancel runs a supplier-reported hotel cancel through the shared
+// refund machinery (reservation.RefundOps) under the 'stays:refund:<id>' /
+// 'stays:hotelcancel:<id>:refund' families, so a raced extranet or guest cancel
+// converges rather than double-paying. A refund failure leaves the row
+// non-terminal so the event can be re-driven.
+func (s *Service) applyHotelCancel(ctx context.Context, reservationID, reason string) error {
+	_, err := s.refundOps().CancelByHotel(ctx, reservationID, reason)
 	return err
+}
+
+// refundOps builds the shared cancel-refund machinery over this service's pool
+// (built here so the app wiring keeps its constructor signature).
+func (s *Service) refundOps() *reservation.RefundOps {
+	return reservation.NewRefundOps(
+		reservation.NewRepository(s.db),
+		ledger.NewService(ledger.NewRepository(s.db), nil))
 }
 
 func orMap(m map[string]any) map[string]any {

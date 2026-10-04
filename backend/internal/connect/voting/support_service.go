@@ -137,7 +137,6 @@ func (s *SupportService) UpdateSupportTicket(ctx context.Context, userID, ticket
 
 // AddTicketMessage adds a message to a support ticket
 func (s *SupportService) AddTicketMessage(ctx context.Context, userID, ticketID, message string, attachments []string) (*TicketMessage, error) {
-	// Verify ticket exists and belongs to user
 	var exists bool
 	err := s.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM voting_support_tickets WHERE id = $1 AND user_id = $2)", ticketID, userID).Scan(&exists)
 	if err != nil || !exists {
@@ -158,7 +157,6 @@ func (s *SupportService) AddTicketMessage(ctx context.Context, userID, ticketID,
 		&msg.ID, &msg.TicketID, &msg.AuthorID, &msg.IsInternal, &msg.Message, &msg.Attachments, &msg.CreatedAt,
 	)
 
-	// Update ticket's updated_at
 	if err == nil {
 		_, _ = s.pool.Exec(ctx, "UPDATE voting_support_tickets SET updated_at = $1 WHERE id = $2", now, ticketID)
 	}
@@ -168,7 +166,6 @@ func (s *SupportService) AddTicketMessage(ctx context.Context, userID, ticketID,
 
 // ListTicketMessages lists all messages in a ticket (owner-scoped)
 func (s *SupportService) ListTicketMessages(ctx context.Context, userID, ticketID string) ([]TicketMessage, error) {
-	// Verify ticket exists and belongs to user
 	var exists bool
 	err := s.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM voting_support_tickets WHERE id = $1 AND user_id = $2)", ticketID, userID).Scan(&exists)
 	if err != nil || !exists {

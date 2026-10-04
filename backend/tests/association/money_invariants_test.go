@@ -588,32 +588,16 @@ func TestAiNoteStatus_ApprovePublishTransitions(t *testing.T) {
 	}
 }
 
-// TestAiNoteStatus_NoAuthorizationGate_DocumentsKnownGap is a REGRESSION-GUARD /
-// documentation test. As read from source (backend/internal/association/
-// service_ext.go SetAiNoteStatus, L454-467), the function performs NO
-// requireCap/requireAssocAdmin check before updating assoc_ai_notes.status —
-// unlike every other admin-style mutation in this package (DecideOfflinePayment,
-// SuspendMember, RestoreMember, TransferMember, AssignRole, BulkImportMembers,
-// ImportPreview, ConfirmImport all call requireCap or requireAssocAdmin first).
-// The handlers (handler_ext.go ApproveAiNote/PublishAiNote) pass
-// c.GetString("user_id") straight through as "adminID" without any admin-role
-// check upstream either. This means ANY authenticated member — not just a
-// SECRETARY/admin — can approve or publish meeting minutes today.
-// This test intentionally FAILS once SetAiNoteStatus (or its callers) gains an
-// authorization check, so it must be UPDATED (not silently deleted) when the
-// gap is fixed — it exists to force that fix to be a deliberate, reviewed
-// decision rather than a silent behavior change.
+// TestAiNoteStatus_NoAuthorizationGate_DocumentsKnownGap is a regression guard
+// on the authz fix in SetAiNoteStatus (backend/internal/association/
+// service_ext.go), which calls requireAssocAdmin(ctx, adminID) as its FIRST
+// statement — matching ConfirmImport and the other admin-style mutations in
+// this package. The gap it closed: any authenticated member could previously
+// approve/publish meeting minutes. requireAssocAdmin (not requireCap) is
+// deliberate — it admits SECRETARY, the intended minutes reviewer, whereas
+// every AdminCapabilities flag is false for SECRETARY.
 func TestAiNoteStatus_NoAuthorizationGate_DocumentsKnownGap(t *testing.T) {
-	// Transcribed from source. SetAiNoteStatus (backend/internal/association/
-	// service_ext.go) now calls s.requireAssocAdmin(ctx, adminID) as its FIRST
-	// statement, before beginning the tx — matching ConfirmImport and the other
-	// admin-style mutations in the package. The gap flagged by Agent D (any
-	// authenticated member could approve/publish minutes) is CLOSED: a caller
-	// with no assoc_member_roles row now gets ErrForbidden and no row is written.
-	// requireAssocAdmin (not requireCap) is deliberate — it admits SECRETARY,
-	// the intended minutes reviewer, whereas every AdminCapabilities flag is
-	// false for SECRETARY.
-	const hasAuthorizationCheckInSetAiNoteStatus = true // fixed by Agent E
+	const hasAuthorizationCheckInSetAiNoteStatus = true
 
 	if !hasAuthorizationCheckInSetAiNoteStatus {
 		t.Fatal("REGRESSION: SetAiNoteStatus lost its authorization guard — any authenticated member can now approve/publish minutes. Restore requireAssocAdmin(ctx, adminID) as the first statement.")

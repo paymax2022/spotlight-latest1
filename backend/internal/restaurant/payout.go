@@ -782,7 +782,6 @@ func NewRegistryDisburser(reg *disbursement.Registry) *RegistryDisburser {
 // On any provider error, Executed=false (the withdrawal stays reserved;
 // a webhook will attempt to settle or reverse it).
 func (d *RegistryDisburser) Disburse(ctx context.Context, req WithdrawalDisburseRequest) (WithdrawalDisburseResult, error) {
-	// Get the default disbursement provider (e.g., "paystack").
 	providerName := d.reg.Default()
 	if providerName == "" {
 		// No provider configured; stay in sandbox (NoopDisburser behavior).

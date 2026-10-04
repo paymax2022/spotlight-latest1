@@ -131,7 +131,6 @@ func (r *Repository) ImportBank(ctx context.Context, competitionID, bankKey, rub
 // falls back to template counts when nothing is bound yet).
 func (r *Repository) StageCounts(ctx context.Context, competitionID, bankKey, rubricVersion string) (map[int]int, error) {
 	counts := map[int]int{}
-	// Bound first.
 	rows, err := r.pool.Query(ctx, `
 		SELECT stage, COUNT(*) FROM arena_quiz_question
 		 WHERE competition_id = $1 GROUP BY stage`, competitionID)
@@ -150,7 +149,6 @@ func (r *Repository) StageCounts(ctx context.Context, competitionID, bankKey, ru
 	if len(counts) > 0 {
 		return counts, nil
 	}
-	// Template fallback.
 	trows, err := r.pool.Query(ctx, `
 		SELECT stage, COUNT(*) FROM arena_quiz_question
 		 WHERE bank_key = $1 AND rubric_version = $2 AND competition_id IS NULL

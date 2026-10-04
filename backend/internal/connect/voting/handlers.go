@@ -278,15 +278,10 @@ func (h *Handler) GetStages(c *gin.Context) {
 // Gated behind FEATURE_CONTESTANT_SOCIAL_ENABLED, same as the like/share
 // mutation routes in Register — a token could otherwise resolve before the
 // feature that issues tokens is even live anywhere else.
-// A public GET /contests mirror (for logged-out web visitors) was tried here
-// and reverted 2026-09-28: adding it made the staging backend deploy crash-
-// loop and fail its healthcheck every time (Railway logs showed a
-// gin.(*RouterGroup).GET stack frame right after startup, then thousands of
-// dropped log lines/sec — consistent with a panic on every request, most
-// likely the healthcheck route). The exact mechanism wasn't confirmed before
-// reverting — Railway's CLI log tail is rate-limited and dropped the actual
-// panic message both times. Re-attempt only with direct Railway dashboard
-// log access to see the undropped stack trace.
+// A public GET /contests mirror (for logged-out web visitors) was reverted
+// 2026-09-28: it crash-looped the staging deploy — a panic on every request
+// right after startup (Railway's rate-limited log tail dropped the actual
+// stack). Re-attempt only with direct Railway dashboard logs.
 func RegisterPublic(public gin.IRouter, svc *Service, cfg config.Config) {
 	if !cfg.FeatureContestantSocialEnabled {
 		log.Println("[connect-voting] FEATURE_CONTESTANT_SOCIAL_ENABLED is off — skipping public share-resolve route")
@@ -402,9 +397,6 @@ func RegisterAdmin(admin gin.IRouter, svc *Service, guard PermissionGuard, cfg c
 }
 
 // MyVotes — GET /connect/votes/mine?contestId=&voteType=FREE|PAID
-// The screen that reads this used to call GET /voting/my-votes, a path nothing
-// served: it answered 404 with an HTML body, and with mock mode off the list
-// could never render a single row.
 func (h *Handler) MyVotes(c *gin.Context) {
 	vt := strings.ToUpper(strings.TrimSpace(c.Query("voteType")))
 	list, err := h.svc.MyVotes(c.Request.Context(), ginutil.UserID(c), c.Query("contestId"),

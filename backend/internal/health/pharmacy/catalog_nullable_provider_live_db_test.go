@@ -63,7 +63,7 @@ func TestLiveDB_ListProducts_ToleratesAProductWithNoPharmacy(t *testing.T) {
 		t.Errorf("PharmacyName = %q, want empty string", found.PharmacyName)
 	}
 
-	// The detail endpoint shares the query shape and had the identical bug.
+	// The detail endpoint shares the query shape — same unowned-product semantics.
 	one, err := svc.GetProduct(ctx, id)
 	if err != nil {
 		t.Fatalf("GetProduct must not fail on an unowned product: %v", err)

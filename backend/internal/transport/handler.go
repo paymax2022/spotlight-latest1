@@ -489,8 +489,8 @@ func (s *Service) SendMessage(ctx context.Context, tripID, senderID string, req 
 // Backend-owned presigned Cloudflare R2 uploads for driver documents.
 // The mobile driver-onboarding flow (features/mobility) needs to upload a licence,
 // insurance certificate, roadworthiness certificate, etc. before submitting the
-// resulting object key via POST /driver/documents. Previously the client had to
-// supply an arbitrary file_url string (untrusted). Now:
+// resulting object key via POST /driver/documents. A client-supplied file_url
+// string would be untrusted, so:
 //  1. Client calls POST /api/finance/driver/documents/presign with the snake_case
 //     body {doc_type, file_name, mime_type}.
 //  2. Backend derives a SERVER-CONTROLLED object key

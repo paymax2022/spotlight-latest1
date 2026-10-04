@@ -391,8 +391,9 @@ func (h *Handler) UpsertLocation(c *gin.Context) {
 }
 
 // adminRoleSlugs are the roles permitted to read provider cost/usage telemetry.
-// Kept in sync with the RBAC role slugs used elsewhere (see rbac personas tests).
-var adminRoleSlugs = map[string]bool{"admin": true, "super_admin": true}
+// Seeded role slugs — the RBAC migration and middleware use the hyphenated
+// spellings; underscore variants matched no seeded role.
+var adminRoleSlugs = map[string]bool{"admin": true, "super-admin": true, "system-admin": true}
 
 // requireAdmin gates cost/usage telemetry to admins. It reads the authenticated
 // user that middleware.RequireAuthContext places in the gin context (key

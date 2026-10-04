@@ -26,8 +26,8 @@ import (
 	"spotlight/backend/internal/services"
 )
 
-// searchAdapter bridges Agent A's type-erased marketplace.Searcher seam
-// (Search(ctx, any) (any, error)) to Agent B's concrete *search.Client, which
+// searchAdapter bridges the type-erased marketplace.Searcher seam
+// (Search(ctx, any) (any, error)) to the concrete *search.Client, which
 // speaks Search(ctx, search.SearchRequest) (search.SearchResults, error).
 // The two packages deliberately never share a type at compile time (no import
 // cycle: marketplace never imports search). This adapter — the ONE place that
@@ -177,9 +177,8 @@ func RegisterMarketplace(
 	svc := marketplace.NewService(pool, ledgerSvc, redis)
 
 	// Fail-closed KYC-tier gate on the boost wallet debit (§6 "Tier/KYC gate"
-	// FINDING in docs/qa/modules/marketplace.md — the boost charge previously
-	// called s.ledger.Debit directly with no tier-limit/KYC gate at all, the
-	// only money path in this codebase missing one). Built self-contained from
+	// FINDING in docs/qa/modules/marketplace.md) — every wallet debit must pass
+	// it, boost included. Built self-contained from
 	// the shared pool here — mirroring ledgerSvc above — rather than threading
 	// app-wiring's single tiersSvc instance out of registerFinanceRoutes,
 	// since RegisterMarketplace is deliberately callable as one

@@ -59,6 +59,10 @@ func actorOf(c *gin.Context) string {
 // is the honest, additive write: the decision is durably captured, no schema invented.
 func (h *Handler) ActionRiskCase(c *gin.Context) {
 	riskID := c.Param("id")
+	if !uuidOK(riskID) {
+		badID(c)
+		return
+	}
 	var body struct {
 		Action   string `json:"action"`   // e.g. 'dismiss' | 'escalate' | 'confirm_fraud'
 		Decision string `json:"decision"` // console alias for action
@@ -91,6 +95,10 @@ func (h *Handler) ActionRiskCase(c *gin.Context) {
 // touches it (only RecordScore does). Records an audit row. Money-free by design (SF-4).
 func (h *Handler) TransitionCompetition(c *gin.Context) {
 	id := c.Param("id")
+	if !uuidOK(id) {
+		badID(c)
+		return
+	}
 	var body struct {
 		Event string `json:"event"`
 	}

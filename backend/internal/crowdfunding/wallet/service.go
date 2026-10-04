@@ -99,21 +99,14 @@ var ErrCampaignNotFound = errors.New("crowdfunding/wallet: campaign not found")
 //   - pending         = Σ cf_withdrawals in (PENDING, PROCESSING, APPROVED) [in-flight out]
 //   - available       = the creator's REAL ledger user_wallet balance − pending
 //
-// "available" used to be derived as released − totalWithdrawn − pending — the
-// FULL gross contribution total, with no accounting for the 10% platform cut
-// Contribute() already deducted via settlement.Settle before the money ever
-// reached the creator's own wallet. That overstated what a creator could
-// actually withdraw by exactly the platform fee: a campaign that raised
-// ₦10,000 shows ₦10,000 "available", but only ₦9,000 ever lands in the
-// creator's user_wallet — requesting the full displayed amount passed this
-// function's own available-balance check and then failed downstream with an
-// unexplained "insufficient funds" from SubmitWithdrawal's ledger.Debit,
-// which checks the SAME account this now reads. Reading that real balance
-// directly (rather than re-deriving an approximation of it) means the two
-// can never disagree again. Falls back to the old approximation only when no
-// ledger is wired (s.ledger == nil, e.g. a read-only context that never
-// configured one) — a read that can't reach the real balance is better than
-// no read at all, but a wired payout path must never trust it as a gate.
+// "available" must be the creator's REAL ledger wallet balance − pending — NOT
+// derived as released − totalWithdrawn − pending. That derivation ignores the
+// platform fee settlement.Settle deducts before money reaches the wallet, so it
+// overstates availability and lets an over-large request through only to fail
+// downstream on an unexplained "insufficient funds". Reading the real balance
+// keeps the gate and the payout's ledger.Debit check in agreement. Falls back
+// to the approximation only when no ledger is wired (s.ledger == nil) — a wired
+// payout path must never trust it as a gate.
 func (s *Service) GetWallet(ctx context.Context, campaignID string) (*CampaignWalletSummary, error) {
 	var (
 		title     string

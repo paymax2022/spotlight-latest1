@@ -42,6 +42,15 @@ type Repository struct {
 // NewRepository builds the pgx-backed Store.
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
+// notFoundOnBadID guards uuid-typed lookups: a non-uuid id can never match a
+// row, so answer ErrNotFound rather than leaking 22P02 as a 500.
+func notFoundOnBadID(id string) error {
+	if _, err := uuid.Parse(id); err != nil {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // querier abstracts *pgxpool.Pool and pgx.Tx.
 type querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
@@ -77,6 +86,9 @@ func (r *Repository) Insert(ctx context.Context, s School) (*School, error) {
 }
 
 func (r *Repository) Get(ctx context.Context, id string) (*School, error) {
+	if err := notFoundOnBadID(id); err != nil {
+		return nil, err
+	}
 	q := `SELECT ` + schoolCols + ` FROM academy_schools WHERE id = $1`
 	s, err := scanSchool(r.db.QueryRow(ctx, q, id))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -114,6 +126,9 @@ func (r *Repository) List(ctx context.Context, ownerUserID string) ([]School, er
 // Update sets only the descriptive columns supplied (empty string ⇒ leave unchanged via
 // COALESCE). It NEVER touches verification_tier or status.
 func (r *Repository) Update(ctx context.Context, id string, req UpdateSchoolRequest) (*School, error) {
+	if err := notFoundOnBadID(id); err != nil {
+		return nil, err
+	}
 	const q = `UPDATE academy_schools SET
 	    name = COALESCE($2, name),
 	    code = COALESCE($3, code),
@@ -136,6 +151,9 @@ func (r *Repository) Update(ctx context.Context, id string, req UpdateSchoolRequ
 // already validated the move via VerifyTransition; this re-asserts the precondition at
 // the DB (WHERE verification_tier=$from FOR UPDATE) so concurrent verifies can't race.
 func (r *Repository) SetVerificationTier(ctx context.Context, id string, from, to VerificationTier) (*School, error) {
+	if err := notFoundOnBadID(id); err != nil {
+		return nil, err
+	}
 	var out *School
 	err := r.withTx(ctx, func(tx pgx.Tx) error {
 		const sel = `SELECT verification_tier FROM academy_schools WHERE id = $1 FOR UPDATE`
@@ -167,6 +185,9 @@ func (r *Repository) SetVerificationTier(ctx context.Context, id string, from, t
 }
 
 func (r *Repository) ExportRoster(ctx context.Context, schoolID string) ([]ExportStudent, error) {
+	if err := notFoundOnBadID(schoolID); err != nil {
+		return nil, err
+	}
 	const q = `SELECT id, admission_number, class_id, status, minor_flag
 	           FROM academy_students WHERE school_id = $1 ORDER BY created_at ASC`
 	rows, err := r.db.Query(ctx, q, schoolID)
@@ -186,6 +207,9 @@ func (r *Repository) ExportRoster(ctx context.Context, schoolID string) ([]Expor
 }
 
 func (r *Repository) ExportFees(ctx context.Context, schoolID string) ([]ExportFee, error) {
+	if err := notFoundOnBadID(schoolID); err != nil {
+		return nil, err
+	}
 	const q = `SELECT id, name, amount_minor, currency, locked
 	           FROM academy_fee_schedules WHERE school_id = $1 ORDER BY created_at ASC`
 	rows, err := r.db.Query(ctx, q, schoolID)

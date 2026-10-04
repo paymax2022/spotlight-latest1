@@ -110,14 +110,14 @@ func TestValidateBankTransferRequest(t *testing.T) {
 
 	badAcct := good
 	badAcct.AccountNumber = "123" // not 10 digits
-	if err := transfers.ValidateBankTransferRequest(badAcct); !errors.Is(err, transfers.ErrInvalidAccount) {
-		t.Fatalf("short account number: got %v, want ErrInvalidAccount", err)
+	if err := transfers.ValidateBankTransferRequest(badAcct); !errors.Is(err, transfers.ErrInvalidAccountNumber) {
+		t.Fatalf("short account number: got %v, want ErrInvalidAccountNumber (400)", err)
 	}
 
 	noBank := good
 	noBank.BankCode = ""
-	if err := transfers.ValidateBankTransferRequest(noBank); !errors.Is(err, transfers.ErrInvalidAccount) {
-		t.Fatalf("missing bank code: got %v, want ErrInvalidAccount", err)
+	if err := transfers.ValidateBankTransferRequest(noBank); !errors.Is(err, transfers.ErrInvalidAccountNumber) {
+		t.Fatalf("missing bank code: got %v, want ErrInvalidAccountNumber (400)", err)
 	}
 }
 

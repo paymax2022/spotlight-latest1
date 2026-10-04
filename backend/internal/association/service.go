@@ -197,7 +197,6 @@ func (s *Service) PayInvoice(ctx context.Context, userID, invoiceID string, req 
 		return nil, ErrIdempotencyRequired
 	}
 
-	// Load the invoice + its owner.
 	var (
 		amount     int64
 		title      string

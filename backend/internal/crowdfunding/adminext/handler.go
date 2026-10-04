@@ -10,6 +10,7 @@ import (
 	"spotlight/backend/go-common/httperr"
 	financekyc "spotlight/backend/internal/finance/kyc"
 	financeledger "spotlight/backend/internal/finance/ledger"
+	financesettlement "spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -353,7 +354,13 @@ func (h *Handler) decideFeatureRequest(c *gin.Context, approve bool) {
 // and no operator loses access. Confirmed before applying: an admin passes both
 // (200 / non-403) while a non-admin is refused both (403).
 func RegisterAdmin(rg *gin.RouterGroup, db *pgxpool.Pool, ledgerSvc *financeledger.Service, kycSvc *financekyc.Service, rbac services.RBACService) {
-	h := NewHandler(NewService(db).WithLedger(ledgerSvc).WithKYC(kycSvc))
+	svc := NewService(db).WithLedger(ledgerSvc).WithKYC(kycSvc)
+	if ledgerSvc != nil {
+		// The refund-approval path needs the settlement rail alongside the
+		// ledger (escrow refunds go through settlement.Refund).
+		svc.WithSettlement(financesettlement.NewService(db, ledgerSvc))
+	}
+	h := NewHandler(svc)
 
 	// Reading the console vs acting through it are separate grants, mirroring
 	// crowdfunding.admin.review / .decide on the review routes.

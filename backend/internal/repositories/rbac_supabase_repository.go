@@ -497,14 +497,10 @@ func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) (
 }
 
 // GetAdminUser fetches exactly one platform_users row by primary key.
-// This used to be implemented as ListAdminUsers(Limit: 1) followed by a
-// linear search for a matching ID — but ListAdminUsers orders by
-// created_at.desc, so a Limit of 1 fetches only the single newest user
-// platform-wide. Every lookup for any other user (i.e. almost every lookup)
-// silently 404'd, which broke the admin console's per-user inspect/update
-// view (AUTH-019). Filter by id=eq.<userID> directly instead — PostgREST
-// applies the filter server-side, so this returns the requested row
-// regardless of creation order.
+// Must filter by id=eq.<userID> server-side (PostgREST applies it before
+// limit) — do NOT implement as ListAdminUsers(Limit: 1) + client-side match:
+// ListAdminUsers orders by created_at.desc, so Limit 1 returns only the
+// single newest user platform-wide (AUTH-019).
 func (r *RBACSupabaseRepository) GetAdminUser(userID string) (domain.AdminUser, error) {
 	id := strings.TrimSpace(userID)
 	if id == "" {

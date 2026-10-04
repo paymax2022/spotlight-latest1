@@ -62,9 +62,9 @@ func NewOTPAuthBridge(auth AuthService, db *pgxpool.Pool) *otpAuthBridge {
 // WithSessions wires SessionService into the bridge, the same way
 // AuthHandler.WithSessions does for the password-login path. Call this from
 // the same place that builds the AuthHandler's session wiring, with the same
-// service instance and the same feature flag — a step-up session that is
-// tracked by a DIFFERENT SessionService instance than /api/auth/me validates
-// against would fail exactly the way the untracked session did before this.
+// service instance and the same feature flag — a step-up session tracked by a
+// DIFFERENT SessionService instance than /api/auth/me validates against is
+// effectively untracked.
 func (b *otpAuthBridge) WithSessions(sessions SessionService, enabled bool) *otpAuthBridge {
 	b.sessions = sessions
 	b.sessionHardening = enabled
@@ -80,14 +80,12 @@ func (b *otpAuthBridge) gate(email string) (*platformUser, error) {
 	user, err := b.svc.findPlatformUserByEmail(email)
 	if err != nil {
 		// The lookup itself failed (REST/network) — distinct from the zero-rows
-		// case below. Unchanged: propagate as-is, same as before this fix.
+		// case below: propagate as-is.
 		return nil, err
 	}
 	if user == nil {
 		// AUTH-014: zero platform_users rows for an email completing a step-up.
-		// This used to be treated as "the gate only applies when a row exists"
-		// and let the step-up through with zero enforcement of suspension/lock —
-		// the same bug LoginUser had. The RBAC identity-bridge trigger
+		// The RBAC identity-bridge trigger
 		// (20260904000000_rbac_identity_bridge.sql) mirrors auth.users into
 		// platform_users SYNCHRONOUSLY within account creation, so a normal
 		// account always has a row by the time any login step is reachable. A
@@ -114,14 +112,12 @@ func (b *otpAuthBridge) MintSession(ctx context.Context, email string) (map[stri
 	if err != nil {
 		return nil, err
 	}
-	// AUTH-009: a session minted here was, until this call, NEVER registered
-	// with SessionService — only the password-login path (AuthHandler.Login)
-	// did that, after its own GoTrue mint. With FEATURE_SESSION_HARDENING_ENABLED
-	// on, RequireAuthContextWithSessions looks every token up in SessionService
-	// and fails closed on a miss, so a step-up session was valid at GoTrue and
-	// rejected everywhere else as "session revoked". Registering it here, using
-	// the tokens GoTrue just returned, is the missing half of the same pattern
-	// Login already uses.
+	// AUTH-009: a session minted here MUST be registered with SessionService.
+	// With FEATURE_SESSION_HARDENING_ENABLED on, RequireAuthContextWithSessions
+	// looks every token up in SessionService and fails closed on a miss, so an
+	// unregistered step-up session is valid at GoTrue but rejected everywhere
+	// else as "session revoked". Registering it here, using the tokens GoTrue
+	// just returned, mirrors the password-login path.
 	b.trackSession(user, session)
 	return session, nil
 }

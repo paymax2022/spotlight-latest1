@@ -501,15 +501,9 @@ func (s *Service) VerifyBusiness(ctx context.Context, userID string) error {
 
 // CreateOffer places a pending offer on a listing.
 func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, offerKobo int64, message string) (*Offer, error) {
-	// Guard before the fetch: an empty listingID reached the repository and
-	// surfaced as 500 "invalid input syntax for type uuid".
-	// This guard was originally added believing the caller was misspelling
-	// listingId as listing_id. That had it backwards — snake_case IS the wire
-	// name (contracts/openapi.yaml), and the mobile client cannot send anything
-	// else, since it snake-cases every outbound body. The real fault was the
-	// handler reading camelCase, so this guard converted a 500 into a 400 and
-	// left the endpoint just as unreachable. Handler fixed; guard kept, because
-	// an empty listing ID is still a caller error worth naming.
+	// Guard before the fetch: an empty listingID would reach the repository and
+	// surface as 500 "invalid input syntax for type uuid" — an empty id is a
+	// caller error (400), not a DB error.
 	if strings.TrimSpace(listingID) == "" {
 		return nil, fieldErr(CodeValidation, "listing_id is required", "listing_id")
 	}

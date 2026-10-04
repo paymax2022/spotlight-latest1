@@ -294,10 +294,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			}
 		}
 		// Correct password, unverified address. Answered distinctly so the client
-		// can send the user to enter their code instead of telling them their
-		// password is wrong — which is what it used to say, leaving them stuck
-		// with no route forward. See ErrEmailNotConfirmed for why this does not
-		// leak account existence.
+		// can route the user to enter their code instead of reporting a wrong
+		// password. See ErrEmailNotConfirmed for why this does not leak account
+		// existence.
 		if errors.Is(err, services.ErrEmailNotConfirmed) {
 			h.audit.LogLogin(failUserID, failEmail, "failed", "email_not_confirmed", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
 			c.JSON(http.StatusForbidden, gin.H{
@@ -309,10 +308,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		}
 		// GoTrue was unreachable/degraded — the service never reached a
 		// credential verdict and counted NO strike. This must not look like a
-		// wrong password: E2E-FR-049 was a GoTrue outage answering 401
-		// invalid_credentials for CORRECT passwords, each of which also bumped
-		// failed_login_attempts. The row is written too — an outage window is
-		// exactly what forensics needs to reconstruct — but with the honest
+		// wrong password (E2E-FR-049). The row is written too — an outage window
+		// is exactly what forensics needs to reconstruct — but with the honest
 		// "upstream_error" reason rather than a false invalid_credentials
 		// (failure_reason is free text; only status is CHECK-constrained).
 		if errors.Is(err, services.ErrAuthUnavailable) {
@@ -329,10 +326,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// Strip the internal hints BEFORE any branch can return `out` to a client.
-	// They were previously removed only inside the session-hardening branch, so
-	// with that flag off __user_id was shipped to the caller despite the comment
-	// saying it never is.
+	// Strip the internal hints BEFORE any branch can return `out` to a client —
+	// they must never reach the caller regardless of which flags are on.
 	loginUserID, _ := out["__user_id"].(string)
 	resolvedEmail, _ := out["__email"].(string)
 	delete(out, "__user_id")
@@ -340,7 +335,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	// Success is attributed the same way the failure paths are: the resolved
 	// account identity, not the raw request fields — identifier logins carry
-	// no email, so in.Email was logging every row anonymous (E2E-AUTH-007).
+	// no email (E2E-AUTH-007).
 	h.audit.LogLogin(loginUserID, resolvedEmail, "success", "", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
 
 	// Second factor. The password was correct, so GoTrue has already minted a
@@ -481,15 +476,9 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 }
 
 // ResetPassword completes a reset with an emailed CODE.
-// It used to accept {token, newPassword}, hand the token to a service method
-// that returned nil for any non-empty string, and answer "Password reset
-// successful" — for a password it had not changed. That is the same defect the
-// audit removed as B4 on verify-email, still live here. Nothing called it: web
-// and mobile both complete resets through Supabase's own recovery session, which
-// is why nobody noticed.
-// The token form is now REFUSED rather than answered with a false success. A
-// caller relying on it was already getting nothing; the difference is that it
-// now says so.
+// The legacy {token, newPassword} form is REFUSED rather than answered with a
+// false success — no service method can honor a bare token here; web and mobile
+// complete resets through Supabase's own recovery session.
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	var in struct {
 		Email       string `json:"email"`

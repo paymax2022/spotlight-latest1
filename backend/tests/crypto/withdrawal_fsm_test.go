@@ -24,14 +24,7 @@ import (
 )
 
 // withdrawalTransitionsMirror transcribes allowedWithdrawalTransitions
-// verbatim from backend/internal/crypto/model_ext.go:104-110:
-//
-//	    WithdrawalRequested: {WithdrawalPending: true, WithdrawalFailed: true},
-//	    WithdrawalPending:   {WithdrawalBroadcast: true, WithdrawalFailed: true},
-//	    WithdrawalBroadcast: {WithdrawalConfirmed: true, WithdrawalFailed: true},
-//	    WithdrawalConfirmed: {}, // terminal
-//	    WithdrawalFailed:    {}, // terminal
-//	}
+// verbatim from backend/internal/crypto/model_ext.go.
 //
 // AML-gated flow (model_ext.go): requested → pending_review → approved →
 // broadcast → confirmed | failed. Money never leaves before an admin approval.
@@ -95,7 +88,7 @@ func TestWithdrawalFSM_ExhaustiveTransitionMatrix(t *testing.T) {
 			}
 		}
 	}
-	// requested{pending_review,failed} + pending_review{approved,failed} +
+	// 2 edges from each of the 4 non-terminal states = 8 legal edges total.
 	if legalCount != 8 {
 		t.Errorf("expected exactly 8 legal withdrawal edges, got %d", legalCount)
 	}
@@ -185,8 +178,7 @@ func TestWithdrawalFSM_EveryNonTerminalStateHasFailedAsAnEscapeHatch(t *testing.
 // preview (QuoteWithdrawal) and the execution path (Withdraw), so the
 // preview and the fill always agree (service_ext.go comment at
 // QuoteWithdrawal, L298-300).
-// Source: backend/internal/crypto/service_ext.go:328-336 (unexported):
-//	}
+// Source: backend/internal/crypto/service_ext.go:328-336 (unexported).
 
 func networkFeeUnitsMirror(units int64) int64 {
 	fee := units / 2000

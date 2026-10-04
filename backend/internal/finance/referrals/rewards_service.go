@@ -320,6 +320,22 @@ func (s *RewardService) GetOrCreateLink(ctx context.Context, referrerID string) 
 	var l Link
 	err := s.db.QueryRow(ctx, sel, referrerID).Scan(&l.ID, &l.ReferrerID, &l.Code, &l.CreatedAt)
 	if err == nil {
+		// E2E-FIN-044 convergence: if the legacy finance_referral_codes table
+		// holds an OLDER code for this user it is canonical — adopt it so both
+		// surfaces show one code. A collision (code held by another referrer)
+		// leaves the row unchanged.
+		var legacy string
+		var legacyAt time.Time
+		if lerr := s.db.QueryRow(ctx,
+			`SELECT code, created_at FROM finance_referral_codes WHERE user_id = $1`,
+			referrerID).Scan(&legacy, &legacyAt); lerr == nil && legacy != l.Code && legacyAt.Before(l.CreatedAt) {
+			if _, uerr := s.db.Exec(ctx,
+				`UPDATE referral_links SET code = $2 WHERE referrer_id = $1`,
+				referrerID, legacy); uerr == nil {
+				l.Code = legacy
+				l.CreatedAt = legacyAt
+			}
+		}
 		return &l, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -333,6 +349,19 @@ func (s *RewardService) GetOrCreateLink(ctx context.Context, referrerID string) 
 		INSERT INTO referral_links (referrer_id, code) VALUES ($1,$2)
 		ON CONFLICT (referrer_id) DO NOTHING
 		RETURNING id, referrer_id, code, created_at`
+	// E2E-FIN-044: adopt the legacy finance_referral_codes code if one exists —
+	// first-minted wins, so an old seed code stays the user's one code.
+	var adopted string
+	if aerr := s.db.QueryRow(ctx,
+		`SELECT code FROM finance_referral_codes WHERE user_id = $1`,
+		referrerID).Scan(&adopted); aerr == nil {
+		if ierr := s.db.QueryRow(ctx, ins, referrerID, adopted).Scan(&l.ID, &l.ReferrerID, &l.Code, &l.CreatedAt); ierr == nil {
+			return &l, nil
+		} else if errors.Is(ierr, pgx.ErrNoRows) {
+			return s.GetOrCreateLink(ctx, referrerID)
+		}
+		// Code taken by another referrer — fall through and draw a fresh one.
+	}
 	for attempt := 0; attempt < codeIssueAttempts; attempt++ {
 		code, gerr := generateRewardCode()
 		if gerr != nil {
@@ -362,14 +391,11 @@ func (s *RewardService) GetOrCreateLink(ctx context.Context, referrerID string) 
 //
 // Late-claim semantics (E2E-FIN-042): the §7A signup resolver ALWAYS writes a
 // row — a codeless signup gets a house placeholder (is_house, referrer NULL) —
-// so the plain ON CONFLICT DO NOTHING insert this endpoint used to run was a
-// silent no-op for every codeless signup: the placeholder survived, the code
-// never attributed, and the response lied with referrer_id="". The upsert
-// below now REPLACES a still-claimable house placeholder with the real
-// referrer (mirroring the claimable conditions attribution.Service.ClaimCode
-// enforces: is_house, status='grace', grace window open). A row already held
-// by a real referrer is never overwritten — first-real-attribution wins, so a
-// concurrent signup-time attribution beats a racing late claim.
+// so the upsert below must REPLACE a still-claimable house placeholder rather
+// than no-op on conflict (same claimable conditions as
+// attribution.Service.ClaimCode: is_house, status='grace', grace window open).
+// A row held by a real referrer is never overwritten — first-real-attribution
+// wins, so a signup-time attribution beats a racing late claim.
 //
 // Returns (referrerID, attributed): referrerID is the user's ACTUAL current
 // referrer ("" when still house-attributed), and attributed is true only when
@@ -1127,9 +1153,6 @@ func (s *RewardService) ModuleStatus(ctx context.Context) ([]ModuleRollup, error
 // small helpers.
 
 // generateRewardCode issues a code in the shared 5-character shape (see service.go).
-// It previously returned "R" + hex(5 bytes) = 11 characters, far too long to
-// read aloud or type — the complaint that prompted this change. Nothing depended
-// on the "R" prefix; it was never parsed anywhere.
 func generateRewardCode() (string, error) {
 	return GenerateCode()
 }

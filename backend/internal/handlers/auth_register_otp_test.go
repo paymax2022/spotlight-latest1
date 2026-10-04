@@ -292,9 +292,9 @@ func TestRegisterRefusedWhenTheSignupBudgetCannotBeEvaluated(t *testing.T) {
 
 // An allowed registration consults the budget exactly once and proceeds.
 // (The ORDERING — budget before creation — is asserted in the two refusal tests
-// above, by requiring that RegisterUser was never called. An earlier version of
-// this test claimed to check ordering while only counting gate calls, and a
-// mutation that moved the check after creation passed it.)
+// above, by requiring that RegisterUser was never called. Counting gate calls
+// alone cannot prove ordering: a mutation that moved the check after creation
+// would pass.)
 func TestSignupBudgetConsultedOnceOnTheHappyPath(t *testing.T) {
 	gate := &recordingGate{allowed: true}
 	issuer := &recordingIssuer{}

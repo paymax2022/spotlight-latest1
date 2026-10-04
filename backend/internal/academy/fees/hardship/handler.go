@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
@@ -75,30 +74,19 @@ func (h *Handler) fail(c *gin.Context, err error) {
 
 // RegisterFeesHardship wires the hardship routes. member routes use the /hardship subpath on
 // the passed member group; admin routes are grouped under /hardship/admin and RBAC-gated with
-// academy.fees.hardship.review (SF-9 human review). nil pool / groups are skipped. The
-// QA/integration task calls this from RegisterAcademy and injects the InvoiceFreezer (adapter
-// over feesinvoice.Service) + ReviewerAuthorizer (over the RBAC service) — see NOTE below.
+// academy.fees.hardship.review (SF-9 human review). Takes an already-assembled
+// *Service built by the integration layer with the real ports; nil svc/groups skip.
 //
 //	member: POST /hardship                       submit a hardship/freeze request (→ pending)
 //	        GET  /hardship/:id                    get a request
 //	admin : POST /hardship/admin/:id/approve     HUMAN approve → freezes invoice (overdue→frozen)
 //	        POST /hardship/admin/:id/deny         HUMAN deny → invoice unchanged
 //	        GET  /hardship/admin?schoolId=…       school pending review queue
-//
-// NOTE: to keep the register signature byte-for-byte identical to the other fees packages'
-// Register* (pool + rbac only), this constructor builds a service with the DB store but WITHOUT
-// the InvoiceFreezer/ReviewerAuthorizer ports. Approve/Deny are therefore fail-closed here
-// (no authorizer ⇒ ErrForbidden). The integration task should re-wire the service via
-// NewServiceWithDeps (or NewService) with the real invoice adapter + RBAC-backed authorizer
-// and register the handler with that service — the RBAC middleware on the admin group is a
-// second, defense-in-depth gate. This mirrors how feesscholarship takes an already-assembled
-// Service; the fixed signature is preserved for the automated router-integration check.
-func RegisterFeesHardship(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) *Handler {
-	if pool == nil {
+func RegisterFeesHardship(member, admin *gin.RouterGroup, svc *Service, rbac services.RBACService) *Handler {
+	if svc == nil {
 		return nil
 	}
-	// Ports left nil here (see NOTE): the integration task injects them via NewServiceWithDeps.
-	h := NewHandler(NewService(pool, nil, nil))
+	h := NewHandler(svc)
 
 	if member != nil {
 		mg := member.Group("/hardship")

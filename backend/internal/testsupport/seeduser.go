@@ -15,25 +15,33 @@ import (
 
 // CleanupUser registers teardown for a synthetic auth.users row seeded by a test.
 // WHY THIS EXISTS. The live-DB suites seed users as '<uuid>@seed.test' and file
-// real rows under them. Most never deleted them, and the reason is structural
-// rather than careless: auth.users has 183 referencing foreign keys that are
+// real rows under them. auth.users has ~180 referencing foreign keys that are
 // NO ACTION rather than CASCADE, so a correct teardown would need each test to
-// know its own write set across the whole schema. 88% of auth.users on a
-// developer's database was this residue.
-// This does the knowing instead. The common case costs ONE statement — most
-// seeded users touch only CASCADE-ing tables, so the plain delete succeeds. The
-// expensive dependency unwind runs only when that delete is actually blocked.
+// know its own write set across the whole schema — this does the knowing
+// instead. The common case costs ONE statement — most seeded users touch only
+// CASCADE-ing tables, so the plain delete succeeds. The expensive dependency
+// unwind runs only when that delete is actually blocked.
 // MUST be registered while the pool is still open. Cleanups are last-in-first-out,
 // so the pool's own close has to be registered FIRST — the live-DB constructors do
 // that with t.Cleanup(pool.Close). A `defer pool.Close()` in the test would fire
-// before every cleanup here and silently no-op the lot, which is exactly the bug
-// that let this residue build up in the first place.
+// before every cleanup here and silently no-op the lot.
 func CleanupUser(t *testing.T, pool *pgxpool.Pool, userID string) {
 	t.Helper()
 	if pool == nil || userID == "" {
 		return
 	}
 	t.Cleanup(func() { DeleteUser(context.Background(), pool, userID) })
+}
+
+// CleanupUserCtx is CleanupUser with the caller's context threaded into
+// teardown (the contextcheck-friendly variant). Cancellation is stripped —
+// the test's ctx is already dead by cleanup time — but values still flow.
+func CleanupUserCtx(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID string) {
+	t.Helper()
+	if pool == nil || userID == "" {
+		return
+	}
+	t.Cleanup(func() { DeleteUser(context.WithoutCancel(ctx), pool, userID) })
 }
 
 // CleanupUsers registers teardown for several seeded users at once.

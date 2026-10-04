@@ -26,9 +26,6 @@ import (
 // (model.go:76-92); this file transcribes the exact formulas so the
 // truncation behavior (never over-credit) is locked without package-internal
 // access.
-//	}
-//	func cashForUnits(units, priceKobo, scale int64) int64 {
-//	}
 
 func unitsForCashMirror(cashKobo, priceKobo, scale int64) int64 {
 	if priceKobo <= 0 || scale <= 0 {

@@ -9,6 +9,8 @@ package platform
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -239,5 +241,30 @@ func TestTrustJSON_NonZeroUpdatedAt_FormatsRFC(t *testing.T) {
 	j := trustJSON(TrustRow{SchoolID: "s", Score: 0.5, UpdatedAt: ts})
 	if j["updated_at"] != "2026-01-02T03:04:05Z" {
 		t.Errorf("updated_at = %v, want RFC3339 UTC", j["updated_at"])
+	}
+}
+
+// Non-uuid path params feeding uuid-typed columns must answer 400, never a 22P02 500.
+func TestUuidOK(t *testing.T) {
+	for _, s := range []string{"", "institutions", "e2e-acad-case-1", "not-a-uuid"} {
+		if uuidOK(s) {
+			t.Errorf("uuidOK(%q) = true, want false", s)
+		}
+	}
+	for _, s := range []string{"00000000-0000-0000-0000-000000000000", "4d078dc4-755b-4a83-a592-e28bae3ce00f"} {
+		if !uuidOK(s) {
+			t.Errorf("uuidOK(%q) = false, want true", s)
+		}
+	}
+}
+
+// ActionRiskCase must reject a non-uuid risk id with 400 before the audit insert.
+func TestActionRiskCase_NonUUID_Returns400(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{{Key: "id", Value: "e2e-acad-case-1"}}
+	(&Handler{}).ActionRiskCase(c)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("non-uuid risk id: want 400, got %d", w.Code)
 	}
 }

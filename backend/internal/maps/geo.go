@@ -205,7 +205,6 @@ func (olcCodec) Decode(code string) (Point, error) {
 		latVal += float64(latIdx) * res
 		lngVal += float64(lngIdx) * res
 	}
-	// Return the cell center.
 	return Point{
 		Lat:    latVal + lastRes/2,
 		Lng:    lngVal + lastRes/2,

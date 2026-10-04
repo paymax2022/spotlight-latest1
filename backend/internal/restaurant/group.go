@@ -142,7 +142,6 @@ func (s *Service) FinalizeGroupOrder(ctx context.Context, groupID, hostID string
 	if _, err := s.db.Exec(ctx, `UPDATE group_orders SET status='locked', updated_at=now() WHERE id=$1 AND status='open'`, groupID); err != nil {
 		return nil, err
 	}
-	// Build the single order request from the aggregated group items.
 	req.Items = req.Items[:0]
 	for _, it := range g.Items {
 		req.Items = append(req.Items, OrderItemInput{MenuItemID: it.MenuItemID, Quantity: it.Quantity})

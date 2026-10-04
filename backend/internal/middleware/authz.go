@@ -145,11 +145,10 @@ func resolveVerifiedIdentity(c *gin.Context, supabase *integrations.SupabaseRest
 	}
 
 	// AUTH-012: GetUserStatus returns ("pending", err) on a lookup failure,
-	// and "pending" is not one of the blocked statuses below — so a
-	// swallowed error here used to let a transient lookup failure through
-	// this specific check as if the account were merely pending. Fail
-	// closed instead: a status we could not verify is refused, same as
-	// every other failure path in this function.
+	// and "pending" is not one of the blocked statuses below — a swallowed
+	// error would let a transient lookup failure through as if the account
+	// were merely pending. Fail closed: a status we could not verify is
+	// refused, same as every other failure path in this function.
 	status, serr := rbac.GetUserStatus(userID)
 	if serr != nil {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
@@ -175,15 +174,15 @@ func resolveVerifiedIdentity(c *gin.Context, supabase *integrations.SupabaseRest
 // unlike RequireAdminConsoleRole, does NOT additionally require the caller
 // hold a consoleAdminRoleSlugs role (super-admin/system-admin).
 // ADR-057 (docs/adr/ADR-057-stem-routes-verified-identity-gate.md): STEM
-// routes (router.go's stemRead/stemManage) used to be sub-groups of
-// adminGroup, which requires RequireAdminConsoleRole — so a real person
-// holding e.g. only 'judge' (and neither 'super-admin' nor 'system-admin')
-// could never reach a STEM route at all, no matter what RequireStemRoles
-// decided (see ADR-056 point 6). consoleAdminRoleSlugs is deliberately narrow
-// because it gates unrelated PII-bearing routes (leads, chatbot transcripts,
-// handoffs) that a STEM judge has no business seeing. STEM routes now use
-// this middleware instead: a real verified identity, with the STEM-specific
-// role decision left entirely to RequireStemRoles's own allow-list per route.
+// routes (router.go's stemRead/stemManage) must NOT sit under adminGroup,
+// which requires RequireAdminConsoleRole — a real person holding e.g. only
+// 'judge' (and neither 'super-admin' nor 'system-admin') could never reach a
+// STEM route at all, no matter what RequireStemRoles decided (see ADR-056
+// point 6). consoleAdminRoleSlugs is deliberately narrow because it gates
+// unrelated PII-bearing routes (leads, chatbot transcripts, handoffs) that a
+// STEM judge has no business seeing. STEM routes use this middleware instead:
+// a real verified identity, with the STEM-specific role decision left
+// entirely to RequireStemRoles's own allow-list per route.
 func RequireVerifiedIdentity(supabase *integrations.SupabaseRestClient, rbac services.RBACService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if _, ok := resolveVerifiedIdentity(c, supabase, rbac); ok {
@@ -227,20 +226,17 @@ func AdminRoleFromContext(c *gin.Context) string {
 // middleware's. This fails closed instead of assuming router wiring: if this
 // middleware is ever mounted somewhere that skips real auth, it refuses
 // rather than resolving roles for an unverified caller.
-// AUTH-020 follow-up: previously the caller's STEM sub-role was read from a
-// client-supplied `x-stem-role` header and never independently verified —
-// only the outer admin identity was real, the header narrowing it was not.
-// This now resolves the caller's REAL roles via rbac.GetUserRoles(userID),
-// same as RequireAdminConsoleRole, and compares them against allowedRoles.
+// AUTH-020: the caller's STEM sub-role is resolved from rbac.GetUserRoles(userID),
+// same as RequireAdminConsoleRole — never from a client-supplied `x-stem-role`
+// header, which would be unverified input.
 // See ADR-056 (docs/adr/ADR-056-stem-role-real-rbac.md) for the design
 // decisions this rests on, and 20270205000000_stem_admin_rbac_roles.sql for
 // the public.roles rows
 // (operations-manager, school-admin, teacher-coach, mentor, sponsor) this
 // depends on; contest-manager, judge, super-admin and system-admin already
-// existed (20260527100000_enterprise_auth_rbac.sql). ADR-057 closed the
-// follow-on gap ADR-056 flagged: those STEM-specific roles are now actually
-// reachable by someone who holds only one of them, not just by platform
-// admins who also happen to qualify via the ADMIN/SUPER_ADMIN alias.
+// existed (20260527100000_enterprise_auth_rbac.sql). Per ADR-057, STEM-specific
+// roles are reachable by someone who holds only one of them, not just by
+// platform admins who also qualify via the ADMIN/SUPER_ADMIN alias.
 func RequireStemRoles(rbac services.RBACService, allowedRoles ...string) gin.HandlerFunc {
 	allowed := map[string]struct{}{}
 	for _, role := range allowedRoles {

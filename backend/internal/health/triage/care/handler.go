@@ -170,8 +170,7 @@ func RegisterHealthTriageCare(member, admin *gin.RouterGroup, pool *pgxpool.Pool
 	}
 	if admin != nil {
 		// admin is already rooted at /api/health/triage/admin (adminGroupTop5 in
-		// health_triage_routes.go) — these used to re-prepend "/health/triage",
-		// doubling the segment and 404ing every escalation admin call.
+		// health_triage_routes.go) — subpaths must stay bare.
 		admin.GET("/escalations", guard("health.triage.review"), h.AdminListEscalations)
 		admin.POST("/escalations/:id/ack", guard("health.triage.review"), h.AdminAcknowledge)
 		admin.POST("/escalations/:id/resolve", guard("health.triage.review"), h.AdminResolve)

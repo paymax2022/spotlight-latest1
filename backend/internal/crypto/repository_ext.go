@@ -304,7 +304,6 @@ func (r *Repository) CreateWithdrawal(ctx context.Context, w Withdrawal) (string
 		return "", false, ErrInsufficient
 	}
 
-	// Record the opening transition (requested).
 	const evt = `INSERT INTO crypto_withdrawal_events (withdrawal_id, from_status, to_status, actor_id, detail)
 	             VALUES ($1, NULL, 'requested', $2, 'withdrawal requested; units parked')`
 	if _, err := tx.Exec(ctx, evt, wid, w.UserID); err != nil {

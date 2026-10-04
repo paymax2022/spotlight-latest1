@@ -206,3 +206,42 @@ export async function saveAuthState(context: BrowserContext, filePath = AUTH_STA
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   await context.storageState({ path: filePath });
 }
+
+/**
+ * TEST-013 — provision a throwaway, already-confirmed GoTrue user through the
+ * admin API so a spec can own its session lifecycle (e.g. a real logout must
+ * NOT revoke the shared qa-claude-test session other workers rely on).
+ * Requires SUPABASE_SERVICE_ROLE_KEY (playwright.config loads .env.local).
+ */
+export async function provisionConfirmedUser(
+  request: APIRequestContext,
+  email: string,
+  password: string,
+): Promise<string> {
+  const supabaseUrl = process.env.E2E_SUPABASE_URL || 'http://127.0.0.1:54321';
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serviceKey) {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY unset — cannot provision a per-spec user');
+  }
+  const res = await request.post(`${supabaseUrl}/auth/v1/admin/users`, {
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+    data: { email, password, email_confirm: true },
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok() && !body?.id) {
+    throw new Error(`provision user failed (${res.status()}): ${JSON.stringify(body)}`);
+  }
+  return body.id as string;
+}
+
+/** Remove a user provisioned via provisionConfirmedUser (admin API). */
+export async function deleteProvisionedUser(request: APIRequestContext, userId: string): Promise<void> {
+  const supabaseUrl = process.env.E2E_SUPABASE_URL || 'http://127.0.0.1:54321';
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serviceKey) return;
+  await request
+    .delete(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
+      headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+    })
+    .catch(() => undefined);
+}

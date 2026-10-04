@@ -70,7 +70,6 @@ func (r *Repository) InsertProfile(ctx context.Context, userID string, entityTyp
 		}
 		return "", err
 	}
-	// Seed a creation event (append-only).
 	_ = r.insertEvent(ctx, id, "profile.created", "", string(status), userID, map[string]any{"mode": mode})
 	return id, nil
 }

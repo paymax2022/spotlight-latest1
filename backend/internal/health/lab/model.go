@@ -86,14 +86,12 @@ const (
 )
 
 var allowedSampleTransitions = fsm.Table[SampleState]{
-	// SampleHandedOver is missing here would make Handover() unreachable from
+	// SampleHandedOver missing here would make Handover() unreachable from
 	// its own documented starting state — Handover's switch treats
 	// SampleCollected as valid (the phlebotomist → courier handoff, per the
 	// package's own "phlebotomist → courier → lab" doc comment), but without
 	// this edge canTransitionSample rejects every such call with "illegal
 	// sample transition COLLECTED -> HANDED_OVER" regardless of caller.
-	// Found live via UAT — the standard courier handover step was completely
-	// blocked end to end.
 	SampleCollected:         fsm.Set(SampleInCustody, SampleHandedOver, SampleAccessioned, SampleBreached),
 	SampleInCustody:         fsm.Set(SampleHandedOver, SampleAccessioned, SampleBreached),
 	SampleHandedOver:        fsm.Set(SampleAccessioned, SampleBreached),

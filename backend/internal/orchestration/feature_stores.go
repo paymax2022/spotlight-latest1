@@ -13,7 +13,7 @@ import (
 // vertical (mobile src/features/fx/api/fx.api.ts getVirtualAccounts/getCollections).
 // Virtual accounts already PERSIST to orch_collections (repository.go
 // SaveCollection, written by the real CreateCollection handler). This store adds
-// the object-scoped LIST reads that were previously empty stubs. No new table is
+// the object-scoped LIST reads. No new table is
 // created for virtual accounts — we reuse orch_collections, which keys on
 // customer_id (= the business/tenant id, the authenticated customer).
 // Collection EVENTS (inbound credits into a virtual account) persist to

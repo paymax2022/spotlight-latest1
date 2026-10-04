@@ -4,12 +4,9 @@ package adminext
 // Public discovery (internal/crowdfunding/service_discovery.go) filters its "featured",
 // "trending" and "urgent" collections on campaigns.featured / .trending /
 // .urgent, and sortClause("recommended") ranks on c.verified DESC, c.featured
-// DESC. Those three booleans default to FALSE and, until this file, nothing in
-// the product could ever set them: no creator route, no admin route, no job. So
-// every one of those collections was permanently empty on the live database and
-// the app's Featured/Trending rails rendered nothing.
-// This adds the missing operator surface: list the placement candidates, patch
-// the flags, and report on what is currently placed.
+// DESC. Those three booleans default to FALSE; this file is the ONLY writer —
+// it adds the operator surface: list the placement candidates, patch the flags,
+// and report on what is currently placed.
 // RULE — only an ACTIVE campaign may be PROMOTED. Turning a flag ON puts the
 // campaign on a public discovery rail, so it must have cleared review first;
 // promoting a PENDING_REVIEW / REJECTED / FROZEN campaign would publish

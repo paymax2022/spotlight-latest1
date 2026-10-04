@@ -44,7 +44,8 @@ func TestLiveDB_Withdraw_AmountExceedingRealBalanceIsRefused(t *testing.T) {
 	pool := moneyPathPool(t)
 
 	const contributeKobo = 1_000_000 // 90/10 split -> 900,000 net to creator
-	campaignID, creatorID, _, walletSvc := seedFundedContribution(t, ctx, pool, 5_000_000, contributeKobo)
+	fx := seedFundedContribution(t, ctx, pool, 5_000_000, contributeKobo)
+	campaignID, creatorID, walletSvc := fx.campaignID, fx.creatorID, fx.walletSvc
 
 	ledgerSvc := financeledger.NewService(financeledger.NewRepository(pool), (*goredis.Client)(nil))
 	before, err := ledgerSvc.GetBalance(ctx, creatorID)
@@ -95,7 +96,8 @@ func TestLiveDB_Withdraw_ExactAvailableAmountSucceeds(t *testing.T) {
 	pool := moneyPathPool(t)
 
 	const contributeKobo = 1_000_000 // -> 900,000 net to creator
-	campaignID, creatorID, _, walletSvc := seedFundedContribution(t, ctx, pool, 5_000_000, contributeKobo)
+	fx := seedFundedContribution(t, ctx, pool, 5_000_000, contributeKobo)
+	campaignID, creatorID, walletSvc := fx.campaignID, fx.creatorID, fx.walletSvc
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO cf_bank_accounts (id, user_id, bank_name, account_number_masked, account_name, is_default)

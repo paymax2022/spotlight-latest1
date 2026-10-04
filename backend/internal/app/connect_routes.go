@@ -205,7 +205,6 @@ func RegisterConnectLiveGame(member *gin.RouterGroup, admin *gin.RouterGroup, po
 // was never implemented — the mint shipped instead. The route stays unmounted
 // (404) until a verified funding source lands.
 func registerConnectWalletRoutes(r *gin.Engine, cfg config.Config, _ any, _ services.RBACService, authMiddleware gin.HandlerFunc, db *pgxpool.Pool, auditSvc services.AuditService, kycVerify *kycverify.Service) {
-	// Create stores with pooled connections
 	walletStore := handlers.NewWalletStore(db)
 	giftingStore := handlers.NewGiftingStore(db)
 	payoutsStore := handlers.NewPayoutsStore(db)

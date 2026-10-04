@@ -365,7 +365,7 @@ func runHandler(h HandlerFunc, hctx runCtx) (err error) {
 }
 
 // Poll drives RunDue on a fixed interval until ctx is cancelled. This is the
-// missing half of the durable-job design (E2E-BE-005): modules Schedule() jobs
+// drain side of the durable-job design (E2E-BE-005): modules Schedule() jobs
 // and register handlers, and exactly one poller per process drains the due set.
 // The claim is FOR UPDATE SKIP LOCKED and the occurrence is UNIQUE-keyed, so
 // running Poll on every API replica is safe (at-most-once per occurrence).

@@ -1,30 +1,21 @@
 package orchestration
 
 // ── Where a customer's money actually lives (ADR-051) ──────────────
-// FX used to keep EVERY currency, NGN included, in its own `orch_balances` pot.
-// Nothing in production ever credited that pot: its only writers are a
-// conversion's own destination leg, a card refund, and a test-only SeedBalance.
-// So /fx reported ₦0 to every user while the wallet, checkout, food and mobility
-// screens all showed the real figure out of `ledger_entries` — and a first
-// conversion was unreachable, because the only way to get NGN into the FX pot
-// was to have already converted into it.
-// Two pots for one currency also breaks the iron rule that a wallet balance is a
-// projection of the ledger: whichever pot a screen did not read was silently
-// wrong, and "show one number, spend a different one" is the worst shape a money
-// bug can take.
-// The rule now, in ONE place so no caller can pick a different answer:
+// Two pots for one currency breaks the iron rule that a wallet balance is a
+// projection of the ledger: whichever pot a screen did not read would be
+// silently wrong. The rule, in ONE place so no caller can pick a different answer:
 //	NGN      → the platform's main double-entry ledger (ledger_accounts /
 //	           ledger_entries), the same pot every other NGN module reads and
 //	           spends. FX reads it, debits it, and pays into it.
-//	anything → the `orch_balances` pot, unchanged. The main ledger has no
+//	anything → the `orch_balances` pot. The main ledger has no
 //	else       per-currency user accounts (ledger_accounts is unique on
 //	           (user_id, type) and every user_wallet row is NGN), so non-NGN FX
 //	           holdings have nowhere else to live.
-// The FX module's own book (`orch_ledger_entries`) is untouched and still posts
-// a full per-currency balanced set for every move, so the ADR-029 invariant
-// holds exactly as before. For NGN it is now an analytical mirror of a cash
-// movement recorded in the main ledger rather than the record of the pot itself;
-// `provider_clearing` is the bridging account on both books.
+// The FX module's own book (`orch_ledger_entries`) still posts a full
+// per-currency balanced set for every move, so the ADR-029 invariant holds. For
+// NGN it is an analytical mirror of a cash movement recorded in the main ledger
+// rather than the record of the pot itself; `provider_clearing` is the bridging
+// account on both books.
 
 import (
 	"context"

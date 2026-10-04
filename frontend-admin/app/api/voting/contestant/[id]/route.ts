@@ -22,7 +22,6 @@ export async function GET(
   try {
     const { id } = await params;
 
-    // Fetch contestant votes from database
     const { data: adminVotes, error: votesError } = await supabase()
       .from('admin_votes')
       .select('*')
@@ -33,7 +32,6 @@ export async function GET(
       throw votesError;
     }
 
-    // Fetch audit log
     const { data: auditLog, error: auditError } = await supabase()
       .from('vote_audit_log')
       .select('*')
@@ -44,7 +42,6 @@ export async function GET(
       throw auditError;
     }
 
-    // Fetch vote stats
     const { data: voteStats, error: statsError } = await supabase()
       .from('contestant_vote_stats')
       .select('*')
@@ -91,7 +88,6 @@ export async function POST(
       );
     }
 
-    // Get current vote count
     const { data: existingVotes } = await supabase()
       .from('admin_votes')
       .select('*')
@@ -136,7 +132,6 @@ export async function POST(
       throw auditError;
     }
 
-    // Update vote stats
     const { error: statsError } = await supabase()
       .from('contestant_vote_stats')
       .upsert({

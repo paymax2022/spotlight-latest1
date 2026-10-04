@@ -235,16 +235,14 @@ func TestRegisterDoesNotReadTheSignupPolicyOnTheSignupPath(t *testing.T) {
 	}
 }
 
-// THE regression for a defect this file's earlier version did not catch.
-// RegisterUser used to branch on cfg.FeatureOTPEmailEnabled while the register
-// HANDLER branched on whether an issuer was actually wired. Those disagree in a
-// state that is easy to reach — flag on, Brevo credentials absent, which is the
-// repository's state today — and the result was an account created through the
-// silent admin path (so GoTrue sent nothing) with no code issued either.
-// Unconfirmed, unverifiable, login refused forever, and /api/auth/otp/request
-// answering 503 so the user could not even ask for one.
-// Reproduced live before the fix: registration returned 201, the mail catcher
-// recorded zero messages, otp_codes was empty, and login answered 403.
+// THE regression for a flag-vs-wiring mismatch: RegisterUser must branch on
+// whether an OTP issuer is actually wired — the same condition the register
+// HANDLER branches on — not on cfg.FeatureOTPEmailEnabled alone. Branching on
+// the flag alone diverges in an easy-to-reach state (flag on, Brevo credentials
+// absent, which is the repository's state today): the account is created
+// through the silent admin path (so GoTrue sends nothing) and no code is
+// issued either — unconfirmed, unverifiable, login refused forever, and
+// /api/auth/otp/request answering 503 so the user cannot even ask for one.
 func TestRegisterUsesSignupWhenTheFlagIsOnButOTPNeverWired(t *testing.T) {
 	cap := &captured{}
 	srv := gotrueStub(t, cap)

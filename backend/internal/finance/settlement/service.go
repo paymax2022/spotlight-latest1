@@ -184,21 +184,12 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 	}
 	providerKobo, platformKobo, riderKobo := legs.ProviderKobo, legs.PlatformKobo, legs.RiderKobo
 
-	// ATOMICITY FIX (money invariant): previously the provider/rider credits went
-	// through s.ledger.Credit (which posts on the ledger's OWN connection), while the
-	// commission entries and the settlement-row status update ran on this tx. That
-	// split meant a crash between the provider credit and tx.Commit could pay the
-	// provider without ever marking the settlement 'settled' — and because the ledger
-	// Credit is a plain INSERT (no ON CONFLICT), a retry then errored on the UNIQUE
-	// idempotency_key, wedging the settlement.
-	// The ledger.Service still exposes no tx-aware Credit/Debit (documented gap — a
-	// future refactor should add ledger.CreditTx(tx, ...) so wallet balance
-	// projections and settlement rows commit as one unit). Until then, we post EVERY
-	// leg of this settlement as raw balanced ledger_entries pairs on THIS tx, so all
-	// money movement + the status flip commit atomically. Wallet account rows are
-	// resolved (get-or-create) OUTSIDE the tx — that only ensures the account exists
-	// and moves no money — then every posting is on the tx and idempotent via
-	// ON CONFLICT (idempotency_key) DO NOTHING, making the whole Settle safe to retry.
+	// Atomicity (money invariant): ledger.Service exposes no tx-aware
+	// Credit/Debit (documented gap), so every leg posts as raw balanced
+	// ledger_entries pairs on THIS tx — all money movement and the status flip
+	// commit atomically. Wallet accounts are get-or-create'd OUTSIDE the tx
+	// (creates no money), and each posting is idempotent via
+	// ON CONFLICT (idempotency_key) DO NOTHING, so Settle is safe to retry.
 	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return err
@@ -249,6 +240,92 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 	return tx.Commit(ctx)
 }
 
+// SettleToStandingAccounts releases an escrowed settlement whose provider is a
+// standing account, not a user wallet — e.g. a stays supplier's net parks in
+// AccountProviderClearing until a later payout draws it down, and the platform
+// cut lands on a module-chosen account (stays uses AccountCommission).
+// Split.ProviderID is annotation-only; a rider leg still resolves a real wallet.
+// Same mechanics as Settle — the status flip commits in the same tx as the legs.
+func (s *Service) SettleToStandingAccounts(ctx context.Context, settlementID string, split Split, providerAccount, platformAccount ledger.AccountType) error {
+	if providerAccount == "" || platformAccount == "" {
+		return errors.New("settlement: standing-account settle requires provider and platform accounts")
+	}
+	if err := split.Validate(); err != nil {
+		return err
+	}
+	var sett Settlement
+	const q = `SELECT id, reference, payer_id, total_kobo, status FROM settlements WHERE id=$1 FOR UPDATE`
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("settlement: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := tx.QueryRow(ctx, q, settlementID).Scan(
+		&sett.ID, &sett.Reference, &sett.PayerID, &sett.TotalKobo, &sett.Status,
+	); err != nil {
+		return fmt.Errorf("settlement: fetch: %w", err)
+	}
+	if sett.Status != StatusEscrowed {
+		return fmt.Errorf("settlement: cannot settle — current status is %s", sett.Status)
+	}
+	legs, err := ComputeLegs(sett.TotalKobo, split)
+	if err != nil {
+		return err
+	}
+
+	// Account resolution (get-or-create) happens OUTSIDE the money tx, matching
+	// Settle — it moves no money and only ensures the accounts exist.
+	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		return err
+	}
+	providerAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, providerAccount)
+	if err != nil {
+		return fmt.Errorf("settlement: resolve provider clearing account: %w", err)
+	}
+	platformAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, platformAccount)
+	if err != nil {
+		return fmt.Errorf("settlement: resolve platform account: %w", err)
+	}
+
+	ref := "settle:" + sett.Reference
+	idem := "settle:" + settlementID
+
+	// Escrow → provider clearing (the net owed to a non-wallet counterparty).
+	if legs.ProviderKobo > 0 {
+		if err := postPairTx(ctx, tx, escrowAcc.ID, providerAcc.ID, legs.ProviderKobo,
+			ref+":provider", idem+":provider"); err != nil {
+			return fmt.Errorf("settlement: credit provider clearing: %w", err)
+		}
+	}
+	// Escrow → platform standing account (commission/revenue).
+	if legs.PlatformKobo > 0 {
+		if err := postPairTx(ctx, tx, escrowAcc.ID, platformAcc.ID, legs.PlatformKobo,
+			ref+":commission", idem+":commission"); err != nil {
+			return fmt.Errorf("settlement: post platform leg: %w", err)
+		}
+	}
+	// Escrow → rider wallet (a rider is always a wallet-holding user).
+	if split.RiderID != nil && legs.RiderKobo > 0 {
+		riderWallet, err := s.ledger.GetOrCreateUserWallet(ctx, *split.RiderID)
+		if err != nil {
+			return fmt.Errorf("settlement: resolve rider wallet: %w", err)
+		}
+		if err := postPairTx(ctx, tx, escrowAcc.ID, riderWallet.ID, legs.RiderKobo,
+			ref+":rider", idem+":rider"); err != nil {
+			return fmt.Errorf("settlement: credit rider: %w", err)
+		}
+	}
+
+	now := time.Now()
+	const updateStatus = `UPDATE settlements SET status='settled', settled_at=$2, provider_kobo=$3, fee_kobo=$4 WHERE id=$1`
+	if _, err := tx.Exec(ctx, updateStatus, settlementID, now, legs.ProviderKobo, legs.PlatformKobo); err != nil {
+		return fmt.Errorf("settlement: update status: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
 // postPairTx posts a balanced double-entry pair (DEBIT debitAccountID,
 // CREDIT creditAccountID) for amountKobo on the given tx. Both legs share the
 // reference and derive a distinct-but-stable idempotency key, and both use
@@ -272,16 +349,10 @@ func postPairTx(ctx context.Context, tx pgx.Tx, debitAccountID, creditAccountID 
 // ErrWrongRefundMethod guards the Refund/RefundExternal split: calling Refund
 // (a WALLET CREDIT) on an externally-funded settlement, or RefundExternal (a
 // clearing-account reversal, no wallet touched) on a wallet-funded one, is
-// refused rather than silently moving money the wrong way. This is the fix
-// for a real defect found while porting the Paystack-checkout pattern to a
-// second module: every existing settlement.Refund call site (across several
-// modules, including restaurant's own pre-existing order-cancellation path)
-// unconditionally wallet-credited the payer, which for an EscrowExternal
-// settlement would hand a Tier-0 customer real spendable wallet balance
-// funded by an external charge — exactly the hazard EscrowExternal exists to
-// avoid. Enforcing the correct method HERE protects every caller, including
-// ones written before this check existed and any written after without
-// knowing about the gotcha.
+// refused rather than silently moving money the wrong way. Wallet-crediting an
+// EscrowExternal settlement would hand a Tier-0 customer spendable balance
+// funded by an external charge — the exact hazard EscrowExternal exists to
+// avoid. Enforcing HERE protects every caller, present and future.
 var ErrWrongRefundMethod = fmt.Errorf("settlement: wrong refund method for this settlement's funding source")
 
 // Refund releases a WALLET-funded escrow back to the payer's wallet. Refuses
@@ -310,9 +381,11 @@ func (s *Service) Refund(ctx context.Context, settlementID, reason string) error
 	}
 	if err := s.ledger.Credit(ctx, sett.PayerID,
 		"refund:"+sett.Reference, "refund:"+settlementID, escrowAcc.ID, sett.TotalKobo,
-	); err != nil {
+	); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return fmt.Errorf("settlement: credit refund: %w", err)
 	}
+	// ErrDuplicate is tolerated — a retry after a mid-flight crash finds the leg
+	// posted and proceeds to the flip (same contract as RefundExternal).
 	const update = `UPDATE settlements SET status='refunded' WHERE id=$1`
 	_, err = s.db.Exec(ctx, update, settlementID)
 	return err

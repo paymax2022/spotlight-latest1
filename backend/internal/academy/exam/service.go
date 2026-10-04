@@ -69,10 +69,17 @@ var (
 	ErrNotEntitled       = errors.New("exam: not entitled to this arena")
 	ErrPauseNotAllowed   = errors.New("exam: blueprint does not permit pausing")
 	ErrAlreadyFinal      = errors.New("exam: attempt already submitted")
+	ErrConflict          = errors.New("exam: conflicts with an existing row")
 )
 
+// arenaCodes mirrors the academy_exam_arenas.code CHECK enum — validating here
+// turns the 23514 violation into a deterministic ErrInvalidInput.
+var arenaCodes = map[string]bool{
+	"CCE": true, "BECE": true, "WASSCE": true, "NECO": true, "UTME": true, "NABTEB": true,
+}
+
 func (s *Service) CreateArena(ctx context.Context, actor string, req CreateArenaRequest) (*Arena, error) {
-	if req.Code == "" || req.Name == "" {
+	if req.Code == "" || req.Name == "" || !arenaCodes[req.Code] {
 		return nil, ErrInvalidInput
 	}
 	return s.repo.InsertArena(ctx, actor, req)

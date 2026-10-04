@@ -1,39 +1,21 @@
 package marketplace_test
 
-// Agent F (QA) — Marketplace FSM invariant tests.
-// WHY THIS FILE EXISTS AS A MIRROR, NOT A DIRECT CALL:
-// Agent A's guarded-transition tables (orderTransitions, listingTransitions,
-// disputeTransitions, boostTransitions) and their guard functions
-// (canOrderTransition, guardOrderTransition, ...) in backend/internal/marketplace
-// are UNEXPORTED (lowercase) by design — the FSM internals are not part of the
-// frozen public contract (SWARM_INTEGRATION_CONTRACT.md only freezes the struct
-// shapes, Service method signatures, routes, and error codes). Per Agent F's file
-// boundary, tests must live in backend/tests/marketplace/ as an external test
-// package (marketplace_test) and may only import EXPORTED symbols of
-// spotlight/backend/internal/marketplace — an unexported func cannot be called
-// from outside the package, and this directory must not contain a `package
-// marketplace` (internal) file, since backend/internal/marketplace/*.go is
-// Agent A's exclusive file-ownership boundary.
-// So these tests do two things, mirroring the house pattern already used in
-// backend/internal/finance/settlement/split_invariant_test.go (splitLegsKobo):
-//  1. They TRANSCRIBE the exact transition tables from
-//     Paymax_Marketplace_CLAUDE_BUILD_CONTRACT.md §2.1-2.4 (verified line-by-line
-//     against fsm_listing.go / fsm_order.go / fsm_dispute.go / fsm_boost.go source
-//     read directly during test authoring) and assert every legal edge is present
-//     and every OTHER edge (illegal) is absent — i.e. the transcription itself
-//     enforces "guarded, exhaustive, no implicit transitions" as a spec-level
-//     regression lock. If Agent A's source table ever silently drifts from the
-//     contract, a source-level diff review (or a future in-package test A adds)
-//     is the enforcement point; this file is the CONTRACT-side lock.
+// Marketplace FSM invariant tests — a mirror, not a direct call.
+// The guarded-transition tables (orderTransitions, listingTransitions,
+// disputeTransitions, boostTransitions) and their guard functions in
+// backend/internal/marketplace are UNEXPORTED by design — the FSM internals are
+// not part of the frozen public contract, and this external test package may
+// only import exported symbols. So these tests instead:
+//  1. TRANSCRIBE the exact transition tables from
+//     Paymax_Marketplace_CLAUDE_BUILD_CONTRACT.md §2.1-2.4 and assert every
+//     legal edge is present and every illegal edge is absent — a spec-level
+//     regression lock on "guarded, exhaustive, no implicit transitions".
 //  2. Where the guard's OBSERVABLE effect crosses into exported territory (the
-//     CodedError code + HTTP status a caller actually receives), the codes are
-//     asserted against the frozen §3 taxonomy in errors.go (which IS exported).
-// A live Postgres would let us drive Service methods end-to-end and observe the
-// unexported guards indirectly (see sequence_flow_test.go's DB-required notes).
-// Absent that, these tests are correct-by-construction against the transcribed
-// tables and catch the class of bug the skill calls out: "test every allowed
-// transition produces the right next state... and every disallowed transition is
-// rejected."
+//     CodedError code + HTTP status), assert the codes against the frozen §3
+//     taxonomy in errors.go (which IS exported).
+// A live Postgres would let us drive Service methods end-to-end (see
+// sequence_flow_test.go's DB-required notes); absent that, these tests are
+// correct-by-construction against the transcribed tables.
 
 import (
 	"testing"

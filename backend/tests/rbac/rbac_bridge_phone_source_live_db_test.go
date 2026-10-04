@@ -9,13 +9,11 @@ package rbac_test
 // auth_service.go) never sets that column: it sends phone inside the signup/
 // admin-create request's "data"/"user_metadata" payload, which GoTrue stores
 // at raw_user_meta_data->>'phone', and separately PATCHes it onto
-// user_profiles.phone afterward. So ADR-053's copy was a structural no-op for
-// every real user — confirmed on local Supabase before this fix: 0 of 57,703
-// platform_users rows carried a phone.
+// user_profiles.phone afterward — so copying NEW.phone is a structural no-op
+// for real users.
 // This test seeds an auth.users row the way RegisterUser's GoTrue payload
 // actually shapes one (phone inside raw_user_meta_data, top-level phone
-// column left blank) and asserts platform_users.phone comes out populated —
-// pinning the fix, not just the absence of an error.
+// column left blank) and asserts platform_users.phone comes out populated.
 // SKIPPED whenever TEST_DATABASE_URL is unset — same gate as the other live-DB
 // suites (see backend/tests/otp/store_live_db_test.go).
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"

@@ -512,16 +512,21 @@ type Application struct {
 // in R2; storage_key is a signed-URL ref only (HL-8). expires_at feeds the HL-2
 // auto-suspend signal.
 type CredentialDoc struct {
-	ID            string     `json:"id"`
-	ApplicationID string     `json:"application_id"`
-	OwnerUserID   string     `json:"owner_user_id"`
-	CredType      string     `json:"cred_type"` // VCN | PCN | MLSCN | NAFDAC | PREMISES | OTHER
-	ReferenceNo   string     `json:"reference_no"`
-	NAFDACRef     string     `json:"nafdac_ref"`
-	StorageKey    string     `json:"storage_key"`
-	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
-	Verified      bool       `json:"verified"`
-	CreatedAt     time.Time  `json:"created_at"`
+	ID            string `json:"id"`
+	ApplicationID string `json:"application_id"`
+	OwnerUserID   string `json:"owner_user_id"`
+	// cred_type admits two vocabularies (CHECK widened by
+	// 20271003000000_health_cred_doc_types.sql): the issuer enum used by
+	// provider onboarding — VCN | PCN | MLSCN | NAFDAC | PREMISES | OTHER — and
+	// the Mode-B evidence-doc types the credential service attaches —
+	// VCN_CERT | ANNUAL_LICENCE | GOV_ID.
+	CredType    string     `json:"cred_type"`
+	ReferenceNo string     `json:"reference_no"`
+	NAFDACRef   string     `json:"nafdac_ref"`
+	StorageKey  string     `json:"storage_key"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	Verified    bool       `json:"verified"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // presigned R2 uploads for provider-application credential

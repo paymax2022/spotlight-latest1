@@ -218,7 +218,6 @@ func (s *Service) allocate(ctx context.Context, checkerID string, o *Offering) (
 		}
 		_ = s.repo.UpdateSubscriptionStatus(ctx, sub.ID, SubAllocated)
 		_ = s.repo.SetCertRef(ctx, o.AssetID, sub.UserID, certKey)
-		// Record the certificate document row.
 		_ = s.repo.InsertDocument(ctx, &Document{
 			AssetID:    &o.AssetID,
 			OfferingID: &o.ID,

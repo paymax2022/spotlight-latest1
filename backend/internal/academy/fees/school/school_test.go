@@ -254,3 +254,25 @@ func TestServiceExport_RequiresVerifiedAndOwner(t *testing.T) {
 		t.Fatalf("export must report the verified tier, got %s", exp.Tier)
 	}
 }
+
+// A non-uuid id can never match a uuid PK — the repository answers ErrNotFound
+// instead of leaking 22P02 as a 500. Nil pool is safe: the guard runs first.
+func TestRepository_NonUUIDID_ReturnsNotFound(t *testing.T) {
+	repo := NewRepository(nil)
+	ctx := context.Background()
+	if _, err := repo.Get(ctx, "institutions"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Get(non-uuid): want ErrNotFound, got %v", err)
+	}
+	if _, err := repo.Update(ctx, "institutions", UpdateSchoolRequest{}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Update(non-uuid): want ErrNotFound, got %v", err)
+	}
+	if _, err := repo.SetVerificationTier(ctx, "institutions", TierPending, TierVerified); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetVerificationTier(non-uuid): want ErrNotFound, got %v", err)
+	}
+	if _, err := repo.ExportRoster(ctx, "institutions"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ExportRoster(non-uuid): want ErrNotFound, got %v", err)
+	}
+	if _, err := repo.ExportFees(ctx, "institutions"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ExportFees(non-uuid): want ErrNotFound, got %v", err)
+	}
+}

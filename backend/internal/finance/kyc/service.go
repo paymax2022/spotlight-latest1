@@ -212,9 +212,9 @@ func (s *Service) ListPending(ctx context.Context, limit, offset int) ([]Profile
 	return profiles, rows.Err()
 }
 
-// Fail marks a KYC attempt as failed. Atomic with its audit row (the update and
-// audit insert used to be two unguarded statements — a crash between them left
-// a status change with no audit trail).
+// Fail marks a KYC attempt as failed. The status update and its audit row
+// commit in one tx — a crash between them must never leave a status change
+// with no audit trail.
 func (s *Service) Fail(ctx context.Context, userID string, actorID *string) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -252,7 +252,6 @@ func hashIfPresent(v *string) *string {
 	if v == nil || *v == "" {
 		return nil
 	}
-	_ = fmt.Sprintf // keep fmt import used elsewhere in the file
 	salt := sha256.Sum256([]byte(*v))
 	key := argon2.IDKey([]byte(*v), salt[:], 1, 64*1024, 4, 32)
 	hashed := "argon2id:" + hex.EncodeToString(key)
@@ -283,20 +282,13 @@ func (h *Handler) GetMe(c *gin.Context) {
 	c.JSON(http.StatusOK, profile)
 }
 
-// Initiate, Approve, Reject, and ListPending used to be exposed here as
-// POST /finance/kyc/initiate and the /finance/admin/kyc/* admin trio. All four
-// let a caller move kyc_tier/kyc_status with NO automated identity check —
-// Initiate just hashed and stored whatever BVN/NIN the client sent, and
-// Approve/Reject took an admin's word for it with no provider evidence.
-// Removed along with their routes (see internal/app/finance_routes.go) in
-// favor of the KYC verification gateway (internal/finance/kycverify), which
-// runs real Dojah/Smile ID/Youverify checks before a case ever reaches admin
-// review. The underlying Service methods (Initiate/Approve/Fail/ListPending)
-// remain — Approve is still the tier-write sink kycverify's own case-approval
-// flow calls into (see kycTierElevator in finance_routes.go), and Initiate is
-// still called directly by the mobile tier-submission handlers
-// (internal/handlers/kyc_connect_handler.go) pending a separate rewrite to
-// route those through kycverify's session/check flow instead.
+// Initiate/Approve/Reject/ListPending have no HTTP routes here — tier/status
+// moves go through the KYC verification gateway (internal/finance/kycverify),
+// which requires real provider evidence before admin review. The Service
+// methods remain because Approve is still kycverify's tier-write sink (see
+// kycTierElevator in internal/app/finance_routes.go) and Initiate is still
+// called by the mobile tier-submission handlers
+// (internal/handlers/kyc_connect_handler.go).
 
 // Status mirrors the kyc_status check constraint in the Supabase migration.
 type Status string

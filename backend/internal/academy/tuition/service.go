@@ -30,16 +30,17 @@ import (
 )
 
 var (
-	ErrDuplicate            = errors.New("tuition: duplicate idempotency key")
-	ErrZeroPayment          = errors.New("tuition: payment amount must be > 0")
-	ErrInvalidPlanType      = errors.New("tuition: invalid plan type")
-	ErrPlanNotFound         = errors.New("tuition: no active plan found")
-	ErrApplicationNotFound  = errors.New("tuition: application not found")
-	ErrBatchNotFound        = errors.New("tuition: batch not found")
-	ErrInvalidPaymentAmount = errors.New("tuition: payment amount does not match plan")
-	ErrForbidden            = errors.New("tuition: payment does not belong to this user")
-	ErrPaymentNotConfirmed  = errors.New("tuition: payment not confirmed by provider")
-	ErrReferenceReused      = errors.New("tuition: payment reference already used for a different installment")
+	ErrDuplicate             = errors.New("tuition: duplicate idempotency key")
+	ErrZeroPayment           = errors.New("tuition: payment amount must be > 0")
+	ErrInvalidPlanType       = errors.New("tuition: invalid plan type")
+	ErrPlanNotFound          = errors.New("tuition: no active plan found")
+	ErrApplicationNotFound   = errors.New("tuition: application not found")
+	ErrBatchNotFound         = errors.New("tuition: batch not found")
+	ErrInvalidPaymentAmount  = errors.New("tuition: payment amount does not match plan")
+	ErrForbidden             = errors.New("tuition: payment does not belong to this user")
+	ErrPaymentNotConfirmed   = errors.New("tuition: payment not confirmed by provider")
+	ErrReferenceReused       = errors.New("tuition: payment reference already used for a different installment")
+	ErrNoPendingInstallments = errors.New("tuition: no pending installments")
 )
 
 // Auditor is the admin-action audit sink, matching services.AuditService's LogAction.
@@ -379,7 +380,7 @@ func (s *Service) ValidatePayment(ctx context.Context, appID, userID string, amo
 			return fmt.Errorf("fetch batch: %w", err)
 		}
 		if amountNaira > batch.FeeNGN {
-			return fmt.Errorf("tuition: payment exceeds batch fee")
+			return fmt.Errorf("%w: %d exceeds batch fee %d", ErrInvalidPaymentAmount, amountNaira, batch.FeeNGN)
 		}
 		return nil
 	}
@@ -391,13 +392,14 @@ func (s *Service) ValidatePayment(ctx context.Context, appID, userID string, amo
 	for _, p := range payments {
 		if p.Status == PaymentStatusPending {
 			if amountNaira != p.AmountNGN {
-				return fmt.Errorf("tuition: payment amount (%d) does not match next installment (%d)",
-					amountNaira, p.AmountNGN)
+				// Sentinel errors so writeErr's errMap answers 400, not 500.
+				return fmt.Errorf("%w: payment amount (%d) does not match next installment (%d)",
+					ErrInvalidPaymentAmount, amountNaira, p.AmountNGN)
 			}
 			return nil
 		}
 	}
-	return fmt.Errorf("tuition: no pending payments")
+	return ErrNoPendingInstallments
 }
 
 // WaiveTuition marks a payment as waived (admin action).

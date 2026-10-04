@@ -11,11 +11,8 @@ import (
 	"spotlight/backend/internal/finance/transfers"
 )
 
-// AUD-BE-011: the transfer/convert initiates declared
-// `idempotency_key binding:"required"` and merged the Idempotency-Key header
-// AFTER binding, so the documented header-only contract 400'd before the merge
-// ever ran. These specs pin: header-only is accepted (fails deeper, not at
-// binding) and neither-source still 400s.
+// AUD-BE-011: pin the header contract — a header-only Idempotency-Key is
+// accepted (fails deeper, not at binding) and neither-source still 400s.
 // The handler is constructed with a nil service on purpose: reaching the service
 // at all is the signal under test — a bind rejection answers 400 first.
 

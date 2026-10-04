@@ -340,7 +340,6 @@ func (s *Service) CompleteCarHire(ctx context.Context, id, callerID string) erro
 	// only; no ledger re-post).
 	ownerID := b.UserID
 	s.recordCommissionSafe(ctx, "Lifestyle", "Car Hire", "", b.FareKobo, id, &ownerID)
-	// Refund the deposit settlement back to the customer.
 	var depositSettID string
 	if err := s.db.QueryRow(ctx,
 		`SELECT id FROM settlements WHERE reference=$1 AND status='escrowed' LIMIT 1`,

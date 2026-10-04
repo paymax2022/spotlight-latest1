@@ -232,11 +232,7 @@ func TestLiveDB_CreateOrder_UntrackedProductStockUnlimited(t *testing.T) {
 	}
 }
 
-// The Dispatch nil-settlement panic fix (health_pharmacy_routes.go now wires
-// transport.NewService(pool, settlement.NewService(pool, ledgerSvc)) instead
-// of a nil settlement service) is verified live via a throwaway backend + a
-// full order lifecycle curl sweep rather than a unit test here — BookParcel's
-// real signature pulls in a maps-routing provider and pricing config that
-// would make a package-local test fragile and only loosely representative of
-// the actual fix (a one-line wiring change matching finance_routes.go's own
-// established pattern for the same transport.Service constructor).
+// The Dispatch nil-settlement panic fix (health_pharmacy_routes.go wires
+// transport.NewService(pool, settlement.NewService(pool, ledgerSvc))) is not
+// unit-tested here: BookParcel's real signature pulls in a maps-routing
+// provider and pricing config that would make a package-local test fragile.

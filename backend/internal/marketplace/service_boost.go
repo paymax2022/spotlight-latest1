@@ -227,29 +227,13 @@ func (s *Service) PurchaseBoost(ctx context.Context, sellerID, idemKey string, i
 // RejectBoost (admin/system) rejects an active/purchased boost for a policy
 // violation and AUTO-REFUNDS in the same flow (§2.4 reject → rejected_with_reason →
 // auto_refunded). reason_code MANDATORY.
-// Ordering (UAT fix — three sibling agents independently found the OLD two-UPDATE
-// sequence non-atomic and got a boost permanently stranded):
-//  1. The refund is posted FIRST, before mkt_boosts.status is touched at all.
-//  2. Only on refund success does the row transition, in ONE UPDATE, straight from
-//     its ORIGINAL status to the terminal auto_refunded (reason code + refund ref +
-//     refunded_kobo stamped together).
-//
-// This mirrors the "partial completion must be safely resumable" precedent in
-// estate's RequestPayout/PayDues (backend/internal/estate/vendor.go,
-// service_dues.go: ledger call first, status-row update last, so a mid-flight
-// failure changes nothing in the row and a retry is just another first attempt).
-// The OLD code flipped status → rejected_with_reason in its own committed UPDATE
-// BEFORE attempting the refund. A refund failure (e.g. the seller has no
-// ledger_accounts row yet — Postgres FK violation on ledger_accounts_user_id_fkey,
-// since GetOrCreateAccount's INSERT requires the user to already exist in
-// auth.users) left the row stuck at rejected_with_reason with refund_ref=NULL —
-// and every retry then hit guardBoostTransition's rejected_with_reason →
-// rejected_with_reason as an ILLEGAL self-edge (409 INVALID_BOOST_TRANSITION),
-// permanently wedging the boost with no way to complete the refund from the admin
-// console. rejected_with_reason is never independently read or filtered on
-// anywhere else in this codebase (grep confirms), so collapsing the two legs into
-// one atomic write closes the intermediate-state window entirely rather than just
-// narrowing it.
+// Ordering is load-bearing (ledger-first, status-last — the same partial-
+// completion precedent as estate's RequestPayout/PayDues): the refund posts
+// FIRST, before mkt_boosts.status is touched, and only on success does the row
+// transition in ONE UPDATE straight to terminal auto_refunded (reason code +
+// refund ref + refunded_kobo stamped together). A committed intermediate
+// rejected_with_reason row would wedge every retry on the FSM's illegal
+// self-edge with no path to complete the refund.
 func (s *Service) RejectBoost(ctx context.Context, adminID, boostID, reasonCode string) (*Boost, error) {
 	if err := requireReason(reasonCode); err != nil {
 		return nil, err

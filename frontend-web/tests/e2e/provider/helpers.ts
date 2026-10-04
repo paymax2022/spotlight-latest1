@@ -89,17 +89,21 @@ export async function createRestaurant(
   return { status: res.status(), body: await res.json().catch(() => ({})) };
 }
 
-/** Direct Go call for routes with no BFF proxy (KYB, admin). */
+/** Direct Go call for routes with no BFF proxy (KYB, admin). Accepts
+ * arbitrary headers — Idempotency-Key etc. (silently dropping them made
+ * money-path replay probes vacuous: the request succeeded WITHOUT the key,
+ * so a "replay" proved nothing). */
 export async function goFetch(
   request: APIRequestContext,
   path: string,
-  opts: { method?: string; token?: string; data?: unknown } = {},
+  opts: { method?: string; token?: string; data?: unknown; headers?: Record<string, string> } = {},
 ): Promise<{ status: number; body: any }> {
   const res = await request.fetch(`${GO_BACKEND_URL}${path}`, {
     method: opts.method ?? 'GET',
     headers: {
       'Content-Type': 'application/json',
       ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
+      ...(opts.headers ?? {}),
     },
     ...(opts.data !== undefined ? { data: opts.data } : {}),
   });

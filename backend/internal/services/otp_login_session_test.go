@@ -84,9 +84,9 @@ func TestMintSession_StepUpSessionIsUsableAfterward(t *testing.T) {
 	}
 
 	// This is exactly what RequireAuthContextWithSessions runs on every
-	// protected request. Before the fix, MintSession never called
-	// IssueSession, so this looked the token up and found nothing — the same
-	// "session not found" the middleware collapses into 401 "session revoked".
+	// protected request: MintSession must IssueSession the token it returns,
+	// or this lookup finds nothing — the same "session not found" the
+	// middleware collapses into 401 "session revoked".
 	sess, verr := sessions.ValidateAccess(access)
 	if verr != nil {
 		t.Fatalf("ValidateAccess(minted token) = %v, want the session to be found — this is the AUTH-009 regression", verr)

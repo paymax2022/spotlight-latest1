@@ -75,7 +75,6 @@ func (h *RegistrationHandler) CreateApplication(c *gin.Context) {
 		return
 	}
 
-	// Generate unique reference
 	reference := fmt.Sprintf("SPOT-%d-%s", time.Now().Unix(), generateShortID())
 
 	app, err := h.store.CreateApplication(c.Request.Context(), userID, body.ContestSlug, reference)
@@ -145,7 +144,6 @@ func (h *RegistrationHandler) SaveStep(c *gin.Context) {
 		return
 	}
 
-	// Calculate completion percent (rough estimate: steps * 20%)
 	stepOrder := []string{"contest_selection", "personal_info", "qualifications", "portfolio", "review_summary"}
 	newPercent := 0
 	for i, step := range stepOrder {
@@ -196,7 +194,6 @@ func (h *RegistrationHandler) SubmitApplication(c *gin.Context) {
 		return
 	}
 
-	// Record status change in timeline
 	if err := h.store.RecordStatusChange(c.Request.Context(), id, "draft", "submitted",
 		"Application submitted for review", "public_user"); err != nil {
 		// Log but don't fail the request
@@ -274,7 +271,6 @@ func (h *RegistrationHandler) WithdrawApplication(c *gin.Context) {
 		return
 	}
 
-	// Record status change in timeline
 	if err := h.store.RecordStatusChange(c.Request.Context(), id, "submitted", "withdrawn",
 		body.Note, "public_user"); err != nil {
 		fmt.Printf("failed to record status change: %v\n", err)
@@ -322,20 +318,15 @@ func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
 		return
 	}
 
-	// Generate payment reference
 	reference := fmt.Sprintf("SPT-REG-%d-%s", time.Now().Unix(), generateShortID())
 
 	if body.Method == "WALLET" {
-		// WALLET: Charge from wallet (requires ledger entry)
-		// Phase 2: Post double-entry ledger entry
-
 		pt, err := h.store.CreatePaymentTransaction(c.Request.Context(), appID, reference, body.AmountKobo, "WALLET", idemKey)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create payment"})
 			return
 		}
 
-		// Update payment status to completed
 		if err := h.store.UpdatePaymentStatus(c.Request.Context(), appID, reference, "completed", ""); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update payment"})
 			return
@@ -357,8 +348,7 @@ func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
 		}})
 
 	} else if body.Method == "PAYSTACK" {
-		// PAYSTACK: Return checkout URL (no ledger entry yet)
-		// Phase 2: Call Paystack provider and get authorization URL
+		// Checkout URL only — no ledger entry until verification.
 		pt, err := h.store.CreatePaymentTransaction(c.Request.Context(), appID, reference, body.AmountKobo, "PAYSTACK", idemKey)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create payment"})
@@ -378,7 +368,7 @@ func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
 			"transactionId":    pt.ID,
 			"reference":        reference,
 			"status":           "initiated",
-			"authorizationUrl": "https://checkout.paystack.com/" + reference, // Phase 2: real Paystack URL
+			"authorizationUrl": "https://checkout.paystack.com/" + reference, // placeholder URL — real Paystack flow is not wired
 		}})
 	} else {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payment method"})
@@ -404,14 +394,13 @@ func (h *RegistrationHandler) VerifyPayment(c *gin.Context) {
 		return
 	}
 
-	// Phase 2: Call Paystack to verify payment status
-	// For now: assume verified if reference provided
+	// NOTE: no provider verification is wired — a supplied reference marks the
+	// payment verified.
 	if body.Reference == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "reference required"})
 		return
 	}
 
-	// Update payment status to completed
 	if err := h.store.UpdatePaymentStatus(c.Request.Context(), appID, body.Reference, "verified", body.Reference); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify payment"})
 		return

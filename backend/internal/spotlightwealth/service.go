@@ -149,7 +149,6 @@ func (s *Service) CompleteChallenge(ctx context.Context, userID, id, idemKey str
 	if idemKey == "" {
 		return nil, ErrBadInput
 	}
-	// Load challenge + membership state under one read.
 	var rewardKobo int64
 	var currency, memberState string
 	const load = `SELECT c.reward_kobo, c.currency, COALESCE(m.state,'')

@@ -30,7 +30,8 @@ func TestLiveDB_Release_ReportsZeroWhenContributionsAlreadySettled(t *testing.T)
 	// campaign to 'funded' in the same call that already instant-settled the
 	// contribution to 'released' — the real-world sequence this pins.
 	const goalKobo = 200_000
-	campaignID, creatorID, cfSvc, _ := seedFundedContribution(t, ctx, pool, goalKobo, goalKobo)
+	fx := seedFundedContribution(t, ctx, pool, goalKobo, goalKobo)
+	campaignID, creatorID, cfSvc := fx.campaignID, fx.creatorID, fx.cfSvc
 
 	var status string
 	if err := pool.QueryRow(ctx, `SELECT status FROM campaigns WHERE id = $1`, campaignID).Scan(&status); err != nil {
@@ -77,7 +78,8 @@ func TestLiveDB_Release_DeniedForNonOwner(t *testing.T) {
 	pool := moneyPathPool(t)
 
 	const goalKobo = 150_000
-	campaignID, _, cfSvc, _ := seedFundedContribution(t, ctx, pool, goalKobo, goalKobo)
+	fx := seedFundedContribution(t, ctx, pool, goalKobo, goalKobo)
+	campaignID, cfSvc := fx.campaignID, fx.cfSvc
 
 	impostorID := "00000000-0000-0000-0000-000000000000"
 	if _, err := cfSvc.Release(ctx, campaignID, impostorID); err == nil {

@@ -111,15 +111,13 @@ func RegisterSavings(member *gin.RouterGroup, adminGroup *gin.RouterGroup, cfg c
 // a user can never request/pay/payout as someone else).
 //
 // E2E-FIN-043 double-mount: social.Handler.Register adds its own "/social"
-// segment, so passing finance.Group("/social") here used to mount the module
-// ONLY at /api/finance/social/social/* while the documented canonical
-// /api/finance/social/* 404'd (the Next.js proxy and mobile clients call the
-// canonical path). The fix registers on the bare member group for the canonical
-// path AND re-registers under member.Group("/social") as a backward-compatible
-// alias — shipped e2e suites and clients still calling the doubled path keep
-// working. A second Register call is safe: member routes on the doubled prefix
-// are distinct paths (no gin duplicate-route panic) and admin routes are skipped
-// (nil group) so social.admin.* is registered exactly once.
+// segment, so it must be called on the bare member group to land routes at the
+// documented canonical /api/finance/social/* (what the Next.js proxy and mobile
+// clients call). It is ALSO re-registered under member.Group("/social") as a
+// backward-compatible alias — shipped e2e suites and clients still calling the
+// doubled path keep working. The second Register call is safe: member routes on
+// the doubled prefix are distinct paths (no gin duplicate-route panic) and admin
+// routes are skipped (nil group) so social.admin.* is registered exactly once.
 func RegisterSocialPay(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
 	if pool == nil {
 		log.Println("[social] nil pool — skipping social routes")
