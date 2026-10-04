@@ -417,6 +417,7 @@ var (
 	// Vars (not consts) so tests can shrink them.
 	stemRateMaxKeys       = 100_000
 	stemRateSweepInterval = time.Minute
+	stemRateLimitError    = "rate limit exceeded"
 )
 
 // sweepStemRateStoreLocked drops buckets whose owning window has passed. The
@@ -442,12 +443,44 @@ func evictStemRateStoreLocked(n int) {
 	}
 }
 
-// StemRateLimit enforces a simple in-memory fixed-window rate limit per
-// route+client key. The store is shared across all mount points and is bounded:
-// stale buckets are swept periodically on write, and the map never exceeds
-// stemRateMaxKeys. The key deliberately excludes the caller-set `x-stem-role`
-// header — it is dead for authz since roles resolve via RBAC (ADR-056), and as
-// a key component it let any caller mint a fresh bucket per request.
+// stemRateRedisGet is bound once by BindStemRateRedis (route setup time).
+// Resolved per request so a nil or errored client always falls back to the
+// local store — protection degrades to per-instance, never disappears
+// (E2E-BE-032 residual).
+var stemRateRedisGet func() *platformRedis.Client
+
+// BindStemRateRedis makes every StemRateLimit handler share its budget across
+// replicas through Redis fixed-window counters. Call once at startup; handlers
+// mounted before the call still pick it up because the getter is resolved at
+// request time.
+func BindStemRateRedis(get func() *platformRedis.Client) {
+	stemRateRedisGet = get
+}
+
+// stemAllowRedis mirrors AuthRateLimiter.allowRedis for the shared stem store.
+// Returns (allowed, remaining, resetSeconds, handled) — handled=false means the
+// caller must use the local path.
+func stemAllowRedis(ctx context.Context, r *platformRedis.Client, key string, limit int, window time.Duration, now time.Time) (bool, int, int, bool) {
+	bucket := now.Unix() / int64(window.Seconds())
+	sum := sha256.Sum256([]byte(key))
+	rkey := fmt.Sprintf("rl:stem:%x:%d", sum[:8], bucket)
+	n, err := r.Incr(ctx, rkey).Result()
+	if err != nil {
+		return false, 0, 0, false
+	}
+	if n == 1 {
+		_ = r.Expire(ctx, rkey, window+time.Minute).Err()
+	}
+	reset := time.Duration((bucket+1)*int64(window.Seconds())-now.Unix()) * time.Second
+	return n <= int64(limit), max(int(int64(limit)-n), 0), int(reset.Seconds()), true
+}
+
+// StemRateLimit enforces a fixed-window rate limit per route+client key. With
+// BindStemRateRedis the budget is shared across replicas; otherwise it uses
+// the bounded in-memory store (shared across all mount points). The key
+// deliberately excludes the caller-set `x-stem-role` header — it is dead for
+// authz since roles resolve via RBAC (ADR-056), and as a key component it let
+// any caller mint a fresh bucket per request.
 func StemRateLimit(limit int, window time.Duration) gin.HandlerFunc {
 	if limit <= 0 {
 		limit = 60
@@ -459,6 +492,24 @@ func StemRateLimit(limit int, window time.Duration) gin.HandlerFunc {
 		key := c.FullPath() + "|" + c.Request.Method + "|" + c.ClientIP()
 
 		now := time.Now()
+		if stemRateRedisGet != nil {
+			if r := stemRateRedisGet(); r != nil {
+				if allowed, remaining, resetIn, hit := stemAllowRedis(c.Request.Context(), r, key, limit, window, now); hit {
+					c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
+					c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
+					c.Header("X-RateLimit-Reset", strconv.Itoa(resetIn))
+					if !allowed {
+						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+							"success": false,
+							"error":   stemRateLimitError,
+						})
+						return
+					}
+					c.Next()
+					return
+				}
+			}
+		}
 		stemRateMu.Lock()
 		if now.Sub(stemRateLastSweep) >= stemRateSweepInterval {
 			sweepStemRateStoreLocked(now)
@@ -489,7 +540,7 @@ func StemRateLimit(limit int, window time.Duration) gin.HandlerFunc {
 		if current > limit {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"success": false,
-				"error":   "rate limit exceeded",
+				"error":   stemRateLimitError,
 			})
 			return
 		}

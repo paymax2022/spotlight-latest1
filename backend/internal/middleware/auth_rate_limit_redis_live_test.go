@@ -2,10 +2,14 @@ package middleware
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 
 	platformRedis "spotlight/backend/internal/platform/redis"
 )
@@ -91,5 +95,36 @@ func TestRedisRemainingAndReset(t *testing.T) {
 	}
 	if resetIn <= 0 || resetIn > 60 {
 		t.Fatalf("resetIn=%d, want within (0,60]", resetIn)
+	}
+}
+
+// StemRateLimit's Redis path shares the budget across replicas the same way —
+// two separate handler chains must count against one counter.
+func TestStemSharedCounterAcrossInstances(t *testing.T) {
+	r := liveRedis(t)
+	BindStemRateRedis(func() *platformRedis.Client { return r })
+	t.Cleanup(func() { BindStemRateRedis(nil) })
+
+	gin.SetMode(gin.TestMode)
+	ip := "10.99." + strconv.FormatInt(time.Now().UnixNano()%255+1, 10) + ".7"
+	call := func(h gin.HandlerFunc) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", nil)
+		c.Request.RemoteAddr = ip + ":1234"
+		h(c)
+		return w
+	}
+	// FullPath is empty in test contexts — the key still distinguishes this run.
+	h1 := StemRateLimit(2, time.Minute)
+	h2 := StemRateLimit(2, time.Minute)
+
+	for i := range 2 {
+		if w := call(h1); w.Code == http.StatusTooManyRequests {
+			t.Fatalf("attempt %d on handler 1 should be allowed", i+1)
+		}
+	}
+	if w := call(h2); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("handler 2 must see handler 1's attempts — got %d, want 429", w.Code)
 	}
 }

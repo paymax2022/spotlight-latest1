@@ -81,6 +81,10 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 			sharedRedis = rc
 		}
 	}
+	// E2E-BE-032: stem route limiters share their budgets across replicas when
+	// Redis is up; resolved per request so a Redis outage degrades to the
+	// bounded in-memory store rather than disabling the protection.
+	middleware.BindStemRateRedis(func() *platformRedis.Client { return sharedRedis })
 	supabase := integrations.NewSupabaseRestClient(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey)
 	configureLocalJWTVerify(cfg, supabase)
 	adminRepo := repositories.NewAdminSupabaseRepository(supabase)
