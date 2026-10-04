@@ -2,6 +2,7 @@ package top5events
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -118,6 +119,16 @@ func (h *Handler) CreateEvent(c *gin.Context) {
 
 func (h *Handler) GetEvent(c *gin.Context) {
 	out, err := h.svc.GetEvent(c.Request.Context(), c.Param("id"))
+	// E2E-SEC-060: ListEvents already restricts anonymous/non-organiser callers
+	// to publiclyVisibleStates — the by-id read must honour the same gate or
+	// DRAFT/SUSPENDED events stay readable to anyone holding (or guessing) the
+	// id. 404, not 403, so existence isn't leaked either.
+	if err == nil && out != nil && !slices.Contains(publiclyVisibleStates, string(out.State)) {
+		if uid := c.GetString("user_id"); uid == "" || uid != out.OrganiserID {
+			respond(c, nil, ErrNotFound)
+			return
+		}
+	}
 	respond(c, out, err)
 }
 
