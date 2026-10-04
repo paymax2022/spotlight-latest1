@@ -131,13 +131,19 @@ func (s *Service) AdminDashboard(ctx context.Context) (*AdminDashboard, error) {
 // AdminDispenseAudit is the immutable dispense audit read (HL-12). Each row is the
 // pharmacist action that filled an order's e-Rx (dispense-once).
 func (s *Service) AdminDispenseAudit(ctx context.Context, pharmacyProviderID string) ([]map[string]any, error) {
+	// NULL for "no filter" — the `($1 = '' OR uuid_col = $1)` shape resolved
+	// $1 as text and 500'd on uuid = text.
+	var provPtr *string
+	if pharmacyProviderID != "" {
+		provPtr = &pharmacyProviderID
+	}
 	const q = `
 		SELECT d.id, d.order_id, d.prescription_id, d.pharmacist_id, d.created_at, o.pharmacy_provider_id
 		FROM dispense_records d
 		JOIN pharmacy_orders o ON o.id = d.order_id
-		WHERE ($1 = '' OR o.pharmacy_provider_id = $1)
+		WHERE ($1::uuid IS NULL OR o.pharmacy_provider_id = $1::uuid)
 		ORDER BY d.created_at DESC LIMIT 200`
-	rows, err := s.db.Query(ctx, q, pharmacyProviderID)
+	rows, err := s.db.Query(ctx, q, provPtr)
 	if err != nil {
 		return nil, err
 	}

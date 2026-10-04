@@ -307,13 +307,21 @@ func (s *Service) UpsertProduct(ctx context.Context, ownerID string, p Product) 
 	if p.ID == "" {
 		p.ID = uuid.New().String()
 	}
+	// pharmacy_products.category is NOT NULL with a legacy enum ('prescription',
+	// 'otc', …) and no default — the legacy storefront still reads it, so the
+	// insert must fill it. Derive it from rx_required (POM ⇒ 'prescription',
+	// else 'otc'); never client-supplied.
+	category := "otc"
+	if p.RxRequired {
+		category = "prescription"
+	}
 	const q = `
 		INSERT INTO pharmacy_products
-			(id, pharmacy_provider_id, name, nafdac_ref, nafdac_status, rx_required, is_controlled, price_kobo, stock_qty, active)
-		VALUES ($1,$2,$3,$4,$5,$6,false,$7,$8,$9)
+			(id, pharmacy_provider_id, name, category, nafdac_ref, nafdac_status, rx_required, is_controlled, price_kobo, stock_qty, active)
+		VALUES ($1,$2,$3,$10,$4,$5,$6,false,$7,$8,$9)
 		ON CONFLICT (id) DO UPDATE SET
-			name=$3, nafdac_ref=$4, nafdac_status=$5, rx_required=$6, price_kobo=$7, stock_qty=$8, active=$9, updated_at=now()`
-	if _, err := s.db.Exec(ctx, q, p.ID, p.PharmacyProviderID, p.Name, p.NAFDACRef, p.NAFDACStatus, p.RxRequired, p.PriceKobo, p.StockQty, p.Active); err != nil {
+			name=$3, category=$10, nafdac_ref=$4, nafdac_status=$5, rx_required=$6, price_kobo=$7, stock_qty=$8, active=$9, updated_at=now()`
+	if _, err := s.db.Exec(ctx, q, p.ID, p.PharmacyProviderID, p.Name, p.NAFDACRef, p.NAFDACStatus, p.RxRequired, p.PriceKobo, p.StockQty, p.Active, category); err != nil {
 		return nil, fmt.Errorf("pharmacy: upsert product: %w", err)
 	}
 	s.audited(ownerID, "", "health.pharmacy.product.upsert", p.ID, nil,
