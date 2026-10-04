@@ -58,9 +58,11 @@ func (s *stubAuthService) LogoutUser(token string) error {
 	s.mu.Unlock()
 	return s.logoutErr
 }
-func (s *stubAuthService) RequestPasswordReset(string) error                    { return nil }
-func (s *stubAuthService) ResetPassword(string, string) error                   { return nil }
-func (s *stubAuthService) ChangePassword(string, string, string) error          { return nil }
+func (s *stubAuthService) RequestPasswordReset(string) error  { return nil }
+func (s *stubAuthService) ResetPassword(string, string) error { return nil }
+func (s *stubAuthService) ChangePassword(context.Context, string, string, string) error {
+	return nil
+}
 func (s *stubAuthService) CompleteProfile(string, string, map[string]any) error { return nil }
 
 // noopAudit is declared in session_handler_test.go and reused here.

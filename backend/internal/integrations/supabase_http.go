@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -122,17 +123,17 @@ func (c *SupabaseRestClient) RPC(function string, payload map[string]any, out an
 	return nil
 }
 
-func (c *SupabaseRestClient) AuthUser(accessToken string) (map[string]any, error) {
+func (c *SupabaseRestClient) AuthUser(ctx context.Context, accessToken string) (map[string]any, error) {
 	// ADR-PR395: local verify when configured — same 401 semantics for a
 	// definitively-bad token, no GoTrue round trip.
 	if c.localVerify {
-		return c.verifyLocalJWT(accessToken)
+		return c.verifyLocalJWT(ctx, accessToken)
 	}
 	if strings.TrimSpace(c.baseURL) == "" {
 		return nil, errors.New("supabase URL is not configured")
 	}
 	u := strings.TrimRight(c.baseURL, "/") + "/auth/v1/user"
-	req, err := http.NewRequest(http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}

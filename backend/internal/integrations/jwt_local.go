@@ -67,9 +67,9 @@ type jwksKey struct {
 
 // fetchJWKS pulls the signing keys. Called at most once per unknown-kid event;
 // the result is cached under c.jwksMu.
-func (c *SupabaseRestClient) fetchJWKS() (map[string]jwksKey, error) {
+func (c *SupabaseRestClient) fetchJWKS(ctx context.Context) (map[string]jwksKey, error) {
 	u := strings.TrimRight(c.baseURL, "/") + "/auth/v1/.well-known/jwks.json"
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -103,11 +103,11 @@ func (c *SupabaseRestClient) fetchJWKS() (map[string]jwksKey, error) {
 
 // jwksFor returns the cached key set, fetching on first use. On a cache miss
 // for the requested kid it refetches once (key rotation) before failing.
-func (c *SupabaseRestClient) jwksFor(kid string) (jwksKey, error) {
+func (c *SupabaseRestClient) jwksFor(ctx context.Context, kid string) (jwksKey, error) {
 	c.jwksMu.Lock()
 	defer c.jwksMu.Unlock()
 	if c.jwks == nil {
-		keys, err := c.fetchJWKS()
+		keys, err := c.fetchJWKS(ctx)
 		if err != nil {
 			return jwksKey{}, fmt.Errorf("jwks unavailable: %w", err)
 		}
@@ -115,7 +115,7 @@ func (c *SupabaseRestClient) jwksFor(kid string) (jwksKey, error) {
 	}
 	k, ok := c.jwks[kid]
 	if !ok {
-		keys, err := c.fetchJWKS()
+		keys, err := c.fetchJWKS(ctx)
 		if err != nil {
 			return jwksKey{}, fmt.Errorf("jwks unavailable: %w", err)
 		}
@@ -132,7 +132,7 @@ func b64url(s string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(s)
 }
 
-func (c *SupabaseRestClient) verifySignature(parts []string, alg, kid string) error {
+func (c *SupabaseRestClient) verifySignature(ctx context.Context, parts []string, alg, kid string) error {
 	signingInput := []byte(parts[0] + "." + parts[1])
 	sig, err := b64url(parts[2])
 	if err != nil {
@@ -151,7 +151,7 @@ func (c *SupabaseRestClient) verifySignature(parts []string, alg, kid string) er
 		}
 		return nil
 	case "ES256":
-		k, err := c.jwksFor(kid)
+		k, err := c.jwksFor(ctx, kid)
 		if err != nil {
 			return err
 		}
@@ -190,7 +190,7 @@ func (c *SupabaseRestClient) verifySignature(parts []string, alg, kid string) er
 	}
 }
 
-func (c *SupabaseRestClient) verifyLocalJWT(token string) (map[string]any, error) {
+func (c *SupabaseRestClient) verifyLocalJWT(ctx context.Context, token string) (map[string]any, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("malformed jwt: %w", ErrTokenInvalid)
@@ -206,7 +206,7 @@ func (c *SupabaseRestClient) verifyLocalJWT(token string) (map[string]any, error
 	if err := json.Unmarshal(header, &hdr); err != nil {
 		return nil, fmt.Errorf("malformed jwt header: %w", ErrTokenInvalid)
 	}
-	if err := c.verifySignature(parts, hdr.Alg, hdr.Kid); err != nil {
+	if err := c.verifySignature(ctx, parts, hdr.Alg, hdr.Kid); err != nil {
 		return nil, err
 	}
 	payload, err := b64url(parts[1])

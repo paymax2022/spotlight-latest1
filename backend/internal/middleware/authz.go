@@ -106,7 +106,7 @@ func resolveVerifiedIdentity(c *gin.Context, supabase *integrations.SupabaseRest
 		return "", false
 	}
 	token := strings.TrimSpace(h[7:])
-	info, err := supabase.AuthUser(token)
+	info, err := supabase.AuthUser(c.Request.Context(), token)
 	if err != nil {
 		// AUD-AUTH-001: distinguish a real token rejection from an auth-backend
 		// outage — the latter is a 503, not a 401.

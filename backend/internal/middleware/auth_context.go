@@ -39,7 +39,7 @@ func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACSe
 			return
 		}
 		token := strings.TrimSpace(h[7:])
-		info, err := supabase.AuthUser(token)
+		info, err := supabase.AuthUser(c.Request.Context(), token)
 		if err != nil {
 			// AUD-AUTH-001: only a definitive rejection means a bad token. A
 			// transport error/5xx means the auth backend is down — answer 503 so

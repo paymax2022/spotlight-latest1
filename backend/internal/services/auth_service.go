@@ -24,7 +24,7 @@ type AuthService interface {
 	LoginUser(in domain.LoginRequest) (map[string]any, error)
 	LogoutUser(accessToken string) error
 	RequestPasswordReset(email string) error
-	ChangePassword(accessToken, currentPassword, newPassword string) error
+	ChangePassword(ctx context.Context, accessToken, currentPassword, newPassword string) error
 	CompleteProfile(userID string, profileType string, metadata map[string]any) error
 }
 
@@ -482,11 +482,11 @@ func (s *authService) RequestPasswordReset(email string) error {
 	return nil
 }
 
-func (s *authService) ChangePassword(accessToken, currentPassword, newPassword string) error {
+func (s *authService) ChangePassword(ctx context.Context, accessToken, currentPassword, newPassword string) error {
 	if strings.TrimSpace(accessToken) == "" || len(currentPassword) < 8 || len(newPassword) < 8 {
 		return errors.New("invalid password change payload")
 	}
-	authUser, err := s.supabase.AuthUser(accessToken)
+	authUser, err := s.supabase.AuthUser(ctx, accessToken)
 	if err != nil {
 		// AUD-AUTH-001: a definitive rejection means bad/expired token; any
 		// other failure is an auth-backend outage, not an authz verdict.

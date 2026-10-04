@@ -552,7 +552,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "missing bearer token"})
 		return
 	}
-	if err := h.auth.ChangePassword(authz[7:], in.CurrentPassword, in.NewPassword); err != nil {
+	if err := h.auth.ChangePassword(c.Request.Context(), authz[7:], in.CurrentPassword, in.NewPassword); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
