@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext, mapGateEvent } from '@/src/server/visitor/gate.service';
 
-// POST /api/v1/visitor/gate/checkout — check out a visitor using the original check-in event id.
+// Check out a visitor using the original check-in event id.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

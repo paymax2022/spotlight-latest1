@@ -554,7 +554,6 @@ func (s *Service) GetMerchantEarnings(ctx context.Context, ownerID string) (*Mer
 		return nil, fmt.Errorf("restaurant: earnings pending: %w", err)
 	}
 
-	// Recent runs (most recent first).
 	rows, err := s.db.Query(ctx,
 		`SELECT id, period_key, net_minor, status, processed_at
 		   FROM restaurant_payout_runs WHERE provider_type=$2 AND provider_id=$1

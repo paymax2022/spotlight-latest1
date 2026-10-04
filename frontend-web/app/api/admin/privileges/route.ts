@@ -3,7 +3,6 @@ import { handleApiError } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 
-// GET /api/admin/privileges — Get privileges for all users
 // E2E-SEC-054: was gated on requireRequestUser only — any signed-in user could
 // enumerate every user's role/permission assignments. RBAC inventory is
 // roles:manage territory, same as /api/admin/users-roles.

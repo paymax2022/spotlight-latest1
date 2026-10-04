@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/estate/resident';
 import { buildAnalytics, isAnalyticsType } from '@/src/server/estate/analytics';
 
-// GET /api/v1/estate/analytics/{type}?from=&to= — chart-ready estate analytics.
+// Chart-ready estate analytics.
 // client never passes an estate ID. Estate-admin only (mirrors reports).
 export async function GET(request: Request, context: { params: Promise<{ type: string }> }) {
   try {

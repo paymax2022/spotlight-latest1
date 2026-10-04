@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/estate/resident';
 import { getFinanceDashboard } from '@/src/server/estate/finance';
 
-// GET /api/v1/estate/finance — estate finance dashboard (admin only).
+// Estate finance dashboard (admin only).
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

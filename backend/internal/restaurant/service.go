@@ -792,35 +792,19 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	//	3. insert the order           (its own tx)
 	// Anything added here that needs the DB while `tx` is open must go ON `tx`.
 
-	// The Escrow below DEBITS the customer's wallet, so placing an order is a wallet
-	// debit like any other and owes CLAUDE.md's iron rule #4 a fail-closed tier check:
-	// a Tier 0 customer has no wallet at all, and every capped tier has a daily debit
-	// ceiling that this order must fit under. The check and the debit read the same
-	// rows — tiers sums today's user_wallet DEBIT entries, which is exactly what the
-	// escrow posts — so the cap prices food orders alongside transfers and withdrawals
-	// instead of leaving food as an uncapped side door out of the wallet.
-	// Enforced on `total` — subtotal + delivery + tip — because that is the whole
-	// amount leaving the customer's wallet. Gating only the food subtotal would let
-	// the delivery fee and tip escape the cap.
+	// The Escrow below DEBITS the customer's wallet, so placing an order owes
+	// CLAUDE.md's iron rule #4 a fail-closed tier check (Tier 0 has no wallet;
+	// capped tiers have a daily debit ceiling). Enforced on `total` — subtotal +
+	// delivery + tip — the whole amount leaving the wallet.
 	// Placement is deliberate:
-	//   - AFTER the free validations (closed restaurant, unknown/unavailable item,
-	//     min-order, tip bound) so each keeps returning its own specific error, and
-	//     so a cart that would be refused anyway never costs a tier lookup;
-	//   - BEFORE anything that writes. A tier rejection must leave behind no ledger
-	//     entry, no settlement row, no order row — and no promo redemption either.
-	//     Gating after the reservation would let a tier-blocked order burn a slot off
-	//     a single-use campaign, which is the customer's allowance spent on an order
-	//     they were never allowed to place. This gate reads only, so it can sit ahead
-	//     of the reservation without weakening its own "nothing to reverse" property.
-	// A nil gate is refused rather than treated as "unlimited" — see ErrTierGateUnwired.
-	// This stays unconditional: a deployment with no gate must not place orders at all.
-	// Skipped entirely when external is true: an externally-funded order is paid for
-	// by an ALREADY-VERIFIED Paystack charge that never touches the customer's wallet
-	// (see settlement.EscrowExternal), so there is no wallet debit for this gate to
-	// price against — the KYC-tier daily-wallet-debit limit has nothing to say about
-	// money that never entered the wallet. See PlaceOrderPaystackFunded's doc comment
-	// for why this is safe: the caller must have already verified the Paystack charge
-	// covers the exact computed total before reaching here.
+	//   - AFTER the free validations so a refused cart never costs a tier lookup;
+	//   - BEFORE anything that writes, so a tier rejection leaves no ledger entry,
+	//     no settlement/order row, and no promo redemption (a burned single-use
+	//     slot would be spent on an order never allowed).
+	// A nil gate is refused (ErrTierGateUnwired), never "unlimited".
+	// Skipped when external is true: a Paystack-funded order never touches the
+	// wallet (settlement.EscrowExternal), so the daily-wallet-debit limit has
+	// nothing to price — see PlaceOrderPaystackFunded.
 	if !external {
 		if s.tiers == nil {
 			return nil, ErrTierGateUnwired
@@ -1226,7 +1210,6 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 		}
 	}
 
-	// Notify the relevant party and broadcast over the order WS channel.
 	customer, _, rider, _ := s.orderParties(ctx, orderID)
 	switch newStatus {
 	case OrderConfirmed:
@@ -1410,28 +1393,15 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 		return err
 	}
 
-	// Record realized Spotlight profit into the central Commission & Profit registry.
-	// This is the food-delivery settlement point (shared by the live UpdateStatus
-	// (delivered) path and the crash-recovery reconciler re-drive). Best-effort +
-	// idempotent: the order id doubles as source ref + idempotency key, so retries /
-	// reconciliation never double-count. gross is the SAME basis restaurant's own 10%
-	// platform cut is computed on, i.e. exactly the `gross` Settle reconstructs above:
-	//	gross = total_kobo − TipKobo − ServiceFeeKobo + DiscountKobo
-	// The tip and the service fee come off because both are fixed legs paid straight
-	// through (to the rider and to the platform respectively) that the percentages never
-	// priced; the promo discount goes back on because the percentages price the
-	// PRE-discount value, so a discounted order still generated that much business.
-	// KNOWN LIMITATION, deliberately not papered over: RecordFor accepts only a gross and
-	// derives the cut from the central rate card, so two components of the platform's
-	// ACTUAL take cannot be expressed here — the service fee it keeps in full (under-
-	// recorded) and a platform-funded promo discount it gave back (over-recorded). The
-	// LEDGER is unaffected and remains the source of truth: Settle already posted the
-	// exact platform leg, service fee and all. This is an analytics row only. Fixing it
-	// needs a RecordFor variant that takes an explicit realized-fee amount — tracked as
-	// follow-up, not fixable from inside this module.
-	// A recorder failure is logged and swallowed — it must NEVER fail the settlement above
-	// (restaurant's own settle already posted the platform cut to the ledger; this appends
-	// the earning row only). userID is the paying customer.
+	// Record realized Spotlight profit in the central Commission & Profit registry
+	// (shared by UpdateStatus-delivered and the crash-recovery re-drive). Best-effort
+	// + idempotent: order id doubles as source ref / idempotency key. gross is the
+	// same basis as the 10% platform cut — tip and service fee come off (fixed
+	// pass-through legs), discount goes back on (percentages price pre-discount).
+	// KNOWN LIMITATION: RecordFor takes only a gross, so the service-fee leg and a
+	// platform-funded discount cannot be expressed — under/over-recording
+	// respectively. The LEDGER remains source of truth; this is an analytics row.
+	// A recorder failure is logged and swallowed — it must never fail the settle.
 	var grossKobo int64
 	var customerID string
 	s.db.QueryRow(ctx, `SELECT total_kobo, customer_id FROM orders WHERE id=$1`, orderID).Scan(&grossKobo, &customerID)
@@ -1521,7 +1491,6 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 	// sweep) is covered without each recording separately.
 	s.recordOrderEvent(ctx, orderID, actorID, OrderStatus(status), OrderCancelled)
 
-	// Notify the customer + rider (if assigned) and broadcast cancellation.
 	customer, _, rider, _ := s.orderParties(ctx, orderID)
 	if customer != "" && customer != actorID {
 		s.notify(ctx, Notification{UserID: customer, Event: EventOrderCancelled, Title: "Order cancelled", Body: "Your order was cancelled and refunded.", Data: map[string]any{"order_id": orderID}})

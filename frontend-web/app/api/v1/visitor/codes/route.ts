@@ -11,7 +11,7 @@ import {
   toDbCodeType,
 } from '@/src/server/visitor/visitor.service';
 
-// GET /api/v1/visitor/codes — the caller's access codes (newest first).
+// The caller's access codes (newest first).
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -29,7 +29,6 @@ export async function GET(request: Request) {
   }
 }
 
-// POST /api/v1/visitor/codes — create an access code.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

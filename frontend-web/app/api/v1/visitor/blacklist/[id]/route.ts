@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/visitor/visitor.service';
 
-// DELETE /api/v1/visitor/blacklist/{id} — remove a blacklist entry.
+// Remove a blacklist entry.
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireRequestUser(request);

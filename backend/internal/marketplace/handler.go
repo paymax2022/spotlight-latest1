@@ -35,21 +35,14 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) WithWebhookSecret(secret string) *Handler { h.webhookSecret = secret; return h }
 
 // viewerIDForCounting returns the caller's user id for VIEW-COUNTING ONLY.
-// ⚠️ NOT AUTHENTICATION. When no auth middleware has run it falls back to reading
-// the `sub` claim out of the bearer token WITHOUT verifying its signature, so the
-// value is attacker-controllable. It is deliberately never written into the gin
-// context, because userID() reads from there and every authorization check in
-// this package trusts that key — putting an unverified id there would turn a
-// forged token into real access. Pass it straight to RecordListingView, nowhere
-// else.
-// Why unverified is acceptable HERE: the value gates nothing but whether a
-// counter increments. GET /listings/:id is deliberately auth-optional
-// (tier0_browse) and runs no auth middleware, and the only proper alternative —
-// supabase.AuthUser() — is a GoTrue round trip per request on the module's
-// hottest public read. That is not a trade worth making for a view counter.
-// Worst case from a forged token: the forger suppresses counting of views they
-// are themselves generating. They cannot inflate anyone's count beyond simply
-// fetching the page, and they gain no access.
+// ⚠️ NOT AUTHENTICATION. With no auth middleware it reads the `sub` claim
+// WITHOUT verifying the signature, so the value is attacker-controllable — it
+// is deliberately never written into the gin context, which every authz check
+// in this package trusts. Acceptable here because it gates only a counter
+// increment on the auth-optional GET /listings/:id (a forged token can at most
+// suppress counting of the forger's own views); the verified alternative,
+// supabase.AuthUser(), is a GoTrue round trip on the hottest public read.
+// Pass it straight to RecordListingView, nowhere else.
 func viewerIDForCounting(c *gin.Context) string {
 	if id := ginutil.UserID(c); id != "" {
 		return id // a real middleware ran — trust that instead

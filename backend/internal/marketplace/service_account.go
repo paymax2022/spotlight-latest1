@@ -25,7 +25,6 @@ func (s *Service) SaveListing(ctx context.Context, userID, listingID string) (*S
 // adds it (no-op if already saved); when saved=false, removes it (no-op if not saved).
 func (s *Service) ToggleSavedItem(ctx context.Context, userID, listingID string, saved bool) (*SavedItem, error) {
 	if saved {
-		// Add to wishlist
 		l, err := s.repo.GetListing(ctx, listingID)
 		if err != nil {
 			return nil, err
@@ -33,11 +32,10 @@ func (s *Service) ToggleSavedItem(ctx context.Context, userID, listingID string,
 		// InsertSavedItem returns ALREADY_SAVED on conflict; caller may retry or ignore
 		return s.repo.InsertSavedItem(ctx, userID, listingID, l.PriceKobo)
 	} else {
-		// Remove from wishlist
 		if err := s.repo.DeleteSavedItem(ctx, userID, listingID); err != nil {
 			return nil, err
 		}
-		// Return empty SavedItem to indicate deleted
+		// Empty SavedItem signals "deleted" to the caller.
 		return &SavedItem{ListingID: listingID}, nil
 	}
 }

@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/estate/resident';
 import { buildReports } from '@/src/server/estate/analytics';
 
-// GET /api/v1/estate/reports — computed estate reports (admin only).
+// Computed estate reports (admin only).
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

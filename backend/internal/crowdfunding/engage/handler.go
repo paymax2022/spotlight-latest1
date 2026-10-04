@@ -310,28 +310,6 @@ func (h *Handler) LikeUpdate(c *gin.Context) {
 // Register wires the crowdfunding engagement routes onto the supplied router
 // group. The caller is responsible for mounting `rg` under the crowdfunding
 // prefix and applying auth middleware that sets `user_id`.
-// Routes (relative to rg):
-//
-//	GET  /help                       → help-center articles
-//	GET  /support/tickets            → caller's support tickets
-//	GET  /support/tickets/:id        → single ticket with messages
-//	POST /support/tickets            → open a new ticket
-//	POST /support/tickets/:id/reply  → append a reply, set ticket PENDING
-//	GET  /notifications              → caller's notifications
-//	POST /notifications/read         → mark all notifications read
-//	POST /campaigns/:id/events       → record a VIEW or SHARE (analytics)
-//	GET  /campaigns/:id/comments     → campaign comments + Q&A with replies
-//	POST /campaigns/:id/comments     → post a comment or question
-//	POST /comments/:commentId/reply  → creator reply to a comment
-//	POST /comments/:commentId/report → flag a comment (idempotent)
-//	GET  /campaigns/:id/updates      → campaign updates, newest first
-//	POST /campaigns/:id/updates      → publish an update (creator only)
-//	POST /updates/:updateId/like     → like an update (idempotent)
-//	GET  /campaigns/:id/documents    → supporting documents
-//	POST /campaigns/:id/documents    → attach an uploaded document (creator only)
-//	POST /campaigns/:id/broadcast    → message every backer (creator only)
-//	GET  /settings/notifications     → notification preferences
-//	PUT  /settings/notifications     → upsert notification preferences
 func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
 	h := NewHandler(NewService(db))
 

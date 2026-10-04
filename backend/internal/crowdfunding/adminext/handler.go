@@ -338,21 +338,11 @@ func (h *Handler) decideFeatureRequest(c *gin.Context, approve bool) {
 // shared KYC service used by the KYC queue; nil fails that endpoint closed too.
 // It is purely additive: it registers NEW sub-paths under the same group the
 // campaign-review handlers already use, and never edits shared route files.
-// Permissions. These routes carried NONE until now: the group's auth proved only
-// that the caller was SIGNED IN, so any authenticated user — any campaign
-// creator, any ordinary app user — could read this console's data and write
-// through it. Verified against the running server before this change: a campaign
-// owner's token returned 200 on GET /admin/withdrawals and successfully set
-// `featured` via PATCH /admin/campaigns/:id/flags, self-promoting onto the public
-// rail and bypassing the approval queue that exists to prevent exactly that.
-// The four campaign-review routes registered alongside this call already carried
-// RequirePermission and correctly answered 403 to the same token, which is what
-// made the omission here invisible — the console worked, and the holes were the
-// routes nobody had gated.
-// Reads take crowdfunding.admin.review, mutations crowdfunding.admin.decide —
-// the two permissions those review routes already use, so no new grant is needed
-// and no operator loses access. Confirmed before applying: an admin passes both
-// (200 / non-403) while a non-admin is refused both (403).
+// Permissions: these routes previously carried none — any signed-in user could
+// read this console and self-promote a campaign via PATCH
+// /admin/campaigns/:id/flags. Reads take crowdfunding.admin.review, mutations
+// crowdfunding.admin.decide — the same two permissions the review routes use,
+// so no new grant is needed.
 func RegisterAdmin(rg *gin.RouterGroup, db *pgxpool.Pool, ledgerSvc *financeledger.Service, kycSvc *financekyc.Service, rbac services.RBACService) {
 	svc := NewService(db).WithLedger(ledgerSvc).WithKYC(kycSvc)
 	if ledgerSvc != nil {
