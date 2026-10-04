@@ -109,8 +109,7 @@ func (h *Handler) SaveContestant(c *gin.Context) {
 		return
 	}
 
-	// Determine save type (admin vs judge) - implement your RBAC here
-	saveType := "judge" // Default to judge
+	saveType := "judge"
 
 	result, err := h.svc.SaveContestant(c.Request.Context(), req.EvictionID, uid, saveType, req.Reason)
 	if err != nil {

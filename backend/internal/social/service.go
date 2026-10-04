@@ -266,7 +266,6 @@ func (s *Service) CreateSplit(ctx context.Context, organiserID, title string, to
 		return nil, nil, fmt.Errorf("social: at least one participant required")
 	}
 
-	// Resolve participants.
 	parts, err := s.resolveShares(ctx, mode, totalKobo, shares)
 	if err != nil {
 		return nil, nil, err
@@ -415,7 +414,6 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 	if err := s.led.Credit(ctx, bill.OrganiserID, "split:"+sh.SplitID, key+":cr", escrowAcc.ID, sh.AmountKobo); err != nil {
 		return fmt.Errorf("social: pay share credit: %w", err)
 	}
-	// Settle the bill when no PENDING shares remain.
 	var pending int
 	_ = s.db.QueryRow(ctx, `SELECT count(*) FROM split_shares WHERE split_id=$1 AND state='PENDING'`, sh.SplitID).Scan(&pending)
 	if pending == 0 {

@@ -282,8 +282,6 @@ func (s *Service) AutoSuggestMenu(ctx context.Context, restaurantID, callerID st
 	return count, nil
 }
 
-// Reads.
-
 // DishView is the buyer-facing read: the resolved profile, its display block,
 // and the allergen declarations (with the default "may contain" surfaced for
 // unattested allergens implicitly via the display layer).
@@ -370,7 +368,7 @@ func (s *Service) DeclareRecipe(ctx context.Context, menuItemID, userID string, 
 		return nil, err
 	}
 
-	// Compute the per-serving profile from the just-declared recipe.
+	// Per-serving profile from the just-declared recipe.
 	lookup := func(ing Ingredient) (Composition, bool) {
 		c, lerr := s.repo.LookupComposition(ctx, ing.FoodCode, ing.Source, ing.PrepMethod)
 		if lerr != nil || c == nil {

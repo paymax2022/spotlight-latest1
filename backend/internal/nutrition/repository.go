@@ -585,8 +585,6 @@ func (r *Repository) Audit(ctx context.Context, menuItemID, actorID, action stri
 	return err
 }
 
-// small helpers
-
 func orPerServing(p PerServing) PerServing {
 	if p == nil {
 		return PerServing{}

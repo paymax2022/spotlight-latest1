@@ -53,7 +53,6 @@ func (s *Service) CreateSession(ctx context.Context, userID string, req CreateSe
 // SendMessage appends the user message, fetches history, calls the AI provider,
 // and stores the AI reply. Returns both the user and AI messages.
 func (s *Service) SendMessage(ctx context.Context, sessionID, userID string, req SendMessageRequest) (*Message, *Message, error) {
-	// Verify session belongs to user and is open or escalated.
 	var status string
 	if err := s.db.QueryRow(ctx, `SELECT status FROM support_sessions WHERE id=$1 AND user_id=$2`, sessionID, userID).Scan(&status); err != nil {
 		return nil, nil, fmt.Errorf("aicare: session not found")
@@ -62,7 +61,6 @@ func (s *Service) SendMessage(ctx context.Context, sessionID, userID string, req
 		return nil, nil, fmt.Errorf("aicare: session is resolved — please open a new session")
 	}
 
-	// Store user message.
 	userMsg := &Message{
 		ID:        uuid.New().String(),
 		SessionID: sessionID,
@@ -75,7 +73,7 @@ func (s *Service) SendMessage(ctx context.Context, sessionID, userID string, req
 		return nil, nil, fmt.Errorf("aicare: insert user message: %w", err)
 	}
 
-	// Only call AI when session is not escalated (escalated = human agent responds).
+	// Escalated sessions are answered by a human agent — no AI reply.
 	var aiMsg *Message
 	if status == string(SessionOpen) && s.ai != nil {
 		history, _ := s.getHistory(ctx, sessionID, 10)
