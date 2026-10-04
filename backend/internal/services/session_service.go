@@ -520,7 +520,7 @@ func (n *resendNotifier) deliver(userID, email, eventType string) {
 
 	to := strings.TrimSpace(email)
 	if to == "" && n.supabase != nil && n.supabase.Enabled() && strings.TrimSpace(userID) != "" {
-		to = n.lookupEmail(userID)
+		to = n.lookupEmail(context.Background(), userID)
 	}
 	if to == "" || strings.TrimSpace(n.cfg.ResendAPIKey) == "" {
 		return // nothing we can do; stay silent
@@ -552,11 +552,11 @@ func (n *resendNotifier) deliver(userID, email, eventType string) {
 	_ = resp.Body.Close()
 }
 
-func (n *resendNotifier) lookupEmail(userID string) string {
+func (n *resendNotifier) lookupEmail(ctx context.Context, userID string) string {
 	var rows []struct {
 		Email string `json:"email"`
 	}
-	if err := n.supabase.REST(http.MethodGet, "platform_users", map[string]string{"select": "email", "id": "eq." + userID, "limit": "1"}, nil, &rows); err != nil || len(rows) == 0 {
+	if err := n.supabase.REST(ctx, http.MethodGet, "platform_users", map[string]string{"select": "email", "id": "eq." + userID, "limit": "1"}, nil, &rows); err != nil || len(rows) == 0 { //nolint:goconst // PostgREST select key; literal is self-describing
 		return ""
 	}
 	return rows[0].Email

@@ -574,7 +574,7 @@ func (h *AuthHandler) CompleteProfile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid payload"})
 		return
 	}
-	if err := h.auth.CompleteProfile(u.ID, in.ProfileType, in.Metadata); err != nil {
+	if err := h.auth.CompleteProfile(c.Request.Context(), u.ID, in.ProfileType, in.Metadata); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}

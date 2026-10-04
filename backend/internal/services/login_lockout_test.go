@@ -113,7 +113,7 @@ func captureBumpRPC(t *testing.T, cfg config.Config, u *platformUser, rpcReply s
 	defer srv.Close()
 
 	svc := &authService{supabase: integrations.NewSupabaseRestClient(srv.URL, "key"), cfg: cfg}
-	if err := svc.bumpFailedLogin(u); err != nil {
+	if err := svc.bumpFailedLogin(t.Context(), u); err != nil {
 		t.Fatalf("bumpFailedLogin: %v", err)
 	}
 	return body, path
@@ -163,7 +163,7 @@ func TestBumpFailedLogin_RPCErrorPropagates(t *testing.T) {
 	}))
 	defer srv.Close()
 	svc := &authService{supabase: integrations.NewSupabaseRestClient(srv.URL, "key"), cfg: config.Config{}}
-	if err := svc.bumpFailedLogin(&platformUser{ID: "u1"}); err == nil {
+	if err := svc.bumpFailedLogin(t.Context(), &platformUser{ID: "u1"}); err == nil {
 		t.Fatal("RPC failure must propagate — silently skipped bumps are free retries against the lockout budget")
 	}
 }
@@ -265,7 +265,7 @@ func newAuthServiceWithProfiles(t *testing.T, rows []map[string]any) *authServic
 // not trigger a phone lookup at all.
 func TestResolveLoginEmail_EmailShapedIdentifierPassesThroughLowercased(t *testing.T) {
 	svc := newAuthServiceWithProfiles(t, nil) // fails the test if REST is ever called
-	got := svc.resolveLoginEmail("Ada@Example.COM", "")
+	got := svc.resolveLoginEmail(t.Context(), "Ada@Example.COM", "")
 	if got != "ada@example.com" {
 		t.Errorf("resolveLoginEmail = %q, want lowercased email with no REST call", got)
 	}
@@ -274,7 +274,7 @@ func TestResolveLoginEmail_EmailShapedIdentifierPassesThroughLowercased(t *testi
 // An empty identifier falls back to the caller-supplied email, lowercased.
 func TestResolveLoginEmail_EmptyIdentifierFallsBackToEmail(t *testing.T) {
 	svc := &authService{supabase: integrations.NewSupabaseRestClient("http://unused.invalid", "key")}
-	got := svc.resolveLoginEmail("   ", "Ada@Example.COM")
+	got := svc.resolveLoginEmail(t.Context(), "   ", "Ada@Example.COM")
 	if got != "ada@example.com" {
 		t.Errorf("resolveLoginEmail = %q, want the fallback email lowercased", got)
 	}
@@ -284,7 +284,7 @@ func TestResolveLoginEmail_EmptyIdentifierFallsBackToEmail(t *testing.T) {
 // network call.
 func TestResolveLoginEmail_NonEmailNonPhoneResolvesToEmpty(t *testing.T) {
 	svc := &authService{supabase: integrations.NewSupabaseRestClient("http://unused.invalid", "key")}
-	if got := svc.resolveLoginEmail("not-an-email-or-phone", "fallback@x.com"); got != "" {
+	if got := svc.resolveLoginEmail(t.Context(), "not-an-email-or-phone", "fallback@x.com"); got != "" {
 		t.Errorf("resolveLoginEmail = %q, want \"\"", got)
 	}
 }
@@ -294,7 +294,7 @@ func TestResolveLoginEmail_PhoneShapedIdentifierResolvesViaProfileLookup(t *test
 	svc := newAuthServiceWithProfilesFiltered(t, "8159491618", []map[string]any{
 		{"email": "Ada@Example.com", "phone": "+2348159491618"},
 	})
-	got := svc.resolveLoginEmail("08159491618", "")
+	got := svc.resolveLoginEmail(t.Context(), "08159491618", "")
 	if got != "ada@example.com" {
 		t.Errorf("resolveLoginEmail = %q, want the resolved+lowercased account email", got)
 	}
@@ -302,7 +302,7 @@ func TestResolveLoginEmail_PhoneShapedIdentifierResolvesViaProfileLookup(t *test
 
 func TestPhoneToEmail_NoMatchReturnsEmpty(t *testing.T) {
 	svc := newAuthServiceWithProfilesFiltered(t, "8159491618", nil)
-	if got := svc.phoneToEmail("8159491618"); got != "" {
+	if got := svc.phoneToEmail(t.Context(), "8159491618"); got != "" {
 		t.Errorf("phoneToEmail = %q, want \"\" on no match", got)
 	}
 }
@@ -314,7 +314,7 @@ func TestPhoneToEmail_AmbiguousMatchReturnsEmpty(t *testing.T) {
 		{"email": "first@example.com", "phone": "08159491618"},
 		{"email": "second@example.com", "phone": "+2348159491618"},
 	})
-	if got := svc.phoneToEmail("8159491618"); got != "" {
+	if got := svc.phoneToEmail(t.Context(), "8159491618"); got != "" {
 		t.Errorf("phoneToEmail = %q, want \"\" when two accounts share a number", got)
 	}
 }
@@ -326,7 +326,7 @@ func TestPhoneToEmail_DiscardsRowsThatDoNotActuallyMatchAfterNormalisation(t *te
 	svc := newAuthServiceWithProfilesFiltered(t, "8159491618", []map[string]any{
 		{"email": "close-but-no.example.com", "phone": "9159491618"}, // like-matched, normalises differently
 	})
-	if got := svc.phoneToEmail("8159491618"); got != "" {
+	if got := svc.phoneToEmail(t.Context(), "8159491618"); got != "" {
 		t.Errorf("phoneToEmail = %q, want \"\" — the row does not actually match after normalisation", got)
 	}
 }
@@ -389,7 +389,7 @@ func TestFindPlatformUserByEmail_ZeroRowsReturnsNilNil(t *testing.T) {
 	defer srv.Close()
 
 	svc := &authService{supabase: integrations.NewSupabaseRestClient(srv.URL, "key")}
-	user, err := svc.findPlatformUserByEmail("ghost@example.com")
+	user, err := svc.findPlatformUserByEmail(t.Context(), "ghost@example.com")
 	if err != nil {
 		t.Fatalf("err = %v, want nil for a zero-row lookup", err)
 	}
@@ -419,7 +419,7 @@ func TestOTPGate_MissingPlatformUsersRowRefuses(t *testing.T) {
 	svc := auth.(*authService)
 	bridge := &otpAuthBridge{svc: svc}
 
-	_, err := bridge.gate("ghost@example.com")
+	_, err := bridge.gate(t.Context(), "ghost@example.com")
 	if err == nil {
 		t.Fatal("gate() must refuse when the account has zero platform_users rows, got nil error")
 	}

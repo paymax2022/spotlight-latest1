@@ -88,22 +88,22 @@ func (r *StemSupabaseRepository) GetOverview() (domain.StemOverview, error) {
 	}
 
 	var err error
-	if out.TotalApplications, err = r.client.Count("stem_applications_v2"); err != nil {
+	if out.TotalApplications, err = r.client.Count(context.Background(), "stem_applications_v2"); err != nil {
 		out.TotalApplications = 0
 	}
-	if out.SubmittedApplications, err = r.client.Count("stem_applications_v2?status=eq.submitted"); err != nil {
+	if out.SubmittedApplications, err = r.client.Count(context.Background(), "stem_applications_v2?status=eq.submitted"); err != nil {
 		out.SubmittedApplications = 0
 	}
-	if out.UnderReviewApplications, err = r.client.Count("stem_applications_v2?status=eq.under_review"); err != nil {
+	if out.UnderReviewApplications, err = r.client.Count(context.Background(), "stem_applications_v2?status=eq.under_review"); err != nil {
 		out.UnderReviewApplications = 0
 	}
-	if out.ShortlistedApplications, err = r.client.Count("stem_applications_v2?status=eq.shortlisted"); err != nil {
+	if out.ShortlistedApplications, err = r.client.Count(context.Background(), "stem_applications_v2?status=eq.shortlisted"); err != nil {
 		out.ShortlistedApplications = 0
 	}
-	if out.SchoolChannelApplicants, err = r.client.Count("stem_applications_v2?entry_route=eq.school"); err != nil {
+	if out.SchoolChannelApplicants, err = r.client.Count(context.Background(), "stem_applications_v2?entry_route=eq.school"); err != nil {
 		out.SchoolChannelApplicants = 0
 	}
-	if out.EmergingApplicants, err = r.client.Count("stem_applications_v2?entry_route=eq.open"); err != nil {
+	if out.EmergingApplicants, err = r.client.Count(context.Background(), "stem_applications_v2?entry_route=eq.open"); err != nil {
 		out.EmergingApplicants = 0
 	}
 
@@ -3324,28 +3324,28 @@ func (r *StemSupabaseRepository) GetReportSummary() (domain.StemReportSummary, e
 		return out, nil
 	}
 	var err error
-	if out.TotalApplications, err = r.client.Count("stem_applications_v2"); err != nil {
+	if out.TotalApplications, err = r.client.Count(context.Background(), "stem_applications_v2"); err != nil {
 		out.TotalApplications = 0
 	}
-	if out.TotalSchools, err = r.client.Count("stem_schools"); err != nil {
+	if out.TotalSchools, err = r.client.Count(context.Background(), "stem_schools"); err != nil {
 		out.TotalSchools = 0
 	}
-	if out.TotalEmerging, err = r.client.Count("stem_emerging_innovators"); err != nil {
+	if out.TotalEmerging, err = r.client.Count(context.Background(), "stem_emerging_innovators"); err != nil {
 		out.TotalEmerging = 0
 	}
-	if out.TotalVotes, err = r.client.Count("stem_vote_transactions"); err != nil {
+	if out.TotalVotes, err = r.client.Count(context.Background(), "stem_vote_transactions"); err != nil {
 		out.TotalVotes = 0
 	}
-	if out.TotalSponsors, err = r.client.Count("stem_sponsors"); err != nil {
+	if out.TotalSponsors, err = r.client.Count(context.Background(), "stem_sponsors"); err != nil {
 		out.TotalSponsors = 0
 	}
-	if out.TotalCertificates, err = r.client.Count("stem_certificates"); err != nil {
+	if out.TotalCertificates, err = r.client.Count(context.Background(), "stem_certificates"); err != nil {
 		out.TotalCertificates = 0
 	}
-	if out.TotalBadgeAwards, err = r.client.Count("stem_badge_awards"); err != nil {
+	if out.TotalBadgeAwards, err = r.client.Count(context.Background(), "stem_badge_awards"); err != nil {
 		out.TotalBadgeAwards = 0
 	}
-	if out.TotalBootcampCohorts, err = r.client.Count("stem_bootcamp_cohorts"); err != nil {
+	if out.TotalBootcampCohorts, err = r.client.Count(context.Background(), "stem_bootcamp_cohorts"); err != nil {
 		out.TotalBootcampCohorts = 0
 	}
 	return out, nil

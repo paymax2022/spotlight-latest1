@@ -337,10 +337,11 @@ func (s *Service) RequestPayout(ctx context.Context, tutorUserID string, amountM
 	}
 	if !inserted {
 		// Lost the idem race with a concurrent request → return the durable winner (one rail call).
-		if winner, ferr := s.repo.FindPayoutByIdem(ctx, idemKey); ferr == nil {
-			return &PayoutResult{Payout: winner, Ref: ptr.DerefZero(winner.PayoutRef), Replayed: true}, nil
+		winner, ferr := s.repo.FindPayoutByIdem(ctx, idemKey)
+		if ferr != nil {
+			return nil, ferr
 		}
-		return nil, err
+		return &PayoutResult{Payout: winner, Ref: ptr.DerefZero(winner.PayoutRef), Replayed: true}, nil
 	}
 
 	// (5) Call the PayoutRail (idempotent on idemKey). On error, drive requested→failed.

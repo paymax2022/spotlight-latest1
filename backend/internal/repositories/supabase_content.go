@@ -204,22 +204,22 @@ func (r *RealityTVSupabaseRepository) GetDashboardMetrics() (domain.RealityTVDas
 	}
 
 	var err error
-	if out.TotalSeasons, err = r.client.Count("reality_tv_seasons"); err != nil {
+	if out.TotalSeasons, err = r.client.Count(context.Background(), "reality_tv_seasons"); err != nil {
 		out.TotalSeasons = 0
 	}
-	if out.TotalApplications, err = r.client.Count("reality_tv_applications"); err != nil {
+	if out.TotalApplications, err = r.client.Count(context.Background(), "reality_tv_applications"); err != nil {
 		out.TotalApplications = 0
 	}
-	if out.TotalContestants, err = r.client.Count("contestants?category=eq.reality_tv"); err != nil {
+	if out.TotalContestants, err = r.client.Count(context.Background(), "contestants?category=eq.reality_tv"); err != nil {
 		out.TotalContestants = 0
 	}
-	if out.ActiveVotingRounds, err = r.client.Count("reality_tv_voting_rounds?status=eq.active"); err != nil {
+	if out.ActiveVotingRounds, err = r.client.Count(context.Background(), "reality_tv_voting_rounds?status=eq.active"); err != nil {
 		out.ActiveVotingRounds = 0
 	}
-	if out.OpenTickets, err = r.client.Count("reality_tv_support_tickets?status=in.(open,in_progress)"); err != nil {
+	if out.OpenTickets, err = r.client.Count(context.Background(), "reality_tv_support_tickets?status=in.(open,in_progress)"); err != nil {
 		out.OpenTickets = 0
 	}
-	if out.PendingApplications, err = r.client.Count("reality_tv_applications?status=in.(submitted,screening,shortlisted,welfare_review)"); err != nil {
+	if out.PendingApplications, err = r.client.Count(context.Background(), "reality_tv_applications?status=in.(submitted,screening,shortlisted,welfare_review)"); err != nil {
 		out.PendingApplications = 0
 	}
 

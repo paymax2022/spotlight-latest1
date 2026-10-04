@@ -63,7 +63,9 @@ func (s *stubAuthService) ResetPassword(string, string) error                 { 
 func (s *stubAuthService) ChangePassword(context.Context, string, string, string) error {
 	return nil
 }
-func (s *stubAuthService) CompleteProfile(string, string, map[string]any) error { return nil }
+func (s *stubAuthService) CompleteProfile(context.Context, string, string, map[string]any) error {
+	return nil
+}
 
 // noopAudit is declared in session_handler_test.go and reused here.
 

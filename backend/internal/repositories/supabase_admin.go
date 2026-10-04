@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"context"
 	"net/http"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/integrations"
@@ -27,28 +28,28 @@ func (r *AdminSupabaseRepository) GetMenuCounts() (domain.AdminMenuCounts, error
 	}
 
 	var err error
-	if counts.Contestants, err = r.client.Count("contestants"); err != nil {
+	if counts.Contestants, err = r.client.Count(context.Background(), "contestants"); err != nil {
 		return domain.AdminMenuCounts{}, err
 	}
-	if counts.Auditions, err = r.client.Count("audition_registrations"); err != nil {
+	if counts.Auditions, err = r.client.Count(context.Background(), "audition_registrations"); err != nil {
 		return domain.AdminMenuCounts{}, err
 	}
-	if counts.Academy, err = r.client.Count("academy_applications"); err != nil {
+	if counts.Academy, err = r.client.Count(context.Background(), "academy_applications"); err != nil {
 		return domain.AdminMenuCounts{}, err
 	}
-	if counts.RealityTV, err = r.client.Count("reality_tv_applications"); err != nil {
+	if counts.RealityTV, err = r.client.Count(context.Background(), "reality_tv_applications"); err != nil {
 		return domain.AdminMenuCounts{}, err
 	}
-	if counts.SMEPitch, err = r.client.Count("sme_pitch_applications"); err != nil {
+	if counts.SMEPitch, err = r.client.Count(context.Background(), "sme_pitch_applications"); err != nil {
 		return domain.AdminMenuCounts{}, err
 	}
-	if counts.Stem, err = r.client.Count("stem_applications_v2"); err != nil {
+	if counts.Stem, err = r.client.Count(context.Background(), "stem_applications_v2"); err != nil {
 		return domain.AdminMenuCounts{}, err
 	}
-	if counts.Bootcamp, err = r.client.Count("bootcamp_applications"); err != nil {
+	if counts.Bootcamp, err = r.client.Count(context.Background(), "bootcamp_applications"); err != nil {
 		return domain.AdminMenuCounts{}, err
 	}
-	if counts.OpenMic, err = r.client.Count("competition_enrollments"); err != nil {
+	if counts.OpenMic, err = r.client.Count(context.Background(), "competition_enrollments"); err != nil {
 		return domain.AdminMenuCounts{}, err
 	}
 
@@ -74,13 +75,13 @@ func (r *AnalyticsSupabaseRepository) GetChatAnalytics() (domain.ChatAnalytics, 
 	}
 
 	var err error
-	if out.SessionsTotal, err = r.client.Count("chat_sessions"); err != nil {
+	if out.SessionsTotal, err = r.client.Count(context.Background(), "chat_sessions"); err != nil {
 		return domain.ChatAnalytics{}, err
 	}
-	if out.MessagesTotal, err = r.client.Count("chat_messages"); err != nil {
+	if out.MessagesTotal, err = r.client.Count(context.Background(), "chat_messages"); err != nil {
 		return domain.ChatAnalytics{}, err
 	}
-	if out.LeadsTotal, err = r.client.Count("lead_records"); err != nil {
+	if out.LeadsTotal, err = r.client.Count(context.Background(), "lead_records"); err != nil {
 		return domain.ChatAnalytics{}, err
 	}
 	return out, nil
@@ -107,7 +108,7 @@ func (r *AuditSupabaseRepository) LogAction(actorUserID, targetUserID, action, m
 		return nil
 	}
 	payload := map[string]any{"actor_user_id": emptyAudit(actorUserID), "target_user_id": emptyAudit(targetUserID), "action": action, "module": module, "resource_type": emptyAudit(resourceType), "resource_id": emptyAudit(resourceID), "old_values": oldValues, "new_values": newValues, "ip_address": emptyAudit(ipAddress), "user_agent": emptyAudit(userAgent), "severity": fallbackSeverity(severity)}
-	return r.client.REST(http.MethodPost, "audit_logs", map[string]string{}, payload, nil)
+	return r.client.REST(context.Background(), http.MethodPost, "audit_logs", map[string]string{}, payload, nil)
 }
 
 func (r *AuditSupabaseRepository) LogLogin(userID, email, status, failureReason, ipAddress, userAgent string, location map[string]any) error {
@@ -115,7 +116,7 @@ func (r *AuditSupabaseRepository) LogLogin(userID, email, status, failureReason,
 		return nil
 	}
 	payload := map[string]any{"user_id": emptyAudit(userID), "email": strings.TrimSpace(strings.ToLower(email)), "status": status, "failure_reason": emptyAudit(failureReason), "ip_address": emptyAudit(ipAddress), "user_agent": emptyAudit(userAgent), "location_metadata": location}
-	return r.client.REST(http.MethodPost, "login_activity", map[string]string{}, payload, nil)
+	return r.client.REST(context.Background(), http.MethodPost, "login_activity", map[string]string{}, payload, nil)
 }
 
 func (r *AuditSupabaseRepository) ListAuditLogs(filter domain.AuditFilter) ([]map[string]any, error) {
@@ -125,7 +126,7 @@ func (r *AuditSupabaseRepository) ListAuditLogs(filter domain.AuditFilter) ([]ma
 	q := buildAuditQuery(filter)
 	q["select"] = "id,actor_user_id,target_user_id,action,module,resource_type,resource_id,severity,created_at,old_values,new_values,ip_address,user_agent"
 	var rows []map[string]any
-	err := r.client.REST(http.MethodGet, "audit_logs", q, nil, &rows)
+	err := r.client.REST(context.Background(), http.MethodGet, "audit_logs", q, nil, &rows)
 	return rows, err
 }
 
@@ -151,7 +152,7 @@ func (r *AuditSupabaseRepository) ListLoginActivity(filter domain.AuditFilter) (
 		q["and"] = rangeExpr
 	}
 	var rows []map[string]any
-	err := r.client.REST(http.MethodGet, "login_activity", q, nil, &rows)
+	err := r.client.REST(context.Background(), http.MethodGet, "login_activity", q, nil, &rows)
 	return rows, err
 }
 

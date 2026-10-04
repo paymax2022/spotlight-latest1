@@ -20,7 +20,7 @@ import (
 // logged-in user (AUD-AUTH-001).
 var ErrTokenInvalid = errors.New("token rejected by auth backend")
 
-func (c *SupabaseRestClient) buildRequest(method, path string, query map[string]string, body any) (*http.Request, error) {
+func (c *SupabaseRestClient) buildRequest(ctx context.Context, method, path string, query map[string]string, body any) (*http.Request, error) {
 	if !c.Enabled() {
 		return nil, errors.New("supabase REST is not configured")
 	}
@@ -43,7 +43,7 @@ func (c *SupabaseRestClient) buildRequest(method, path string, query map[string]
 		reader = bytes.NewReader(b)
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), method, u.String(), reader)
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), reader)
 	if err != nil {
 		return nil, err
 	}
@@ -53,8 +53,8 @@ func (c *SupabaseRestClient) buildRequest(method, path string, query map[string]
 	return req, nil
 }
 
-func (c *SupabaseRestClient) REST(method, table string, query map[string]string, body any, out any) error {
-	req, err := c.buildRequest(method, "/rest/v1/"+table, query, body)
+func (c *SupabaseRestClient) REST(ctx context.Context, method, table string, query map[string]string, body any, out any) error {
+	req, err := c.buildRequest(ctx, method, "/rest/v1/"+table, query, body)
 	if err != nil {
 		return err
 	}
@@ -78,8 +78,8 @@ func (c *SupabaseRestClient) REST(method, table string, query map[string]string,
 // RESTReturn is like REST but asks PostgREST to return the affected rows
 // (Prefer: return=representation). Used for INSERT/UPDATE statements where the
 // caller needs the generated id or an affected-row count.
-func (c *SupabaseRestClient) RESTReturn(method, table string, query map[string]string, body any, out any) error {
-	req, err := c.buildRequest(method, "/rest/v1/"+table, query, body)
+func (c *SupabaseRestClient) RESTReturn(ctx context.Context, method, table string, query map[string]string, body any, out any) error {
+	req, err := c.buildRequest(ctx, method, "/rest/v1/"+table, query, body)
 	if err != nil {
 		return err
 	}
@@ -101,8 +101,8 @@ func (c *SupabaseRestClient) RESTReturn(method, table string, query map[string]s
 	return nil
 }
 
-func (c *SupabaseRestClient) RPC(function string, payload map[string]any, out any) error {
-	req, err := c.buildRequest(http.MethodPost, "/rest/v1/rpc/"+function, nil, payload)
+func (c *SupabaseRestClient) RPC(ctx context.Context, function string, payload map[string]any, out any) error {
+	req, err := c.buildRequest(ctx, http.MethodPost, "/rest/v1/rpc/"+function, nil, payload)
 	if err != nil {
 		return err
 	}

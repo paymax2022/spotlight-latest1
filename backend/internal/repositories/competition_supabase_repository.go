@@ -36,17 +36,17 @@ func (r *CompetitionSupabaseRepository) GetOverview() (domain.CompetitionOvervie
 	}
 
 	var err error
-	if out.TotalContests, err = r.client.Count("contests"); err != nil {
+	if out.TotalContests, err = r.client.Count(context.Background(), "contests"); err != nil {
 		return domain.CompetitionOverview{}, err
 	}
-	if out.RealityTVContests, err = r.client.Count("contests?contest_type=eq.reality_tv_show"); err != nil {
+	if out.RealityTVContests, err = r.client.Count(context.Background(), "contests?contest_type=eq.reality_tv_show"); err != nil {
 		// fallback if filter-in-path not supported by helper
 		out.RealityTVContests = 0
 	}
-	if out.OpenMicContests, err = r.client.Count("contests?contest_type=eq.one_beat_one_verse"); err != nil {
+	if out.OpenMicContests, err = r.client.Count(context.Background(), "contests?contest_type=eq.one_beat_one_verse"); err != nil {
 		out.OpenMicContests = 0
 	}
-	if out.MultiSkillContests, err = r.client.Count("contests?contest_type=eq.multi_skill"); err != nil {
+	if out.MultiSkillContests, err = r.client.Count(context.Background(), "contests?contest_type=eq.multi_skill"); err != nil {
 		out.MultiSkillContests = 0
 	}
 	return out, nil

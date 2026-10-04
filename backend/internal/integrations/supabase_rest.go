@@ -37,7 +37,7 @@ func (c *SupabaseRestClient) Enabled() bool {
 func (c *SupabaseRestClient) BaseURL() string { return c.baseURL }
 func (c *SupabaseRestClient) APIKey() string  { return c.apiKey }
 
-func (c *SupabaseRestClient) Count(table string) (int, error) {
+func (c *SupabaseRestClient) Count(ctx context.Context, table string) (int, error) {
 	if !c.Enabled() {
 		return 0, errors.New("supabase REST is not configured")
 	}

@@ -74,8 +74,8 @@ const (
 // credentials are wrong; GoTrue mints a session for a correct pair which we
 // discard — it expires unused. Uses the client's bounded http client, not
 // http.DefaultClient.
-func (c *SupabaseRestClient) VerifyPasswordGrant(email, password string) error {
-	req, err := c.buildRequest(http.MethodPost, "/auth/v1/token",
+func (c *SupabaseRestClient) VerifyPasswordGrant(ctx context.Context, email, password string) error {
+	req, err := c.buildRequest(ctx, http.MethodPost, "/auth/v1/token",
 		map[string]string{"grant_type": gotruePasswordField},
 		map[string]any{gotrueEmailField: email, gotruePasswordField: password})
 	if err != nil {
