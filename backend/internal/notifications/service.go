@@ -41,6 +41,11 @@ const (
 	EventOrderStatusUpdate Event = "order.status_update"
 	EventDisputeOpened     Event = "dispute.opened"
 	EventDisputeResolved   Event = "dispute.resolved"
+	// EventAppointmentReminder and EventVaccinationReminder are fired by the
+	// durable scheduler poller, not the health modules themselves (see
+	// app/health_reminder_jobs.go).
+	EventAppointmentReminder Event = "health.appointment.reminder"
+	EventVaccinationReminder Event = "health.vet.vaccination.reminder"
 )
 
 // Notification is the payload enqueued for delivery.
