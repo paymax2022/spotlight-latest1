@@ -65,15 +65,12 @@ func RegisterSavings(member *gin.RouterGroup, adminGroup *gin.RouterGroup, cfg c
 		log.Printf("[savings] %v — keeping default %d bps", err, savings.DefaultEarlyBreakPenaltyBps)
 	}
 
-	// Central Commission & Profit recording (§ profit registry). Nil-safe, gated on the
-	// flag, built WITHOUT a ledger (no double-post — the early-break penalty debit
-	// already moves money into ledger.AccountPaymaxRevenue). Records under
-	// Finance/Savings ONLY on the early-withdrawal penalty (the sole Spotlight-earned
-	// fee in savings; deposits, normal withdrawals, target & Ajo flows are all fee-free
-	// — NL-2, no yield — so AjoService/TargetService need no recorder). RATE NOTE: the
-	// fee is now the SERVER's configured penalty bps (SAVINGS_EARLY_BREAK_PENALTY_BPS,
-	// default 1000 = 10%), and recordCommissionSafe records the EXACT penalty charged
-	// via RecordExact — so the registry no longer depends on the rate being 10%.
+	// Commission recording under Finance/Savings (nil-safe, flag-gated,
+	// ledger-less — the penalty debit already posts to ledger.AccountPaymaxRevenue).
+	// Only the early-withdrawal penalty earns a fee (deposits, withdrawals, target
+	// & Ajo flows are fee-free — NL-2, no yield). recordCommissionSafe records the
+	// EXACT penalty charged via RecordExact (SAVINGS_EARLY_BREAK_PENALTY_BPS),
+	// so the registry does not depend on the configured rate.
 	if cfg.FeatureCommissionEnabled {
 		vaultSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 		log.Println("[savings] commission recording wired → Finance/Savings (early-break penalty; earning-row only; no ledger re-post)")
@@ -215,13 +212,10 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 	// Nil-safe: ScanTicket's publish is a no-op if this is nil.
 	svc.SetRealtime(rtHub)
 
-	// When the commission feature is on, inject a nil-safe recorder so realized
-	// ticket-sale profit lands in commission_earnings for the profit report. The
-	// recorder is built WITHOUT a ledger (nil ledgerService) on purpose: the ticket
-	// checkout debit already posts the money into escrow, so a second ledger post would
-	// double-count. RecordFor therefore appends the earning ROW only. Recording is
-	// best-effort and can never fail or reverse a ticket purchase (see
-	// recordCommissionSafe). Flag off ⇒ no recorder is set ⇒ the seam stays nil ⇒ no-op.
+	// Commission recording for ticket-sale profit. Ledger-less recorder — the
+	// checkout debit already posts into escrow, so RecordFor appends the earning
+	// ROW only; best-effort, never fails a purchase (recordCommissionSafe).
+	// Flag off ⇒ nil-safe no-op.
 	if cfg.FeatureCommissionEnabled {
 		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 		log.Println("[top5events] commission recording wired → Lifestyle/Event Tickets (earning-row only; no ledger re-post)")
@@ -328,15 +322,11 @@ func RegisterCreators(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 	var age creators.AgeProvider = nil // nil ⇒ age gate fails CLOSED for rated content (NL-11)
 	svc := creators.NewService(pool, ledgerSvc, walletSvc, tags, sched, kycSvc, age, auditor)
 
-	// When the commission feature is on, inject a nil-safe recorder so realized creator
-	// profit (tips, content sales, subscription charges) lands in commission_earnings
-	// for the profit report under 'Lifestyle / Creators'. The recorder is built WITHOUT
-	// a ledger (nil) on purpose: creditCreator already posts the platform fee to the
-	// ledger (fee → Paymax revenue), so a second ledger post would double count —
-	// RecordFor therefore appends the earning ROW only. Recording is best-effort +
-	// idempotent (the per-event reference as key) and can never fail or reverse a
-	// creator earnings credit / payout (see creators.recordCommissionSafe). Flag off ⇒
-	// no recorder is set ⇒ the seam stays nil ⇒ silent no-op ⇒ creators unchanged.
+	// Commission recording for creator profit under 'Lifestyle / Creators'
+	// (tips, content sales, subscription charges). Ledger-less recorder —
+	// creditCreator already posts the platform fee, so RecordFor appends the
+	// earning ROW only; best-effort + idempotent, never fails an earnings
+	// credit (creators.recordCommissionSafe). Flag off ⇒ nil-safe no-op.
 	if cfg.FeatureCommissionEnabled {
 		creatorsCommission := withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)
 		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: creatorsCommission})

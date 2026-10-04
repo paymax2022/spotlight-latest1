@@ -405,14 +405,13 @@ func (h *Handler) AdminMembership(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "membership": m})
 }
 
-// Tier is the membership level. BLACK is reserved for Phase-3.
+// Tier is the membership level. TierBlack (BLACK) is defined in black.go.
 type Tier string
 
 const (
 	Tier1 Tier = "TIER1"
 	Tier2 Tier = "TIER2"
 	Tier3 Tier = "TIER3"
-	// TierBlack Tier = "BLACK" // P3
 )
 
 // Membership is a user's loyalty standing. Lifetime points drive tier; the tier is

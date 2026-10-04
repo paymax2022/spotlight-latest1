@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { mapSession } from '@/src/server/visitor/gate.service';
 
-// GET /api/v1/visitor/gate/session — the guard's active gate session.
+// The guard's active gate session.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

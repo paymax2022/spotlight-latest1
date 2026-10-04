@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext, mapGateEvent } from '@/src/server/visitor/gate.service';
 import { ACCESS_CODE_COLUMNS } from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/gate/deny — deny a visitor entry.
+// Deny a visitor entry.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -37,7 +37,6 @@ export async function POST(request: Request) {
       .single();
     if (evtErr) throw evtErr;
 
-    // Notify the issuer if we have a code.
     if (accessCodeId) {
       const { data: code } = await supabase
         .from('visitor_access_codes')

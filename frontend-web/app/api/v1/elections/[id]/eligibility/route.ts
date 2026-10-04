@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/elections/elections.service';
 
-// GET /api/v1/elections/{id}/eligibility — VoterEligibility.
+// VoterEligibility.
 // module exposes a restriction status, should also be checked here.)
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {

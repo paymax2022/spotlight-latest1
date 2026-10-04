@@ -4,7 +4,6 @@ import { getTopupStatus } from '@/src/server/wallet/service';
 import { verifyAndSettleTopup } from '@/src/server/wallet/verify';
 import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/responses';
 
-// GET /api/v1/wallet/topup/:reference
 // Returns the status of a wallet top-up intent so the app can wait for the
 // Paystack webhook to credit the wallet before completing a module checkout
 // ("pay with card" path). Scoped to the authenticated owner of the intent.

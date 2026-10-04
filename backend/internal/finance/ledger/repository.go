@@ -57,17 +57,12 @@ func (r *Repository) getOrCreateUserAccount(ctx context.Context, userID string, 
 		return nil, fmt.Errorf("ledger: get account user=%s type=%s: %w", userID, accountType, err)
 	}
 
-	// First touch — create it. Plain ON CONFLICT DO NOTHING (no arbiter): the
-	// table carries TWO uniqueness surfaces — unique index
-	// ledger_accounts_user_type_key (user_id, type) AND the original table
-	// constraint ledger_accounts_user_id_type_currency_key (user_id, type,
-	// currency). An arbiter only suppresses conflicts on ITS index; the older
-	// constraint sits earlier in the index list, so a concurrent loser could
-	// pass the arbiter check before the winner reached it and then hit the
-	// winner's in-flight tuple in the (user_id,type,currency) index — a hard
-	// 23505 that escaped instead of being absorbed (caught by
-	// TestLiveDB_GetOrCreateAccount_ConcurrentCreatorsConverge, AUD-DB-007).
-	// With no arbiter, conflicts on ANY unique index resolve to DO NOTHING.
+	// First touch — create it. Plain ON CONFLICT DO NOTHING with NO arbiter:
+	// the table carries two uniqueness surfaces ((user_id,type) index AND the
+	// older (user_id,type,currency) constraint). An arbiter only suppresses
+	// conflicts on its own index — a concurrent loser could still hit a hard
+	// 23505 on the other (AUD-DB-007). With no arbiter, ANY unique conflict
+	// resolves to DO NOTHING.
 	const upsert = `
 		INSERT INTO ledger_accounts (user_id, type)
 		VALUES ($1, $2)
@@ -194,27 +189,17 @@ func getBalanceTx(ctx context.Context, tx pgx.Tx, accountID string) (int64, erro
 }
 
 // DebitWithBalanceCheck performs the balance sufficiency check and the balanced
-// debit/credit insert as ONE atomic, serialised unit — closing the balance TOCTOU
-// race where two concurrent debits both read the pre-debit balance, both pass the
-// check, and together overdraw the wallet.
-// Concurrency design:
-//   - Open a tx and take pg_advisory_xact_lock(hashtext("wallet:"+userID)) FIRST.
-//     Two debits on the same wallet therefore serialise: the second blocks until
-//     the first commits (releasing the xact-scoped lock), so it reads the balance
-//     AFTER the first debit landed. This mirrors the identical pattern already used
-//     in finance/transfers/service.go, so lock keys are consistent app-wide and the
-//     ordering can't deadlock against a transfer (both grab exactly one wallet lock,
-//     same key namespace "wallet:<userID>", in the same order — no lock cycle).
-//   - Re-project the balance INSIDE the tx (getBalanceTx) and fail-closed with
-//     ErrInsufficientFunds if it's short.
-//   - Insert the balanced DEBIT/CREDIT pair on the SAME tx. Idempotency is preserved:
-//     the per-side unique idempotency_key + ON CONFLICT DO NOTHING makes a replay a
-//     no-op instead of a duplicate-key error (the Redis fast-path in Service still
-//     short-circuits the common case before we ever open a tx).
+// debit/credit insert as ONE atomic, serialised unit — closing the TOCTOU race
+// where two concurrent debits both pass a pre-debit balance check and overdraw.
+//   - pg_advisory_xact_lock(hashtext("wallet:"+userID)) serialises debits on
+//     the same wallet — same key namespace as finance/transfers/service.go, so
+//     no lock cycle.
+//   - The balance is re-projected INSIDE the tx (getBalanceTx); short →
+//     ErrInsufficientFunds.
+//   - The balanced pair posts on the same tx; per-side unique idempotency_key
+//   - ON CONFLICT DO NOTHING makes a replay a no-op.
 //
-// debitAccountID is the user wallet being drawn down; creditAccountID is the
-// counterpart (escrow / clearing / revenue). walletLockKey is the userID whose
-// wallet lock guards the check — always the debited wallet's owner.
+// walletLockKey is the owner of the wallet being drawn down.
 func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey string, j JournalEntry, amountKobo int64) error {
 	if amountKobo <= 0 {
 		return fmt.Errorf("ledger: debit amount must be positive kobo, got %d", amountKobo)
@@ -226,14 +211,12 @@ func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey st
 	}
 	defer tx.Rollback(ctx)
 
-	// Serialise all debits against this wallet before reading its balance.
 	const lock = `SELECT pg_advisory_xact_lock(hashtext($1))`
 	if _, err := tx.Exec(ctx, lock, "wallet:"+walletLockKey); err != nil {
 		return fmt.Errorf("ledger: advisory lock wallet=%s: %w", walletLockKey, err)
 	}
 
-	// Sufficiency check under the lock — no other debit on this wallet can interleave
-	// between here and Commit.
+	// Sufficiency check under the lock — no interleaving debit before Commit.
 	balance, err := getBalanceTx(ctx, tx, j.DebitAccountID)
 	if err != nil {
 		return err
@@ -242,12 +225,10 @@ func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey st
 		return ErrInsufficientFunds
 	}
 
-	// Post the balanced pair on the SAME tx. ON CONFLICT DO NOTHING keeps a retry
-	// idempotent (unique idempotency_key would otherwise error the replay) — but
-	// only when the replayed amount matches what was actually posted. A different
-	// amount under a REUSED key is a tampered retry, not a retry at all: a caller
-	// could pre-claim the key cheaply at this endpoint, then replay it through a
-	// higher-level path that re-derives the real price and trusts the no-op.
+	// Balanced pair on the SAME tx. ON CONFLICT makes a retry idempotent — but
+	// only when the replayed amount matches: a different amount under a REUSED
+	// key is a tampered retry (a key pre-claimed cheaply here could otherwise
+	// absorb a pricier replay as a no-op), so verifyReplayAmount fails closed.
 	const insertEntry = `
 		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
 		VALUES ($1, $2, $3, $4, $5)
@@ -310,9 +291,8 @@ func (r *Repository) PostJournal(ctx context.Context, j JournalEntry) error {
 		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
 		VALUES ($1, $2, $3, $4, $5)`
 
-	// debit side. A duplicate idempotency_key means this exact journal was already
-	// posted (replay) — surface the typed ErrDuplicate so callers can treat the
-	// retry as a no-op instead of a hard failure.
+	// A duplicate idempotency_key means this journal already posted (replay) —
+	// surface typed ErrDuplicate so callers treat the retry as a no-op.
 	_, err = tx.Exec(ctx, insertEntry,
 		j.DebitAccountID, string(EntryDebit), j.AmountKobo, j.Reference, j.IdempotencyKey+":debit")
 	if err != nil {
@@ -321,7 +301,6 @@ func (r *Repository) PostJournal(ctx context.Context, j JournalEntry) error {
 		}
 		return fmt.Errorf("ledger: insert debit entry: %w", err)
 	}
-	// credit side
 	_, err = tx.Exec(ctx, insertEntry,
 		j.CreditAccountID, string(EntryCredit), j.AmountKobo, j.Reference, j.IdempotencyKey+":credit")
 	if err != nil {
@@ -335,14 +314,10 @@ func (r *Repository) PostJournal(ctx context.Context, j JournalEntry) error {
 }
 
 // PostReversalPair writes a balanced REVERSAL_DEBIT / REVERSAL_CREDIT pair
-// atomically. Unlike PostJournal (which always posts DEBIT/CREDIT), this is the
-// only correction primitive: it restores a held amount to creditAccountID
-// (REVERSAL_DEBIT, counted as +balance) and drains debitAccountID
-// (REVERSAL_CREDIT). Idempotency keys are suffixed per side so a duplicate
-// webhook violates the unique constraint and is a no-op.
-// creditAccountID is the account whose balance is restored (e.g. the user
-// wallet); debitAccountID is the account the hold is released from (e.g. the
-// failed-transfer suspense account).
+// atomically — the only correction primitive (ledger entries are immutable).
+// creditAccountID is restored (REVERSAL_DEBIT, +balance); debitAccountID is
+// the hold drained (REVERSAL_CREDIT, e.g. the failed-transfer suspense).
+// Per-side key suffixes make a duplicate webhook a no-op.
 func (r *Repository) PostReversalPair(ctx context.Context, creditAccountID, debitAccountID string, amountKobo int64, reference, idempotencyKey string) error {
 	if amountKobo <= 0 {
 		return fmt.Errorf("ledger: reversal amount must be positive kobo, got %d", amountKobo)
@@ -357,14 +332,9 @@ func (r *Repository) PostReversalPair(ctx context.Context, creditAccountID, debi
 		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
 		VALUES ($1, $2, $3, $4, $5)`
 
-	// Restore balance to the user wallet — REVERSAL_DEBIT reads as +balance.
-	// A duplicate idempotency_key means this exact reversal was already posted
-	// (replay) — surface the typed ErrDuplicate, mirroring PostJournal above,
-	// so callers (e.g. marketplace CancelBoost/RejectBoost) can treat the
-	// retry as a no-op instead of a hard failure. Without this, a caller's
-	// Redis-lock-based dedup is the ONLY thing standing between a replay and a
-	// raw wrapped error — and that lock does not always answer (Redis unset,
-	// unreachable, or its TTL elapsed between two attempts).
+	// REVERSAL_DEBIT reads as +balance (restore). Duplicate key → typed
+	// ErrDuplicate so callers treat a replay as a no-op — Redis-lock dedup is
+	// not always there to absorb it (Redis unset, unreachable, TTL elapsed).
 	if _, err := tx.Exec(ctx, insertEntry,
 		creditAccountID, string(EntryReversalDebit), amountKobo, reference, idempotencyKey+":rev_debit"); err != nil {
 		if dbutil.IsUniqueViolation(err) {

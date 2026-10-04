@@ -5,7 +5,6 @@ import { clientIpHeaders } from '@/src/lib/rate-limit/client-ip';
 
 const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 
-// POST /api/v1/crowdfunding/withdraw/[id]
 // → Go: POST /api/finance/crowdfunding/campaigns/:id/withdrawal-request
 // [id] is the CAMPAIGN id. Money mutation: requires an Idempotency-Key header,
 // which the shared proxy helper does not forward, so this route forwards the

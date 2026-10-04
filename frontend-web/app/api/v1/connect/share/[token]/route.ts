@@ -1,7 +1,7 @@
 import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { handleApiError } from '@/src/lib/api/responses';
 
-// GET /api/v1/connect/share/:token — PUBLIC, no auth.
+// PUBLIC, no auth.
 // This one path under /api/v1/connect/* is deliberately NOT behind the
 // catch-all proxy at ../[...path]/route.ts, which calls requireRequestUser()
 // on every request. A share link is followed by a stranger who has never

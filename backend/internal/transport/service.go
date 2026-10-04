@@ -801,7 +801,6 @@ func (s *Service) ShareToken(ctx context.Context, tripID, riderID string) (*Shar
 // someone without an account) but returns only non-sensitive tracking fields —
 // never the trip PIN. Returns the trip id + a minimal public view.
 func (s *Service) ResolveShare(ctx context.Context, token string) (map[string]any, error) {
-	// Find the most recent share_link event carrying this token.
 	const q = `
 		SELECT trip_id, metadata
 		FROM trip_events

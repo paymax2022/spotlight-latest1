@@ -3,7 +3,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { buildUserWsTicket } from '@/src/lib/restaurant/ws-ticket';
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 
-// GET /api/v1/restaurant/ws — a short-lived signed ws(s):// URL for the CALLER'S
+// A short-lived signed ws(s):// URL for the CALLER'S
 // OWN realtime stream, pointing directly at the Go backend.
 // Sibling of the per-order ticket handled inside orders/[...path]/route.ts, and
 // it exists for the same reason (this Next proxy is fetch-based and cannot

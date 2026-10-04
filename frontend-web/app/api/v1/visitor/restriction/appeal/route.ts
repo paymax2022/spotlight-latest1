@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/restriction/appeal — raise a restriction appeal.
+// Raise a restriction appeal.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

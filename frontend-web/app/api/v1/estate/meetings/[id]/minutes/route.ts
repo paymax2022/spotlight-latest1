@@ -3,7 +3,7 @@ import { handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 
-// GET /api/v1/estate/meetings/{id}/minutes — minutes & decisions, or null.
+// Minutes & decisions, or null.
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     await requireRequestUser(request);

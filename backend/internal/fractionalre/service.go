@@ -703,19 +703,14 @@ func (s *Service) ExtendOffering(ctx context.Context, actorID, id string, extraD
 	return o, nil
 }
 
-// Auto-invest execution. The house pattern for periodic work is a background
-// ticker goroutine (orchestration.StartTreasuryMonitor /
-// symptomsearch.StartRetentionPurge — the repo has no pg_cron and no asynq
-// periodic scheduler); this mirrors it.
-// Every execution goes through the EXISTING Subscribe money path, so every iron
-// rule (KYC, risk-ack, 10% cap, tier limit, escrow ledger, audit) applies
-// unchanged. The idempotency key is DETERMINISTIC —
-// autoinvest:{plan_id}:{scheduled_run_iso} — so a crash between "subscribed"
-// and "advanced next_run_at" makes the re-run a replay of the same
-// subscription, never a double-invest.
-// Failures (limit exceeded, KYC, insufficient funds, no open offering, missing
-// risk-ack) are FAIL-CLOSED: the plan is marked status='failed' with
-// last_error and skipped — never retried in a loop. Every attempt is audited.
+// Auto-invest execution runs on a background ticker goroutine (the house
+// pattern — the repo has no pg_cron or asynq scheduler). Every execution goes
+// through the EXISTING Subscribe money path, so every iron rule (KYC, risk-ack,
+// 10% cap, tier limit, escrow ledger, audit) applies unchanged. The idempotency
+// key is DETERMINISTIC — autoinvest:{plan_id}:{scheduled_run_iso} — so a crash
+// between subscribe and advancing next_run_at replays, never double-invests.
+// Failures are FAIL-CLOSED: the plan is marked 'failed' and skipped, never
+// retried in a loop.
 
 // autoInvestStore is the narrow persistence surface the runner needs
 // (satisfied by *Repository; faked in tests — no DB).

@@ -313,36 +313,16 @@ func (r *Repository) ApproveAppealDecision(ctx context.Context, id, checkerID st
 }
 
 // AdminAnalytics — repository_admin_analytics.go — GET /admin/analytics (MKT-007, ADM-005).
-// Real, computed from actual rows:
-//   - active_listings / new_listings      : mkt_listings COUNT
-//   - revenue_kobo                        : SUM(mkt_boosts.price_kobo - refunded_kobo)
-//     for retained (purchased/active/completed) boosts in the window — the
-//     SAME "sole live marketplace money path" semantics AdminMetrics already
-//     documents (repository.go ~1640).
-//   - funnel.contacts                     : COUNT(mkt_contact_reveals) in the window
-//     (revealed_at is a real per-event timestamp).
-//   - funnel.deals / gmv_series[].deals    : COUNT(mkt_threads WHERE met_at IS NOT
-//     NULL) in the window — the ADR-023 "deal completed" signal (a thread either
-//     participant marked met), independent of whether a review was ever left.
-//   - top_categories[].active_listings    : mkt_listings COUNT per category.
-//
+// Real, computed from actual rows: listings counts; revenue_kobo = SUM of
+// retained mkt_boosts (price − refunded); contacts = mkt_contact_reveals;
+// deals = mkt_threads with met_at set (ADR-023 completion signal).
 // Deliberately NOT computed (returned as 0, never fabricated):
-//   - gmv_kobo / gmv_prev_kobo / gmv_series[].gmv_kobo / top_categories[].gmv_kobo:
-//     ADR-023 retired escrow/order tracking — the marketplace structurally has
-//     no record of the actual item-sale price a deal closed at (parties
-//     transact off-platform). There is no field anywhere this could be summed
-//     from without inventing a number, so it is 0 (never estimated from
-//     price_kobo asks, which are NOT sale prices).
-//   - dau: no activity/session table exists in this module (mkt_listings/
-//     mkt_offers/mkt_messages are per-ACTION tables, not a login/session log).
-//     Averaging distinct actors across them would be a fabricated proxy
-//     metric, not "daily active users" — left 0.
-//   - funnel.views: mkt_listings.view_count (repository_account.go) IS real,
-//     but it is a lifetime CUMULATIVE counter with no per-event timestamp —
-//     there is no way to scope "views in the last N days" from it. Reporting
-//     the lifetime total against a rolling window label would silently lie
-//     every time range_days changes (7d and 90d would show the same number).
-//     Left 0 rather than mislabel a lifetime count as a window count.
+//   - GMV fields: ADR-023 retired escrow/order tracking, so the actual sale
+//     price a deal closed at is unrecorded (parties transact off-platform);
+//     price_kobo is an ask, not a sale price.
+//   - dau: no session/activity table exists — any proxy would be fabricated.
+//   - funnel.views: view_count is a lifetime cumulative counter with no
+//     per-event timestamp, so it cannot be scoped to a rolling window.
 type AdminAnalytics struct {
 	RangeDays      int                     `json:"range_days"`
 	GMVKobo        int64                   `json:"gmv_kobo"`

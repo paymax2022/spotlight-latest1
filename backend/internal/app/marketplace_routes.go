@@ -196,15 +196,11 @@ func RegisterMarketplace(
 	// FEATURE_REALTIME_ENABLED.
 	svc.WithRealtime(rtHub)
 
-	// When the commission feature is on, inject a nil-safe recorder so realized
-	// marketplace profit (the boost purchase — the live revenue-capture point after
-	// ADR-023 retired escrow settlement) lands in commission_earnings for the profit
-	// report. The recorder is built WITHOUT a ledger (nil ledgerService) on purpose:
-	// the boost charge already posts the money into ledger.AccountCommission, so a
-	// second ledger post would double-count the commission revenue account. RecordFor
-	// therefore appends the earning ROW only. Recording is best-effort and can never
-	// fail or reverse a boost (see marketplace.recordCommissionSafe). Flag off ⇒ no
-	// recorder is set ⇒ the seam stays nil ⇒ silent no-op.
+	// Commission recording for marketplace profit (the boost purchase — the live
+	// revenue-capture point after ADR-023 retired escrow settlement). Ledger-less
+	// recorder — the boost charge already posts to ledger.AccountCommission, so
+	// RecordFor appends the earning ROW only; best-effort, never fails a boost
+	// (marketplace.recordCommissionSafe). Flag off ⇒ nil-safe no-op.
 	if cfg.FeatureCommissionEnabled {
 		commissionSvc := withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)
 		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commissionSvc})

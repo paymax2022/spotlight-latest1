@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext, isWithinWindow, MAIN_POSITION_SUFFIX } from '@/src/server/elections/elections.service';
 
-// POST /api/v1/elections/{id}/vote — cast a vote. Body: { positionId, candidateId }.
+// Cast a vote. Body: { positionId, candidateId }.
 // Single-position schema: positionId is accepted for contract parity but the
 // vote is unique per (election, voter). Idempotency-Key header is honoured by
 // the unique constraint (re-submitting the same vote returns the same ballot).

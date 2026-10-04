@@ -4,7 +4,6 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/elections/elections.service';
 
-// GET /api/v1/elections/{id}/candidates/{candidateId}/media
 // Returns the candidate's media gallery: profile photo + any campaign_media from
 // the election's candidates JSONB array. No separate media table needed — the
 // campaign_media field is a string[] stored on each candidate object.

@@ -57,7 +57,6 @@ func (s *Service) ListNotifications(ctx context.Context, userID string, limit, o
 			return nil, err
 		}
 
-		// Parse JSON data
 		if dataStr != "" {
 			if err := json.Unmarshal([]byte(dataStr), &n.Data); err != nil {
 				n.Data = make(map[string]interface{})
@@ -98,7 +97,6 @@ func (s *Service) MarkNotificationRead(ctx context.Context, userID, notification
 		return nil, err
 	}
 
-	// Parse JSON data
 	if dataStr != "" {
 		if err := json.Unmarshal([]byte(dataStr), &n.Data); err != nil {
 			n.Data = make(map[string]interface{})

@@ -100,12 +100,10 @@ type Config struct {
 	// member /api/finance/maplerad/* routes, the /api/webhooks/maplerad/go webhook,
 	// and the reconcile + orphan-sweep jobs. DEFAULT OFF — no flag, no money path.
 	FeatureMapleradEnabled bool
-	// FeatureUtilityBillsEnabled gates the Utility Bills DOMAIN money path
-	// (Next.js → Go migration, Phase 1+): member /api/finance/utilitybills/*
-	// routes, admin routes, and background jobs (pending-transaction requery
-	// sweep). DEFAULT OFF — no flag, no money path. Phase 0 (this package's
-	// pure domain types/logic) has nothing gated by it; the flag exists now
-	// so Phase 1 can wire behind it without a second config PR.
+	// FeatureUtilityBillsEnabled gates the Utility Bills DOMAIN money path:
+	// member /api/finance/utilitybills/* routes, admin routes, and background
+	// jobs (pending-transaction requery sweep). DEFAULT OFF — no flag, no
+	// money path; the flag exists ahead of the Phase 1 wiring.
 	FeatureUtilityBillsEnabled bool
 
 	// Eversend credentials (FX provider 2).
@@ -187,14 +185,11 @@ type Config struct {
 	// Shared secret guarding /internal/referrals/* (service-to-service purchase
 	// hooks). Empty ⇒ those endpoints fail closed (503).
 	ReferralRewardsInternalSecret string
-	// Referral purchase-commission-split: a flat 20% of Spotlight's realized
+	// Referral purchase-commission-split: a flat 20% of Spotlight's realised
 	// commission on a purchase, paid to the referred payer's referrer, capped at
 	// referral_links.reward_cap rewarded purchases per CODE (not per referred
-	// user). Hooked into commission.Service (see referral/commissionsplit) —
-	// distinct from, and off by default same as, FeatureReferralRewardsEnabled's
-	// OLDER tiered engine above. Off by default: a brand-new money-path feature
-	// ships dark until explicitly verified in an environment, same posture as
-	// every other feature flag here.
+	// user). Hooked into commission.Service (see referral/commissionsplit);
+	// distinct from the older tiered engine above. DEFAULT OFF — new money path.
 	FeatureReferralCommissionSplitEnabled bool
 	FeatureTierLimitsEnabled              bool
 	FeatureFXEnabled                      bool
@@ -211,13 +206,12 @@ type Config struct {
 	AssocCardSigningSecret string
 	FeatureEventsEnabled   bool
 	FeatureEstateEnabled   bool
-	// FeatureEstateDuesPaystackCheckoutEnabled gates the Paystack-funded (card /
-	// bank-transfer) estate dues payment path (estate/paystackcheckout) — a
-	// dues invoice paid for directly via Paystack, posted DR provider-clearing
-	// / CR settlement, that never touches the payer's wallet and therefore
-	// never runs the KYC-tier gate. Default OFF. Same audited design as
-	// restaurant's FeatureRestaurantPaystackCheckoutEnabled, adapted to dues'
-	// immediate-settle model (no escrow/hold-release step to mirror).
+	// FeatureEstateDuesPaystackCheckoutEnabled gates the Paystack-funded
+	// (card/bank-transfer) estate dues path (estate/paystackcheckout): direct
+	// Paystack payment posted DR provider-clearing / CR settlement, never
+	// touching the payer's wallet, so no KYC-tier gate. Default OFF. Same
+	// audited design as FeatureRestaurantPaystackCheckoutEnabled, minus the
+	// escrow/hold-release step (dues settle immediately).
 	FeatureEstateDuesPaystackCheckoutEnabled bool
 	FeatureCrowdfundingEnabled               bool
 	FeatureRestaurantEnabled                 bool
@@ -228,16 +222,14 @@ type Config struct {
 	// RequestWithdrawal itself refuses with ErrWithdrawalsDisabled until this is
 	// explicitly turned on (see Service.WithWithdrawals).
 	FeatureRestaurantWithdrawalsEnabled bool
-	// FeatureRestaurantPaystackCheckoutEnabled gates the Paystack-funded (card /
-	// bank-transfer) food-order checkout path (restaurant/paystackcheckout) —
-	// an order paid for directly via Paystack, escrowed via
-	// settlement.EscrowExternal, that never touches the customer's wallet and
-	// therefore never runs the KYC-tier gate. Default OFF. This is a DIFFERENT,
-	// audited design from the rejected FEATURE_CHECKOUT_TOPUP_TIER0 (which
-	// topped up the wallet then spent it — see docs/audit/checkout-allowance-audit-findings.md)
-	// and must never be confused with it: this flag adds a new, wallet-free
-	// payment rail; it does not relax the tier gate on the existing
-	// wallet-funded PlaceOrder path, which stays fail-closed regardless.
+	// FeatureRestaurantPaystackCheckoutEnabled gates the Paystack-funded
+	// (card/bank-transfer) food-order checkout path (restaurant/paystackcheckout):
+	// an order paid directly via Paystack, escrowed via
+	// settlement.EscrowExternal, never touching the customer's wallet, so no
+	// KYC-tier gate. Default OFF. This is the audited alternative to the
+	// rejected FEATURE_CHECKOUT_TOPUP_TIER0 top-up-then-spend design (see
+	// docs/audit/checkout-allowance-audit-findings.md): a new wallet-free rail;
+	// the tier gate on wallet-funded PlaceOrder stays fail-closed regardless.
 	FeatureRestaurantPaystackCheckoutEnabled bool
 	// FeatureModuleGateEnforce turns the server-side module gate from observe-only
 	// (logs what it would refuse) into enforcing (503s unpublished modules). Default
@@ -249,16 +241,13 @@ type Config struct {
 	FeatureVoteBridgeEnabled     bool
 	FeatureTransportEnabled      bool
 	FeatureTransportModesEnabled bool // parcel/bus/towing/movers/car-hire expansion
-	// FeatureTransportPaystackCheckoutEnabled gates the Paystack-funded (card /
-	// bank-transfer) ride-hailing checkout path (transport/paystackcheckout) —
-	// a ride paid for directly via Paystack, escrowed via
-	// settlement.EscrowExternal, that never touches the rider's wallet and
-	// therefore never runs the KYC-tier gate. Default OFF. Mirrors
-	// restaurant's FeatureRestaurantPaystackCheckoutEnabled exactly — same
-	// audited design, ported to ride-hailing's instant-pricing flow only (no
-	// offer-mode negotiation). See restaurant/paystackcheckout's doc comment
-	// for why this is a different, safe design from the rejected
-	// FEATURE_CHECKOUT_TOPUP_TIER0.
+	// FeatureTransportPaystackCheckoutEnabled gates the Paystack-funded
+	// (card/bank-transfer) ride-hailing checkout path
+	// (transport/paystackcheckout): a ride paid directly via Paystack, escrowed
+	// via settlement.EscrowExternal, never touching the rider's wallet, so no
+	// KYC-tier gate. Default OFF. Same audited design as
+	// FeatureRestaurantPaystackCheckoutEnabled, ported to ride-hailing's
+	// instant-pricing flow (no offer-mode negotiation).
 	FeatureTransportPaystackCheckoutEnabled bool
 	// Transport Trip Scheduling: schedule a future logistics movement (ride/parcel/
 	// airport/bus) that the transport-scheduler worker materializes + escrows at a
@@ -599,21 +588,20 @@ type Config struct {
 	BillingAPIKey        string
 	BillingWebhookSecret string
 
-	// Resend: email delivery. Key from resend.com dashboard.
 	// Per-IP, per-route auth throttles. See middleware.AuthRateLimit.
 	AuthRateLimitPerMin       int
 	AuthResetRateLimitPerHour int
 
+	// Resend: email delivery. Key from resend.com dashboard.
 	ResendAPIKey    string
 	ResendFromEmail string // must be @spotlightng.com — the only domain verified on the Resend account
 
-	// Brevo joins Resend rather than replacing it. Resend is the fire-and-forget
-	// notification path where a silent failure is tolerable; an undelivered OTP
-	// is a failed login, so that path reports and classifies its failures.
-	// FeatureOTPEmailEnabled defaults OFF and the routes 503 until it is on. No
-	// Brevo credentials exist in this repo or any .env today — the account,
-	// sender domain and template have to be provisioned before this can be
-	// switched on anywhere. See docs/audit/USER_MANAGEMENT_AUDIT.md B1.
+	// Brevo joins Resend rather than replacing it: Resend is the fire-and-forget
+	// notification path (a silent failure is tolerable); an undelivered OTP is a
+	// failed login, so the OTP path reports and classifies its failures.
+	// FeatureOTPEmailEnabled defaults OFF and the routes 503 until it is on; the
+	// Brevo account, sender domain and template must be provisioned first.
+	// See docs/audit/USER_MANAGEMENT_AUDIT.md B1.
 	FeatureOTPEmailEnabled bool
 	// FeatureOTPLoginMFAEnabled turns a correct password into a code challenge
 	// instead of a session. SEPARATE from FeatureOTPEmailEnabled on purpose:
@@ -927,13 +915,11 @@ func Load() Config {
 		ConnectVerificationPepper: getEnv("CONNECT_VERIFICATION_PEPPER", ""),
 
 		R2AccountEndpoint: getEnv("R2_ACCOUNT_ENDPOINT", ""),
-		// No default. The previous default was "spotlight-open-mic", a bucket that
-		// does not exist in the R2 account — and because Configured() only checks
-		// that the fields are non-empty, that default made the module look
-		// configured: presign answered 200 and the upload then died at the PUT with
-		// NoSuchBucket, which the client can only report as "couldn't be uploaded".
-		// Empty fails closed at Configured() instead, so an unset bucket says
-		// "uploads are not configured" up front.
+		// No default: the previous default ("spotlight-open-mic") does not exist
+		// in the R2 account, and because Configured() only checks non-emptiness
+		// the presign returned 200 while the upload died at the PUT with
+		// NoSuchBucket. Empty fails closed at Configured() — an unset bucket
+		// reports "uploads are not configured" up front.
 		R2Bucket:          getEnv("R2_BUCKET", ""),
 		R2AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),
 		R2SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
@@ -990,13 +976,6 @@ func Load() Config {
 	}
 }
 
-// Fail-fast secret validation. Best practice: a service must not boot in
-// production with missing or placeholder secrets, and must never run with a
-// swapped key (e.g. a secret key in a public slot). In non-production
-// environments the same checks emit warnings so local/dev keeps working with
-// placeholders.
-// Wire this in main(): `if err := cfg.Validate(); err != nil { log.Fatal(err) }`.
-
 // IsProd reports whether this is a production deployment.
 func (c Config) IsProd() bool {
 	e := strings.ToLower(strings.TrimSpace(c.AppEnv))
@@ -1018,9 +997,10 @@ func isPlaceholder(v string) bool {
 	return false
 }
 
-// Validate checks that required secrets are present (and shaped correctly) for
-// the features that are enabled. Returns a combined error in production; returns
-// nil (after logging warnings) elsewhere.
+// Validate enforces fail-fast secret validation: the service must not boot in
+// production with missing, placeholder, or swapped secrets (e.g. a secret key
+// in a public slot); in non-production the same checks log warnings so local
+// dev keeps working with placeholders. Wired in main() before boot.
 func (c Config) Validate() error {
 	var problems []string
 
@@ -1055,7 +1035,6 @@ func (c Config) Validate() error {
 
 	require(c.FeatureMapleradEnabled, "MAPLERAD_SECRET_KEY", c.MapleradSecretKey)
 	prefix(c.MapleradSecretKey, "mpr_", "MAPLERAD_SECRET_KEY")
-	// In production Maplerad must use a live (non-sandbox) key.
 	if c.IsProd() && c.FeatureMapleradEnabled && c.MapleradProd && strings.Contains(c.MapleradSecretKey, "sandbox") {
 		problems = append(problems, "MAPLERAD_SECRET_KEY is a sandbox key but MAPLERAD_PROD=true")
 	}

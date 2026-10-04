@@ -13,7 +13,7 @@ async function countWhere(supabase: any, table: string, build: (q: any) => any):
   return count ?? 0;
 }
 
-// GET /api/v1/estate/admin/summary — counts of items needing admin attention.
+// Counts of items needing admin attention.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

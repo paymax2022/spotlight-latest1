@@ -10,7 +10,6 @@ function mapFacility(row: any) {
   return { id: row.id, estateId: row.estate_id, name: row.name, kind: row.kind, capacity: row.capacity ?? undefined, feeKobo: row.fee_kobo };
 }
 
-// GET /api/v1/estate/facilities
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

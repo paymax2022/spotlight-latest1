@@ -1,17 +1,7 @@
 // Package buildinfo answers one question at startup: what source is this
-// process actually serving?
-// WHY IT EXISTS. A running server is a SNAPSHOT of its source at the moment it
-// started, not a follower of the tree it was built from. :8091 is shared by
-// every session and runs from whichever checkout someone last started it in, so
-// the tree can move — or the whole checkout can be a different one than you
-// assume — while the process serves the code it compiled days ago.
-// That has now cost real time three separate times. The last case: :8091 was
-// serving a marketplace listing path with no photo persistence, the fix had been
-// on develop for two days, and the checkout it ran from was a stale feature
-// branch nobody realised was involved. Diagnosing it meant reading `ps -o lstart`
-// against commit timestamps and `lsof -p <pid> | grep cwd` — all recoverable, but
-// only if you already suspect the process rather than the code in front of you.
-// One line at startup makes the server say it itself.
+// process actually serving? A running server is a SNAPSHOT of its source at
+// start time, and the shared dev backend may serve a stale checkout — one
+// startup line makes the server say it itself instead of guessing.
 
 package buildinfo
 
@@ -69,13 +59,10 @@ func Describe(ctx context.Context, dir string) Info {
 	return info
 }
 
-// Line renders Info as a single log line.
-// It says "local origin/develop" rather than "origin/develop" on purpose. The
-// comparison is against the remote-tracking ref as it stands on disk, and
-// nothing here fetches — a network call at startup could hang the boot, which is
-// a worse failure than a stale number. So the ref may itself be days old, and a
-// silent "up to date" would be exactly the kind of false green this line exists
-// to prevent. Naming the ref as local is what keeps the claim honest.
+// Line renders Info as a single log line. It says "local origin/develop" on
+// purpose: the comparison uses the remote-tracking ref as it stands on disk —
+// nothing here fetches (a network call at startup could hang the boot), so the
+// ref itself may be stale and naming it local keeps the claim honest.
 func Line(i Info) string {
 	if !i.OK {
 		return "[source] not a git checkout — cannot report branch or staleness"
@@ -115,17 +102,9 @@ func git(ctx context.Context, dir string, args ...string) (string, bool) {
 }
 
 // Release answers "what commit is THIS process serving?" from outside the box.
-// WHY THIS IS SEPARATE FROM Describe. Describe shells out to git, and a deployed
-// image has no .git — the package doc already says so, and it returns OK false
-// there by design. That is fine for the local startup line, but it means a
-// deployed server cannot say what it is running, which is precisely when you most
-// need to know.
-// This has cost real time. Verifying a staging deploy meant reading GitHub job
-// conclusions and trusting Railway's own status, because the only external probe
-// was /api/v1/public/health, whose body is a fixed string identical on every
-// build. A health check that answers the same before and after a deploy cannot
-// distinguish "deployed" from "did not deploy" — the exact false-green this
-// codebase keeps getting caught by.
+// Separate from Describe because a deployed image has no .git — and a health
+// endpoint answering the same fixed string on every build cannot distinguish
+// "deployed" from "did not deploy".
 // injectedCommit is set at BUILD time with:
 //
 //	go build -ldflags "-X spotlight/backend/internal/platform/buildinfo.injectedCommit=<sha>"

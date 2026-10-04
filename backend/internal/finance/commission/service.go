@@ -19,14 +19,10 @@ type ledgerService interface {
 	PostJournal(ctx context.Context, j ledger.JournalEntry) error
 }
 
-// ReferralHook is notified once for every NEWLY recorded (never a duplicate
-// idempotent replay) earning — the seam the referral purchase-commission-split
-// engine (backend/internal/referral/commissionsplit) hangs off of, mirroring the
-// ledger.TransactionDetailResolver / Service.SetResolvers late-binding pattern so
-// this package never imports referral/* (referral/commissionsplit imports THIS
-// package for the Earning type instead — a one-way dependency, no cycle).
-// OnEarningRecorded must never be allowed to fail the caller's purchase — see
-// Service.SetReferralHook.
+// ReferralHook is notified once per NEWLY recorded earning — the seam the
+// referral commission-split engine hangs off (it imports this package, never
+// the reverse — no cycle). It must never be allowed to fail the caller's
+// purchase — see Service.SetReferralHook.
 type ReferralHook interface {
 	OnEarningRecorded(ctx context.Context, e Earning)
 }
@@ -52,13 +48,9 @@ func NewService(repo *Repository, ledgerSvc ledgerService) *Service {
 // simply never fires).
 func (s *Service) SetReferralHook(h ReferralHook) { s.referralHook = h }
 
-// notifyReferralHook is called ONLY when InsertEarning reports a genuinely NEW
-// row (never on an idempotent-replay duplicate — the hook must fire exactly
-// once per real earning, ever). Recovers from a panic in the hook so a bug in
-// the (much newer, less exercised) referral engine can never take down the
-// purchase path that got a customer's money moving in the first place — the
-// exact same defensive posture RecordEarning/RecordExact already take toward
-// their OWN ledger post (best-effort, logged, never fatal to the caller).
+// notifyReferralHook fires ONLY when InsertEarning reports a genuinely NEW row
+// (exactly once per real earning — never on a replay duplicate). A hook panic
+// is recovered so the newer referral engine can never take down a purchase.
 func (s *Service) notifyReferralHook(ctx context.Context, e *Earning) {
 	if s.referralHook == nil || e == nil {
 		return
@@ -134,7 +126,7 @@ func computeBreakdown(cfg *Config, grossKobo int64) *CalcResult {
 
 // CreateConfig upserts a config row and appends a create/update audit entry.
 func (s *Service) CreateConfig(ctx context.Context, in ConfigInput, changedBy string) (*Config, error) {
-	// Capture prior state (if this collides with an existing key) for the audit.
+	// Prior state (on a key collision) for the before/after audit payload.
 	var before map[string]any
 	if existing, err := s.repo.GetByKey(ctx, in.ServiceCategory, in.Service, in.ServiceSubtype); err == nil {
 		before = configToMap(existing)
@@ -190,13 +182,11 @@ func (s *Service) SetActive(ctx context.Context, id string, active bool, changed
 }
 
 // RecordEarning idempotently records realized Spotlight profit for one source
-// transaction. The fee breakdown is derived server-side from the active config
-// (never trusted from the caller). If a ledger service is wired and the spotlight
-// revenue is positive, a balanced double-entry recognition is posted FIRST
-// (DR provider_clearing → CR commission-revenue) so the immutable earning row can
-// carry the ledger_ref (the append-only table forbids a later UPDATE). Both the
-// ledger post and the earnings insert are keyed by the idempotency key, so a
-// duplicate call is a safe no-op that returns the original row.
+// transaction. The fee breakdown is derived server-side (never trusted from
+// the caller). When a ledger is wired and revenue is positive, the balanced
+// recognition (DR provider_clearing → CR commission-revenue) posts FIRST so the
+// immutable earning row can carry ledger_ref. Both the post and the insert key
+// on the idempotency key — a duplicate is a safe no-op returning the original.
 func (s *Service) RecordEarning(ctx context.Context, in EarningInput, idempotencyKey string) (*Earning, error) {
 	if idempotencyKey == "" {
 		return nil, errors.New("commission: idempotency key required")
@@ -234,10 +224,8 @@ func (s *Service) RecordEarning(ctx context.Context, in EarningInput, idempotenc
 		IdempotencyKey:       &idempotencyKey,
 	}
 
-	// Recognize revenue in the ledger BEFORE persisting the (immutable) earning so
-	// we can store its ledger_ref. Idempotent + best-effort: a duplicate is a safe
-	// no-op; a ledger failure must not corrupt the ledger, so we surface the error
-	// and do NOT record an earning that claims a ledger ref it never got.
+	// Ledger recognition BEFORE persisting so the immutable row carries
+	// ledger_ref; a failure surfaces rather than recording a phantom ref.
 	if s.ledger != nil && bd.SpotlightRevenueKobo > 0 {
 		ref := "commission:" + idempotencyKey
 		if err := s.postRevenue(ctx, ref, idempotencyKey+":commission-rev", bd.SpotlightRevenueKobo); err != nil {
@@ -256,20 +244,14 @@ func (s *Service) RecordEarning(ctx context.Context, in EarningInput, idempotenc
 	return saved, nil
 }
 
-// RecordExact idempotently records realized Spotlight profit using the caller's
-// ACTUAL realized fee (recordedRevenueKobo) rather than recomputing the breakdown
-// from the active config %. This is the correct path for modules whose real earning
-// is a FIXED-kobo fee or a provider spread — Money Transfer, FX, Jobs, Association,
-// and the Savings early-withdrawal penalty — where config% × gross would mis-state
-// profit. (%-take modules keep using RecordEarning/RecordFor.)
-// The config is still resolved best-effort so config_id + currency are populated for
-// reporting joins, but the amount NEVER depends on the config %; a missing config is
-// not an error. recordedRevenueKobo is written verbatim to spotlight_revenue_kobo and
-// attributed to platform_charge_kobo (these modules realize a platform fee/spread,
-// not a provider commission) so the breakdown columns still sum to spotlight_revenue.
-// Idempotent on idempotencyKey exactly like RecordEarning (a duplicate is a safe
-// no-op that returns the original row). With a nil ledger (as the module adapters use)
-// no ledger post is made — the immutable earning row is appended only (no double count).
+// RecordExact idempotently records realized profit using the caller's ACTUAL
+// realized fee (recordedRevenueKobo) rather than config% × gross — the correct
+// path for fixed-fee / spread modules (transfers, FX, jobs, association,
+// savings early-withdrawal penalty). recordedRevenueKobo lands verbatim on
+// spotlight_revenue_kobo, attributed to platform_charge_kobo so the breakdown
+// columns still sum. Config resolution is best-effort for reporting joins only
+// (a missing config is not an error). Idempotent like RecordEarning; with a
+// nil ledger (the module adapters) only the earning row is appended.
 func (s *Service) RecordExact(ctx context.Context, category, service, subtype string,
 	grossKobo, recordedRevenueKobo int64, sourceModule, sourceRef string, userID *string, idempotencyKey string) (*Earning, error) {
 	if idempotencyKey == "" {
@@ -282,9 +264,8 @@ func (s *Service) RecordExact(ctx context.Context, category, service, subtype st
 		return nil, fmt.Errorf("commission: recorded revenue must be non-negative, got %d", recordedRevenueKobo)
 	}
 
-	// Resolve config best-effort — ONLY for config_id + currency (reporting joins). The
-	// recorded amount is the caller's realized fee and never depends on the config %, so
-	// a missing config is fine (config_id stays nil, currency defaults to NGN).
+	// Config resolution is for config_id + currency only — the recorded amount
+	// never depends on config %.
 	var configID *string
 	currency := "NGN"
 	if cfg, err := s.repo.GetByKey(ctx, category, service, subtype); err == nil {
@@ -314,10 +295,8 @@ func (s *Service) RecordExact(ctx context.Context, category, service, subtype st
 		IdempotencyKey:       &idempotencyKey,
 	}
 
-	// Recognize revenue in the ledger BEFORE persisting the immutable earning (same
-	// order + idempotency discipline as RecordEarning) when a ledger is wired and the
-	// realized fee is positive. These module adapters inject a nil ledger, so this is a
-	// no-op there and only the earning row is appended.
+	// Same order + idempotency discipline as RecordEarning. The module adapters
+	// inject a nil ledger, so this is a no-op there.
 	if s.ledger != nil && recordedRevenueKobo > 0 {
 		ref := "commission:" + idempotencyKey
 		if err := s.postRevenue(ctx, ref, idempotencyKey+":commission-rev", recordedRevenueKobo); err != nil {
@@ -338,14 +317,10 @@ func (s *Service) RecordExact(ctx context.Context, category, service, subtype st
 
 // postRevenue posts a balanced revenue-recognition entry:
 //
-//	DR provider_clearing  (funds received on behalf of Spotlight are drawn down)
+//	DR provider_clearing  (funds held on behalf of Spotlight drawn down)
 //	CR commission         (Spotlight commission-revenue account)
 //
-// Both are standing accounts resolved via GetOrCreateStandingAccount (singletons
-// by type; auto-created, no seed row needed). This mirrors how other revenue
-// modules recognize income (e.g. placement: DR escrow → CR placement_revenue;
-// creators: fee moves into paymax_revenue). Idempotent via the ledger's unique
-// idempotency_key + Redis fast-path — a duplicate is a safe no-op.
+// Idempotent via the ledger's unique idempotency_key — a duplicate is a no-op.
 func (s *Service) postRevenue(ctx context.Context, reference, idempotencyKey string, amountKobo int64) error {
 	clearing, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
 	if err != nil {
@@ -403,48 +378,33 @@ func configToMap(c *Config) map[string]any {
 }
 
 // Recorder is the dependency-light seam other modules use to record realized
-// Spotlight profit into the central commission registry WITHOUT importing the
-// module's internals or DB types. The existing *Service satisfies it, so wiring is
-// a one-liner and the dependency can be injected nil-safe (a nil Recorder ⇒ no-op
-// on the caller's side; see each caller's recordCommissionSafe helper).
-// This is purely additive: it exposes the already-implemented idempotent
-// RecordEarning under a small, stable interface plus a convenience form that fills
-// the EarningInput for the common "category/service/subtype + gross + source" call.
+// profit into the central registry without importing this module's internals.
+// *Service satisfies it; a nil Recorder is a no-op on the caller's side.
 type Recorder interface {
-	// Record idempotently records realized profit for one source transaction. The
-	// fee breakdown is derived server-side from the active rate card (never trusted
-	// from the caller); a duplicate idempotencyKey is a safe no-op that returns the
-	// original row. This is a straight pass-through to RecordEarning.
+	// Record idempotently records realized profit for one source transaction;
+	// a straight pass-through to RecordEarning.
 	Record(ctx context.Context, in EarningInput, idempotencyKey string) (*Earning, error)
 
-	// RecordFor is the convenience form: the caller passes the config coordinates
-	// (category/service/subtype), the gross amount in kobo, and provenance
-	// (sourceModule/sourceRef/userID) + an idempotency key. The breakdown is
-	// resolved and computed by the central config via RecordEarning → the recorded
-	// earning can never drift from the active rate card.
+	// RecordFor is the convenience form: the caller passes config coordinates +
+	// gross + provenance + idempotency key; the breakdown comes from the active
+	// rate card via RecordEarning.
 	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
 		sourceModule, sourceRef string, userID *string, idempotencyKey string) (*Earning, error)
 
-	// RecordExact is the exact-fee form: the caller passes BOTH the gross (principal,
-	// for context) and the ACTUAL realized fee it earned (recordedRevenueKobo). The
-	// recorded profit is the caller's fee verbatim — NOT config% × gross. This is the
-	// correct path for fixed-fee / spread modules (transfers, fx, jobs, association,
-	// savings) where a %-of-gross figure would mis-state profit. config_id is still
-	// resolved for reporting joins but never drives the amount. Idempotent like Record.
+	// RecordExact is the exact-fee form for fixed-fee / spread modules
+	// (transfers, fx, jobs, association, savings): the caller's realized fee is
+	// recorded verbatim — NOT config% × gross. Idempotent like Record.
 	RecordExact(ctx context.Context, category, service, subtype string, grossKobo, recordedRevenueKobo int64,
 		sourceModule, sourceRef string, userID *string, idempotencyKey string) (*Earning, error)
 }
 
-// Record satisfies Recorder. It delegates verbatim to RecordEarning — behavior is
-// unchanged (idempotent, server-side breakdown, optional ledger recognition).
+// Record satisfies Recorder — a verbatim delegate to RecordEarning.
 func (s *Service) Record(ctx context.Context, in EarningInput, idempotencyKey string) (*Earning, error) {
 	return s.RecordEarning(ctx, in, idempotencyKey)
 }
 
-// RecordFor builds the EarningInput from the caller's coordinates and delegates to
-// RecordEarning, which resolves the active config and computes the breakdown via the
-// shared computeBreakdown core (the same math the /calculate endpoint uses). Currency
-// defaults to the resolved config's currency inside RecordEarning when left empty.
+// RecordFor builds the EarningInput from the caller's coordinates and delegates
+// to RecordEarning (the same computeBreakdown core /calculate uses).
 func (s *Service) RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
 	sourceModule, sourceRef string, userID *string, idempotencyKey string) (*Earning, error) {
 	return s.RecordEarning(ctx, EarningInput{

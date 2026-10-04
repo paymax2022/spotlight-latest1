@@ -318,41 +318,12 @@ func (h *Handler) Unfeature(c *gin.Context) {
 // IMPORTANT: the campaign-scoped routes use the SAME param name ':id' as the
 // sibling discovery/wallet packages (which register /campaigns/:id,
 // /campaigns/:id/wallet, /campaigns/:id/ledger on the same group) to avoid Gin
-// wildcard-conflict panics on the shared /campaigns/:id/* tree.
-// Routes (relative to rg):
-//
-//	GET    /campaigns/:id/contributors          → contributors (derived)
-//	GET    /campaigns/:id/milestones            → campaign milestones
-//	GET    /campaigns/saved                     → caller's saved campaigns
-//	GET    /campaigns/recently-viewed           → caller's recently viewed
-//	POST   /campaigns/:id/save                  → save a campaign
-//	DELETE /campaigns/:id/save                  → unsave a campaign
-//	GET    /contributions                       → caller's contributions
-//	GET    /contributions/:id                   → a single contribution
-//	POST   /contributions/:id/refund-request    → record refund intent (no money)
-//	GET    /creator/stats                       → creator dashboard stats (derived)
-//	GET    /creator/campaigns                   → creator's campaigns
-//	GET    /creator/contributions               → recent contributions to creator
-//	GET    /creator/withdrawals                 → creator's withdrawal requests
-//	GET    /creator/notifications               → creator notifications
-//	GET    /creator/campaigns/:id/analytics     → campaign analytics (derived)
-//	GET    /rewards/backers                      → reward fulfilment queue
-//	PUT    /rewards/fulfilment/:id               → update reward fulfilment status
-//
-// Owner self-management (every one of these verifies campaign ownership under
-// FOR UPDATE inside the writing transaction — see selfmanage.go):
-//
-//	PATCH  /creator/campaigns/:id                  → partial edit
-//	POST   /creator/campaigns/:id/pause            → out of public discovery
-//	POST   /creator/campaigns/:id/resume           → back into public discovery
-//	DELETE /creator/campaigns/:id                  → soft-delete (no funds only)
-//	POST   /creator/campaigns/:id/feature-request  → ask an admin for the rail
-//	DELETE /creator/campaigns/:id/feature-request  → withdraw that request
-//	POST   /creator/campaigns/:id/unfeature        → leave the rail (no approval)
+// wildcard-conflict panics on the shared /campaigns/:id/* tree. Owner
+// self-management routes each verify campaign ownership under FOR UPDATE inside
+// the writing transaction (see selfmanage.go).
 func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
 	h := NewHandler(NewService(db))
 
-	// Campaign-scoped reads / saves (shared :id param with sibling packages).
 	rg.GET("/campaigns/:id/contributors", h.GetContributors)
 	rg.GET("/campaigns/:id/milestones", h.GetMilestones)
 	rg.POST("/campaigns/:id/save", h.SaveCampaign)
@@ -363,12 +334,10 @@ func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
 	rg.GET("/saved-campaigns", h.GetSaved)
 	rg.GET("/recently-viewed", h.GetRecentlyViewed)
 
-	// Contributions (caller's own) + refund-request (record-only).
 	rg.GET("/contributions", h.ListContributions)
 	rg.GET("/contributions/:id", h.GetContribution)
 	rg.POST("/contributions/:id/refund-request", h.RequestRefund)
 
-	// Creator dashboard.
 	rg.GET("/creator/stats", h.GetCreatorStats)
 	rg.GET("/creator/campaigns", h.GetMyCampaigns)
 	rg.GET("/creator/contributions", h.GetCreatorContributions)
@@ -376,8 +345,8 @@ func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
 	rg.GET("/creator/notifications", h.GetCreatorNotifications)
 	rg.GET("/creator/campaigns/:id/analytics", h.GetCampaignAnalytics)
 
-	// Owner self-management. These share the ':id' param with the analytics
-	// route above (Gin requires one param name per path segment position).
+	// Shares the ':id' param with the analytics route above (Gin requires one
+	// param name per path segment position).
 	rg.PATCH("/creator/campaigns/:id", h.UpdateCampaign)
 	rg.DELETE("/creator/campaigns/:id", h.DeleteCampaign)
 	rg.POST("/creator/campaigns/:id/pause", h.PauseCampaign)
@@ -386,7 +355,6 @@ func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
 	rg.DELETE("/creator/campaigns/:id/feature-request", h.WithdrawFeatureRequest)
 	rg.POST("/creator/campaigns/:id/unfeature", h.Unfeature)
 
-	// Reward fulfilment.
 	rg.GET("/rewards/backers", h.GetRewardBackers)
 	rg.PUT("/rewards/fulfilment/:id", h.UpdateRewardStatus)
 }

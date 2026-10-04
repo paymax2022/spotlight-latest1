@@ -34,7 +34,6 @@ import (
 	"testing"
 )
 
-// ===========================================================================
 // Inv 2. Vendor settlement SPLIT — mirrors Service.SettleVendor's fee math and
 // the balanced escrow legs it posts:
 //
@@ -47,7 +46,6 @@ import (
 // whatever the fee_bps, net+fee reconstitutes gross EXACTLY (no kobo created or
 // destroyed), both legs are >= 0, and the fee leg is only posted when fee > 0
 // (matching the `if fee > 0` guard in service.go so no zero-value journal is cut).
-// ===========================================================================
 
 // vendorFloatLeg mirrors one vendor_float row accrued by a TapCharge.
 type vendorFloatLeg struct {
@@ -179,13 +177,11 @@ func TestSettlementSplit_SumOfChargesEqualsSumOfPayoutLegs(t *testing.T) {
 	}
 }
 
-// ===========================================================================
 // Inv 4 (strengthened). TapCharge fails CLOSED on insufficient balance: NEITHER
 // the attendee CHARGE entry NOR the vendor float credit may be written. The mirror
 // suite proved the attendee balance was unchanged; here we also prove the VENDOR
 // leg is skipped, mirroring the early `return ErrInsufficientFloat` in
 // Service.TapCharge that happens BEFORE either INSERT.
-// ===========================================================================
 
 // tapChargeVendorLedger mirrors the two-sided write in Service.TapCharge: an
 // attendee-side CHARGE and a vendor-side float credit are written TOGETHER inside
@@ -277,7 +273,6 @@ func TestTapCharge_ClosedWallet_WritesNoVendorCredit(t *testing.T) {
 	}
 }
 
-// ===========================================================================
 // Inv 5. Tier / limit gate fails CLOSED.
 //
 // (a) Purchase & TopUp move money via wallet.Debit, whose FIRST statement is
@@ -288,7 +283,6 @@ func TestTapCharge_ClosedWallet_WritesNoVendorCredit(t *testing.T) {
 // (b) SettleVendor checks `int(tier) < 1 -> ErrKYCRequired` (service.go:755-757)
 //     BEFORE opening its tx; an unverified vendor gets no settlement row and no
 //     payout legs.
-// ===========================================================================
 
 // mirrorTierGate replicates the fail-closed ordering of wallet.Debit +
 // tiers.EnforceWalletDebitLimit. dailyLimitKobo == 0 means "wallet disabled at this

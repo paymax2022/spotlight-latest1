@@ -387,15 +387,10 @@ func (s *Service) Book(ctx context.Context, userID, reservationID, bookToken, id
 	}
 	_ = s.repo.RecordPaymentIntent(ctx, res.ID, string(res.PaymentMethod), "charged", "stays:settle:"+res.ID, idempotencyKey+":charge", res.GrossAmountKobo)
 
-	// Record realized Spotlight profit into the central Commission & Profit registry.
-	// This is the stays revenue-realization point (the CONFIRMED booking whose escrow
-	// split just posted the platform cut to the ledger). Best-effort + idempotent: the
-	// reservation id doubles as source ref + idempotency key, so replays / reconciliation
-	// re-drives never double-count. gross = the full booking value the guest is charged
-	// (res.GrossAmountKobo) — the same basis stays' own commission split is computed on.
-	// A recorder failure is logged and swallowed — it must NEVER fail the booking or the
-	// payout above (stays' own settle already posted the commission to the ledger; this
-	// appends the immutable earning row only). Central config: Property/Hotel = 10%.
+	// Revenue-realization point: record Spotlight profit in the central Commission
+	// & Profit registry. Best-effort + idempotent (reservation id is the source ref
+	// / idempotency key); a failure must never fail the booking — see
+	// recordCommissionSafe. Central config: Property/Hotel = 10%.
 	guestID := userID
 	s.recordCommissionSafe(ctx, "Property", "Hotel", "", res.GrossAmountKobo, res.ID, &guestID)
 
@@ -923,19 +918,11 @@ func (r *Repository) SumAgentCommission(ctx context.Context, agentUserID string)
 	return t, nil
 }
 
-// voucher_signer.go — reusable R2 presigner for stays booking vouchers.
-// The reservation handler holds a `signRef func(ref string) (string, error)` that
-// turns a stored voucher object ref into a short-lived, presigned GET URL the guest
-// can download. When wired to nil the handler returns the raw stored ref (see
-// NewHandler); this file provides a real, fail-closed signer.
-// It REUSES the shared std-lib SigV4 presigner (internal/platform/r2), the same
-// client the estate/marketplace/transport/doctor/KYC modules use — no hand-rolled
-// signing, no aws-sdk dependency. R2 credentials are SERVER-SIDE ONLY and never
-// reach a client; the client only ever sees the minted URL.
-// Fail-closed: when R2 env is absent the signer returns a clear
-// "voucher storage not configured" error rather than a broken/unsigned URL, so
-// local/dev still builds and runs (the voucher route then surfaces the error
-// instead of leaking a raw ref that would 403 at R2).
+// Reusable R2 presigner for stays booking vouchers (voucher_signer.go). Turns a
+// stored voucher object ref into a short-lived presigned GET URL via the shared
+// platform/r2 SigV4 presigner — R2 credentials are SERVER-SIDE ONLY, the client
+// only ever sees the minted URL. Fail-closed: absent R2 env yields a clear
+// "voucher storage not configured" error, never a broken/unsigned URL or raw ref.
 
 // voucherPresignTTL bounds how long an issued voucher download URL is valid.
 const voucherPresignTTL = 15 * time.Minute
@@ -946,13 +933,10 @@ var ErrVoucherStorageNotConfigured = errors.New("reservation: voucher storage no
 
 // NewR2VoucherSigner builds the voucher presigner from the R2 env vars
 // (R2_ACCOUNT_ENDPOINT, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
-// R2_REGION), reusing the shared platform/r2 SigV4 presigner. It returns a
-// `func(ref string) (string, error)` matching what reservation.NewHandler expects.
-// It NEVER returns a nil signer + nil error: when R2 is unconfigured it returns a
-// working func that yields ErrVoucherStorageNotConfigured (so the caller can wire
-// it unconditionally and the route fails closed rather than presenting a raw ref).
-// The returned error is reserved for future hard-validation; today it is always nil
-// so wiring code can ignore it and stay nil-safe.
+// R2_REGION). It NEVER returns a nil signer + nil error: unconfigured R2 yields
+// a func that returns ErrVoucherStorageNotConfigured, so wiring can be
+// unconditional and the route fails closed. The error return is reserved for
+// future hard-validation (always nil today).
 func NewR2VoucherSigner() (func(ref string) (string, error), error) {
 	presigner := r2.New(r2.Config{
 		AccountEndpoint: os.Getenv("R2_ACCOUNT_ENDPOINT"),

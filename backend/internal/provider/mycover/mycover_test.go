@@ -17,8 +17,6 @@ import (
 	"spotlight/backend/internal/insurance/gateway"
 )
 
-// ENVELOPE
-
 // TestEnvelope_ResponseTextBothShapes is the regression that matters most:
 // MyCover returns responseText as a STRING on success and as an ARRAY OF
 // STRINGS on every validation failure. A parser that declares it `string`
@@ -381,8 +379,6 @@ func TestGetQuote_RefusesWithoutProductID(t *testing.T) {
 		t.Fatalf("want ErrNoProductID, got %v", err)
 	}
 }
-
-// CATALOG NORMALISATION
 
 // TestListProducts_NormalisesLiveShape feeds the adapter the verbatim v2 shapes
 // — a LIGHT list plus a full record per id — and checks every value that crosses

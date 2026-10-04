@@ -457,17 +457,12 @@ func (s *Service) Withdraw(ctx context.Context, userID, assetID, addressID strin
 }
 
 // broadcastApprovedWithdrawal dispatches an admin-approved withdrawal to the
-// provider and advances approved → broadcast. It is the ONLY place the provider is
-// called — invoked from the admin approve path AFTER the AML gate, never from the
-// member create path. On provider reject/error the withdrawal fails and the parked
-// units are returned to the holder (compensation, never mints). It reads the owner +
-// destination from the persisted row so the broadcast targets the right whitelisted
-// address. Idempotent: the guarded approved→broadcast transition (and the provider's
-// own idempotency on the withdrawal id) make a re-run safe.
-// TODO(crypto-worker): for production this should be enqueued to an asynq worker so
-// the admin approve HTTP call returns immediately and provider latency/retries are
-// handled off the request path. Today it runs inline on approve so the state machine
-// is exercisable end-to-end with the mock provider.
+// provider and advances approved → broadcast — the ONLY place the provider is
+// called (admin approve path AFTER the AML gate, never the member path). A
+// provider error fails the withdrawal and returns the parked units. Idempotent
+// via the guarded transition + the provider's own idempotency on the key.
+// TODO(crypto-worker): enqueue to an asynq worker for production so the admin
+// approve call returns immediately; today it runs inline.
 func (s *Service) broadcastApprovedWithdrawal(ctx context.Context, w *AdminWithdrawal) (*AdminWithdrawal, error) {
 	// Provider needs the net units, the destination address + network, and a stable
 	// idempotency key. Derive the provider idem key from the withdrawal id (stable).

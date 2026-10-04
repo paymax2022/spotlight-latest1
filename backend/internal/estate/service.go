@@ -202,7 +202,6 @@ func (s *Service) CreateElection(ctx context.Context, estateID, creatorID string
 // CastVote casts a vote in an open election using a Redlock-protected atomic check.
 // Enforces one-vote-per-resident via UNIQUE(election_id, voter_id).
 func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID string, req CastVoteRequest) (*Vote, error) {
-	// Verify voter is a resident.
 	if err := s.assertResident(ctx, estateID, voterID); err != nil {
 		return nil, err
 	}
@@ -219,7 +218,6 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 	if !elig.Eligible {
 		return nil, fmt.Errorf("estate: not eligible to vote in this election: %s", strings.Join(elig.Reasons, ", "))
 	}
-	// Verify election is open.
 	var status string
 	var startsAt, endsAt time.Time
 	if err := s.db.QueryRow(ctx, `SELECT status, starts_at, ends_at FROM elections WHERE id=$1 AND estate_id=$2`, electionID, estateID).
@@ -417,7 +415,6 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 
 // CheckOutVisitor records a gate departure.
 func (s *Service) CheckOutVisitor(ctx context.Context, estateID, guardID, codeID, gateID string) error {
-	// Verify code belongs to this estate.
 	var cnt int
 	if err := s.db.QueryRow(ctx,
 		`SELECT COUNT(*) FROM visitor_access_codes WHERE id=$1 AND estate_id=$2`, codeID, estateID,
@@ -447,13 +444,11 @@ func (s *Service) SubmitIncidentReport(ctx context.Context, estateID, guardID st
 
 // HandoverShift closes the current shift and optionally starts the next.
 func (s *Service) HandoverShift(ctx context.Context, estateID, guardID string, req HandoverRequest) (*GuardShift, error) {
-	// Close existing open shift if any.
 	_, _ = s.db.Exec(ctx,
 		`UPDATE guard_shifts SET ended_at=NOW(), handover_notes=$1, relieved_by=$2
 		WHERE estate_id=$3 AND guard_id=$4 AND ended_at IS NULL`,
 		req.HandoverNotes, dbutil.StrPtr(req.RelievedBy), estateID, guardID,
 	)
-	// Open new shift.
 	shift := &GuardShift{
 		ID: uuid.New().String(), GuardID: guardID, GateID: req.GateID,
 		EstateID: estateID, StartedAt: time.Now(), CreatedAt: time.Now(),
@@ -599,7 +594,6 @@ func (s *Service) CreateAccessCode(ctx context.Context, estateID, userID string,
 			req.CodeType, numeric, qrID, req.ValidFrom, req.ValidUntil, req.Recurrence, req.MaxUses,
 		)
 		if err != nil {
-			// If duplicate numeric code, retry.
 			continue
 		}
 		code = c
@@ -701,7 +695,6 @@ func (s *Service) GetCheckinHistory(ctx context.Context, estateID, userID, codeI
 	if _, err := s.getResidentID(ctx, estateID, userID); err != nil {
 		return nil, err
 	}
-	// Verify the code belongs to this user.
 	var ownerID string
 	if err := s.db.QueryRow(ctx,
 		`SELECT issued_by FROM visitor_access_codes WHERE id=$1 AND estate_id=$2`, codeID, estateID,
@@ -919,7 +912,6 @@ func (s *Service) GetProfile(ctx context.Context, estateID, userID string) (*Res
 	if err := s.db.QueryRow(ctx, q, resID).Scan(&p.ID, &p.ResidentID, &p.Bio, &p.ProfilePhotoURL,
 		&p.Phone, &p.AltPhone, &p.OccupancyType, &p.Visibility, &p.CreatedAt, &p.UpdatedAt,
 	); err != nil {
-		// Return an empty profile if none exists yet.
 		return &ResidentProfile{ResidentID: resID, Visibility: "members", OccupancyType: "resident"}, nil
 	}
 	return p, nil
@@ -1163,7 +1155,6 @@ func (s *Service) JoinWithInviteCode(ctx context.Context, userID, code string) (
 		return nil, fmt.Errorf("estate: invite code has reached maximum uses")
 	}
 
-	// Increment use count.
 	if _, err := tx.Exec(ctx, `UPDATE estate_invite_codes SET used_count=used_count+1 WHERE id=$1`, ic.ID); err != nil {
 		return nil, fmt.Errorf("estate: update invite code: %w", err)
 	}

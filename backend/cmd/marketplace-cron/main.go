@@ -42,8 +42,6 @@ func main() {
 	}
 	defer pool.Close()
 
-	// Order auto-release + escrow reconciliation jobs REMOVED (ADR-023
-	// listings-and-connect pivot): the marketplace no longer holds escrow orders.
 	// The periodic jobs are listing auto-expiry (§2.1) and boost completion (§2.4).
 	log.Println("marketplace-cron: starting (listing auto-expire + boost completion every 5m)")
 

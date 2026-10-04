@@ -68,17 +68,12 @@ const MinWithdrawTier = 1
 var ErrKYCRequired = fmt.Errorf("referral/ledger: verified KYC required to withdraw")
 
 // ErrAccountNotEligible is returned when the beneficiary's platform_users
-// account status blocks referral money movement (REF-009) — both the actual
-// payout (Transition to 'paid') and a withdrawal request.
-// SCOPE NOTE: this gates Refer & Earn's OWN money-path entry points
-// (Transition, WithdrawEligible) — it does NOT touch
-// finance/ledger.Service.Credit itself, which is the shared primitive used
-// across many other modules (wallet top-up, transfers, other reward paths).
-// Changing that function's semantics would have app-wide blast radius outside
-// this module's authority. Gating both of Refer & Earn's own callers achieves
-// the same practical outcome for this module — a suspended/locked/deleted
-// account can no longer accrue a real wallet credit through EITHER path this
-// module exposes — without touching shared infrastructure.
+// account status blocks referral money movement (REF-009) — both a payout
+// (Transition to 'paid') and a withdrawal request.
+// SCOPE: this gates Refer & Earn's OWN entry points, NOT the shared
+// finance/ledger.Service.Credit primitive — changing that would have app-wide
+// blast radius. Gating both callers achieves the same outcome here without
+// touching shared infrastructure.
 var ErrAccountNotEligible = fmt.Errorf("referral/ledger: account status blocks this action")
 
 // AuditSink records a durable audit event for a money mutation. Optional; wired

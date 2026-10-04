@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext } from '@/src/server/visitor/gate.service';
 import { ACCESS_CODE_COLUMNS, mapAccessCode } from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/gate/vehicles/scan — stub ANPR/OCR plate scan.
+// Stub ANPR/OCR plate scan.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

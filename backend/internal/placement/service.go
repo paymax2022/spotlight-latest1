@@ -646,8 +646,6 @@ func (s *Service) checkEligibility(ctx context.Context, c *Campaign) error {
 	return nil
 }
 
-// internals
-
 // transition applies a guarded optimistic-locked state change, writes audit, and
 // refreshes the in-memory campaign version/state.
 func (s *Service) transition(ctx context.Context, c *Campaign, to State, actorID, action string) error {

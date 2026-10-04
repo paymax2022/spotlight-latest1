@@ -172,28 +172,15 @@ func (s *Service) requestRide(ctx context.Context, riderID string, req RequestRi
 	}
 
 	// refundOnFailure undoes the escrow above if the trip can't be durably
-	// created at all. e.g. an offer inside the app's own [floor,ceiling]
-	// range can still trip the DB's separate, absolute
-	// trips_fare_kobo_check constraint, which the app-level
-	// validateFareInRange call above does not know about. Without this, such
-	// an offer escrows the rider's wallet and then fails the trip INSERT,
-	// leaving a real settlements row in 'escrowed'
-	// state with no owning trip — no FSM state, no cancel path (cancel needs
-	// a trip id), and outside the reconciler's reach (it only re-drives
-	// completed trips). Mirrors this same package's own established pattern
-	// for the identical shape (see BookEventTransport's
-	// event_booking_insert_failed refund).
-	// NEVER calls settlement.Refund for an externally-funded escrow: Refund's
-	// only mechanism is a LEDGER CREDIT to the payer's WALLET (reversing a
-	// wallet debit that, for an EscrowExternal escrow, never happened) — doing
-	// that here would hand a Tier-0 rider real spendable wallet balance funded
-	// by an external card charge, exactly the hazard this whole feature exists
-	// to avoid (see restaurant/paystackcheckout's package doc comment). For
-	// `external`, this is intentionally a no-op: the settlement stays escrowed
-	// with no owning trip, and the CALLER (transport/paystackcheckout, mirroring
-	// restaurant's paystackcheckout.OnChargeSuccess) reverses the customer's
-	// money the correct way — a real Paystack refund — when RequestRidePaystackFunded
-	// returns this error.
+	// created — e.g. an in-range offer can still trip the DB's absolute
+	// trips_fare_kobo_check, which validateFareInRange doesn't know about.
+	// Without it the trip INSERT fails leaving an 'escrowed' settlement with
+	// no owning trip — no cancel path, outside the reconciler's reach.
+	// NEVER calls settlement.Refund for an externally-funded escrow: Refund
+	// credits the payer's WALLET, which would hand a Tier-0 rider spendable
+	// balance funded by an external card charge. For `external` this is a
+	// no-op; the caller (transport/paystackcheckout, mirroring
+	// restaurant's OnChargeSuccess) issues a real Paystack refund instead.
 	refundOnFailure := func(reason string, err error) error {
 		if settlementID != nil && !external {
 			s.settlement.Refund(ctx, *settlementID, reason)

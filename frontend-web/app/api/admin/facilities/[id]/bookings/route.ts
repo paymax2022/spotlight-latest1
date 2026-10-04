@@ -3,7 +3,6 @@ import { handleApiError } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 
-// GET /api/admin/facilities/[id]/bookings — Get bookings for a facility
 // E2E-SEC-054: gated on requireRequestUser only before (any signed-in user
 // could read residents' booking PII via the service-role client). Now requires
 // programs:manage. params is a Promise on this Next version.

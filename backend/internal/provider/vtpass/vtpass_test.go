@@ -131,8 +131,6 @@ func TestPurchasePayload_Education(t *testing.T) {
 	}
 }
 
-// Response normalization
-
 func TestNormalizeProviderStatus(t *testing.T) {
 	cases := []struct {
 		name string
@@ -198,8 +196,6 @@ func TestTokenFrom(t *testing.T) {
 		t.Fatalf("tokenFrom must prefer token over purchased_code, got %q", tokenFrom(both))
 	}
 }
-
-// Sandbox meter simulation table
 
 func TestSandboxPurchase_MeterTable(t *testing.T) {
 	c := New("k", "p", "s", EnvironmentSandbox, "")
@@ -344,8 +340,6 @@ func TestAuthHeaders_MissingKeysFailClosed(t *testing.T) {
 		t.Fatal("PurchaseBill with no secret key must fail (POST requires secret-key)")
 	}
 }
-
-// Base URL selection by environment
 
 func TestNew_BaseURLDefaultsByEnvironment(t *testing.T) {
 	live := New("a", "p", "s", EnvironmentLive, "")

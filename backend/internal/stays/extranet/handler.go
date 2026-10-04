@@ -52,23 +52,19 @@ func (h *Handler) Register(g *gin.RouterGroup) {
 	g.GET("/verification/business", h.GetBusinessVerification)
 	g.POST("/verification/submit", h.SubmitForReview)
 
-	// Property content.
 	g.GET("/properties/:propertyId", h.GetProperty)
 	g.PATCH("/properties/:propertyId", h.UpdateContent)
 	g.PATCH("/properties/:propertyId/details", h.UpdateDetails)
-	// Photos (property_photos.go).
 	g.POST("/properties/:propertyId/photos/presign", h.PresignPhoto)
 	g.GET("/properties/:propertyId/photos", h.ListPhotos)
 	g.POST("/properties/:propertyId/photos", h.CreatePhoto)
 	g.PATCH("/properties/:propertyId/photos/:photoId", h.UpdatePhoto)
 	g.DELETE("/properties/:propertyId/photos/:photoId", h.DeletePhoto)
-	// Room types + rate plans.
 	g.GET("/properties/:propertyId/room-types", h.ListRoomTypes)
 	g.POST("/properties/:propertyId/room-types", h.CreateRoomType)
 	g.GET("/properties/:propertyId/rate-plans", h.ListRatePlans)
 	g.POST("/properties/:propertyId/rate-plans", h.CreateRatePlan)
 
-	// Reservations dashboard.
 	g.GET("/properties/:propertyId/reservations", h.ListReservations)
 	g.GET("/properties/:propertyId/arrivals", h.Arrivals)
 	g.GET("/properties/:propertyId/departures", h.Departures)
@@ -81,14 +77,11 @@ func (h *Handler) Register(g *gin.RouterGroup) {
 	g.POST("/properties/:propertyId/reservations/:reservationId/messages", h.SendMessage)
 	g.GET("/properties/:propertyId/reservations/:reservationId/messages", h.ListMessages)
 
-	// Finance reads.
 	g.GET("/properties/:propertyId/payouts", h.Payouts)
 	g.GET("/properties/:propertyId/commission", h.Commission)
 
-	// Analytics.
 	g.GET("/properties/:propertyId/analytics", h.Analytics)
 
-	// Account / staff.
 	g.GET("/properties/:propertyId/staff", h.ListStaff)
 	g.POST("/properties/:propertyId/staff", h.UpsertStaff)
 	g.POST("/properties/:propertyId/staff/invite", h.InviteStaffByEmail)

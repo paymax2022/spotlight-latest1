@@ -6,7 +6,7 @@ import { getResidentContext, resolveNames } from '@/src/server/estate/resident';
 
 const COLS = 'id, estate_id, title, description, assignee_id, created_by, due_date, priority, status, created_at';
 
-// POST /api/v1/estate/tasks/{id}/status — Body: { status }.
+// Body: { status }.
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireRequestUser(request);

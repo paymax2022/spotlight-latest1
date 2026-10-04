@@ -371,15 +371,12 @@ func limitParam(c *gin.Context) int {
 // RegisterAdmin wires the admin settlement routes onto the admin group. guard is the
 // per-route RBAC middleware factory the aggregator supplies.
 func (h *Handler) RegisterAdmin(g *gin.RouterGroup, guard func(permission string) gin.HandlerFunc) {
-	// Payouts.
 	g.GET("/payouts", guard("stays.admin.settlement"), h.ListPayouts)
 	g.POST("/payouts/queue", guard("stays.admin.settlement"), h.QueuePayout)
 	g.POST("/payouts/:id/release", guard("stays.admin.settlement"), h.ReleasePayout)
-	// Commission ledger.
 	g.GET("/commission", guard("stays.admin.commission"), h.ListCommission)
 	g.POST("/commission/accrue", guard("stays.admin.settlement"), h.AccrueCommission)
 	g.POST("/commission/reverse", guard("stays.admin.settlement"), h.ReverseCommission)
-	// Remittance reconciliation (Rail A).
 	g.GET("/remittances", guard("stays.admin.settlement"), h.ListRemittances)
 	g.POST("/remittances/ingest", guard("stays.admin.settlement"), h.IngestRemittance)
 	g.POST("/remittances/:id/resolve", guard("stays.admin.settlement"), h.ResolveRemittance)

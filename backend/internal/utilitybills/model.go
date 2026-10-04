@@ -251,26 +251,13 @@ func NextStatusFromProvider(outcome ProviderOutcome) Status {
 }
 
 // ClassifyProviderOutcome folds a provider TIMEOUT into the ProviderOutcome
-// vocabulary NextStatusFromProvider expects, so a timed-out purchase attempt
-// is never misclassified as failed.
-// This is not a port of anything in status.ts — status.ts has no concept of
-// a timeout. The rule lives in service.ts's attemptProviderPurchase: when
-// withUtilityProviderTimeout rejects with UtilityProviderTimeoutError, the
-// caught branch returns `{ status: 'pending', ... }` (never 'failed'),
-// specifically because a request that timed out on OUR side may have
-// actually succeeded upstream — VTpass keeps processing after our socket
-// gives up, so treating a timeout as failure risks reporting "failed" on a
-// purchase that later succeeds at the provider, or worse, driving a
-// double-purchase on retry. Only a requery (Phase 1, against the actual
-// provider) can resolve it, so it must land in provider_pending, exactly
-// like an explicit "pending" response — never failed.
-// Judgment call (flagged per the task instructions): this only classifies
-// OUTCOME → OUTCOME as a pure function, which is genuinely decision logic
-// adjacent to the state machine. Recording the attempt row itself (whose
-// status value is the distinct string "timeout", preserved verbatim in
-// utility_provider_attempts for observability — NOT the same vocabulary as
-// ProviderOutcome) is I/O and stays Phase 1's job in service.go; this
-// function does not attempt to model that.
+// vocabulary so a timed-out attempt is never misclassified as failed: our
+// socket giving up does not mean VTpass stopped processing, so a timeout lands
+// in provider_pending (requery resolves it) — never 'failed', which would
+// invite a double-purchase on retry.
+// The attempt row's own status is the distinct string "timeout" (kept verbatim
+// in utility_provider_attempts for observability) — a different vocabulary from
+// ProviderOutcome; recording it stays in service.go.
 func ClassifyProviderOutcome(timedOut bool, outcome ProviderOutcome) ProviderOutcome {
 	if timedOut {
 		return ProviderOutcomePending
