@@ -175,7 +175,7 @@ func (s *Service) rateModeCore(ctx context.Context, mode, jobID, raterID, provid
 // all received mode ratings (parcel/towing/mover).
 func (s *Service) recomputeModeRating(ctx context.Context, providerUserID string) {
 	var avg float64
-	s.db.QueryRow(ctx,
+	_ = s.db.QueryRow(ctx,
 		`SELECT COALESCE(AVG(stars),5.0) FROM mode_ratings WHERE ratee_id=$1`, providerUserID).Scan(&avg)
 	_, _ = s.db.Exec(ctx, `UPDATE drivers SET rating=$1, updated_at=NOW() WHERE user_id=$2`, avg, providerUserID)
 }

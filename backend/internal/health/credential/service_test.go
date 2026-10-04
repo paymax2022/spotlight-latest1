@@ -291,7 +291,7 @@ func TestSubmit_HappyPath(t *testing.T) {
 }
 
 func TestSubmit_RequiresConsent(t *testing.T) {
-	svc, _, _, _, _ := newHarness(t)
+	svc, _, _, _, _ := newHarness(t) //nolint:dogsled // tuple: only svc needed
 	in := validSubmit()
 	in.Consent = false
 	if _, err := svc.Submit(context.Background(), vetOwner, in); err == nil {
@@ -300,7 +300,7 @@ func TestSubmit_RequiresConsent(t *testing.T) {
 }
 
 func TestSubmit_OwnerOnly(t *testing.T) {
-	svc, _, _, _, _ := newHarness(t)
+	svc, _, _, _, _ := newHarness(t) //nolint:dogsled // tuple: only svc needed
 	if _, err := svc.Submit(context.Background(), "other-vet", validSubmit()); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("expected ErrForbidden for non-owner, got %v", err)
 	}

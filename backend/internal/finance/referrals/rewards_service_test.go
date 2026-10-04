@@ -185,7 +185,7 @@ func TestOnPurchaseSettled_FractionalTruncation_Integration(t *testing.T) {
 		t.Fatalf("OnPurchaseSettled: %v", err)
 	}
 
-	_, status, rewardKobo, _, _ := rewardRow(t, pool, txnID)
+	_, status, rewardKobo, _, _ := rewardRow(t, pool, txnID) //nolint:dogsled // tuple: subset asserted
 	if status != referrals.RewardStatusCredited {
 		t.Fatalf("status = %q, want CREDITED", status)
 	}

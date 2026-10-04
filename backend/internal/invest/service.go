@@ -182,7 +182,7 @@ func (s *Service) Eligibility(ctx context.Context, userID string) (map[string]an
 	if err != nil {
 		return nil, err
 	}
-	_, _, _, suitabilityDone, err := s.repo.LatestSuitability(ctx, userID)
+	_, _, _, suitabilityDone, err := s.repo.LatestSuitability(ctx, userID) //nolint:dogsled // tuple: only suitabilityDone needed
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +268,7 @@ func (s *Service) refreshProfileGates(ctx context.Context, userID string) error 
 	if err != nil {
 		return err
 	}
-	_, _, _, suitabilityDone, err := s.repo.LatestSuitability(ctx, userID)
+	_, _, _, suitabilityDone, err := s.repo.LatestSuitability(ctx, userID) //nolint:dogsled // tuple: only suitabilityDone needed
 	if err != nil {
 		return err
 	}

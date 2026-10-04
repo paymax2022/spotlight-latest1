@@ -137,7 +137,7 @@ func (s *Service) MoverDetail(ctx context.Context, id, callerID string) (map[str
 	isOwner := callerID == uid
 	if !isOwner {
 		var cnt int
-		s.db.QueryRow(ctx, `
+		_ = s.db.QueryRow(ctx, `
 			SELECT COUNT(*) FROM mover_bids b JOIN drivers d ON d.id = b.provider_id
 			WHERE b.job_id=$1 AND d.user_id=$2`, id, callerID).Scan(&cnt)
 		if cnt == 0 {

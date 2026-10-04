@@ -189,7 +189,7 @@ func TestCreateIntent_ReturnsAuthURL(t *testing.T) {
 }
 
 func TestCreateIntent_RequiresIdempotencyKey(t *testing.T) {
-	svc, _, _, _, _ := newTestService(t, 50000)
+	svc, _, _, _, _ := newTestService(t, 50000) //nolint:dogsled // tuple: only svc needed
 	if _, err := svc.CreatePaymentIntent(context.Background(), "g", CreatePaymentIntentRequest{InvoiceID: "inv-1", AmountMinor: 100}, ""); !errors.Is(err, ErrIdempotencyRequired) {
 		t.Fatalf("money path must require Idempotency-Key, got %v", err)
 	}

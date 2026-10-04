@@ -137,7 +137,7 @@ func (m *memCardStore) TerminateCard(_ context.Context, business, id string) err
 	if !m.owned(business, id) {
 		return ErrCardNotFound
 	}
-	_, _, _ = m.setStatus(business, id, "terminated")
+	_, _, _ = m.setStatus(business, id, "terminated") //nolint:dogsled // tuple: only side-effect matters
 	return nil
 }
 func (m *memCardStore) UpdateControls(_ context.Context, business, id string, controls SpendingControls) (Card, bool, error) {
