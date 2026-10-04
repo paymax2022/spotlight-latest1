@@ -108,7 +108,7 @@ func seedHandoverFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 func TestLiveDB_Handover_CollectedToHandedOverSucceeds(t *testing.T) {
 	pool := handoverPool(t)
 	ctx := t.Context()
-	labID, _, sampleID, phleboID, _, _ := seedHandoverFixture(t, ctx, pool)
+	labID, _, sampleID, phleboID, _, _ := seedHandoverFixture(t, ctx, pool) //nolint:dogsled // tuple: subset needed
 
 	svc := NewService(pool, nil, nil, fakeHandoverGate{labID: labID, verifiedPhlebotomistID: phleboID}, nil, nil, nil, nil)
 

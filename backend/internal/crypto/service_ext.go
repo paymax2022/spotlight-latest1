@@ -18,7 +18,7 @@ import (
 // asset B at the current quotes, net of the default spread (retained as fee).
 // Display-only: the server re-prices at execution time.
 func (s *Service) SwapQuote(ctx context.Context, userID, fromAssetID, toAssetID string, fromUnits int64) (*SwapQuote, error) {
-	q, _, _, _, err := s.priceSwap(ctx, fromAssetID, toAssetID, fromUnits)
+	q, _, _, _, err := s.priceSwap(ctx, fromAssetID, toAssetID, fromUnits) //nolint:dogsled // tuple: quote path only
 	return q, err
 }
 
