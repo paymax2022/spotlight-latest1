@@ -138,6 +138,34 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ── Notification delivery worker ───────────────────────────────────────────
+  # Consumes the notification:push/email/sms asynq tasks the api enqueues —
+  # health appointment/vaccination reminders, wallet events, estate notices.
+  # E2E-BE-031: nothing local consumed the queue, so enqueued tasks sat
+  # pending forever (the scheduler poller writes them; this drains them).
+  # Render already runs the same binary in prod (render.yaml
+  # spotlight-notification-worker). Profile-gated so it only runs when
+  # notification delivery is being exercised locally:
+  #   docker compose --profile notifications up notification-worker
+  # Provider creds (RESEND_API_KEY / TERMII_API_KEY / Expo) are unset locally —
+  # provider calls fail and the task retries, which is the observable behavior
+  # you want when testing enqueue→consume without real delivery.
+  notification-worker:
+    profiles: ["notifications"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["/app/notification-worker"]
+    environment:
+      # Local-only dev fixture (postgres:postgres on the Supabase CLI sidecar
+      # port), same DSN the other compose services carry.
+      DATABASE_URL: postgres://postgres:postgres@host.docker.internal:54322/postgres?sslmode=disable # trufflehog:ignore
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   redis_data:
   es_data:
