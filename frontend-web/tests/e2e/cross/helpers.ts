@@ -61,7 +61,7 @@ export async function adminBearer(request: APIRequestContext): Promise<string> {
 export async function adminGo(
   request: APIRequestContext,
   path: string,
-  opts: { method?: string; data?: unknown } = {},
+  opts: { method?: string; data?: unknown; headers?: Record<string, string> } = {},
 ): Promise<{ status: number; body: any }> {
   const token = await adminBearer(request);
   const res = await request.fetch(`${GO_BACKEND_URL}${path}`, {
@@ -70,6 +70,7 @@ export async function adminGo(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
       'x-admin-api-key': ADMIN_API_KEY,
+      ...(opts.headers ?? {}),
     },
     ...(opts.data !== undefined ? { data: opts.data } : {}),
   });
@@ -82,7 +83,7 @@ export async function adminGoAs(
   request: APIRequestContext,
   token: string,
   path: string,
-  opts: { method?: string; data?: unknown } = {},
+  opts: { method?: string; data?: unknown; headers?: Record<string, string> } = {},
 ): Promise<{ status: number; body: any }> {
   const res = await request.fetch(`${GO_BACKEND_URL}${path}`, {
     method: opts.method ?? 'GET',
@@ -90,6 +91,7 @@ export async function adminGoAs(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
       'x-admin-api-key': ADMIN_API_KEY,
+      ...(opts.headers ?? {}),
     },
     ...(opts.data !== undefined ? { data: opts.data } : {}),
   });
