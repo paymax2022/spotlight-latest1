@@ -340,3 +340,42 @@ func hasAudit(s *fakeStore, action string) bool {
 	}
 	return false
 }
+
+// academy_scholarship_awards.user_id is an auth.users FK — the award stores the
+// guardian-of-record, never the academy_students id; falls back to the actor.
+func TestApplyAward_StoresGuardianUserID(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeStore()
+	svc, fp := fundedPledge(t, store, newFakeLedger(), newFakeInvoicePayer(), 100000)
+
+	res, err := svc.ApplyAward(ctx, "admin-1", ApplyAwardRequest{
+		PledgeID:       fp.ID,
+		InvoiceID:      "inv-1",
+		StudentID:      "stu-1",
+		GuardianUserID: "guardian-1",
+		AmountMinor:    40000,
+	}, "apply-guardian-1")
+	if err != nil {
+		t.Fatalf("apply award: %v", err)
+	}
+	if res.Award.UserID != "guardian-1" {
+		t.Errorf("award.user_id must be the guardian auth user, got %q", res.Award.UserID)
+	}
+	if res.Award.StudentID != "stu-1" {
+		t.Errorf("award.student_id must stay the academy student, got %q", res.Award.StudentID)
+	}
+
+	// No guardian → the actor is the auth party of record.
+	res2, err := svc.ApplyAward(ctx, "admin-1", ApplyAwardRequest{
+		PledgeID:    fp.ID,
+		InvoiceID:   "inv-1",
+		StudentID:   "stu-1",
+		AmountMinor: 10000,
+	}, "apply-guardian-2")
+	if err != nil {
+		t.Fatalf("apply award (no guardian): %v", err)
+	}
+	if res2.Award.UserID != "admin-1" {
+		t.Errorf("award.user_id must fall back to the actor, got %q", res2.Award.UserID)
+	}
+}

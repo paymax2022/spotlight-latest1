@@ -57,11 +57,14 @@ type Pledge struct {
 
 // Award is one application of a funded pledge toward a specific invoice. It carries the invoice
 // payment reference produced by feesinvoice.RecordPayment so the fund flow is traceable.
+// UserID is the auth.users party persisted to user_id (an auth.users FK) — the
+// guardian-of-record, falling back to the applying actor.
 type Award struct {
 	ID               string     `json:"id"`
 	PledgeID         string     `json:"pledgeId"`
 	InvoiceID        string     `json:"invoiceId"`
 	StudentID        string     `json:"studentId"`
+	UserID           string     `json:"userId"`
 	AmountMinor      int64      `json:"amountMinor"`
 	InvoicePaymentID *string    `json:"invoicePaymentId,omitempty"`
 	State            AwardState `json:"state"`

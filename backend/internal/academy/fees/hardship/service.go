@@ -59,8 +59,8 @@ type ReviewerAuthorizer interface {
 }
 
 // NewService wires the pgx-backed store. The invoice-freezer + reviewer-authorizer ports are
-// injected by the integration task (composed at the academy registration root), mirroring
-// how feesscholarship takes its ledger/invoice ports.
+// injected by the integration layer (internal/app registerAcademyFees — E2E-ACAD-004),
+// mirroring how feesscholarship takes its ledger/invoice ports.
 func NewService(db *pgxpool.Pool, invoices InvoiceFreezer, authz ReviewerAuthorizer) *Service {
 	return &Service{store: NewRepository(db), invoices: invoices, authz: authz}
 }

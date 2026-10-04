@@ -172,9 +172,12 @@ func (s *Service) ApplyAward(ctx context.Context, actorID string, req ApplyAward
 	var awardReplayed bool
 	if err := s.store.WithTx(ctx, func(tx Tx) error {
 		a, inserted, aerr := tx.AppendAward(ctx, Award{
-			PledgeID:         req.PledgeID,
-			InvoiceID:        req.InvoiceID,
-			StudentID:        strutil.FirstNonEmpty(req.StudentID, p.TargetStudentID),
+			PledgeID:  req.PledgeID,
+			InvoiceID: req.InvoiceID,
+			StudentID: strutil.FirstNonEmpty(req.StudentID, p.TargetStudentID),
+			// user_id is an auth.users FK — store the guardian-of-record, not the
+			// academy_students id (23503 otherwise). Actor is a guaranteed auth user.
+			UserID:           strutil.FirstNonEmpty(req.GuardianUserID, actorID),
 			AmountMinor:      req.AmountMinor,
 			InvoicePaymentID: ptr.OrNil(paymentID),
 			IdempotencyKey:   idemKey,

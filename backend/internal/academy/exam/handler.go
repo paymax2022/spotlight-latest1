@@ -49,6 +49,8 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrIllegalTransition):
 		c.JSON(http.StatusConflict, gin.H{keyError: "illegal_transition", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
+	case errors.Is(err, ErrConflict):
+		c.JSON(http.StatusConflict, gin.H{keyError: "conflict", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrNotEntitled):
 		c.JSON(http.StatusForbidden, gin.H{keyError: "not_entitled", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrPauseNotAllowed), errors.Is(err, ErrInvalidInput), errors.Is(err, ErrAlreadyFinal):

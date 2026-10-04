@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/strutil"
@@ -13,6 +14,18 @@ import (
 )
 
 const keyError = "error"
+
+// uuidOK reports whether s is a syntactically valid uuid — path params feed
+// uuid-typed columns, so handlers gate on it and answer 400 rather than a 22P02 500.
+func uuidOK(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil
+}
+
+// badID writes the stable 400 invalid_input body for a malformed uuid path param.
+func badID(c *gin.Context) {
+	c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid_id", "message": "id must be a uuid"})
+}
 
 // Handler exposes the read-only platform EdTech oversight endpoints. Every response
 // is wrapped in {"data": ...} to match the console client (getJson unwraps
@@ -93,6 +106,10 @@ func (h *Handler) VerifySchool(c *gin.Context) {
 	// live route (POST /verification-queue/:id/review, where :id is the school id in the
 	// derived queue). Whichever param is present wins.
 	schoolID := c.Param("id")
+	if !uuidOK(schoolID) {
+		badID(c)
+		return
+	}
 	var body struct {
 		Decision    string `json:"decision"` // console sends 'approve' | 'reject'
 		GrantedTier string `json:"granted_tier"`
@@ -337,6 +354,10 @@ func (h *Handler) OverrideTrustScore(c *gin.Context) {
 	}
 	if schoolID == "" {
 		schoolID = body.SchoolID
+	}
+	if !uuidOK(schoolID) {
+		badID(c)
+		return
 	}
 	actorID := ""
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {

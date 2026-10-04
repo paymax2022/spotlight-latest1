@@ -322,6 +322,17 @@ func (s *Service) RecordPayment(ctx context.Context, actorID, invoiceID, guardia
 	return &RecordPaymentResult{Payment: p, Invoice: hydrated, Replayed: false}, nil
 }
 
+// Freeze applies the overdue→frozen transition through the guarded state
+// machine — never a raw status write. Returns the updated invoice or
+// ErrIllegalTransition when the edge is not legal.
+func (s *Service) Freeze(ctx context.Context, actorID, invoiceID string) (*Invoice, error) {
+	inv, err := s.store.GetInvoice(ctx, invoiceID)
+	if err != nil {
+		return nil, err
+	}
+	return s.applyEvent(ctx, actorID, inv, feesstatemachine.EvInvoiceFreeze)
+}
+
 // deriveStatusAfterPayment picks the correct invoice event from the DERIVED balance and the
 // due date, then applies it via the guarded state machine. Returns the invoice as it stands
 // after the transition (or unchanged when no transition is warranted / it is idempotent).

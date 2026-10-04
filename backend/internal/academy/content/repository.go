@@ -122,12 +122,14 @@ func (r *Repository) ListLiveLessonsForObjective(ctx context.Context, objectiveI
 // ListLessons lists lessons admin-wide (all statuses), newest first, optionally
 // filtered by objective_id / status. Mirrors ListLiveLessonsForObjective without
 // the live-only + single-objective constraints (admin CMS surface).
+// Reads academy_edu_lessons — NOT the brownfield academy_lessons (which has no
+// objective_id column and broke this endpoint at runtime — E2E-ACAD-003).
 func (r *Repository) ListLessons(ctx context.Context, objectiveID, status string, limit, offset int) ([]Lesson, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	var sb strings.Builder
-	sb.WriteString(`SELECT ` + lessonCols + ` FROM public.academy_lessons WHERE 1=1`)
+	sb.WriteString(`SELECT ` + lessonCols + ` FROM public.academy_edu_lessons WHERE 1=1`)
 	args := []any{}
 	if objectiveID != "" {
 		args = append(args, objectiveID)

@@ -1,6 +1,8 @@
 package exam
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -231,5 +233,16 @@ func TestResultToScoreMap_CarriesSubjectName(t *testing.T) {
 	}
 	if _, present := subs[1]["subject_name"]; present {
 		t.Error("subjects[1] has no resolved name → subject_name must be omitted, not empty")
+	}
+}
+
+// An arena code outside the CHECK enum must fail validation with ErrInvalidInput
+// before the repository is reached. Nil pool is safe — the guard returns first.
+func TestCreateArena_InvalidCode_ReturnsInvalidInput(t *testing.T) {
+	svc := NewService(nil)
+	for _, code := range []string{"", "NOPE", "bece", "BECE2"} {
+		if _, err := svc.CreateArena(context.Background(), "actor-1", CreateArenaRequest{Code: code, Name: "n"}); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("code %q: want ErrInvalidInput, got %v", code, err)
+		}
 	}
 }
