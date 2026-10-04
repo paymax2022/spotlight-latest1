@@ -281,7 +281,7 @@ func TestIdempotency_DuplicateContributionIsNoOp(t *testing.T) {
 }
 
 func TestContribute_RequiresIdempotencyKey(t *testing.T) {
-	svc, _, _, _ := newTestService()
+	svc, _, _, _ := newTestService() //nolint:dogsled // tuple: only svc needed
 	ctx := context.Background()
 	v, _ := svc.CreateVault(ctx, "guardian-1", CreateVaultRequest{GoalName: "T", TargetMinor: 1000})
 	if _, err := svc.Contribute(ctx, "guardian-1", v.ID, 100, ""); !errors.Is(err, ErrIdempotencyRequired) {
@@ -293,7 +293,7 @@ func TestContribute_RequiresIdempotencyKey(t *testing.T) {
 
 // active → target_reached auto-fires when the derived balance meets the target.
 func TestStateMachine_AutoReachTarget(t *testing.T) {
-	svc, _, _, _ := newTestService()
+	svc, _, _, _ := newTestService() //nolint:dogsled // tuple: only svc needed
 	ctx := context.Background()
 	v, _ := svc.CreateVault(ctx, "g", CreateVaultRequest{GoalName: "T", TargetMinor: 50000})
 
@@ -389,7 +389,7 @@ func TestStateMachine_ApplyOnlyFromTargetReached(t *testing.T) {
 
 // Contribution into a terminal (withdrawn) vault is rejected.
 func TestContribute_RejectedOnTerminalVault(t *testing.T) {
-	svc, _, _, _ := newTestService()
+	svc, _, _, _ := newTestService() //nolint:dogsled // tuple: only svc needed
 	ctx := context.Background()
 	v, _ := svc.CreateVault(ctx, "g", CreateVaultRequest{GoalName: "T", TargetMinor: 50000})
 	if _, err := svc.Withdraw(ctx, "g", v.ID); err != nil {
