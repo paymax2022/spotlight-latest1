@@ -47,7 +47,7 @@ func seedSettledContribution(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO settlements (id, reference, module_type, payer_id, total_kobo, fee_kobo, provider_kobo,
 			                         status, escrowed_at, settled_at, idempotency_key)
-			VALUES ($1, $2, 'crowdfunding', $3, $4, $5, $6, 'settled', NOW(), $7)`,
+			VALUES ($1, $2, 'crowdfunding', $3, $4, $5, $6, 'settled', NOW(), NOW(), $7)`,
 			settlementID, "campaign:"+campaignID+":contributor:"+contributorID,
 			contributorID, totalKobo, fee, totalKobo-fee, idem); err != nil {
 			t.Fatalf("seed settled settlement: %v", err)
