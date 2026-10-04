@@ -355,9 +355,9 @@ func (h *Handler) AdminCustodyAudit(c *gin.Context) {
 }
 
 // AdminDashboard — GET /admin/dashboard  platform-wide KPI aggregate. See
-// Service.AdminDashboard / AdminDashboard (admin.go, admin_model.go) for
-// exactly what is computed and why fields this batch cannot honestly compute
-// are left off the shape entirely rather than fabricated.
+// Service.AdminDashboard / AdminDashboard (admin.go) for exactly what is
+// computed and why fields this batch cannot honestly compute are left off the
+// shape entirely rather than fabricated.
 func (h *Handler) AdminDashboard(c *gin.Context) {
 	d, err := h.svc.AdminDashboard(c.Request.Context())
 	if err != nil {

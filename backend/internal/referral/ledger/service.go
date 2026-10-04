@@ -218,20 +218,11 @@ func (s *Service) Transition(ctx context.Context, rewardID, nextState, idempoten
 
 	// Real payout: post a balanced credit to the human beneficiary's wallet.
 	// House rows are notional and skip the wallet entirely.
-	// REF-009 (closing the accrual/payout-side half): a suspended/locked/
-	// deleted beneficiary is refused HERE too, not just at WithdrawEligible.
-	// This closes the remaining gap deliberately left open when REF-009 was
-	// first scoped to the withdrawal path alone — on reflection, gating only
-	// withdrawal while still letting the payout itself land would just move
-	// the same "money reaches a suspended account" outcome one step earlier,
-	// and would risk the exact class of bug REF-011 just fixed elsewhere in
-	// this file: a state transition succeeding while the money movement it
-	// describes silently doesn't happen (or, here, happens somewhere it
-	// shouldn't). Failing the WHOLE transition (no state change, no credit)
-	// when the gate rejects means the reward simply stays at its current
-	// state — safe to retry once the account is reinstated, matching this
-	// function's existing "state and money move together, or neither does"
-	// contract.
+	// REF-009: a suspended/locked/deleted beneficiary is refused here too, not
+	// just at WithdrawEligible — gating withdrawal alone would still let money
+	// land on a suspended account. Failing the WHOLE transition (no state
+	// change, no credit) leaves the reward safe to retry, matching this
+	// function's "state and money move together, or neither does" contract.
 	if nextState == StatePaid && !isHouse && beneficiaryID != nil && *beneficiaryID != "" && amountKobo > 0 {
 		if err := s.checkAccountEligibleForMoneyMovement(ctx, *beneficiaryID); err != nil {
 			return err

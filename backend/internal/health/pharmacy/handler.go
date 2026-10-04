@@ -401,16 +401,12 @@ func parseOptionalFloat(s string) *float64 {
 }
 
 // AdminListOrders — GET /admin/orders  order/delivery oversight.
-// PHARMACY-001: the admin frontend (healthPharmacyAdminService.ts listOrders)
-// sends `status` + `fulfilment` query params; this used to read only `state` +
-// `pharmacy_provider_id`, so both filters silently no-op'd. Backend now accepts
-// the frontend's actual param names (preferred: it's the frontend's documented
-// contract — see the PR description for why this side was picked over renaming
-// the frontend), aliasing the older `state`/`fulfilment_method` names for
-// back-compat with any other caller. Values are upper-cased before the query
-// since pharmacy_orders.state/fulfilment_method store upper-case enum values
-// (OrderState/FulfilmentMethod, model.go) while the frontend's own status
-// vocabulary (types/healthAdmin.ts PharmacyOrderStatus) is lower-case.
+// Accepts the admin frontend's `status` + `fulfilment` param names
+// (healthPharmacyAdminService.ts listOrders) and aliases the older
+// `state`/`fulfilment_method` names for back-compat. Values are upper-cased
+// before the query since pharmacy_orders.state/fulfilment_method store
+// upper-case enum values (OrderState/FulfilmentMethod, model.go) while the
+// frontend's status vocabulary is lower-case.
 func (h *Handler) AdminListOrders(c *gin.Context) {
 	state := strings.ToUpper(strings.TrimSpace(strutil.FirstNonEmpty(c.Query("status"), c.Query("state"))))
 	fulfilment := strings.ToUpper(strings.TrimSpace(strutil.FirstNonEmpty(c.Query("fulfilment"), c.Query("fulfilment_method"))))
@@ -435,10 +431,9 @@ func (h *Handler) AdminGetOrder(c *gin.Context) {
 }
 
 // AdminDashboard — GET /admin/dashboard  platform-wide KPI aggregate
-// (PHARMACY-001). See Service.AdminDashboard / AdminDashboard (admin.go,
-// admin_model.go) for exactly what is computed and why fields this batch
-// cannot honestly compute are left off the shape entirely rather than
-// fabricated.
+// (PHARMACY-001). See Service.AdminDashboard / AdminDashboard (admin.go) for
+// exactly what is computed and why fields this batch cannot honestly compute
+// are left off the shape entirely rather than fabricated.
 func (h *Handler) AdminDashboard(c *gin.Context) {
 	d, err := h.svc.AdminDashboard(c.Request.Context())
 	if err != nil {

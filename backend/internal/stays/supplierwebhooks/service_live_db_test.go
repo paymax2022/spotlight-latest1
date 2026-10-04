@@ -234,8 +234,8 @@ func TestLiveDB_Webhook_IllegalEdgeFailsAndLegalEdgesApply(t *testing.T) {
 // ────────────────────────────────────────────────────────────────────────────
 // PIN G-4c + G-3: a supplier-reported CANCELLED_BY_HOTEL must run the SHARED
 // refund path — kill the queued payout, drain the parked legs back to the
-// guest, land the terminal state. The bare UPDATE this used to be stranded the
-// guest's gross in the pooled accounts forever.
+// guest, land the terminal state. A bare UPDATE would strand the guest's
+// gross in the pooled accounts forever.
 // ────────────────────────────────────────────────────────────────────────────
 func TestLiveDB_Webhook_HotelCancel_RefundsAndKillsPayout(t *testing.T) {
 	ctx := context.Background()

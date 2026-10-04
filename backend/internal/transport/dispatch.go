@@ -296,7 +296,6 @@ func (s *Service) CompleteTrip(ctx context.Context, tripID, driverUserID string)
 	if t.DriverID != nil {
 		s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *t.DriverID)
 	}
-	// Bump rider completed-trip count.
 	s.db.Exec(ctx, `UPDATE mobility_profiles SET completed_trips=completed_trips+1, updated_at=NOW() WHERE user_id=$1`, t.RiderID)
 	return nil
 }

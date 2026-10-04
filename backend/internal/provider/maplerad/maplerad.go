@@ -341,7 +341,7 @@ func (c *Client) InitiatePayout(ctx context.Context, req provider.PayoutRequest)
 // VerifyWebhookSignature validates Maplerad's HMAC-SHA256 signature over the raw
 // body, hex-encoded, using the vault-stored webhook secret, with a constant-time
 // compare. (Scheme mirrors orchestration/adapters/maplerad_live.go.) Rejects when
-// the secret or signature is missing — never the old `return true` stub.
+// the secret or signature is missing — fail closed.
 func (c *Client) VerifyWebhookSignature(payload []byte, signature string) bool {
 	if c.webhookSecret == "" || signature == "" {
 		return false

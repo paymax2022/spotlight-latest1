@@ -416,18 +416,14 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 		webhooks.GET("/health", health.GenericHealth)
 	}
 
-	// Single shared pgx pool for all DB-backed module aggregators. Created once
-	// here (was previously opened twice — finance + connect each called
-	// platformDB.New). nil when DATABASE_URL is unset or the connection fails;
-	// each aggregator skips its routes on a nil pool.
+	// Single shared pgx pool for all DB-backed module aggregators. nil when
+	// DATABASE_URL is unset or the connection fails; each aggregator skips its
+	// routes on a nil pool.
 	// Outside development a nil pool is FATAL, not a warning. A degraded boot
 	// still binds :8080 and answers /api/v1/public/health with 200, so Railway
 	// marks the deployment SUCCESS, replaces the previous (working) one, and
 	// every DB-backed route — all of /api/finance/*, wallet, KYC, restaurant,
-	// association, health — 404s for as long as that deployment lives. That is
-	// exactly what happened on staging on 2026-09-28: an auto-deployed build
-	// ran 13 hours with no finance routes behind a green health check, and the
-	// only symptom was "Couldn't load …" on every module in the app. Refusing
+	// association, health — 404s for as long as that deployment lives. Refusing
 	// to start turns that into a FAILED deployment that Railway keeps rolled
 	// back (restartPolicyType ON_FAILURE), which is the outcome we want. Same
 	// doctrine as the ASSOC_CARD_SIGNING_SECRET guard in finance_routes.go:
@@ -489,11 +485,9 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	health.WithRedis(sharedRedis, cfg.RedisRequired)
 
 	// Shared SSE hub (one instance, one /api/v1/realtime/stream route regardless
-	// of which module publishes) — was previously built locally inside
-	// RegisterMarketplace, which meant marketplace was the only module that
-	// could ever reach the mobile client's one SSE connection. Built here so
-	// events (and any future module) can share it. Nil-Redis-safe (falls back
-	// to in-process fan-out); see platform/realtime.Hub's own doc comment.
+	// of which module publishes) — the mobile client holds one SSE connection,
+	// so every publishing module must reach the same hub. Nil-Redis-safe (falls
+	// back to in-process fan-out); see platform/realtime.Hub's own doc comment.
 	rtHub := realtime.NewHub(sharedRedis)
 
 	// Server-issued email OTP (Brevo). Always registered so the surface answers
@@ -643,7 +637,7 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 
 	// Paymax Marketplace (Jiji-style classifieds + escrow checkout). Feature-flagged,
 	// default off. Reuses the finance double-entry ledger for escrow; app-wiring
-	// injects Agent B's *search.Client via svc.SetSearcher when search is available.
+	// injects the *search.Client via svc.SetSearcher when search is available.
 	if cfg.FeatureMarketplaceEnabled {
 		RegisterMarketplace(r, cfg, supabase, rbacService, sharedPool, sharedRedis, rtHub, referralRewardsSvc)
 	}

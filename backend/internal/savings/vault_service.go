@@ -28,8 +28,8 @@ const AutoSaveJobType = "savings.autosave"
 // before maturity, in basis points (1000 = 10%). It matches the 10% the central
 // commission module already assumes for this fee (see app wiring). Override per
 // deployment with SAVINGS_EARLY_BREAK_PENALTY_BPS.
-// This rate MUST be server-side. It previously arrived in the request body, so
-// any member could break a lock penalty-free by sending penalty_bps: 0.
+// This rate MUST be server-side — a client-supplied penalty_bps would let any
+// member break a lock penalty-free.
 const DefaultEarlyBreakPenaltyBps int64 = 1000
 
 // walletDebitLimiter is the minimal seam every savings money path depends on

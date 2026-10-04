@@ -28,13 +28,10 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 //
 // READ-FIRST, not write-first. In steady state the account already exists, so the
 // common path is a single SELECT — no write transaction, no XID, no speculative
-// insertion against the unique index. The previous shape upserted FIRST and only
-// fell back to SELECT when the INSERT conflicted (INSERT ... ON CONFLICT DO
-// NOTHING RETURNING yields zero rows on conflict), so every read paid for a write
-// attempt plus a second query — two round trips where one suffices, on the hottest
-// read path in the API (every balance / transaction / transfer call resolves its
-// account here). On a saturated pool the extra write-shaped acquisition also held
-// a connection longer per request (AGT1-PERF-001).
+// insertion against the unique index. A write-first upsert would make every read
+// pay for a write attempt plus a fallback SELECT on the hottest read path in the
+// API (every balance / transaction / transfer call resolves its account here;
+// AGT1-PERF-001).
 //
 // Race safety is unchanged: two first-touch creators still converge on the
 // unique constraint — one inserts, the other conflicts (DO NOTHING → no rows)

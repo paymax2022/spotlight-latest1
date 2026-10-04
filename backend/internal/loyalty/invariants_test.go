@@ -11,8 +11,6 @@ package loyalty
 //   - rank(Tier) (service.go): the tier ordering that drives (a) monotonic
 //     no-downgrade tier re-evaluation and (b) MinTier reward gating. This is the
 //     single pure comparator both money-adjacent paths depend on.
-// It also documents a real ordering bug found while reading (see the BUG note and
-// TestRank_BlackTierIsUnordered).
 // Symbols under test are unexported, so this file is in-package (package loyalty).
 
 import "testing"
@@ -68,9 +66,9 @@ func TestRank_MinTierGating(t *testing.T) {
 	}
 }
 
-// rank(TierBlack) is now the highest tier (above TIER3), fixing the latent defect
-// where BLACK fell through to 0 and a MinTier=BLACK reward gate would admit EVERY
-// member (rank(anyTier) >= 0). BLACK membership is also tracked in a separate table
+// rank(TierBlack) must be the highest tier (above TIER3): if BLACK fell through
+// to rank 0, a MinTier=BLACK reward gate would admit EVERY member
+// (rank(anyTier) >= 0). BLACK membership is also tracked in a separate table
 // (black.go); this asserts the comparator itself is correct + fail-closed.
 
 func TestRank_BlackTierIsHighest(t *testing.T) {

@@ -703,10 +703,10 @@ func (s *Service) ExtendOffering(ctx context.Context, actorID, id string, extraD
 	return o, nil
 }
 
-// Auto-invest execution (work order 4). Plans were previously created but never
-// run. The house pattern for periodic work is a background ticker goroutine
-// (orchestration.StartTreasuryMonitor / symptomsearch.StartRetentionPurge — the
-// repo has no pg_cron and no asynq periodic scheduler); this mirrors it.
+// Auto-invest execution. The house pattern for periodic work is a background
+// ticker goroutine (orchestration.StartTreasuryMonitor /
+// symptomsearch.StartRetentionPurge — the repo has no pg_cron and no asynq
+// periodic scheduler); this mirrors it.
 // Every execution goes through the EXISTING Subscribe money path, so every iron
 // rule (KYC, risk-ack, 10% cap, tier limit, escrow ledger, audit) applies
 // unchanged. The idempotency key is DETERMINISTIC —

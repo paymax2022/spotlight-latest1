@@ -50,10 +50,9 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	rxSvc := healthrx.NewService(pool, nil)
 	// transport.Service needs a real settlement instance for its own escrow
 	// (last-mile courier payout) — a nil settlement service isn't a no-op,
-	// it's a nil pointer BookParcel dereferences unconditionally. Found live
-	// via UAT: dispatching any DELIVERY-fulfilment pharmacy order panicked
-	// (500) inside settlement.Service.Escrow, so the entire DELIVERY
-	// lifecycle for this vertical could never progress past DISPENSED.
+	// it's a nil pointer BookParcel dereferences unconditionally, so
+	// dispatching a DELIVERY-fulfilment order would panic inside
+	// settlement.Service.Escrow and never progress past DISPENSED.
 	// Mirrors finance_routes.go's own transport.NewService wiring.
 	transportSvc := transport.NewService(pool, settlement.NewService(pool, ledgerSvc))
 	kycSvc := kyc.NewService(pool)

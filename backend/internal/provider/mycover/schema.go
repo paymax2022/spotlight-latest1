@@ -299,16 +299,13 @@ func convertField(rf rawSchemaField) Field {
 // mapFieldType translates MyCover's coarse type vocabulary (string, number,
 // boolean, object, array, integer) into the richer internal contract type the
 // app renders a widget from.
-// ⚠️ ONE OF THESE LABELS IS LOAD-BEARING, NOT PRESENTATIONAL.
-// This comment used to claim the whole mapping "never changes what is sent or
-// what anything costs". That was false, and the falsehood was the root cause of
-// a live 100x pricing bug. `money` is the label that says a value is DENOMINATED:
-// clients submit money fields in kobo because of it, and the adapter rescales
-// exactly those fields to the provider's naira because of it (see
-// gateway/form_money.go and money.go). Every other label here really is just a
-// keyboard and a control.
-// A name-based heuristic remains acceptable for `money` for one reason only:
-// SYMMETRY. Both sides key off the SAME emitted label, so a field this function
+// ⚠️ ONE OF THESE LABELS IS LOAD-BEARING, NOT PRESENTATIONAL. `money` says a
+// value is DENOMINATED: clients submit money fields in kobo because of it, and
+// the adapter rescales exactly those fields to the provider's naira because of
+// it (see gateway/form_money.go and money.go). Every other label here is just
+// a keyboard and a control.
+// A name-based heuristic is safe for `money` for one reason only: SYMMETRY.
+// Both sides key off the SAME emitted label, so a field this function
 // misclassifies is multiplied by 100 by the client and divided by 100 by the
 // adapter and round-trips to identity. If you ever make one side decide for
 // itself which fields are money, that property is gone and a wrong guess here

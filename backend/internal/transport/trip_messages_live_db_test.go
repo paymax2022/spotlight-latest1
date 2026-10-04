@@ -74,7 +74,6 @@ func TestLiveDB_TripChatIsScopedToParticipants(t *testing.T) {
 		t.Errorf("rider message sender_role = %q, want rider", riderMsg.SenderRole)
 	}
 
-	// Driver sends.
 	driverMsg, err := svc.SendMessage(ctx, tripID, driver, SendTripMessageRequest{Body: "On my way, 2 mins"})
 	if err != nil {
 		t.Fatalf("SendMessage (driver): %v", err)

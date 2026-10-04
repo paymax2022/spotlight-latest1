@@ -467,7 +467,6 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		}
 	}
 
-	// Fetch and validate menu items; group by restaurant for downstream processing.
 	var itemsWithRest []itemWithRest
 	var subtotal int64
 	for _, input := range req.Items {
@@ -780,15 +779,13 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	ref := "order:" + orderID
 
 	// The rest of PlaceOrder runs as phases that each hold AT MOST ONE pool connection,
-	// and never overlap. This is a hard requirement, not tidiness: an earlier shape kept
-	// the order transaction open across settlement.Escrow, and Escrow needs a SECOND
-	// connection of its own (ledger.Debit, then the settlements insert). Every in-flight
-	// order therefore held two connections, so once concurrency reached half the pool
-	// size every connection was pinned by an order tx while every one of those txs
-	// waited for a connection that could never come free — a total deadlock of the order
-	// path, not a slowdown. It reproduces exactly with pool_max_conns=4 and 8 concurrent
-	// orders (goroutines parked in puddle.Pool.acquire inside Escrow), which is why CI on
-	// a 2-core runner hung for its full 10-minute timeout while a 16-core dev box passed.
+	// and never overlap. This is a hard requirement, not tidiness: keeping the
+	// order transaction open across settlement.Escrow deadlocks, because Escrow
+	// needs a SECOND connection of its own (ledger.Debit, then the settlements
+	// insert). Once concurrency reached half the pool size every connection was
+	// pinned by an order tx while every tx waited for a connection that could
+	// never come free — reproducible with pool_max_conns=4 and 8 concurrent
+	// orders (goroutines parked in puddle.Pool.acquire inside Escrow).
 	//	0. tier gate                 (reads only — nothing to unwind)
 	//	1. reserve the promo slot    (short tx: FOR UPDATE + count + redemption insert)
 	//	2. escrow                     (its own connection)
@@ -964,7 +961,6 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 	// The promo redemption was already written in phase 1, keyed to this orderID, so
 	// there is nothing to insert here — the order row it points at now exists.
 
-	// Insert order items and their restaurant mappings (multi-restaurant support).
 	const insertItem = `INSERT INTO order_items (id, order_id, menu_item_id, name, price_kobo, quantity, subtotal_kobo) VALUES ($1,$2,$3,$4,$5,$6,$7)`
 	const insertRestMapping = `INSERT INTO order_restaurant_items (id, order_id, order_item_id, restaurant_id) VALUES ($1,$2,$3,$4)`
 	const insertItemModifier = `INSERT INTO order_item_modifiers (id, order_item_id, modifier_id, name, price_delta_kobo) VALUES ($1,$2,$3,$4,$5)`
@@ -1004,7 +1000,6 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 		return nil, err
 	}
 
-	// Notify the restaurant owner of the new order; broadcast over the order WS.
 	s.notify(ctx, Notification{
 		UserID: ownerID,
 		Event:  EventOrderPlaced,

@@ -258,13 +258,8 @@ func TestEarningsProjectedFromLedger(t *testing.T) {
 }
 
 // Regression: a user who has never requested an upgrade must get the
-// `not_started` STATE, never an error.
-// The repository correctly reports "no row"; the bug was translating that into a
-// 404 at the service boundary. Every provider looks exactly like this on their
-// first visit, so the 404 made /onboarding/upgrade-merchant unreachable for the
-// only people it exists for — it rendered "We could not load your upgrade
-// status". contracts/doctor.openapi.yaml declares ONLY a 200 for this endpoint,
-// so the 404 was never part of the contract either.
+// `not_started` STATE, never an error — "no row" is the starting state, not a
+// missing resource (contracts/doctor.openapi.yaml declares ONLY a 200 here).
 func TestGetMerchantUpgrade_FreshUserIsNotStartedNotAnError(t *testing.T) {
 	svc, _, _, cleanup := newIntegrationService(t)
 	defer cleanup()
@@ -321,11 +316,9 @@ func seedAuthUser(t *testing.T, pool *db.Pool) string {
 	return id
 }
 
-// Regression: choosing a provider type must work for a user with NO doctor_profiles
-// row — which is everyone who reaches this step.
-// Nothing in this backend ever INSERTed into doctor_profiles, so the UPDATE this
-// path used to run matched zero rows and returned ErrNotFound → HTTP 404, blocking
-// onboarding at the provider-type step for every real user.
+// Regression: choosing a provider type must work for a user with NO
+// doctor_profiles row — which is everyone who reaches this step. The row is
+// created by this path's upsert, not expected to pre-exist.
 func TestSetProviderType_CreatesProfileRowForFreshUser(t *testing.T) {
 	svc, _, pool, cleanup := newIntegrationService(t)
 	// t.Cleanup, NOT defer: seedAuthUser registers its row deletion with

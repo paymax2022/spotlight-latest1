@@ -1,19 +1,13 @@
 package groups
 
-// LIVE-DB regression guard for two stacked bugs found auditing GRP-4
-// ("dues use ledger.Debit directly, bypassing the usual tier-limit check").
-//  1. Create() inserted the group's wallet ledger account with group_id left
-//     NULL, never binding it to the group just created. PayDues looks the
-//     wallet up by group_id, so it could never find ANY group's wallet —
-//     dues payments were completely non-functional, not just ungated.
-//     Confirmed live before fixing: the newest group_wallet row's group_id
-//     was NULL regardless of the group actually created.
-//  2. PayDues called s.ledger.Debit directly with no tier gate at all, unlike
-//     every other money-path module (restaurant, transport), which owe
-//     CLAUDE.md's iron rule #4 a fail-closed KYC-tier / daily-limit check
-//     before a wallet debit. Fixed by wiring the same tierLimiter seam
-//     (EnforceCheckoutDebitLimit) restaurant/transport already use, refusing
-//     with ErrTierGateUnwired when no gate is wired at all.
+// LIVE-DB regression guard for the GRP-4 dues money path. Two invariants:
+//  1. Create() must bind the group's wallet ledger account with group_id —
+//     PayDues looks the wallet up by group_id, so a NULL group_id leaves every
+//     group's wallet unreachable.
+//  2. PayDues must pass a fail-closed KYC-tier / daily-limit check before the
+//     wallet debit (CLAUDE.md iron rule #4), via the same tierLimiter seam
+//     (EnforceCheckoutDebitLimit) restaurant/transport use — refusing with
+//     ErrTierGateUnwired when no gate is wired at all.
 // Skipped unless TEST_DATABASE_URL is set.
 
 import (

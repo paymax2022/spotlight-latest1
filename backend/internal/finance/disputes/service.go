@@ -245,11 +245,9 @@ func (h *Handler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": disputes, "count": len(disputes)})
 }
 
-// AdminResolve handles POST /api/finance/admin/disputes/:id/resolve
-// refund_kobo is REQUIRED reading for module_type=="food" (see Service.Resolve /
-// FOOD-004) — it used to be silently dropped here, which is exactly how the refund
-// path went dead: the frontend's request body was correct, but nothing ever
-// unmarshalled it.
+// AdminResolve handles POST /api/finance/admin/disputes/:id/resolve.
+// refund_kobo is REQUIRED for module_type=="food" (see Service.Resolve /
+// FOOD-004) — it must be unmarshalled here or the refund path dead-ends.
 func (h *Handler) AdminResolve(c *gin.Context) {
 	adminID := ginutil.UserID(c)
 	disputeID := c.Param("id")

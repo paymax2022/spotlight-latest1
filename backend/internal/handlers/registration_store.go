@@ -220,7 +220,6 @@ func (s *RegistrationStore) GetApplication(ctx context.Context, userID string, a
 
 // SaveStep updates form_data and step progress.
 func (s *RegistrationStore) SaveStep(ctx context.Context, userID string, appID string, stepKey string, values map[string]interface{}, newPercent int) (*Application, error) {
-	// Merge new values into form_data
 	row := s.db.QueryRow(ctx, `
 		UPDATE registrations
 		SET
@@ -339,7 +338,7 @@ type StatusEvent struct {
 
 // GetStatusTimeline retrieves the timeline of status changes for an application.
 func (s *RegistrationStore) GetStatusTimeline(ctx context.Context, userID string, appID string) ([]StatusEvent, error) {
-	// First verify user owns the application
+	// Object-level authz: the caller must own the application.
 	var owned bool
 	err := s.db.QueryRow(ctx, "SELECT true FROM registrations WHERE id = $1 AND user_id = $2", appID, userID).Scan(&owned)
 	if errors.Is(err, pgx.ErrNoRows) {

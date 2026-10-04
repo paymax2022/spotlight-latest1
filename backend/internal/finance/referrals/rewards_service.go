@@ -362,14 +362,11 @@ func (s *RewardService) GetOrCreateLink(ctx context.Context, referrerID string) 
 //
 // Late-claim semantics (E2E-FIN-042): the §7A signup resolver ALWAYS writes a
 // row — a codeless signup gets a house placeholder (is_house, referrer NULL) —
-// so the plain ON CONFLICT DO NOTHING insert this endpoint used to run was a
-// silent no-op for every codeless signup: the placeholder survived, the code
-// never attributed, and the response lied with referrer_id="". The upsert
-// below now REPLACES a still-claimable house placeholder with the real
-// referrer (mirroring the claimable conditions attribution.Service.ClaimCode
-// enforces: is_house, status='grace', grace window open). A row already held
-// by a real referrer is never overwritten — first-real-attribution wins, so a
-// concurrent signup-time attribution beats a racing late claim.
+// so the upsert below must REPLACE a still-claimable house placeholder rather
+// than no-op on conflict (same claimable conditions as
+// attribution.Service.ClaimCode: is_house, status='grace', grace window open).
+// A row held by a real referrer is never overwritten — first-real-attribution
+// wins, so a signup-time attribution beats a racing late claim.
 //
 // Returns (referrerID, attributed): referrerID is the user's ACTUAL current
 // referrer ("" when still house-attributed), and attributed is true only when
@@ -1127,9 +1124,6 @@ func (s *RewardService) ModuleStatus(ctx context.Context) ([]ModuleRollup, error
 // small helpers.
 
 // generateRewardCode issues a code in the shared 5-character shape (see service.go).
-// It previously returned "R" + hex(5 bytes) = 11 characters, far too long to
-// read aloud or type — the complaint that prompted this change. Nothing depended
-// on the "R" prefix; it was never parsed anywhere.
 func generateRewardCode() (string, error) {
 	return GenerateCode()
 }

@@ -47,8 +47,8 @@ func TestLiveDB_OwnerCatalogueIncludesWhatCustomersCannotSee(t *testing.T) {
 	f := newInboxFixture(t, ctx, pool)
 
 	onSale := seedProduct(t, ctx, f, f.pharmacy, "Paracetamol", "REGISTERED", true, 50_000, 12)
-	// Taken off sale — invisible in the customer catalogue, and previously
-	// invisible to its own owner, who could then never put it back.
+	// Taken off sale — invisible in the customer catalogue, but must remain
+	// visible to its own owner so it can be put back.
 	deactivated := seedProduct(t, ctx, f, f.pharmacy, "Amoxicillin", "REGISTERED", false, 120_000, 0)
 	// Awaiting NAFDAC verification — the owner must see it to chase it.
 	pending := seedProduct(t, ctx, f, f.pharmacy, "New Syrup", "PENDING", true, 80_000, 5)

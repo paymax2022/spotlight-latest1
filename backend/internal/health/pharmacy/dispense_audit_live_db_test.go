@@ -1,12 +1,10 @@
 package healthpharmacy_test
 
-// LIVE-DB regression for E2E-HLT-002: GET /admin/dispense-audit 500'd on EVERY
-// call. AdminDispenseAudit bound the optional pharmacy_provider_id filter as a
-// text string and ran `WHERE ($1 = '' OR o.pharmacy_provider_id = $1)` — the
-// comparison arm is evaluated per row regardless of the short-circuit, so
-// Postgres rejected `uuid = ''` with `invalid input syntax for type uuid`,
-// filtered or not. The fix mirrors AdminListOrders: bind NULL for "no filter"
-// and compare in a single typed context ($1::uuid).
+// LIVE-DB regression for E2E-HLT-002: GET /admin/dispense-audit must not 500.
+// The optional pharmacy_provider_id filter binds NULL for "no filter" and
+// compares in a single typed context ($1::uuid) — a `($1 = '' OR col = $1)`
+// shape still evaluates the uuid comparison per row and Postgres rejects
+// `uuid = ''` with `invalid input syntax for type uuid`, filtered or not.
 // Skips unless TEST_DATABASE_URL is set.
 
 import (

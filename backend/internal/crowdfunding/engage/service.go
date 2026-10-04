@@ -435,24 +435,16 @@ func (s *Service) RecordCampaignEvent(ctx context.Context, campaignID, eventType
 }
 
 // Broadcast — a creator's one-time message to everyone who has backed their
-// campaign (the mobile "Message contributors" screen).
-// UAT finding (Crowdfunding CF-008): the mobile client has shipped this
-// screen for a while (app/crowdfunding/creator/performance/[id].tsx, a real
-// navigable "Message contributors" action, not behind any feature flag) and
-// POSTs to /campaigns/:id/broadcast — but neither a Next.js proxy route nor
-// a Go handler existed anywhere in the codebase. Every real send 404'd.
+// campaign (the mobile "Message contributors" screen, CF-008).
 // Delivery scope: this posts a REAL in-app notification (cf_notifications,
 // the same table GetNotifications/MarkNotificationsRead already read/write)
 // to every distinct backer, honoring each backer's own campaign_updates
-// preference (cf_notification_prefs) — a backer who opted out of campaign
-// updates does not get messaged just because the creator chose to send one.
-// The requested push/email channels are recorded on the notification so a
-// future dispatcher can pick them up, but no push or email actually leaves
-// the platform yet — there is no APNs/FCM/Resend wiring anywhere in this
-// module to hook into, and this function does not fabricate one (see the
-// project-wide "we do not fabricate a provider success" convention, e.g.
-// adminext/withdraw_approve.go). recipients in the response is an honest
-// count of who was actually notified in-app.
+// preference (cf_notification_prefs) — an opted-out backer is not messaged.
+// The requested push/email channels are recorded on the notification for a
+// future dispatcher, but no push or email actually leaves the platform — there
+// is no APNs/FCM/Resend wiring in this module and this function does not
+// fabricate one. recipients in the response is an honest count of who was
+// actually notified in-app.
 
 const (
 	minBroadcastSubject = 4

@@ -184,21 +184,12 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 	}
 	providerKobo, platformKobo, riderKobo := legs.ProviderKobo, legs.PlatformKobo, legs.RiderKobo
 
-	// ATOMICITY FIX (money invariant): previously the provider/rider credits went
-	// through s.ledger.Credit (which posts on the ledger's OWN connection), while the
-	// commission entries and the settlement-row status update ran on this tx. That
-	// split meant a crash between the provider credit and tx.Commit could pay the
-	// provider without ever marking the settlement 'settled' — and because the ledger
-	// Credit is a plain INSERT (no ON CONFLICT), a retry then errored on the UNIQUE
-	// idempotency_key, wedging the settlement.
-	// The ledger.Service still exposes no tx-aware Credit/Debit (documented gap — a
-	// future refactor should add ledger.CreditTx(tx, ...) so wallet balance
-	// projections and settlement rows commit as one unit). Until then, we post EVERY
-	// leg of this settlement as raw balanced ledger_entries pairs on THIS tx, so all
-	// money movement + the status flip commit atomically. Wallet account rows are
-	// resolved (get-or-create) OUTSIDE the tx — that only ensures the account exists
-	// and moves no money — then every posting is on the tx and idempotent via
-	// ON CONFLICT (idempotency_key) DO NOTHING, making the whole Settle safe to retry.
+	// Atomicity (money invariant): ledger.Service exposes no tx-aware
+	// Credit/Debit (documented gap), so every leg posts as raw balanced
+	// ledger_entries pairs on THIS tx — all money movement and the status flip
+	// commit atomically. Wallet accounts are get-or-create'd OUTSIDE the tx
+	// (creates no money), and each posting is idempotent via
+	// ON CONFLICT (idempotency_key) DO NOTHING, so Settle is safe to retry.
 	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return err
@@ -358,16 +349,10 @@ func postPairTx(ctx context.Context, tx pgx.Tx, debitAccountID, creditAccountID 
 // ErrWrongRefundMethod guards the Refund/RefundExternal split: calling Refund
 // (a WALLET CREDIT) on an externally-funded settlement, or RefundExternal (a
 // clearing-account reversal, no wallet touched) on a wallet-funded one, is
-// refused rather than silently moving money the wrong way. This is the fix
-// for a real defect found while porting the Paystack-checkout pattern to a
-// second module: every existing settlement.Refund call site (across several
-// modules, including restaurant's own pre-existing order-cancellation path)
-// unconditionally wallet-credited the payer, which for an EscrowExternal
-// settlement would hand a Tier-0 customer real spendable wallet balance
-// funded by an external charge — exactly the hazard EscrowExternal exists to
-// avoid. Enforcing the correct method HERE protects every caller, including
-// ones written before this check existed and any written after without
-// knowing about the gotcha.
+// refused rather than silently moving money the wrong way. Wallet-crediting an
+// EscrowExternal settlement would hand a Tier-0 customer spendable balance
+// funded by an external charge — the exact hazard EscrowExternal exists to
+// avoid. Enforcing HERE protects every caller, present and future.
 var ErrWrongRefundMethod = fmt.Errorf("settlement: wrong refund method for this settlement's funding source")
 
 // Refund releases a WALLET-funded escrow back to the payer's wallet. Refuses

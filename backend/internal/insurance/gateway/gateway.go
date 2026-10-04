@@ -368,12 +368,9 @@ type ProviderProduct struct {
 // therefore the only thing that says a scale must be applied when the value
 // crosses into a provider that speaks a different unit.
 // MyCover's form inputs are denominated in NAIRA. Paymax's iron rule is INTEGER
-// KOBO, and every client submits kobo. For a long time nothing converted between
-// them — the client scaled up because the schema said `money`, and the adapter
-// forwarded the answers verbatim — so every declared value reached the insurer
-// 100x too large. Proven live on a 5%-rated gadget product: a ₦200,000 phone was
-// quoted ₦1,000,000 instead of ₦10,000.
-// The fix is one rule, stated here so both sides read it from the same place:
+// KOBO, and every client submits kobo — without a single conversion point every
+// declared value reaches the insurer 100x too large.
+// The rule, stated here so both sides read it from the same place:
 //	A money input crosses EVERY internal boundary in kobo (MoneyInputWireUnit).
 //	The PROVIDER ADAPTER converts to the provider's unit exactly once, for
 //	exactly the field paths this file derives from the SAME schema the client

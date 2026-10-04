@@ -652,8 +652,7 @@ func StartExpiryCloser(ctx context.Context, db *pgxpool.Pool, every time.Duratio
 		var closed int
 		if err := db.QueryRow(cctx, `SELECT public.close_expired_contests()`).Scan(&closed); err != nil {
 			// Logged, never fatal: a failed sweep leaves contests reading LIVE for
-			// another interval, which is the status quo this fixes — not a reason to
-			// take the process down.
+			// another interval — not a reason to take the process down.
 			log.Printf("[connect.voting] contest expiry sweep failed: %v", err)
 			return
 		}

@@ -168,8 +168,8 @@ func TestLoginMFAIgnoredWithoutAnIssuer(t *testing.T) {
 	}
 }
 
-// The internal hints must never reach a client. __user_id used to be stripped
-// only inside the session-hardening branch, so with that flag off it shipped.
+// The internal hints must never reach a client — they must be stripped on
+// EVERY login path, not just the session-hardening branch.
 func TestLoginNeverLeaksInternalHints(t *testing.T) {
 	r := loginRouter(t, nil, false)
 	w := post(t, r, "/api/auth/login", loginBody())

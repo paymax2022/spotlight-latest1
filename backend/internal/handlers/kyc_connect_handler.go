@@ -186,14 +186,11 @@ func (h *KYCConnectHandler) submitTier(c *gin.Context, targetTier int, req kyc.I
 // SubmitTier1 — POST /api/v1/kyc/tier1 (Idempotency-Key required)
 // Submit BVN/NIN for Tier 1 — runs a REAL data-match check via the KYC
 // verification gateway (Dojah primary, Smile ID/Youverify fallback) before the
-// tier is ever elevated. This used to write kyc_status='pending' with the
-// identifier hashed and stored, and NOTHING else — no automated check at all,
-// an admin (or nothing) decided later. Tier 1 needs exactly one check
-// (ID_NUMBER, see kycverify.RequiredChecks) and Dojah's BVN/NIN lookup takes an
-// id_number alone — no name/DOB match, no image capture — so this is the one
-// tier submission that can be wired to the real gateway today without any
-// mobile-side camera/SDK work. Tiers 2/3 cannot: see
-// registerConnectWalletRoutes's comment.
+// tier is ever elevated. Tier 1 needs exactly one check (ID_NUMBER, see
+// kycverify.RequiredChecks) and Dojah's BVN/NIN lookup takes an id_number
+// alone — no name/DOB match, no image capture — so this is the one tier
+// submission that can be wired to the real gateway without any mobile-side
+// camera/SDK work. Tiers 2/3 cannot: see registerConnectWalletRoutes's comment.
 func (h *KYCConnectHandler) SubmitTier1(c *gin.Context) {
 	if !requireSubmitContext(c) {
 		return
@@ -209,8 +206,7 @@ func (h *KYCConnectHandler) SubmitTier1(c *gin.Context) {
 		// (ErrConsentRequired), and that gate must not be silently satisfied
 		// server-side just to make an old client request shape "work". A client
 		// that omits it gets a clear 403 telling it to collect consent first,
-		// which is the correct failure — not a silent unverified approval, which
-		// is the bug this endpoint used to have.
+		// which is the correct failure — not a silent unverified approval.
 		ConsentVersion string `json:"consentVersion"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -330,15 +326,14 @@ func writeKycVerifyErr(c *gin.Context, err error) {
 
 // SubmitTier2 — POST /api/v1/kyc/tier2 (Idempotency-Key required)
 // Submit ID + address for Tier 2.
-// STILL writes kyc_status='pending' via kyc.Service.Initiate with NO automated
-// check, same as Tier 1 used to. NOT fixed alongside SubmitTier1: Tier 2 needs
-// a real DOCUMENT and/or LIVENESS/FACIAL check (kycverify.RequiredChecks), both
-// of which require actual captured images — this client sends a pre-uploaded
-// file URI, not the base64 bytes kycverify's checks expect, and the app's own
-// capture UI for those checks (src/features/kycverify/components/CaptureStub.tsx)
-// is an explicit, commented sandbox stub with no real camera/SDK behind it yet.
-// Wiring this through today would submit fake bytes to a real provider. See
-// PR retiring the admin manual-approval bypass for the fuller writeup.
+// Intentionally still writes kyc_status='pending' via kyc.Service.Initiate with
+// NO automated check — unlike SubmitTier1. Tier 2 needs a real DOCUMENT and/or
+// LIVENESS/FACIAL check (kycverify.RequiredChecks), both of which require actual
+// captured images: this client sends a pre-uploaded file URI, not the base64
+// bytes kycverify's checks expect, and the app's capture UI for those checks
+// (src/features/kycverify/components/CaptureStub.tsx) is an explicit,
+// commented sandbox stub with no real camera/SDK behind it yet. Wiring this
+// through today would submit fake bytes to a real provider.
 func (h *KYCConnectHandler) SubmitTier2(c *gin.Context) {
 	if !requireSubmitContext(c) {
 		return

@@ -281,13 +281,11 @@ func scanContribution(scan func(dest ...any) error) (Contribution, error) {
 // callerID. It NEVER moves money — an admin processes the actual refund in a
 // separate slice. The insert is idempotent on the contribution (UNIQUE), so
 // re-requesting is a no-op.
-// The ownership predicate is load-bearing. This used to look the contribution up
-// by id alone and then take requester_id from the ROW, which meant it could
-// never misattribute a request — but any authenticated account could file one
-// against a stranger's contribution, and the ON CONFLICT branch let them
-// overwrite the reason on a request the real contributor had already filed. A
-// refund request is what an admin acts on, so that is someone else's money
-// dispute opened, or reworded, by a third party.
+// The ownership predicate is load-bearing: without it any authenticated account
+// could file a refund request against a stranger's contribution, and the
+// ON CONFLICT branch would let them overwrite the reason on a request the real
+// contributor already filed — someone else's money dispute opened or reworded
+// by a third party.
 // Scoping the lookup is what makes the wrong write impossible rather than
 // merely unlikely: with the predicate in place, callerID and the row's
 // contributor_id are the same value by construction, so requester_id is written

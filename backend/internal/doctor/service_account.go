@@ -89,17 +89,12 @@ func (s *Service) SetProviderType(ctx context.Context, userID, idemKey string, r
 	return s.repo.SaveProfileDraft(ctx, userID, patch)
 }
 
-// GetProfileDraft has the same defect GetMerchantUpgrade was fixed for: no
-// doctor_profiles row is the STARTING state for a fresh provider (the row is
-// only ever created by SaveProfileDraft's upsert, on the FIRST write), not a
-// missing resource. Propagating ErrNotFound as a 404 made every one of Section
-// B's profile-builder screens unreachable for anyone who reaches
-// /profile/setup/* before that first write has happened — e.g. a bookmarked or
-// directly-typed URL, same failure mode this endpoint's fresh-user branch
-// already existed to prevent for /onboarding/merchant-upgrade. The synthesized
-// row mirrors doctor_profiles' own column defaults (supabase/migrations
-// 20260625000000_doctor_module.sql) exactly, so a first-time GET and a
-// first-time INSERT look identical to every caller.
+// GetProfileDraft treats "no doctor_profiles row" as the STARTING state for a
+// fresh provider (the row is only created by SaveProfileDraft's upsert on the
+// FIRST write), not a missing resource — so it synthesizes a row mirroring the
+// table's column defaults (supabase/migrations 20260625000000_doctor_module.sql)
+// rather than propagating ErrNotFound, keeping /profile/setup/* reachable before
+// the first write. A first-time GET and a first-time INSERT look identical.
 func (s *Service) GetProfileDraft(ctx context.Context, userID string) (*Profile, error) {
 	p, err := s.repo.GetProfileDraft(ctx, userID)
 	if err == nil {

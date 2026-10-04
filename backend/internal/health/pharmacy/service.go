@@ -564,26 +564,20 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 			return failAfterHold(fmt.Errorf("pharmacy: insert line: %w", err))
 		}
 	}
-	// Decrement stock atomically for TRACKED products, conditioned on enough
-	// stock still being available — closes an unlimited-oversell hole found
-	// live via UAT (no stock write existed anywhere in this file; two
-	// concurrent orders could both succeed against a single unit of stock).
-	// stock_qty=0 means "not inventory-tracked" (the DB default, and the
-	// current value for most of the live catalog — owners are not required
-	// to set a count), NOT "zero available": treating 0 as a hard floor would
-	// block checkout on the majority of today's products, a bigger
-	// regression than the bug being fixed. Only products an owner has opted
-	// into tracking by setting stock_qty > 0 are gated and decremented.
+	// Decrement stock atomically for TRACKED products only — this closes an
+	// unlimited-oversell hole (two concurrent orders could both succeed
+	// against a single unit of stock).
+	// stock_qty=0 means "not inventory-tracked" (the DB default; owners are
+	// not required to set a count), NOT "zero available": treating 0 as a hard
+	// floor would block checkout on most of the catalog. Only products an
+	// owner opted into tracking (stock_qty > 0) are gated and decremented.
 	// WHERE stock_qty >= quantity makes this a compare-and-swap: if a
 	// concurrent order already consumed the remaining stock, RowsAffected is
 	// 0 and the order is refused — fail closed, never oversell a tracked item.
-	// The moment a tracked product's stock_qty reaches exactly 0, in_stock
-	// flips false (checked earlier, in the pricing loop, before any money
-	// moves). Without that second signal, a depleted tracked product's
-	// stock_qty==0 would be indistinguishable from an untracked product's
-	// stock_qty==0 default — the fix's own first version had exactly this
-	// bug: once sold out, the "untracked = unlimited" branch let further
-	// orders straight through again.
+	// When a tracked product's stock_qty reaches exactly 0, in_stock flips
+	// false (checked in the pricing loop before money moves) — without that
+	// second signal, a depleted tracked product's stock_qty==0 would be
+	// indistinguishable from an untracked product's default.
 	const decStock = `
 		UPDATE pharmacy_products
 		SET stock_qty = stock_qty - $2, in_stock = ((stock_qty - $2) > 0)

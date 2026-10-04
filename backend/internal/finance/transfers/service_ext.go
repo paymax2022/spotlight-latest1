@@ -14,10 +14,9 @@ import (
 // idempotency key); this adds an action-level breadcrumb. Best-effort + non-fatal
 // (a logging failure must never abort the money path).
 //
-// E2E-X-029: this used to be stdout-only — a money mutation left zero durable
-// audit_logs rows. When a durable sink is wired (SetAuditor — the shared
-// services.AuditService over the Supabase audit_logs table), every audit() call
-// now also persists a row; the stdout line stays for log-tail debugging.
+// When a durable sink is wired (SetAuditor — the shared services.AuditService
+// over the Supabase audit_logs table), every audit() call also persists a row
+// (E2E-X-029); the stdout line stays for log-tail debugging.
 func (s *Service) audit(ctx context.Context, userID, action, entityID, detail string) {
 	log.Printf("[audit][transfers] action=%s user=%s entity=%s detail=%s", action, userID, entityID, detail)
 	metadata := map[string]any{}

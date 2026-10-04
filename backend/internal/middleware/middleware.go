@@ -359,12 +359,11 @@ var (
 	stemRateMu        sync.Mutex
 	stemRateStore     = map[string]*stemRateBucket{}
 	stemRateLastSweep time.Time
-	// Bounds for the shared store. The key is derived from route + method +
-	// client IP, so an attacker rotating source IPs must not be able to grow
-	// the map without limit (AUD-BE-004 residual: previously it NEVER evicted,
-	// and it also mixed the caller-set `x-stem-role` header into the key — a
-	// second bypass axis, since each distinct header value minted a fresh
-	// bucket). Vars (not consts) so tests can shrink them.
+	// Bounds for the shared store (AUD-BE-004). The key is derived from route +
+	// method + client IP — an attacker rotating source IPs must not be able to
+	// grow the map without limit, and the caller-set `x-stem-role` header must
+	// NOT be part of the key (each distinct value would mint a fresh bucket).
+	// Vars (not consts) so tests can shrink them.
 	stemRateMaxKeys       = 100_000
 	stemRateSweepInterval = time.Minute
 )

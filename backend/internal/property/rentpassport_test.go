@@ -1,20 +1,13 @@
 package property
 
 // Pure, DB-free unit tests for the rent-passport scoring formula and the
-// on-time-ratio / realtor-tolerance control flow documented in rentpassport.go
-// and docs/qa/modules/property.md §3/§7.
-// computeRentScore is exercised directly (same package, unexported function).
-// The on-time-ratio accumulation and the estate-vs-realtor error-tolerance
-// asymmetry are NOT their own functions — they are inlined in
-// GetRentPassport, which needs a live *pgxpool.Pool to run at all. Rather than
-// skip them, this file TRANSCRIBES the exact branches from GetRentPassport
-// (cited by line range below) into small local helpers driven by fake
-// query results, following the same "transcribed invariant" convention used
-// in backend/tests/association/money_invariants_test.go for logic a live
-// driver call would otherwise hide from a DB-free suite. Any drift between
-// the helper here and the cited production code is the bug a reviewer should
-// catch — see also context_test.go / property_money_invariant_test.go for the
-// live-DB counterparts that exercise the real SQL.
+// on-time-ratio / realtor-tolerance control flow in rentpassport.go.
+// That control flow is inlined in GetRentPassport (needs a live pool), so this
+// file TRANSCRIBES the exact branches into local helpers driven by fake query
+// results — the "transcribed invariant" convention used in
+// tests/association/money_invariants_test.go. Drift between a helper here and
+// the cited production code is the bug a reviewer should catch; context_test.go
+// / property_money_invariant_test.go hold the live-DB counterparts.
 
 import (
 	"errors"
@@ -220,22 +213,16 @@ func TestOnTimeRatio_PaidExactlyOnDueDateCountsAsOnTime(t *testing.T) {
 }
 
 // Transcribed from GetRentPassport (rentpassport.go):
-//   - estate query error (L79-81): `if err != nil { return nil, fmt.Errorf(...) }`
-//     — FATAL, the whole passport request fails.
+//   - estate query error (L79-81): FATAL — the whole passport request fails.
 //   - realtor query error (L129, L167): `if err == nil { ...loop... }` with NO
-//     else branch — a non-nil err is silently swallowed and the function
-//     continues as if the user simply had no realtor history.
-// This is a real, deliberate asymmetry per docs/qa/modules/property.md §6
-// ("Fail-closed on dependency error") — it must NOT be "fixed" into symmetry
-// without that being a deliberate, reviewed decision. Exercising the true
-// "realtor tables absent" case against a live Postgres would require DROPping
-// realtor_payments/realtor_invoices/realtor_leases on the shared local
-// Supabase instance, which the additive-only migration iron rule and the
-// shared-worktree safety rule both forbid (see CLAUDE.md "Brownfield safety"
-// and the "Don't Hot-Patch Shared Worktree" memory note) — so this transcribed
-// control-flow test is the safe, faithful proxy. See
-// property_money_invariant_test.go for the live-DB estate+realtor happy-path
-// sum, which proves the two sources compose correctly when both succeed.
+//     else branch — a non-nil err is silently swallowed, continuing as if the
+//     user had no realtor history.
+// The asymmetry is deliberate per docs/qa/modules/property.md §6 ("fail-closed
+// on dependency error") — do NOT "fix" it into symmetry without a reviewed
+// decision. A live-DB "realtor tables absent" case would require DROPping
+// tables, which the additive-only migration rule forbids, so this transcribed
+// control-flow test is the safe proxy. See property_money_invariant_test.go for
+// the live-DB estate+realtor happy-path sum.
 
 // buildPassportErrorHandling mirrors ONLY the error-handling shape of
 // GetRentPassport's two query blocks (not the actual SQL/scan), returning

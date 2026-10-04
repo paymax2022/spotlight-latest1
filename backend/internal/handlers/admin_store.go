@@ -17,10 +17,8 @@ type AdminStore struct {
 // single shape.
 // There is NO single `orders` table for trading: public.orders belongs to the
 // restaurant module (customer_id / restaurant_id / total_kobo) and carries none
-// of the columns this console needs. Earlier revisions of this file queried
-// `orders.user_id` / `order_type` / `amount_kobo`, so every read that touched it
-// failed with `column "amount_kobo" does not exist` and the endpoint returned
-// 500 unconditionally.
+// of the columns this console needs — querying it here 500s with
+// `column "amount_kobo" does not exist`.
 // status is normalised onto the admin console's AdminOrderStatus union —
 // Filled | PartiallyFilled | Processing | Pending | Failed | Reversed |
 // ComplianceHold (mobile-app/reactnative/src/features/admin/types/admin.types.ts).

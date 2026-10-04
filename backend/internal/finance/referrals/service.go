@@ -46,12 +46,9 @@ func (s *Service) GetOrCreateCode(ctx context.Context, userID string) (*Code, er
 	if err == nil {
 		return &c, nil
 	}
-	// Generate a new code. GenerateCode() below is the SAME generator System
-	// B's referral_links uses — REF-004: this used to be a locally-defined
-	// 8-char lowercase hex generator, incompatible with both referral_links'
-	// format and the frontend's SPOT-XXXXXX format, even though all three wrote
-	// into/read from finance_referral_codes-shaped data. One alphabet, one
-	// length, one case, regardless of which stack issues the code.
+	// GenerateCode() is the shared generator referral_links also uses (REF-004):
+	// one alphabet, one length, one case, regardless of which stack issues the
+	// code — every writer produces the frontend's SPOT-XXXXXX shape.
 	code, err := GenerateCode()
 	if err != nil {
 		return nil, fmt.Errorf("referrals: generate code: %w", err)

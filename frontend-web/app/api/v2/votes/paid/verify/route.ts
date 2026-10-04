@@ -55,8 +55,7 @@ export async function POST(request: NextRequest) {
                      'unknown';
     const userAgent = request.headers.get('user-agent') || 'unknown';
 
-    // Get user ID from auth or from the transaction itself
-    // (in case webhook calls this without auth)
+    // 'system' when the webhook calls without auth
     const userId = user?.id || 'system';
 
     // Verify and credit the vote via bridge

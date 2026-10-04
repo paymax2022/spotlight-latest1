@@ -86,7 +86,6 @@ func (h *PayoutsConnectHandler) RequestPayout(c *gin.Context) {
 		return
 	}
 
-	// Check eligibility first
 	elig, err := h.store.GetPayoutEligibility(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check payout eligibility"})
@@ -243,7 +242,6 @@ func (s *PayoutsStore) GetPayoutEligibility(ctx context.Context, userID string) 
 		return nil, fmt.Errorf("query payout eligibility: %w", err)
 	}
 
-	// Check balance requirement
 	if elig.Eligible && elig.CurrentBalanceKobo < elig.MinimumBalanceKobo {
 		elig.Eligible = false
 		elig.Message = fmt.Sprintf("Minimum balance %d kobo required", elig.MinimumBalanceKobo)

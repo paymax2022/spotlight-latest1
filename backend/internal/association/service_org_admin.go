@@ -94,10 +94,6 @@ func (s *Service) GetAdminOrganisation(ctx context.Context, adminID, orgID strin
 	}
 
 	d.Chapters = []Chapter{}
-	// NOTE: these sub-lists used `if err == nil`, so a query error (or a per-row
-	// scan error) produced a silently empty list rather than a failure. A wrong
-	// column name therefore looked like "this org has no committees" while
-	// committeeCount reported 2. Errors are returned now.
 	if rows, err := s.db.Query(ctx, `
 		SELECT id, name, level, parent_id,
 		       (SELECT count(*) FROM assoc_memberships m WHERE m.chapter_id=c.id AND m.status='ACTIVE')

@@ -58,8 +58,8 @@ func (h *Handler) ListPets(c *gin.Context) {
 		return
 	}
 	// Anything ListPets returns past the auth check is an internal failure
-	// (e.g. a DB error), not an auth one — mapping it to 401 like the old code
-	// did made a query bug indistinguishable from a bad/missing token.
+	// (e.g. a DB error), not an auth one — mapping it to 401 would make a query
+	// bug indistinguishable from a bad/missing token.
 	pets, err := h.svc.ListPets(c.Request.Context(), id)
 	if err != nil {
 		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
@@ -423,9 +423,9 @@ func (h *Handler) AdminDeactivateService(c *gin.Context) {
 }
 
 // AdminDashboard — GET /admin/dashboard  platform-wide KPI aggregate. See
-// Service.AdminDashboard / AdminDashboard (service.go, admin_model.go) for
-// exactly what is computed and why fields this batch cannot honestly compute
-// are left off the shape entirely rather than fabricated.
+// Service.AdminDashboard / AdminDashboard (service.go) for exactly what is
+// computed and why fields this batch cannot honestly compute are left off the
+// shape entirely rather than fabricated.
 func (h *Handler) AdminDashboard(c *gin.Context) {
 	d, err := h.svc.AdminDashboard(c.Request.Context())
 	if err != nil {

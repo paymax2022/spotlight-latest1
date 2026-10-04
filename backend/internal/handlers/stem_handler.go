@@ -93,10 +93,7 @@ func (h *StemHandler) Overview(c *gin.Context) {
 
 // MyRole reports which STEM role name(s) — if any — the caller's real RBAC
 // roles resolve to, using the exact mapping RequireStemRoles itself checks
-// against (middleware.ResolveStemRoleNames). ADR-057 frontend follow-up:
-// frontend-admin's stemAccess.ts used to derive the "current" STEM role from
-// a build-time env var; this endpoint lets it ask the real, signed-in-user
-// question instead.
+// against (middleware.ResolveStemRoleNames; ADR-057).
 // Deliberately sits behind RequireVerifiedIdentity ONLY (router.go's
 // stemGroup), not RequireStemRoles: the whole point is that ANY verified
 // admin can call this, including one who holds no STEM role at all — an

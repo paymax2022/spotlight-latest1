@@ -1,11 +1,9 @@
 package app
 
 // Route-mount regression test for E2E-SEC-064: the Connect wallet/KYC surface
-// (/api/v1/wallet/*, /api/v1/kyc/*, /api/v1/me/tier) used to mount whenever the
-// pool existed, ignoring FEATURE_CONNECT_ENABLED entirely.
-//
-// Fix: the mount honors an EXPLICIT flag value — explicitly-false unmounts the
-// surface (404 for an authenticated member), while an UNSET flag preserves the
+// (/api/v1/wallet/*, /api/v1/kyc/*, /api/v1/me/tier) must honor an EXPLICIT
+// FEATURE_CONNECT_ENABLED value — explicitly-false unmounts the surface (404
+// for an authenticated member), while an UNSET flag preserves the
 // pre-existing behavior (mounted) so deployments that never had the variable
 // do not lose their wallet endpoints on upgrade. The independent
 // FEATURE_CONNECT_WALLET_FUND_ENABLED sub-gate on POST /wallet/fund is

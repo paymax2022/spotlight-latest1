@@ -98,8 +98,7 @@ func TestLiveDB_PolicyRefund(t *testing.T) {
 	}
 
 	// SUPPLIER-REF shaped rate_plan_id + refundable plan → the join must still
-	// resolve (previously it missed → the defective default refunded anyway,
-	// masking the miss; with fail-closed default a miss now mis-prices to 0).
+	// resolve — a miss now fails closed to refund=0 rather than refund anyway.
 	ref, pen = a.policyRefund(ctx, seedResForPolicy(t, pool, "supplier", true))
 	if ref != gross || pen != 0 {
 		t.Fatalf("supplier-ref refundable plan → refund=%d penalty=%d, want %d/0 (join miss mis-priced)", ref, pen, gross)

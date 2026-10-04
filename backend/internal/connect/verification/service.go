@@ -166,7 +166,6 @@ func (s *StatusService) SubmitSelfie(ctx context.Context, req LivenessRequest) (
 	}
 
 	// A submission moves none/failed → pending implicitly, then to the outcome.
-	// Validate the final transition against the guard.
 	if !canTransition(current, target) {
 		// none→pending→outcome is the normal path; allow none→outcome directly,
 		// but reject e.g. l1_passed→l0_passed downgrades.

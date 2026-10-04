@@ -35,8 +35,7 @@ func stubID(prefix string) string { return fmt.Sprintf("%s_%d", prefix, time.Now
 
 // Provisioning only — opens a zero-balance wallet for a currency. No value moves,
 // so no ledger entry and no Idempotency-Key: re-opening is a no-op, not a reset.
-// This used to echo {available: 0} without writing anything, so an added wallet
-// disappeared on the next GET /balances and there was no way to hold a currency.
+// It writes the row so the wallet persists across GET /balances.
 
 // walletCurrencies is the set a customer may open, mirroring WALLET_CURRENCIES in
 // mobile src/features/fx/constants/fx.constants.ts. Closed by design: without it

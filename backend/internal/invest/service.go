@@ -653,7 +653,6 @@ func (s *Service) Buy(ctx context.Context, userID, idem string, req BuyOrderRequ
 		return nil, err
 	}
 
-	// Insert the order in PendingReview.
 	o := &Order{
 		UserID: userID, StockAssetID: st.ID, Symbol: st.Symbol, Side: SideBuy, OrderType: req.OrderType,
 		AmountKobo: notional, Quantity: qty, LimitPriceKobo: req.LimitPriceKobo, EstimatedPriceKobo: priceForCalc,

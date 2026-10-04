@@ -719,10 +719,8 @@ func (h *MarkupHandler) ListAudit(c *gin.Context) {
 
 // Paymax FX markup.
 // Maplerad's FX endpoints return NO fee: the provider prices its own margin into
-// the rate (see maplerad.ConvertFXResponse). Before the real contract was known,
-// this service read a `fee` field that never existed on the wire, so `fee_kobo`
-// was structurally 0 — the user was debited principal only and
-// recordCommissionSafe never fired (it early-returns on feeKobo <= 0).
+// the rate (see maplerad.ConvertFXResponse) — there is no `fee` field on the
+// wire, so provider-side `fee_kobo` is structurally 0.
 // Paymax revenue on this path is therefore an EXPLICIT markup of our own. It is
 // operator-tunable at runtime: the live rate lives in public.fx_markup_rates and
 // is changed through PUT /api/finance/admin/fx/markup (ADR-030).

@@ -27,11 +27,9 @@ export async function getCompetitionOverview(): Promise<CompetitionOverview | nu
       return null;
     }
 
-    // Return overview data or null if empty
     return payload.overview as CompetitionOverview;
   } catch (error) {
     console.error('Failed to fetch competition overview:', error);
-    // Check if backend is accessible
     if (error instanceof TypeError && error.message === 'Failed to fetch') {
       console.error(`Cannot reach backend at ${apiV1()}. Is the Go backend running on port 8091?`);
     }

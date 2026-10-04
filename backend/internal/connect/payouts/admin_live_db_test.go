@@ -1,9 +1,8 @@
 package connectpayouts
 
 // Live-DB test for the CONNECT-001 admin payout surface: RegisterAdmin's
-// list/detail/settle/reject routes, which did not exist at all before this
-// change (the member group only ever exposed creator-facing POST/GET
-// /payouts — the admin console's payout queue 404'd in production).
+// list/detail/settle/reject routes (the member group only exposes
+// creator-facing POST/GET /payouts; the admin queue is separate).
 // Proves, against a REAL local Postgres:
 //  1. the admin list route returns real rows (seeded via the actual member
 //     Request() money path, not hand-inserted fixtures);

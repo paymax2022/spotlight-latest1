@@ -72,8 +72,8 @@ func NewService(d Deps) *Service {
 	if fee <= 0 {
 		fee = DefaultRegistrationFeeKobo
 	}
-	// Zero (unset) falls back to the default; callers wanting a genuinely free
-	// registration can set a negative sentinel is not supported — 0 means default.
+	// Zero/unset falls back to the default; a non-positive sentinel is not a
+	// "free registration" escape hatch.
 	platformFee := d.PlatformFeeKobo
 	if platformFee <= 0 {
 		platformFee = DefaultPlatformFeeKobo
@@ -105,7 +105,6 @@ func (s *Service) StartRegisterNew(ctx context.Context, userID string, req Regis
 	if err != nil {
 		return nil, err
 	}
-	// Persist proprietors with masked identity tails only.
 	props := make([]Proprietor, 0, len(req.Proprietors))
 	for _, p := range req.Proprietors {
 		props = append(props, Proprietor{

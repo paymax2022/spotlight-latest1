@@ -301,9 +301,9 @@ func (h *academyWebhookHandler) settleFromRow(ctx context.Context, rail string, 
 			return nil
 		}
 		// Terminal obligation matched but the leg did NOT post — park a durable
-		// outbox row carrying the row's amount snapshot (AUD-BE-013 residual:
-		// previously this leg was lost forever because we still ack 200 and the
-		// dedupe row is already consumed).
+		// outbox row carrying the row's amount snapshot: the dedupe row is
+		// already consumed and we still ack 200, so without the outbox the leg
+		// is lost forever (AUD-BE-013 residual).
 		h.enqueueOutbox(ctx, rail, evt, amount, err)
 		return err
 	}

@@ -21,11 +21,9 @@ package utilitybills
 // party → maybe reverse" problem.
 // Commission is recorded via commission.Service.RecordExact with a REAL (non-nil)
 // ledger, which posts a balanced revenue-recognition leg
-// (DR provider_clearing → CR commission) per settled transaction. The Next.js
-// implementation never did this — it wrote commission_earnings with
-// `ledger_ref: null` and an explicit `TODO(ledger)`. This closes that gap with an
-// already-tested mechanism, but it does change what lands in the ledger going
-// forward. Called out in the PR description, not buried under "port".
+// (DR provider_clearing → CR commission) per settled transaction — a deliberate
+// divergence from the TS source, which wrote commission_earnings with
+// `ledger_ref: null`.
 // KYC tier gating. wallet.Service.Debit's tier/daily-limit check is the ONLY
 // limit this module enforces; no additional "must be Tier 1" gate is added, per a
 // confirmed product decision. (Note Tier 0 still cannot debit at all — that is
@@ -135,7 +133,7 @@ const (
 	actionTransactionReverse  = "utilitybills.transaction.reverse"
 	actionDisputeResolve      = "utilitybills.dispute.resolve"
 	// actionSweepTrigger is recorded ONLY for the manual admin-triggered sweep.
-	// The scheduled job () stays audit-silent — an
+	// The scheduled job stays audit-silent — an
 	// audit log is a record of who did something, and "the clock" is not a who.
 	actionSweepTrigger = "utilitybills.sweep.trigger"
 )
@@ -1708,8 +1706,8 @@ func (s *Service) SweepPending(ctx context.Context, limit int) (*SweepResult, er
 // Idempotency is keyed on the TRANSACTION, not on a caller-supplied header:
 // "reverse this transaction" is inherently a once-per-transaction operation, and
 // keying it on the transaction id means two admins clicking refund cannot pay the
-// member twice. (This is a deliberate divergence from the pay path's
-// client-key-derived suffixes — flagged in the PR description.)
+// member twice — a deliberate divergence from the pay path's client-key-derived
+// suffixes.
 // actorUserID is the acting ADMIN (Phase 4), recorded as the audit actor. It is
 // deliberately a parameter rather than something read off the context: a money
 // reversal with no attributable author is exactly the record an audit trail
@@ -1967,9 +1965,8 @@ const defaultSweepLimit = 25
 
 // StartPendingSweep periodically requeries transactions stuck in a non-terminal
 // state (initiated / wallet_debited / provider_pending) with no resolved
-// webhook or synchronous answer. Before this, NOTHING automatically resolved
-// them — the only path was an admin manually hitting the requery-pending
-// worker endpoint (UTIL-002).
+// webhook or synchronous answer — without it they are only resolvable by an
+// admin hitting the requery-pending worker endpoint (UTIL-002).
 func StartPendingSweep(ctx context.Context, svc *Service, interval time.Duration) {
 	if interval <= 0 {
 		interval = time.Hour

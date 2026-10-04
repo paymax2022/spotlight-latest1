@@ -2,11 +2,9 @@ package aicare
 
 // Internal (package-local) tests for the aicare package.
 // SCOPE NOTE: This module is an AI *customer-support* agent, not a medical/
-// telemedicine advisor. The production code contains NO medical-safety
-// classifier, NO safe-completion / red-flag escalation logic, NO disclaimer
-// builder, NO session FSM transition function, and NO MockProvider. Those were
-// assumed by the task brief but do not exist in the source. We therefore test
-// only the pure logic that is actually present:
+// telemedicine advisor — it has NO medical-safety classifier, no red-flag
+// escalation logic, no disclaimer builder, no session FSM transition function,
+// and no MockProvider. These tests cover only the pure logic that exists:
 //   1. AnthropicProvider.Reply — role mapping, request construction, headers,
 //      system framing, and response/error parsing — exercised through an
 //      injected fake http.RoundTripper (the live Anthropic API is never called).

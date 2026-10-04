@@ -298,11 +298,10 @@ const supportPotAccountType = "arena_support_pot"
 
 // isLedgerReplay reports whether err is the ledger's own idempotent-replay
 // signal (ledger.ErrDuplicate, surfaced via the redis idempotency lock — see
-// finance/ledger.Service.Debit/Credit). Found live via UAT: none of the money
-// rails checked for this, so a genuine client retry with the same
-// Idempotency-Key (the normal, expected case after a timeout) bubbled the raw
-// internal ledger error all the way to an unmapped 500, instead of the
-// idempotent no-op every other money path in this codebase gives a replay.
+// finance/ledger.Service.Debit/Credit). Every money rail must check it: a
+// genuine client retry with the same Idempotency-Key (the normal case after a
+// timeout) must get the idempotent no-op every other money path gives, not an
+// unmapped 500 on the raw ledger error.
 func isLedgerReplay(err error) bool {
 	return errors.Is(err, ledger.ErrDuplicate)
 }

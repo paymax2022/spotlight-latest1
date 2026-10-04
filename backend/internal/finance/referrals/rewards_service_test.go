@@ -533,11 +533,9 @@ func TestResolveCodeToReferrer_UnknownCode_Errors_Integration(t *testing.T) {
 const referralCodeAlphabet = "ABCDEFGHJKMNPQRTUVWXY346789"
 
 // TestGetOrCreateCode_Legacy_MatchesSharedAlphabetFormat_Integration is the
-// REF-004 regression: the legacy Service used to generate 8 lowercase hex
-// characters via its own generateCode(), a format incompatible with both
-// referral_links (5 chars, uppercase, curated alphabet) and the frontend's
-// then-SPOT-XXXXXX format — three shapes writing into/reading from the same
-// finance_referral_codes.code column. All issuers must now agree.
+// REF-004 regression: the legacy Service's code path must produce the shared
+// referral_links shape (5 chars, uppercase, curated alphabet) — all issuers
+// of finance_referral_codes.code must agree on one format.
 func TestGetOrCreateCode_Legacy_MatchesSharedAlphabetFormat_Integration(t *testing.T) {
 	ctx := context.Background()
 	pool := liveRewardsPool(t)
@@ -567,9 +565,8 @@ func TestGetOrCreateCode_Legacy_MatchesSharedAlphabetFormat_Integration(t *testi
 // TestResolveCodeToReferrer_LegacyService_CaseInsensitive_Integration is the
 // REF-008 regression on the LEGACY Service.ResolveCodeToReferrer itself
 // (distinct from RewardService's two-table resolver exercised elsewhere in
-// this file): a code stored in lowercase — exactly what the pre-fix
-// generateCode() used to emit — must still resolve when looked up in a
-// different case, mirroring what internal/referral/attribution's
+// this file): a code stored in lowercase must still resolve when looked up in
+// a different case, mirroring what internal/referral/attribution's
 // normalizeCode() does to every code entered at signup.
 func TestResolveCodeToReferrer_LegacyService_CaseInsensitive_Integration(t *testing.T) {
 	ctx := context.Background()
@@ -655,14 +652,12 @@ func TestComputeReward_FloorsFractionalKobo(t *testing.T) {
 }
 
 // ── E2E-FIN-042 — Attribute late-claim semantics ────────────────────────────
-// POST /v1/referrals/attribute used to be a silent no-op for ~every codeless
-// signup: the §7A resolver always writes a referral_attributions row, so a
-// codeless user already had a global_house placeholder and the endpoint's plain
-// ON CONFLICT DO NOTHING insert never applied the code (200 {"referrer_id":""}).
-// These tests pin the fixed contract: a claimable house placeholder is REPLACED
-// by the real referrer; a real referrer already on the row always wins
-// (first-real-attribution); a no-longer-claimable house row is left alone and
-// the response is honest about it.
+// The §7A resolver always writes a referral_attributions row (codeless signups
+// get a global_house placeholder), so a plain ON CONFLICT DO NOTHING insert
+// would silently never apply the code. These tests pin the contract: a
+// claimable house placeholder is REPLACED by the real referrer; a real
+// referrer already on the row always wins (first-real-attribution); a
+// no-longer-claimable house row is left alone and the response says so.
 
 // seedHousePlaceholder simulates the §7A signup resolver's codeless-signup
 // output: a referral_attributions row pointing at a house account
@@ -704,8 +699,8 @@ func attributionRow(t *testing.T, pool *pgxpool.Pool, referredUserID string) (*s
 }
 
 // A user whose only attribution is the default house placeholder (still in
-// grace) must get the real referrer — the placeholder is replaced, not left in
-// place (the reported bug: previously it survived and the response was empty).
+// grace) must get the real referrer — the placeholder is replaced, not left
+// in place.
 func TestAttribute_OverridesClaimableHousePlaceholder_Integration(t *testing.T) {
 	ctx := context.Background()
 	pool := liveRewardsPool(t)

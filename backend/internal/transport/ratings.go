@@ -24,7 +24,6 @@ func (s *Service) RateTrip(ctx context.Context, tripID, raterID string, req Rate
 		return nil, codedErr(http.StatusConflict, CodeInvalidState, "trip not completed")
 	}
 
-	// Determine role + ratee.
 	var role, rateeID string
 	var driverUserID string
 	if t.DriverID != nil {

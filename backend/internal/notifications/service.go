@@ -74,9 +74,7 @@ func NewService(client *asynq.Client) *Service {
 
 // Send enqueues a notification for async delivery on the specified channels.
 //
-// E2E-FR-051: enqueue failures were previously dropped silently (callers did
-// `_ = svc.Send(...)`) — 115 tasks sat pending unnoticed during a failure
-// drill. This method is now the observability floor: EVERY per-channel failure
+// Observability floor (E2E-FR-051): EVERY per-channel failure
 // is logged (structured key=value) AND counted on the
 // paymax.notification.enqueue metric, and ALL channels are attempted before
 // the aggregated error is returned — one bad channel must not starve the rest.

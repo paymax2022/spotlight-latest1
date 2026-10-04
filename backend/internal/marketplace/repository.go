@@ -81,10 +81,6 @@ func (r *Repository) InsertListing(ctx context.Context, l *Listing) (*Listing, e
 }
 
 // InsertListingMedia persists the photos a seller uploaded for a listing.
-// This is what was missing: CreateListingInput has always carried MediaIDs and
-// the service parsed them, but nothing ever wrote a mkt_listing_media row — so
-// the table was empty for every listing ever created, and every card in the app
-// fell back to a placeholder.
 // The three size variants are the same object today: the presign path stores one
 // upload per photo and there is no derivative pipeline yet. They are separate
 // columns so a later resizer can fill them in without a migration or a change

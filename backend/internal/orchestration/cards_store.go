@@ -321,7 +321,6 @@ func (s *sqlCardStore) FundCard(ctx context.Context, business, id string, amount
 		}
 	}
 
-	// Lock the card row.
 	var currency string
 	err = tx.QueryRow(ctx, `SELECT currency FROM orch_fx_cards WHERE id=$1 AND business_id=$2 FOR UPDATE`, id, business).Scan(&currency)
 	if errors.Is(err, pgx.ErrNoRows) {

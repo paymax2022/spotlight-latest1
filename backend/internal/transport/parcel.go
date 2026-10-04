@@ -517,7 +517,6 @@ func (s *Service) MarkParcelPickedUp(ctx context.Context, id, driverUserID, phot
 	}
 	s.recordModeEvent(ctx, driverUserID, "parcel.picked_up", "parcel", id, "pickup_pin_verified", "picked_up",
 		map[string]any{"photo_url": photoURL})
-	// Auto-advance to in_transit.
 	if err := s.parcelSetStatus(ctx, id, "picked_up", "in_transit"); err != nil {
 		return err
 	}

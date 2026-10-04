@@ -53,9 +53,6 @@ import (
 //     is therefore entirely Paymax's responsibility and is enforced upstream of
 //     this adapter (see the insurance policy service); the header is still sent
 //     in case the provider ever honours it, but nothing depends on that.
-//
-// Raw provider JSON NEVER leaks past this file. Keys come from config/env via
-// New(); they are NEVER hard-coded and NEVER logged.
 type Client struct {
 	apiKey        string // secret key — server-to-server auth; never logged
 	publicKey     string // publishable key — client-init / disclosure; safe to surface

@@ -67,7 +67,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ro
       }
     });
 
-    // Remove permissions that should be removed
     const toDelete = (currentPerms ?? [])
       .filter((rp: any) => FACILITIES_PERMISSIONS.includes(rp.permissions.slug) && !permissionsToKeep.has(rp.permissions.slug))
       .map((rp: any) => rp.id);
@@ -81,7 +80,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ro
       if (deleteError) throw deleteError;
     }
 
-    // Add new permissions
     const existingSlugs = new Set(
       (currentPerms ?? [])
         .filter((rp: any) => FACILITIES_PERMISSIONS.includes(rp.permissions.slug))

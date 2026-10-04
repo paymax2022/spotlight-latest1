@@ -348,7 +348,6 @@ func (s *Service) Rewind(ctx context.Context, userID string) (undone string, err
 	}
 	defer tx.Rollback(ctx)
 
-	// Newest like for this viewer.
 	var likeTarget string
 	var likeAt time.Time
 	likeFound := true
@@ -363,7 +362,6 @@ func (s *Service) Rewind(ctx context.Context, userID string) (undone string, err
 		}
 	}
 
-	// Newest pass for this viewer.
 	var passTarget string
 	var passAt time.Time
 	passFound := true
@@ -382,7 +380,6 @@ func (s *Service) Rewind(ctx context.Context, userID string) (undone string, err
 		return "", ErrNothingToUndo
 	}
 
-	// Choose the more recent of the two swipes.
 	undoLike := likeFound && (!passFound || !passAt.After(likeAt))
 	if undoLike {
 		// If this like created a mutual match, void the match first.

@@ -157,7 +157,6 @@ func (s *Service) CreateNotification(ctx context.Context, userID, notificationTy
 	id := uuid.New().String()
 	now := time.Now()
 
-	// Convert data to JSON
 	dataJSON, _ := json.Marshal(data)
 
 	query := `
@@ -177,7 +176,6 @@ func (s *Service) CreateNotification(ctx context.Context, userID, notificationTy
 		return nil, err
 	}
 
-	// Parse JSON data
 	if err := json.Unmarshal([]byte(dataStr), &n.Data); err != nil {
 		n.Data = make(map[string]interface{})
 	}
@@ -191,7 +189,6 @@ func (s *Service) BroadcastNotification(ctx context.Context, userIDs []string, n
 		return nil
 	}
 
-	// Convert data to JSON
 	dataJSON, _ := json.Marshal(data)
 
 	query := `

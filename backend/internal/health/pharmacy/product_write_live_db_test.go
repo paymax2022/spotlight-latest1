@@ -1,19 +1,13 @@
 package healthpharmacy_test
 
 // LIVE-DB regression for E2E-HLT-001: POST /products (Service.UpsertProduct)
-// failed on EVERY write with a 23502 not_null_violation → 422. Root cause:
-// pharmacy_products predates this module — the earlier
-// 20260617000000_health_premium.sql storefront created it with
-// `category TEXT NOT NULL CHECK (category IN ('pain','vitamins','first_aid',
-// 'baby','skincare','devices','prescription','otc'))` and no default, the
-// 20260815000200 collision guard added the new-module columns but could not
-// relax the legacy one, and the Go INSERT never set it. The column is NOT dead
-// weight: the legacy pharmacy reader (internal/pharmacy/service.go) still
-// SELECTs category and scans it into a non-nullable Go string, so a NULL would
-// break the legacy catalog instead. The write therefore populates it, derived
-// server-side from rx_required → 'prescription' | 'otc' (both enum-legal).
-// Every sibling live-DB test seeds rows with an explicit category= so none of
-// them ever exercised the real INSERT — this suite does.
+// must populate pharmacy_products.category — the column is
+// `TEXT NOT NULL CHECK (category IN ('pain','vitamins','first_aid','baby',
+// 'skincare','devices','prescription','otc'))` with no default (created by
+// 20260617000000_health_premium.sql, predating this module), so omitting it is
+// a 23502 violation. It cannot be left NULL: the legacy pharmacy reader
+// (internal/pharmacy/service.go) still SELECTs category into a non-nullable Go
+// string. The write derives it from rx_required → 'prescription' | 'otc'.
 // Skips unless TEST_DATABASE_URL is set.
 
 import (

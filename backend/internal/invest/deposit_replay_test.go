@@ -2,9 +2,8 @@ package invest
 
 // E2E-MTL-002: invest deposit/withdraw idempotency-replay contract.
 // A replayed mutation must return the SAME result as the first call — the
-// wallet view, status 200 — and post exactly one set of ledger legs. Before the
-// fix, the replay propagated ledger.ErrDuplicate (Redis fast-path) or a raw
-// 23505 from the invest ledger (no Redis), surfacing as a 500.
+// wallet view, status 200 — and post exactly one set of ledger legs (never
+// surface ledger.ErrDuplicate / 23505 as a 500).
 //
 // Live-DB only, gated on TEST_DATABASE_URL (helpers live in
 // live_journey_test.go — same package).

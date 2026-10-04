@@ -54,12 +54,10 @@ func reviewTransition(current, decision string) (string, bool) {
 // AdminCampaignSummary is the review-queue shape: everything the public list
 // carries, plus the two fields the moderation console needs and the public one
 // must never expose.
-// submittedAt and riskLevel were already SELECTed by the discovery query and
-// then dropped by toSummary, so the admin console rendered blanks for both —
-// including the queue's sort key. They are added here rather than on
-// CampaignSummary because that type is also the PUBLIC discovery payload, and
-// riskLevel is an internal fraud signal: putting it there would publish the
-// platform's own risk assessment of every campaign to anyone browsing.
+// submittedAt and riskLevel live here rather than on CampaignSummary because
+// that type is also the PUBLIC discovery payload, and riskLevel is an internal
+// fraud signal: putting it there would publish the platform's own risk
+// assessment of every campaign to anyone browsing.
 type AdminCampaignSummary struct {
 	CampaignSummary
 	SubmittedAt string `json:"submittedAt"`

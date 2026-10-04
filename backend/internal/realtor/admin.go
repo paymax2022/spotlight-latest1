@@ -163,11 +163,10 @@ func (h *AdminHandler) Escrow(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": escrow})
 }
 
-// ResolveEscrow is the money-moving admin endpoint that closes PROPMGMT-002:
-// until this existed, money paid into realtor_escrow_deposits had no way to
-// ever come back out. Release/forfeiture is inspection-gated — it requires a
-// submitted realtor_move_outs record for the lease — and every branch is
-// audited to realtor_admin_audit_log by the repository method.
+// ResolveEscrow is the money-moving admin endpoint for inspection-gated deposit
+// release/forfeiture (PROPMGMT-002): it requires a submitted realtor_move_outs
+// record for the lease, and every branch is audited to realtor_admin_audit_log
+// by the repository method.
 func (h *AdminHandler) ResolveEscrow(c *gin.Context) {
 	id := c.Param("id")
 	var body struct {
@@ -371,12 +370,10 @@ func (s *StaysService) GetOrIssueGatePass(ctx context.Context, bookingID, caller
 		return nil, ErrNoGatePass // not in a managed estate → 404 at the handler.
 	}
 
-	// Already issued → return it.
 	if b.PassID != nil && *b.PassID != "" {
 		return s.estate.GetVisitorPass(ctx, *b.EstateID, *b.PassID)
 	}
 
-	// Only issue for live stays.
 	if b.Status != "confirmed" && b.Status != "checked_in" {
 		return nil, ErrNoGatePass
 	}

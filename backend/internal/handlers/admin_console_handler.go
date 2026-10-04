@@ -293,7 +293,6 @@ func (h *AdminConsoleHandler) GetOrders(c *gin.Context) {
 
 	result := []gin.H{}
 	for _, o := range orders {
-		// Apply filter.
 		// Compared against the AdminOrderStatus values the store normalises to
 		// (see tradingOrdersSQL), NOT lower-case. The failed/pending groupings
 		// mirror the console's own KPI tiles exactly — failed counts

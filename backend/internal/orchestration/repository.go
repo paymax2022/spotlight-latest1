@@ -42,9 +42,8 @@ func (s *sqlStore) Balances(ctx context.Context, customer string) ([]Money, erro
 }
 
 // OpenWallet makes a currency visible to the customer at a zero balance so the
-// wallet survives a refetch. Previously the endpoint fabricated an
-// {available: 0} response and persisted nothing, so a newly "added" wallet
-// vanished on the next load and there was no way to hold a non-NGN currency.
+// wallet survives a refetch — a fabricated-but-unpersisted {available: 0}
+// response would vanish on the next load.
 // NGN is a no-op: its wallet is the main ledger account, created on demand.
 func (s *sqlStore) OpenWallet(ctx context.Context, customer, currency string) error {
 	cur := strings.ToUpper(strings.TrimSpace(currency))
@@ -427,14 +426,9 @@ func (s *sqlStore) Transactions(ctx context.Context, customer string) ([]TxView,
 	}
 	tr.Close()
 
-	// Inbound DEPOSITS, from orch_collection_events.
-	// This used to list orch_collections — one row per virtual ACCOUNT, which is
-	// not a transaction: it had no amount, and it left Destination.Currency as "".
-	// The mobile TransactionRow formats that leg through CURRENCIES[currency], so
-	// an empty code was `undefined.decimals` and the resulting crash blanked the
-	// WHOLE FX screen for any customer who had ever provisioned an account. It
-	// also emitted the account's "active" as a status, which is not a member of
-	// the client's TxStatus union.
+	// Inbound DEPOSITS, from orch_collection_events — one row per EVENT. (Listing
+	// orch_collections instead would emit per-account rows with no amount and a
+	// blank Destination.Currency, which the client's TxStatus union cannot hold.)
 	// A deposit is money arriving 1:1 — no conversion — so both legs carry the
 	// same amount and currency.
 	col, err := s.db.Query(ctx, `

@@ -375,8 +375,7 @@ func (s *Service) VerifyDoctor(ctx context.Context, reviewerID, doctorUserID str
 
 	// Skip the audit write on an idempotent replay (wasNoop) — no state actually
 	// changed, so a second audit row would misrepresent the trail as two
-	// distinct decisions. Found live by this test: the first version of this
-	// method wrote an audit row unconditionally, including on replay.
+	// distinct decisions.
 	if s.audit != nil && !wasNoop {
 		_ = s.audit.InsertAudit(ctx, reviewerID, "telemedicine.admin.doctor.verified", "doctor_verification", verifID, "",
 			map[string]any{"decision": req.Decision, "reason": req.Reason, "doctor_user_id": doctorUserID})

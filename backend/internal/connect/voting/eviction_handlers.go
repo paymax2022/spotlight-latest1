@@ -75,7 +75,6 @@ func (h *Handler) TriggerEvictions(c *gin.Context) {
 		return
 	}
 
-	// Set defaults
 	if req.EvictionPercentage == 0 {
 		req.EvictionPercentage = 20
 	}
@@ -251,13 +250,11 @@ func (h *Handler) AdminVote(c *gin.Context) {
 
 // TriggerEvictions marks the bottom 20% of contestants for eviction.
 func (s *Service) TriggerEvictions(ctx context.Context, contestID string, req EvictionRequest, actorID string) ([]EvictionResponse, error) {
-	// Call Supabase RPC to trigger evictions atomically
 	results, err := s.repo.TriggerEvictions(ctx, contestID, req.StageNumber, req.EvictionPercentage, req.GracePeriodHours, actorID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to trigger evictions: %w", err)
 	}
 
-	// Audit log
 	if s.audit != nil {
 		s.audit.WriteAudit(ctx, "evict_contestants", actorID, "contest", contestID, map[string]any{
 			"stage_number":        req.StageNumber,
@@ -278,7 +275,6 @@ func (s *Service) SaveContestant(ctx context.Context, evictionID, actorID, saveT
 		return nil, fmt.Errorf("failed to save contestant: %w", err)
 	}
 
-	// Audit log
 	if s.audit != nil {
 		s.audit.WriteAudit(ctx, "save_contestant", actorID, "eviction", evictionID, map[string]any{
 			"save_type": saveType,
@@ -296,7 +292,6 @@ func (s *Service) ExtendGracePeriod(ctx context.Context, evictionID string, addi
 		return nil, fmt.Errorf("failed to extend grace period: %w", err)
 	}
 
-	// Audit log
 	if s.audit != nil {
 		s.audit.WriteAudit(ctx, "extend_grace_period", actorID, "eviction", evictionID, map[string]any{
 			"additional_hours": additionalHours,
@@ -313,7 +308,6 @@ func (s *Service) FinalizeEvictions(ctx context.Context, contestID string, stage
 		return nil, fmt.Errorf("failed to finalize evictions: %w", err)
 	}
 
-	// Audit log
 	if s.audit != nil {
 		s.audit.WriteAudit(ctx, "finalize_evictions", "system", "contest", contestID, map[string]any{
 			"stage_number": stageNumber,
@@ -370,19 +364,17 @@ func (s *Service) GetEvictions(ctx context.Context, contestID string, stageNum s
 
 // AdminVote allows admin to vote unlimited without payment.
 func (s *Service) AdminVote(ctx context.Context, contestID, contestantID, actorID string, voteQuantity int) (*Vote, error) {
-	// Verify contest exists
 	_, err := s.repo.GetContest(ctx, contestID)
 	if err != nil {
 		return nil, ErrNotFound
 	}
 
-	// Record the admin vote directly (no ledger debit, no idempotency key needed)
+	// Admin votes bypass the ledger — no debit, no idempotency key.
 	vote, err := s.repo.AdminVote(ctx, contestID, contestantID, actorID, voteQuantity)
 	if err != nil {
 		return nil, fmt.Errorf("failed to record admin vote: %w", err)
 	}
 
-	// Audit log
 	if s.audit != nil {
 		s.audit.WriteAudit(ctx, "admin_vote", actorID, "contest", contestID, map[string]any{
 			"contestant_id": contestantID,

@@ -3,12 +3,10 @@ package rbac_test
 // LIVE-DB test: GetAdminUser fetches the REQUESTED user, not just whichever
 // user happens to be newest.
 // WHY THIS EXISTS (AUTH-019)
-// GetAdminUser used to be implemented as ListAdminUsers(Limit: 1) followed by
-// a linear search of that one-row result for a matching ID. ListAdminUsers
-// orders by created_at.desc, so a Limit of 1 fetches only the single newest
-// platform_users row system-wide — every other lookup silently 404'd. This
-// broke the admin console's per-user inspect/update/suspend/lock workflow for
-// every user except whoever registered last.
+// ListAdminUsers orders by created_at.desc, so ListAdminUsers(Limit: 1)
+// fetches only the single newest platform_users row system-wide — a
+// GetAdminUser built on it + a client-side match 404s every lookup except the
+// newest user.
 // A test that seeds one user and fetches it by ID would pass against BOTH the
 // broken implementation (if that user happens to be newest) and the fixed
 // one, so it would not have caught this. The property that actually matters
@@ -122,8 +120,8 @@ func TestLiveDB_GetAdminUserFetchesNonNewestUserByID(t *testing.T) {
 			"test assumptions about created_at ordering are stale", oldestID)
 	}
 
-	// Fetch the OLDEST seeded user — the case that was broken (it is never
-	// the single row a Limit:1/created_at.desc query returns).
+	// Fetch the OLDEST seeded user — never the single row a
+	// Limit:1/created_at.desc query returns.
 	got, err := repo.GetAdminUser(oldestID)
 	if err != nil {
 		t.Fatalf("GetAdminUser(oldest, non-newest user): %v", err)

@@ -45,8 +45,7 @@ import (
 // authMW must be the SAME RequireAuthContext middleware the finance group uses.
 // It has to run BEFORE requireUserID on the admin group: requireUserID only reads
 // the user_id that RequireAuthContext populates, so mounting it alone 401s every
-// admin route even with a valid token (the bug documented three times over in
-// finance_routes.go).
+// admin route even with a valid token.
 // ctx is the app-lifetime background context (registerFinanceRoutes's own
 // context.Background()) that scopes the Phase 3 requery-sweep job — the same
 // ctx the Maplerad block passes directly to StartReconcile/StartOrphanSweep.
@@ -81,11 +80,9 @@ func RegisterUtilityBills(
 		"vtpass": vtpassClient,
 	})
 
-	// This is the deliberate behaviour change Phase 1 makes explicit: a settled
-	// utility transaction now posts a balanced revenue-recognition leg
+	// A settled utility transaction posts a balanced revenue-recognition leg
 	// (DR provider_clearing → CR commission) and the commission_earnings row
-	// carries its ledger_ref. The Next.js path left ledger_ref null with a
-	// standing TODO. Passing nil here would silently preserve that gap.
+	// carries its ledger_ref. Passing nil here would silently drop that leg.
 	commissionSvc := withReferralSplit(commission.NewService(commission.NewRepository(pool), ledgerSvc), pool, cfg)
 
 	svc := utilitybills.NewService(utilitybills.Deps{
@@ -195,7 +192,7 @@ func RegisterUtilityBills(
 	admin.GET("/reports/provider-performance", perm, handler.AdminProviderPerformanceReport)
 
 	// Background reconciliation: hourly requery sweep for stuck purchases
-	// (Phase 3, closes UTIL-002 — previously nothing did this automatically).
+	// (UTIL-002).
 	utilitybills.StartPendingSweep(ctx, svc, time.Hour)
 
 	log.Printf("[finance] Utility Bills domain routes registered at /api/finance/utilitybills (vtpass env=%s, configured=%t, adapters=%v)",

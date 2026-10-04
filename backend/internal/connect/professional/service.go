@@ -157,7 +157,6 @@ func (s *Service) SendIntro(ctx context.Context, fromUserID string, in IntroInpu
 
 // RespondIntro lets the recipient accept/decline a pending intro (object-level authz).
 func (s *Service) RespondIntro(ctx context.Context, recipientID, introID string, accept bool) (*IntroRequest, error) {
-	// Verify the responder is the recipient and the request is pending.
 	var fromID string
 	var status IntroStatus
 	if err := s.db.QueryRow(ctx,

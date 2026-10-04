@@ -223,7 +223,6 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 		return
 	}
 
-	// Record gift transaction
 	gt, err := h.store.SendGift(c.Request.Context(), userID, body.RecipientID, body.ProductID, body.Message, product.AmountKobo, reference, idemKey)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send gift"})

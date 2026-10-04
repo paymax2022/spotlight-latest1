@@ -89,7 +89,6 @@ func TestEvictionHandlersParameterBinding(t *testing.T) {
 			c, _ := gin.CreateTestContext(w)
 			c.Request = req
 
-			// Try to bind the request body to the appropriate type
 			var bindErr error
 			switch tt.request.(type) {
 			case EvictionRequest:
@@ -158,10 +157,8 @@ func TestEvictionResponseTypes(t *testing.T) {
 
 // TestEvictionRequestValidation verifies struct tags work correctly
 func TestEvictionRequestValidation(t *testing.T) {
-	// Verify struct tags are present
 	req := EvictionRequest{}
 
-	// Check that JSON tags are properly set
 	tests := []struct {
 		name      string
 		jsonBytes string
@@ -199,7 +196,6 @@ func TestEvictionRequestValidation(t *testing.T) {
 				return
 			}
 
-			// Validate the parsed request
 			if req.StageNumber <= 0 && tt.expectOK {
 				t.Errorf("expected valid stage_number, got %d", req.StageNumber)
 			}
@@ -209,10 +205,8 @@ func TestEvictionRequestValidation(t *testing.T) {
 
 // TestRouteRegistration verifies routes can be registered without panic
 func TestRouteRegistration(t *testing.T) {
-	// Create a mock service (not fully functional, just for testing registration)
 	mockSvc := &Service{}
 
-	// Test that Register doesn't panic (member routes)
 	t.Run("member_routes", func(t *testing.T) {
 		router := gin.New()
 		defer func() {
@@ -225,7 +219,6 @@ func TestRouteRegistration(t *testing.T) {
 		t.Log("✓ Register() executed without panic")
 	})
 
-	// Test that RegisterAdmin doesn't panic (admin routes on separate group)
 	t.Run("admin_routes", func(t *testing.T) {
 		router := gin.New()
 		adminGroup := router.Group("/admin")
@@ -278,7 +271,6 @@ func TestErrorResponse(t *testing.T) {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 
-			// Simulate error response
 			c.JSON(tt.statusCode, gin.H{"error": tt.errorMessage})
 
 			if w.Code != tt.statusCode {

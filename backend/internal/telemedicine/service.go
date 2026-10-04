@@ -172,12 +172,8 @@ func (s *Service) ListDoctors(ctx context.Context, q ListDoctorsQuery) ([]Doctor
 	// and Doctor.About), unlike sub_specialty/avatar_url/mdcn_number/phone which are
 	// already *string and tolerate NULL. pgx fails the whole scan on either —
 	// "cannot scan NULL into *string" — and because that happens per-row inside the
-	// loop, ONE such doctor 500s the ENTIRE list rather than omitting itself. Every
-	// doctor in the local database has about=NULL, so the doctor list — the front
-	// door of telemedicine — returned 500 outright.
-	// bio has no NULLs today but the column allows them, so it is coalesced too
-	// rather than left as the next instance of this bug. Empty string matches the
-	// struct's `omitempty` JSON tags: an absent bio simply does not appear.
+	// loop, ONE such doctor 500s the ENTIRE list rather than omitting itself.
+	// COALESCE keeps NULL → "" which matches the struct's `omitempty` JSON tags.
 	sql := fmt.Sprintf(`
 		SELECT d.id, d.user_id, d.name, d.specialty, d.sub_specialty, COALESCE(d.bio, ''), COALESCE(d.about, ''),
 		       d.consult_fee_kobo, d.avatar_url, d.is_available, d.is_online, d.is_hmo_verified,
@@ -251,13 +247,9 @@ func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*Docto
 	// floor arithmetic CompleteAppointment's settlement.Split uses for the doctor's
 	// actual provider leg (consult − floor(0.15·consult)) — NOT `fee_kobo * 0.85`,
 	// which Postgres evaluates as a fractional numeric whenever fee_kobo isn't a
-	// multiple of 20. pgx cannot scan a fractional numeric into int64, and the
-	// error was previously discarded (`_ = ...Scan(...)`), so weeklyRevenue
-	// silently stayed at its Go zero value for any doctor with an odd consult fee
-	// — found live via UAT (a doctor who was genuinely credited 85003 kobo saw a
-	// dashboard reading exactly 0). Integer division avoids the numeric type
-	// entirely, so the scan can never fail this way again, and the figure now
-	// matches what the doctor was actually paid to the kobo.
+	// multiple of 20 and pgx cannot scan into int64 (a discarded scan error leaves
+	// weeklyRevenue silently 0). Integer division avoids the numeric type entirely,
+	// so the figure matches what the doctor was actually paid to the kobo.
 	var weeklyRevenue int64
 	if err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(fee_kobo - (fee_kobo * 15 / 100)), 0)
@@ -409,7 +401,7 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 	// assertSlotFree below before ever reaching settlement.Escrow's own
 	// idempotency handling — money-safe (no double charge), but the caller sees
 	// a spurious "slot no longer available" error instead of the expected
-	// idempotent success (found live via UAT).
+	// idempotent success.
 	if req.IdempotencyKey != "" {
 		if existing, err := s.appointmentByIdempotencyKey(ctx, patientID, req.IdempotencyKey); err != nil {
 			return nil, fmt.Errorf("telemedicine: check idempotency key: %w", err)

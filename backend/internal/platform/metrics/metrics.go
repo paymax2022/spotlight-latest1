@@ -76,9 +76,8 @@ func RecordLedgerInvariantBreach(ctx context.Context, kind string) {
 
 // RecordNotificationEnqueue counts notification-task enqueues by channel
 // ("push" | "email" | "sms") and result ("success" | "failure" |
-// "marshal_error" | "client_unconfigured"). E2E-FR-051: enqueue failures used
-// to be silently dropped at call sites — this counter is the metric surface to
-// alert on when notifications are expected to flow (failure ≈ 0).
+// "marshal_error" | "client_unconfigured"). This counter is the metric surface to
+// alert on when notifications are expected to flow (failure ≈ 0) (E2E-FR-051).
 func RecordNotificationEnqueue(ctx context.Context, channel, result string) {
 	instruments()
 	notificationEnqueue.Add(ctx, 1, metric.WithAttributes(

@@ -24,7 +24,6 @@ import (
 
 // koboToMoney / Money display conversion.
 // Source: backend/internal/spotlightwealth/model.go:23-31.
-//   }
 // koboToMoney is unexported; this file transcribes the exact formula so the
 // display conversion (used for reward balances/history) is locked without
 // requiring package-internal access.

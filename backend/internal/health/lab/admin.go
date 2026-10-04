@@ -215,8 +215,8 @@ func (s *Service) AdminDashboard(ctx context.Context) (*AdminDashboard, error) {
 
 // request/response types for the admin console dashboard.
 // These are additive to model.go; nothing here changes the member-facing
-// shapes. Mirrors healthpharmacy's admin_model.go (PHARMACY-001) exactly in
-// shape and discipline.
+// shapes. Mirrors healthpharmacy's admin.go (PHARMACY-001) exactly in shape
+// and discipline.
 
 // AdminDashboard aggregates platform-wide KPIs for the lab admin console.
 // Contrast with the owner/patient views (model.go), which are scoped to one
@@ -229,25 +229,13 @@ type AdminDashboard struct {
 	OrdersByState map[string]int64 `json:"orders_by_state"`
 	// PlatformRevenueKoboWeek is Spotlight's realized commission on lab orders
 	// released in the trailing 7 days.
-	// This is a direct READ of already-recorded rows, not a recomputation:
-	// the lab service's own release path (recordCommissionSafe, service.go)
-	// does NOT itself know the commission split — the breakdown is resolved
-	// server-side by the central commission module's rate card
-	// (commission.Service.RecordFor / computeBreakdown), and lab deliberately
-	// never imports that package (see CommissionRecorder's doc comment in
-	// service.go — the interface seam exists precisely so lab stays ignorant
-	// of the rate, which can be changed by admins at any time via the
-	// rate-card UI). Recomputing a % here would mean hardcoding a rate that
-	// can silently drift from the live config — exactly the class of bug
-	// PHARMACY-002/003 and Telemedicine's TELEMEDICINE-002 float bug both
-	// were. Summing commission_earnings.spotlight_revenue_kobo (an
-	// append-only, integer-kobo ledger of exactly what recordCommissionSafe
-	// recorded) for source_module='health.lab' (service.go's
-	// recordCommissionSafe call site) is therefore the only accurate,
-	// integer-only source of this figure. If the commission feature is off
-	// (FeatureCommissionEnabled=false ⇒ SetCommissionRecorder is never
-	// called), no rows are ever written for this module and this is honestly
-	// 0 — not fabricated, not estimated.
+	// Direct READ of already-recorded rows, NOT a recomputation: the split is
+	// resolved server-side by the central commission module's rate card, and
+	// lab deliberately never imports that package — recomputing a % here would
+	// hardcode a rate that can drift from the live config. Summing
+	// commission_earnings.spotlight_revenue_kobo (append-only integer-kobo
+	// ledger) for source_module='health.lab' is the only accurate source.
+	// When the commission feature is off no rows are written and this is 0.
 	PlatformRevenueKoboWeek int64 `json:"platform_revenue_kobo_week"`
 	// TotalLabs mirrors the exact APPROVED-lab predicate used by
 	// labProviderGateAdapter.IsApprovedLab (backend/internal/app/health_lab_routes.go)
