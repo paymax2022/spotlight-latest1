@@ -39,12 +39,10 @@ func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
 
 // GetOrCreateCode returns the user's referral code, creating one if needed.
 //
-// E2E-FIN-044: this service and the rewards engine mint into DIFFERENT tables
-// (finance_referral_codes vs referral_links), so a user could hold two codes
-// and see a different one depending on which surface they opened. Rule: the
-// FIRST-MINTED code is canonical. When both tables hold a code for the user
-// and they differ, the older one wins and this row self-repairs to it; when
-// only referral_links has one, it is adopted here before a new one is drawn.
+// This service and the rewards engine mint into DIFFERENT tables
+// (finance_referral_codes vs referral_links); E2E-FIN-044 makes the
+// first-minted code canonical — a divergent row self-repairs to the older
+// code, and a link-only code is adopted before a fresh one is drawn.
 // Resolution already cross-checks both tables (RewardService.resolveCode), so
 // attribution is unaffected by which table's copy a signup used.
 func (s *Service) GetOrCreateCode(ctx context.Context, userID string) (*Code, error) {
