@@ -105,9 +105,11 @@ func (h *Handler) Refund(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"ok":            true,
-		"refundedCount": result.RefundedCount,
-		"refundedKobo":  result.RefundedKobo,
+		"ok":             true,
+		"refundedCount":  result.RefundedCount,
+		"refundedKobo":   result.RefundedKobo,
+		"failedCount":    result.FailedCount,
+		"unrefundedKobo": result.UnrefundedKobo,
 	})
 }
 

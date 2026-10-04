@@ -64,17 +64,30 @@ func moneyPathPool(t *testing.T) *pgxpool.Pool {
 // through the actual service (not a raw INSERT) — so the instant-settle split
 // this test pins really ran. Returns the campaign id, creator id, and the
 // crowdfunding/wallet services wired against the same pool.
-func seedFundedContribution(t *testing.T, ctx context.Context, pool *pgxpool.Pool, goalKobo, contributeKobo int64) (campaignID, creatorID string, cfSvc *crowdfunding.Service, walletSvc *cfwallet.Service) {
+// fundedFixture carries the ids + services seedFundedContribution returns —
+// a struct because the tuple grew past what blank-identifier unpacking could
+// carry readably.
+type fundedFixture struct {
+	campaignID    string
+	creatorID     string
+	contributorID string
+	cfSvc         *crowdfunding.Service
+	walletSvc     *cfwallet.Service
+}
+
+func seedFundedContribution(t *testing.T, ctx context.Context, pool *pgxpool.Pool, goalKobo, contributeKobo int64) fundedFixture {
 	t.Helper()
 
 	ledgerSvc := financeledger.NewService(financeledger.NewRepository(pool), (*goredis.Client)(nil))
 	settlementSvc := settlement.NewService(pool, ledgerSvc)
-	cfSvc = crowdfunding.NewService(pool, ledgerSvc, settlementSvc)
-	walletSvc = cfwallet.NewService(pool).WithLedger(ledgerSvc)
-
-	creatorID = uuid.NewString()
-	contributorID := uuid.NewString()
-	campaignID = uuid.NewString()
+	fx := fundedFixture{
+		creatorID:     uuid.NewString(),
+		contributorID: uuid.NewString(),
+		campaignID:    uuid.NewString(),
+		cfSvc:         crowdfunding.NewService(pool, ledgerSvc, settlementSvc),
+		walletSvc:     cfwallet.NewService(pool).WithLedger(ledgerSvc),
+	}
+	creatorID, contributorID, campaignID := fx.creatorID, fx.contributorID, fx.campaignID
 	testsupport.CleanupUsers(t, pool, creatorID, contributorID)
 
 	for _, id := range []string{creatorID, contributorID} {
@@ -126,7 +139,7 @@ func seedFundedContribution(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 		t.Fatalf("fund contributor wallet: %v", err)
 	}
 
-	contrib, err := cfSvc.Contribute(ctx, campaignID, contributorID, crowdfunding.ContributeRequest{
+	contrib, err := fx.cfSvc.Contribute(ctx, campaignID, contributorID, crowdfunding.ContributeRequest{
 		AmountKobo:     contributeKobo,
 		IdempotencyKey: "cf-uat-contrib-" + campaignID,
 	})
@@ -137,7 +150,7 @@ func seedFundedContribution(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 		t.Fatalf("precondition failed: contribution status = %q, want 'released' (instant-settle) — the fixture assumes the normal happy path", contrib.Status)
 	}
 
-	return campaignID, creatorID, cfSvc, walletSvc
+	return fx
 }
 
 // TestLiveDB_Withdraw_AvailableMatchesRealLedgerBalanceNotGrossRaised pins the
@@ -148,7 +161,8 @@ func TestLiveDB_Withdraw_AvailableMatchesRealLedgerBalanceNotGrossRaised(t *test
 	pool := moneyPathPool(t)
 
 	const contributeKobo = 1_000_000 // 90/10 split -> 900,000 net to creator
-	campaignID, creatorID, _, walletSvc := seedFundedContribution(t, ctx, pool, 5_000_000, contributeKobo)
+	fx := seedFundedContribution(t, ctx, pool, 5_000_000, contributeKobo)
+	campaignID, creatorID, walletSvc := fx.campaignID, fx.creatorID, fx.walletSvc
 
 	ledgerSvc := financeledger.NewService(financeledger.NewRepository(pool), (*goredis.Client)(nil))
 	realBalance, err := ledgerSvc.GetBalance(ctx, creatorID)
@@ -174,28 +188,134 @@ func TestLiveDB_Withdraw_AvailableMatchesRealLedgerBalanceNotGrossRaised(t *test
 	}
 }
 
-// TestLiveDB_Refund_ReportsZeroWhenContributionsAlreadySettled pins the
-// second fix: refunding a campaign whose contributions already instant-
-// settled must honestly report zero refunded, not a bare success.
-func TestLiveDB_Refund_ReportsZeroWhenContributionsAlreadySettled(t *testing.T) {
+// TestLiveDB_Refund_ClawbackMakesBackerWholeOnFailedCampaign pins the
+// E2E-COM-004 fix: instant-settle means nearly every real contribution is
+// 'released' with a 'settled' settlement, so the old escrowed-only gate
+// refunded ₦0 while marking the campaign failed. RefundAll must now claw the
+// settled split back — DR creator wallet (90%) + DR paymax_revenue (10%) /
+// CR backer wallet (gross) — so the backer is made whole at GROSS.
+func TestLiveDB_Refund_ClawbackMakesBackerWholeOnFailedCampaign(t *testing.T) {
 	ctx := context.Background()
 	pool := moneyPathPool(t)
 
-	campaignID, creatorID, cfSvc, _ := seedFundedContribution(t, ctx, pool, 5_000_000, 100_000)
+	const contributeKobo = 100_000 // 90/10 split -> 90,000 to creator, 10,000 fee
+	fx := seedFundedContribution(t, ctx, pool, 5_000_000, contributeKobo)
+	campaignID, creatorID, contributorID, cfSvc := fx.campaignID, fx.creatorID, fx.contributorID, fx.cfSvc
+
+	ledgerSvc := financeledger.NewService(financeledger.NewRepository(pool), (*goredis.Client)(nil))
+	backerBefore, err := ledgerSvc.GetBalance(ctx, contributorID)
+	if err != nil {
+		t.Fatalf("backer balance: %v", err)
+	}
+	if backerBefore != 100 { // fixture funds contributeKobo+100 then contributes contributeKobo
+		t.Fatalf("test setup: backer balance = %d, want 100 after contributing %d", backerBefore, contributeKobo)
+	}
+
+	var contributionID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM contributions WHERE campaign_id = $1`, campaignID).Scan(&contributionID); err != nil {
+		t.Fatalf("read contribution: %v", err)
+	}
+
+	result, err := cfSvc.RefundAll(ctx, campaignID, creatorID)
+	if err != nil {
+		t.Fatalf("refund: %v", err)
+	}
+	if result.RefundedCount != 1 {
+		t.Errorf("RefundedCount = %d, want 1 — a released contribution is refundable via clawback", result.RefundedCount)
+	}
+	if result.RefundedKobo != contributeKobo {
+		t.Errorf("RefundedKobo = %d, want %d (the full gross)", result.RefundedKobo, contributeKobo)
+	}
+	if result.FailedCount != 0 {
+		t.Errorf("FailedCount = %d, want 0", result.FailedCount)
+	}
+
+	// Money actually moved: backer restored at gross, creator clawed back to 0.
+	if got, err := ledgerSvc.GetBalance(ctx, contributorID); err != nil || got != contributeKobo+100 {
+		t.Errorf("backer balance after refund = %d, want %d (gross restored) err=%v", got, contributeKobo+100, err)
+	}
+	if got, err := ledgerSvc.GetBalance(ctx, creatorID); err != nil || got != 0 {
+		t.Errorf("creator balance after clawback = %d, want 0 (90%% leg reversed) err=%v", got, err)
+	}
+
+	// The reversal legs are BALANCED double-entry under cf:refund:<id>.
+	debits, credits := refundLegs(t, ctx, pool, "cf:refund:"+contributionID+"%")
+	if debits != contributeKobo || credits != contributeKobo {
+		t.Errorf("clawback legs: debits=%d credits=%d, want both %d", debits, credits, contributeKobo)
+	}
+
+	// Campaign + contribution + settlement reached their terminal states.
+	var status, contribStatus, settStatus string
+	if err := pool.QueryRow(ctx, `SELECT status FROM campaigns WHERE id = $1`, campaignID).Scan(&status); err != nil {
+		t.Fatalf("read campaign status: %v", err)
+	}
+	if status != "failed" {
+		t.Errorf("campaign status = %q, want 'failed'", status)
+	}
+	if err := pool.QueryRow(ctx, `SELECT status FROM contributions WHERE campaign_id = $1`, campaignID).Scan(&contribStatus); err != nil {
+		t.Fatalf("read contribution status: %v", err)
+	}
+	if contribStatus != "refunded" {
+		t.Errorf("contribution status = %q, want 'refunded'", contribStatus)
+	}
+	if err := pool.QueryRow(ctx, `SELECT st.status FROM settlements st JOIN contributions co ON co.settlement_id = st.id WHERE co.id = $1`, contributionID).Scan(&settStatus); err != nil {
+		t.Fatalf("read settlement status: %v", err)
+	}
+	if settStatus != "refunded" {
+		t.Errorf("settlement status = %q, want 'refunded'", settStatus)
+	}
+
+	// Replay is a safe no-op: campaign is already 'failed' and the
+	// contribution is no longer in the refundable set — zero new legs.
+	d0, c0 := refundLegs(t, ctx, pool, "cf:refund:"+contributionID+"%")
+	if _, err := cfSvc.RefundAll(ctx, campaignID, creatorID); err != nil {
+		t.Fatalf("second refund call: %v", err)
+	}
+	d1, c1 := refundLegs(t, ctx, pool, "cf:refund:"+contributionID+"%")
+	if d1 != d0 || c1 != c0 {
+		t.Errorf("replay posted extra legs: (%d,%d) → (%d,%d)", d0, c0, d1, c1)
+	}
+}
+
+// TestLiveDB_Refund_ReportsFailureWhenCreatorAlreadyCashedOut pins the
+// fail-closed side of the clawback: the backer is NOT credited money that
+// does not exist. When the creator's wallet no longer holds the payout the
+// refund is reported via FailedCount/UnrefundedKobo rather than aborting or
+// fabricating a credit.
+func TestLiveDB_Refund_ReportsFailureWhenCreatorAlreadyCashedOut(t *testing.T) {
+	ctx := context.Background()
+	pool := moneyPathPool(t)
+
+	const contributeKobo = 100_000
+	fx := seedFundedContribution(t, ctx, pool, 5_000_000, contributeKobo)
+	campaignID, creatorID, contributorID, cfSvc := fx.campaignID, fx.creatorID, fx.contributorID, fx.cfSvc
+
+	ledgerSvc := financeledger.NewService(financeledger.NewRepository(pool), (*goredis.Client)(nil))
+	// Drain the creator's wallet exactly the way a completed withdrawal does —
+	// a balanced debit to the clearing account — so the clawback leg finds no
+	// funds to reverse.
+	clearing, err := ledgerSvc.GetOrCreateStandingAccount(ctx, financeledger.AccountProviderClearing)
+	if err != nil {
+		t.Fatalf("resolve clearing: %v", err)
+	}
+	if err := ledgerSvc.Debit(ctx, creatorID, "cf-test-drain:"+campaignID, "cf-test-drain:"+campaignID, clearing.ID, 90_000); err != nil {
+		t.Fatalf("drain creator wallet (fixture emulates a completed withdrawal): %v", err)
+	}
 
 	result, err := cfSvc.RefundAll(ctx, campaignID, creatorID)
 	if err != nil {
 		t.Fatalf("refund: %v", err)
 	}
 	if result.RefundedCount != 0 {
-		t.Errorf("RefundedCount = %d, want 0 — the contribution had already instant-settled, nothing was left in escrow", result.RefundedCount)
+		t.Errorf("RefundedCount = %d, want 0 — the clawback must fail closed", result.RefundedCount)
 	}
-	if result.RefundedKobo != 0 {
-		t.Errorf("RefundedKobo = %d, want 0", result.RefundedKobo)
+	if result.FailedCount != 1 || result.UnrefundedKobo != contributeKobo {
+		t.Errorf("FailedCount/UnrefundedKobo = %d/%d, want 1/%d — the unrecoverable debt must be reported, not hidden",
+			result.FailedCount, result.UnrefundedKobo, contributeKobo)
 	}
-
-	// Existing behavior preserved: the campaign is still marked failed/
-	// cancelled even when there was nothing to refund.
+	if got, _ := ledgerSvc.GetBalance(ctx, contributorID); got != 100 {
+		t.Errorf("backer balance = %d, want 100 — no fabricated credit", got)
+	}
 	var status string
 	if err := pool.QueryRow(ctx, `SELECT status FROM campaigns WHERE id = $1`, campaignID).Scan(&status); err != nil {
 		t.Fatalf("read campaign status: %v", err)
@@ -203,24 +323,20 @@ func TestLiveDB_Refund_ReportsZeroWhenContributionsAlreadySettled(t *testing.T) 
 	if status != "failed" {
 		t.Errorf("campaign status = %q, want 'failed'", status)
 	}
-
-	// The already-released contribution must be untouched — not silently
-	// flipped to 'refunded' when no money actually moved.
-	var contribStatus string
-	if err := pool.QueryRow(ctx, `SELECT status FROM contributions WHERE campaign_id = $1`, campaignID).Scan(&contribStatus); err != nil {
-		t.Fatalf("read contribution status: %v", err)
-	}
-	if contribStatus != "released" {
-		t.Errorf("contribution status = %q, want 'released' (unchanged)", contribStatus)
-	}
 }
 
-// The positive case — RefundAll actually refunding a contribution genuinely
-// stuck in 'escrowed' (a failed instant-settle) — is deliberately NOT covered
-// here with a fabricated settlements/contributions row: doing that without
-// going through the real Escrow() debit would credit the shared AccountEscrow
-// standing account without a matching prior debit, polluting its balance for
-// any other session reading it on this shared local database. RefundAll's
-// refund-execution loop itself is unchanged by this fix (only the counting/
-// reporting around it changed) and already has coverage via settlement's own
-// Refund() path; the two tests above are what this fix actually needs.
+// refundLegs sums the DEBIT-side and CREDIT-side ledger legs under a
+// reference LIKE pattern — the balanced-double-entry assertion for the refund
+// clawback (mirrors the e2e helper ledgerTotalsByRef).
+func refundLegs(t *testing.T, ctx context.Context, pool *pgxpool.Pool, refLike string) (int64, int64) {
+	t.Helper()
+	var debits, credits int64
+	err := pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(CASE WHEN type IN ('DEBIT','REVERSAL_CREDIT') THEN amount_kobo ELSE 0 END),0),
+		       COALESCE(SUM(CASE WHEN type IN ('CREDIT','REVERSAL_DEBIT') THEN amount_kobo ELSE 0 END),0)
+		  FROM ledger_entries WHERE reference LIKE $1`, refLike).Scan(&debits, &credits)
+	if err != nil {
+		t.Fatalf("refund legs: %v", err)
+	}
+	return debits, credits
+}

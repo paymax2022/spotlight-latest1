@@ -186,7 +186,11 @@ func (s *Service) AdminStats(ctx context.Context) (*AdminStats, error) {
 	_ = s.db.QueryRow(ctx, `
 		SELECT COUNT(*), COALESCE(SUM(amount_kobo),0) FROM cf_withdrawals WHERE status='PENDING'`,
 	).Scan(&st.WithdrawalsPending, &st.WithdrawalsPendingKobo)
-	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_refunds WHERE status='REQUESTED'`).Scan(&st.RefundRequests)
+	// Refund queue depth = live member requests (cf_refund_requests) plus
+	// legacy seed-only cf_refunds rows still pending.
+	_ = s.db.QueryRow(ctx, `
+		SELECT (SELECT COUNT(*) FROM cf_refund_requests WHERE status='REFUND_REQUESTED')
+		     + (SELECT COUNT(*) FROM cf_refunds WHERE status='REQUESTED')`).Scan(&st.RefundRequests)
 	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_fraud_alerts WHERE status IN ('OPEN','INVESTIGATING')`).Scan(&st.FraudAlerts)
 	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_support_tickets WHERE status IN ('OPEN','PENDING')`).Scan(&st.OpenTickets)
 

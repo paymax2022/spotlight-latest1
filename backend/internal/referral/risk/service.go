@@ -400,22 +400,36 @@ func (s *Service) MyFraudStatus(ctx context.Context, userID string) (*FraudStatu
 // generically.
 var ErrNoReferrerToReport = errors.New("risk: no referrer to report")
 
+// ErrMemberTargetScope is returned when a member supplies a target_user_id
+// outside their own referral graph — a member may only name their own referrer
+// or a user they referred (admin-side targeting is separately RBAC-gated).
+var ErrMemberTargetScope = errors.New("risk: members may only report their own referrer or one of their own referrals")
+
 // ReportAbuse lets a member report a suspected abusive referral. Stored as an
 // open alert with a reason code only (no free-text PII persisted).
+// Target resolution is server-side: an empty target means "report whoever
+// referred me"; a non-empty target is honoured only inside the reporter's own
+// referral graph, else ErrMemberTargetScope.
 func (s *Service) ReportAbuse(ctx context.Context, reporterID string, in ReportInput) (*Alert, error) {
-	// An empty target means "report whoever referred me" — the only report a
-	// member can actually make from the app, which has no way to name another
-	// account. Resolve it server-side: accepting a client-supplied id here would
-	// let anyone open a fraud alert against any account.
+	referrer, err := s.repo.ReferrerOf(ctx, reporterID)
+	if err != nil {
+		return nil, err
+	}
 	if in.TargetUserID == "" {
-		referrer, err := s.repo.ReferrerOf(ctx, reporterID)
-		if err != nil {
-			return nil, err
-		}
 		if referrer == "" {
 			return nil, ErrNoReferrerToReport
 		}
 		in.TargetUserID = referrer
+	} else if in.TargetUserID != referrer {
+		// Not the reporter's referrer — allowed only for a user the reporter
+		// referred (either direction of their own graph edge).
+		own, err := s.repo.IsReferredBy(ctx, in.TargetUserID, reporterID)
+		if err != nil {
+			return nil, err
+		}
+		if !own {
+			return nil, ErrMemberTargetScope
+		}
 	}
 	if in.TargetUserID == reporterID {
 		return nil, fmt.Errorf("risk: cannot report yourself")

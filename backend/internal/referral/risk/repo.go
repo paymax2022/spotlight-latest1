@@ -640,3 +640,20 @@ func (r *Repository) ReferrerOf(ctx context.Context, userID string) (string, err
 	}
 	return *referrer, nil
 }
+
+// IsReferredBy reports whether referredUserID is attributed to referrerID —
+// used by ReportAbuse to scope a member-supplied target.
+func (r *Repository) IsReferredBy(ctx context.Context, referredUserID, referrerID string) (bool, error) {
+	var ok bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM referral_attributions
+			 WHERE referred_user_id = $1
+			   AND referrer_id = $2
+			   AND COALESCE(is_house, false) = false
+		)`, referredUserID, referrerID).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("risk: check referral edge: %w", err)
+	}
+	return ok, nil
+}

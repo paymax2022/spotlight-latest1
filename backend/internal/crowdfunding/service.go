@@ -194,17 +194,11 @@ const (
 	PlatformFeePct   = 0.10
 )
 
-// Contribute escrows a contributor's funds toward a campaign, then immediately
-// settles the 90/10 split (creator/platform) so the contribution is available
-// in the creator's wallet on arrival — no goal-gated escrow hold. This is a
-// deliberate product choice (donation/GoFundMe-style "keep what you raise",
-// not Kickstarter-style all-or-nothing): a campaign that later fails to reach
-// its goal has no refund path for money already settled here. The one
-// remaining checkpoint is admin campaign review — reviewStatus must already be
-// ACTIVE, which is why that's checked here in addition to the funding-cycle
-// status (Publish() can flip status to 'active' without going through review;
-// requiring reviewStatus too closes that gap rather than relying on Publish()
-// alone). If the campaign goal is now met, it also transitions to "funded".
+// Contribute escrows a contributor's funds, then immediately settles the 90/10
+// split so the money is available in the creator's wallet on arrival — no
+// goal-gated hold ("keep what you raise", not all-or-nothing); refunds work via
+// the clawback in refund.go. reviewStatus must already be ACTIVE — Publish()
+// can flip status to 'active' without review, so both are checked.
 func (s *Service) Contribute(ctx context.Context, campaignID, contributorID string, req ContributeRequest) (*Contribution, error) {
 	// Idempotent replay: return the prior contribution unchanged, before any
 	// state checks below. settlement.Escrow already deduplicates the ledger
@@ -396,28 +390,24 @@ func (s *Service) Release(ctx context.Context, campaignID, creatorID string) (*R
 	return result, nil
 }
 
-// RefundResult reports what RefundAll actually did, so a caller can tell
-// "every contributor got their money back" apart from "the campaign was
-// cancelled but nothing was refundable" — see RefundAll's own comment for
-// why that distinction matters here.
+// RefundResult reports what RefundAll actually did — refunded vs unrecoverable.
 type RefundResult struct {
 	RefundedCount int   `json:"refundedCount"`
 	RefundedKobo  int64 `json:"refundedKobo"`
+	// FailedCount / UnrefundedKobo count contributions the refund executor could
+	// not reverse — most commonly a released contribution whose creator already
+	// withdrew the payout. Reported, never silently dropped.
+	FailedCount    int   `json:"failedCount"`
+	UnrefundedKobo int64 `json:"unrefundedKobo"`
 }
 
-// RefundAll refunds every contribution still sitting in escrow when a
-// campaign fails or is cancelled, then marks the campaign failed.
-// Contribute() settles the 90/10 split IMMEDIATELY on arrival (see that
-// function's own comment) — a contribution only stays 'escrowed' if that
-// instant settle failed and is waiting on a manual sweep. So on a campaign
-// where every contribution settled normally, this refunds NOTHING: there is
-// nothing left in escrow to give back, the money already left for the
-// creator. That is an accepted product tradeoff (08a2b51a), not a bug this
-// function should silently paper over — but returning a bare success with no
-// indication of it was: a caller (and eventually a UI) had no way to tell
-// "we refunded everyone" from "we refunded no one, they'd already been
-// paid" apart from independently re-querying every contribution. Report the
-// real count/amount so that distinction is visible to whoever calls this.
+// RefundAll refunds every refundable contribution when a campaign fails or is
+// cancelled, then marks the campaign failed. Contribute() instant-settles the
+// 90/10 split, so "refundable" covers both states: 'escrowed' contributions are
+// refunded from the escrow pool and 'released' ones clawed back from the
+// creator's wallet + platform revenue (the shared executor in refund.go owns
+// both mechanics). A per-contribution failure (e.g. creator already cashed out)
+// is collected into FailedCount/UnrefundedKobo rather than aborting the sweep.
 func (s *Service) RefundAll(ctx context.Context, campaignID, creatorID string) (*RefundResult, error) {
 	var status string
 	if err := s.db.QueryRow(ctx, `SELECT status FROM campaigns WHERE id=$1 AND creator_id=$2`, campaignID, creatorID).Scan(&status); err != nil {
@@ -427,19 +417,19 @@ func (s *Service) RefundAll(ctx context.Context, campaignID, creatorID string) (
 		return nil, fmt.Errorf("crowdfunding: cannot refund a funded campaign")
 	}
 
-	rows, err := s.db.Query(ctx, `SELECT id, settlement_id, amount_kobo FROM contributions WHERE campaign_id=$1 AND status='escrowed'`, campaignID)
+	rows, err := s.db.Query(ctx, `SELECT id, amount_kobo FROM contributions WHERE campaign_id=$1 AND status IN ('escrowed','released')`, campaignID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	type c struct {
-		id, settlementID string
-		amountKobo       int64
+		id         string
+		amountKobo int64
 	}
 	var contribs []c
 	for rows.Next() {
 		var entry c
-		if err := rows.Scan(&entry.id, &entry.settlementID, &entry.amountKobo); err != nil {
+		if err := rows.Scan(&entry.id, &entry.amountKobo); err != nil {
 			return nil, err
 		}
 		contribs = append(contribs, entry)
@@ -448,17 +438,28 @@ func (s *Service) RefundAll(ctx context.Context, campaignID, creatorID string) (
 
 	result := &RefundResult{}
 	for _, entry := range contribs {
-		if err := s.settlement.Refund(ctx, entry.settlementID, "campaign_cancelled"); err != nil {
-			return nil, fmt.Errorf("crowdfunding: refund contribution %s: %w", entry.id, err)
+		outcome, err := RefundContribution(ctx, s.db, s.ledger, s.settlement, entry.id, "campaign_cancelled")
+		if err != nil {
+			// Collect and continue — one unrefundable contribution must not
+			// leave every other backer unpaid.
+			result.FailedCount++
+			result.UnrefundedKobo += entry.amountKobo
+			continue
 		}
-		if _, err := s.db.Exec(ctx, `UPDATE contributions SET status='refunded' WHERE id=$1`, entry.id); err != nil {
-			return nil, fmt.Errorf("crowdfunding: mark contribution %s refunded: %w", entry.id, err)
+		if outcome.AlreadyRefunded {
+			continue
 		}
 		result.RefundedCount++
-		result.RefundedKobo += entry.amountKobo
+		result.RefundedKobo += outcome.RefundedKobo
 	}
 	if _, err := s.db.Exec(ctx, `UPDATE campaigns SET status='failed' WHERE id=$1`, campaignID); err != nil {
 		return nil, err
+	}
+	// Audit the money mutation; best-effort — audit must never fail a refund.
+	if _, err := s.db.Exec(ctx,
+		`INSERT INTO cf_audit_logs (actor, action, target, ip) VALUES ($1,$2,$3,$4)`,
+		creatorID, "campaign.refund", campaignID, ""); err != nil {
+		log.Printf("[crowdfunding] audit write for campaign refund %s failed (refund itself committed): %v", campaignID, err)
 	}
 	return result, nil
 }

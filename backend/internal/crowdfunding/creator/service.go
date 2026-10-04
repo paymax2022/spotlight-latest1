@@ -271,7 +271,9 @@ func scanContribution(scan func(dest ...any) error) (Contribution, error) {
 		Message:           nil,
 		RewardTierTitle:   nil,
 		CreatedAt:         timeutil.RFC3339(createdAt),
-		RefundEligible:    rawStatus == "escrowed" && !refundRequested,
+		// Anything not yet refunded is reversible (escrow rail or clawback) —
+		// eligibility is "not refunded and no request already on file".
+		RefundEligible: rawStatus != "refunded" && !refundRequested,
 	}, nil
 }
 
