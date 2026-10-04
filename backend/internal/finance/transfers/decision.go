@@ -25,8 +25,13 @@ var (
 	// Refusing is mandatory: a wallet credit cannot be clawed back, so guessing
 	// between them risks paying a stranger permanently.
 	ErrAmbiguousRecipient = errors.New("transfers: more than one account uses this phone number")
-	// ErrInvalidAccount — bank account/code failed resolution (404).
+	// ErrInvalidAccount — a well-formed enquiry resolved to nothing: the
+	// provider lookup found no such account (404).
 	ErrInvalidAccount = errors.New("transfers: invalid bank account")
+	// ErrInvalidAccountNumber — the request itself is malformed (bad NUBAN
+	// shape or a missing destination field) → 400, distinct from the 404
+	// lookup-miss sentinel above.
+	ErrInvalidAccountNumber = errors.New("transfers: malformed bank account number or bank code")
 	// ErrMissingIdempotencyKey — money mutation without an Idempotency-Key (400).
 	ErrMissingIdempotencyKey = errors.New("transfers: Idempotency-Key required")
 	// ErrInvalidAmount — non-positive kobo amount (400).
@@ -63,16 +68,16 @@ var (
 //	missing key / bad amount → 400
 //	anything else            → 500 (fail closed)
 var errMap = httperr.New(http.StatusInternalServerError, // 500 — fail closed
-	httperr.R(http.StatusUnprocessableEntity, ErrSelfTransfer),                            // 422
-	httperr.R(http.StatusPaymentRequired, ledger.ErrInsufficientFunds),                    // 402
-	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded), // 403
-	httperr.R(http.StatusNotFound, ErrRecipientNotFound, ErrInvalidAccount),               // 404
-	httperr.R(http.StatusConflict, ErrAmbiguousRecipient),                                 // 409 — refuse, do not guess
-	httperr.R(http.StatusBadRequest, ErrMissingIdempotencyKey, ErrInvalidAmount),          // 400
-	httperr.R(http.StatusForbidden, ErrPinNotSet, ErrPinInvalid),                          // 403
-	httperr.R(http.StatusBadRequest, ErrPinCurrentRequired),                               // 400 — malformed request, NOT a failed guess
-	httperr.R(http.StatusForbidden, ErrPinLocked),                                         // 403
-	httperr.R(http.StatusBadGateway, ErrProviderUnavailable),                              // 502
+	httperr.R(http.StatusUnprocessableEntity, ErrSelfTransfer),                                            // 422
+	httperr.R(http.StatusPaymentRequired, ledger.ErrInsufficientFunds),                                    // 402
+	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),                 // 403
+	httperr.R(http.StatusNotFound, ErrRecipientNotFound, ErrInvalidAccount),                               // 404
+	httperr.R(http.StatusConflict, ErrAmbiguousRecipient),                                                 // 409 — refuse, do not guess
+	httperr.R(http.StatusBadRequest, ErrMissingIdempotencyKey, ErrInvalidAmount, ErrInvalidAccountNumber), // 400
+	httperr.R(http.StatusForbidden, ErrPinNotSet, ErrPinInvalid),                                          // 403
+	httperr.R(http.StatusBadRequest, ErrPinCurrentRequired),                                               // 400 — malformed request, NOT a failed guess
+	httperr.R(http.StatusForbidden, ErrPinLocked),                                                         // 403
+	httperr.R(http.StatusBadGateway, ErrProviderUnavailable),                                              // 502
 )
 
 func HTTPStatusForError(err error) int {
@@ -96,6 +101,8 @@ func ErrorCode(err error) string {
 		return "ambiguous_recipient"
 	case errors.Is(err, ErrInvalidAccount):
 		return "invalid_account"
+	case errors.Is(err, ErrInvalidAccountNumber):
+		return "invalid_account_number"
 	case errors.Is(err, ErrMissingIdempotencyKey):
 		return "idempotency_key_required"
 	case errors.Is(err, ErrInvalidAmount):
@@ -139,7 +146,8 @@ func ValidateBankTransferRequest(req BankTransferRequest) error {
 		return ErrInvalidAmount
 	}
 	if !looksLikeNUBAN(req.AccountNumber) || strings.TrimSpace(req.BankCode) == "" {
-		return ErrInvalidAccount
+		// Malformed request shape → 400, not the 404 lookup-miss sentinel.
+		return ErrInvalidAccountNumber
 	}
 	return nil
 }

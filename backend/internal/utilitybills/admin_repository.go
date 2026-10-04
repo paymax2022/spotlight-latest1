@@ -780,7 +780,8 @@ type CategorySettingInput struct {
 	MaxAmountKobo       *int64 `json:"max_amount_kobo"`
 }
 
-// CreateCategorySetting inserts a category setting.
+// CreateCategorySetting inserts a category setting; the category text is the
+// PK, so a duplicate 23505 maps to ErrCategoryExists.
 func (r *Repository) CreateCategorySetting(ctx context.Context, in CategorySettingInput) (*CategorySettingRow, error) {
 	s, err := scanCategorySetting(r.db.QueryRow(ctx, `
 		INSERT INTO public.utility_category_settings
@@ -790,6 +791,9 @@ func (r *Repository) CreateCategorySetting(ctx context.Context, in CategorySetti
 		in.Category, in.Enabled, dbutil.NullStr(in.AvailabilityMessage),
 		in.DailyLimitKobo, in.MinAmountKobo, in.MaxAmountKobo))
 	if err != nil {
+		if dbutil.IsUniqueViolation(err) {
+			return nil, fmt.Errorf("%w: %s", ErrCategoryExists, in.Category)
+		}
 		return nil, fmt.Errorf("utilitybills: create category setting: %w", err)
 	}
 	return s, nil

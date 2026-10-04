@@ -38,6 +38,9 @@ var errMap = httperr.New(http.StatusInternalServerError,
 	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
 	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
 	httperr.R(http.StatusUnprocessableEntity, ErrInsufficientCash, ErrInsufficientShares),
+	// A locked-but-not-durable leg is a "not yet", not a failure — 202, same
+	// convention as trading's ErrDebitPending/ErrCreditPending.
+	httperr.R(http.StatusAccepted, ErrDepositPending, ErrWithdrawPending),
 	httperr.R(http.StatusConflict, ErrMarketClosed),
 	httperr.R(http.StatusBadRequest, ErrBelowMinimum, ErrAboveMaximum, ErrInvalidOrder),
 )

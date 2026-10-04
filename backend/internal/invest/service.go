@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/jsonx"
 	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/ledger"
@@ -132,6 +133,11 @@ var (
 	ErrAboveMaximum        = errors.New("invest: order above maximum amount")
 	ErrInvalidOrder        = errors.New("invest: invalid order parameters")
 	ErrNotEligible         = errors.New("invest: account not eligible to trade")
+	// ErrDepositPending / ErrWithdrawPending — the idempotency key is held but
+	// no durable pair exists: a prior attempt died mid-flight or a concurrent
+	// identical request is still running. Caller must retry.
+	ErrDepositPending  = errors.New("invest: deposit cash leg pending confirmation, retry")
+	ErrWithdrawPending = errors.New("invest: withdrawal credit leg pending confirmation, retry")
 )
 
 func (s *Service) GetProfile(ctx context.Context, userID string) (*Profile, error) {
@@ -417,7 +423,10 @@ func (s *Service) Wallet(ctx context.Context, userID string) (*WalletView, error
 }
 
 // Deposit funds the invest wallet from the main Paymax wallet (double-entry on
-// both ledgers). Requires an idempotency key.
+// both ledgers). Requires an idempotency key: a replay returns the same wallet
+// view and posts zero additional legs. An ErrDuplicate from the main-ledger
+// debit is only a lock signal (the Redis fast-path holds the key even after a
+// failed attempt), so it is confirmed via Posted before treated as a replay.
 func (s *Service) Deposit(ctx context.Context, userID, idem string, amountKobo int64, source string) (*WalletView, error) {
 	if amountKobo <= 0 {
 		return nil, ErrInvalidOrder
@@ -425,29 +434,60 @@ func (s *Service) Deposit(ctx context.Context, userID, idem string, amountKobo i
 	if idem == "" {
 		idem = fmt.Sprintf("invdep:%s:%d", userID, s.now().UnixNano())
 	}
+	mainKey := idem + ":main"
+	invKey := idem + ":inv"
 	// 1) Debit the main Paymax wallet → bridge standing account.
 	bridge, err := s.mainLedger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
 	if err != nil {
 		return nil, err
 	}
-	// Tier gate (fail-closed, E2E-FIN-046): the same EnforceWalletDebitLimit the
-	// transfer rail applies — Tier 0 and over-daily-cap depositors are refused
-	// BEFORE money moves (zero ledger legs, no invest-cash credit). A replay
-	// whose leg is already posted surfaces the same ErrDuplicate the debit used
-	// to return, so refusal ordering does not change replay behavior.
-	if err := s.enforceDebitLimit(ctx, userID, amountKobo); err != nil {
+	postedMain, err := s.mainLedger.Posted(ctx, mainKey)
+	if err != nil {
 		return nil, err
 	}
-	if err := s.mainLedger.Debit(ctx, userID, "invest:deposit", idem+":main", bridge.ID, amountKobo); err != nil {
-		return nil, err // includes ErrInsufficientFunds / ErrDuplicate
+	if !postedMain {
+		// Tier gate on fresh attempts only — a replay whose leg is already
+		// durable skipped it above, so a completed deposit can't be refused by
+		// a limit that now counts the deposit itself.
+		if err := s.enforceDebitLimit(ctx, userID, amountKobo); err != nil {
+			return nil, err
+		}
+		if err := s.mainLedger.Debit(ctx, userID, "invest:deposit", mainKey, bridge.ID, amountKobo); err != nil {
+			if !errors.Is(err, ledger.ErrDuplicate) {
+				return nil, err // includes ErrInsufficientFunds
+			}
+			// ErrDuplicate is not proof the legs landed — confirm via Posted.
+			// Not posted means a prior attempt died holding the lock.
+			posted, perr := s.mainLedger.Posted(ctx, mainKey)
+			if perr != nil {
+				return nil, perr
+			}
+			if !posted {
+				return nil, ErrDepositPending
+			}
+		}
 	}
-	// 2) Credit the invest cash wallet.
-	if err := s.il.Deposit(ctx, userID, "invest:deposit", idem+":inv", amountKobo); err != nil {
+	// 2) Credit the invest cash wallet (skipped on replay; a crash between the
+	// legs resumes here).
+	postedInv, err := s.il.Posted(ctx, invKey)
+	if err != nil {
 		return nil, err
+	}
+	if !postedInv {
+		if err := s.il.Deposit(ctx, userID, "invest:deposit", invKey, amountKobo); err != nil {
+			// A concurrent identical request claimed the key — true replay.
+			if !dbutil.IsUniqueViolation(err) {
+				return nil, err
+			}
+		}
 	}
 	return s.Wallet(ctx, userID)
 }
 
+// Withdraw moves invest cash back to the main Paymax wallet. Same idempotency
+// contract as Deposit; the Posted pre-check also keeps a replay from re-running
+// the in-tx balance check, which would refuse a completed withdrawal once the
+// cash has been spent.
 func (s *Service) Withdraw(ctx context.Context, userID, idem string, amountKobo int64, dest string) (*WalletView, error) {
 	if amountKobo <= 0 {
 		return nil, ErrInvalidOrder
@@ -455,17 +495,42 @@ func (s *Service) Withdraw(ctx context.Context, userID, idem string, amountKobo 
 	if idem == "" {
 		idem = fmt.Sprintf("invwd:%s:%d", userID, s.now().UnixNano())
 	}
-	// 1) Debit invest cash (re-checks balance inside tx).
-	if err := s.il.Withdraw(ctx, userID, "invest:withdraw", idem+":inv", amountKobo); err != nil {
+	invKey := idem + ":inv"
+	mainKey := idem + ":main"
+	// 1) Debit invest cash (re-checks balance inside tx on a fresh attempt only).
+	postedInv, err := s.il.Posted(ctx, invKey)
+	if err != nil {
 		return nil, err
+	}
+	if !postedInv {
+		if err := s.il.Withdraw(ctx, userID, "invest:withdraw", invKey, amountKobo); err != nil {
+			if !dbutil.IsUniqueViolation(err) {
+				return nil, err
+			}
+		}
 	}
 	// 2) Credit the main Paymax wallet from the bridge standing account.
 	bridge, err := s.mainLedger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.mainLedger.Credit(ctx, userID, "invest:withdraw", idem+":main", bridge.ID, amountKobo); err != nil {
+	postedMain, err := s.mainLedger.Posted(ctx, mainKey)
+	if err != nil {
 		return nil, err
+	}
+	if !postedMain {
+		if err := s.mainLedger.Credit(ctx, userID, "invest:withdraw", mainKey, bridge.ID, amountKobo); err != nil {
+			if !errors.Is(err, ledger.ErrDuplicate) {
+				return nil, err
+			}
+			posted, perr := s.mainLedger.Posted(ctx, mainKey)
+			if perr != nil {
+				return nil, perr
+			}
+			if !posted {
+				return nil, ErrWithdrawPending
+			}
+		}
 	}
 	return s.Wallet(ctx, userID)
 }

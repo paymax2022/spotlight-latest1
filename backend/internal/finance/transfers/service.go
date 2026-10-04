@@ -538,7 +538,7 @@ func (s *Service) InitiateBankToBank(ctx context.Context, userID string, req Ban
 		return nil, ErrInvalidAmount
 	}
 	if !looksLikeNUBAN(req.AccountNumber) || strings.TrimSpace(req.BankCode) == "" {
-		return nil, ErrInvalidAccount
+		return nil, ErrInvalidAccountNumber // malformed request → 400, not the 404 lookup sentinel
 	}
 	if s.registry == nil {
 		return nil, ErrProviderUnavailable

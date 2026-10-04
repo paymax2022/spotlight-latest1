@@ -58,6 +58,9 @@ var (
 	ErrInvalidDisputeStatus = errors.New("utilitybills: status must be 'resolved' or 'rejected'")
 	// ErrInvalidReportType — an unknown report name reached the service.
 	ErrInvalidReportType = errors.New("utilitybills: unknown report type")
+	// ErrCategoryExists — a setting already exists for this category (409);
+	// the repository maps the PK 23505 to this sentinel.
+	ErrCategoryExists = errors.New("utilitybills: a setting for this utility category already exists")
 )
 
 // Status vocabularies, taken from the live schema's CHECK constraints rather

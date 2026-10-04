@@ -3,6 +3,7 @@ package transfers
 import (
 	"context"
 	"log"
+	"strings"
 
 	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/provider"
@@ -145,9 +146,12 @@ func (s *Service) ListBanks(ctx context.Context, preferred string) ([]provider.B
 }
 
 // ResolveAccount performs a NUBAN name enquiry via the registry.
+// Two distinct refusals: a malformed request (bad NUBAN shape, missing bank
+// code) is a 400 — ErrInvalidAccountNumber; a well-formed enquiry whose lookup
+// found nothing keeps the 404 ErrInvalidAccount (E2E-MTL-003).
 func (s *Service) ResolveAccount(ctx context.Context, req ResolveAccountRequest) (*provider.AccountResolution, error) {
-	if !looksLikeNUBAN(req.AccountNumber) || req.BankCode == "" {
-		return nil, ErrInvalidAccount
+	if !looksLikeNUBAN(req.AccountNumber) || strings.TrimSpace(req.BankCode) == "" {
+		return nil, ErrInvalidAccountNumber
 	}
 	if s.registry == nil {
 		return nil, ErrProviderUnavailable
@@ -184,8 +188,10 @@ func (s *Service) ListBeneficiaries(ctx context.Context, userID string) ([]Benef
 // SaveBeneficiary resolves the account name and saves a beneficiary (registry
 // recipient created lazily on the first payout). Returns the saved row.
 func (s *Service) SaveBeneficiary(ctx context.Context, userID string, req SaveBeneficiaryRequest) (*Beneficiary, error) {
-	if !looksLikeNUBAN(req.AccountNumber) || req.BankCode == "" {
-		return nil, ErrInvalidAccount
+	// Same validation-vs-lookup split as ResolveAccount: malformed input is a
+	// 400, an unresolvable (but well-formed) destination stays a 404.
+	if !looksLikeNUBAN(req.AccountNumber) || strings.TrimSpace(req.BankCode) == "" {
+		return nil, ErrInvalidAccountNumber
 	}
 	if s.registry == nil {
 		return nil, ErrProviderUnavailable
