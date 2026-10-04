@@ -320,6 +320,22 @@ func (s *RewardService) GetOrCreateLink(ctx context.Context, referrerID string) 
 	var l Link
 	err := s.db.QueryRow(ctx, sel, referrerID).Scan(&l.ID, &l.ReferrerID, &l.Code, &l.CreatedAt)
 	if err == nil {
+		// E2E-FIN-044 convergence: if the legacy finance_referral_codes table
+		// holds an OLDER code for this user it is canonical — adopt it so both
+		// surfaces show one code. A collision (code held by another referrer)
+		// leaves the row unchanged.
+		var legacy string
+		var legacyAt time.Time
+		if lerr := s.db.QueryRow(ctx,
+			`SELECT code, created_at FROM finance_referral_codes WHERE user_id = $1`,
+			referrerID).Scan(&legacy, &legacyAt); lerr == nil && legacy != l.Code && legacyAt.Before(l.CreatedAt) {
+			if _, uerr := s.db.Exec(ctx,
+				`UPDATE referral_links SET code = $2 WHERE referrer_id = $1`,
+				referrerID, legacy); uerr == nil {
+				l.Code = legacy
+				l.CreatedAt = legacyAt
+			}
+		}
 		return &l, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -333,6 +349,19 @@ func (s *RewardService) GetOrCreateLink(ctx context.Context, referrerID string) 
 		INSERT INTO referral_links (referrer_id, code) VALUES ($1,$2)
 		ON CONFLICT (referrer_id) DO NOTHING
 		RETURNING id, referrer_id, code, created_at`
+	// E2E-FIN-044: adopt the legacy finance_referral_codes code if one exists —
+	// first-minted wins, so an old seed code stays the user's one code.
+	var adopted string
+	if aerr := s.db.QueryRow(ctx,
+		`SELECT code FROM finance_referral_codes WHERE user_id = $1`,
+		referrerID).Scan(&adopted); aerr == nil {
+		if ierr := s.db.QueryRow(ctx, ins, referrerID, adopted).Scan(&l.ID, &l.ReferrerID, &l.Code, &l.CreatedAt); ierr == nil {
+			return &l, nil
+		} else if errors.Is(ierr, pgx.ErrNoRows) {
+			return s.GetOrCreateLink(ctx, referrerID)
+		}
+		// Code taken by another referrer — fall through and draw a fresh one.
+	}
 	for attempt := 0; attempt < codeIssueAttempts; attempt++ {
 		code, gerr := generateRewardCode()
 		if gerr != nil {

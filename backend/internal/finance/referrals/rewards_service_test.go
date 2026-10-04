@@ -834,3 +834,84 @@ func TestAttribute_LockedHousePlaceholder_NotOverridden_Integration(t *testing.T
 		t.Fatal("locked house row was rewritten — a locked attribution is terminal")
 	}
 }
+
+// ── E2E-FIN-044: one code per user across both mint tables ────────────────
+
+// A code minted into referral_links must be what the legacy surface returns —
+// first-minted wins, adopted into finance_referral_codes rather than a second
+// code drawn.
+func TestGetOrCreateCode_AdoptsLinkCode_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	rewardSvc, fin := newRewardSvc(pool)
+	legacySvc := referrals.NewService(pool, fin)
+
+	u := seedRewardUser(t, pool)
+	link, err := rewardSvc.GetOrCreateLink(ctx, u)
+	if err != nil {
+		t.Fatalf("GetOrCreateLink: %v", err)
+	}
+	code, err := legacySvc.GetOrCreateCode(ctx, u)
+	if err != nil {
+		t.Fatalf("GetOrCreateCode: %v", err)
+	}
+	if code.Code != link.Code {
+		t.Fatalf("legacy surface shows %q but the link minted %q — two codes for one user", code.Code, link.Code)
+	}
+}
+
+// Mirror image: a legacy finance_referral_codes seed must be what the rewards
+// engine returns, adopted into referral_links rather than a second code drawn.
+func TestGetOrCreateLink_AdoptsLegacyCode_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	rewardSvc, fin := newRewardSvc(pool)
+	legacySvc := referrals.NewService(pool, fin)
+
+	u := seedRewardUser(t, pool)
+	code, err := legacySvc.GetOrCreateCode(ctx, u)
+	if err != nil {
+		t.Fatalf("GetOrCreateCode: %v", err)
+	}
+	link, err := rewardSvc.GetOrCreateLink(ctx, u)
+	if err != nil {
+		t.Fatalf("GetOrCreateLink: %v", err)
+	}
+	if link.Code != code.Code {
+		t.Fatalf("rewards surface shows %q but the legacy minted %q — two codes for one user", link.Code, code.Code)
+	}
+}
+
+// Users who already hold DIFFERENT codes in each table converge on the older
+// (first-minted) one, and the newer row self-repairs.
+func TestReferralCodeConvergesOnFirstMinted_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	rewardSvc, fin := newRewardSvc(pool)
+	legacySvc := referrals.NewService(pool, fin)
+
+	u := seedRewardUser(t, pool)
+	// Older legacy code, newer link code — link must repair to the legacy.
+	mustRewardExec(t, pool,
+		`INSERT INTO finance_referral_codes (user_id, code, created_at) VALUES ($1,'OLDER', now() - interval '2 days')`, u)
+	mustRewardExec(t, pool,
+		`INSERT INTO referral_links (referrer_id, code, created_at) VALUES ($1,'NEWER', now())`, u)
+
+	link, err := rewardSvc.GetOrCreateLink(ctx, u)
+	if err != nil {
+		t.Fatalf("GetOrCreateLink: %v", err)
+	}
+	if link.Code != "OLDER" {
+		t.Fatalf("GetOrCreateLink = %q, want the first-minted %q", link.Code, "OLDER")
+	}
+	code, err := legacySvc.GetOrCreateCode(ctx, u)
+	if err != nil {
+		t.Fatalf("GetOrCreateCode: %v", err)
+	}
+	if code.Code != "OLDER" {
+		t.Fatalf("GetOrCreateCode = %q, want converged %q", code.Code, "OLDER")
+	}
+}
