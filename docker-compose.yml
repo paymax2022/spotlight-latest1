@@ -30,6 +30,10 @@ services:
       # trade-off is GoTrue logout/password-change staleness bounded by the
       # access-token TTL, and platform_users status still gates per request.
       # PROD stays a deliberate decision — see jwt_local.go's revocation note.
+      # E2E-SEC-055 residual: FEATURE_SESSION_HARDENING stays OFF even with
+      # local verify — turning it on without a session-sync-on-refresh design
+      # 401s every token minted outside Login (GoTrue refresh rotation,
+      # password grants) since ValidateAccess fails closed on a missing row.
       AUTH_JWT_LOCAL_VERIFY: "true"
     depends_on:
       redis:
