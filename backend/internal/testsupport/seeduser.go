@@ -36,6 +36,17 @@ func CleanupUser(t *testing.T, pool *pgxpool.Pool, userID string) {
 	t.Cleanup(func() { DeleteUser(context.Background(), pool, userID) })
 }
 
+// CleanupUserCtx is CleanupUser with the caller's context threaded into
+// teardown (the contextcheck-friendly variant). Cancellation is stripped —
+// the test's ctx is already dead by cleanup time — but values still flow.
+func CleanupUserCtx(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID string) {
+	t.Helper()
+	if pool == nil || userID == "" {
+		return
+	}
+	t.Cleanup(func() { DeleteUser(context.WithoutCancel(ctx), pool, userID) })
+}
+
 // CleanupUsers registers teardown for several seeded users at once.
 func CleanupUsers(t *testing.T, pool *pgxpool.Pool, userIDs ...string) {
 	t.Helper()

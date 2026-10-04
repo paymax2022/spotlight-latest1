@@ -13,7 +13,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/stays/ari"
+	"spotlight/backend/internal/stays/reservation"
 )
 
 // Sentinel errors.
@@ -32,6 +34,11 @@ type Service struct {
 	authz *AuthZ
 	allot ari.Allotment // re-opens allotment on hotel cancel / no-show
 
+	// refund is the shared stays cancel-refund machinery (reservation.RefundOps)
+	// — the hotel-side cancel unwinds money through the same residual map + legs
+	// + payout kill the guest-side saga drives, never a bare state flip.
+	refund *reservation.RefundOps
+
 	mailer       StaffInviteMailer // staff-invite email delivery (see staff_invite.go)
 	adminBaseURL string            // frontend-admin origin, for building accept links
 
@@ -42,7 +49,14 @@ type Service struct {
 // email-based staff invite flow (staff_invite.go) — pass extranet.NewResendStaffInviteMailer
 // and cfg.AdminAppBaseURL from the caller.
 func NewService(repo *Repository, authz *AuthZ, allot ari.Allotment, mailer StaffInviteMailer, adminBaseURL string) *Service {
-	return &Service{repo: repo, authz: authz, allot: allot, mailer: mailer, adminBaseURL: adminBaseURL}
+	return &Service{
+		repo:         repo,
+		authz:        authz,
+		allot:        allot,
+		refund:       reservation.NewRefundOps(reservation.NewRepository(repo.db), ledger.NewService(ledger.NewRepository(repo.db), nil)),
+		mailer:       mailer,
+		adminBaseURL: adminBaseURL,
+	}
 }
 
 // WithPhotoPresigner attaches the R2 presigner used for property photo
@@ -215,8 +229,9 @@ func (s *Service) ReservationDetail(ctx context.Context, userID, propertyID, res
 }
 
 // MarkNoShow transitions the reservation to NO_SHOW and re-opens the held allotment
-// (so the room can be re-sold). Money handling (no-show penalty/charge) stays with
-// the guest-side saga + admin settlement; this is the operational state change.
+// (so the room can be re-sold). Money semantics: a no-show earns the stay — the
+// guest forfeits the gross, so no refund legs post; the provider net stays
+// parked and the queued payout remains releasable (ReleasePayout admits NO_SHOW).
 func (s *Service) MarkNoShow(ctx context.Context, userID, propertyID, reservationID string) error {
 	if err := s.guard(ctx, userID, propertyID); err != nil {
 		return err
@@ -228,12 +243,24 @@ func (s *Service) MarkNoShow(ctx context.Context, userID, propertyID, reservatio
 	return nil
 }
 
-// CancelByHotel cancels a reservation on the hotel's side and re-opens the allotment.
+// CancelByHotel cancels a reservation on the hotel's side and re-opens the
+// allotment. A hotel-side cancel is a FULL refund — the guest is made whole out
+// of the booking's parked legs through the shared refund machinery
+// (reservation.RefundOps: kill payouts → drain the residual → record → flip).
+// Every failure leaves the reservation non-terminal and retryable; the legs
+// converge on the full residual across retries and initiators.
 func (s *Service) CancelByHotel(ctx context.Context, userID, propertyID, reservationID, reason string) error {
 	if err := s.guard(ctx, userID, propertyID); err != nil {
 		return err
 	}
-	if err := s.repo.CancelByHotel(ctx, reservationID, propertyID, reason); err != nil {
+	ok, err := s.repo.ReservationBelongsToProperty(ctx, reservationID, propertyID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	if _, err := s.refund.CancelByHotel(ctx, reservationID, reason); err != nil {
 		return err
 	}
 	s.releaseAllotment(ctx, reservationID)

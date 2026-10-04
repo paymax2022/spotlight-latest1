@@ -371,9 +371,21 @@ func (r *Repository) ReservationBelongsToProperty(ctx context.Context, reservati
 	return ok, err
 }
 
-// MarkNoShow transitions a CONFIRMED reservation to NO_SHOW (optimistic on state).
+// MarkNoShow transitions a CONFIRMED reservation to NO_SHOW (optimistic on
+// state) under the same reservation advisory lock the refund sagas hold — a
+// no-show flip racing a cancel saga's terminal flip could otherwise wedge the
+// reservation payable while guest legs already posted.
 func (r *Repository) MarkNoShow(ctx context.Context, reservationID, propertyID string) error {
-	ct, err := r.db.Exec(ctx, `
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext($1))`, "stays:reservation:"+reservationID); err != nil {
+		return fmt.Errorf("extranet: reservation lock: %w", err)
+	}
+	ct, err := tx.Exec(ctx, `
 		UPDATE public.stays_reservation
 		SET state = 'NO_SHOW', version = version + 1, updated_at = now()
 		WHERE id = $1 AND property_id = $2 AND state = 'CONFIRMED'`, reservationID, propertyID)
@@ -383,25 +395,7 @@ func (r *Repository) MarkNoShow(ctx context.Context, reservationID, propertyID s
 	if ct.RowsAffected() == 0 {
 		return fmt.Errorf("extranet: reservation not CONFIRMED or not in property")
 	}
-	return nil
-}
-
-// CancelByHotel transitions a CONFIRMED reservation to CANCELLED_BY_HOTEL.
-func (r *Repository) CancelByHotel(ctx context.Context, reservationID, propertyID, reason string) error {
-	ct, err := r.db.Exec(ctx, `
-		UPDATE public.stays_reservation
-		SET state = 'CANCELLED_BY_HOTEL', version = version + 1, updated_at = now()
-		WHERE id = $1 AND property_id = $2 AND state = 'CONFIRMED'`, reservationID, propertyID)
-	if err != nil {
-		return err
-	}
-	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("extranet: reservation not CONFIRMED or not in property")
-	}
-	_, _ = r.db.Exec(ctx, `
-		INSERT INTO public.stays_cancellation (reservation_id, reason, policy_snapshot)
-		VALUES ($1,$2,'{"by":"hotel"}'::jsonb)`, reservationID, reason)
-	return nil
+	return tx.Commit(ctx)
 }
 
 // RoomTypeOfReservation returns the room type + date range for allotment release.

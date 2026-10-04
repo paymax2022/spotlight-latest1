@@ -40,10 +40,17 @@ func NewService(repo *Repository, ledgerSvc *ledger.Service) *Service {
 // the net-rate/hotel-payable) and records the domain entry. Idempotent on the key.
 // The double-entry is: DEBIT AccountProviderClearing (commission slice of the gross
 // already escrow-settled there) → CREDIT AccountCommission.
+// Runs under the reservation advisory lock so the journal can't shift the
+// parked residual under an in-flight refund saga.
 func (s *Service) AccrueCommission(ctx context.Context, reservationID string, amountKobo int64, idempotencyKey string) (string, error) {
 	if amountKobo <= 0 {
 		return "", ErrBadAmount
 	}
+	lockTx, lErr := s.repo.LockReservation(ctx, reservationID)
+	if lErr != nil {
+		return "", fmt.Errorf("settlement: accrue commission lock: %w", lErr)
+	}
+	defer func() { _ = lockTx.Rollback(ctx) }()
 	propertyID, _ := s.repo.PropertyOfReservation(ctx, reservationID)
 	ref := "stays:commission:" + reservationID
 	if err := s.postCommissionJournal(ctx, amountKobo, ref, idempotencyKey, false); err != nil {
@@ -63,7 +70,13 @@ func (s *Service) AccrueCommission(ctx context.Context, reservationID string, am
 // reverses the net commission accrued for the reservation (CREDIT back
 // AccountProviderClearing ← DEBIT AccountCommission) and records a negative domain
 // entry. Idempotent on the key. A no-op when nothing was accrued.
+// Same advisory lock as AccrueCommission.
 func (s *Service) ReverseCommission(ctx context.Context, reservationID, idempotencyKey string) (string, error) {
+	lockTx, lErr := s.repo.LockReservation(ctx, reservationID)
+	if lErr != nil {
+		return "", fmt.Errorf("settlement: reverse commission lock: %w", lErr)
+	}
+	defer func() { _ = lockTx.Rollback(ctx) }()
 	net, err := s.repo.CommissionNetForReservation(ctx, reservationID)
 	if err != nil {
 		return "", err
@@ -151,8 +164,51 @@ func (s *Service) ReleasePayout(ctx context.Context, payoutID string) (Payout, e
 	if p.Status == "PAID" {
 		return p, nil // idempotent
 	}
+	// Serialize with the reservation's cancel/modify sagas: the release credit
+	// and the status flip must interleave atomically with refund allocation —
+	// without this lock a payout credit can land between a cancel's residual
+	// read and its leg posts, transiently over-drawing provider_clearing
+	// (ledger audit M-1). Advisory lock, released at function exit.
+	if p.ReservationID != "" {
+		lockTx, lErr := s.repo.LockReservation(ctx, p.ReservationID)
+		if lErr != nil {
+			return p, fmt.Errorf("settlement: payout %s — reservation lock: %w", payoutID, lErr)
+		}
+		defer func() { _ = lockTx.Rollback(ctx) }()
+	}
 	if p.Status == "CANCELLED" || p.Status == "FAILED" {
+		// Already resolved — reverse any orphaned credit a crashed release left.
+		if err := s.clawbackOrphanedCredit(ctx, &p); err != nil {
+			return p, err
+		}
 		return p, fmt.Errorf("settlement: payout %s is %s", payoutID, p.Status)
+	}
+	// Reservation-state gate: a payout bound to a cancelled/refunded reservation
+	// must never release — the guest refund already unwound the legs it would
+	// draw a second time. NO_SHOW pays like COMPLETED (the guest forfeits the
+	// gross). Lookup failures refuse.
+	if p.ReservationID != "" {
+		state, sErr := s.repo.ReservationState(ctx, p.ReservationID)
+		if sErr != nil {
+			return p, fmt.Errorf("settlement: payout %s — reservation %s state lookup failed, refusing: %w",
+				payoutID, p.ReservationID, sErr)
+		}
+		if state != "CONFIRMED" && state != "COMPLETED" && state != "NO_SHOW" {
+			return p, fmt.Errorf("%w: payout %s — reservation %s is %s",
+				ErrPayoutBlocked, payoutID, p.ReservationID, state)
+		}
+		// Refunded-but-payable wedge: a cancel saga that posted guest legs but
+		// lost the terminal-flip race leaves a payable-looking row — releasing
+		// would pay the hotelier money the guest already got back.
+		drawn, dErr := s.repo.CancelRefundDrawKobo(ctx, p.ReservationID)
+		if dErr != nil {
+			return p, fmt.Errorf("settlement: payout %s — reservation %s refund-draw probe failed, refusing: %w",
+				payoutID, p.ReservationID, dErr)
+		}
+		if drawn > 0 {
+			return p, fmt.Errorf("%w: payout %s — reservation %s has %d kobo of posted cancel-refund legs (payable-looking wedge)",
+				ErrPayoutBlocked, payoutID, p.ReservationID, drawn)
+		}
 	}
 	// Fraud gate — release only after a confirmed+completed stay.
 	ok, err := s.repo.HasCompletedStay(ctx, p.PropertyID)
@@ -178,9 +234,46 @@ func (s *Service) ReleasePayout(ctx context.Context, payoutID string) (Payout, e
 		return p, fmt.Errorf("settlement: payout credit: %w", err)
 	}
 	if err := s.repo.SetPayoutStatus(ctx, payoutID, "PAID", ref, "", true); err != nil {
+		if errors.Is(err, ErrPayoutNotPayable) {
+			// The row resolved between read and flip. A racing release paying it
+			// is an idempotent replay; a cancel flipping it mid-release leaves an
+			// orphaned credit to claw back.
+			if cur, gErr := s.repo.GetPayout(ctx, payoutID); gErr == nil && cur.Status == "PAID" {
+				return cur, nil
+			}
+			if cErr := s.clawbackOrphanedCredit(ctx, &p); cErr != nil {
+				return p, fmt.Errorf("settlement: payout %s resolved during release AND clawback failed: %w", payoutID, cErr)
+			}
+			return p, fmt.Errorf("%w: payout %s resolved during release — any posted credit was reversed", ErrPayoutBlocked, payoutID)
+		}
 		return p, err
 	}
 	return s.repo.GetPayout(ctx, payoutID)
+}
+
+// clawbackOrphanedCredit reverses a payout credit that posted but whose row
+// resolved before it could pay out. No-op when the credit never posted.
+func (s *Service) clawbackOrphanedCredit(ctx context.Context, p *Payout) error {
+	posted, err := s.ledger.Posted(ctx, "stays:payout:"+p.ID)
+	if err != nil {
+		return fmt.Errorf("settlement: payout %s credit probe failed: %w", p.ID, err)
+	}
+	if !posted {
+		return nil
+	}
+	clearingAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
+	if err != nil {
+		return err
+	}
+	wallet, err := s.ledger.GetOrCreateUserWallet(ctx, p.HotelierUserID)
+	if err != nil {
+		return err
+	}
+	if err := s.ledger.PostReversal(ctx, clearingAcc.ID, wallet.ID, p.AmountKobo,
+		"stays:payout:clawback:"+p.ID, "stays:payout:clawback:"+p.ID); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+		return fmt.Errorf("settlement: payout %s clawback: %w", p.ID, err)
+	}
+	return nil
 }
 
 // ListPayouts returns payouts by status (admin workbench).
@@ -259,6 +352,8 @@ func mapErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrPayoutHeld):
 		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), "code": "PAYOUT_HELD"})
+	case errors.Is(err, ErrPayoutBlocked):
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), "code": "PAYOUT_BLOCKED"})
 	case errors.Is(err, ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{keyError: "not found"})
 	case errors.Is(err, ErrBadAmount):

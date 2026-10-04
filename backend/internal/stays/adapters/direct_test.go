@@ -114,6 +114,46 @@ func TestDeriveSupplierRefStable(t *testing.T) {
 	}
 }
 
+// TestComputePolicyRefund pins the direct-rail cancellation refund semantics —
+// the (refund, penalty) the booked policy allows.
+func TestComputePolicyRefund(t *testing.T) {
+	const gross = 50_000_00 // ₦50,000
+	cases := []struct {
+		name                    string
+		gross                   int64
+		refundable              bool
+		policy                  map[string]any
+		wantRefund, wantPenalty int64
+	}{
+		{"refundable, empty snapshot → full refund", gross, true, map[string]any{}, gross, 0},
+		{"refundable, nil snapshot → full refund", gross, true, nil, gross, 0},
+		{"non-refundable plan flag → zero refund, full penalty", gross, false, map[string]any{}, 0, gross},
+		{"snapshot refundable=false overrides plan flag", gross, true, map[string]any{"refundable": false}, 0, gross},
+		{"snapshot refundable=true overrides plan flag", gross, false, map[string]any{"refundable": true}, gross, 0},
+		{"explicit penalty_kobo", gross, true, map[string]any{"penalty_kobo": float64(5_000_00)}, gross - 5_000_00, 5_000_00},
+		{"penalty_bps (25%)", gross, true, map[string]any{"penalty_bps": float64(2500)}, gross - gross/4, gross / 4},
+		{"penalty_percent (10%)", gross, true, map[string]any{"penalty_percent": float64(10)}, gross - gross/10, gross / 10},
+		{"penalty_kobo wins over bps/percent", gross, true, map[string]any{"penalty_kobo": float64(1_000_00), "penalty_bps": float64(5000), "penalty_percent": float64(50)}, gross - 1_000_00, 1_000_00},
+		{"penalty clamps at gross (never negative refund)", gross, true, map[string]any{"penalty_kobo": float64(99_000_00)}, 0, gross},
+		{"penalty clamps at zero (never negative penalty)", gross, true, map[string]any{"penalty_kobo": float64(-1)}, gross, 0},
+		{"zero gross → zero refund/penalty", 0, true, map[string]any{}, 0, 0},
+		{"non-refundable zero gross → zero", 0, false, map[string]any{}, 0, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotR, gotP := computePolicyRefund(c.gross, c.refundable, c.policy)
+			if gotR != c.wantRefund || gotP != c.wantPenalty {
+				t.Fatalf("computePolicyRefund(%d, %v, %v) = (%d,%d), want (%d,%d)",
+					c.gross, c.refundable, c.policy, gotR, gotP, c.wantRefund, c.wantPenalty)
+			}
+			// Invariant: refund + penalty == gross.
+			if c.gross > 0 && gotR+gotP != c.gross {
+				t.Fatalf("refund+penalty %d+%d != gross %d", gotR, gotP, c.gross)
+			}
+		})
+	}
+}
+
 func assertNights(t *testing.T, got, want []string) {
 	t.Helper()
 	if len(got) != len(want) {
