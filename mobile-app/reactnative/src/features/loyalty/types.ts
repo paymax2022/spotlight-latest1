@@ -1,4 +1,3 @@
-// ── Loyalty domain types ─────────────────────────────────────────────────────
 // IMPORTANT (NL-4): points are NON-CASH. They are a promotional balance, never
 // money. Never apply kobo/naira math to a points value. Redeemable reward COST
 // is in points; reward VALUE (airtime/bill credit) is in kobo for display only.

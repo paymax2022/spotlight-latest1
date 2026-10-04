@@ -1,8 +1,6 @@
 package policy
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression test for the bind-replay ORIGINAL-POLICY lookup.
-//
 // Found via live UAT execution (2026-09-17): BindFromQuote always creates a
 // fresh Policy row BEFORE it learns whether the Idempotency-Key was already
 // used. On replay it used to try to stamp the SAME provider_policy_ref onto
@@ -11,15 +9,12 @@ package policy
 // share one provider policy ref), returning a raw 500 instead of the
 // idempotent "same result back" the caller is owed, and leaving the fresh row
 // stranded in BINDING forever (a state the FSM never resolves on its own).
-//
 // The fix threads the ORIGINAL policy_id through BindClaim so the replay path
 // can look up and return the FIRST bound policy directly, instead of
 // re-persisting onto the throwaway row. This test pins the low-level piece of
 // that fix: Claim() must round-trip the original policy_id on a successful
 // key, distinct from whatever policy_id a later (replay) caller passes in.
-//
 // Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

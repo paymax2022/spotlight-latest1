@@ -26,8 +26,6 @@ func mustJSON(t *testing.T, v any) string {
 	return string(b)
 }
 
-// ─── The decision guard ──────────────────────────────────────────────────────
-
 // Only a PENDING request may be decided. Deciding twice is refused rather than
 // silently re-applied: a second approve on an already-APPROVED request would
 // re-set featured on a campaign an operator may since have deliberately pulled
@@ -84,8 +82,6 @@ func TestFeatureApproval_MatchesDirectFlagsPromotionRule(t *testing.T) {
 	}
 }
 
-// ─── Decision mapping ────────────────────────────────────────────────────────
-
 func TestDecisionStatusAndAction(t *testing.T) {
 	if decisionStatus(true) != "APPROVED" || decisionStatus(false) != "REJECTED" {
 		t.Fatalf("decisionStatus wrong: %q / %q", decisionStatus(true), decisionStatus(false))
@@ -107,7 +103,7 @@ func TestDecisionStatusAndAction(t *testing.T) {
 }
 
 // An empty admin id must become SQL NULL, not the empty string — decided_by is
-// a uuid column and '' aborts the statement on the cast, which would turn a
+// a uuid column and ” aborts the statement on the cast, which would turn a
 // missing user_id into a 500 on every decision.
 func TestNullableActor(t *testing.T) {
 	if nullableActor("") != nil {
@@ -120,8 +116,6 @@ func TestNullableActor(t *testing.T) {
 		t.Errorf("a real admin id must be passed through, got %#v", got)
 	}
 }
-
-// ─── Response shape ──────────────────────────────────────────────────────────
 
 // The console renders note and decidedAt directly and distinguishes null from
 // empty, so an undecided request must emit explicit nulls rather than omitting
@@ -160,8 +154,6 @@ func TestAdminFeatureRequest_JSONContract(t *testing.T) {
 		}
 	}
 }
-
-// ─── Routes ──────────────────────────────────────────────────────────────────
 
 // The console 404'd on these three paths before this change; pin them so a
 // rename cannot silently break it again. Gin also panics at boot on a wildcard

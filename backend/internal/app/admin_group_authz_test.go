@@ -21,7 +21,6 @@ import (
 // (wired at router.go, in the same "/admin" tree) now requires it too,
 // exercised through the REAL router (NewRouter), not just the middleware in
 // isolation the way admin_console_rbac_failclosed_test.go does.
-//
 // testAdminAPIKey stands in for a correctly-configured ADMIN_API_KEY. Every
 // request below sends it via x-admin-api-key — deliberately reproducing what
 // frontend-admin's admin-proxy route does unconditionally for every request

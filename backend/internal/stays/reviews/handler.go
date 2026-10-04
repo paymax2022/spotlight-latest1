@@ -6,7 +6,12 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyError = "error"
 
 // Handler exposes the member + extranet + admin review surfaces. RBAC is applied at
 // the route by the aggregator; object-level checks are in the service.
@@ -17,20 +22,18 @@ type Handler struct {
 // NewHandler constructs the reviews handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string { return c.GetString("user_id") }
-
 func mapErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotCompleted):
-		c.JSON(http.StatusPreconditionFailed, gin.H{"error": err.Error(), "code": "REVIEW_LOCKED"})
+		c.JSON(http.StatusPreconditionFailed, gin.H{keyError: httperr.Msg(c, http.StatusPreconditionFailed, err), "code": "REVIEW_LOCKED"})
 	case errors.Is(err, ErrNotOwner), errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: "forbidden"})
 	case errors.Is(err, ErrAlreadyReviewed):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "ALREADY_REVIEWED"})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), "code": "ALREADY_REVIEWED"})
 	case errors.Is(err, ErrBadScore):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -69,8 +72,6 @@ func (h *Handler) RegisterAdmin(g *gin.RouterGroup, guard func(permission string
 	g.POST("/reviews/:reviewId/moderate", guard("stays.admin.review"), h.Moderate)
 }
 
-// --- member handlers ---
-
 // ListByProperty: GET /reviews?property_id=...
 func (h *Handler) ListByProperty(c *gin.Context) {
 	limit, offset := pageParams(c)
@@ -84,7 +85,7 @@ func (h *Handler) ListByProperty(c *gin.Context) {
 
 // CanReview: GET /reservations/:id/review-eligibility
 func (h *Handler) CanReview(c *gin.Context) {
-	ok, err := h.svc.CanReview(c.Request.Context(), uid(c), c.Param("id"))
+	ok, err := h.svc.CanReview(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		// Distinguish locked vs not-owner but never 500 for the normal "locked" path.
 		switch {
@@ -92,7 +93,7 @@ func (h *Handler) CanReview(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"data": gin.H{"can_review": false, "reason": "NOT_COMPLETED"}})
 			return
 		case errors.Is(err, ErrNotOwner):
-			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			c.JSON(http.StatusForbidden, gin.H{keyError: "forbidden"})
 			return
 		default:
 			mapErr(c, err)
@@ -111,10 +112,10 @@ func (h *Handler) Create(c *gin.Context) {
 		Body         string         `json:"body"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	id, err := h.svc.Create(c.Request.Context(), uid(c), c.Param("id"), b.OverallScore, b.SubScores, b.Title, b.Body)
+	id, err := h.svc.Create(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.OverallScore, b.SubScores, b.Title, b.Body)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -125,7 +126,7 @@ func (h *Handler) Create(c *gin.Context) {
 // ListMine: GET /me/reviews
 func (h *Handler) ListMine(c *gin.Context) {
 	limit, offset := pageParams(c)
-	out, err := h.svc.ListMine(c.Request.Context(), uid(c), limit, offset)
+	out, err := h.svc.ListMine(c.Request.Context(), ginutil.UserID(c), limit, offset)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -143,12 +144,10 @@ func (h *Handler) GetResponse(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": rsp})
 }
 
-// --- extranet handlers ---
-
 // ListForHotelier: GET /properties/:propertyId/reviews (extranet)
 func (h *Handler) ListForHotelier(c *gin.Context) {
 	limit, offset := pageParams(c)
-	out, err := h.svc.ListForHotelier(c.Request.Context(), uid(c), c.Param("propertyId"), limit, offset)
+	out, err := h.svc.ListForHotelier(c.Request.Context(), ginutil.UserID(c), c.Param("propertyId"), limit, offset)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -162,10 +161,10 @@ func (h *Handler) Respond(c *gin.Context) {
 		Body string `json:"body" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	id, err := h.svc.Respond(c.Request.Context(), uid(c), c.Param("reviewId"), b.Body)
+	id, err := h.svc.Respond(c.Request.Context(), ginutil.UserID(c), c.Param("reviewId"), b.Body)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -179,14 +178,12 @@ func (h *Handler) Flag(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&b)
-	if err := h.svc.FlagAsHotelier(c.Request.Context(), uid(c), c.Param("reviewId"), b.Reason); err != nil {
+	if err := h.svc.FlagAsHotelier(c.Request.Context(), ginutil.UserID(c), c.Param("reviewId"), b.Reason); err != nil {
 		mapErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
 }
-
-// --- admin handlers ---
 
 // ListForAdminProperty: GET /reviews?property_id=... (admin)
 func (h *Handler) ListForAdminProperty(c *gin.Context) {
@@ -206,7 +203,7 @@ func (h *Handler) Moderate(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.Moderate(c.Request.Context(), c.Param("reviewId"), b.Status, b.Reason); err != nil {

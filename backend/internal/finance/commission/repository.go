@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // ErrConfigNotFound is returned when no active rate card resolves for a lookup.
@@ -160,7 +162,7 @@ func (r *Repository) UpsertConfig(ctx context.Context, in ConfigInput, updatedBy
 	row := r.db.QueryRow(ctx, q,
 		in.ServiceCategory, in.Service, in.ServiceSubtype, feeModel,
 		in.CommissionBps, in.PlatformChargeBps, in.ConvenienceFeeKobo, in.FixedFeeKobo,
-		feePayer, currency, active, nullableStr(in.Notes), updatedBy)
+		feePayer, currency, active, dbutil.NullStr(in.Notes), updatedBy)
 	c, err := scanConfig(row)
 	if err != nil {
 		return nil, fmt.Errorf("commission: upsert config: %w", err)
@@ -205,7 +207,7 @@ func (r *Repository) UpdateConfigByID(ctx context.Context, id string, in ConfigI
 		RETURNING ` + configCols
 	row := r.db.QueryRow(ctx, q, id,
 		feeModel, in.CommissionBps, in.PlatformChargeBps, in.ConvenienceFeeKobo, in.FixedFeeKobo,
-		feePayer, currency, active, nullableStr(in.Notes), updatedBy)
+		feePayer, currency, active, dbutil.NullStr(in.Notes), updatedBy)
 	c, err := scanConfig(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrConfigNotFound
@@ -239,7 +241,7 @@ func (r *Repository) InsertAudit(ctx context.Context, configID, action string, b
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO public.commission_config_audit (config_id, action, before, after, changed_by)
 		VALUES ($1,$2,$3,$4,$5)`,
-		nullableStr(configID), action, jsonbOrNil(before), jsonbOrNil(after), changedBy)
+		dbutil.NullStr(configID), action, jsonbOrNil(before), jsonbOrNil(after), changedBy)
 	if err != nil {
 		return fmt.Errorf("commission: insert audit: %w", err)
 	}
@@ -394,16 +396,6 @@ func (r *Repository) Report(ctx context.Context, from, to time.Time, groupBy str
 		out = append(out, rr)
 	}
 	return out, rows.Err()
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-// nullableStr returns nil (SQL NULL) for an empty string.
-func nullableStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 // jsonbOrNil returns nil (SQL NULL) for a nil map so an absent before/after stays

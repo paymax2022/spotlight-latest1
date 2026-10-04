@@ -1,6 +1,5 @@
 'use client';
 
-// ── Admin — Voting Visibility control ────────────────────────────────────────
 // Controls the universal voting engine's PUBLIC visibility: whether a contest (or
 // a phase inside it) exposes the leaderboard, vote count and rank to the public.
 // Backend (do NOT change) lives at /api/admin/voting/* — in frontend-web, not the
@@ -11,8 +10,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { webProxyBase } from '@/config/env';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
-
-// ─── Auth / fetch plumbing (mirrors connect/crowdfunding admin services) ──────
 
 /**
  * PATH A (frontend-web via /api/web-proxy) — same as votePackagesService.
@@ -33,10 +30,7 @@ function votingBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${votingBase()}${path}`, { headers: authHeaders(), cache: 'no-store' });
@@ -52,8 +46,6 @@ async function apiSend<T>(method: 'POST' | 'DELETE', path: string, body?: unknow
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   return (await res.json()) as T;
 }
-
-// ─── Types (backend rows are snake_case) ──────────────────────────────────────
 
 interface VotingSettingsRow {
   contest_id: string;
@@ -110,8 +102,6 @@ function Toggle({ checked, onChange, text }: { checked: boolean; onChange: (v: b
     </label>
   );
 }
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
 
 const REQUIRED_PERMS = ['votes:manage'];
 
@@ -265,7 +255,6 @@ export default function VotingVisibilityPage() {
     };
   }, [settings, phases]);
 
-  // ── Permission gate ─────────────────────────────────────────────────────────
   if (permsLoaded && !canManage) {
     return (
       <Page>

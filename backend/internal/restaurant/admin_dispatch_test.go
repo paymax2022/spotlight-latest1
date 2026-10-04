@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// ── Rider roster ─────────────────────────────────────────────────────────────
-
 func TestAdminRiderParamsNormalized(t *testing.T) {
 	cases := []struct {
 		name string
@@ -170,8 +168,6 @@ func TestRiderRosterFromAppliesTheCategoryFilterOnlyWhenAsked(t *testing.T) {
 		}
 	}
 }
-
-// ── Dispatch queue ───────────────────────────────────────────────────────────
 
 func TestAdminDispatchParamsNormalized(t *testing.T) {
 	cases := []struct {

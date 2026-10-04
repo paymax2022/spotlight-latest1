@@ -9,11 +9,11 @@ import PrimaryButton from '@/components/PrimaryButton';
 import AddressAutocompleteInput, { type SelectedAddress } from '@/components/AddressAutocompleteInput';
 import { withPlusCode } from '@/lib/addressLookup';
 import type { LatLng } from '@/features/food/types';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { usePlaceOrder, useDeliveryQuote } from '@/features/food/hooks';
 import {
   useCartStore, cartSubtotalKobo, cartItemCount, cartPackageCount,
@@ -72,7 +72,6 @@ export default function CheckoutScreen() {
   const goneRestaurantIdList = useCartRestaurantAvailability(cartRestaurantIds);
 
   // Remove them. A cart persists locally AND on the server, so it outlives the
-  // menu it was built from; the food of a deleted kitchen sits here looking
   // ordinary — named, priced, adding to the total — while PlaceOrder can never
   // accept it and its delivery leg can never be quoted. Only a 404 gets here
   // (see availability.ts); a server error leaves the cart alone.
@@ -93,9 +92,7 @@ export default function CheckoutScreen() {
   }, [goneRestaurantIdList, removeRestaurants]);
 
   // Names for the OTHER restaurants in a multi-restaurant cart. Lines added in
-  // this session carry their own name; the per-id lookup below covers carts
   // hydrated from storage or the server, whose lines predate that field.
-  //
   // This used to seed the map from the WHOLE discovery list. That list is now
   // paged, so it would have named only the restaurants that happened to be on
   // page 1 — and the by-id fetch already covers every case it did, without
@@ -114,7 +111,6 @@ export default function CheckoutScreen() {
 
   // Ids that neither a captured line name nor the cart's own primary restaurant
   // can name. Fetched by id, which has no is_open filter and no paging — a cart
-  // outlives opening hours, and discovery is `WHERE is_open = TRUE`. Usually
   // empty, in which case no request is made.
   const unresolvedRestaurantIds = useMemo(
     () =>
@@ -138,7 +134,6 @@ export default function CheckoutScreen() {
   const pay = usePurchasePayment<Awaited<ReturnType<typeof placeOrder.mutateAsync>>>();
   // Card/Transfer runs through a genuinely separate, server-initiated Paystack
   // rail (paystackcheckout on the Go side) — NOT usePurchasePayment's built-in
-  // wallet-top-up-then-spend trick. The server quotes and charges directly; no
   // wallet debit ever occurs, so this works even without KYC (see onCard below
   // and initiateFoodOrderPaystack's doc comment).
   const paystackCheckout = useGatewayCheckout();
@@ -156,7 +151,6 @@ export default function CheckoutScreen() {
   // authoritative on placeOrder — this only drives the pre-payment estimate.
   const quoteQ = useDeliveryQuote(restaurantId ?? undefined, addressLocation);
   const quote = quoteQ.data;
-  // A quote is a SERVER price and is always used; flat_fallback only means it is
   // not distance-based. The old rule discarded a flat-fallback quote in favour of
   // restaurant.deliveryFeeKobo — a field with no column and no DTO behind it —
   // so the fee rendered as ₦0 for every restaurant without coordinates while
@@ -218,7 +212,6 @@ export default function CheckoutScreen() {
 
   const onPlace = () => {
     if (!restaurantId || !address.trim() || belowMin || placeOrder.isPending || paid) return;
-    // PlaceOrder reads the restaurant row for pricing and open-hours; if we could
     // not load it, the order cannot be placed and taking a payment first would
     // charge for something the server is about to refuse.
     if (restaurantUnavailable) return;

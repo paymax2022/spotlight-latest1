@@ -1,10 +1,9 @@
-// ── Paymax AI Symptom Checker — Triage constants & presentation maps ─────────
 // Mock-first: reuses the shared health USE_MOCK flag + HEALTH_API_BASE.
 // Never hardcode hex — resolve through Colors. Money in kobo.
 // SAFETY: SC-1 (no "diagnosis"), SC-8 (disclaimer + emergency everywhere),
 // SC-9 (extra caution for child/maternal).
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { USE_MOCK, HEALTH_API_BASE } from '@/features/health/constants/health.constants';
 import type {
   DispositionLevel,

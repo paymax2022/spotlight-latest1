@@ -42,13 +42,13 @@ func TestMetrics_HandComputed(t *testing.T) {
 	// trades: profit factor = grossWin/grossLoss.
 	trades := []Trade{{PnLKobo: 300}, {PnLKobo: -100}, {PnLKobo: 200}, {PnLKobo: -100}}
 	m2 := ComputeMetrics(curve, trades, 0, Config{PeriodsPerYear: 365})
-	if m2.ProfitFactorBps != 25000 { // (300+200)/(100+100)=2.5
+	if m2.ProfitFactorBps != 25000 {
 		t.Fatalf("profit factor = %d bps, want 25000", m2.ProfitFactorBps)
 	}
 	if m2.WinRateBps != 5000 { // 2/4
 		t.Fatalf("win rate = %d, want 5000", m2.WinRateBps)
 	}
-	if m2.ExpectancyKobo != 75 { // (300-100+200-100)/4
+	if m2.ExpectancyKobo != 75 {
 		t.Fatalf("expectancy = %d, want 75", m2.ExpectancyKobo)
 	}
 }

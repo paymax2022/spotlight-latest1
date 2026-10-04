@@ -4,9 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"strconv"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	keyError = "error"
+	keyData  = "data"
 )
 
 var (
@@ -265,4 +276,268 @@ func (s *Service) RespondCollab(ctx context.Context, userID, collabID string, ac
 	_ = s.audit.WriteAudit(ctx, "connect.collab.respond", userID, "connect_collab_request", r.ID,
 		map[string]any{"status": target})
 	return r, nil
+}
+
+type VerificationStatus string
+
+const (
+	VerUnverified VerificationStatus = "unverified"
+	VerPending    VerificationStatus = "pending"
+	VerVerified   VerificationStatus = "verified"
+	VerRejected   VerificationStatus = "rejected"
+)
+
+// FanMessagePolicy controls who may DM the creator (server-enforced).
+type FanMessagePolicy string
+
+const (
+	FanOpen         FanMessagePolicy = "open"
+	FanVerifiedOnly FanMessagePolicy = "verified_only"
+	FanOff          FanMessagePolicy = "off"
+)
+
+func ValidFanPolicy(p FanMessagePolicy) bool {
+	switch p {
+	case FanOpen, FanVerifiedOnly, FanOff:
+		return true
+	}
+	return false
+}
+
+type Profile struct {
+	ID                 string    `json:"id"`
+	UserID             string    `json:"user_id"`
+	Handle             string    `json:"handle,omitempty"`
+	DisplayName        string    `json:"display_name,omitempty"`
+	Category           string    `json:"category,omitempty"`
+	Bio                string    `json:"bio,omitempty"`
+	VerificationStatus string    `json:"verification_status"`
+	FanMessages        string    `json:"fan_messages"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+type PortfolioItem struct {
+	ID               string    `json:"id"`
+	CreatorID        string    `json:"creator_id"`
+	Title            string    `json:"title"`
+	URL              string    `json:"url,omitempty"`
+	Kind             string    `json:"kind"`
+	ModerationStatus string    `json:"moderation_status"`
+	Position         int       `json:"position"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+type CollabRequest struct {
+	ID         string    `json:"id"`
+	FromUserID string    `json:"from_user_id"`
+	CreatorID  string    `json:"creator_id"`
+	Subject    string    `json:"subject,omitempty"`
+	Body       string    `json:"body,omitempty"`
+	BudgetKobo *int64    `json:"budget_kobo,omitempty"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type ProfileInput struct {
+	Handle      string `json:"handle"`
+	DisplayName string `json:"display_name"`
+	Category    string `json:"category"`
+	Bio         string `json:"bio"`
+}
+
+type PortfolioInput struct {
+	Title    string `json:"title" binding:"required"`
+	URL      string `json:"url"`
+	Kind     string `json:"kind"`
+	Position int    `json:"position"`
+}
+
+type CollabInput struct {
+	CreatorID  string `json:"creator_id" binding:"required"`
+	Subject    string `json:"subject"`
+	Body       string `json:"body"`
+	BudgetKobo *int64 `json:"budget_kobo"`
+}
+
+type CollabResponse struct {
+	Accept bool `json:"accept"`
+}
+
+type FanPolicyInput struct {
+	FanMessages string `json:"fan_messages" binding:"required"`
+}
+
+// validCollabTransition guards the collab-request state machine.
+func validCollabTransition(from, to string) bool {
+	if from != "pending" {
+		return false
+	}
+	return to == "accepted" || to == "declined" || to == "withdrawn"
+}
+
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+func (h *Handler) GetProfile(c *gin.Context) {
+	p, err := h.svc.GetProfile(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{keyError: "no creator profile"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: p})
+}
+
+func (h *Handler) UpsertProfile(c *gin.Context) {
+	var in ProfileInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	p, err := h.svc.UpsertProfile(c.Request.Context(), ginutil.UserID(c), in)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: p})
+}
+
+func (h *Handler) AddPortfolio(c *gin.Context) {
+	var in PortfolioInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	it, err := h.svc.AddPortfolioItem(c.Request.Context(), ginutil.UserID(c), in)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidKind):
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		case errors.Is(err, ErrNoProfile):
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		}
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{keyData: it})
+}
+
+func (h *Handler) ListPortfolio(c *gin.Context) {
+	out, err := h.svc.ListPortfolio(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: out})
+}
+
+// RequestVerification — POST /creator/verification {evidence_ref}.
+func (h *Handler) RequestVerification(c *gin.Context) {
+	var body struct {
+		EvidenceRef string `json:"evidence_ref" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "evidence_ref required"})
+		return
+	}
+	if err := h.svc.RequestVerification(c.Request.Context(), ginutil.UserID(c), body.EvidenceRef); err != nil {
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{keyData: gin.H{"status": "pending"}})
+}
+
+// SetFanPolicy — PATCH /creator/fan-messages {fan_messages}.
+func (h *Handler) SetFanPolicy(c *gin.Context) {
+	var in FanPolicyInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	if err := h.svc.SetFanPolicy(c.Request.Context(), ginutil.UserID(c), FanMessagePolicy(in.FanMessages)); err != nil {
+		if errors.Is(err, ErrInvalidPolicy) {
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+			return
+		}
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"fan_messages": in.FanMessages}})
+}
+
+// SubmitCollab — POST /creator/collab-requests.
+func (h *Handler) SubmitCollab(c *gin.Context) {
+	var in CollabInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	r, err := h.svc.SubmitCollab(c.Request.Context(), ginutil.UserID(c), in)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{keyData: r})
+}
+
+// ListCollabs — GET /creator/collab-requests (creator inbox).
+func (h *Handler) ListCollabs(c *gin.Context) {
+	out, err := h.svc.ListCollabsForCreator(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: out})
+}
+
+// RespondCollab — POST /creator/collab-requests/:id/respond {accept}.
+func (h *Handler) RespondCollab(c *gin.Context) {
+	var body CollabResponse
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	r, err := h.svc.RespondCollab(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Accept)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotCreator):
+			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		case errors.Is(err, ErrBadTransition):
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: r})
+}
+
+// AdminVerificationQueue — GET /admin/creator/verification.
+func (h *Handler) AdminVerificationQueue(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	out, err := h.svc.ListVerificationQueue(c.Request.Context(), limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: out})
+}
+
+// AdminReviewVerification — POST /admin/creator/verification {user_id, approve, reason}.
+func (h *Handler) AdminReviewVerification(c *gin.Context) {
+	var body struct {
+		UserID  string `json:"user_id" binding:"required"`
+		Approve bool   `json:"approve"`
+		Reason  string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	if err := h.svc.ReviewVerification(c.Request.Context(), ginutil.UserID(c), body.UserID, body.Approve, body.Reason); err != nil {
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"reviewed": true}})
 }

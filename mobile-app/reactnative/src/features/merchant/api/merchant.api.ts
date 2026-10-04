@@ -1,8 +1,6 @@
-// ── Merchant Onboarding — API wrapper (mock-first) ───────────────────────────
 // Typed data layer the screens code against. Mirrors crowdfunding.api.ts and
 // doctor.api.ts: USE_MOCK-flagged, in-memory stateful store so the full
 // create → draft → submit → review → approve flow runs without a live backend.
-//
 // TODO(live): flip USE_MOCK=false and point each function at the Go endpoints
 //   GET  /api/v1/onboarding/modules
 //   GET  /api/v1/onboarding/modules/:id/merchant-types
@@ -15,7 +13,7 @@
 
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { applyEvent } from '../lib/applicationStateMachine';
 import {
   FORM_SCHEMAS,
@@ -38,21 +36,16 @@ import type {
 
 // LIVE by default, against /api/v1/onboarding/* and /api/v1/me/capabilities —
 // set EXPO_PUBLIC_MERCHANT_USE_MOCK=true for the offline demo store below.
-//
 // It used to default the other way, so the whole onboarding wizard ran on an
 // in-memory mock and never touched the Go engine, even though 10 of the 11
 // functions here already had live branches. Matches restaurantmerchant, which
 // also defaults live.
-//
-// ⚠️ The server side needs FEATURE_ONBOARDING_ENABLED=true, or the Go routes are
 // not registered at all and every call 404s.
 const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_MERCHANT_USE_MOCK, false);
 
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const nowISO = () => new Date().toISOString();
 const uid = (p: string) => `${p}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-// ─── In-memory store (mock) ──────────────────────────────────────────────────
 
 const ME_USER_ID = 'usr-amaka';
 
@@ -74,8 +67,6 @@ const db: {
   applications: [],
 };
 
-// ─── Validation (client mirrors server — FR-12) ──────────────────────────────
-// Pure implementation lives in ../lib/validation; re-exported so existing
 // screen imports from this module keep working.
 export { isFieldVisible, validateStep } from '../lib/validation';
 import { validateStep as _validateStep } from '../lib/validation';
@@ -86,8 +77,6 @@ function validateAll(schema: FormSchema, data: ApplicationData): Record<string, 
     return { ...acc, ...errors };
   }, {});
 }
-
-// ─── Catalogue reads (FR-5, FR-6, FR-8) ──────────────────────────────────────
 
 export async function listModules(): Promise<MerchantModule[]> {
   if (USE_MOCK) { await delay(); return MERCHANT_MODULES; }
@@ -123,8 +112,6 @@ export async function getFormSchema(schemaId: string): Promise<FormSchema> {
   return res.data.data;
 }
 
-// ─── Capabilities (FR-25 / FR-26) ────────────────────────────────────────────
-
 export async function getMyCapabilities(): Promise<MyCapabilities> {
   if (USE_MOCK) {
     await delay();
@@ -146,8 +133,6 @@ export async function getMyCapabilities(): Promise<MyCapabilities> {
   const res = await api.get('/api/v1/me/capabilities');
   return res.data.data;
 }
-
-// ─── Applications (FR-7, FR-11, FR-12, §7.2) ─────────────────────────────────
 
 const ACTIVE_STATES = ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'NEEDS_MORE_INFO'];
 
@@ -257,8 +242,6 @@ export async function resubmitApplication(input: ResubmitApplicationInput): Prom
   return res.data.data;
 }
 
-// ─── Demo-only helpers (drive the QA happy path; no live equivalent) ─────────
-
 /** Simulates an admin approval so the capability switcher updates in the demo. */
 export async function __demoApprove(applicationId: string): Promise<void> {
   const app = db.applications.find((a) => a.id === applicationId);
@@ -272,7 +255,6 @@ export async function __demoApprove(applicationId: string): Promise<void> {
       id: uid('mp'), userId: ME_USER_ID, moduleId: type.moduleId, moduleName: type.moduleName,
       merchantTypeId: type.id, merchantTypeName: type.name, icon: type.icon,
       roleGranted: type.roleToGrant, status: 'ACTIVE', activatedAt: nowISO(),
-      // Mirrors onboarding/service.go: fmt.Sprintf("/merchant/%s", mt.Slug).
       workspaceRoute: `/merchant/${type.slug}`,
     });
   }

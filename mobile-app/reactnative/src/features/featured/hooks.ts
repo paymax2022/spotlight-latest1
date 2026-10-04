@@ -1,4 +1,3 @@
-// ── Featured Placement — Data hooks ───────────────────────────────────────────
 // React Query hooks mirroring food/hooks.ts so screens stay declarative and
 // share caching / loading / error contracts. Money mutations (submit, pay)
 // attach Idempotency-Keys generated here, never reused across retries.
@@ -10,7 +9,6 @@ import type { CreateDraftRequest, PlacementEvent } from './types';
 
 const KEY = 'featured';
 
-// ─── Zones & eligible items ──────────────────────────────────────────────────
 export function useZones() {
   return useQuery({ queryKey: [KEY, 'zones'], queryFn: featured.listZones, staleTime: 60_000 });
 }
@@ -23,7 +21,6 @@ export function useEligibleItems() {
   });
 }
 
-// ─── Campaigns ───────────────────────────────────────────────────────────────
 /** "My Promotions" list. Poll so status/countdown stay fresh. */
 export function useMyPromotions(options?: { poll?: boolean }) {
   return useQuery({
@@ -148,7 +145,6 @@ export function useResume() {
   });
 }
 
-// ─── Public landing + events ─────────────────────────────────────────────────
 export function useLandingPlacements(options?: { poll?: boolean }) {
   return useQuery({
     queryKey: [KEY, 'landing'],

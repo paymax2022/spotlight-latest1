@@ -6,18 +6,16 @@ import (
 	"testing"
 	"time"
 
+	"spotlight/backend/go-common/ptr"
 	feesstatemachine "spotlight/backend/internal/academy/fees/statemachine"
 )
 
 // PURE tests — no DB. The pgx Repository is replaced by an in-memory fakeStore so the
 // full promotion lifecycle, the SF-3 two-approval guard, and the idempotent rollover are
 // all exercised without a live DB (mirrors feessession/session_test.go isolation).
-//
 // SF-3 is a RELEASE BLOCKER, so this file makes a REAL bypass attempt: it explicitly
 // calls Apply from promotion_computed and from promotion_reviewed and asserts BOTH fail
 // with ErrApprovalRequired. A test that never attempts the bypass proves nothing.
-
-// ── in-memory fake store ──────────────────────────────────────────────────────
 
 type fakeStore struct {
 	promos   map[string]*PromotionRecord
@@ -52,7 +50,7 @@ func (f *fakeStore) UpsertScore(_ context.Context, schoolID, classID, sessionID,
 	// Stage a session_active promotion record per (student, session, class) — mirrors
 	// the repository's staging behaviour.
 	for _, p := range f.promos {
-		if p.StudentID == studentID && deref(p.SessionID) == sessionID && deref(p.FromClassID) == classID {
+		if p.StudentID == studentID && ptr.ZeroIfNil(p.SessionID) == sessionID && ptr.ZeroIfNil(p.FromClassID) == classID {
 			p.ExamScore = f64(score)
 			return nil
 		}
@@ -102,7 +100,7 @@ func (f *fakeStore) GetPromotion(_ context.Context, id string) (*PromotionRecord
 func (f *fakeStore) ListPromotionsByClass(_ context.Context, sessionID, classID string) ([]PromotionRecord, error) {
 	out := []PromotionRecord{}
 	for _, p := range f.promos {
-		if deref(p.SessionID) == sessionID && deref(p.FromClassID) == classID {
+		if ptr.ZeroIfNil(p.SessionID) == sessionID && ptr.ZeroIfNil(p.FromClassID) == classID {
 			out = append(out, *p)
 		}
 	}
@@ -198,8 +196,6 @@ func (f *fakeStore) ReassignFeeSchedule(_ context.Context, schoolID, studentID, 
 
 func (f *fakeStore) WriteAudit(_ context.Context, _, _, _, _, _, _ string, _ any) error { return nil }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
 func f64(v float64) *float64 { return &v }
 
 func itoa(n int) string {
@@ -262,8 +258,6 @@ func driveToApproved(t *testing.T, svc *Service, fs *fakeStore, school, session,
 	return id
 }
 
-// ── TEST: full happy path ──────────────────────────────────────────────────────
-
 func TestPromotion_HappyPath_AppliesAndRolls(t *testing.T) {
 	ctx := context.Background()
 	fs := newFakeStore()
@@ -280,8 +274,8 @@ func TestPromotion_HappyPath_AppliesAndRolls(t *testing.T) {
 		t.Fatalf("want applied, got %s", out.State)
 	}
 	stu, _ := fs.GetStudent(ctx, "stu-1")
-	if deref(stu.ClassID) != "jss2" {
-		t.Fatalf("promoted student must move to jss2, got %q", deref(stu.ClassID))
+	if ptr.ZeroIfNil(stu.ClassID) != "jss2" {
+		t.Fatalf("promoted student must move to jss2, got %q", ptr.ZeroIfNil(stu.ClassID))
 	}
 	if stu.Status != StudentPromoted {
 		t.Fatalf("want status promoted, got %s", stu.Status)
@@ -291,8 +285,6 @@ func TestPromotion_HappyPath_AppliesAndRolls(t *testing.T) {
 	}
 }
 
-// ── TEST: SF-3 BYPASS (required) ────────────────────────────────────────────────
-//
 // Explicitly attempt to reach `applied` skipping approvals and assert BOTH fail with
 // ErrApprovalRequired. This is the release-blocker proof.
 
@@ -375,8 +367,6 @@ func TestPromotion_SF3_PureMachine_NoBypassEdge(t *testing.T) {
 	}
 }
 
-// ── TEST: apply with only one approval column set ──────────────────────────────
-//
 // Defence-in-depth assertion: even if a record were somehow in promotion_approved with a
 // missing approver column, Apply refuses. We simulate that corrupt state directly.
 
@@ -399,8 +389,6 @@ func TestPromotion_Apply_MissingApproverColumn_Fails(t *testing.T) {
 		t.Fatalf("rollover must not run on incomplete approvals")
 	}
 }
-
-// ── TEST: distinct-approver guard (stronger SF-3) ──────────────────────────────
 
 func TestPromotion_SameApprover_Rejected(t *testing.T) {
 	ctx := context.Background()
@@ -429,8 +417,6 @@ func TestPromotion_SameApprover_Rejected(t *testing.T) {
 	}
 }
 
-// ── TEST: repeated decision keeps class ────────────────────────────────────────
-
 func TestPromotion_Repeated_KeepsSameClass(t *testing.T) {
 	ctx := context.Background()
 	fs := newFakeStore()
@@ -442,15 +428,13 @@ func TestPromotion_Repeated_KeepsSameClass(t *testing.T) {
 		t.Fatalf("apply: %v", err)
 	}
 	stu, _ := fs.GetStudent(ctx, "stu-1")
-	if deref(stu.ClassID) != "jss1" {
-		t.Fatalf("repeated student must stay in jss1, got %q", deref(stu.ClassID))
+	if ptr.ZeroIfNil(stu.ClassID) != "jss1" {
+		t.Fatalf("repeated student must stay in jss1, got %q", ptr.ZeroIfNil(stu.ClassID))
 	}
 	if stu.Status != StudentRepeated {
 		t.Fatalf("want status repeated, got %s", stu.Status)
 	}
 }
-
-// ── TEST: rollover idempotent (double apply) ───────────────────────────────────
 
 func TestPromotion_Rollover_Idempotent(t *testing.T) {
 	ctx := context.Background()

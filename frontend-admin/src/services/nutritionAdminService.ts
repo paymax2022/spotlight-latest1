@@ -16,9 +16,7 @@ import type {
 // The Go nutrition admin routes hang off the /api prefix (same convention as
 // usersService / onboardingService): callers append '/nutrition/...' or
 // '/nutrition/admin/...' onto this base.
-//
 // apiBaseUrl is the same-origin admin-proxy path (<origin>/api/admin-proxy),
-// not a plain API root — the old `env.apiBaseUrl.replace(/\/api\/v1\/?$/, ...)`
 // here stopped matching once the proxy migration landed (apiBaseUrl stopped
 // ending in /api/v1), silently no-op'ing this replace and leaving every call
 // pointed at the bare proxy root instead of .../api/nutrition/... — see
@@ -30,17 +28,12 @@ function adminApiBase(): string {
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  if (!token) return {};
-  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 
-// Mock by default; flip with NEXT_PUBLIC_NUTRITION_ADMIN_USE_MOCK=false once the
 // live Go admin endpoints (/api/nutrition/admin/*) are deployed. Matches the
 // onboarding/mobility/realtor admin-service convention.
 const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_NUTRITION_ADMIN_USE_MOCK);
-
-// ── Fixtures ────────────────────────────────────────────────────────────────
 
 const compositionFixture: CompositionReference[] = [
   {
@@ -180,9 +173,6 @@ const implausibleFixture: ImplausibleProfile[] = [
   },
 ];
 
-// ── Reads ─────────────────────────────────────────────────────────────────
-
-// GET /nutrition/composition?source=&q=  (public catalog; fixtures by default)
 export async function listComposition(
   filters: CompositionFilters = {},
 ): Promise<CompositionReference[]> {
@@ -210,7 +200,6 @@ export async function listComposition(
   return (data.composition ?? data.data ?? []) as CompositionReference[];
 }
 
-// GET /nutrition/library  (public Nigerian Dish Library; fixtures by default)
 export async function listLibrary(): Promise<DishLibraryEntry[]> {
   if (USE_FIXTURES) return libraryFixture;
   const res = await fetch(`${adminApiBase()}/nutrition/library`, {
@@ -250,8 +239,6 @@ export async function getImplausible(id: string): Promise<ImplausibleProfile> {
   const data = await res.json().catch(() => ({}));
   return (data.profile ?? data) as ImplausibleProfile;
 }
-
-// ── Writes ──────────────────────────────────────────────────────────────────
 
 async function post(path: string, body: Record<string, unknown>): Promise<unknown> {
   const res = await fetch(`${adminApiBase()}${path}`, {
@@ -333,7 +320,6 @@ export async function resolveDish(dishId: string): Promise<ImplausibleProfile> {
 }
 
 // Mark a flagged profile as reviewed (accept value as-is). No dedicated backend
-// route in scope; this is a local/optimistic state transition in fixtures, and
 // posts to resolve with a reviewed hint when live.
 export async function markReviewed(id: string, dishId: string): Promise<ImplausibleProfile> {
   if (USE_FIXTURES) {
@@ -350,9 +336,7 @@ export async function markReviewed(id: string, dishId: string): Promise<Implausi
   return (data.profile ?? data) as ImplausibleProfile;
 }
 
-// ── Nutritionist consults (mock-only review/resolve queue) ───────────────────
 // No backend route group exists (see types note). Reads/writes are fixture-backed
-// until /api/nutrition/admin/consults/* is delivered; the live branches below
 // document the expected shape so the flip is a one-liner.
 
 let consultFixture: NutritionistConsult[] = [
@@ -429,7 +413,6 @@ function filterConsults(
   });
 }
 
-// GET /nutrition/admin/consults?status=&priority=&q=
 export async function listConsults(
   filters: ConsultFilters = {},
 ): Promise<NutritionistConsult[]> {
@@ -505,7 +488,6 @@ export async function transitionConsult(
   return (data.consult ?? data) as NutritionistConsult;
 }
 
-// ── Nutritionist payouts (mock-only payout runs / reconciliation) ────────────
 // Amounts are kobo (money iron-rules). Mock-only until a settlement backend
 // exists; the live branches document /api/nutrition/admin/payouts/*.
 
@@ -544,7 +526,6 @@ const payoutFixture: PayoutRun[] = [
   },
 ];
 
-// GET /nutrition/admin/payouts?status=&period=
 export async function listPayoutRuns(filters: PayoutFilters = {}): Promise<PayoutRun[]> {
   if (USE_FIXTURES) {
     return payoutFixture.filter((r) => {
@@ -583,7 +564,6 @@ export async function getPayoutRun(id: string): Promise<PayoutRun> {
 }
 
 // Reconcile a payout run against the ledger settlement account. Requires
-// nutrition.admin.resolve server-side; money mutation is backend-only (this UI
 // only triggers the run — the Go side posts the balanced double-entry).
 export async function reconcilePayoutRun(id: string): Promise<PayoutRun> {
   if (USE_FIXTURES) {
@@ -603,8 +583,6 @@ export async function reconcilePayoutRun(id: string): Promise<PayoutRun> {
   >;
   return (data.run ?? data) as PayoutRun;
 }
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
 
 // Format an integer kobo amount as Naira. Display-only — never used for math.
 export function formatKobo(kobo: number): string {

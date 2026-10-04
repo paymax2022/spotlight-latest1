@@ -176,37 +176,101 @@ export async function getOrCreateUserProfile(user: RequestUser) {
   return normalizeProfile({ id: user.id, email: user.email, role: 'USER' }, user);
 }
 
-export async function updateUserProfile(user: RequestUser, patch: Partial<SpotlightUserProfile>) {
+// E2E-SEC-053: the ONLY fields a user may write on their own profile. The
+// handler used to accept the raw request body as a patch, so
+// PUT /api/me/profile {"role":"admin"} persisted user_profiles.role — which
+// assertAdminPermission then trusted, self-granting super_admin on every BFF
+// admin route. Anything not listed here (role, is_admin, kyc_tier, kyc_status,
+// status, verified, permissions, roles, or any other privileged/unknown key)
+// is dropped before it can reach the upsert. Keep this list in sync with the
+// `optional`/metadata column maps below.
+const USER_WRITABLE_PROFILE_FIELDS = [
+  'email',
+  'firstName',
+  'lastName',
+  'displayName',
+  'gender',
+  'dateOfBirth',
+  'phone',
+  'whatsapp',
+  'country',
+  'state',
+  'lga',
+  'city',
+  'address',
+  'profilePhotoUrl',
+  'bio',
+  'preferredCategory',
+  'profileTypes',
+  'social',
+  'emergencyContactName',
+  'emergencyContactPhone',
+  'consentAccepted',
+  'identity',
+  'specialistProfiles',
+] as const;
+
+export type UserWritableProfilePatch = Partial<
+  Pick<SpotlightUserProfile, (typeof USER_WRITABLE_PROFILE_FIELDS)[number]>
+>;
+
+// sanitizeProfilePatch drops every non-allowlisted key from a user-supplied
+// profile patch. It exists so NO caller of updateUserProfile can smuggle a
+// privileged column (role et al.) through, whatever shape the request body
+// arrived in.
+export function sanitizeProfilePatch(input: unknown): UserWritableProfilePatch {
+  const raw = asRecord(input);
+  const patch: Record<string, unknown> = {};
+  for (const field of USER_WRITABLE_PROFILE_FIELDS) {
+    if (field in raw) patch[field] = raw[field];
+  }
+  return patch as UserWritableProfilePatch;
+}
+
+export async function updateUserProfile(user: RequestUser, patch: Partial<SpotlightUserProfile> | unknown) {
   const supabase = createAdminClient();
+  // Allowlist the writable field set — see USER_WRITABLE_PROFILE_FIELDS.
+  const safe = sanitizeProfilePatch(patch);
+
+  // The role column is server-managed and must never come from the patch.
+  // Preserve whatever the row already holds on update; 'USER' only seeds a
+  // first-time insert. (Writing 'USER' unconditionally would also have
+  // clobbered a legitimately-set role on every profile edit.)
+  const { data: existingRow } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle();
+  const persistedRole =
+    getString(asRecord(existingRow as Record<string, unknown> | null), ['role']) || 'USER';
+
   const metadata = {
-    firstName: patch.firstName,
-    lastName: patch.lastName,
-    displayName: patch.displayName,
-    gender: patch.gender,
-    dateOfBirth: patch.dateOfBirth,
-    phone: patch.phone,
-    whatsapp: patch.whatsapp,
-    country: patch.country,
-    state: patch.state,
-    lga: patch.lga,
-    city: patch.city,
-    address: patch.address,
-    profilePhotoUrl: patch.profilePhotoUrl,
-    bio: patch.bio,
-    preferredCategory: patch.preferredCategory,
-    profileTypes: patch.profileTypes,
-    social: patch.social,
-    emergencyContactName: patch.emergencyContactName,
-    emergencyContactPhone: patch.emergencyContactPhone,
-    consentAccepted: patch.consentAccepted,
+    firstName: safe.firstName,
+    lastName: safe.lastName,
+    displayName: safe.displayName,
+    gender: safe.gender,
+    dateOfBirth: safe.dateOfBirth,
+    phone: safe.phone,
+    whatsapp: safe.whatsapp,
+    country: safe.country,
+    state: safe.state,
+    lga: safe.lga,
+    city: safe.city,
+    address: safe.address,
+    profilePhotoUrl: safe.profilePhotoUrl,
+    bio: safe.bio,
+    preferredCategory: safe.preferredCategory,
+    profileTypes: safe.profileTypes,
+    social: safe.social,
+    emergencyContactName: safe.emergencyContactName,
+    emergencyContactPhone: safe.emergencyContactPhone,
+    consentAccepted: safe.consentAccepted,
   };
-  const fullName = [patch.firstName, patch.lastName].filter(Boolean).join(' ').trim() || patch.displayName;
+  const fullName = [safe.firstName, safe.lastName].filter(Boolean).join(' ').trim() || safe.displayName;
 
   // A PATCH must only carry the fields it was actually given.
-  //
   // This payload used to spell out every column with `patch.x || null`, which
   // broke updates twice over:
-  //
   //   1. full_name is NOT NULL. `PUT /api/me/profile {"phone":"…"}` carries no
   //      name, so full_name became null, the upsert failed 23502, and the
   //      fallback below quietly persisted only id/email/role — a 200 response
@@ -215,34 +279,32 @@ export async function updateUserProfile(user: RequestUser, patch: Partial<Spotli
   //   2. Had it succeeded it would have been destructive: sending only a phone
   //      also nulled first_name, city, address and everything else the caller
   //      never mentioned.
-  //
   // Omitting undefined keys fixes both — an absent field is left exactly as it
   // is, and a NOT NULL column is never handed a null it did not ask for.
   const optional: Record<string, unknown> = {
     full_name: fullName || undefined,
-    first_name: patch.firstName,
-    last_name: patch.lastName,
-    display_name: patch.displayName || fullName || undefined,
-    phone: patch.phone,
-    date_of_birth: patch.dateOfBirth,
-    gender: patch.gender,
-    country: patch.country,
-    state: patch.state,
-    lga: patch.lga,
-    city: patch.city,
-    address: patch.address,
-    social: patch.social,
-    identity: patch.identity,
-    specialist_profiles: patch.specialistProfiles,
-    profile_types: patch.profileTypes,
+    first_name: safe.firstName,
+    last_name: safe.lastName,
+    display_name: safe.displayName || fullName || undefined,
+    phone: safe.phone,
+    date_of_birth: safe.dateOfBirth,
+    gender: safe.gender,
+    country: safe.country,
+    state: safe.state,
+    lga: safe.lga,
+    city: safe.city,
+    address: safe.address,
+    social: safe.social,
+    identity: safe.identity,
+    specialist_profiles: safe.specialistProfiles,
+    profile_types: safe.profileTypes,
   };
 
   const widePayload: Record<string, unknown> = {
-    // id and email are the row's identity; email is NOT NULL with no default, so
     // it has to be present for the insert half of the upsert.
     id: user.id,
-    email: patch.email || user.email || null,
-    role: patch.role || 'USER',
+    email: safe.email || user.email || null,
+    role: persistedRole,
     metadata,
     updated_at: new Date().toISOString(),
   };
@@ -252,8 +314,8 @@ export async function updateUserProfile(user: RequestUser, patch: Partial<Spotli
 
   const narrowPayload = {
     id: user.id,
-    email: patch.email || user.email || null,
-    role: patch.role || 'USER',
+    email: safe.email || user.email || null,
+    role: persistedRole,
   };
 
   const attempts: Array<{ label: string; payload: Record<string, unknown> }> = [

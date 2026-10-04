@@ -1,7 +1,5 @@
-// ── Inline video — WEB implementation ────────────────────────────────────────
 // Metro picks this file on web and InlineVideo.native.tsx on iOS/Android, the
 // same split the payments gateway uses.
-//
 // The point of this component is that a learner never leaves Spotlight to watch
 // a lesson. The previous behaviour called Linking.openURL, which handed them to
 // the YouTube app or a new browser tab and lost their place in the course.
@@ -9,10 +7,10 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Linking } from 'react-native';
 import { Play, ExternalLink } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { youtubeEmbedUrl } from './youtube';
 
 export interface InlineVideoProps {

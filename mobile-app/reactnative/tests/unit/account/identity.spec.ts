@@ -1,5 +1,4 @@
 // A form only stops asking for a detail when the account is judged to HAVE it.
-// The judgement is this function, and its one interesting case is the fallback
 // that makes `fullName` equal to the email: pre-filling "you@example.com" into a
 // Full name field — and, on the forms that lock it, leaving no way to fix it —
 // is worse than asking.

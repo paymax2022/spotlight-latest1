@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Supabase row mappers ─────────────────────────────────
 // Maps realtor_* table rows (snake_case, joined graph) → domain types used by
 // the screens. Mirrors src/api/mappers/*.mapper.ts. Money columns are BIGINT
 // minor units (kobo) and pass through unchanged.

@@ -1,9 +1,7 @@
 package healthpharmacy_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression coverage for two defects found live during the Pharmacy
 // (Module 15) UAT pass:
-//
 //   - CreateOrder never decremented stock_qty anywhere, so a product with a
 //     small tracked quantity (stock_qty > 0) could be oversold without limit —
 //     two concurrent orders for the same last unit both succeeded and both
@@ -18,9 +16,7 @@ package healthpharmacy_test
 //     unconditionally. The entire DELIVERY lifecycle could never progress
 //     past DISPENSED. Fixed by wiring a real settlement.Service, mirroring
 //     finance_routes.go's own transport wiring.
-//
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -103,6 +99,7 @@ func seedStockFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sto
 			t.Fatalf("seed user: %v", err)
 		}
 		testsupport.CleanupUser(t, pool, u)
+		testsupport.SetKycTier(t, ctx, pool, u, testsupport.KycTierUnlimited)
 	}
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO health_providers (id, owner_user_id, domain, provider_type, display_name, status)
@@ -143,7 +140,7 @@ func TestLiveDB_CreateOrder_TrackedStockOversellRefused(t *testing.T) {
 	pool := stockDispatchPool(t)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	patientID, pharmacyID, productID := seedStockFixture(t, ctx, pool, 1) // stock_qty=1, tracked
+	patientID, pharmacyID, productID := seedStockFixture(t, ctx, pool, 1)
 	fundWallet(t, ctx, led, patientID, 5_000_000)
 
 	escrowAdapter := newTestEscrowAdapter(pool, led)
@@ -235,11 +232,7 @@ func TestLiveDB_CreateOrder_UntrackedProductStockUnlimited(t *testing.T) {
 	}
 }
 
-// The Dispatch nil-settlement panic fix (health_pharmacy_routes.go now wires
-// transport.NewService(pool, settlement.NewService(pool, ledgerSvc)) instead
-// of a nil settlement service) is verified live via a throwaway backend + a
-// full order lifecycle curl sweep rather than a unit test here — BookParcel's
-// real signature pulls in a maps-routing provider and pricing config that
-// would make a package-local test fragile and only loosely representative of
-// the actual fix (a one-line wiring change matching finance_routes.go's own
-// established pattern for the same transport.Service constructor).
+// The Dispatch nil-settlement panic fix (health_pharmacy_routes.go wires
+// transport.NewService(pool, settlement.NewService(pool, ledgerSvc))) is not
+// unit-tested here: BookParcel's real signature pulls in a maps-routing
+// provider and pricing config that would make a package-local test fragile.

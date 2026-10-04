@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"time"
-
+	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/insurance/gateway"
+	"time"
 )
 
 // PolicyView is the slice of a policy the claims engine needs: it must verify the
@@ -239,8 +239,6 @@ func (s *Service) UploadEvidence(ctx context.Context, userID, claimID, fileName,
 	return ev, nil
 }
 
-// --- queries + object-level authZ ---
-
 // GetClaim returns a claim the caller owns.
 func (s *Service) GetClaim(ctx context.Context, userID, claimID string) (*Claim, error) {
 	return s.ownedClaim(ctx, userID, claimID)
@@ -269,8 +267,6 @@ func (s *Service) ownedClaim(ctx context.Context, userID, claimID string) (*Clai
 	}
 	return c, nil
 }
-
-// --- transitions (admin/decisioning + provider-driven sync) ---
 
 // transition applies a guarded state change with optimistic version.
 func (s *Service) transition(ctx context.Context, c *Claim, to State) error {
@@ -363,7 +359,6 @@ func (s *Service) Reject(ctx context.Context, claimID, reason string) (*Claim, e
 }
 
 // Settle executes the IDEMPOTENT payout money-move: PAYOUT_PENDING → SETTLED.
-//
 // The payout posts a CREDIT to the claimant's wallet via wallet.Credit (the same
 // payout rail Paystack charges use: DR provider_clearing → CR user_wallet). It is
 // idempotent on the CLAIM'S idempotency_key (suffixed ":payout"): the ledger
@@ -429,8 +424,6 @@ func (s *Service) Settle(ctx context.Context, claimID string) (*Claim, error) {
 	return s.repo.Get(ctx, c.ID)
 }
 
-// --- admin ---
-
 // SearchAdmin returns claims across users (admin; RBAC gated at the route).
 func (s *Service) SearchAdmin(ctx context.Context, state, policyID string, limit, offset int) ([]Claim, error) {
 	return s.repo.SearchAdmin(ctx, state, policyID, limit, offset)
@@ -440,8 +433,6 @@ func (s *Service) SearchAdmin(ctx context.Context, state, policyID string, limit
 func (s *Service) AdminGet(ctx context.Context, claimID string) (*Claim, error) {
 	return s.repo.Get(ctx, claimID)
 }
-
-// --- provider-driven sync (called by the webhooks package) ---
 
 // ClaimByProviderRef resolves a claim from a (provider, provider_claim_ref) pair.
 // Used by webhook ingestion to map a provider claim event back to our row.
@@ -496,8 +487,6 @@ func (s *Service) ApplyProviderClaimEvent(ctx context.Context, claimID, eventTyp
 	return nil
 }
 
-// --- safe side-effect helpers (never fail the flow) ---
-
 func (s *Service) auditSafe(ctx context.Context, userID, action string, detail map[string]any) {
 	if s.audit != nil {
 		s.audit.Audit(ctx, userID, action, detail)
@@ -508,4 +497,90 @@ func (s *Service) notifySafe(ctx context.Context, userID, kind, message string) 
 	if s.notify != nil {
 		s.notify.Notify(ctx, userID, kind, message)
 	}
+}
+
+// State is the guarded claim lifecycle state (PRD §10.2 / build-plan §4).
+//
+//	DRAFT → FNOL_SUBMITTED → UNDER_ASSESSMENT
+//	                            ├─ NEEDS_MORE_INFO ⇄ UNDER_ASSESSMENT
+//	                            ├─ APPROVED → PAYOUT_PENDING → SETTLED
+//	                            └─ REJECTED
+//
+// The payout money-move happens ONLY on PAYOUT_PENDING → SETTLED, idempotent on
+// the claim's idempotency_key. The state machine is closed: a transition not in
+// the adjacency map is rejected by guard().
+type State string
+
+const (
+	StateDraft         State = "DRAFT"
+	StateFNOLSubmitted State = "FNOL_SUBMITTED"
+	StateUnderAssess   State = "UNDER_ASSESSMENT"
+	StateNeedsMoreInfo State = "NEEDS_MORE_INFO"
+	StateApproved      State = "APPROVED"
+	StatePayoutPending State = "PAYOUT_PENDING"
+	StateSettled       State = "SETTLED"
+	StateRejected      State = "REJECTED"
+)
+
+// transitions is the guarded adjacency map. Terminal states (SETTLED,
+// REJECTED) simply have no entry.
+var transitions = fsm.Table[State]{
+	StateDraft:         fsm.Set(StateFNOLSubmitted),
+	StateFNOLSubmitted: fsm.Set(StateUnderAssess),
+	StateUnderAssess:   fsm.Set(StateNeedsMoreInfo, StateApproved, StateRejected),
+	StateNeedsMoreInfo: fsm.Set(StateUnderAssess),
+	StateApproved:      fsm.Set(StatePayoutPending),
+	StatePayoutPending: fsm.Set(StateSettled),
+}
+
+// canTransition reports whether from→to is a permitted guarded transition.
+func canTransition(from, to State) bool { return transitions.Can(from, to) }
+
+// isTerminal reports whether a state admits no further transitions.
+func isTerminal(s State) bool { return transitions.IsTerminal(s) }
+
+// Claim is the normalised, Paymax-owned claim record (a projection over the
+// provider plus our lifecycle state). Money fields are kobo BIGINT.
+type Claim struct {
+	ID                 string    `json:"id"`
+	PolicyID           string    `json:"policy_id"`
+	ClaimantID         string    `json:"claimant_user_id"`
+	Provider           string    `json:"provider"`           // aggregator
+	ProviderClaimRef   *string   `json:"provider_claim_ref"` // set after FNOL hand-off
+	State              State     `json:"state"`
+	LossEventAt        time.Time `json:"loss_event_at"`
+	ReportedAt         time.Time `json:"reported_at"`
+	Description        string    `json:"description"`
+	ClaimedAmountKobo  int64     `json:"claimed_amount_kobo"`
+	ApprovedAmountKobo int64     `json:"approved_amount_kobo"`
+	Currency           string    `json:"currency"`
+	PayoutLedgerRef    *string   `json:"payout_ledger_ref"` // set on SETTLED
+	IdempotencyKey     string    `json:"idempotency_key"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	Version            int       `json:"version"`
+}
+
+// Evidence is a signed-URL reference to a claim evidence object in R2. The bytes
+// never travel through the backend; only the object key (storage_ref) is stored.
+type Evidence struct {
+	ID          string    `json:"id"`
+	ClaimID     string    `json:"claim_id"`
+	FileName    string    `json:"file_name"`
+	ContentType string    `json:"content_type"`
+	StorageRef  string    `json:"storage_ref"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// Payout is the insurance-domain record of a claim payout money move. It
+// references the ledger entry (payout_ledger_ref) and carries the idempotency key
+// (UNIQUE) so a retried settlement is a safe no-op.
+type Payout struct {
+	ID              string    `json:"id"`
+	ClaimID         string    `json:"claim_id"`
+	WalletLedgerRef string    `json:"wallet_ledger_ref"`
+	IdempotencyKey  string    `json:"idempotency_key"`
+	AmountKobo      int64     `json:"amount_kobo"`
+	Status          string    `json:"status"` // posted
+	CreatedAt       time.Time `json:"created_at"`
 }

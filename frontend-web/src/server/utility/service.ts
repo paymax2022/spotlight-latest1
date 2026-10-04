@@ -2,21 +2,23 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 import { resolveUtilityCommission, type ResolvedCommission } from '@/src/server/commission/config';
 import { creditWallet, debitWallet, reverseWalletDebit } from '@/src/server/wallet/service';
-import { calculateUtilityPricing } from './pricing';
-import { getViableUtilityRoutes, selectUtilityProvider, type UtilityRouteCandidate } from './routing';
-import { canRequeryUtilityStatus, canReverseUtilityTransaction, nextStatusFromProvider } from './status';
-import { getUtilityAdapter } from './adapters/registry';
-import { fetchVtpassServices, type VtpassServiceInfo } from './adapters/vtpass';
-import type { UtilityValidationResult } from './adapters/types';
 import {
+  calculateUtilityPricing,
+  getViableUtilityRoutes,
+  selectUtilityProvider,
+  type UtilityRouteCandidate,
+  canRequeryUtilityStatus,
+  canReverseUtilityTransaction,
+  nextStatusFromProvider,
   protectProviderCredentialsPayload,
   providerCredentialsConfigured,
-} from './credentials';
-import {
   getUtilityProviderTimeoutMs,
   UtilityProviderTimeoutError,
   withUtilityProviderTimeout,
-} from './provider-timeout';
+} from './helpers';
+import { getUtilityAdapter } from './adapters/registry';
+import { fetchVtpassServices, type VtpassServiceInfo } from './adapters/vtpass';
+import type { UtilityValidationResult } from './adapters/types';
 import {
   notifyUtilityCustomer,
   notifyUtilityTransactionStatus,
@@ -40,11 +42,308 @@ function receiptNumber(id: string) {
   return `UTL-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${id.slice(0, 8).toUpperCase()}`;
 }
 
+// AUD-BILL-005: a stuck transaction is only safe to recover once it is older
+// than any in-flight writer could possibly still own it. Provider calls are
+// capped at getUtilityProviderTimeoutMs (max 120s) per attempt and failover
+// walks a small routes list, so 10 minutes is far beyond a live purchase.
+const UTILITY_STUCK_MIN_AGE_MS = 10 * 60_000;
+
+function isStuckPastThreshold(transaction: UtilityTransactionRow) {
+  return Date.now() - new Date(transaction.updated_at).getTime() >= UTILITY_STUCK_MIN_AGE_MS;
+}
+
+// Attempts recorded as anything other than a definitive provider 'failed' are
+// ambiguous for recovery: 'started'/'timeout'/'error' can mean the provider
+// received (and possibly vended) a request whose request_id embeds the call
+// timestamp and cannot be reconstructed for a requery. Never auto-reverse on
+// ambiguous evidence — refunding a vend that succeeded would pay out twice.
+const AMBIGUOUS_ATTEMPT_STATUSES: ReadonlySet<UtilityProviderAttemptRow['status']> = new Set([
+  'started',
+  'pending',
+  'timeout',
+  'error',
+  'successful',
+]);
+
+/**
+ * AUD-BILL-005 — probe the ledger for this transaction's money legs.
+ *
+ * BOTH writer conventions must be recognised: this plane posts the wallet leg
+ * under the caller's key verbatim (`utility:<tx>:DEBIT`, `…:REVERSAL_DEBIT`,
+ * `…:PAYSTACK_REFUND`, `…:ADMIN_REVERSAL_*`), while the Go plane
+ * (backend/internal/utilitybills) derives its own per-side suffixes from the
+ * CLIENT key (`<key>:debit:credit`, `<key>:reversal:rev_debit`, and
+ * `utility:<tx>:ADMIN_REVERSAL_DEBIT:rev_debit`). Probing only the TS keys
+ * would misread a Go-written row as "no debit" — stranding real money, or
+ * worse, refunding it again.
+ *
+ * The paystack VALIDATION_REFUND credit cannot be probed by key at all (it is
+ * keyed on the intent id, which the transaction does not store), so for
+ * paystack-source rows it is matched by the captured payment reference.
+ */
+async function lookupUtilityMoneyLegs(
+  transaction: UtilityTransactionRow,
+): Promise<{ debitPosted: boolean; compensationPosted: boolean }> {
+  const supabase = createAdminClient();
+  const key = transaction.idempotency_key;
+  const debitKeys = [
+    `utility:${transaction.id}:DEBIT`,
+    `${key}:debit:debit`,
+    `${key}:debit:credit`,
+  ];
+  const compensationKeys = [
+    `utility:${transaction.id}:REVERSAL_DEBIT`,
+    `utility:${transaction.id}:PAYSTACK_REFUND`,
+    `utility:${transaction.id}:PAYSTACK_REFUND:credit`,
+    `utility:${transaction.id}:ADMIN_REVERSAL_DEBIT`,
+    `utility:${transaction.id}:ADMIN_REVERSAL_DEBIT:rev_debit`,
+    `utility:${transaction.id}:ADMIN_REVERSAL_DEBIT:rev_credit`,
+    `utility:${transaction.id}:ADMIN_REVERSAL_PAYSTACK_REFUND`,
+    `utility:${transaction.id}:ADMIN_REVERSAL_PAYSTACK_REFUND:counter`,
+    `utility:${transaction.id}:ADMIN_REVERSAL_PAYSTACK_REFUND:credit`,
+    `${key}:reversal:rev_debit`,
+    `${key}:reversal:rev_credit`,
+  ];
+  const { data: legs, error } = await supabase
+    .from('ledger_entries')
+    .select('idempotency_key')
+    .in('idempotency_key', [...debitKeys, ...compensationKeys]);
+  if (error) throw new ApiError('Failed to inspect utility ledger legs.', 500);
+
+  const posted = new Set(((legs ?? []) as Array<{ idempotency_key: string }>).map((leg) => leg.idempotency_key));
+  const debitPosted = debitKeys.some((k) => posted.has(k));
+  let compensationPosted = compensationKeys.some((k) => posted.has(k));
+
+  if (!compensationPosted && transaction.payment_source === 'paystack') {
+    const paymentRef = transaction.metadata?.payment_reference;
+    if (typeof paymentRef === 'string' && paymentRef) {
+      const { data: refund } = await supabase
+        .from('ledger_entries')
+        .select('id')
+        .eq('reference', paymentRef)
+        .eq('type', 'CREDIT')
+        .limit(1);
+      compensationPosted = (refund ?? []).length > 0;
+    }
+  }
+
+  return { debitPosted, compensationPosted };
+}
+
+// AUD-BILL-005 — how long a just-'failed' row must age before an ADMIN
+// reversal may claim it. While a row is freshly failed its compensator
+// (recovery or the in-flight writer's auto-reverse) is likely still inside its
+// probe→post window — the window serialises admin compensation behind it
+// without a schema-level lock.
+const UTILITY_ADMIN_SETTLE_WINDOW_MS = 60_000;
+
+/**
+ * AUD-BILL-005 — claim a still-open transaction for settlement by flipping it
+ * to 'failed' in ONE write. 'failed' is outside every other claim set AND
+ * outside the writer's guarded settle statuses, so after this CAS lands: no
+ * second compensator can enter the probe→post window concurrently, and an
+ * in-flight writer's settle patch is refused outright. null means another
+ * writer owns the row — adopt its outcome.
+ */
+async function claimUtilityForSettlement(
+  transaction: UtilityTransactionRow,
+  reason: string,
+): Promise<UtilityTransactionRow | null> {
+  const supabase = createAdminClient();
+  const { data: claimed } = await supabase
+    .from('utility_transactions')
+    .update({ status: 'failed', failure_reason: reason, updated_at: new Date().toISOString() })
+    .eq('id', transaction.id)
+    .eq('updated_at', transaction.updated_at)
+    .in('status', ['initiated', 'wallet_debited', 'provider_pending'])
+    .select('*');
+  return ((claimed ?? [])[0] ?? null) as UtilityTransactionRow | null;
+}
+
+/**
+ * AUD-BILL-005 — claim an already-'failed' row for ADMIN reversal. The 60s
+ * window keeps the admin out of a just-claimed row's probe→post window; the
+ * observed updated_at CAS guards against a second admin claiming the same
+ * version.
+ */
+async function claimFailedUtilityForReversal(
+  transaction: UtilityTransactionRow,
+): Promise<UtilityTransactionRow | null> {
+  const supabase = createAdminClient();
+  const cutoff = new Date(Date.now() - UTILITY_ADMIN_SETTLE_WINDOW_MS).toISOString();
+  const { data: claimed } = await supabase
+    .from('utility_transactions')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', transaction.id)
+    .eq('updated_at', transaction.updated_at)
+    .eq('status', 'failed')
+    .lt('updated_at', cutoff)
+    .select('*');
+  return ((claimed ?? [])[0] ?? null) as UtilityTransactionRow | null;
+}
+
+async function reloadUtilityTransaction(transaction: UtilityTransactionRow): Promise<UtilityTransactionRow> {
+  const supabase = createAdminClient();
+  const { data } = await supabase.from('utility_transactions').select('*').eq('id', transaction.id).maybeSingle();
+  return (data ?? transaction) as UtilityTransactionRow;
+}
+
+/**
+ * AUD-BILL-005 — close out a utility transaction that can no longer fulfil.
+ *
+ * `authoritative` controls whether the wallet/paystack money leg is
+ * compensated: true means we can prove the provider never vended (zero
+ * attempts, only definitive 'failed' attempts, or an authoritative failed
+ * verdict on a real provider_reference), so reversing/refunding is safe.
+ * false means vend evidence is ambiguous — the row is marked 'failed' and ops
+ * is alerted, but the money leg is left for manual reconciliation.
+ *
+ * Compensation reuses payUtility's own idempotency keys
+ * (`utility:<tx>:REVERSAL_DEBIT` / `utility:<tx>:PAYSTACK_REFUND`), so a
+ * reversal already posted by the original request or an earlier sweep is a
+ * no-op, never a double refund — and the ledger probe recognises the Go
+ * plane's keys for transactions this plane did not write.
+ */
+async function settleFailedUtilityTransaction(
+  transaction: UtilityTransactionRow,
+  reason: string,
+  opts: { authoritative: boolean },
+): Promise<UtilityTransactionRow> {
+  // The claim flips the row to 'failed' in one write — outside every other
+  // claim set — so exactly one compensator can ever be inside the probe→post
+  // window, and an in-flight writer's guarded settle write refuses to land
+  // after the claim.
+  const claimed = await claimUtilityForSettlement(transaction, reason);
+  if (!claimed) return reloadUtilityTransaction(transaction);
+
+  if (!opts.authoritative) {
+    await addEvent(transaction.id, 'stuck_needs_manual_reconciliation', reason);
+    queueUtilityAdminAlert({
+      title: 'Utility transaction needs manual reconciliation',
+      message: `${transaction.receipt_number ?? transaction.id} failed with ambiguous provider attempts — verify with the provider before reversing.`,
+      audience: 'support',
+    });
+    await notifyUtilityTransactionStatus(claimed, reason);
+    return claimed;
+  }
+
+  const legs = await lookupUtilityMoneyLegs(claimed);
+  let compensated = false;
+  if (legs.compensationPosted) {
+    // Money was already returned (by payUtility's failure branch, an earlier
+    // sweep, a Go-plane reversal, or the paystack validation refund) — this
+    // call only converges the status.
+    compensated = true;
+  } else if (claimed.payment_source === 'wallet') {
+    // Only reverse when the DEBIT leg actually posted — a crash between the
+    // transaction insert and the wallet debit leaves 'initiated' with no money
+    // moved, and posting a reversal there would hand the user free funds.
+    if (legs.debitPosted) {
+      try {
+        await reverseWalletDebit(claimed.user_id, {
+          amountKobo: claimed.retail_amount_kobo,
+          reference: claimed.receipt_number ?? claimed.id,
+          idempotencyKey: `utility:${claimed.id}:REVERSAL_DEBIT`,
+          description: `Utility payment reversal ${claimed.receipt_number ?? claimed.id}`,
+          metadata: { utility_transaction_id: claimed.id, category: claimed.category, auto_reversal: true },
+        });
+        compensated = true;
+        await addEvent(claimed.id, 'wallet_reversed', 'Wallet debit reversed for unfulfilled utility payment.');
+      } catch (error) {
+        // The reversal could not post — the row lands on 'failed' (NOT
+        // 'reversed') so the outstanding money stays visible, with an explicit
+        // failure event + alert matching the Go plane's stuck_reversal_failed.
+        await addEvent(claimed.id, 'stuck_reversal_failed', error instanceof Error ? error.message : 'Wallet reversal could not be posted.');
+        queueUtilityAdminAlert({
+          title: 'Utility stuck-transaction reversal failed',
+          message: `${claimed.receipt_number ?? claimed.id} is debited and unfulfilled, but the reversal failed to post — refund manually.`,
+          audience: 'support',
+        });
+      }
+    } else if (transaction.status !== 'initiated') {
+      // The status claims money moved but no debit leg exists — an integrity
+      // anomaly, never a silent failure.
+      queueUtilityAdminAlert({
+        title: 'Utility transaction debited without a ledger debit',
+        message: `${transaction.receipt_number ?? transaction.id} was ${transaction.status} but no wallet debit leg exists — investigate.`,
+        audience: 'support',
+      });
+    }
+  } else {
+    // 'paystack' transactions only exist because the charge verified before
+    // payUtility ran — the money was captured, so refund it to the wallet. The
+    // captured payment_reference is the PROOF of capture: without it (an
+    // integrity anomaly, or a forged-source row) a credit would mint funds.
+    const paymentRef = claimed.metadata?.payment_reference;
+    if (typeof paymentRef === 'string' && paymentRef) {
+      try {
+        await creditWallet(claimed.user_id, {
+          amountKobo: claimed.retail_amount_kobo,
+          reference: claimed.receipt_number ?? claimed.id,
+          idempotencyKey: `utility:${claimed.id}:PAYSTACK_REFUND`,
+          description: `Refund: utility payment ${claimed.receipt_number ?? claimed.id} (provider could not complete)`,
+          metadata: {
+            utility_transaction_id: claimed.id,
+            category: claimed.category,
+            refund_reason: 'provider_failed',
+            original_payment_source: 'paystack',
+            auto_reversal: true,
+          },
+        });
+        compensated = true;
+        await addEvent(claimed.id, 'paystack_refunded', 'Paystack payment refunded to wallet for unfulfilled utility payment.');
+      } catch (error) {
+        await addEvent(claimed.id, 'paystack_refund_failed', error instanceof Error ? error.message : 'Paystack refund credit could not be posted.');
+        queueUtilityAdminAlert({
+          title: 'Utility paystack refund failed',
+          message: `${claimed.receipt_number ?? claimed.id} was captured but unfulfilled, and the wallet refund failed to post — refund manually.`,
+          audience: 'support',
+        });
+      }
+    } else {
+      await addEvent(claimed.id, 'paystack_refund_skipped', 'Paystack-sourced transaction carries no payment_reference — no proof of capture; refusing to credit.');
+      queueUtilityAdminAlert({
+        title: 'Utility transaction paystack-sourced without a payment reference',
+        message: `${claimed.receipt_number ?? claimed.id} is paystack-sourced but has no captured payment_reference — refund refused; investigate.`,
+        audience: 'support',
+      });
+    }
+  }
+
+  const supabase = createAdminClient();
+  const status = compensated ? 'reversed' : 'failed';
+  await supabase.from('utility_transactions').update({
+    status,
+    failure_reason: reason,
+    updated_at: new Date().toISOString(),
+  }).eq('id', transaction.id);
+  await addEvent(transaction.id, compensated ? 'auto_reversed' : 'failed_no_debit', reason);
+  const updated = await reloadUtilityTransaction(transaction);
+  await notifyUtilityTransactionStatus(updated, reason);
+  return updated;
+}
+
+/**
+ * AUD-BILL-005 — crash recovery for transactions that never completed the
+ * provider loop ('initiated'/'wallet_debited'). Recovery is driven by
+ * utility_provider_attempts evidence rather than a provider query: the
+ * request_id a provider might know is timestamp-embedded and
+ * unreconstructible, so a requery can only ever answer "not found".
+ */
+async function recoverStuckUtilityTransaction(transaction: UtilityTransactionRow): Promise<UtilityTransactionRow> {
+  if (!isStuckPastThreshold(transaction)) return transaction;
+
+  const attempts = await listUtilityTransactionAttempts(transaction.id);
+  const ambiguous = attempts.some((attempt) => AMBIGUOUS_ATTEMPT_STATUSES.has(attempt.status));
+  if (ambiguous) {
+    return settleFailedUtilityTransaction(transaction, 'Stuck transaction has provider attempts that may have vended — manual reconciliation required.', { authoritative: false });
+  }
+  return settleFailedUtilityTransaction(transaction, 'Stuck transaction recovered: no provider fulfilment was recorded.', { authoritative: true });
+}
+
 // Commission module integration (additive, guarded). When an active
 // commission_config row matches the resolved (service, subtype), prefer its
 // customer-facing convenience fee over the utility_products value. When the fee
-// is unchanged (the current seeded case for electricity/cable = 10000, and
-// airtime/data = 0) the pricing is returned untouched, so amounts do not move
 // unless a config row deliberately differs. Reversible: delete these two lines
 // in payUtility to fall fully back to utility_products pricing.
 function applyCommissionConvenienceFee(
@@ -86,7 +385,6 @@ async function recordUtilityCommissionEarning(params: {
     const convenienceFeeKobo = pricing.convenienceFeeKobo;
     const fixedFeeKobo = config ? config.fixed_fee_kobo : 0;
 
-    // Prefer the config-derived revenue; if there is no config (or it derives no
     // revenue) fall back to the per-transaction gross profit already computed.
     const derivedRevenue = commissionKobo + platformChargeKobo + convenienceFeeKobo + fixedFeeKobo;
     const spotlightRevenueKobo = config && derivedRevenue > 0 ? derivedRevenue : pricing.grossProfitKobo;
@@ -478,7 +776,6 @@ export async function validateUtilityCustomer(input: {
     // adapter's documented test-meter simulation EVEN IF no provider route is
     // seeded in this environment — so the documented test meters always validate
     // for testing. (serviceID is derived from the biller code, e.g.
-    // 'vtpass-eko-electric' -> 'eko-electric'; the sandbox stub keys off the meter.)
     if (process.env.VTPASS_ENVIRONMENT === 'sandbox' && biller.requires_validation) {
       const adapter = getUtilityAdapter('vtpass');
       const result = await adapter.validateCustomer({
@@ -554,7 +851,21 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     .select('*')
     .eq('idempotency_key', input.idempotencyKey)
     .maybeSingle();
-  if (existing) return { alreadyProcessed: true, transaction: existing as UtilityTransactionRow };
+  if (existing) {
+    const existingRow = existing as UtilityTransactionRow;
+    // AUD-BILL-005: a non-terminal row means the original request died
+    // mid-flight (or is still running — the recovery age gate leaves those
+    // alone). Attempt recovery so a same-key retry converges the transaction
+    // instead of replaying a phantom pending purchase forever.
+    if (canRequeryUtilityStatus(existingRow.status)) {
+      try {
+        return { alreadyProcessed: true, transaction: await requeryUtilityTransaction(existingRow) };
+      } catch {
+        return { alreadyProcessed: true, transaction: existingRow };
+      }
+    }
+    return { alreadyProcessed: true, transaction: existingRow };
+  }
 
   const biller = await getBiller(billerId);
   const product = await getProduct(productId);
@@ -640,6 +951,11 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
 
   await addEvent(transactionId, 'initiated', 'Utility payment initiated.', { pricing });
 
+  // AUD-BILL-005: the row version this writer provably owns. Every settle-path
+  // write below CASes on it — a recovery/admin claim bumps updated_at, so a
+  // claimed row refuses these writes instead of being resurrected.
+  let ownedVersion = (inserted as UtilityTransactionRow).updated_at;
+
   if (paymentSource === 'wallet') {
     await debitWallet(userId, {
       amountKobo: pricing.retailAmountKobo,
@@ -649,7 +965,29 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
       metadata: { utility_transaction_id: transactionId, category, biller: biller.code },
     });
 
-    await supabase.from('utility_transactions').update({ status: 'wallet_debited', updated_at: new Date().toISOString() }).eq('id', transactionId);
+    const { data: debited } = await supabase.from('utility_transactions')
+      .update({ status: 'wallet_debited', updated_at: new Date().toISOString() })
+      .eq('id', transactionId)
+      .eq('status', 'initiated')
+      .eq('updated_at', ownedVersion)
+      .select('*');
+    const debitedRow = (debited ?? [])[0] as UtilityTransactionRow | undefined;
+    if (!debitedRow) {
+      // A settlement claim landed between the insert and the debit — the claim
+      // winner owns the outcome INCLUDING compensating the debit just posted,
+      // and the purchase loop must not run (a vend delivered after a refund
+      // pays out twice). Loud, because THIS writer knows the debit posted even
+      // if the claim winner's probe ran before the debit committed and saw no
+      // money leg.
+      await addEvent(transactionId, 'writer_outraced', 'A settlement claim landed between the wallet debit and fulfilment — the writer yields.');
+      queueUtilityAdminAlert({
+        title: 'Utility writer yielded after posting a debit',
+        message: `${receipt} was claimed for settlement between its wallet debit and fulfilment — verify the claim winner compensated the posted debit.`,
+        audience: 'support',
+      });
+      return { alreadyProcessed: false, transaction: await reloadUtilityTransaction(inserted as UtilityTransactionRow) };
+    }
+    ownedVersion = debitedRow.updated_at;
     await addEvent(transactionId, 'wallet_debited', 'Wallet debited for utility payment.');
   } else {
     await addEvent(transactionId, 'paystack_verified', 'Paystack payment verified for utility payment.', {
@@ -719,13 +1057,37 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     failure_reason: providerResult.status === 'failed' ? providerResult.message ?? 'Provider failed transaction.' : null,
     updated_at: new Date().toISOString(),
   };
-  await supabase.from('utility_transactions').update(patch).eq('id', transactionId);
+  // AUD-BILL-005: the settle patch lands only while the row is still in a
+  // pre-settle status at the version this writer owns — a settlement claim
+  // flips the row to 'failed' and bumps updated_at, so a claimed row rejects
+  // this write outright instead of being resurrected.
+  const { data: settled } = await supabase.from('utility_transactions').update(patch).eq('id', transactionId)
+    .in('status', ['initiated', 'wallet_debited'])
+    .eq('updated_at', ownedVersion)
+    .select('id');
+  const settleWon = (settled ?? []).length > 0;
   await addEvent(transactionId, `provider_${providerResult.status}`, providerResult.message, {
     provider_id: fulfilledRoute.provider.id,
     raw: providerResult.raw ?? {},
   });
 
-  if (providerResult.status === 'failed') {
+  if (!settleWon) {
+    // Recovery or an admin claimed the row mid-purchase — the claim winner owns
+    // the money legs. Record the verdict so reconciliation can see a vend that
+    // raced settlement; a successful vend after settlement means the customer
+    // may hold BOTH the vend and the compensation — escalate.
+    await addEvent(transactionId, 'provider_outcome_after_claim', providerResult.message, {
+      provider_id: fulfilledRoute.provider.id,
+      outcome: providerResult.status,
+    });
+    if (providerResult.status !== 'failed') {
+      queueUtilityAdminAlert({
+        title: 'Provider vend landed after settlement claim',
+        message: `${receipt} reported ${providerResult.status} after another process settled the transaction — verify whether the customer holds both the vend and the compensation.`,
+        audience: 'support',
+      });
+    }
+  } else if (providerResult.status === 'failed') {
     if (paymentSource === 'wallet') {
       await reverseWalletDebit(userId, {
         amountKobo: pricing.retailAmountKobo,
@@ -820,6 +1182,22 @@ export async function listUtilityTransactionAttempts(transactionId: string) {
 
 export async function requeryUtilityTransaction(transaction: UtilityTransactionRow) {
   if (!canRequeryUtilityStatus(transaction.status)) return transaction;
+
+  // AUD-BILL-005: 'initiated'/'wallet_debited' rows never completed the
+  // provider loop, so there is no provider state to requery — recover from the
+  // provider-attempt evidence instead of asking a provider about a request_id
+  // it cannot have.
+  if (transaction.status !== 'provider_pending') {
+    return recoverStuckUtilityTransaction(transaction);
+  }
+  // A provider_pending row with no recorded provider_reference can only be
+  // requeried under a fabricated request id — the adapters derive one from the
+  // CURRENT timestamp, so neither "failed" nor "successful" describes the real
+  // vend. Attempt evidence decides instead.
+  if (!transaction.provider_reference) {
+    return recoverStuckUtilityTransaction(transaction);
+  }
+
   const supabase = createAdminClient();
   const { data: provider } = await supabase.from('utility_providers').select('*').eq('id', transaction.provider_id).maybeSingle();
   if (!provider) throw new ApiError('Transaction provider not found.', 404);
@@ -845,13 +1223,39 @@ export async function requeryUtilityTransaction(transaction: UtilityTransactionR
     throw error;
   });
   const status = nextStatusFromProvider(result.status);
-  await supabase.from('utility_transactions').update({
+
+  // AUD-BILL-005: a definitive provider failure on a pending vend used to just
+  // mark the row 'failed' and strand the debit. Compensate the money leg the
+  // same way payUtility's own failure branch does — but only when the verdict
+  // is authoritative (a real provider_reference was queried); a failed verdict
+  // on a fabricated request id carries no evidence about the actual vend.
+  if (status === 'failed') {
+    return settleFailedUtilityTransaction(
+      transaction,
+      result.message ?? 'Provider failed transaction.',
+      { authoritative: Boolean(transaction.provider_reference) },
+    );
+  }
+
+  // AUD-BILL-005: CAS the verdict write on the observed version and the
+  // requery-eligible status set — a settlement claim that landed while the
+  // provider call was in flight bumps updated_at and moves the row terminal,
+  // so a stale 'successful'/'pending' verdict must not resurrect a compensated
+  // row.
+  const { data: verdictRows } = await supabase.from('utility_transactions').update({
     status,
     provider_reference: result.providerReference ?? transaction.provider_reference,
     token: result.token ?? transaction.token,
     provider_response: result.raw ?? null,
     updated_at: new Date().toISOString(),
-  }).eq('id', transaction.id);
+  }).eq('id', transaction.id)
+    .in('status', ['initiated', 'wallet_debited', 'provider_pending'])
+    .eq('updated_at', transaction.updated_at)
+    .select('id');
+  if ((verdictRows ?? []).length === 0) {
+    await addEvent(transaction.id, 'provider_verdict_after_claim', `A settlement claim owns this row — discarding verdict ${status}.`);
+    return reloadUtilityTransaction(transaction);
+  }
   await addEvent(transaction.id, 'status_requery', result.message, { status });
   const { data } = await supabase.from('utility_transactions').select('*').eq('id', transaction.id).maybeSingle();
   const updated = (data ?? transaction) as UtilityTransactionRow;
@@ -861,11 +1265,38 @@ export async function requeryUtilityTransaction(transaction: UtilityTransactionR
 
 export async function reverseUtilityTransaction(transaction: UtilityTransactionRow, reason: string) {
   if (!canReverseUtilityTransaction(transaction.status)) throw new ApiError('Transaction is not eligible for reversal.', 400);
+  // AUD-BILL-005: the automatic paths compensate under `REVERSAL_DEBIT` /
+  // `PAYSTACK_REFUND` keys (and the Go plane under its own `<key>:reversal:*`
+  // family) — different keys from this route's ADMIN_REVERSAL_* legs, so key
+  // dedupe alone cannot stop a double refund when a crash left the status
+  // 'failed' after compensation already posted. Probe every money leg the
+  // transaction could have first; a posted compensation converges the status
+  // without moving money, and a wallet-source row with NO debit leg at all is
+  // an integrity anomaly that must never mint a reversal.
+  const legs = await lookupUtilityMoneyLegs(transaction);
+  if (transaction.payment_source === 'wallet' && !legs.debitPosted && !legs.compensationPosted) {
+    throw new ApiError('No wallet debit exists for this transaction — nothing to reverse.', 409);
+  }
+  // AUD-BILL-005: serialise compensation behind the settlement claim — a
+  // recoverer, the in-flight writer's auto-reverse, or a second admin all
+  // probe the same ledger before posting, so without the claim two
+  // compensators can both pass the probe and double-refund under different
+  // key families.
+  const claimed = transaction.status === 'failed'
+    ? await claimFailedUtilityForReversal(transaction)
+    : await claimUtilityForSettlement(transaction, `Admin reversal: ${reason}`);
+  if (!claimed) {
+    const current = await reloadUtilityTransaction(transaction);
+    if (current.status === 'reversed') return current;
+    throw new ApiError('This transaction is being settled by another process — retry shortly.', 409);
+  }
   // Only a 'wallet' source ever debited the wallet ledger — reversing that
   // is a real REVERSAL_DEBIT. A 'paystack' source never touched the wallet,
   // so the equivalent action is a CREDIT (same helper payUtility's own
   // failure branch uses), not a reversal of something that never happened.
-  if (transaction.payment_source === 'wallet') {
+  if (legs.compensationPosted) {
+    await addEvent(transaction.id, 'admin_reversal_skipped', `Compensation already posted for this transaction; skipping duplicate money leg. Reason: ${reason}`);
+  } else if (transaction.payment_source === 'wallet') {
     await reverseWalletDebit(transaction.user_id, {
       amountKobo: transaction.retail_amount_kobo,
       reference: transaction.receipt_number ?? transaction.id,
@@ -874,6 +1305,13 @@ export async function reverseUtilityTransaction(transaction: UtilityTransactionR
       metadata: { utility_transaction_id: transaction.id, reason },
     });
   } else {
+    // The captured payment_reference is the proof a Paystack charge exists —
+    // crediting a paystack-sourced row WITHOUT one mints unbacked funds (a
+    // forged-source row is exactly how that anomaly arrives).
+    const paymentRef = transaction.metadata?.payment_reference;
+    if (typeof paymentRef !== 'string' || !paymentRef) {
+      throw new ApiError('Paystack-sourced transaction has no captured payment reference — nothing proves funds were taken.', 409);
+    }
     await creditWallet(transaction.user_id, {
       amountKobo: transaction.retail_amount_kobo,
       reference: transaction.receipt_number ?? transaction.id,
@@ -897,6 +1335,13 @@ export async function reverseUtilityTransaction(transaction: UtilityTransactionR
 
 export async function createUtilityDispute(userId: string, transactionId: string, reason: string) {
   const transaction = await getUserUtilityTransaction(userId, transactionId);
+  // AUD-BILL-005: 'disputed' is outside every claim, requery, and reversal set —
+  // flipping a NON-terminal row to it freezes the row out of the sweep and
+  // breaks the writer's settle CAS, stranding a debited wallet with no
+  // compensator able to claim it. Disputes exist for delivered charges only.
+  if (transaction.status !== 'successful') {
+    throw new ApiError('Only a completed utility payment can be disputed.', 400);
+  }
   const supabase = createAdminClient();
   const { data, error } = await supabase.from('utility_disputes').insert({
     transaction_id: transaction.id,

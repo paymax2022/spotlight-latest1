@@ -4,7 +4,6 @@ import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Catch-all proxy: /api/v1/referrals/<...> → Go /v1/referrals/<...>
-// (Direct Referral Rewards engine). Auth + feature-flag guarded; the Go
 // service enforces object-level authZ (own data only), idempotent attribution,
 // and the reward/ledger invariants. State-changing calls forward the
 // Idempotency-Key verbatim (proxyToGoBackend handles that).

@@ -1,8 +1,6 @@
-// ── Contestant Registration — Mobile types ───────────────────────────────────
 // Mirror of the backend contract:
 //   frontend-web/src/features/registration/types.ts (canonical)
 //   frontend-web/src/server/registration/store.ts    (draft / step shapes)
-//
 // The registration flow is SCHEMA-DRIVEN: the server returns an ordered list of
 // `steps`, each with `fields[]` of `RegistrationField`. The mobile wizard renders
 // purely from this schema — it must never hardcode the step list or field set.
@@ -159,7 +157,6 @@ export interface RegistrationDraft {
   fraudFlags: string[];
 }
 
-// ── Voting seam ──────────────────────────────────────────────────────────────
 // An approved application becomes a contestant, but until now nothing told the
 // applicant: the status screen showed a chip and a withdraw button and stopped.
 // GET /api/registration/applications/:id/voting joins the roster entry and the
@@ -228,8 +225,6 @@ export interface RegistrationStatusEvent {
   actorRole: ContestantRole;
 }
 
-// ── API response envelopes (Next.js successResponse wraps payloads bare) ──────
-
 export interface ContestsResponse {
   success: boolean;
   contests: ContestRegistrationDefinition[];
@@ -278,8 +273,6 @@ export interface UploadResponse {
   };
 }
 
-// ── Registration payment ──────────────────────────────────────────────────────
-
 export type RegistrationPaymentMethod = 'WALLET' | 'PAYSTACK';
 
 export interface InitiateRegistrationPaymentResponse {
@@ -297,8 +290,6 @@ export interface VerifyRegistrationPaymentResponse {
   status: 'PENDING' | 'SUCCESSFUL' | 'FAILED';
   reference: string;
 }
-
-// ── File uploads ─────────────────────────────────────────────────────────────
 
 // A locally-picked file ready for multipart upload.
 export interface PickedUpload {

@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
+	"github.com/gin-gonic/gin"
+	"net/http"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
+	"strconv"
+	"time"
 )
 
 // Service is the premium↔provider-statement matcher + commission confirm/reverse
@@ -72,8 +76,6 @@ func (s *Service) ListRecords(ctx context.Context, status, provider string, limi
 func (s *Service) ResolveBreak(ctx context.Context, id, note string) error {
 	return s.repo.ResolveBreak(ctx, id, note)
 }
-
-// --- commission confirm / reverse ---
 
 // ConfirmCommission marks a policy's commission entry CONFIRMED (reconciled
 // against the provider statement). The ledger entry posted at bind is unchanged;
@@ -148,4 +150,184 @@ func (s *Service) ListCommission(ctx context.Context, status, provider string, l
 // filter (the commission ledger view summary).
 func (s *Service) CommissionSummary(ctx context.Context, status, provider string) (int64, error) {
 	return s.repo.CommissionTotal(ctx, status, provider)
+}
+
+// Register wires the admin reconciliation workbench + commission ledger view.
+//   - admin (per-route RBAC):
+//     POST /reconciliation/:id/resolve      (insurance.reconciliation.resolve)
+//     POST /commission/:policy_id/confirm   (insurance.reconciliation.resolve)
+//     POST /commission/:policy_id/reverse   (insurance.reconciliation.resolve)
+func Register(admin *gin.RouterGroup, h *Handler, guard func(permission string) gin.HandlerFunc) {
+	rg := admin.Group("/reconciliation")
+	rg.GET("", guard("insurance.reconciliation.view"), h.ListRecords)
+	rg.POST("/match", guard("insurance.reconciliation.resolve"), h.MatchStatement)
+	rg.POST("/:id/resolve", guard("insurance.reconciliation.resolve"), h.ResolveBreak)
+
+	cg := admin.Group("/commission")
+	cg.GET("", guard("insurance.commission.view"), h.ListCommission)
+	cg.POST("/:policy_id/confirm", guard("insurance.reconciliation.resolve"), h.ConfirmCommission)
+	cg.POST("/:policy_id/reverse", guard("insurance.reconciliation.resolve"), h.ReverseCommission)
+}
+
+// Handler exposes the admin reconciliation workbench + commission ledger view.
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler constructs the reconciliation handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+func mapErr(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+	case errors.Is(err, ErrAlreadyReversed):
+		c.JSON(http.StatusConflict, gin.H{"error": "already_reversed"})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+	}
+}
+
+// MatchStatement (admin): POST /reconciliation/match
+// body: {provider, lines:[{policy_id, statement_ref, amount_kobo}]}
+func (h *Handler) MatchStatement(c *gin.Context) {
+	var body struct {
+		Provider string          `json:"provider" binding:"required"`
+		Lines    []StatementLine `json:"lines" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	recs, err := h.svc.MatchStatement(c.Request.Context(), body.Provider, body.Lines)
+	if err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": recs})
+}
+
+// ListRecords (admin): GET /reconciliation?status=&provider=
+func (h *Handler) ListRecords(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	recs, err := h.svc.ListRecords(c.Request.Context(), c.Query("status"), c.Query("provider"), limit, offset)
+	if err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": recs})
+}
+
+// ResolveBreak (admin): POST /reconciliation/:id/resolve {note}
+func (h *Handler) ResolveBreak(c *gin.Context) {
+	var body struct {
+		Note string `json:"note"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	if err := h.svc.ResolveBreak(c.Request.Context(), c.Param("id"), body.Note); err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"resolved": true}})
+}
+
+// ConfirmCommission (admin): POST /commission/:policy_id/confirm
+func (h *Handler) ConfirmCommission(c *gin.Context) {
+	ce, err := h.svc.ConfirmCommission(c.Request.Context(), c.Param("policy_id"))
+	if err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": ce})
+}
+
+// ReverseCommission (admin): POST /commission/:policy_id/reverse {reason}
+func (h *Handler) ReverseCommission(c *gin.Context) {
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	ce, err := h.svc.ReverseCommission(c.Request.Context(), c.Param("policy_id"), body.Reason)
+	if err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": ce})
+}
+
+// ListCommission (admin): GET /commission?status=&provider= — commission ledger view.
+func (h *Handler) ListCommission(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	entries, err := h.svc.ListCommission(c.Request.Context(), c.Query("status"), c.Query("provider"), limit, offset)
+	if err != nil {
+		mapErr(c, err)
+		return
+	}
+	total, _ := h.svc.CommissionSummary(c.Request.Context(), c.Query("status"), c.Query("provider"))
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"entries": entries, "total_kobo": total}})
+}
+
+// RecordStatus is the lifecycle of a reconciliation record (a match attempt
+// between a Paymax premium/commission row and a provider statement line).
+type RecordStatus string
+
+const (
+	// StatusMatched — premium amount + provider line agree; nothing to do.
+	StatusMatched RecordStatus = "MATCHED"
+	// StatusBreak — a discrepancy (amount mismatch / missing on one side).
+	StatusBreak RecordStatus = "BREAK"
+	// StatusResolved — an operator resolved a break (manual disposition recorded).
+	StatusResolved RecordStatus = "RESOLVED"
+)
+
+// CommissionStatus is the lifecycle of a commission entry. Commission lives on
+// the SEPARATE commission ledger account IB0 used (ledger.AccountCommission); a
+// reversal posts a balanced correction, never an UPDATE.
+type CommissionStatus string
+
+const (
+	CommissionPending   CommissionStatus = "PENDING"   // posted at bind, awaiting statement confirm
+	CommissionConfirmed CommissionStatus = "CONFIRMED" // reconciled against provider statement
+	CommissionReversed  CommissionStatus = "REVERSED"  // reversing entry posted (cancel/clawback)
+)
+
+// ReconciliationRecord is one premium↔statement match attempt. A BREAK is a
+// discrepancy an operator works in the admin workbench.
+type ReconciliationRecord struct {
+	ID                  string       `json:"id"`
+	Provider            string       `json:"provider"`
+	PolicyID            *string      `json:"policy_id,omitempty"`
+	PremiumTxID         *string      `json:"premium_tx_id,omitempty"`
+	StatementRef        string       `json:"statement_ref"`
+	ExpectedAmountKobo  int64        `json:"expected_amount_kobo"`
+	StatementAmountKobo int64        `json:"statement_amount_kobo"`
+	Status              RecordStatus `json:"status"`
+	BreakReason         string       `json:"break_reason,omitempty"`
+	ResolutionNote      string       `json:"resolution_note,omitempty"`
+	CreatedAt           time.Time    `json:"created_at"`
+	ResolvedAt          *time.Time   `json:"resolved_at,omitempty"`
+}
+
+// CommissionEntry is the insurance-domain record of a commission posting on the
+// SEPARATE commission ledger account. It references the ledger entry by ref and
+// carries the idempotency key (UNIQUE) so confirm/reverse are replay-safe.
+type CommissionEntry struct {
+	ID             string           `json:"id"`
+	PolicyID       string           `json:"policy_id"`
+	Provider       string           `json:"provider"`
+	AmountKobo     int64            `json:"amount_kobo"`
+	LedgerRef      string           `json:"ledger_ref"`
+	IdempotencyKey string           `json:"idempotency_key"`
+	Status         CommissionStatus `json:"status"`
+	CreatedAt      time.Time        `json:"created_at"`
+	UpdatedAt      time.Time        `json:"updated_at"`
+}
+
+// StatementLine is one line of a provider statement uploaded for reconciliation.
+type StatementLine struct {
+	PolicyID     string `json:"policy_id"`
+	StatementRef string `json:"statement_ref"`
+	AmountKobo   int64  `json:"amount_kobo"`
 }

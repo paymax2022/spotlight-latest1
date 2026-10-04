@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { handleApiError } from '@/src/lib/api/responses';
-import { getLeaderboard } from '@/src/server/voting/totals.service';
+// E2E-X-026: bridge-owned getLeaderboard — totals.service's version embeds
+// contestant_share_links with no FK (PGRST200 → swallowed → permanently []).
+import { getLeaderboard } from '@/src/server/voting-bridge/leaderboard.service';
 import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
 import { createAdminClient } from '@/lib/supabase/server';
 
@@ -47,17 +49,17 @@ export async function GET(
     const ids = entries.map((e) => e.contestantId);
     if (ids.length > 0) {
       const { data: rows } = await supabase
-        .from('competition_enrollments')
-        .select('id, stage_name, profile_photo_url, genre_style, user_profiles(full_name, avatar_url)')
+        .from('contestants')
+        .select('id, name, stage_name, photo_url, category, state')
         .in('id', ids);
 
       const byId = new Map((rows ?? []).map((r: any) => [r.id, r]));
       for (const e of entries) {
         const r = byId.get(e.contestantId) as any;
         if (r) {
-          e.contestantName = r.user_profiles?.full_name ?? r.stage_name ?? 'Contestant';
+          e.contestantName = r.name ?? r.stage_name ?? 'Contestant';
           e.stageName = r.stage_name ?? null;
-          e.photoUrl = r.profile_photo_url || r.user_profiles?.avatar_url || null;
+          e.photoUrl = r.photo_url || null;
         }
       }
     }
@@ -83,7 +85,6 @@ export async function GET(
     const result = entries.map((e, i) => {
       const currentRank = i + 1; // position in the live sorted result (ordered by total_confirmed_votes desc)
 
-      // Prefer snapshot data; fall back to the stored rank column as "previous rank"
       // (the stored rank was set by the last recomputeRanks call, so it trails live vote order).
       const snapshotPreviousRank = previousRankMap.get(e.contestantId) ?? null;
       const storedRank = e.rank != null ? e.rank : null;

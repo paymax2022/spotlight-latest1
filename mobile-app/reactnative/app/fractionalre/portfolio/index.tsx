@@ -3,16 +3,16 @@ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ChevronRight, TrendingUp, Coins, FileText, Repeat } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { usePortfolio, useHoldings } from '@/features/fractionalre/hooks';
 import { formatNaira, formatNairaCompact, formatYield } from '@/features/fractionalre/utils';
 import { KIND_LABEL } from '@/features/fractionalre/constants';
-import AllocationDonut from '@/features/fractionalre/components/AllocationDonut';
+import { AllocationDonut } from '@/features/fractionalre/components';
 
 export default function PortfolioOverview() {
   const portfolio = usePortfolio();

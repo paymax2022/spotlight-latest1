@@ -3,16 +3,16 @@ import { View, Text, FlatList, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Plus, ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
-import { useTickets } from '@/features/association/hooks/useSettings';
-import { relativeTime } from '@/features/association/utils/associationFormatters';
-import { TICKET_STATUS_STYLE, TICKET_CATEGORY_LABEL } from '@/features/association/constants/support.constants';
+import { useTickets } from '@/features/association/hooks';
+import { relativeTime } from '@/features/association/utils';
+import { TICKET_STATUS_STYLE, TICKET_CATEGORY_LABEL } from '@/features/association/constants';
 
 export default function TicketList() {
   const tickets = useTickets();

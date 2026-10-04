@@ -1,7 +1,7 @@
 // Estate Tasks API (Block 31) — dual mock/live behind USE_MOCK.
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import type { CreateTaskInput, EstateTask, TaskPriority, TaskStatus, UpdateTaskStatusInput } from './types';
 

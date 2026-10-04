@@ -15,7 +15,6 @@ import { PageHeader, Card, Kpi, Badge, btn, input, th, td, money, timeAgo } from
 // docs/qa/modules/property.md §6).
 
 export default function PropertyPage() {
-  // ── Rent passport screening lookup (P0) ──────────────────────────────────
   const [userId, setUserId] = useState('');
   const [passport, setPassport] = useState<RentPassport | null>(null);
   const [lookupLoading, setLookupLoading] = useState(false);
@@ -36,7 +35,6 @@ export default function PropertyPage() {
     }
   }
 
-  // ── Own-context diagnostic (P1) ──────────────────────────────────────────
   const [context, setContext] = useState<PropertyContextResponse | null>(null);
   const [contextLoading, setContextLoading] = useState(true);
   const [contextError, setContextError] = useState<string | null>(null);

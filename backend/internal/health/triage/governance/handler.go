@@ -2,16 +2,22 @@ package governance
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
+	"io"
 	"net/http"
+	"spotlight/backend/internal/health/triage"
+	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/services"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"spotlight/backend/internal/health/triage"
-	"spotlight/backend/internal/middleware"
-	"spotlight/backend/internal/services"
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyError = "error"
 
 // Handler exposes the admin clinical-governance API + the validation runner. All
 // admin routes are RBAC-gated by health.triage.review (applied at registration).
@@ -34,37 +40,26 @@ func actor(c *gin.Context) string {
 	return c.GetString("user_id")
 }
 
-func statusFor(err error) int {
-	switch {
-	case errors.Is(err, ErrNotFound):
-		return http.StatusNotFound
-	case errors.Is(err, ErrSignOffRequired):
-		return http.StatusForbidden
-	case errors.Is(err, ErrIllegalTransition):
-		return http.StatusConflict
-	case errors.Is(err, ErrConflict):
-		return http.StatusConflict
-	default:
-		return http.StatusBadRequest
-	}
-}
+var govErrMap = httperr.New(http.StatusBadRequest,
+	httperr.R(http.StatusNotFound, ErrNotFound),
+	httperr.R(http.StatusForbidden, ErrSignOffRequired),
+	httperr.R(http.StatusConflict, ErrIllegalTransition, ErrConflict),
+)
 
 // respond writes a uniform success/error envelope. Callers capture the (value,
 // error) pair first (a multi-value call result cannot be spread alongside `c`).
 func respond[T any](c *gin.Context, v T, err error) {
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"success": false, "error": err.Error()})
+		govErrMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": v})
 }
 
-// ─────────────────────────────── Content ─────────────────────────────────────
-
 func (h *Handler) CreateContent(c *gin.Context) {
 	var in ContentItem
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.gov.CreateContentDraft(c.Request.Context(), actor(c), in)
@@ -77,7 +72,7 @@ func (h *Handler) EditContent(c *gin.Context) {
 		RAGTags []string `json:"rag_tags"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.gov.EditContent(c.Request.Context(), actor(c), c.Param("id"), body.Body, body.RAGTags)
@@ -109,18 +104,16 @@ func (h *Handler) ContentLifecycle(c *gin.Context) {
 	case "deprecate":
 		v, err = h.gov.DeprecateContent(ctx, uid, id)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "unknown action"})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: "unknown action"})
 		return
 	}
 	respond(c, v, err)
 }
 
-// ─────────────────────────────── Red-flag rules ──────────────────────────────
-
 func (h *Handler) CreateRule(c *gin.Context) {
 	var in RedFlagRule
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.gov.CreateRuleDraft(c.Request.Context(), actor(c), in)
@@ -135,7 +128,7 @@ func (h *Handler) EditRule(c *gin.Context) {
 		Severity     string        `json:"severity"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.gov.EditRule(c.Request.Context(), actor(c), c.Param("id"), body.Name, body.Condition, body.UrgencyLevel, body.Severity)
@@ -167,18 +160,16 @@ func (h *Handler) RuleLifecycle(c *gin.Context) {
 	case "deprecate":
 		v, err = h.gov.DeprecateRule(ctx, uid, id)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "unknown action"})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: "unknown action"})
 		return
 	}
 	respond(c, v, err)
 }
 
-// ─────────────────────────────── Vignettes / validation ──────────────────────
-
 func (h *Handler) UpsertVignette(c *gin.Context) {
 	var v Vignette
 	if err := c.ShouldBindJSON(&v); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	out, err := h.val.store.UpsertVignette(c.Request.Context(), &v)
@@ -195,18 +186,16 @@ func (h *Handler) ListVignettes(c *gin.Context) {
 func (h *Handler) RunValidation(c *gin.Context) {
 	rep, err := h.val.RunShadowEval(c.Request.Context(), h.engine)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "report": rep})
 }
 
-// ─────────────────────────────── Language packs ──────────────────────────────
-
 func (h *Handler) UpsertLanguagePack(c *gin.Context) {
 	var lp LanguagePack
 	if err := c.ShouldBindJSON(&lp); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	v, err := h.gov.UpsertLanguagePack(c.Request.Context(), actor(c), lp)
@@ -217,8 +206,6 @@ func (h *Handler) ListLanguagePacks(c *gin.Context) {
 	v, err := h.gov.ListLanguagePacks(c.Request.Context())
 	respond(c, v, err)
 }
-
-// ─────────────────────────────── Wiring ──────────────────────────────────────
 
 // RegisterHealthTriageGovernance wires the clinical-governance + validation admin
 // API. Admin routes are RBAC-gated by health.triage.review; the member group is
@@ -245,8 +232,7 @@ func RegisterHealthTriageGovernance(member, admin *gin.RouterGroup, pool *pgxpoo
 
 	// Admin (RBAC health.triage.review) — content lifecycle.
 	// admin is already rooted at /api/health/triage/admin (adminGroupTop5 in
-	// health_triage_routes.go) — this used to re-prepend "/health/triage/admin",
-	// doubling the segment and 404ing every governance admin call.
+	// health_triage_routes.go) — subpaths must stay bare.
 	cg := admin.Group("")
 	cg.GET("/content", rev, h.ListContent)
 	cg.POST("/content", rev, h.CreateContent)
@@ -289,4 +275,140 @@ func MountWhatsApp(r gin.IRouter, pool *pgxpool.Pool, secret string, driver Tria
 	}
 	wh := NewWhatsAppHandler(NewRepository(pool), secret, driver, enabled)
 	r.POST("/internal/webhooks/triage/whatsapp", wh.Handle)
+}
+
+// EVERY channel message. These constants are the canonical footer; appendSafety
+// guarantees they are present on every WhatsApp reply. ──
+
+const (
+	// DisclaimerText — the symptom checker triages & navigates; it never diagnoses.
+	DisclaimerText = "Note: This is general guidance for triage, not a medical diagnosis. Always consult a qualified health professional."
+	// EmergencyLine — the one-tap emergency escalation shown on every message.
+	EmergencyLine = "EMERGENCY? Reply 999 or call 112 now for an ambulance."
+)
+
+// appendSafety appends the SC-8 disclaimer + one-tap emergency line to a reply,
+// idempotently (it won't double-append if a line is already present). Every
+// outbound WhatsApp message passes through here.
+func appendSafety(reply string) string {
+	reply = strings.TrimRight(reply, "\n ")
+	if !strings.Contains(reply, DisclaimerText) {
+		reply += "\n\n" + DisclaimerText
+	}
+	if !strings.Contains(reply, EmergencyLine) {
+		reply += "\n" + EmergencyLine
+	}
+	return reply
+}
+
+// TriageDriver is the injected port the WhatsApp handler maps a message onto. The
+// core triage service adapts to it: given an external (channel) id + the user's
+// text + language, it starts or continues a triage session and returns the reply,
+// whether the disposition is an emergency, and any error. Keeping this an interface
+// means the governance package never imports/edits the protected core service.
+type TriageDriver interface {
+	StartOrContinue(ctx context.Context, externalID, text, language string) (reply string, emergency bool, err error)
+}
+
+// WhatsAppHandler is the signed inbound WhatsApp webhook. It HMAC-verifies the raw
+// body, idempotently resolves the external id → channel session (so a redelivered
+// webhook never starts a duplicate triage), drives the TriageDriver, and returns a
+// reply that ALWAYS carries the SC-8 disclaimer + one-tap emergency line.
+type WhatsAppHandler struct {
+	repo    *Repository
+	secret  string
+	driver  TriageDriver
+	enabled bool
+}
+
+// NewWhatsAppHandler builds the handler. enabled mirrors the
+// FeatureHealthTriageWhatsAppEnabled flag — when false the route is inert.
+func NewWhatsAppHandler(repo *Repository, secret string, driver TriageDriver, enabled bool) *WhatsAppHandler {
+	return &WhatsAppHandler{repo: repo, secret: secret, driver: driver, enabled: enabled}
+}
+
+const channelWhatsApp = "whatsapp"
+
+// verifySignature does a constant-time HMAC-SHA256 check of the raw body against
+// the configured secret. The signature header may be "sha256=<hex>" or bare hex.
+func (h *WhatsAppHandler) verifySignature(body []byte, sig string) bool {
+	if h.secret == "" || sig == "" {
+		return false
+	}
+	sig = strings.TrimPrefix(strings.TrimSpace(sig), "sha256=")
+	return cryptox.ConstantTimeEqual(cryptox.HMACSHA256Hex(h.secret, string(body)), sig)
+}
+
+// inboundMessage is the minimal shape we read from a WhatsApp inbound payload.
+// MessageID is the idempotency key (the provider's unique per-message id); From is
+// the wa_id used as the external session id.
+type inboundMessage struct {
+	MessageID string `json:"message_id"`
+	From      string `json:"from"`
+	Text      string `json:"text"`
+	Language  string `json:"language"`
+}
+
+// Handle handles POST /internal/webhooks/triage/whatsapp.
+func (h *WhatsAppHandler) Handle(c *gin.Context) {
+	if !h.enabled {
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: "whatsapp triage disabled"})
+		return
+	}
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+	sig := c.GetHeader("X-Hub-Signature-256")
+	if sig == "" {
+		sig = c.GetHeader("X-Signature")
+	}
+	if !h.verifySignature(body, sig) {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "invalid signature"})
+		return
+	}
+
+	var msg inboundMessage
+	if err := json.Unmarshal(body, &msg); err != nil || msg.From == "" {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid payload"})
+		return
+	}
+	if msg.Language == "" {
+		msg.Language = "en"
+	}
+
+	ctx := c.Request.Context()
+
+	// Idempotency: key on the provider message id (unique per message). If we've
+	// already processed this exact message, ack without re-driving the triage.
+	idemKey := msg.MessageID
+	if idemKey == "" {
+		idemKey = msg.From // degrade gracefully; still de-dupes per sender turn
+	}
+	_, inserted, err := h.repo.UpsertChannelSession(ctx, channelWhatsApp, idemKey, nil)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	if !inserted {
+		// Redelivery: already handled. Re-emit a safe ack (still SC-8 compliant).
+		c.JSON(http.StatusOK, gin.H{"reply": appendSafety("We already received that message."), "duplicate": true})
+		return
+	}
+
+	// Drive the core triage via the injected adapter, keyed by the sender wa_id.
+	reply, emergency, derr := h.driver.StartOrContinue(ctx, msg.From, msg.Text, msg.Language)
+	if derr != nil {
+		// Even on error, return an SC-8-compliant safe message (emergency line always present).
+		c.JSON(http.StatusOK, gin.H{
+			"reply": appendSafety("Sorry, we hit a problem. If this is urgent, please seek care now."),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"reply":     appendSafety(reply),
+		"emergency": emergency,
+	})
 }

@@ -1,4 +1,3 @@
-// ── Doctor — profile, verification & availability hooks ──────────────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {

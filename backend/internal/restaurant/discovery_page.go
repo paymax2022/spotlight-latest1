@@ -4,11 +4,11 @@ import (
 	"context"
 	"strconv"
 	"strings"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Paged customer-facing discovery.
-//
 // WHY THIS EXISTS
 // ListOpenRestaurants selects EVERY open restaurant with no LIMIT. That was fine
 // when the estate was a handful of seeded shops; it is now 2,016 open rows out of
@@ -16,14 +16,11 @@ import (
 // a single scroll view, over a payload that has to be parsed before anything at
 // all is drawn. The client also filtered by cuisine and search text IN MEMORY,
 // which only worked because it held the whole table.
-//
 // So the page and the filters move server-side together: paging a list the client
 // then narrows locally would show "20 results" that silently exclude the match on
 // page 7. Query + cuisine are applied in SQL, before LIMIT.
-//
 // The response keeps the `restaurants` key the old handler used, so an
 // un-updated client still finds its array (it just gets the first page).
-// ─────────────────────────────────────────────────────────────────────────────
 
 const (
 	defaultDiscoveryLimit = 20
@@ -97,7 +94,6 @@ type RestaurantPage struct {
 
 // discoveryColumns is the single column list every restaurant read in this file
 // shares, so the row scanner below stays valid for all of them.
-//
 // is_featured and like_count ride along here (not just in the paged list)
 // because neither needs a caller-identity bound parameter — restaurantIsFeatured
 // and the likes COUNT(*) are both pure functions of the row itself. `liked`
@@ -166,7 +162,6 @@ func buildDiscoveryWhere(p DiscoveryParams, moderationOn bool) (string, []any) {
 // created_at to the microsecond — lets Postgres order the duplicates differently
 // per query, so the same restaurant can appear on two pages while another is
 // never returned at all.
-//
 // "distance" needs two extra bound params (the device's lat/lng) that the WHERE
 // clause never uses, so they cannot ride in buildDiscoveryWhere's args — nextParam
 // is the next free placeholder index, i.e. len(whereArgs)+1, and the returned args
@@ -176,18 +171,15 @@ func buildDiscoveryWhere(p DiscoveryParams, moderationOn bool) (string, []any) {
 // buys the slot cannot control which tab a customer is looking at — if this
 // only applied to the default sort, most of the audience would never see the
 // thing they paid for.
-//
 // The predicate mirrors placement.Repository.ServingCandidates exactly, which is
 // the authoritative definition of "serving right now": ACTIVE, inside its
 // window. Anything looser would hand out position for free — a PAUSED, expired
 // or unpaid campaign must not lift anybody. If that definition changes, change
 // it here too.
-//
 // EXISTS rather than a join: discovery already pages over this query, and a join
 // against a table that can hold several campaigns per subject would multiply
 // rows and corrupt the count. It also consumes no bound parameter, which matters
 // because the caller indexes LIMIT/OFFSET off the arg count.
-//
 // restaurantIsFeatured is the predicate alone (reused by discoveryColumns'
 // is_featured projection and DiscoveryParams.FeaturedOnly's WHERE clause);
 // featuredFirstOrder wraps it for ORDER BY. One definition, so the "is this
@@ -286,7 +278,6 @@ func (s *Service) queryRestaurants(ctx context.Context, where, orderBy string, w
 // ListOpenRestaurantsPage returns one page of the discovery list plus the total
 // number of restaurants matching the same filters (so a client can show progress
 // and stop paging without an extra empty request).
-//
 // callerUserID marks which of the returned rows the CALLER has liked (see
 // attachLikedFlags) — pass "" for an unauthenticated/unknown caller, which
 // simply leaves every row's Liked at its zero value (false) rather than
@@ -351,4 +342,29 @@ func (s *Service) attachLikedFlags(ctx context.Context, callerUserID string, res
 		restaurants[i].Liked = liked[restaurants[i].ID]
 	}
 	return nil
+}
+
+// LikeRestaurant records callerUserID liking restaurantID. Idempotent: liking
+// twice is not an error, same as marketplace's InsertFollow — the caller only
+// ever expresses "I like this", never "increment a counter".
+func (s *Service) LikeRestaurant(ctx context.Context, callerUserID, restaurantID string) error {
+	_, err := s.db.Exec(ctx,
+		`INSERT INTO restaurant_likes (user_id, restaurant_id) VALUES ($1, $2)`,
+		callerUserID, restaurantID)
+	if err != nil {
+		if dbutil.IsUniqueViolation(err) {
+			return nil // already liked — idempotent, not an error
+		}
+		return err
+	}
+	return nil
+}
+
+// UnlikeRestaurant removes callerUserID's like, if any. Idempotent: unliking
+// something never liked (or already unliked) is a no-op, not an error.
+func (s *Service) UnlikeRestaurant(ctx context.Context, callerUserID, restaurantID string) error {
+	_, err := s.db.Exec(ctx,
+		`DELETE FROM restaurant_likes WHERE user_id = $1 AND restaurant_id = $2`,
+		callerUserID, restaurantID)
+	return err
 }

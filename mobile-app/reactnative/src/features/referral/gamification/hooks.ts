@@ -1,4 +1,3 @@
-// ── Referral Gamification React Query hooks (v5) — M-GAM-01..07 ──────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as gamApi from './api';

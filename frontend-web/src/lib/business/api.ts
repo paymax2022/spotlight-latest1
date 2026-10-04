@@ -1,4 +1,3 @@
-// ── Business Registry (CAC) typed client ───────────────────────────────────
 // Wraps the Go backend's member endpoints exposed under /api/finance/business
 // (proxied verbatim by the next.config.mjs rewrite, which forwards the Bearer
 // token and Idempotency-Key headers). All responses are shaped `{ data: ... }`
@@ -65,7 +64,6 @@ export interface NameCheckResult {
   suggestions?: string[];
 }
 
-// ── request payloads ────────────────────────────────────────────────────────
 export interface NameCheckInput {
   proposedName: string;
   lineOfBusiness?: string;
@@ -87,7 +85,6 @@ export interface RegisterInput {
   proprietors?: Proprietor[];
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────
 function idempotencyKey(scope: string, id: string): string {
   const random = Math.random().toString(36).slice(2, 10);
   return `BIZ-${scope}-${id}-${Date.now()}-${random}`;
@@ -108,7 +105,6 @@ async function unwrap<T>(res: Response): Promise<T> {
   return (payload?.data ?? payload) as T;
 }
 
-// ── endpoints ──────────────────────────────────────────────────────────────
 export async function listMyBusinesses(): Promise<Business[]> {
   const res = await authFetch(`${BASE}/me`, { cache: 'no-store' });
   return unwrap<Business[]>(res);
@@ -178,8 +174,6 @@ export async function payBusinessFee(id: string): Promise<Business> {
   );
   return unwrap<Business>(res);
 }
-
-// ── Fee via payment gateway (Paystack) — alternative to the wallet debit ──────
 
 export type PaystackInit = { reference: string; authorizationUrl: string; alreadyPaid?: boolean };
 

@@ -1,12 +1,11 @@
-// ── Sell — live fair-price band meter (Price screen, screen 13) ──────────────
 // A horizontal band (p25 … p75, median marked) with the seller's current price
 // plotted on it. Non-blocking: a price outside the band shows a nudge, never a
 // hard stop (spec §13: "seller's price, seller's call").
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { MarketColors, formatNaira, fairPriceVerdict, FAIR_PRICE_LABEL } from '@/features/marketplace';
 import type { FairPriceBand } from '@/features/marketplace';
 

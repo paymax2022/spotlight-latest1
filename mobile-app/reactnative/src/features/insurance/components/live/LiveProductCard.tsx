@@ -1,4 +1,3 @@
-// ── Insurance (live) — catalog product card ─────────────────────────────────
 // One row of the real MyCover catalog: what it covers, who carries the risk,
 // how long the cover runs, and what it costs — with flat and percentage pricing
 // rendered differently (see PriceLabel).
@@ -7,10 +6,10 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Icons from 'lucide-react-native';
 import { CalendarDays, ChevronRight, ShieldCheck } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { InsuranceColors } from '../../constants/insurance.constants';
 import { categoryMeta } from '../../live/catalog';
 import { stripTags } from '../../live/html';

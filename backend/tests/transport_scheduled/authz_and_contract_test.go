@@ -1,11 +1,9 @@
 package transport_scheduled_test
 
-// ---------------------------------------------------------------------------
 // Object-level authz (OLA), admin reason_code requirement, and DTO/contract
 // shape checks against the REAL exported `transport` package types (these
 // compile against the actual production structs — no transcription needed
 // here, since ScheduledBooking/ScheduledCreateRequest/etc. are exported).
-//
 // GetScheduled / CancelScheduled / RescheduleScheduled all require a live pgx
 // pool (they call s.getScheduledRow via s.db.QueryRow), so the actual OLA
 // branch — `if b.UserID != userID { return 403 }` — cannot be driven end-to-end
@@ -19,7 +17,6 @@ package transport_scheduled_test
 //     (ForceDispatchScheduled/ReassignScheduled/CancelScheduledAdmin all guard
 //     `if reason == "" { return REASON_REQUIRED }` BEFORE any DB call — this
 //     branch runs with a nil pool since it returns before s.svc.getScheduledRow).
-// ---------------------------------------------------------------------------
 
 import (
 	"encoding/json"
@@ -29,12 +26,9 @@ import (
 	"spotlight/backend/internal/transport"
 )
 
-// ─── OLA: pure decision transcribed from GetScheduled ────────────────────────
-//
 // Cited verbatim from backend/internal/transport/scheduled.go, GetScheduled:
 //
 //	if b.UserID != userID {
-//		return nil, codedErr(http.StatusForbidden, CodeForbidden, "not your booking")
 //	}
 func ownsScheduledBooking(bookingOwnerID, callerID string) bool {
 	return bookingOwnerID == callerID
@@ -63,19 +57,11 @@ func TestOLA_EmptyCallerNeverMatchesRealOwner(t *testing.T) {
 	}
 }
 
-// ─── Admin reason_code required BEFORE any DB touch ──────────────────────────
-//
 // Cited verbatim (all three, backend/internal/transport/scheduled_admin.go):
 //
 //	func (a *AdminService) ForceDispatchScheduled(ctx, adminID, id, reason string) {
-//		if reason == "" { return nil, codedErr(422, "REASON_REQUIRED", "reason_code required") }
-//		...
 //	func (a *AdminService) ReassignScheduled(ctx, adminID, id, driverID, reason string) {
-//		if reason == "" { return nil, codedErr(422, "REASON_REQUIRED", "reason_code required") }
-//		if driverID == "" { return nil, codedErr(422, "DRIVER_REQUIRED", "driver_id required") }
-//		...
 //	func (a *AdminService) CancelScheduledAdmin(ctx, adminID, id, reason string) {
-//		if reason == "" { return nil, codedErr(422, "REASON_REQUIRED", "reason_code required") }
 //
 // These guards run BEFORE a.svc.getScheduledRow, so they are provable with a
 // nil-pool *AdminService — the call must never reach the DB when reason=="".
@@ -124,8 +110,6 @@ func TestAdminReassign_RequiresDriverIDToo(t *testing.T) {
 		t.Errorf("a non-empty driver_id must pass, got %v", err)
 	}
 }
-
-// ─── Contract/DTO shape checks against the REAL exported types ──────────────
 
 // TestContract_ScheduledCreateRequest_JSONFieldNames locks the exact wire
 // field names the frozen route promises (§"FROZEN HTTP ROUTES" POST /scheduled

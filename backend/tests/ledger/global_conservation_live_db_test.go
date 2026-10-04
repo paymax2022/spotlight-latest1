@@ -1,27 +1,20 @@
 package ledger_test
 
-// ---------------------------------------------------------------------------
 // ADR-040 — GLOBAL CONSERVATION over the shared public.ledger_entries table.
-//
 // public.ledger_entries has two independent writers:
 //   • the Go finance ledger (backend/internal/finance/ledger) — always posts a
 //     balanced DR/CR pair;
 //   • the Next.js wallet plane (frontend-web/src/server/wallet) — which, before
 //     ADR-040, posted ONE leg per money event.
-//
 // Because both write to the same table, a single-sided writer in EITHER plane
 // destroys the only invariant that can catch a whole class of money bugs:
-//
 //     SUM(signed amount_kobo) over the entire table == 0
-//
 // (CREDIT / REVERSAL_DEBIT positive, DEBIT / REVERSAL_CREDIT negative — the same
 // sign rule as public.wallet_balance and ledger.balanceProjectionSQL.)
-//
 // This file is the cross-plane assertion. The pure-logic half — that the wallet
 // plane's journal BUILDER cannot emit an unbalanced set — lives in
 // frontend-web/tests/unit/finance/ledger-conservation.spec.ts and runs on every
 // PR without a database.
-//
 // ── Bring-up note ─────────────────────────────────────────────────────────
 //  1. Apply migrations, in particular:
 //       supabase/migrations/20260613030000_ledger_entries.sql
@@ -32,10 +25,8 @@ package ledger_test
 //       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  3. Run:
 //       cd backend && go test ./tests/ledger/... -run LiveDB -v
-//
 // This test is READ-ONLY apart from the two journals it posts itself, each of
 // which is balanced and keyed by a fresh uuid — safe to re-run repeatedly.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

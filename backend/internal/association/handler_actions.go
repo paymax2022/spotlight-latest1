@@ -4,17 +4,18 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 // Write-path (mutation) handlers, kept separate from handler.go to reduce merge
-// surface. Error→HTTP mapping uses statusFor (handler.go).
-
-// ─── Engagement ───────────────────────────────────────────────────────────────
+// surface. Error→HTTP mapping uses errMap (handler.go).
 
 // POST /associations/announcements/:id/acknowledge
 func (h *Handler) AcknowledgeAnnouncement(c *gin.Context) {
-	if err := h.svc.AcknowledgeAnnouncement(c.Request.Context(), c.GetString("user_id"), c.Param("id")); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.AcknowledgeAnnouncement(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -22,14 +23,12 @@ func (h *Handler) AcknowledgeAnnouncement(c *gin.Context) {
 
 // POST /associations/notifications/read
 func (h *Handler) MarkNotificationsRead(c *gin.Context) {
-	if err := h.svc.MarkNotificationsRead(c.Request.Context(), c.GetString("user_id")); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.MarkNotificationsRead(c.Request.Context(), ginutil.UserID(c)); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
-
-// ─── Meetings ─────────────────────────────────────────────────────────────────
 
 type rsvpBody struct {
 	Status string `json:"status"`
@@ -39,11 +38,11 @@ type rsvpBody struct {
 func (h *Handler) RsvpMeeting(c *gin.Context) {
 	var b rsvpBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.RsvpMeeting(c.Request.Context(), c.GetString("user_id"), c.Param("id"), b.Status); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.RsvpMeeting(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Status); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -51,14 +50,12 @@ func (h *Handler) RsvpMeeting(c *gin.Context) {
 
 // POST /associations/meetings/:id/attendance
 func (h *Handler) CheckInMeeting(c *gin.Context) {
-	if err := h.svc.CheckInMeeting(c.Request.Context(), c.GetString("user_id"), c.Param("id")); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.CheckInMeeting(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
-
-// ─── Tasks ────────────────────────────────────────────────────────────────────
 
 type taskStatusBody struct {
 	Status string `json:"status" binding:"required"`
@@ -68,39 +65,33 @@ type taskStatusBody struct {
 func (h *Handler) UpdateTaskStatus(c *gin.Context) {
 	var b taskStatusBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.UpdateTaskStatus(c.Request.Context(), c.GetString("user_id"), c.Param("id"), b.Status); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.UpdateTaskStatus(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Status); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
-
-// ─── Documents ────────────────────────────────────────────────────────────────
 
 // POST /associations/documents/:id/acknowledge
 func (h *Handler) AcknowledgeDocument(c *gin.Context) {
-	if err := h.svc.AcknowledgeDocument(c.Request.Context(), c.GetString("user_id"), c.Param("id")); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.AcknowledgeDocument(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
-
-// ─── Committees ───────────────────────────────────────────────────────────────
 
 // POST /associations/committees/:id/join
 func (h *Handler) JoinCommittee(c *gin.Context) {
-	if err := h.svc.RequestJoinCommittee(c.Request.Context(), c.GetString("user_id"), c.Param("id")); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.RequestJoinCommittee(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
-
-// ─── Events ───────────────────────────────────────────────────────────────────
 
 type eventRsvpBody struct {
 	Rsvp string `json:"rsvp"`
@@ -114,11 +105,11 @@ type eventFeedbackBody struct {
 func (h *Handler) RsvpEvent(c *gin.Context) {
 	var b eventRsvpBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.RsvpEvent(c.Request.Context(), c.GetString("user_id"), c.Param("id"), b.Rsvp); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.RsvpEvent(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Rsvp); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -126,9 +117,9 @@ func (h *Handler) RsvpEvent(c *gin.Context) {
 
 // POST /associations/events/:id/register
 func (h *Handler) RegisterEvent(c *gin.Context) {
-	res, err := h.svc.RegisterEvent(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+	res, err := h.svc.RegisterEvent(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	// ticketCode is kept at the top level for the existing mobile client, which
@@ -144,17 +135,15 @@ func (h *Handler) RegisterEvent(c *gin.Context) {
 func (h *Handler) SubmitEventFeedback(c *gin.Context) {
 	var b eventFeedbackBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.SubmitEventFeedback(c.Request.Context(), c.GetString("user_id"), c.Param("id"), b.Rating, b.Comment); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.SubmitEventFeedback(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Rating, b.Comment); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
-
-// ─── Admin: offline payment + member actions ──────────────────────────────────
 
 type offlineDecisionBody struct {
 	Approve bool `json:"approve"`
@@ -173,12 +162,12 @@ type roleBody struct {
 func (h *Handler) DecideOfflinePayment(c *gin.Context) {
 	var b offlineDecisionBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	idemKey := c.GetHeader("Idempotency-Key")
-	if err := h.svc.DecideOfflinePayment(c.Request.Context(), c.GetString("user_id"), c.Param("id"), idemKey, b.Approve); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	idemKey := ginutil.IdempotencyKey(c)
+	if err := h.svc.DecideOfflinePayment(c.Request.Context(), ginutil.UserID(c), c.Param("id"), idemKey, b.Approve); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -188,8 +177,8 @@ func (h *Handler) DecideOfflinePayment(c *gin.Context) {
 func (h *Handler) SuspendMember(c *gin.Context) {
 	var b suspendBody
 	_ = c.ShouldBindJSON(&b) // reason optional
-	if err := h.svc.SuspendMember(c.Request.Context(), c.GetString("user_id"), c.Param("id"), b.Reason); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.SuspendMember(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Reason); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -197,8 +186,8 @@ func (h *Handler) SuspendMember(c *gin.Context) {
 
 // POST /associations/admin/members/:id/restore
 func (h *Handler) RestoreMember(c *gin.Context) {
-	if err := h.svc.RestoreMember(c.Request.Context(), c.GetString("user_id"), c.Param("id")); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.RestoreMember(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -208,11 +197,11 @@ func (h *Handler) RestoreMember(c *gin.Context) {
 func (h *Handler) TransferMember(c *gin.Context) {
 	var b transferBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.TransferMember(c.Request.Context(), c.GetString("user_id"), c.Param("id"), b.Chapter); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.TransferMember(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Chapter); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -222,18 +211,18 @@ func (h *Handler) TransferMember(c *gin.Context) {
 func (h *Handler) BulkImportMembers(c *gin.Context) {
 	orgID := c.Query("org_id")
 	if orgID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "org_id query param required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "org_id query param required"})
 		return
 	}
 	file, _, err := c.Request.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "multipart file 'file' required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "multipart file 'file' required"})
 		return
 	}
 	defer file.Close()
-	n, err := h.svc.BulkImportMembers(c.Request.Context(), c.GetString("user_id"), orgID, file)
+	n, err := h.svc.BulkImportMembers(c.Request.Context(), ginutil.UserID(c), orgID, file)
 	if err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "imported": n})
@@ -243,11 +232,11 @@ func (h *Handler) BulkImportMembers(c *gin.Context) {
 func (h *Handler) AssignRole(c *gin.Context) {
 	var b roleBody
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.AssignRole(c.Request.Context(), c.GetString("user_id"), c.Param("id"), b.Role); err != nil {
-		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+	if err := h.svc.AssignRole(c.Request.Context(), ginutil.UserID(c), c.Param("id"), b.Role); err != nil {
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

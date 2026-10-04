@@ -34,7 +34,6 @@ function tierFor(lifetime: number): { tierId: TierId; pointsToNext: number; next
   };
 }
 
-// ── Mock fixtures ─────────────────────────────────────────────────────────────
 const MOCK_LIFETIME = 8450;
 let MOCK_BALANCE = 6200;
 
@@ -60,14 +59,11 @@ const MOCK_CATALOG: CatalogItem[] = [
   { id: 'r_concierge', title: 'Gold Concierge',   description: '1 month dedicated concierge support.',   kind: 'perk',     costPoints: 5000, valueKobo: null,    emoji: '👑', minTierId: 'TIER3' },
 ];
 
-// ── Server → client tier-id mapping (backend uses TIER1/TIER2/TIER3 strings). ──
 function tierIdFromServer(tier: unknown): TierId {
   const t = String(tier ?? 'TIER1').toUpperCase();
   return (t === 'TIER2' || t === 'TIER3' ? t : 'TIER1') as TierId;
 }
 
-// ── Reads ──────────────────────────────────────────────────────────────────────
-// Backend: GET /api/finance/loyalty/me → { success, membership: { tier,
 // lifetime_points } }. Spendable points balance lives on the sibling points
 // endpoint (GET /api/finance/points/balance → { success, balance_points }).
 // There is no single "account" endpoint, so we combine both calls.
@@ -85,7 +81,6 @@ export async function getAccount(): Promise<LoyaltyAccount> {
   const lifetimePoints = Number(membership?.lifetime_points ?? 0);
   const balancePoints = Number((balRes.data as { balance_points?: number })?.balance_points ?? 0);
   const t = tierFor(lifetimePoints);
-  // Prefer the server-reported tier when present; fall back to the local
   // ladder derivation (display-only — the server is the source of truth for
   // any gating decision).
   const tierId = membership?.tier ? tierIdFromServer(membership.tier) : t.tierId;
@@ -100,7 +95,6 @@ export async function getLedger(): Promise<PointsEntry[]> {
   return [...MOCK_LEDGER].reverse();
 }
 
-// Backend: GET /api/finance/points/catalog → { success, items: CatalogItem[] }
 // (points.CatalogItem: id, sku, title, kind, cost_points, value_kobo, active).
 export async function getCatalog(): Promise<CatalogItem[]> {
   if (USE_MOCK) { await delay(); return MOCK_CATALOG; }
@@ -127,9 +121,7 @@ export async function getTiers(): Promise<Tier[]> {
   return TIERS;
 }
 
-// ── Mutations ────────────────────────────────────────────────────────────────
 // Redeem points → airtime / bill / discount / perk (NL-4: never cash).
-// Backend: POST /api/finance/points/redeem expects { sku } (Idempotency-Key is
 // NOT required by this endpoint) → { success, redemption, item }. NOTE: the
 // catalog "id" returned above is the SKU, so RedeemInput.itemId IS the sku.
 export async function redeem(input: RedeemInput): Promise<RedeemResult> {

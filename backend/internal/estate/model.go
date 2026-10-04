@@ -68,8 +68,6 @@ type Vote struct {
 	CastAt      time.Time `json:"cast_at"`
 }
 
-// ── Block 25: Resident profile models ────────────────────────────────────────
-
 // ResidentProfile holds extended personal data for a resident.
 type ResidentProfile struct {
 	ID               string      `json:"id"`
@@ -185,8 +183,7 @@ type AddVehicleRequest struct {
 	DocURL string `json:"doc_url"`
 }
 
-// ── Block 28: Security gate / guard app ───────────────────────────────────────
-
+// Gate — Block 28: Security gate / guard app
 // Gate is a physical entry point in an estate.
 type Gate struct {
 	ID        string    `json:"id"`
@@ -270,8 +267,6 @@ type SyncRequest struct {
 	Logs []OfflineLogEntry `json:"logs" binding:"required"`
 }
 
-// ── Block 27: Extended visitor access codes ───────────────────────────────────
-
 // AccessCode is a typed entry permit with numeric + QR code.
 type AccessCode struct {
 	ID           string    `json:"id"`
@@ -322,8 +317,6 @@ type CreateAccessCodeRequest struct {
 type ExtendCodeRequest struct {
 	ValidUntil time.Time `json:"valid_until" binding:"required"`
 }
-
-// ── Block 26: Dashboard ───────────────────────────────────────────────────────
 
 // DashboardPayment is a pending dues/payment summary.
 type DashboardPayment struct {

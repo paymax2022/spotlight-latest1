@@ -10,17 +10,14 @@ import (
 // Package feesinvoice owns the Invoice entity of the EdTech School-Fees module (build-spec
 // §2 Invoice, §3.1 Invoice state machine, §4 SF-2). Built against public.academy_invoices
 // and public.academy_invoice_payments (migration 20260918000000_academy_fees_edtech.sql).
-//
 // SF-2 (CRITICAL, release blocker): an Invoice's balance and amount_paid are DERIVED, never
 // stored/mutated. There is deliberately NO Balance/AmountPaid COLUMN on academy_invoices
 // and NO `UPDATE academy_invoices SET balance/amount_paid` anywhere in this package. Balance
 // is computed as: total_amount_minor − SUM(academy_invoice_payments WHERE status='succeeded').
 // The Balance/AmountPaidMinor fields on the Invoice struct below are COMPUTED at read time
 // by the service from the payment rows; they are never persisted as source of truth.
-//
 // State changes go through feesstatemachine.InvoiceTransition ONLY — never a raw status
 // write. Payments are APPEND-ONLY to academy_invoice_payments, idempotent on idempotency_key.
-//
 // The actual money move (ledger debit of guardian → school) is E3's payment-adapter concern
 // (see report / the E3 hook comment in service.go). This package records the thin payment
 // row and derives status; it never posts a ledger entry itself.
@@ -37,7 +34,6 @@ type Invoice struct {
 	IssuedAt         *time.Time                    `json:"issuedAt,omitempty"`
 	CreatedAt        time.Time                     `json:"createdAt"`
 
-	// ── DERIVED (SF-2) — computed from succeeded payment rows, never persisted ──
 	AmountPaidMinor int64 `json:"amountPaidMinor"` // SUM(succeeded payments)
 	Balance         int64 `json:"balance"`         // total_amount_minor − amountPaidMinor
 }
@@ -77,8 +73,6 @@ type RecordPaymentResult struct {
 	Replayed bool `json:"replayed"`
 }
 
-// ── Request DTOs ────────────────────────────────────────────────────────────────
-
 // IssueInvoiceRequest issues an invoice for a student against an immutable fee schedule.
 // total_amount_minor may be supplied explicitly; when 0 the service derives it from the fee
 // schedule amount (single source of truth for the price).
@@ -98,20 +92,18 @@ type RecordPaymentRequest struct {
 	LedgerReference string `json:"ledgerReference"`
 }
 
-// ── Sentinel errors ─────────────────────────────────────────────────────────────
-
 var (
-	ErrNotFound              = errors.New("not_found")
-	ErrUnauthenticated       = errors.New("unauthenticated")
-	ErrInvalidAmount         = errors.New("invalid_amount")
-	ErrInvalidDate           = errors.New("invalid_date")
-	ErrMissingStudent        = errors.New("missing_student")
-	ErrMissingFeeSchedule    = errors.New("missing_fee_schedule")
-	ErrIdempotencyRequired   = errors.New("idempotency_key_required")
+	ErrNotFound               = errors.New("not_found")
+	ErrUnauthenticated        = errors.New("unauthenticated")
+	ErrInvalidAmount          = errors.New("invalid_amount")
+	ErrInvalidDate            = errors.New("invalid_date")
+	ErrMissingStudent         = errors.New("missing_student")
+	ErrMissingFeeSchedule     = errors.New("missing_fee_schedule")
+	ErrIdempotencyRequired    = errors.New("idempotency_key_required")
 	ErrIdempotencyKeyConflict = errors.New("idempotency_key_conflict")
-	ErrOverpayment           = errors.New("overpayment")
-	ErrInvoiceNotPayable     = errors.New("invoice_not_payable")
-	ErrIllegalTransition     = errors.New("illegal_transition")
+	ErrOverpayment            = errors.New("overpayment")
+	ErrInvoiceNotPayable      = errors.New("invoice_not_payable")
+	ErrIllegalTransition      = errors.New("illegal_transition")
 	// ErrAlreadyIssued guards double-issue of the same invoice.
 	ErrAlreadyIssued = errors.New("already_issued")
 )

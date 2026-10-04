@@ -1,6 +1,5 @@
 'use client';
 
-// ── Earn (Referral Rewards) — member UI, LIVE against the backend ─────────────
 // Data comes exclusively from the Go Direct Rewards engine via /api/v1/referrals/*.
 // No mock data. All money is integer kobo, formatted for display only.
 
@@ -16,8 +15,8 @@ import {
   type ReferredUser,
   type RewardEntry,
   type MilestonesResponse,
-} from '@/src/lib/referral/api';
-import { formatNaira, formatRate, formatDate, tierLabel, shareMessage } from '@/src/lib/referral/format';
+} from '@/src/lib/referral';
+import { formatNaira, formatRate, formatDate, tierLabel, shareMessage } from '@/src/lib/referral';
 
 type LoadState = 'loading' | 'ready' | 'error' | 'unavailable';
 

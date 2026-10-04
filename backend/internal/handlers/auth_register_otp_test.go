@@ -15,15 +15,17 @@ import (
 	"spotlight/backend/internal/services"
 )
 
-// ── doubles ─────────────────────────────────────────────────────────────────
-
 type stubAuthService struct {
-	result   *services.RegisterResult
-	err      error
-	loginOut map[string]any
+	result    *services.RegisterResult
+	err       error
+	loginOut  map[string]any
+	loginErr  error
+	logoutErr error
 
 	mu            sync.Mutex
 	registerCalls int
+	logoutCalls   int
+	logoutToken   string
 }
 
 func (s *stubAuthService) registered() int {
@@ -39,6 +41,9 @@ func (s *stubAuthService) RegisterUser(domain.RegisterRequest) (*services.Regist
 	return s.result, s.err
 }
 func (s *stubAuthService) LoginUser(domain.LoginRequest) (map[string]any, error) {
+	if s.loginErr != nil {
+		return nil, s.loginErr
+	}
 	// A fresh copy per call: the handler deletes the internal hints in place, and
 	// a shared map would make the second test in a run see them already gone.
 	out := map[string]any{}
@@ -46,6 +51,13 @@ func (s *stubAuthService) LoginUser(domain.LoginRequest) (map[string]any, error)
 		out[k] = v
 	}
 	return out, nil
+}
+func (s *stubAuthService) LogoutUser(token string) error {
+	s.mu.Lock()
+	s.logoutCalls++
+	s.logoutToken = token
+	s.mu.Unlock()
+	return s.logoutErr
 }
 func (s *stubAuthService) RequestPasswordReset(string) error                    { return nil }
 func (s *stubAuthService) ResetPassword(string, string) error                   { return nil }
@@ -97,8 +109,6 @@ func registerBody() map[string]string {
 		"firstName": "Ada", "lastName": "Lovelace",
 	}
 }
-
-// ── the wiring ──────────────────────────────────────────────────────────────
 
 // Signup with confirmations ON returns no session, which is what
 // NeedsVerification reports. That is exactly when a code has to go out.
@@ -199,8 +209,6 @@ func TestRegisterDoesNotIssueWhenRegistrationFails(t *testing.T) {
 	}
 }
 
-// ── the signup budget (GoTrue's sign_in_sign_ups, replaced) ─────────────────
-
 type recordingGate struct {
 	mu      sync.Mutex
 	ips     []string
@@ -283,11 +291,10 @@ func TestRegisterRefusedWhenTheSignupBudgetCannotBeEvaluated(t *testing.T) {
 }
 
 // An allowed registration consults the budget exactly once and proceeds.
-//
 // (The ORDERING — budget before creation — is asserted in the two refusal tests
-// above, by requiring that RegisterUser was never called. An earlier version of
-// this test claimed to check ordering while only counting gate calls, and a
-// mutation that moved the check after creation passed it.)
+// above, by requiring that RegisterUser was never called. Counting gate calls
+// alone cannot prove ordering: a mutation that moved the check after creation
+// would pass.)
 func TestSignupBudgetConsultedOnceOnTheHappyPath(t *testing.T) {
 	gate := &recordingGate{allowed: true}
 	issuer := &recordingIssuer{}

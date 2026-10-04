@@ -17,7 +17,6 @@ export function mapRepair(row: any, names: Record<string, string>) {
   };
 }
 
-// GET /api/v1/estate/repairs
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -31,7 +30,6 @@ export async function GET(request: Request) {
   } catch (error) { return handleApiError(error, 'Failed to list repairs'); }
 }
 
-// POST /api/v1/estate/repairs
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

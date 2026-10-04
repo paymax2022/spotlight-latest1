@@ -23,10 +23,10 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { bridgedVerifyPaidVote } from '@/server/voting-bridge/bridge';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient } from '@/lib/supabase/server';
 import { enableBridge, disableBridge } from '@/server/voting-bridge/feature-flag';
 
-vi.mock('@/lib/supabase/admin');
+vi.mock('@/lib/supabase/server');
 vi.mock('@/server/voting-bridge/outbox', () => ({ enqueueOutboxEvent: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/src/server/voting/core', () => ({
   verifyVotePayment: vi.fn(),
@@ -164,7 +164,7 @@ describe('Paid Vote Concurrency (Webhook + Redirect Race) — PV-005', () => {
     const supabase = mockSupabaseWith({});
     vi.mocked(verifyVotePayment).mockResolvedValue({
       success: true,
-      amountKobo: 100, // far short of amount_expected (10.00 NGN = 1000 kobo)
+      amountKobo: 100,
       currency: 'NGN',
       providerReference: 'prov-ref',
       paidAt: '2026-09-16T00:00:00Z',

@@ -6,13 +6,18 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"spotlight/backend/internal/domain"
+	"spotlight/backend/internal/integrations"
 	"strconv"
 	"strings"
 	"time"
-
-	"spotlight/backend/internal/domain"
-	"spotlight/backend/internal/integrations"
 )
+
+type CompetitionRepository interface {
+	GetOverview() (domain.CompetitionOverview, error)
+	ListOpenMic(limit int) ([]domain.OpenMicCompetition, error)
+	CreateOpenMic(input domain.OpenMicCreateInput) (domain.OpenMicCompetition, error)
+}
 
 type CompetitionSupabaseRepository struct {
 	client *integrations.SupabaseRestClient

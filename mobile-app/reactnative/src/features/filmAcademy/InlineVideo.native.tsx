@@ -1,4 +1,3 @@
-// ── Inline video — NATIVE implementation ─────────────────────────────────────
 // iOS/Android counterpart of InlineVideo.tsx. Same contract, WebView instead of
 // an iframe. react-native-webview is already a dependency (the Paystack sheet
 // and the mobility map use it), so this adds no new package.
@@ -7,10 +6,10 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Linking, ActivityIndicator } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Play, ExternalLink } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { youtubeEmbedUrl } from './youtube';
 import type { InlineVideoProps } from './InlineVideo';
 

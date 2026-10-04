@@ -11,16 +11,13 @@ import (
 	"time"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Real provider adapters (HTTP/JSON). These implement the same MarketDataAdapter
 // / BrokerAdapter interfaces as the mocks, so swapping them in is a config
 // change — no business-logic change. They speak a documented generic JSON
 // contract; point them at the partner's gateway (or a thin shim that maps the
 // partner API onto this contract).
-//
 // All prices on the wire are in NAIRA (major units, decimal); we convert to
 // integer kobo at the boundary so the rest of the system stays kobo-only.
-// ─────────────────────────────────────────────────────────────────────────────
 
 func nairaToKoboF(naira float64) int64 { return int64(naira*100 + 0.5) }
 
@@ -28,8 +25,6 @@ func nairaToKoboF(naira float64) int64 { return int64(naira*100 + 0.5) }
 type HealthChecker interface {
 	Healthy(ctx context.Context) (bool, string)
 }
-
-// ── Market-data adapter ──────────────────────────────────────────────────────
 
 // HTTPMarketDataConfig configures the real market-data adapter.
 type HTTPMarketDataConfig struct {
@@ -152,8 +147,6 @@ func (m *HTTPMarketData) get(ctx context.Context, path string, out any) error {
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
-
-// ── Broker adapter ───────────────────────────────────────────────────────────
 
 type HTTPBrokerConfig struct {
 	BaseURL       string

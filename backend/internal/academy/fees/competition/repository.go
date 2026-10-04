@@ -15,7 +15,6 @@ import (
 // 20260918000000). It also resolves student/school identity for the leaderboard
 // enrichment (IdentityResolver) by reading the EXISTING academy_students /
 // academy_schools tables — it does NOT own or duplicate that identity data.
-//
 // No money path here: this repo touches no ledger primitive.
 
 // Store is the persistence port the service depends on. Interface (not the
@@ -39,8 +38,6 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 // IsNoRows lets callers detect absence without importing pgx.
 func IsNoRows(err error) bool { return err == pgx.ErrNoRows }
-
-// ── Competition CRUD ──────────────────────────────────────────────────────────
 
 func (r *Repository) CreateCompetition(ctx context.Context, c *Competition) (*Competition, error) {
 	const q = `
@@ -90,8 +87,6 @@ func (r *Repository) UpdateCompetitionStatus(ctx context.Context, id string, sta
 	return nil
 }
 
-// ── Registrations ─────────────────────────────────────────────────────────────
-
 // RegisterSchool inserts a registration; the UNIQUE(competition_id, school_id)
 // constraint makes a repeat a no-op-safe conflict the service treats as
 // idempotent.
@@ -130,8 +125,6 @@ func (r *Repository) ListRegistrations(ctx context.Context, competitionID string
 	}
 	return out, rows.Err()
 }
-
-// ── IdentityResolver (reads existing academy_students / academy_schools) ────────
 
 // ResolveStudent enriches a gamification user_id with the EdTech student + school
 // identity fields the leaderboard needs. minor_flag drives SF-7. Reuses existing

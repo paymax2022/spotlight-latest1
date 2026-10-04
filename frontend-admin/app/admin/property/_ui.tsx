@@ -59,7 +59,6 @@ export function Card({ title, children, right }: PropsWithChildren<{ title?: str
 }
 
 // Kobo→naira formatting — deliberately IDENTICAL to app/admin/realtor/_ui.tsx's
-// `money()` (this console's established per-module helper convention; there is
 // no single centralized formatter shared across modules).
 export function money(minorKobo: number): string {
   const n = minorKobo / 100;

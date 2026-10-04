@@ -1,9 +1,7 @@
 // Paymax Connect — Skill Assessments types (Phase 6 §6.7, SA-01..04).
-//
 // Self-contained slice alongside ../types.ts. Reuses USE_MOCK / CONNECT_API_BASE
 // from ../../constants/connect.constants and the arena quiz runner's question
 // shape so SA-02 can drive the EXISTING QuizRunner with no remapping.
-//
 // SAFETY / INVARIANTS upheld here (Phase 6 §2):
 //  PN-5  Assessed skills are structurally + visually distinct from self-reported
 //        skills. A badge exists ONLY as the product of a passed, timestamped

@@ -9,8 +9,7 @@ import (
 
 // Google is used ONLY for autocompleteAddress (consumer checkout/delivery
 // surfaces) and searchExternalPlaces. Nothing else by default.
-//
-// License coherence (enforced here + in guards.go/cache.go):
+// License coherence (enforced here + in ):
 //   - Every result is tagged Source=google and Cacheable=false.
 //   - The cache writer REFUSES to persist these (guardCacheWrite).
 //   - The renderer guard THROWS if a google-sourced point reaches the OpenStack
@@ -127,9 +126,7 @@ func (g *Google) SearchPlaces(ctx context.Context, query string, near *Point) ([
 	return out, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Geocoder (Google Geocoding API) — Source=google, NEVER cacheable.
-// ─────────────────────────────────────────────────────────────────────────────
 
 type googleGeocodeResp struct {
 	Status  string `json:"status"`
@@ -229,10 +226,8 @@ func (g *Google) ReverseGeocode(ctx context.Context, lat, lng float64) (GeoResul
 	}, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Distance Matrix (Google Distance Matrix API) — driving distance + ETA.
 // Source=google. Used for delivery-fee distance pricing on consumer surfaces.
-// ─────────────────────────────────────────────────────────────────────────────
 
 type googleMatrixResp struct {
 	Status string `json:"status"`

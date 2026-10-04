@@ -1,4 +1,3 @@
-// ── Account tab (§ Trust & Account hub, screens 28–34) ───────────────────────
 // The Account tab is the hub that links every Trust & Account surface:
 //   28 Verification Center → reuses the existing KYC flow shell (/kyc-verify)
 //   30 Wallet hand-off     → reuses the existing wallet screen (/(tabs)/wallet)
@@ -7,9 +6,7 @@
 //   33 Notification prefs   → account/notifications
 //   34 Help & Support       → account/help
 // plus the Discover-owned Saved items / Saved searches (linked, not owned here).
-//
 // (29 My Orders is owned by the Transact agent — reachable from the Orders tab.)
-//
 // Data layer: @/features/marketplace/api/account.api (mock/live via MKT_USE_MOCK).
 import React from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
@@ -18,10 +15,10 @@ import { router } from 'expo-router';
 import {
   ShieldCheck, Wallet, Heart, BellRing, Bell, Flag, UserX, LifeBuoy, ChevronRight, Store,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { MarketColors } from '@/features/marketplace';
 
 type Row = {

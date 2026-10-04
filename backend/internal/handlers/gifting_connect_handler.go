@@ -5,10 +5,21 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/services"
+)
+
+const (
+	strAmountkobo = "amountKobo"
+	keyProduct    = "product"
+	keyRef        = "ref"
+	keyStatus     = "status"
+	keyMessage    = "message"
+	keyCreatedAt  = "createdAt"
 )
 
 // GiftingConnectHandler handles /api/v1/wallet/gifting/* endpoints.
@@ -42,10 +53,10 @@ func (h *GiftingConnectHandler) GetCatalog(c *gin.Context) {
 	data := []gin.H{}
 	for _, item := range items {
 		data = append(data, gin.H{
-			"id":           item.ID,
-			"name":         item.Name,
+			"id":          item.ID,
+			"name":        item.Name,
 			"description": item.Description,
-			"amountKobo":   item.AmountKobo,
+			strAmountkobo: item.AmountKobo,
 			"imageUrl":    item.ImageURL,
 			"available":   item.Available,
 		})
@@ -70,10 +81,10 @@ func (h *GiftingConnectHandler) GetProduct(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"id":           item.ID,
-		"name":         item.Name,
+		"id":          item.ID,
+		"name":        item.Name,
 		"description": item.Description,
-		"amountKobo":   item.AmountKobo,
+		strAmountkobo: item.AmountKobo,
 		"imageUrl":    item.ImageURL,
 		"available":   item.Available,
 	}})
@@ -82,7 +93,7 @@ func (h *GiftingConnectHandler) GetProduct(c *gin.Context) {
 // GetRecipients — GET /api/v1/wallet/gifting/recipients
 // Search gift recipients.
 func (h *GiftingConnectHandler) GetRecipients(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -109,7 +120,7 @@ func (h *GiftingConnectHandler) GetRecipients(c *gin.Context) {
 // QuoteGift — GET /api/v1/wallet/gifting/quote
 // Get gift price + fee (server validates tier limit fail-closed).
 func (h *GiftingConnectHandler) QuoteGift(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -146,9 +157,9 @@ func (h *GiftingConnectHandler) QuoteGift(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"product":            gin.H{"id": product.ID, "name": product.Name, "amountKobo": product.AmountKobo},
+		keyProduct:           gin.H{"id": product.ID, "name": product.Name, strAmountkobo: product.AmountKobo},
 		"recipient":          gin.H{"id": recipientID},
-		"amountKobo":         product.AmountKobo,
+		strAmountkobo:        product.AmountKobo,
 		"feeKobo":            0,
 		"totalKobo":          product.AmountKobo,
 		"tier":               tierPayload(usage),
@@ -160,8 +171,8 @@ func (h *GiftingConnectHandler) QuoteGift(c *gin.Context) {
 // SendGift — POST /api/v1/wallet/gifting/send (Idempotency-Key required)
 // Send gift (wallet-to-wallet money mutation).
 func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
-	userID := c.GetString("user_id")
-	idemKey := c.GetHeader("Idempotency-Key")
+	userID := ginutil.UserID(c)
+	idemKey := ginutil.IdempotencyKey(c)
 
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -181,8 +192,6 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-
-	// Get product details
 	product, err := h.store.GetCatalogItem(c.Request.Context(), body.ProductID)
 	if err != nil || product == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
@@ -214,21 +223,18 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 		return
 	}
 
-	// Record gift transaction
 	gt, err := h.store.SendGift(c.Request.Context(), userID, body.RecipientID, body.ProductID, body.Message, product.AmountKobo, reference, idemKey)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send gift"})
 		return
 	}
-
-	// Emit audit event
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, body.RecipientID, "send_gift", "wallet", "gift",
 			gt.ID, nil, map[string]interface{}{
-				"product":   body.ProductID,
+				keyProduct:  body.ProductID,
 				"amount":    product.AmountKobo,
 				"reference": reference,
-			}, getIPAddress(c), c.Request.UserAgent(), "warning")
+			}, ginutil.ClientIP(c), c.Request.UserAgent(), "warning")
 	}
 
 	bal, err := h.walletSvc.GetBalance(c.Request.Context(), userID)
@@ -245,14 +251,14 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
 		"ok": true,
 		"transaction": gin.H{
-			"id":         gt.ID,
-			"ref":        reference,
-			"product":    gin.H{"id": product.ID, "name": product.Name, "amountKobo": product.AmountKobo},
-			"recipient":  gin.H{"id": gt.RecipientID, "displayName": gt.RecipientName},
-			"amountKobo": product.AmountKobo,
-			"status":     gt.Status,
-			"message":    body.Message,
-			"createdAt":  gt.CreatedAt,
+			"id":          gt.ID,
+			keyRef:        reference,
+			keyProduct:    gin.H{"id": product.ID, "name": product.Name, strAmountkobo: product.AmountKobo},
+			"recipient":   gin.H{"id": gt.RecipientID, "displayName": gt.RecipientName},
+			strAmountkobo: product.AmountKobo,
+			keyStatus:     gt.Status,
+			keyMessage:    body.Message,
+			keyCreatedAt:  gt.CreatedAt,
 		},
 		"balanceKobo": bal.BalanceKobo,
 		"tier":        tierPayload(usage),
@@ -262,7 +268,7 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 // GetSentGifts — GET /api/v1/wallet/gifting/sent
 // View sent gifts.
 func (h *GiftingConnectHandler) GetSentGifts(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -280,14 +286,14 @@ func (h *GiftingConnectHandler) GetSentGifts(c *gin.Context) {
 	data := []gin.H{}
 	for _, g := range gifts {
 		data = append(data, gin.H{
-			"id":         g.ID,
-			"ref":        g.Reference,
-			"product":    gin.H{"id": g.ItemID, "name": g.ItemName, "amountKobo": g.AmountKobo},
-			"recipient":  gin.H{"id": g.RecipientID, "displayName": g.RecipientName},
-			"amountKobo": g.AmountKobo,
-			"status":     g.Status,
-			"message":    g.Message,
-			"createdAt":  g.CreatedAt,
+			"id":          g.ID,
+			keyRef:        g.Reference,
+			keyProduct:    gin.H{"id": g.ItemID, "name": g.ItemName, strAmountkobo: g.AmountKobo},
+			"recipient":   gin.H{"id": g.RecipientID, "displayName": g.RecipientName},
+			strAmountkobo: g.AmountKobo,
+			keyStatus:     g.Status,
+			keyMessage:    g.Message,
+			keyCreatedAt:  g.CreatedAt,
 		})
 	}
 
@@ -297,7 +303,7 @@ func (h *GiftingConnectHandler) GetSentGifts(c *gin.Context) {
 // GetReceivedGifts — GET /api/v1/wallet/gifting/received
 // View received gifts.
 func (h *GiftingConnectHandler) GetReceivedGifts(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -315,14 +321,14 @@ func (h *GiftingConnectHandler) GetReceivedGifts(c *gin.Context) {
 	data := []gin.H{}
 	for _, g := range gifts {
 		data = append(data, gin.H{
-			"id":         g.ID,
-			"ref":        g.Reference,
-			"product":    gin.H{"id": g.ItemID, "name": g.ItemName, "amountKobo": g.AmountKobo},
-			"sender":     gin.H{"id": g.SenderID, "displayName": g.SenderName},
-			"amountKobo": g.AmountKobo,
-			"status":     g.Status,
-			"message":    g.Message,
-			"createdAt":  g.CreatedAt,
+			"id":          g.ID,
+			keyRef:        g.Reference,
+			keyProduct:    gin.H{"id": g.ItemID, "name": g.ItemName, strAmountkobo: g.AmountKobo},
+			"sender":      gin.H{"id": g.SenderID, "displayName": g.SenderName},
+			strAmountkobo: g.AmountKobo,
+			keyStatus:     g.Status,
+			keyMessage:    g.Message,
+			keyCreatedAt:  g.CreatedAt,
 		})
 	}
 
@@ -332,7 +338,7 @@ func (h *GiftingConnectHandler) GetReceivedGifts(c *gin.Context) {
 // GetGiftTransaction — GET /api/v1/wallet/gifting/transactions/:id
 // Single gift transaction detail.
 func (h *GiftingConnectHandler) GetGiftTransaction(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -351,14 +357,14 @@ func (h *GiftingConnectHandler) GetGiftTransaction(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"id":         gt.ID,
-		"ref":        gt.Reference,
-		"product":    gin.H{"id": gt.ItemID, "name": gt.ItemName, "amountKobo": gt.AmountKobo},
-		"sender":     gin.H{"id": gt.SenderID, "displayName": gt.SenderName},
-		"recipient":  gin.H{"id": gt.RecipientID, "displayName": gt.RecipientName},
-		"amountKobo": gt.AmountKobo,
-		"status":     gt.Status,
-		"message":    gt.Message,
-		"createdAt":  gt.CreatedAt,
+		"id":          gt.ID,
+		keyRef:        gt.Reference,
+		keyProduct:    gin.H{"id": gt.ItemID, "name": gt.ItemName, strAmountkobo: gt.AmountKobo},
+		"sender":      gin.H{"id": gt.SenderID, "displayName": gt.SenderName},
+		"recipient":   gin.H{"id": gt.RecipientID, "displayName": gt.RecipientName},
+		strAmountkobo: gt.AmountKobo,
+		keyStatus:     gt.Status,
+		keyMessage:    gt.Message,
+		keyCreatedAt:  gt.CreatedAt,
 	}})
 }

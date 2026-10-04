@@ -46,6 +46,8 @@ metadata:
 - `backend/internal/doctor/` — full build/vet/test ✅ (all 17 tests PASS)
 - `backend/internal/integrations/rtc/` — `TestAgoraKnownAnswer` certified ✅
   - Vector: `007eJxSYNiRu5qp6O5yY/ZkhqaLiWEX...` (byte-for-byte match vs official Agora SDK v0.0.0-20250825033728)
+  - SUPERSEDED 2026-09-21: Agora removed; `agora.go` / `agora_test.go` deleted, VideoSDK is the only provider.
+    `internal/integrations/rtc/videosdk_test.go` now asserts `Enabled("agora") == false` and `legacy_agora` → `ErrUnknownProvider`.
 - `contracts/doctor.openapi.yaml` — YAML valid ✅
 - Mobile `tsconfig.doctorcheck.json` scoped typecheck ✅; whole-app typecheck ✅
   - Fixed: `Colors.gradient*` typed as `string[]` → typed tuples `[string,string]` / `[string,string,string]`

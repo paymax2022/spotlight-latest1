@@ -1,4 +1,3 @@
-// ── Doctor — Emergency & Escalation hooks (Batch 4, Section R) ───────────────
 // Query keys under ['doctor', …]. Mutations auto-generate the idempotencyKey.
 // NOTE: all emergency data/actions are DEMO and non-actionable (no real dialing
 // or dispatch); screens must surface the emergency disclaimer.
@@ -28,8 +27,6 @@ import type {
   DocumentEmergencyCaseInput,
   ScheduleEmergencyFollowUpInput,
 } from '@/types/doctor.batch4';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function useEmergencyFacilities(kind?: EmergencyFacility['kind']) {
   return useQuery({
@@ -75,8 +72,6 @@ export function useEmergencyCaseRecord(id: string) {
     staleTime: 30_000,
   });
 }
-
-// ─── Mutations (DEMO — non-actionable) ───────────────────────────────────────
 
 export function useEscalateToHospital() {
   const qc = useQueryClient();

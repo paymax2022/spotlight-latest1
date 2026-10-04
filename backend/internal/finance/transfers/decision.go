@@ -5,17 +5,16 @@ import (
 	"net/http"
 	"strings"
 
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/services"
 )
 
-// ---------------------------------------------------------------------------
 // Typed error sentinels for the money path.
-//
 // Each maps to an exact HTTP status in HTTPStatusForError so the handler never
 // has to string-match. Iron rule: fail-closed — anything unrecognised is 500.
-// ---------------------------------------------------------------------------
 
 var (
 	// ErrSelfTransfer — sender == recipient (422).
@@ -26,8 +25,13 @@ var (
 	// Refusing is mandatory: a wallet credit cannot be clawed back, so guessing
 	// between them risks paying a stranger permanently.
 	ErrAmbiguousRecipient = errors.New("transfers: more than one account uses this phone number")
-	// ErrInvalidAccount — bank account/code failed resolution (404).
+	// ErrInvalidAccount — a well-formed enquiry resolved to nothing: the
+	// provider lookup found no such account (404).
 	ErrInvalidAccount = errors.New("transfers: invalid bank account")
+	// ErrInvalidAccountNumber — the request itself is malformed (bad NUBAN
+	// shape or a missing destination field) → 400, distinct from the 404
+	// lookup-miss sentinel above.
+	ErrInvalidAccountNumber = errors.New("transfers: malformed bank account number or bank code")
 	// ErrMissingIdempotencyKey — money mutation without an Idempotency-Key (400).
 	ErrMissingIdempotencyKey = errors.New("transfers: Idempotency-Key required")
 	// ErrInvalidAmount — non-positive kobo amount (400).
@@ -39,67 +43,32 @@ var (
 	// ErrPinLocked — too many failed PIN attempts (403).
 	ErrPinLocked = errors.New("transfers: transaction PIN locked — try again later")
 
-	// ErrPinCurrentRequired is returned when a PIN already exists and the caller
-	// asked to set a new one WITHOUT supplying the current PIN.
-	//
-	// It exists so this case never reaches pinStore.Verify. An absent current PIN
-	// is a malformed request, not a wrong guess: verifying "" fails, and the
-	// failure counts toward the 5-attempt lockout. A client that forgets the
-	// field can therefore lock a user out of transfers entirely — which is
-	// exactly what a mobile PIN screen did, five taps at a time, while never
-	// asking for the PIN it was being scored against.
+	// ErrPinCurrentRequired fires when a PIN exists and the caller omitted the
+	// current PIN. It must never reach pinStore.Verify: verifying "" fails and
+	// burns one of the 5 lockout attempts — a client forgetting the field could
+	// otherwise lock the user out entirely.
 	ErrPinCurrentRequired = errors.New("transfers: current transaction PIN is required to change it")
 	// ErrProviderUnavailable — no disbursement provider configured / all failed (502).
 	ErrProviderUnavailable = errors.New("transfers: no disbursement provider available")
 )
 
-// HTTPStatusForError maps a money-path error to its acceptance-gate HTTP status.
-// Unwraps wrapped errors so callers may decorate with %w freely.
-//
-// Mapping (locked by the go-live gates):
-//
-//	self-transfer            → 422
-//	insufficient funds       → 402
-//	tier 0 wallet disabled   → 403
-//	daily limit exceeded     → 403
-//	recipient / account 404  → 404
-//	missing key / bad amount → 400
-//	anything else            → 500 (fail closed)
+// errMap maps a money-path error to its acceptance-gate HTTP status (locked by
+// the go-live gates). Unknown errors fall through to 500 — fail closed.
+var errMap = httperr.New(http.StatusInternalServerError, // 500 — fail closed
+	httperr.R(http.StatusUnprocessableEntity, ErrSelfTransfer),                                            // 422
+	httperr.R(http.StatusPaymentRequired, ledger.ErrInsufficientFunds),                                    // 402
+	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),                 // 403
+	httperr.R(http.StatusNotFound, ErrRecipientNotFound, ErrInvalidAccount),                               // 404
+	httperr.R(http.StatusConflict, ErrAmbiguousRecipient),                                                 // 409 — refuse, do not guess
+	httperr.R(http.StatusBadRequest, ErrMissingIdempotencyKey, ErrInvalidAmount, ErrInvalidAccountNumber), // 400
+	httperr.R(http.StatusForbidden, ErrPinNotSet, ErrPinInvalid),                                          // 403
+	httperr.R(http.StatusBadRequest, ErrPinCurrentRequired),                                               // 400 — malformed request, NOT a failed guess
+	httperr.R(http.StatusForbidden, ErrPinLocked),                                                         // 403
+	httperr.R(http.StatusBadGateway, ErrProviderUnavailable),                                              // 502
+)
+
 func HTTPStatusForError(err error) int {
-	switch {
-	case err == nil:
-		return http.StatusOK
-	case errors.Is(err, ErrSelfTransfer):
-		return http.StatusUnprocessableEntity // 422
-	case errors.Is(err, ledger.ErrInsufficientFunds):
-		return http.StatusPaymentRequired // 402
-	case errors.Is(err, tiers.ErrWalletDisabled):
-		return http.StatusForbidden // 403
-	case errors.Is(err, tiers.ErrDailyLimitExceeded):
-		return http.StatusForbidden // 403
-	case errors.Is(err, ErrRecipientNotFound):
-		return http.StatusNotFound // 404
-	case errors.Is(err, ErrAmbiguousRecipient):
-		return http.StatusConflict // 409 — refuse, do not guess
-	case errors.Is(err, ErrInvalidAccount):
-		return http.StatusNotFound // 404
-	case errors.Is(err, ErrMissingIdempotencyKey):
-		return http.StatusBadRequest // 400
-	case errors.Is(err, ErrInvalidAmount):
-		return http.StatusBadRequest // 400
-	case errors.Is(err, ErrPinNotSet):
-		return http.StatusForbidden // 403
-	case errors.Is(err, ErrPinInvalid):
-		return http.StatusForbidden // 403
-	case errors.Is(err, ErrPinCurrentRequired):
-		return http.StatusBadRequest // 400 — malformed request, NOT a failed guess
-	case errors.Is(err, ErrPinLocked):
-		return http.StatusForbidden // 403
-	case errors.Is(err, ErrProviderUnavailable):
-		return http.StatusBadGateway // 502
-	default:
-		return http.StatusInternalServerError // 500 — fail closed
-	}
+	return errMap.Code(err)
 }
 
 // ErrorCode returns a stable machine-readable code for the API envelope.
@@ -119,6 +88,8 @@ func ErrorCode(err error) string {
 		return "ambiguous_recipient"
 	case errors.Is(err, ErrInvalidAccount):
 		return "invalid_account"
+	case errors.Is(err, ErrInvalidAccountNumber):
+		return "invalid_account_number"
 	case errors.Is(err, ErrMissingIdempotencyKey):
 		return "idempotency_key_required"
 	case errors.Is(err, ErrInvalidAmount):
@@ -162,7 +133,8 @@ func ValidateBankTransferRequest(req BankTransferRequest) error {
 		return ErrInvalidAmount
 	}
 	if !looksLikeNUBAN(req.AccountNumber) || strings.TrimSpace(req.BankCode) == "" {
-		return ErrInvalidAccount
+		// Malformed request shape → 400, not the 404 lookup-miss sentinel.
+		return ErrInvalidAccountNumber
 	}
 	return nil
 }
@@ -193,14 +165,11 @@ func MaskPhone(phone string) string {
 	return strings.Repeat("*", len(phone)-4) + phone[len(phone)-4:]
 }
 
-// ---------------------------------------------------------------------------
 // Recipient resolution.
-//
 // Stored phones are NOT normalised — the same subscriber appears as
 // "8159491618", "08159491618" or "+2348159491618" depending on which signup
 // path wrote the row. Matching the raw string meant a recipient simply could
 // not be found unless the sender happened to type the stored spelling.
-// ---------------------------------------------------------------------------
 
 // RecipientCandidate is one user_profiles row the NSN lookup returned. Phone is
 // the value as STORED, so the masked echo shows the recipient the number they
@@ -212,25 +181,20 @@ type RecipientCandidate struct {
 }
 
 // NormalizeRecipientPhone reduces a phone number to its 10-digit national
-// significant number, so every spelling of one number resolves to one account.
-//
-// Deliberately delegates to services.NormalizePhone — the same function the
-// phone SIGN-IN path uses. A second copy would drift, and the two paths
-// disagreeing about which account owns a number is exactly the class of bug
-// that pays the wrong person. Returns "" for anything that cannot be a Nigerian
-// mobile; callers MUST treat that as "no match" and never as a looser probe.
+// significant number. It delegates to services.NormalizePhone — the same
+// function the sign-in path uses, so the two paths can never disagree about
+// who owns a number. Returns "" for a non-Nigerian-mobile shape; callers MUST
+// treat that as "no match".
 func NormalizeRecipientPhone(raw string) string {
 	return services.NormalizePhone(strings.TrimSpace(raw))
 }
 
 // ChooseRecipient picks the single account behind a normalised NSN.
-//
 // Re-normalises every row in Go rather than trusting the SQL filter. The index
 // expression is right(digits,10), which will happily take the last ten digits
 // of a fourteen-digit foreign number; NormalizeRecipientPhone rejects that
 // shape. Go is authoritative, so a row it cannot normalise back to the
 // requested NSN was never a real candidate and is discarded.
-//
 // Returns ErrAmbiguousRecipient — and a ZERO candidate — when two distinct
 // accounts survive that check. Two accounts sharing a number is a data defect;
 // resolving it by picking one would move money to a stranger irreversibly.
@@ -317,14 +281,11 @@ func NextStatusOnProviderError(current BankTransferStatus) BankTransferStatus {
 	return BankTransferFundsReserved
 }
 
-// ---------------------------------------------------------------------------
 // Per-leg idempotency key derivation.
-//
 // Every money leg of a transfer derives a distinct idempotency key from the
 // base key (or reference) suffixed by the leg name, so the ledger unique
 // constraint makes a duplicate webhook a benign no-op and success vs reversal
 // can never collide. These are pure and unit-tested.
-// ---------------------------------------------------------------------------
 
 // Leg names for the bank-transfer money path.
 const (
@@ -346,20 +307,11 @@ func LegKey(base, leg string) string {
 // for an illegal (backwards or skipping) transition so the funding webhook can't
 // re-fund or re-initiate. Equal states (idempotent replay) return false (no-op).
 func CanAdvanceBankToBank(from, to BankTransferStatus) bool {
-	rank := map[BankTransferStatus]int{
-		BankTransferAwaitingFunding:   1,
-		BankTransferFunded:            2,
-		BankTransferProviderInitiated: 3,
-		BankTransferSuccessful:        4,
-	}
-	// Terminal failure/reversal may be reached from any non-terminal state.
-	if to == BankTransferFailed || to == BankTransferReversed {
-		return from != BankTransferSuccessful && from != BankTransferFailed && from != BankTransferReversed
-	}
-	rf, okF := rank[from]
-	rt, okT := rank[to]
-	if !okF || !okT {
-		return false
-	}
-	return rt == rf+1
+	return bankToBankMoves.Can(from, to)
+}
+
+var bankToBankMoves = fsm.Table[BankTransferStatus]{
+	BankTransferAwaitingFunding:   fsm.Set(BankTransferFunded, BankTransferFailed, BankTransferReversed),
+	BankTransferFunded:            fsm.Set(BankTransferProviderInitiated, BankTransferFailed, BankTransferReversed),
+	BankTransferProviderInitiated: fsm.Set(BankTransferSuccessful, BankTransferFailed, BankTransferReversed),
 }

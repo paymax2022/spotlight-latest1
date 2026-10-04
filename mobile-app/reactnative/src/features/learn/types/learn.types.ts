@@ -1,8 +1,6 @@
-// ── Paymax Invest · Learn Center — Type Contract ─────────────────────────────
 // The education-first investing-literacy surface. Mirrors the crypto module's
 // type-contract conventions (Backend role owns this file). The Learn Center is
 // read-mostly: the only mutation is submitting a quiz to score it.
-//
 // Routes map to /api/v1/learn/* (docs/crypto/api.md envelope). All content is
 // server-driven config in production; the client renders what the payload says.
 
@@ -11,8 +9,6 @@ export type LearnLevel = 'beginner' | 'stock' | 'crypto' | 'wealth';
 
 /** How a lesson is consumed — an article (read) or a video (watch). */
 export type LessonKind = 'article' | 'video';
-
-// ─── Learning path (a curated track of lessons) ───────────────────────────────
 
 export interface LearnPath {
   id: string;
@@ -27,8 +23,6 @@ export interface LearnPath {
   progressPct: number;
 }
 
-// ─── Lesson (a single article or video unit inside a path) ─────────────────────
-
 export interface Lesson {
   id: string;
   pathId: string;
@@ -40,8 +34,6 @@ export interface Lesson {
   /** One-line takeaway shown in lists and on the path screen. */
   summary: string;
 }
-
-// ─── Quiz (optional knowledge check attached to a lesson) ──────────────────────
 
 export interface QuizOption {
   id: string;
@@ -70,8 +62,6 @@ export interface QuizResult {
   total: number;        // number of questions
   passed: boolean;      // score met the pass threshold
 }
-
-// ─── Glossary ──────────────────────────────────────────────────────────────--
 
 export interface GlossaryTerm {
   term: string;

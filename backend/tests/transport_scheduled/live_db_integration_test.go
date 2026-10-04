@@ -1,8 +1,6 @@
 package transport_scheduled_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for transport scheduling.
-//
 // Service (transport.NewService(pool, settlementSvc)) talks to a concrete
 // *pgxpool.Pool for every scheduled-booking method (CreateScheduled,
 // GetScheduled, CancelScheduled, DispatchScheduled, DueForDispatch,
@@ -13,7 +11,6 @@ package transport_scheduled_test
 // fully written end-to-end so it can be un-skipped the moment infra is
 // available — do not treat the skip as "this is a stub"; every step below
 // actually drives the real Service.
-//
 // ── Bring-up note (read before running) ──────────────────────────────────
 //  1. Apply migrations in order, INCLUDING the new one this swarm adds:
 //       supabase/migrations/2026090600000X_transport_scheduled_bookings.sql
@@ -33,11 +30,9 @@ package transport_scheduled_test
 //       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  4. Run:
 //       cd backend && go test ./tests/transport_scheduled/... -run LiveDB -v
-//
 // Everything in this file is additive-only reads/writes against rows this
 // test itself creates (unique UUIDs per run) — it does not truncate tables
 // and is safe to run repeatedly against the same test database.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -589,8 +584,6 @@ func TestLiveDB_SendDueReminders_FiresOnceUnderConcurrentInvocation(t *testing.T
 		t.Errorf("reminder_1h_sent_at changed after a post-claim call: first=%v second=%v (should be stamped exactly once)", firstSentAt, sentAt2)
 	}
 }
-
-// ─── small helpers ───────────────────────────────────────────────────────────
 
 func f64ptr(f float64) *float64 { return &f }
 func intPtr(i int) *int         { return &i }

@@ -3,16 +3,13 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { payInvoice } from '@/src/server/realtor/invoices';
 
-// POST /api/v1/realtor/invoices/[id]/pay — pay a realtor lease invoice.
-//
+// Pay a realtor lease invoice.
 // This route (plus src/server/realtor/invoices.ts) is now the ONLY supported
 // way to pay a realtor invoice — the Supabase RPC `realtor_pay_invoice` it
 // calls internally is locked to service_role (see
 // supabase/migrations/20270220000000_realtor_pay_invoice_require_verified_debit.sql),
 // closing a Blocker-severity exploit where the mobile client called that RPC
 // directly and got a free lease with no payment.
-//
-// Money mutation: requires an Idempotency-Key; posts a balanced ledger debit
 // (tier-checked, atomic, fail-closed) via debitWallet BEFORE the invoice/
 // lease/escrow rows are ever touched.
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {

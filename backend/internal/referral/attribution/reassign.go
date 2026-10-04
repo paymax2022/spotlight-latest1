@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/referral/events"
 	rewardledger "spotlight/backend/internal/referral/ledger"
 )
@@ -49,7 +51,7 @@ func (s *Service) ClaimCode(ctx context.Context, referredUserID, code string) (*
 		return nil, ErrNotHouse
 	}
 
-	norm := normalizeCode(code)
+	norm := strutil.NormalizeCode(code)
 	referrerID, rerr := s.codes.ResolveCodeToReferrer(ctx, norm)
 	if rerr != nil || referrerID == "" {
 		return nil, ErrInvalidCode
@@ -180,7 +182,7 @@ func (s *Service) Reassign(ctx context.Context, in ReassignInput) (*Attribution,
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 'approved', now())`
 	if _, err := s.db.Exec(ctx, ins,
 		in.AttributionID, fromParty, in.ToParty, in.Reason,
-		nullable(in.RequestedBy), cosign, benefitsHouse); err != nil {
+		dbutil.NullStr(in.RequestedBy), cosign, benefitsHouse); err != nil {
 		return nil, fmt.Errorf("referral/attribution: reassign record: %w", err)
 	}
 

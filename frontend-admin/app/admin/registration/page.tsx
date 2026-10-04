@@ -71,7 +71,6 @@ export default function RegistrationApplicantsPage() {
     // No auto-select. This used to jump to the first contest in the list, so the
     // page opened pre-filtered to an arbitrary contest and usually reported
     // "0 applicants" — with the real ones one dropdown change away and no hint
-    // that a filter was even applied. Default to All contests and let the
     // operator narrow.
     listRegistrationContests()
       .then(setContests)

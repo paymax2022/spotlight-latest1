@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	"spotlight/backend/internal/app"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/platform/buildinfo"
@@ -36,18 +38,26 @@ func main() {
 	// Error tracking (Sentry) + tracing (OTel→Cloud Trace); no-op unless configured.
 	flushObservability := observability.Init(cfg.AppEnv)
 
-	r := app.NewRouter(cfg)
-	srv := &http.Server{
-		Addr:              ":" + cfg.Port,
-		Handler:           r,
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-
 	// Cloud Run (and most orchestrators) send SIGTERM before removing an instance.
-	// Drain in-flight requests/transactions instead of dropping them mid-flight.
+	// Created before the router so the signal context also drives the durable-job
+	// poller: on shutdown it stops ticking and lets the claim tx roll back.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	r := app.NewRouterWithContext(ctx, cfg)
+	srv := &http.Server{
+		Addr: ":" + cfg.Port,
+		// otelhttp wraps the whole engine: one span per request, exported to
+		// Cloud Trace when observability.Init installed a real provider —
+		// otherwise the global noop provider makes this free (incl. tests).
+		// The W3C propagator joins incoming `traceparent` headers. Wrapping at
+		// the Handler boundary (not otelgin) keeps the OTel version decoupled
+		// from the pinned gin version — otelhttp is already an indirect dep.
+		Handler:           otelhttp.NewHandler(r, "paymax-backend"),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	// Drain in-flight requests/transactions instead of dropping them mid-flight.
 	go func() {
 		log.Printf("backend listening on :%s", cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

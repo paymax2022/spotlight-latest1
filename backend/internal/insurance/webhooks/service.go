@@ -2,9 +2,16 @@ package webhooks
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"io"
 	"log"
-
+	"net/http"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/insurance/claims"
 	"spotlight/backend/internal/insurance/gateway"
 )
@@ -172,8 +179,6 @@ func (s *Service) applyClaimEvent(ctx context.Context, provider string, ev gatew
 	return true, ""
 }
 
-// --- event family classification + state mapping ---
-
 type family int
 
 const (
@@ -204,4 +209,146 @@ func policyTargetState(eventType string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// Register wires the UNAUTHENTICATED, signature-verified provider webhook routes.
+//   - webhooks (no auth; provider-signed; idempotent on (provider, external_event_id)):
+//     POST /internal/webhooks/mycover
+//     POST /internal/webhooks/octamile
+func Register(webhooks *gin.RouterGroup, h *Handler) {
+	g := webhooks.Group("/internal/webhooks")
+	g.POST("/mycover", h.MyCover)
+	g.POST("/octamile", h.Octamile)
+}
+
+// Handler exposes the provider webhook ingestion routes. These routes are
+// UNAUTHENTICATED (the provider calls them directly) but every request is
+// signature-verified via the adapter before any state change.
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler constructs the webhooks handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// MyCover (webhook): POST /internal/webhooks/mycover
+func (h *Handler) MyCover(c *gin.Context) { h.ingest(c, "mycover") }
+
+// Octamile (webhook): POST /internal/webhooks/octamile
+func (h *Handler) Octamile(c *gin.Context) { h.ingest(c, "octamile") }
+
+// ingest reads the raw body, pulls the signature header and hands off to the
+// service. The raw body is never logged.
+// The signature header name comes from the ADAPTER, not from the URL slug.
+// Deriving it from the slug is what broke this before: MyCover is mounted at
+// /internal/webhooks/mycover but signs with "x-mycoverai-signature", so a
+// derived "X-mycover-Signature" never matched, the signature arrived empty, and
+// every genuine delivery was rejected with a 401 that named no cause. Generic
+// header names remain as fallbacks for adapters that declare none.
+func (h *Handler) ingest(c *gin.Context, provider string) {
+	payload, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot read body"})
+		return
+	}
+	signature := ""
+	if hdr := h.svc.SignatureHeaderFor(provider); hdr != "" {
+		signature = c.GetHeader(hdr)
+	}
+	signature = strutil.FirstNonEmpty(
+		signature,
+		c.GetHeader("X-Signature"),
+		c.GetHeader("X-Webhook-Signature"),
+	)
+	out, err := h.svc.Ingest(c.Request.Context(), provider, payload, signature)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrUnknownProvider):
+			c.JSON(http.StatusNotFound, gin.H{"error": "unknown provider"})
+		case errors.Is(err, ErrBadSignature):
+			// Reject unverified events (do NOT 200 — provider must retry/alert).
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid signature"})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		}
+		return
+	}
+	// Always 200 once verified + recorded (duplicates included) so the provider
+	// stops retrying.
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// Repository persists the provider-event idempotency ledger and applies
+// provider-driven POLICY state changes (claim state changes are delegated to the
+// claims service). All queries are parameterized; raw provider JSON is never
+// written (only the external_event_id + normalised type + refs).
+type Repository struct {
+	db *pgxpool.Pool
+}
+
+// NewRepository constructs the webhooks repository.
+func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
+
+// RecordEvent inserts the (provider, external_event_id) idempotency row. It
+// returns inserted=false when the event was already seen (duplicate webhook), so
+// the caller can drop it. UNIQUE(provider, external_event_id) is the hard guard.
+func (r *Repository) RecordEvent(ctx context.Context, provider, externalEventID, eventType string) (bool, error) {
+	var err error
+
+	// Guard the RECEIVER, not just the pool: this is reached from an
+	// UNAUTHENTICATED endpoint, so a nil repository must return an error the
+	// handler can turn into a 4xx/5xx, never a panic that takes the process with
+	// it. `r.db` alone dereferences nil.
+	if r == nil || r.db == nil {
+		return false, errors.New("webhooks: repository not configured")
+	}
+	ct, err := r.db.Exec(ctx, `
+		INSERT INTO public.insurance_provider_event (provider, external_event_id, event_type)
+		VALUES ($1,$2,$3)
+		ON CONFLICT (provider, external_event_id) DO NOTHING`,
+		provider, externalEventID, eventType)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() == 1, nil
+}
+
+// PolicyByProviderRef returns (policyID, state, version, found) for a policy by
+// its (provider, provider_policy_ref).
+func (r *Repository) PolicyByProviderRef(ctx context.Context, provider, ref string) (string, string, int, bool, error) {
+	var id string
+	var state string
+	var version int
+	var err error
+
+	if r == nil || r.db == nil {
+		return "", "", 0, false, errors.New("webhooks: repository not configured")
+	}
+	err = r.db.QueryRow(ctx, `
+		SELECT id, state, version FROM public.insurance_policy
+		WHERE provider = $1 AND provider_policy_ref = $2 LIMIT 1`, provider, ref).Scan(&id, &state, &version)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", "", 0, false, nil
+		}
+		return "", "", 0, false, err
+	}
+	return id, state, version, true, nil
+}
+
+// SetPolicyState applies a provider-driven policy state change (version-guarded).
+// Used for policy.bound/cancelled/lapsed/expired. Returns false when the guard
+// (version) did not match (a concurrent update won — safe to ignore).
+func (r *Repository) SetPolicyState(ctx context.Context, id, toState string, expectVersion int) (bool, error) {
+	if r == nil || r.db == nil {
+		return false, errors.New("webhooks: repository not configured")
+	}
+	ct, err := r.db.Exec(ctx, `
+		UPDATE public.insurance_policy
+		SET state = $2, version = version + 1, updated_at = now()
+		WHERE id = $1 AND version = $3`, id, toState, expectVersion)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() == 1, nil
 }

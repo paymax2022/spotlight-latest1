@@ -1,19 +1,15 @@
-// ── Connect onboarding — prefill "The basics" from the account ────────────────
 // The user already gave their name, date of birth, gender and state when they
 // set up their Paymax profile. Re-typing all four to enter Connect is friction
 // for no gain, so this maps a stored profile onto the step's controls.
-//
 // ONE RULE governs everything here: a value is only offered when the control can
 // actually DISPLAY it. Every field on this step is a picker over a fixed list
 // (day/month/year, two genders, 37 states). Writing a value a picker has no
 // option for renders as an empty control that nevertheless holds a value — the
 // user sees a blank field, cannot tell anything is set, and submits an answer
 // they never saw. A blank they must fill in is strictly better.
-//
 // Nothing here is authoritative: the screen keeps every field editable (a
 // Connect display name is a chosen name, not a legal one), and the hard 18+ gate
 // is decided server-side on submit regardless of what is prefilled.
-//
 // Pure — no React, no React Native — so it is unit-testable under plain node.
 
 export interface PrefillSource {

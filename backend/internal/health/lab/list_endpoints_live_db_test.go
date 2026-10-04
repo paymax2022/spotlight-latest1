@@ -1,14 +1,11 @@
 package healthlab
 
-// Live-DB regressions for the two lab catalog/history reads the mobile Lab
-// Home Screen calls but which had no backend route at all until now:
+// Live-DB coverage for the two lab catalog/history reads the mobile Lab Home
+// Screen calls:
 //   GET /health/lab/packages  (bundle catalog, ListPackages)
 //   GET /health/lab/orders    (patient's own order history, ListOrdersForPatient)
-//
-// Both previously 404ed unconditionally — this pins that the service methods
-// behind the new routes actually return real rows, correctly scoped.
-//
-// Skips unless TEST_DATABASE_URL is set.
+// Pins that the service methods behind the routes return real rows, correctly
+// scoped. Skips unless TEST_DATABASE_URL is set.
 
 import (
 	"context"

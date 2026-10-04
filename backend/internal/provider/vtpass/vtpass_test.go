@@ -11,9 +11,7 @@ import (
 	"spotlight/backend/internal/provider"
 )
 
-// ════════════════════════════════════════════════════════════════════════════
 // Request building — payload shape genuinely differs by category
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestPurchasePayload_Airtime(t *testing.T) {
 	req := provider.BillRequest{
@@ -133,10 +131,6 @@ func TestPurchasePayload_Education(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Response normalization
-// ════════════════════════════════════════════════════════════════════════════
-
 func TestNormalizeProviderStatus(t *testing.T) {
 	cases := []struct {
 		name string
@@ -202,10 +196,6 @@ func TestTokenFrom(t *testing.T) {
 		t.Fatalf("tokenFrom must prefer token over purchased_code, got %q", tokenFrom(both))
 	}
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// Sandbox meter simulation table
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestSandboxPurchase_MeterTable(t *testing.T) {
 	c := New("k", "p", "s", EnvironmentSandbox, "")
@@ -285,9 +275,7 @@ func TestSandboxGetBill_AlwaysSuccessful(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // Auth headers — api-key always; public-key for GET; secret-key for POST
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestAuthHeaders_PostUsesSecretKey(t *testing.T) {
 	var gotAPIKey, gotSecretKey, gotPublicKey string
@@ -353,10 +341,6 @@ func TestAuthHeaders_MissingKeysFailClosed(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Base URL selection by environment
-// ════════════════════════════════════════════════════════════════════════════
-
 func TestNew_BaseURLDefaultsByEnvironment(t *testing.T) {
 	live := New("a", "p", "s", EnvironmentLive, "")
 	if live.BaseURL() != "https://vtpass.com/api" {
@@ -381,9 +365,7 @@ func TestNew_BaseURLDefaultsByEnvironment(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // End-to-end (HTTP-boundary mocked): purchase + requery
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestPurchaseBill_LiveHTTPRoundTrip(t *testing.T) {
 	var gotBody map[string]any
@@ -466,9 +448,7 @@ func TestGetBill_EmptyRefRejected(t *testing.T) {
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // HTTP-failure normalization — no live network calls anywhere in this suite
-// ════════════════════════════════════════════════════════════════════════════
 
 func TestDo_NonOKStatusSynthesizesEnvelope(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

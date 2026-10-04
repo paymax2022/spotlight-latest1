@@ -1,6 +1,5 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression: Release() used to report a bare {"ok": true} regardless
 // of how many contributions it actually settled — same defect class as
 // RefundAll (see withdrawal_and_refund_live_db_test.go's CF-002 comment).
@@ -9,13 +8,10 @@ package crowdfunding_test
 // time Release() is called — it finds nothing 'escrowed' left to process,
 // but the old handler couldn't tell "this call just paid everyone" apart
 // from "this call did nothing, it had already happened at contribute-time".
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL. See
 // campaign_analytics_live_db_test.go in this package for the pattern.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Release -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -34,7 +30,8 @@ func TestLiveDB_Release_ReportsZeroWhenContributionsAlreadySettled(t *testing.T)
 	// campaign to 'funded' in the same call that already instant-settled the
 	// contribution to 'released' — the real-world sequence this pins.
 	const goalKobo = 200_000
-	campaignID, creatorID, cfSvc, _ := seedFundedContribution(t, ctx, pool, goalKobo, goalKobo)
+	fx := seedFundedContribution(t, ctx, pool, goalKobo, goalKobo)
+	campaignID, creatorID, cfSvc := fx.campaignID, fx.creatorID, fx.cfSvc
 
 	var status string
 	if err := pool.QueryRow(ctx, `SELECT status FROM campaigns WHERE id = $1`, campaignID).Scan(&status); err != nil {
@@ -81,7 +78,8 @@ func TestLiveDB_Release_DeniedForNonOwner(t *testing.T) {
 	pool := moneyPathPool(t)
 
 	const goalKobo = 150_000
-	campaignID, _, cfSvc, _ := seedFundedContribution(t, ctx, pool, goalKobo, goalKobo)
+	fx := seedFundedContribution(t, ctx, pool, goalKobo, goalKobo)
+	campaignID, cfSvc := fx.campaignID, fx.cfSvc
 
 	impostorID := "00000000-0000-0000-0000-000000000000"
 	if _, err := cfSvc.Release(ctx, campaignID, impostorID); err == nil {

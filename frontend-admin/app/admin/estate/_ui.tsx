@@ -101,7 +101,6 @@ export function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-// ── Platform estate oversight: RBAC + tabs ────────────────────────────────────
 // Slugs match the Go guards in backend/internal/app/estate_admin_routes.go and
 // the seed in supabase/migrations/20260919000000_estate_admin_rbac.sql. Client
 // gating only hides dead-end UI; the backend RBAC guard is authoritative.

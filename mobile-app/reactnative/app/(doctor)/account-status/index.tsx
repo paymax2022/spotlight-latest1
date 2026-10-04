@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Clock, CheckCircle2, XCircle, Eye, Ban } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import ProfileMenuItem from '@/components/ProfileMenuItem';
 import { TeleHeader } from '@/features/telemedicine/components';
@@ -17,7 +17,6 @@ import { useAccountStatus } from '@/features/doctor/hooks';
 import { ACCOUNT_STATE_LABELS } from '@/features/doctor/constants';
 import type { AccountState } from '@/types/doctor.batch7';
 
-// ── Section AD — Account-status gate (pending / rejected / suspended / review) ──
 // Dedicated full-screen gate driven by useAccountStatus. Renders the state's
 // title/message + a practice-status badge. Also links the other AD gates
 // (session-expired, access-denied) so reviewers can reach every gate. Reuses

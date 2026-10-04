@@ -5,7 +5,6 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Catch-all proxy for the Referral Earning System member API.
 //   /api/v1/referral/<...>  →  Go: /api/finance/referral/<...>
-// Auth + feature-flag guarded; the Go side applies per-route logic. Admin
 // routes are NOT proxied here (the admin app calls /api/referral/admin/* on Go
 // directly). Money mutations forward the caller's Idempotency-Key header.
 

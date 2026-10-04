@@ -1,9 +1,7 @@
 package edtechfees_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the EdTech Sponsor-a-Student SCHOLARSHIP money
 // path (pledge → fund → apply).
-//
 // feesscholarship.NewService(pool, ledgerPoster, invoicePayer) drives:
 //   - CreatePledge: records a sponsor pledge (state=pledged) in
 //     academy_scholarship_pledges.
@@ -13,12 +11,10 @@ package edtechfees_test
 //   - ApplyAward: applies an award toward a student's invoice via
 //     feesinvoice.RecordPayment (SF-2 — records an invoice payment, never a
 //     balance).
-//
 // The ledger + invoice ports are the SAME thin adapters production wires
 // (backend/internal/app/academy_routes.go: feesScholarshipLedger /
 // feesScholarshipInvoice). Skips on TEST_DATABASE_URL unset
 // (shared gate in invoice_live_db_test.go).
-//
 // ── KNOWN SCHEMA-INTEGRATION GAP (documented, not a test bug) ───────────────
 // The apply step calls feesscholarship Repository.appendAward, which INSERTs into
 // public.academy_scholarship_awards with scholarship_id = the PLEDGE id and
@@ -34,7 +30,6 @@ package edtechfees_test
 // pledge→fund is fully green, then DOCUMENTS the apply gap (it must currently
 // error) so closing it is a deliberate, reviewed schema change — the same
 // "DocumentsKnownGap" discipline used in backend/tests/association.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -47,7 +42,6 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 )
 
-// ── scholarship ledger port: mirrors feesScholarshipLedger in academy_routes.go ─
 type scholarshipLedgerAdapter struct{ ledger *ledger.Service }
 
 func (a scholarshipLedgerAdapter) PostFunding(ctx context.Context, sponsorIdentityID, reference, idempotencyKey string, amountMinor int64) (ledgerRef string, err error) {
@@ -61,7 +55,6 @@ func (a scholarshipLedgerAdapter) PostFunding(ctx context.Context, sponsorIdenti
 	return reference, nil
 }
 
-// ── scholarship invoice port: mirrors feesScholarshipInvoice in academy_routes.go ─
 type scholarshipInvoiceAdapter struct{ inv *feesinvoice.Service }
 
 func (a scholarshipInvoiceAdapter) RecordPayment(ctx context.Context, actorID, invoiceID, guardianUserID string, amountMinor int64, ledgerReference, idempotencyKey string) (paymentID string, replayed bool, err error) {
@@ -83,9 +76,7 @@ func cleanupPledge(t *testing.T, pool *pgxpool.Pool, pledgeID string) {
 	})
 }
 
-// ---------------------------------------------------------------------------
 // Pledge → Fund (real ledger Debit), idempotent + audited; then Apply gap.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_Scholarship_PledgeFund_Idempotent_Audited_ThenApplyDocumentsGap
 // proves the funded scholarship money path end-to-end:
@@ -120,7 +111,6 @@ func TestLiveDB_Scholarship_PledgeFund_Idempotent_Audited_ThenApplyDocumentsGap(
 		scholarshipInvoiceAdapter{inv: invSvc},
 	)
 
-	// ── CreatePledge (state=pledged) ────────────────────────────────────────
 	pledge, err := svc.CreatePledge(ctx, sponsorID, feesscholarship.CreatePledgeRequest{
 		SponsorIdentityID: sponsorID,
 		TargetStudentID:   studentID,
@@ -135,7 +125,6 @@ func TestLiveDB_Scholarship_PledgeFund_Idempotent_Audited_ThenApplyDocumentsGap(
 		t.Fatalf("new pledge state = %s, want pledged", pledge.State)
 	}
 
-	// ── FundPledge (pledged → funded; real ledger debit, idempotent) ────────
 	sponsorBalBefore, err := led.GetBalance(ctx, sponsorID)
 	if err != nil {
 		t.Fatalf("GetBalance before fund: %v", err)
@@ -166,7 +155,6 @@ func TestLiveDB_Scholarship_PledgeFund_Idempotent_Audited_ThenApplyDocumentsGap(
 		t.Errorf("pledge_funded audit rows = %d, want 1", n)
 	}
 
-	// ── Idempotent FundPledge replay: no second ledger move ─────────────────
 	fundedAgain, err := svc.FundPledge(ctx, actorID, pledge.ID, fundKey)
 	if err != nil {
 		t.Fatalf("FundPledge (replay): %v", err)
@@ -182,7 +170,6 @@ func TestLiveDB_Scholarship_PledgeFund_Idempotent_Audited_ThenApplyDocumentsGap(
 		t.Errorf("sponsor wallet changed on fund replay: before=%d after=%d — double funding!", sponsorBalAfter, balAfterReplay)
 	}
 
-	// ── Apply an award toward an invoice — DOCUMENTS the live-schema gap ────
 	inv, err := invSvc.Issue(ctx, actorID, feesinvoice.IssueInvoiceRequest{
 		StudentID:        studentID,
 		FeeScheduleID:    seedFeeSchedule(t, ctx, pool, schoolID, pledgeAmount),

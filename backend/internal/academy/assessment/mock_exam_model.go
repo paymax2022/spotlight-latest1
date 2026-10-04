@@ -24,42 +24,42 @@ type MockExamTemplate struct {
 
 // MockExamInstance represents a shuffled variant of a template
 type MockExamInstance struct {
-	ID             string          `json:"id"`
-	InstanceCode   string          `json:"instance_code"`   // human-readable code for the exam instance
-	TemplateID     string          `json:"template_id"`
-	ExamCode       string          `json:"exam_code"`
-	Variant        int             `json:"variant"`
-	Seed           int             `json:"seed"`
-	MarkingScheme  json.RawMessage `json:"marking_scheme"`
-	CreatedAt      time.Time       `json:"created_at"`
+	ID            string          `json:"id"`
+	InstanceCode  string          `json:"instance_code"` // human-readable code for the exam instance
+	TemplateID    string          `json:"template_id"`
+	ExamCode      string          `json:"exam_code"`
+	Variant       int             `json:"variant"`
+	Seed          int             `json:"seed"`
+	MarkingScheme json.RawMessage `json:"marking_scheme"`
+	CreatedAt     time.Time       `json:"created_at"`
 }
 
 // MockExamQuestionMapping links questions to exam instances
 type MockExamQuestionMapping struct {
-	ID                string    `json:"id"`
-	InstanceID        string    `json:"instance_id"`
-	QuestionItemID    string    `json:"question_item_id"`
-	DisplayOrder      int       `json:"display_order"`
-	Section           string    `json:"section"`
-	TimeAllocatedSec  int       `json:"time_allocated_sec"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID               string    `json:"id"`
+	InstanceID       string    `json:"instance_id"`
+	QuestionItemID   string    `json:"question_item_id"`
+	DisplayOrder     int       `json:"display_order"`
+	Section          string    `json:"section"`
+	TimeAllocatedSec int       `json:"time_allocated_sec"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 // MockExamAttempt tracks a learner's exam session
 type MockExamAttempt struct {
-	ID                 string          `json:"id"`
-	UserID             string          `json:"user_id"`
-	InstanceID         string          `json:"instance_id"`
-	TemplateID         string          `json:"template_id"`
-	Status             string          `json:"status"` // in_progress, submitted, graded
-	ScorePercent       int             `json:"score_percent"`   // percentage score (0-100)
-	TotalSeconds       int             `json:"total_seconds"`   // time taken in seconds
-	Answers            json.RawMessage `json:"answers"`
-	Performance        json.RawMessage `json:"performance"`
-	FlaggedQuestions   []string        `json:"flagged_questions"`
-	StartedAt          time.Time       `json:"started_at"`
-	SubmittedAt        *time.Time      `json:"submitted_at"`
-	CreatedAt          time.Time       `json:"created_at"`
+	ID               string          `json:"id"`
+	UserID           string          `json:"user_id"`
+	InstanceID       string          `json:"instance_id"`
+	TemplateID       string          `json:"template_id"`
+	Status           string          `json:"status"`        // in_progress, submitted, graded
+	ScorePercent     int             `json:"score_percent"` // percentage score (0-100)
+	TotalSeconds     int             `json:"total_seconds"` // time taken in seconds
+	Answers          json.RawMessage `json:"answers"`
+	Performance      json.RawMessage `json:"performance"`
+	FlaggedQuestions []string        `json:"flagged_questions"`
+	StartedAt        time.Time       `json:"started_at"`
+	SubmittedAt      *time.Time      `json:"submitted_at"`
+	CreatedAt        time.Time       `json:"created_at"`
 }
 
 // MockExamStatistics aggregates learner performance
@@ -93,17 +93,17 @@ type StartMockExamRequest struct {
 }
 
 type SubmitMockExamRequest struct {
-	AttemptID      string                 `json:"attempt_id" binding:"required"`
-	Answers        map[string]interface{} `json:"answers" binding:"required"`
-	FlaggedQuestions []string             `json:"flagged_questions"`
+	AttemptID        string         `json:"attempt_id" binding:"required"`
+	Answers          map[string]any `json:"answers" binding:"required"`
+	FlaggedQuestions []string       `json:"flagged_questions"`
 }
 
 type MockExamFilter struct {
-	ClassID    string
-	Status     string
-	ExamType   string
-	Limit      int
-	Offset     int
+	ClassID  string
+	Status   string
+	ExamType string
+	Limit    int
+	Offset   int
 }
 
 // Responses
@@ -133,24 +133,24 @@ type MockExamAttemptResponse struct {
 	ID          string      `json:"id"`
 	InstanceID  string      `json:"instance_id"`
 	Status      string      `json:"status"`
-	Progress    int         `json:"progress"` // percentage
+	Progress    int         `json:"progress"`     // percentage
 	TimeElapsed int         `json:"time_elapsed"` // seconds
 	StartedAt   time.Time   `json:"started_at"`
 	Performance interface{} `json:"performance"`
 }
 
 type MockExamResultResponse struct {
-	ID            string          `json:"id"`
-	TemplateID    string          `json:"template_id"`
-	Score         float64         `json:"score"`
-	ScorePercent  float64         `json:"score_percent"`
-	Grade         string          `json:"grade"`
-	Status        string          `json:"status"`
-	TotalTime     int             `json:"total_time_sec"`
-	Performance   json.RawMessage `json:"performance"`
-	BySection     json.RawMessage `json:"by_section"`
-	SubmittedAt   time.Time       `json:"submitted_at"`
-	GradedAt      *time.Time      `json:"graded_at"`
+	ID           string          `json:"id"`
+	TemplateID   string          `json:"template_id"`
+	Score        float64         `json:"score"`
+	ScorePercent float64         `json:"score_percent"`
+	Grade        string          `json:"grade"`
+	Status       string          `json:"status"`
+	TotalTime    int             `json:"total_time_sec"`
+	Performance  json.RawMessage `json:"performance"`
+	BySection    json.RawMessage `json:"by_section"`
+	SubmittedAt  time.Time       `json:"submitted_at"`
+	GradedAt     *time.Time      `json:"graded_at"`
 }
 
 // Helper to convert seconds to minutes

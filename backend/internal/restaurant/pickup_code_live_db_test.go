@@ -1,10 +1,8 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for the restaurant pickup code: generated when an
 // order goes `ready`, required (distinct from the customer delivery_code) for
 // the assigned rider to confirm pickup. Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -45,7 +43,7 @@ func TestLiveDB_ConfirmPickupRequiresPickupCode(t *testing.T) {
 		t.Fatalf("seed order: %v", err)
 	}
 
-	if err := svc.transitionInternal(ctx, oid, OrderReady); err != nil {
+	if err := svc.transitionInternal(ctx, oid, owner, OrderReady); err != nil {
 		t.Fatalf("transition to ready: %v", err)
 	}
 

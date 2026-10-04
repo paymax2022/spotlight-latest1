@@ -1,8 +1,4 @@
-// ── Types — Paymax Health admin · Vet VCN verification (Mode B / ASSISTED) ──────
-// Companion to healthVetAdmin.ts — do NOT edit that file; this owns the assisted
-// VCN verification-review surface (HEALTH-BUILD; HL-2 credential-gated supply,
 // HL-8 sensitive health/identity data NDPA, HL-12 immutable audit).
-//
 // Mode B (ASSISTED): a veterinarian submits their VCN registration number + name
 // + DOB + documents inside Paymax. An ops reviewer (this console, RBAC
 // `health.vet.review`) reviews the documents + an automatic identity cross-check
@@ -10,9 +6,7 @@
 // self-review/decide. On approval the vet capability is granted idempotently and a
 // licence-expiry auto-suspend is scheduled (HL-2). Every document view is
 // access-logged server-side (HL-8 / NDPA).
-//
 // ProviderApplication / VerificationRecord state machine:
-//  PENDING → VERIFIED | NEEDS_INFO | REJECTED.
 
 export type VcnVerificationStatus = 'PENDING' | 'VERIFIED' | 'NEEDS_INFO' | 'REJECTED';
 
@@ -34,7 +28,7 @@ export type VcnVerificationRecord = {
   licence_expiry: string | null; // YYYY-MM-DD — drives auto-suspend (HL-2)
   reviewer_id: string | null; // ops reviewer who decided (never the vet)
   notes: string;
-  evidence_doc_ids: string[]; // doc ids; view access-logged server-side (HL-8)
+  evidence_doc_ids: string[];
   consent_at: string | null; // NDPA consent timestamp (HL-8)
   created_at: string;
   decided_at: string | null;

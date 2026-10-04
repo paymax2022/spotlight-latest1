@@ -1,4 +1,3 @@
-// ── Screen 2 — Search ────────────────────────────────────────────────────────
 // Fast intent capture. Instant-suggest dropdown (category + query matches),
 // recent-searches chips (persisted), trending chips. First-time user (no recents)
 // shows trending only — the recents section is omitted entirely, not a placeholder.
@@ -8,10 +7,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Search as SearchIcon, TrendingUp, Clock, Tag } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import SearchBar from '@/components/SearchBar';
 import { MarketColors } from '@/features/marketplace';
 import { getSecureItem, setSecureItem } from '@/lib/secureStorage';

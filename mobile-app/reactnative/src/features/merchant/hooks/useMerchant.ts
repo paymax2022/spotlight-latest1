@@ -1,5 +1,3 @@
-// ── Merchant Onboarding — data hooks (react-query) ───────────────────────────
-// Reads expose loading/error/empty to the screens; mutations auto-generate the
 // Idempotency-Key and invalidate the relevant queries. Mirrors the doctor hooks.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -15,8 +13,6 @@ const keys = {
   capabilities:  ['merchant', 'capabilities'] as const,
   application:   (id: string) => ['merchant', 'application', id] as const,
 };
-
-// ─── Reads ───────────────────────────────────────────────────────────────────
 
 export function useModules() {
   return useQuery({ queryKey: keys.modules, queryFn: merchantApi.listModules, staleTime: 60_000 });
@@ -63,8 +59,6 @@ export function useApplication(id?: string) {
     },
   });
 }
-
-// ─── Mutations ───────────────────────────────────────────────────────────────
 
 export function useCreateApplication() {
   const qc = useQueryClient();

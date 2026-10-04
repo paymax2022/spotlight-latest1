@@ -1,27 +1,21 @@
 package estate
 
-// ---------------------------------------------------------------------------
 // LIVE-DB UAT for the Estate module's PayDues money path (docs/qa/modules/estate.md
 // ESTATE-INT-001/002, ESTATE-VAL-001/002, ESTATE-AUTHZ-004/005, ESTATE-IDEM-001,
 // ESTATE-CONC-001). This is the first time PayDues has been exercised against a
 // live database — every prior estate test either nil-DB-guards the money path
 // (isolation_test.go, modules_test.go) or documents the isolation contract
 // without a live DB (isolation_test.go's TestCrossEstateIsolationContract).
-//
 // Follows the pattern used by internal/restaurant/payout_double_payment_live_db_test.go
 // and internal/property/context_test.go: TEST_DATABASE_URL-gated, pgxpool via
 // t.Cleanup, real ledger wired via ledger.NewService(ledger.NewRepository(pool), nil),
 // wallets funded through the ledger (never a direct balance UPDATE — wallet
 // balances are a ledger projection, never mutated directly, per CLAUDE.md).
-//
 // Package `estate` (not `estate_test`) so the tests can call the unexported
 // helpers (existingReceipt) directly when proving the CONC-001 fix.
-//
 // Run:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/estate/... -run TestLiveDB -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -38,8 +32,6 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/testsupport"
 )
-
-// ── pool / service wiring ─────────────────────────────────────────────────
 
 func estateDuesTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -63,8 +55,6 @@ func newDuesTestService(pool *pgxpool.Pool) (*Service, *ledger.Service) {
 	svc := NewService(pool, nil).WithLedger(led).WithTiers(tiers.NewService(pool))
 	return svc, led
 }
-
-// ── fixture helpers ─────────────────────────────────────────────────────────
 
 // seedDuesUser inserts a throwaway auth.users row + a KYC tier-3 user_profiles
 // row (so EnforceCheckoutDebitLimit's Tier-0 checkout-allowance branch never
@@ -136,16 +126,30 @@ func walletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID
 	return bal
 }
 
-func standingBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, accountType string) int64 {
+// duesSettlementLegKobo returns the kobo ONE dues payment's ledger key credited to the
+// standing settlement account: the CREDIT side written by ledger.Debit (repository.go
+// suffixes the pair ":debit"/":credit" on the caller's Idempotency-Key). 0 means the
+// payment never posted.
+// Deliberately NOT a before/after read of the account's BALANCE. settlement is a single
+// global standing account also moved by restaurant payouts, academy, connect, realtor
+// and other suites, and `go test ./...` runs packages concurrently against one database
+// (make test / CI) — a balance delta flakes on their postings and misattributes them to
+// this payment. The payment's own deterministic idempotency key scopes the read to
+// exactly what this test caused, and its absence just as exactly.
+func duesSettlementLegKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, led *ledger.Service, idemKey string) int64 {
 	t.Helper()
-	var bal int64
-	if err := pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(CASE WHEN e.type IN ('CREDIT','REVERSAL_CREDIT') THEN e.amount_kobo ELSE -e.amount_kobo END),0)
-		FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
-		WHERE a.user_id IS NULL AND a.type=$1`, accountType).Scan(&bal); err != nil {
-		t.Fatalf("standing balance for %s: %v", accountType, err)
+	acc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
+	if err != nil {
+		t.Fatalf("settlement standing acct: %v", err)
 	}
-	return bal
+	var credited int64
+	if err := pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries
+		  WHERE idempotency_key=$1 AND type='CREDIT' AND account_id=$2`,
+		idemKey+":credit", acc.ID).Scan(&credited); err != nil {
+		t.Fatalf("read dues settlement leg: %v", err)
+	}
+	return credited
 }
 
 // seedInvoice inserts a pending dues invoice directly (CreateInvoice's own
@@ -194,8 +198,6 @@ func auditCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, estateID,
 	return n
 }
 
-// ── ESTATE-INT-001 / ESTATE-INT-002 ─────────────────────────────────────────
-
 // TestLiveDB_PayDues_HappyPath_DebitsPayerCreditsSettlement_LiftsRestriction
 // covers ESTATE-INT-001 (balanced DEBIT payer / CREDIT settlement, invoice ->
 // paid, audit DUES_PAY) and ESTATE-INT-002 (paying dues lifts an active
@@ -224,7 +226,6 @@ func TestLiveDB_PayDues_HappyPath_DebitsPayerCreditsSettlement_LiftsRestriction(
 	}
 
 	payerBalBefore := walletBalance(t, ctx, pool, resident)
-	settleBalBefore := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
 
 	receipt, err := svc.PayDues(ctx, estateID, resident, PayDuesRequest{
 		InvoiceID:      invID,
@@ -247,12 +248,11 @@ func TestLiveDB_PayDues_HappyPath_DebitsPayerCreditsSettlement_LiftsRestriction(
 
 	// Balanced double-entry, kobo-exact.
 	payerBalAfter := walletBalance(t, ctx, pool, resident)
-	settleBalAfter := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
 	if payerBalBefore-payerBalAfter != amount {
 		t.Errorf("payer debited %d, want %d", payerBalBefore-payerBalAfter, amount)
 	}
-	if settleBalAfter-settleBalBefore != amount {
-		t.Errorf("settlement credited %d, want %d", settleBalAfter-settleBalBefore, amount)
+	if got := duesSettlementLegKobo(t, ctx, pool, led, "int001-"+invID); got != amount {
+		t.Errorf("settlement credited %d for this invoice, want %d", got, amount)
 	}
 
 	// Audit DUES_PAY written.
@@ -275,8 +275,6 @@ func TestLiveDB_PayDues_HappyPath_DebitsPayerCreditsSettlement_LiftsRestriction(
 		t.Error("restriction lifted_at not set")
 	}
 }
-
-// ── ESTATE-VAL-001 ──────────────────────────────────────────────────────────
 
 // TestLiveDB_PayDues_RejectsAmountOverride covers ESTATE-VAL-001: the server
 // re-prices to the invoice's own stored amount and never trusts a client
@@ -362,8 +360,6 @@ func TestLiveDB_PayDues_RejectsAmountOverride(t *testing.T) {
 	})
 }
 
-// ── ESTATE-VAL-002 ──────────────────────────────────────────────────────────
-
 func TestLiveDB_PayDues_RejectsWaivedInvoice(t *testing.T) {
 	pool := estateDuesTestPool(t)
 	ctx := context.Background()
@@ -391,8 +387,6 @@ func TestLiveDB_PayDues_RejectsWaivedInvoice(t *testing.T) {
 		t.Errorf("payment rows = %d after rejected pay, want 0 (no ledger posting)", n)
 	}
 }
-
-// ── ESTATE-AUTHZ-004 (same-estate IDOR) ─────────────────────────────────────
 
 func TestLiveDB_PayDues_RejectsPayingAnotherResidentsInvoice(t *testing.T) {
 	pool := estateDuesTestPool(t)
@@ -426,8 +420,6 @@ func TestLiveDB_PayDues_RejectsPayingAnotherResidentsInvoice(t *testing.T) {
 		t.Errorf("invoice status = %q, want still pending", got)
 	}
 }
-
-// ── ESTATE-AUTHZ-005 (cross-estate IDOR) ────────────────────────────────────
 
 func TestLiveDB_PayDues_RejectsCrossEstateInvoice(t *testing.T) {
 	pool := estateDuesTestPool(t)
@@ -465,8 +457,6 @@ func TestLiveDB_PayDues_RejectsCrossEstateInvoice(t *testing.T) {
 	}
 }
 
-// ── ESTATE-IDEM-001 ──────────────────────────────────────────────────────────
-
 func TestLiveDB_PayDues_IdempotentReplayReturnsCanonicalReceipt(t *testing.T) {
 	pool := estateDuesTestPool(t)
 	ctx := context.Background()
@@ -482,7 +472,6 @@ func TestLiveDB_PayDues_IdempotentReplayReturnsCanonicalReceipt(t *testing.T) {
 	invID := seedInvoice(t, ctx, pool, estateID, resident, amount, "pending")
 
 	key := "idem001-" + invID
-	settleBefore := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
 
 	first, err := svc.PayDues(ctx, estateID, resident, PayDuesRequest{InvoiceID: invID, IdempotencyKey: key})
 	if err != nil {
@@ -505,22 +494,17 @@ func TestLiveDB_PayDues_IdempotentReplayReturnsCanonicalReceipt(t *testing.T) {
 		t.Errorf("estate_payments rows for invoice = %d, want exactly 1", n)
 	}
 
-	settleAfter := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
-	if settleAfter-settleBefore != amount {
-		t.Errorf("settlement credited %d across both calls, want exactly %d once (no second ledger entry)", settleAfter-settleBefore, amount)
+	if got := duesSettlementLegKobo(t, ctx, pool, led, key); got != amount {
+		t.Errorf("settlement credited %d across both calls, want exactly %d once (no second ledger entry)", got, amount)
 	}
 }
-
-// ── ESTATE-CONC-001 ──────────────────────────────────────────────────────────
 
 // TestLiveDB_PayDues_ConcurrentSameKeySettlesExactlyOnce fires two GENUINELY
 // concurrent PayDues calls (real goroutines + sync.WaitGroup, not sequential
 // calls dressed up as concurrent) with the SAME Idempotency-Key against the
 // SAME pending invoice, and proves the settlement posts exactly once.
-//
 // This uncovered a real bug (see the regression-guard proof in the task
 // report): before the fix, a caller that lost the race — its
-// `INSERT INTO estate_payments ... ON CONFLICT (idempotency_key) DO NOTHING`
 // affected 0 rows because the other goroutine's insert had already committed —
 // fell through to update the (already-updated) invoice, lift the (already-
 // lifted) restriction, write a SECOND DUES_PAY audit row, and return a
@@ -544,7 +528,6 @@ func TestLiveDB_PayDues_ConcurrentSameKeySettlesExactlyOnce(t *testing.T) {
 	invID := seedInvoice(t, ctx, pool, estateID, resident, amount, "pending")
 
 	key := "conc001-" + invID
-	settleBefore := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
 
 	const n = 2
 	var wg sync.WaitGroup
@@ -577,9 +560,8 @@ func TestLiveDB_PayDues_ConcurrentSameKeySettlesExactlyOnce(t *testing.T) {
 	if got := paymentCount(t, ctx, pool, invID); got != 1 {
 		t.Fatalf("estate_payments rows = %d, want exactly 1", got)
 	}
-	settleAfter := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
-	if settleAfter-settleBefore != amount {
-		t.Fatalf("settlement credited %d across both concurrent calls, want exactly %d once", settleAfter-settleBefore, amount)
+	if got := duesSettlementLegKobo(t, ctx, pool, led, key); got != amount {
+		t.Fatalf("settlement credited %d across both concurrent calls, want exactly %d once", got, amount)
 	}
 
 	// Every successful caller must receive the SAME canonical receipt ID — the

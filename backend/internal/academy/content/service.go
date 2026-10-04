@@ -22,8 +22,6 @@ var (
 	ErrInvalidInput      = errors.New("academy.content: invalid input")
 )
 
-// ── Lessons (publish) ────────────────────────────────────────────────────────────
-
 // TransitionLesson runs the guarded draft→review→approved→live→archived lifecycle.
 func (s *Service) TransitionLesson(ctx context.Context, actor, id string, to PublishStatus) (*Lesson, error) {
 	if !validPublishStatus(to) {
@@ -49,8 +47,6 @@ func (s *Service) LiveLessonsForObjective(ctx context.Context, objectiveID strin
 	}
 	return s.repo.ListLiveLessonsForObjective(ctx, objectiveID, limit)
 }
-
-// ── Bundles (publish + manifest) ─────────────────────────────────────────────────
 
 // TransitionBundle runs the guarded publish lifecycle; approved→live re-packages
 // the bundle manifest.
@@ -80,8 +76,6 @@ func (s *Service) BundleManifest(ctx context.Context, id string) (map[string]any
 	return b.Manifest, nil
 }
 
-// ── Productions (pipeline board) ─────────────────────────────────────────────────
-
 func (s *Service) CreateProduction(ctx context.Context, actor string, req CreateProductionRequest) (*Production, error) {
 	if req.Title == "" {
 		return nil, ErrInvalidInput
@@ -98,7 +92,7 @@ func (s *Service) UpdateProduction(ctx context.Context, actor, id string, req Up
 
 // AdvanceProduction runs the guarded script→storyboard→shoot→edit→qa→publish move.
 func (s *Service) AdvanceProduction(ctx context.Context, actor, id string, to ProductionStage) (*Production, error) {
-	if !validStage(to) {
+	if stageIndex(to) < 0 {
 		return nil, ErrInvalidInput
 	}
 	return s.repo.AdvanceProduction(ctx, actor, id, to)
@@ -117,8 +111,6 @@ func (s *Service) GetProduction(ctx context.Context, id string) (*Production, er
 func (s *Service) ListProductions(ctx context.Context, f ProductionFilter) ([]Production, error) {
 	return s.repo.ListProductions(ctx, f)
 }
-
-// ── Localizations ────────────────────────────────────────────────────────────────
 
 func (s *Service) UpsertLocalization(ctx context.Context, actor string, req UpsertLocalizationRequest) (*Localization, error) {
 	if req.EntityType == "" || req.EntityID == "" || req.Lang == "" {

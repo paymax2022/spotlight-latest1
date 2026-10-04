@@ -17,11 +17,11 @@ import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import BillReviewSecurityPanel, { calculateBillReview, formatNaira } from '@/components/BillReviewSecurityPanel';
 import PaymentMethodSelector, { type PaymentMethod } from '@/components/PaymentMethodSelector';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1, shadow2 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1, shadow2 } from '@/constants/tokens';
 import { getAirtimeNetworks, initiateAirtimePaystack, purchaseAirtime, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
 import { useGatewayCheckout } from '@/features/payments';
 import ProviderLogo from '@/components/ProviderLogo';
@@ -149,7 +149,6 @@ export default function AirtimeScreen() {
   };
 
   // In-app Paystack SDK checkout (flag-gated). Resumes the server-initialized
-  // transaction in-app, then routes to the payment-status resolver; falls back
   // to the legacy external redirect when the flag is off.
   const paystackCheckout = useGatewayCheckout();
   React.useEffect(() => {

@@ -1,6 +1,3 @@
-// ── Movers — API wrapper ─────────────────────────────────────────────────────
-// Mock-flagged, BASE = '/api/v1'. Accepting a bid is a money mutation
-// (escrow fund) and carries an Idempotency-Key; escrow releases only on
 // completion confirmation. Bid amounts come from providers via the SERVER.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -61,7 +58,6 @@ export async function getMoverJobs(): Promise<MoverJob[]> {
   return unwrap<MoverJob[]>(await api.get(`${BASE}/mobility/movers`));
 }
 
-// ─── Accept bid (money mutation → escrow fund → Idempotency-Key) ───────────────
 export async function acceptBid(id: string, bidId: string, idempotencyKey: string): Promise<MoverJob> {
   if (USE_MOCK) {
     await delay(800);
@@ -80,7 +76,6 @@ export async function acceptBid(id: string, bidId: string, idempotencyKey: strin
   );
 }
 
-// ─── Confirm completion (release escrow → settle provider; Idempotency-Key) ────
 export async function confirmCompletion(id: string, idempotencyKey: string): Promise<MoverJob> {
   if (USE_MOCK) {
     await delay(700);

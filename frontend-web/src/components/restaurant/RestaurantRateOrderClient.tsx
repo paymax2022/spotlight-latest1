@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { getOrder, rateOrder, RestaurantApiError } from '@/src/lib/restaurant/api';
+import { getOrder, rateOrder, RestaurantApiError } from '@/src/lib/restaurant';
 import type { Order } from '@/src/types/restaurant';
 
 function StarPicker({ value, onChange }: { value: number; onChange: (n: number) => void }) {

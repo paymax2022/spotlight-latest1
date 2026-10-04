@@ -1,7 +1,5 @@
-// ── Protection — you're covered ──────────────────────────────────────────────
 // This screen is reached with a POLICY ID, and it fetches that policy before it
 // congratulates anybody.
-//
 // That is deliberate. A purchase has two legs — the payment and the insurer's
 // bind — and they can disagree: the payment can look fine while the insurer
 // refuses to issue. Celebrating off the payment leg alone is how a person ends
@@ -15,10 +13,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { CalendarDays, FileText, ShieldCheck } from 'lucide-react-native';
 import PrimaryButton from '@/components/PrimaryButton';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import {
   InsuranceErrorState,
   StatusPill,

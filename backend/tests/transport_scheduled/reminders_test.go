@@ -1,11 +1,8 @@
 package transport_scheduled_test
 
-// ---------------------------------------------------------------------------
 // SendDueReminders idempotency (24h + 1h waves, concurrent-safe claim).
-//
 // Service.sendReminderWave (backend/internal/transport/scheduled_dispatch.go)
 // claims each booking with a single SQL statement:
-//
 //	UPDATE transport_scheduled_bookings
 //	SET %s = NOW(), updated_at = NOW()          -- %s = reminder_24h_sent_at | reminder_1h_sent_at
 //	WHERE %s IS NULL
@@ -13,7 +10,6 @@ package transport_scheduled_test
 //	  AND scheduled_pickup_at > now()
 //	  AND scheduled_pickup_at <= now() + $1::interval
 //	RETURNING id, user_id, mode, scheduled_pickup_at
-//
 // The claim and the notify are split (UPDATE...RETURNING claims the row atomically;
 // notifyUser fires only for rows the UPDATE actually returned), so two concurrent
 // SendDueReminders calls racing the SAME row can only have ONE of them see it in
@@ -24,7 +20,6 @@ package transport_scheduled_test
 // that are pure logic: (1) the WHERE-clause claim guard is a correct one-shot
 // gate (already-sent bookings are excluded), and (2) the two waves (24h/1h) are
 // independent columns so firing one never blocks or duplicates the other.
-// ---------------------------------------------------------------------------
 
 import (
 	"testing"

@@ -14,7 +14,6 @@ import (
 // consumer-style contract tests: if a struct tag is renamed or a status enum
 // drifts from the spec, the frontend/mobile clients break — catch it here in CI
 // rather than in production.
-//
 // Source of truth: contracts/openapi.yaml (schemas WalletTransfer, BankTransfer,
 // LedgerEntry, parameters/body of /wallet/topup and /transfers/*).
 
@@ -91,12 +90,10 @@ func TestContract_BankTransferStatusEnum(t *testing.T) {
 }
 
 // CONTRACT DRIFT (documented defect, owner: finance/transfers agent):
-//
 // openapi.yaml WalletTransfer.status enum = [successful, failed, reversed],
 // but internal/finance/transfers/model.go defines the wallet-transfer terminal
 // success state as WalletTransferCompleted = "completed" (and uses it when
 // inserting wallet_transfers rows with status='completed').
-//
 // RECONCILED (orchestrator): the model now emits statuses that match the spec
 // enum [successful, failed, reversed]. This test now actively guards that
 // alignment instead of being skipped.

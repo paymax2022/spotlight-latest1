@@ -54,7 +54,6 @@ func TestGrantsDoNotChangeMoneyLimits(t *testing.T) {
 	if !m.UserMayAccess(0, map[string]struct{}{"telemedicine": {}}) {
 		t.Fatal("a grant should open the module for an unverified user")
 	}
-	// ...and that is ALL it does. UserMayAccess returns a bool about access; it has no
 	// amount, no currency and no tier config, so it cannot express a spending decision.
 	// finance/tiers remains the only thing EnforceWalletDebitLimit consults.
 }

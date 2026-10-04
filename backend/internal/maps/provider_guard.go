@@ -3,6 +3,7 @@ package maps
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -15,7 +16,6 @@ import (
 // provider call: is the breaker closed, and are we under today's budget? After
 // each call it folds the outcome into rolling health (error rate, p95 latency,
 // budget used) and trips/recovers the breaker.
-//
 // State lives in map_provider_health (one row per provider). Daily budget uses a
 // UTC date bucket so caps reset at midnight UTC. All writes are best-effort —
 // Observe never blocks the request path (MS-6).
@@ -64,8 +64,6 @@ func NewGuard(pool *pgxpool.Pool, budgets map[string]int64) *Guard {
 // compile-time interface assertion.
 var _ ProviderGuard = (*Guard)(nil)
 
-// --- pure decision helpers (unit-testable, DB-free) ----------------------
-
 // providerHealth is the in-memory view of one map_provider_health row.
 type providerHealth struct {
 	circuit    circuitState
@@ -107,7 +105,6 @@ func allowDecision(h providerHealth, cap int64, now time.Time) bool {
 // nextCircuitState is the pure breaker transition. Given the prior state and a
 // freshly folded observation, it returns the next state and (if it just opened)
 // the open timestamp.
-//
 // Transitions:
 //   - half_open + ok    → closed  (probe succeeded; recover).
 //   - half_open + !ok   → open    (probe failed; re-arm cooldown).
@@ -154,8 +151,6 @@ func foldHealth(h providerHealth, ok bool, latencyMs int64) providerHealth {
 	h.sampleSize++
 	return h
 }
-
-// --- ProviderGuard implementation ----------------------------------------
 
 // Allow reports whether the provider may be called now. Read errors FAIL OPEN
 // (allow) so a health-table hiccup never strands resolution — the breaker and
@@ -254,8 +249,6 @@ func (g *Guard) read(ctx context.Context, provider string) (providerHealth, bool
 	return h, true
 }
 
-// --- admin dashboard -----------------------------------------------------
-
 // ProviderHealthRow is one provider's health for the admin dashboard.
 type ProviderHealthRow struct {
 	Name         string    `json:"name"`
@@ -303,4 +296,39 @@ func (g *Guard) Snapshot(ctx context.Context) ([]ProviderHealthRow, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// This file centralizes the HARD license-coherence rules so they are enforced
+// in exactly one place and are trivially testable.
+// Google's terms forbid (a) caching/persisting geocoding & Places results, and
+// (b) displaying Google-sourced coordinates on a non-Google basemap. We keep the
+// stacks coherent: OpenStack geocode -> OpenStack basemap; Google autocomplete/
+// POI -> a Google map ONLY on that surface.
+
+// isCacheableSource reports whether a result from this source may ever be
+// persisted. Only OpenStack (OSM-licensed) and our own data are cacheable.
+func isCacheableSource(s Source) bool {
+	return s == SourceOpenStack || s == SourceOwn
+}
+
+// guardCacheWrite returns ErrNotCacheable if a result must never be persisted.
+// The cache writer calls this before every INSERT — Google rows are refused.
+func guardCacheWrite(r GeoResult) error {
+	if !r.Cacheable || !isCacheableSource(r.Source) {
+		return fmt.Errorf("%w (provider=%s source=%s)", ErrNotCacheable, r.Provider, r.Source)
+	}
+	return nil
+}
+
+// AssertRenderable is the runtime/dev guard the OpenStack/MapLibre renderer path
+// calls before drawing any point. It THROWS (returns an error) if a Google- (or
+// otherwise non-OSM-) sourced coordinate is about to be rendered on the
+// OpenStack basemap. Keeping this server-side means the client can never receive
+// a mismatched stack: the proxy refuses to emit it.
+// basemapSource is the Source of the basemap the point will be drawn on.
+func AssertRenderable(basemapSource Source, p Point) error {
+	if basemapSource == SourceOpenStack && p.Source == SourceGoogle {
+		return fmt.Errorf("%w (point.source=%s basemap.source=%s)", ErrLicenseCoherence, p.Source, basemapSource)
+	}
+	return nil
 }

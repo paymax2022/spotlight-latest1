@@ -10,14 +10,12 @@ import (
 // provider answered and refused, or the adapter refused pre-flight and never sent
 // anything at all (missing credentials, unsupported operation). Either way NOTHING
 // was created upstream, so a retry — or a failover to the next provider — is safe.
-//
 // This exists because the opposite case is the dangerous one. A transport failure
 // (timeout, reset connection, context deadline) does NOT say whether the request
 // was processed: the provider may still be completing it after our socket gave up.
 // Callers on a money path classify with errors.Is(err, ErrProviderRefused) and
 // treat everything UNRECOGNISED as an unknown outcome to be reconciled, never as a
 // failure to retry. Silence is never read as success or as failure.
-//
 // Adapters must wrap this ONLY around errors they can positively vouch for.
 var ErrProviderRefused = errors.New("provider: request refused, nothing was created upstream")
 
@@ -25,13 +23,10 @@ var ErrProviderRefused = errors.New("provider: request refused, nothing was crea
 // alongside PaymentProvider / DisbursementProvider / VirtualAccountProvider
 // (interfaces.go) — domain code depends ONLY on these ports; all Maplerad HTTP/SDK
 // code lives in internal/provider/maplerad and never leaks its types outward.
-//
 // NGN v1 scope: Identity (customer mapping), Wallet (provision + reconciliation
 // balance), Bills. USD wallets / cards / FX are Phase 2 and intentionally absent.
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Identity — 1 Paymax user ↔ 1 provider customer, created at the required KYC tier.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // CustomerRequest forwards the already-KYC-verified identity to the provider.
 // BVN/NIN are PII — never log them; the adapter sends them to Identity only.
@@ -63,10 +58,8 @@ type IdentityProvider interface {
 	Name() string
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Wallet — provider custody wallet. GetProviderBalance is for RECONCILIATION ONLY;
 // the hot path always reads the internal ledger, never the provider balance.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ProviderBalance is a custody balance snapshot used only by reconciliation.
 type ProviderBalance struct {
@@ -82,10 +75,8 @@ type WalletProvider interface {
 	Name() string
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Bills — async-authoritative: reconcile the sync result with the webhook,
 // idempotent on the client reference.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // BillRequest is a bill purchase keyed by a client reference (idempotency key).
 type BillRequest struct {
@@ -117,7 +108,6 @@ type Bill struct {
 }
 
 // BillsProvider purchases bills and re-queries them (orphan reconciliation).
-//
 // GetBill's ref MUST be the value returned as the prior Bill.ProviderRef (the
 // reference the provider itself echoed back at purchase time), never the
 // caller's own BillRequest.Ref. This is the one identifier every provider is
@@ -134,7 +124,6 @@ type BillsProvider interface {
 // BillValidationRequest asks a provider to confirm that a customer reference (a
 // meter number, a smartcard number, a customer id) actually exists at the biller
 // before any money moves.
-//
 // Params uses the SAME key names as BillRequest.Params so a caller can build one
 // map and use it for both calls — see the vtpass adapter's Params contract.
 type BillValidationRequest struct {
@@ -174,11 +163,9 @@ type BillsValidator interface {
 // HealthCheckResult is a provider's self-reported liveness, normalised across
 // adapters. Status is one of "healthy" | "degraded" | "down", matching the
 // contract in frontend-web/src/server/utility/adapters/types.ts
-// (`healthCheck(): Promise<{ status: 'healthy' | 'degraded' | 'down'; message?: string }>`)
 // and the utility_providers_health_status_check CHECK constraint, which also
 // permits 'unknown' — the value a provider carries BEFORE it has ever been
 // checked, and therefore one no adapter ever returns.
-//
 // The three values are deliberately not a Go enum type: they are persisted
 // verbatim into utility_providers.health_status, and routing.go already branches
 // on that column's string values (`health_status != 'down'`).
@@ -195,7 +182,6 @@ type HealthCheckResult struct {
 // exactly the same reason as BillsValidator: not every adapter has an endpoint
 // that can report its own health, and widening BillsProvider would force every
 // implementer to carry a method it cannot honour. Callers type-assert for it.
-//
 // An implementation must NOT return an error for a provider that answered
 // badly — a refused or unparseable answer is a "degraded"/"down" RESULT, not a
 // Go error. An error is reserved for the adapter being unable to ask at all
@@ -203,4 +189,126 @@ type HealthCheckResult struct {
 type HealthChecker interface {
 	HealthCheck(ctx context.Context) (*HealthCheckResult, error)
 	Name() string
+}
+
+// Named identifies an adapter for routing, metrics, and audit (e.g. "dojah").
+type Named interface {
+	Name() string
+}
+
+// Multi-provider KYC verification ports (ADR-013). Adapters (Dojah, Smile ID,
+// Youverify) implement ONLY the ports they serve; the gateway dispatches per
+// check type by config. Everything normalizes to KycCheckResult — the domain
+// never sees a provider-specific DTO. This mirrors the existing provider-agnostic
+// pattern used by PaymentProvider / MapService.
+
+// KycCheckType is the normalized check category.
+type KycCheckType string
+
+const (
+	KycIDNumber KycCheckType = "ID_NUMBER"
+	KycIDFacial KycCheckType = "ID_FACIAL"
+	KycLiveness KycCheckType = "LIVENESS"
+	KycDocument KycCheckType = "DOCUMENT"
+	KycAML      KycCheckType = "AML"
+)
+
+// KycCheckStatus is the normalized per-check status (matches DB CHECK).
+type KycCheckStatus string
+
+const (
+	KycInitiated KycCheckStatus = "INITIATED"
+	KycPending   KycCheckStatus = "PENDING"
+	KycPassed    KycCheckStatus = "PASSED"
+	KycFailed    KycCheckStatus = "FAILED"
+	KycReview    KycCheckStatus = "REVIEW"
+)
+
+// KycVerifyRequest is the normalized input to any KYC port. ClientRef is the
+// idempotency key that flows through to the provider and back on the webhook.
+type KycVerifyRequest struct {
+	ClientRef string
+	UserID    string
+	Type      KycCheckType
+
+	// Identity fields (data-match / facial).
+	IDType    string // "bvn" | "nin" | "vnin" | "passport" | "drivers_license" | "pvc"
+	IDNumber  string
+	FirstName string
+	LastName  string
+	DOB       string // YYYY-MM-DD
+
+	// Biometric / document capture (base64; adapters upload to the provider).
+	SelfieB64   string
+	DocFrontB64 string
+	DocBackB64  string
+	DocType     string // "passport" | "drivers_license" | "national_id" | ...
+
+	// Threshold gates facial PASS vs REVIEW (default from routing rule).
+	Threshold int
+	Extra     map[string]string
+}
+
+// KycCheckResult is the normalized output every adapter returns.
+type KycCheckResult struct {
+	Status          KycCheckStatus
+	Match           bool
+	Confidence      float64
+	ExtractedFields map[string]string
+	Reason          string
+	ProviderRef     string // provider job/reference id
+	Raw             []byte // raw provider payload (encrypted by the store, not here)
+	// Terminal is true when this response is authoritative (sync result); false
+	// when the true outcome will arrive via webhook/callback (status = PENDING).
+	Terminal bool
+}
+
+// KycWebhookEvent is the normalized shape a provider webhook/callback maps to.
+type KycWebhookEvent struct {
+	Provider    string
+	EventID     string // dedupe key (provider event/job id)
+	ClientRef   string // correlates back to verification_check.client_ref
+	ProviderRef string
+	Status      KycCheckStatus
+	Match       bool
+	Confidence  float64
+	Reason      string
+	Raw         []byte
+}
+
+// IdNumberPort — BVN/NIN/vNIN/passport/DL/PVC data-match (no image).
+type IdNumberPort interface {
+	Named
+	VerifyIDNumber(ctx context.Context, req KycVerifyRequest) (KycCheckResult, error)
+}
+
+// FacialPort — ID + face match (BVN/NIN facial; enhanced KYC + selfie).
+type FacialPort interface {
+	Named
+	VerifyIDFacial(ctx context.Context, req KycVerifyRequest) (KycCheckResult, error)
+}
+
+// LivenessPort — selfie anti-spoof / biometric.
+type LivenessPort interface {
+	Named
+	VerifyLiveness(ctx context.Context, req KycVerifyRequest) (KycCheckResult, error)
+}
+
+// DocumentPort — OCR + authenticity + face-match on an ID document.
+type DocumentPort interface {
+	Named
+	VerifyDocument(ctx context.Context, req KycVerifyRequest) (KycCheckResult, error)
+}
+
+// AmlPort — AML / PEP screening.
+type AmlPort interface {
+	Named
+	ScreenAML(ctx context.Context, req KycVerifyRequest) (KycCheckResult, error)
+}
+
+// KycWebhookParser — hardened ingestion: verify signature, then normalize.
+type KycWebhookParser interface {
+	Named
+	VerifyKycSignature(payload []byte, signature string) bool
+	ParseKycWebhook(payload []byte) (*KycWebhookEvent, error)
 }

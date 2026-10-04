@@ -2,14 +2,11 @@ package creator
 
 // Campaign OWNER self-management: update, pause/resume, soft-delete, and the
 // featured-rail request/withdraw/unfeature pair.
-//
 // Until this file the creator surface was entirely READ-ONLY for campaigns —
 // the only mutations anywhere in the package were save/unsave bookmarks and
 // reward-fulfilment status. A creator could not fix a typo, stop a campaign
 // taking money, or remove a finished campaign.
-//
 // IRON RULES enforced here:
-//
 //   - OWNERSHIP ON EVERY MUTATION. The campaign id arrives from the client and
 //     is never trusted. Every write reads creator_id under FOR UPDATE inside the
 //     same transaction as the write, AND repeats `AND creator_id = $owner` in
@@ -29,9 +26,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-)
 
-// ─── Errors ──────────────────────────────────────────────────────────────────
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ptr"
+	"spotlight/backend/go-common/timeutil"
+)
 
 var (
 	// ErrNotOwner → 403. The caller authenticated fine but does not own the row.
@@ -90,10 +89,7 @@ const (
 // minGoalKobo mirrors the campaigns.goal_kobo CHECK constraint.
 const minGoalKobo int64 = 100
 
-// ─── Request DTOs ────────────────────────────────────────────────────────────
-
 // CampaignUpdateRequest is the PATCH body for an owner editing their campaign.
-//
 // Every field is a POINTER. A nil field means the key was ABSENT from the JSON
 // and that column is left untouched — which is what makes this a partial
 // update. Plain (non-pointer) fields would make every omitted key read as an
@@ -124,8 +120,6 @@ type FeatureRequest struct {
 	AdminNote   *string `json:"adminNote"`
 	CreatedAt   string  `json:"createdAt"`
 }
-
-// ─── Pure helpers (unit-tested without a database) ───────────────────────────
 
 // assignment is one column := value write derived from a PATCH body.
 type assignment struct {
@@ -193,7 +187,6 @@ func guardGoalNotBelowRaised(req CampaignUpdateRequest, raisedKobo int64) error 
 // buildCampaignUpdate renders the partial UPDATE. Column names are fixed
 // literals from updateAssignments and are NEVER caller input; every value is
 // bound as a positional parameter.
-//
 // The WHERE clause carries `creator_id = $owner` in addition to the id. The
 // caller has already verified ownership under FOR UPDATE; repeating it here
 // means even a future refactor that drops the explicit check cannot turn this
@@ -271,7 +264,6 @@ func guardPause(st campaignState) error {
 }
 
 // guardResume: must currently be paused, and must STILL be ACTIVE.
-//
 // The review_status re-check matters: if an admin froze or rejected the
 // campaign while it was paused, resume must not be the creator's way to put it
 // back on a public rail behind the moderator's back.
@@ -286,7 +278,6 @@ func guardResume(st campaignState) error {
 }
 
 // guardDelete refuses any campaign that has EVER held money.
-//
 // hasContributions is deliberately "a contributions row exists in ANY status",
 // not "the escrowed+released total is zero". A row with status='refunded' means
 // the campaign DID receive funds and they were sent back — the money history is
@@ -313,10 +304,7 @@ func guardFeatureRequest(st campaignState) error {
 	return nil
 }
 
-// ─── Locked read ─────────────────────────────────────────────────────────────
-
 // lockCampaign reads the campaign state under FOR UPDATE inside tx.
-//
 // FOR UPDATE is doing real work beyond serialising sibling mutations: PostgreSQL
 // enforces the contributions.campaign_id foreign key by taking a FOR KEY SHARE
 // lock on the referenced campaigns row for every INSERT into contributions, and
@@ -324,7 +312,6 @@ func guardFeatureRequest(st campaignState) error {
 // lock, no new contribution can COMMIT against this campaign — which is what
 // makes the derived "has this campaign ever received funds?" check in
 // DeleteCampaign a decision the delete can actually rely on.
-//
 // Verified against PostgreSQL 17, not merely assumed: with this SELECT ... FOR
 // UPDATE held open, a concurrent contributions INSERT blocks and times out with
 //
@@ -334,7 +321,6 @@ func guardFeatureRequest(st campaignState) error {
 //	                 WHERE "id" = $1 FOR KEY SHARE OF x
 //
 // which is the FK check itself queuing behind this lock.
-//
 // Any error (including a malformed non-UUID id) resolves to ErrNotFound so a
 // probe cannot distinguish "bad id" from "someone else's campaign".
 func lockCampaign(ctx context.Context, tx pgx.Tx, campaignID string) (campaignState, error) {
@@ -363,7 +349,6 @@ func (s *Service) audit(ctx context.Context, tx pgx.Tx, actor, action, target st
 // status, or NULL when it has never asked. Defined once and shared by every
 // owner-facing projection so the single-campaign response and the list response
 // can never disagree about whether a request is pending.
-//
 // "Latest" is by created_at: a campaign may ask again after a rejection or a
 // withdrawal (the partial unique index only forbids two OPEN requests), so
 // several rows can exist and only the newest describes the current state.
@@ -408,7 +393,7 @@ func readOwnedSummary(ctx context.Context, q interface {
 	}
 	sum.CategoryLabel = categoryLabel(sum.Category)
 	if !deadline.IsZero() {
-		sum.Deadline = ptr(rfc3339(deadline))
+		sum.Deadline = ptr.Of(timeutil.RFC3339(deadline))
 	}
 	sum.Paused = pausedAt != nil
 	sum.CreatorType = "INDIVIDUAL"
@@ -431,11 +416,8 @@ func (s *Service) finishOwnedMutation(ctx context.Context, tx pgx.Tx, campaignID
 	return out, nil
 }
 
-// ─── UpdateCampaign ──────────────────────────────────────────────────────────
-
 // UpdateCampaign applies a PARTIAL edit to a campaign the caller owns. Only the
 // keys present in the body change; siblings are untouched.
-//
 // Editing stays permitted while a campaign is ACTIVE on purpose — creators need
 // to fix typos and add progress to the story of a live fundraiser — so every
 // edit writes an audit row naming the columns that moved.
@@ -496,16 +478,12 @@ func (s *Service) UpdateCampaign(ctx context.Context, ownerID, campaignID string
 	return s.finishOwnedMutation(ctx, tx, campaignID, ownerID)
 }
 
-// ─── Pause / Resume ──────────────────────────────────────────────────────────
-
 // SetPaused pauses (paused=true) or resumes (paused=false) a campaign the caller
 // owns.
-//
 // Pause is stored in campaigns.paused_at, NOT in review_status — see the
 // migration header (20270112000000) for the full reasoning: review_status is the
 // moderator's column, its CHECK has no PAUSED value, and overloading it would
 // let a creator's resume clear an admin's FROZEN.
-//
 // Pausing also stops the campaign ACCEPTING money, not just hides it from the
 // rails: Contribute() refuses a paused campaign. An owner who pauses a fundraiser
 // means "stop", and a campaign that vanished from discovery while still taking
@@ -549,11 +527,8 @@ func (s *Service) SetPaused(ctx context.Context, ownerID, campaignID string, pau
 	return s.finishOwnedMutation(ctx, tx, campaignID, ownerID)
 }
 
-// ─── Delete (soft) ───────────────────────────────────────────────────────────
-
 // DeleteCampaign SOFT-deletes a campaign the caller owns, permitted only when
 // the campaign has never received a contribution.
-//
 // WHY SOFT: every foreign key referencing campaigns(id) is ON DELETE CASCADE
 // (contributions, cf_withdrawals, campaign_reviews, milestones, reward tiers,
 // saved campaigns, recently-viewed, CSR matches). A hard DELETE therefore does
@@ -563,7 +538,6 @@ func (s *Service) SetPaused(ctx context.Context, ownerID, campaignID string, pau
 // its creator could erase the rejection record at will; and the settlement rows
 // that reference the campaign by the TEXT ref 'campaign:<id>:contributor:<id>'
 // have no FK at all, so they are orphaned rather than cascaded.
-//
 // RACE SAFETY: the existence check and the write are ONE transaction, and the
 // FOR UPDATE taken by lockCampaign conflicts with the FOR KEY SHARE that
 // PostgreSQL takes on the parent row for every contributions INSERT. So a
@@ -571,7 +545,6 @@ func (s *Service) SetPaused(ctx context.Context, ownerID, campaignID string, pau
 // EXISTS check sees it, and the delete is refused) or blocks until this
 // transaction ends. Contribute() additionally refuses a soft-deleted campaign,
 // which rejects any contribution that starts after the delete commits.
-//
 // The one residual window — a Contribute() that read the campaign as live, then
 // blocked on the FK lock behind this delete, and inserts after it commits — is
 // precisely why this is a soft delete and not a hard one. In that case the
@@ -626,10 +599,7 @@ func (s *Service) DeleteCampaign(ctx context.Context, ownerID, campaignID string
 	return tx.Commit(ctx)
 }
 
-// ─── Feature requests ────────────────────────────────────────────────────────
-
 // RequestFeature records an owner's request to be placed on the featured rail.
-//
 // It NEVER sets campaigns.featured. Promotion stays exclusively with the admin
 // flags endpoint — a creator who could self-promote would be publishing
 // themselves straight onto the app's most prominent surface.
@@ -665,12 +635,12 @@ func (s *Service) RequestFeature(ctx context.Context, ownerID, campaignID, note 
 		// The partial unique index (one PENDING row per campaign) is the actual
 		// guard against a double request — checking first and inserting second
 		// would race with the owner's own second tap.
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return nil, ErrFeatureRequestOpen
 		}
 		return nil, err
 	}
-	fr.CreatedAt = rfc3339(createdAt)
+	fr.CreatedAt = timeutil.RFC3339(createdAt)
 
 	if err := s.audit(ctx, tx, ownerID, "campaign.owner.feature_request", campaignID); err != nil {
 		return nil, err
@@ -682,7 +652,6 @@ func (s *Service) RequestFeature(ctx context.Context, ownerID, campaignID, note 
 }
 
 // WithdrawFeatureRequest retracts the owner's pending request.
-//
 // The row is marked WITHDRAWN rather than deleted, so the admin queue keeps a
 // record that the request existed and was pulled — and so the partial unique
 // index frees up for a fresh request later.
@@ -717,7 +686,6 @@ func (s *Service) WithdrawFeatureRequest(ctx context.Context, ownerID, campaignI
 }
 
 // Unfeature removes the owner's OWN campaign from the featured rail.
-//
 // Always allowed, no approval and no status gate — this mirrors the admin
 // module's rule that DEMOTION is never status-gated (adminext/featured.go).
 // Removing yourself from a rail needs nobody's permission, and a campaign that
@@ -754,14 +722,4 @@ func (s *Service) Unfeature(ctx context.Context, ownerID, campaignID string) (*C
 		return nil, err
 	}
 	return s.finishOwnedMutation(ctx, tx, campaignID, ownerID)
-}
-
-// isUniqueViolation reports whether err is a PostgreSQL unique-constraint
-// violation (SQLSTATE 23505).
-func isUniqueViolation(err error) bool {
-	var pgErr interface{ SQLState() string }
-	if errors.As(err, &pgErr) {
-		return pgErr.SQLState() == "23505"
-	}
-	return false
 }

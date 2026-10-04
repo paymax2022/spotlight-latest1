@@ -8,9 +8,7 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 )
 
-// ---------------------------------------------------------------------------
 // Sentinel / type tests that don't require a real DB.
-// ---------------------------------------------------------------------------
 
 // TestEntryTypes verifies that credit/debit constants are distinct and non-empty.
 func TestEntryTypes(t *testing.T) {
@@ -119,21 +117,16 @@ func TestContextSignatures(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Cross-cutting double-entry invariants (QA money-path pass).
-//
 // The Repository is pgx-backed (repository.go), so the DB write paths cannot run
 // without a live Postgres. But the BALANCE-CLASSIFICATION rule that makes the
 // ledger self-consistent is pure arithmetic: it is the SQL CASE in
 // balanceProjectionSQL (repository.go:77-83):
-//
 //	CREDIT, REVERSAL_DEBIT -> +amount_kobo
 //	DEBIT,  REVERSAL_CREDIT -> -amount_kobo
-//
 // These tests transcribe that classifier and lock the invariants that keep the
 // ledger balanced. If the production CASE and this classifier ever drift, the
 // double-entry guarantee is broken — that is exactly the bug this pins.
-// ---------------------------------------------------------------------------
 
 // signOf mirrors the production balance-projection CASE (repository.go
 // balanceProjectionSQL). +1 means the entry ADDS to its account balance, -1 means

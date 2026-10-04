@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // Repository is the pgx data layer for placement. It NEVER mutates ledger tables —
@@ -33,10 +35,6 @@ func isExclusionViolation(err error) bool {
 	}
 	return false
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Zones
-// ─────────────────────────────────────────────────────────────────────────────
 
 const zoneCols = `id, code, label, layout_type, capacity, base_daily_rate_kobo,
 	tier_multiplier, position, is_active, creative_spec, rate_version`
@@ -91,10 +89,6 @@ func (r *Repository) ListZones(ctx context.Context) ([]Zone, error) {
 	}
 	return out, rows.Err()
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Campaigns
-// ─────────────────────────────────────────────────────────────────────────────
 
 const campaignCols = `id, merchant_id, subject_type, subject_id, zone_code,
 	window_start, window_end, duration_days, creative, quoted_price_kobo, rate_version,
@@ -343,9 +337,7 @@ func (r *Repository) SetPausedIntervalsAndWindow(ctx context.Context, id string,
 	return nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Reservations (EXCLUSIVE-zone slot holds)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // InsertReservation inserts a SCHEDULED reservation. If the no-overlap exclusion
 // constraint fires (SQLSTATE 23P01) it maps to ErrSlotTaken so the caller can refuse
@@ -389,9 +381,7 @@ func (r *Repository) CountActiveInZone(ctx context.Context, zoneCode string, now
 	return n, err
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Serving query (resolver)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ServingCandidates returns ACTIVE campaigns whose window contains now, for a zone,
 // excluding SUSPENDED. Ordered by tier_multiplier-weighted priority is applied in the
@@ -417,15 +407,13 @@ func (r *Repository) ServingCandidates(ctx context.Context, zoneCode string, now
 	return out, rows.Err()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Analytics events (append-only)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // InsertImpression appends one impression event.
 func (r *Repository) InsertImpression(ctx context.Context, campaignID, zoneCode, token, sessionID string) error {
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO public.placement_impression_event (campaign_id, zone_code, placement_token, session_id)
-		VALUES ($1,$2,$3,$4)`, campaignID, zoneCode, token, nullable(sessionID))
+		VALUES ($1,$2,$3,$4)`, campaignID, zoneCode, token, dbutil.NullStr(sessionID))
 	return err
 }
 
@@ -433,7 +421,7 @@ func (r *Repository) InsertImpression(ctx context.Context, campaignID, zoneCode,
 func (r *Repository) InsertTap(ctx context.Context, campaignID, zoneCode, token, sessionID string) error {
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO public.placement_tap_event (campaign_id, zone_code, placement_token, session_id)
-		VALUES ($1,$2,$3,$4)`, campaignID, zoneCode, token, nullable(sessionID))
+		VALUES ($1,$2,$3,$4)`, campaignID, zoneCode, token, dbutil.NullStr(sessionID))
 	return err
 }
 
@@ -456,9 +444,7 @@ func (r *Repository) CampaignAnalytics(ctx context.Context, campaignID string) (
 	return a, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Audit log (INSERT-only, immutable)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // InsertAudit writes one immutable audit row. actorID empty = system (scheduler) →
 // stored as NULL. before/after/metadata are arbitrary JSON.
@@ -467,7 +453,7 @@ func (r *Repository) InsertAudit(ctx context.Context, campaignID, actorID, actio
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO public.placement_audit_log (campaign_id, actor_id, action, before, after, metadata)
 		VALUES ($1,$2,$3,$4,$5,$6)`,
-		campaignID, nullable(actorID), action, jsonbOrNil(before), jsonbOrNil(after), orMap(metadata))
+		campaignID, dbutil.NullStr(actorID), action, jsonbOrNil(before), jsonbOrNil(after), orMap(metadata))
 	return err
 }
 
@@ -479,10 +465,6 @@ func jsonbOrNil(m map[string]any) any {
 	}
 	return m
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Scheduler sweep helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 // DueForActivation returns SCHEDULED campaigns whose window_start has arrived.
 func (r *Repository) DueForActivation(ctx context.Context, now time.Time, limit int) ([]Campaign, error) {
@@ -561,21 +543,9 @@ func collectCampaigns(rows pgx.Rows) ([]Campaign, error) {
 	return out, rows.Err()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// small helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
 func orMap(m map[string]any) map[string]any {
 	if m == nil {
 		return map[string]any{}
 	}
 	return m
-}
-
-// nullable turns "" into a SQL NULL for nullable text/uuid columns.
-func nullable(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }

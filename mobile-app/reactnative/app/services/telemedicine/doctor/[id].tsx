@@ -4,11 +4,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Award, Languages, MessageSquareQuote, Briefcase } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { getDoctor, formatKobo, DEMO_DOCTORS } from '@/api/telemedicine.api';
 import { TeleHeader, DoctorAvatar, RatingStars } from '@/features/telemedicine/components';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -106,7 +106,6 @@ export default function DoctorProfileScreen() {
           fullWidth={false}
           style={{ flex: 1, marginLeft: Spacing.md }}
           // Pre-consultation triage (M1–M17) runs FIRST, then booking. Launches the
-          // intake wizard in pre-booking mode (synthetic `pre-<doctorId>` id); on
           // completion it continues to the booking screen.
           onPress={() =>
             router.push({

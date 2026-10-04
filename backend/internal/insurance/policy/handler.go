@@ -3,10 +3,13 @@ package policy
 import (
 	"errors"
 	"net/http"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/insurance/gateway"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // Handler exposes member + admin policy/quote routes.
@@ -21,8 +24,6 @@ func NewHandler(svc *Service, signRef func(ref string) (string, error)) *Handler
 	return &Handler{svc: svc, signRef: signRef}
 }
 
-func userID(c *gin.Context) string { return c.GetString("user_id") }
-
 // mapErr maps service sentinel errors to HTTP responses.
 func mapErr(c *gin.Context, err error) {
 	switch {
@@ -31,7 +32,7 @@ func mapErr(c *gin.Context, err error) {
 	case errors.Is(err, ErrConsentRequired):
 		c.JSON(http.StatusPreconditionRequired, gin.H{"error": "ndpa_consent_required", "code": "consent_required"})
 	case errors.Is(err, ErrBadState):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 	default:
 		// A provider rejecting the ANSWERS is the applicant's to fix, so it is a
 		// 422 carrying the insurer's own wording — the client attributes each
@@ -52,15 +53,14 @@ func mapErr(c *gin.Context, err error) {
 			}})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
 // CreateQuote (member): POST /quotes {product_code, sum_insured_kobo, inputs}
 func (h *Handler) CreateQuote(c *gin.Context) {
-	uid := userID(c)
-	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+	uid, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -69,7 +69,7 @@ func (h *Handler) CreateQuote(c *gin.Context) {
 		Inputs         map[string]any `json:"inputs"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	qr, err := h.svc.CreateQuote(c.Request.Context(), uid, body.ProductCode, body.SumInsuredKobo, body.Inputs)
@@ -82,7 +82,7 @@ func (h *Handler) CreateQuote(c *gin.Context) {
 
 // GetQuote (member): GET /quotes/:id
 func (h *Handler) GetQuote(c *gin.Context) {
-	qr, err := h.svc.GetQuote(c.Request.Context(), userID(c), c.Param("id"))
+	qr, err := h.svc.GetQuote(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -93,12 +93,11 @@ func (h *Handler) GetQuote(c *gin.Context) {
 // Bind (member): POST /policies {quote_id} — Idempotency-Key header REQUIRED.
 // Runs the premium-debit→bind saga with mandatory auto-reverse.
 func (h *Handler) Bind(c *gin.Context) {
-	uid := userID(c)
-	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+	uid, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
-	idemKey := c.GetHeader("Idempotency-Key")
+	idemKey := ginutil.IdempotencyKey(c)
 	if idemKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
@@ -107,7 +106,7 @@ func (h *Handler) Bind(c *gin.Context) {
 		QuoteID string `json:"quote_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	p, err := h.svc.BindFromQuote(c.Request.Context(), uid, body.QuoteID, idemKey)
@@ -115,7 +114,7 @@ func (h *Handler) Bind(c *gin.Context) {
 		// A bind that auto-reversed returns the VOID policy plus an error; surface
 		// the policy state so the client can show "refunded".
 		if p != nil {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "data": p})
+			c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), "data": p})
 			return
 		}
 		mapErr(c, err)
@@ -128,7 +127,7 @@ func (h *Handler) Bind(c *gin.Context) {
 func (h *Handler) List(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	ps, err := h.svc.ListPolicies(c.Request.Context(), userID(c), limit, offset)
+	ps, err := h.svc.ListPolicies(c.Request.Context(), ginutil.UserID(c), limit, offset)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -138,7 +137,7 @@ func (h *Handler) List(c *gin.Context) {
 
 // Get (member): GET /policies/:id
 func (h *Handler) Get(c *gin.Context) {
-	p, err := h.svc.GetPolicy(c.Request.Context(), userID(c), c.Param("id"))
+	p, err := h.svc.GetPolicy(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -148,7 +147,7 @@ func (h *Handler) Get(c *gin.Context) {
 
 // Certificate (member): GET /policies/:id/certificate — signed URL.
 func (h *Handler) Certificate(c *gin.Context) {
-	ref, err := h.svc.CertificateRef(c.Request.Context(), userID(c), c.Param("id"))
+	ref, err := h.svc.CertificateRef(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -168,7 +167,7 @@ func (h *Handler) Cancel(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	p, err := h.svc.Cancel(c.Request.Context(), userID(c), c.Param("id"), body.Reason)
+	p, err := h.svc.Cancel(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.Reason)
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -185,10 +184,10 @@ func (h *Handler) AddBeneficiary(c *gin.Context) {
 		Phone        *string `json:"phone"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	b, err := h.svc.AddBeneficiary(c.Request.Context(), userID(c), c.Param("id"), &Beneficiary{
+	b, err := h.svc.AddBeneficiary(c.Request.Context(), ginutil.UserID(c), c.Param("id"), &Beneficiary{
 		FullName:     body.FullName,
 		Relationship: body.Relationship,
 		SharePercent: body.SharePercent,
@@ -203,7 +202,7 @@ func (h *Handler) AddBeneficiary(c *gin.Context) {
 
 // ListBeneficiaries (member): GET /policies/:id/beneficiaries
 func (h *Handler) ListBeneficiaries(c *gin.Context) {
-	bs, err := h.svc.ListBeneficiaries(c.Request.Context(), userID(c), c.Param("id"))
+	bs, err := h.svc.ListBeneficiaries(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
@@ -217,7 +216,7 @@ func (h *Handler) AdminSearch(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	ps, err := h.svc.SearchAdmin(c.Request.Context(), c.Query("state"), c.Query("product_code"), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": ps})

@@ -1,4 +1,3 @@
-// ── Restaurant & Delivery — Domain types ─────────────────────────────────────
 // All money is integer kobo (never floats). Mirrors the mobility/parcel type
 // conventions. The order state machine is shared across the customer, rider, and
 // restaurant roles; chat + realtime frames are typed here too.
@@ -10,7 +9,6 @@ export interface LatLng {
   lng: number;
 }
 
-// ─── Restaurant + menu ──────────────────────────────────────────────────────
 export interface Restaurant {
   id: string;
   name: string;
@@ -84,7 +82,6 @@ export interface RestaurantDetail extends Restaurant {
   menu: MenuCategory[];
 }
 
-// ─── Cart (client-side only) ──────────────────────────────────────────────────
 export interface CartLine {
   itemId: string;
   name: string;
@@ -132,10 +129,8 @@ export interface CartPackage {
   restaurantId?: string | null;
 }
 
-// ─── Order ──────────────────────────────────────────────────────────────────
 // State machine: placed → accepted → preparing → ready → picked_up → delivered
 // Terminal/edge: cancelled, no_rider (dispatch failed to assign a rider).
-//
 // The backend's owner-facing vocabulary (pending/confirmed/preparing/ready/
 // picked_up/delivered/cancelled) is supported too — 'pending' aliases 'placed'
 // and 'confirmed' aliases 'accepted'. Both are kept so neither the existing app
@@ -221,7 +216,6 @@ export interface Order {
 
 export type OrderRole = 'customer' | 'restaurant' | 'rider';
 
-// ─── Chat ─────────────────────────────────────────────────────────────────────
 export type ChatSenderRole = OrderRole | 'system';
 
 export interface ChatMessage {
@@ -234,7 +228,6 @@ export interface ChatMessage {
   createdAt: string;
 }
 
-// ─── Rider offers ───────────────────────────────────────────────────────────
 export interface RiderOffer {
   orderId: string;
   restaurantName: string;
@@ -247,7 +240,6 @@ export interface RiderOffer {
   itemCount: number;
 }
 
-// ─── Requests ───────────────────────────────────────────────────────────────
 export interface PlaceOrderRequest {
   restaurantId: string;
   items: { itemId: string; qty: number; restaurantId?: string }[];   // aggregated across packages (for pricing/charge)
@@ -266,7 +258,6 @@ export interface RateOrderRequest {
   comment?: string;
 }
 
-// ─── Realtime frames (WS) ───────────────────────────────────────────────────
 export type OrderFrame =
   | { type: 'order.status'; payload: { order_id: string; status: OrderStatus } }
   | { type: 'order.location'; payload: { order_id: string; lat: number; lng: number } }
@@ -283,7 +274,6 @@ export type OrderFrame =
       };
     };
 
-// ─── Errors ─────────────────────────────────────────────────────────────────
 export type FoodErrorCode =
   | 'NO_RIDER_FOUND'
   | 'BELOW_MIN_ORDER'

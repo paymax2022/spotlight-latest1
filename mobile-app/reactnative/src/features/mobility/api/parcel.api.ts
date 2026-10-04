@@ -1,10 +1,6 @@
-// ── Parcel delivery — API wrapper ────────────────────────────────────────────
 // Typed data layer the parcel screens code against. Mirrors mobility.api.ts:
 // mock-flagged, BASE = '/api/v1', Idempotency-Key on money mutations.
-// Flip EXPO_PUBLIC_MOBILITY_USE_MOCK=false (or EXPO_PUBLIC_PARCEL_USE_MOCK) once
 // the Go endpoints land.
-//
-// IRON RULES: all money is integer kobo; book/cancel carry an Idempotency-Key;
 // fares/insurance come from the SERVER — never computed here.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -34,7 +30,6 @@ const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
 
-// ─── Estimate ─────────────────────────────────────────────────────────────────
 export async function estimateParcel(req: ParcelEstimateRequest): Promise<ParcelEstimate> {
   if (USE_MOCK) {
     await delay(420);
@@ -52,7 +47,6 @@ export async function estimateParcel(req: ParcelEstimateRequest): Promise<Parcel
   );
 }
 
-// ─── Book (money mutation → escrow → Idempotency-Key) ──────────────────────────
 export async function bookParcel(req: ParcelBookRequest): Promise<Parcel> {
   if (USE_MOCK) {
     await delay(900);
@@ -129,7 +123,6 @@ export async function cancelParcel(id: string): Promise<Parcel> {
   return unwrap<Parcel>(await api.post(`${BASE}/mobility/parcels/${id}/cancel`, {}));
 }
 
-// ─── Rating (money mutation when tipping → Idempotency-Key; mirrors rateTrip) ───
 export async function rateParcel(
   id: string,
   stars: number,
@@ -151,9 +144,7 @@ export async function rateParcel(
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // COURIER (driver) endpoints
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getCourierRequests(): Promise<CourierParcelRequest[]> {
   if (USE_MOCK) {
     await delay(360);

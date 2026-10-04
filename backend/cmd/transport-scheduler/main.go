@@ -1,6 +1,5 @@
 // Command transport-scheduler runs the periodic (non-request-driven) jobs the
 // Transport Trip Scheduling feature depends on:
-//
 //   - dispatch-due       every 60s: find `scheduled` bookings whose lead window
 //     has arrived, flip to `dispatch_pending`, and materialize
 //     the real trip/parcel/bus artifact via the existing
@@ -15,7 +14,6 @@
 // House pattern: ticker-goroutine-style runLoop per job, mirroring
 // backend/cmd/marketplace-cron/main.go — this repo has no pg_cron / asynq
 // periodic scheduler.
-//
 // Money-path note: this binary NEVER posts ledger entries itself. All escrow /
 // refund goes through transport.Service.DispatchScheduled → the per-mode service
 // → `settlement`, the exact same guarded, idempotent path the request-driven API

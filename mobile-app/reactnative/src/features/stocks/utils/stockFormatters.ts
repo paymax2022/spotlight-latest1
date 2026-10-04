@@ -1,4 +1,3 @@
-// ── Paymax Invest · Stocks — Formatters & estimate math ──────────────────────
 // All money is minor units (integer). Display helpers convert to major units.
 // The estimate/fee math lives here so the mock API and the screens compute the
 // exact same numbers (the screens preview an estimate; the API executes one).
@@ -23,10 +22,7 @@ import type {
   StockPosition,
 } from '../types/stocks.types';
 
-// silence unused-import lint when CHART_RANGES is only referenced for typing
 void CHART_RANGES;
-
-// ─── Display ──────────────────────────────────────────────────────────────────
 
 /** Format fiat minor units as a localized major-unit string with the symbol. */
 export function formatMoney(amount: number, currency: FiatCurrency, opts?: { decimals?: boolean }): string {
@@ -85,8 +81,6 @@ export function minorToInput(amount: number, currency: FiatCurrency): string {
   return (amount / 10 ** meta.decimals).toString();
 }
 
-// ─── Time ──────────────────────────────────────────────────────────────────---
-
 export function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60_000);
@@ -114,7 +108,6 @@ export function totalFees(fees: Fee[]): number {
   return fees.reduce((sum, f) => sum + f.amount.amount, 0);
 }
 
-// ─── Estimate engine (mock) ───────────────────────────────────────────────────
 // Deterministic so the entry screen's live preview and the executed order agree.
 
 /**
@@ -161,7 +154,6 @@ export function buildEstimate(
   };
 }
 
-// ─── Portfolio aggregation (FX-aware) ─────────────────────────────────────────
 // Positions can be priced in different currencies (NGN for NGX stocks, USD for
 // US stocks). Summing raw minor units across currencies adds kobo to cents and
 // badly understates the portfolio — every value is FX-converted to the display
@@ -212,8 +204,6 @@ export function aggregatePortfolio(positions: StockPosition[], display: FiatCurr
     dayChangePct: prevValue ? +((dayChange / prevValue) * 100).toFixed(2) : 0,
   };
 }
-
-// ─── Chart (deterministic mock generator) ─────────────────────────────────────
 
 /** Deterministic price history for the asset chart (ported from crypto). */
 export function chartFor(asset: StockAsset, range: ChartRange): Candle[] {

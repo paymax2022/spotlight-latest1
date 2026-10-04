@@ -1,12 +1,7 @@
-// ── Paymax AI Trading — mobile API client ────────────────────────────────────
 // Talks to the Go trading module (backend/internal/trading, mounted at
-// /v1/trading via the frontend-web proxy). Backend JSON is snake_case; screens use
 // camelCase — normalized here. Money POSTs carry an Idempotency-Key.
-//
 // PAPER/accounting only: the fund wallet holds cash via the finance ledger and
-// mints/redeems units; there is NO live venue execution. Access is gated by the
 // decoupled Module-KYC (never the app's Tier 0-3).
-//
 // TRADING_USE_MOCK defaults TRUE so the stack is demoable offline. Set
 // EXPO_PUBLIC_TRADING_USE_MOCK=false to hit the real proxy.
 
@@ -17,7 +12,6 @@ export const TRADING_BASE = '/api/v1/trading';
 export const TRADING_USE_MOCK =
   mockAllowed(process.env.EXPO_PUBLIC_TRADING_USE_MOCK, true);
 
-// ── Types (camelCase) ─────────────────────────────────────────────────────────
 export type TradingKycStatus =
   | 'NOT_STARTED' | 'SUBMITTED' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED' | 'BYPASSED' | 'EXPIRED';
 
@@ -27,14 +21,13 @@ export interface KycState {
   bypassExpiresAt: string | null;
 }
 export interface Position {
-  units: number;              // integer-scaled (1e6 = 1.0 unit)
+  units: number;
   navPerUnitKobo: number;
   valueKobo: number;
 }
 export interface SubscribeResult { unitsMinted: number; navPerUnitKobo: number; }
 export interface RedeemResult { cashKobo: number; navPerUnitKobo: number; }
 
-// ── camel/snake helpers ───────────────────────────────────────────────────────
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && (v as object).constructor === Object;
 const camel = (s: string) => s.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
 function deepCamel<T>(v: unknown): T {
@@ -52,7 +45,6 @@ export function newIdempotencyKey(): string {
   return `trd_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-// ── In-memory mock (offline demo) ─────────────────────────────────────────────
 const mock = {
   status: 'NOT_STARTED' as TradingKycStatus,
   units: 0,
@@ -61,7 +53,6 @@ const mock = {
 const mockHasAccess = () => mock.status === 'APPROVED' || mock.status === 'BYPASSED';
 const delay = <T,>(v: T) => new Promise<T>((r) => setTimeout(() => r(v), 200));
 
-// ── Endpoints ─────────────────────────────────────────────────────────────────
 export async function getKyc(): Promise<KycState> {
   if (TRADING_USE_MOCK) return delay({ status: mock.status, hasAccess: mockHasAccess(), bypassExpiresAt: null });
   const res = await api.get(`${TRADING_BASE}/kyc/status`);
@@ -100,7 +91,6 @@ export async function redeem(units: number, idem = newIdempotencyKey()): Promise
   return unwrap<RedeemResult>(res);
 }
 
-// ── Strategy maturity (§12 promotion ladder) — read-only transparency ─────────
 // The sanitized member view of how the fund is managed: which strategies run and
 // at what validated maturity. No governance internals (verdict/track-record/maker-
 // checker) are exposed. Canary/Live are eligibility states — this build executes

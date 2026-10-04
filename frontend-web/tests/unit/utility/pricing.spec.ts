@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateUtilityPricing, resolveUtilityAmount } from '@/src/server/utility/pricing';
+import { calculateUtilityPricing, resolveUtilityAmount } from '@/src/server/utility/helpers';
 import type { UtilityProductMappingRow, UtilityProductRow } from '@/src/server/utility/types';
 
 const fixedProduct: UtilityProductRow = {

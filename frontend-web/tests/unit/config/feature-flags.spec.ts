@@ -38,8 +38,6 @@ describe('Feature flags', () => {
     }
   });
 
-  // ── Default-off invariant ───────────────────────────────────────────────────
-
   it('wallet flag is OFF by default', () => expect(featureFlags.wallet()).toBe(false));
   it('kyc flag is OFF by default', () => expect(featureFlags.kyc()).toBe(false));
   it('virtualAccounts flag is OFF by default', () => expect(featureFlags.virtualAccounts()).toBe(false));
@@ -47,8 +45,6 @@ describe('Feature flags', () => {
   it('referrals flag is OFF by default', () => expect(featureFlags.referrals()).toBe(false));
   it('fintechAdmin flag is OFF by default', () => expect(featureFlags.fintechAdmin()).toBe(false));
   it('tierLimits flag is OFF by default', () => expect(featureFlags.tierLimits()).toBe(false));
-
-  // ── Activation ─────────────────────────────────────────────────────────────
 
   it('wallet flag turns ON when env var is exactly "true"', () => {
     process.env.FEATURE_WALLET_ENABLED = 'true';
@@ -69,8 +65,6 @@ describe('Feature flags', () => {
     expect(featureFlags.kyc()).toBe(false);
   });
 
-  // ── requireFeature guard ───────────────────────────────────────────────────
-
   it('requireFeature throws ApiError(503) when the flag is off', async () => {
     const { ApiError } = await import('@/src/lib/api/responses');
     expect(() => requireFeature('wallet')).toThrow(ApiError);
@@ -86,8 +80,6 @@ describe('Feature flags', () => {
     process.env.FEATURE_KYC_ENABLED = 'true';
     expect(() => requireFeature('kyc')).not.toThrow();
   });
-
-  // ── Independence ───────────────────────────────────────────────────────────
 
   it('enabling one flag does not enable another', () => {
     process.env.FEATURE_WALLET_ENABLED = 'true';

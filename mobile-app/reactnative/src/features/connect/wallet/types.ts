@@ -1,8 +1,6 @@
 // Paymax Connect — Wallet / Gifting / Tier-KYC / Payout types (PRD §6.4, §7, §10.9 WL-*).
-//
 // SAFETY INVARIANTS (docs/prd/dating/CLAUDE.md):
 //  • Payments ONLY via the Paymax wallet. Gifting is wallet-to-wallet REAL Naira.
-//  • Entitlements & tier checks are server-side; the client renders read-only
 //    projections of backend-owned config + verification state.
 //  • Every money-moving surface shows tier + daily limit + remaining allowance.
 //  • Every mutation carries an Idempotency-Key.
@@ -10,14 +8,11 @@
 
 import type { ConnectTier, TierStatus, WalletSummary } from '../types/connect.types';
 
-// Re-export the foundation types so wallet screens can import from one place
 // without redefining them. TierStatus / WalletSummary remain owned by
 // connect.types.ts — these are pass-through aliases only.
 export type { ConnectTier, TierStatus, WalletSummary };
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Wallet ledger / history (WL-01..WL-04)
-// ─────────────────────────────────────────────────────────────────────────────
 
 export type WalletEntryDirection = 'credit' | 'debit';
 
@@ -32,7 +27,6 @@ export type WalletEntryKind =
 
 export type WalletEntryStatus = 'completed' | 'pending' | 'failed' | 'reversed';
 
-// A ledger-style line item. `amountKobo` is always positive; `direction` carries
 // the sign. `balanceAfterKobo` is the running wallet projection after this entry.
 export interface WalletEntry {
   id: string;
@@ -62,9 +56,7 @@ export interface FundResult {
   tier: TierStatus;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Gifting (PRD §6.4) — wallet-to-wallet real Naira
-// ─────────────────────────────────────────────────────────────────────────────
 
 export interface GiftProduct {
   id: string;
@@ -91,7 +83,7 @@ export interface GiftQuote {
   feeKobo: number;
   totalKobo: number;
   tier: TierStatus;
-  remainingAfterKobo: number | null; // null => unlimited (Tier 3)
+  remainingAfterKobo: number | null;
   withinLimit: boolean;
 }
 
@@ -120,9 +112,7 @@ export interface SendGiftResult {
   tier: TierStatus;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tier / KYC upgrade flows (PRD §7) — CBN three-tier model
-// ─────────────────────────────────────────────────────────────────────────────
 
 export type KycStepState = 'not_started' | 'pending' | 'passed' | 'rejected';
 
@@ -130,9 +120,9 @@ export interface TierLimitsRow {
   tier: ConnectTier;
   label: string;
   requirement: string;
-  dailyLimitKobo: number | null;    // null => no fixed ceiling (Tier 3)
+  dailyLimitKobo: number | null;
   singleGiftMaxKobo: number | null;
-  withdrawDailyKobo: number | null; // null/0 => withdraw disabled
+  withdrawDailyKobo: number | null;
   privileges: string[];
 }
 
@@ -150,7 +140,7 @@ export interface KycStatus {
   // Overall review state for an in-flight upgrade application.
   reviewState: 'none' | 'pending' | 'rejected';
   rejectionReason?: string;
-  pendingTarget?: ConnectTier;  // tier being applied for, when reviewState=pending
+  pendingTarget?: ConnectTier;
 }
 
 // Inputs for each upgrade step. The server verifies against the official
@@ -172,7 +162,7 @@ export interface Tier2Input {
 
 export interface Tier3Input {
   livenessUri: string;          // captured liveness selfie/video URI
-  sourceOfFunds: string;        // EDD: declared source of funds
+  sourceOfFunds: string;
   occupation: string;
   expectedMonthlyVolumeKobo: number;
 }
@@ -185,9 +175,7 @@ export interface UpgradeResult {
   message: string;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Creator payouts (PRD §10.9) — gift-revenue withdrawal, Tier2+ & KYC gated
-// ─────────────────────────────────────────────────────────────────────────────
 
 export interface PayoutEligibility {
   eligible: boolean;

@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface Props {
   payoutRef:   string;
@@ -19,7 +19,6 @@ interface Props {
 
 // New component (Y): a payout-history row (ref + period + amount + status pill +
 // chevron) for the payout list and report. The earnings PayoutRow is local to
-// (tabs)/earnings.tsx and typed to the Phase 1 PayoutItem; this row is reused by
 // the payout-detail list / report over the richer PayoutDetail, with a visible
 // failed state, so a shared row is justified.
 export default function PayoutDetailRow({ payoutRef, periodLabel, consultCount, amount, statusLabel, statusTone, failed, onPress }: Props) {

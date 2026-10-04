@@ -3,13 +3,15 @@ package care
 import (
 	"log"
 	"net/http"
+	triage "spotlight/backend/internal/health/triage"
+	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/services"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"spotlight/backend/internal/middleware"
-	"spotlight/backend/internal/services"
+	"spotlight/backend/go-common/ginutil"
 )
 
 // Handler exposes the PRD §6 care-loop + SC-5/SC-8 API. AuthN is the finance auth
@@ -22,31 +24,25 @@ type Handler struct {
 // NewHandler builds the care HTTP handler.
 func NewHandler(svc *CareService) *Handler { return &Handler{svc: svc} }
 
-func uid(c *gin.Context) string { return c.GetString("user_id") }
-
-func fail(c *gin.Context, status int, msg string) {
-	c.JSON(status, gin.H{"success": false, "error": msg})
-}
-
 // Refer — POST /health/triage/sessions/:id/refer
 // body: { level }. Routes the disposition; for emergency returns the SC-8 payload
 // and the raised escalation.
 func (h *Handler) Refer(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
 		Level int `json:"level"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "invalid body")
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	res, err := h.svc.Refer(c.Request.Context(), id, c.Param("id"), req.Level)
 	if err != nil {
-		fail(c, http.StatusUnprocessableEntity, err.Error())
+		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "result": res})
@@ -54,9 +50,9 @@ func (h *Handler) Refer(c *gin.Context) {
 
 // PayReferral — POST /health/triage/referrals/:id/pay  (wallet charge, idempotent)
 func (h *Handler) PayReferral(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	var req struct {
@@ -64,12 +60,12 @@ func (h *Handler) PayReferral(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&req)
 	idem := req.IdempotencyKey
-	if hk := c.GetHeader("Idempotency-Key"); hk != "" {
+	if hk := ginutil.IdempotencyKey(c); hk != "" {
 		idem = hk
 	}
 	ref, err := h.svc.PayReferral(c.Request.Context(), id, c.Param("id"), idem)
 	if err != nil {
-		fail(c, http.StatusUnprocessableEntity, err.Error())
+		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "referral": ref})
@@ -81,7 +77,7 @@ func (h *Handler) NearestEmergency(c *gin.Context) {
 	lng, _ := strconv.ParseFloat(c.Query("lng"), 64)
 	info, err := h.svc.NearestEmergency(c.Request.Context(), lat, lng)
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "emergency": info})
@@ -89,26 +85,24 @@ func (h *Handler) NearestEmergency(c *gin.Context) {
 
 // ListReferrals — GET /health/triage/referrals  (mine)
 func (h *Handler) ListReferrals(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	rows, err := h.svc.ListReferrals(c.Request.Context(), id)
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "referrals": rows})
 }
 
-// ─── Admin (RBAC health.triage.review) ───────────────────────────────────────
-
 // AdminListEscalations — GET /health/triage/escalations?state=
 func (h *Handler) AdminListEscalations(c *gin.Context) {
 	rows, err := h.svc.ListEscalations(c.Request.Context(), c.Query("state"))
 	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "escalations": rows})
@@ -116,14 +110,14 @@ func (h *Handler) AdminListEscalations(c *gin.Context) {
 
 // AdminAcknowledge — POST /health/triage/escalations/:id/ack  (clinician picks up)
 func (h *Handler) AdminAcknowledge(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	e, err := h.svc.Acknowledge(c.Request.Context(), c.Param("id"), id)
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "escalation": e})
@@ -131,14 +125,14 @@ func (h *Handler) AdminAcknowledge(c *gin.Context) {
 
 // AdminResolve — POST /health/triage/escalations/:id/resolve  (clinician closes)
 func (h *Handler) AdminResolve(c *gin.Context) {
-	id := uid(c)
+	id := ginutil.UserID(c)
 	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 	e, err := h.svc.Resolve(c.Request.Context(), c.Param("id"), id)
 	if err != nil {
-		fail(c, http.StatusConflict, err.Error())
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "escalation": e})
@@ -151,7 +145,6 @@ func (h *Handler) AdminResolve(c *gin.Context) {
 //	member: POST /health/triage/sessions/:id/refer
 //	        POST /health/triage/referrals/:id/pay
 //	        GET  /health/triage/emergency/nearest?lat=&lng=   (SC-8, always available)
-//	        GET  /health/triage/referrals                     (mine)
 //	admin (RBAC health.triage.review):
 //	        GET  /health/triage/escalations
 //	        POST /health/triage/escalations/:id/ack
@@ -177,11 +170,79 @@ func RegisterHealthTriageCare(member, admin *gin.RouterGroup, pool *pgxpool.Pool
 	}
 	if admin != nil {
 		// admin is already rooted at /api/health/triage/admin (adminGroupTop5 in
-		// health_triage_routes.go) — these used to re-prepend "/health/triage",
-		// doubling the segment and 404ing every escalation admin call.
+		// health_triage_routes.go) — subpaths must stay bare.
 		admin.GET("/escalations", guard("health.triage.review"), h.AdminListEscalations)
 		admin.POST("/escalations/:id/ack", guard("health.triage.review"), h.AdminAcknowledge)
 		admin.POST("/escalations/:id/resolve", guard("health.triage.review"), h.AdminResolve)
 	}
 	log.Println("[health.triage.care] care-routing + escalation routes registered — refer/pay/emergency + escalations")
 }
+
+// CareReferral is the routed next-step for a triage session (DB:
+// health_triage_care_referrals). It is the CareReferral state machine carrier:
+//
+//	created → routed(pharmacy|lab|telemed|emergency|self_care) → paid → fulfilled
+//	        → follow_up → closed   (emergency/self_care need no payment)
+//
+// AmountMinor is in kobo; PaymentRef pins the ledger charge once paid; TargetRef
+// pins the downstream booking/order id once booked.
+type CareReferral struct {
+	ID               string               `json:"id"`
+	SessionID        string               `json:"session_id"`
+	UserID           string               `json:"user_id"`
+	DispositionLevel int                  `json:"disposition_level"`
+	Route            string               `json:"route"` // pharmacy|lab|telemed|emergency|self_care
+	TargetRef        *string              `json:"target_ref,omitempty"`
+	State            triage.ReferralState `json:"state"`
+	AmountMinor      int64                `json:"amount_minor"`
+	PaymentRef       *string              `json:"payment_ref,omitempty"`
+	IdempotencyKey   *string              `json:"idempotency_key,omitempty"`
+	CreatedAt        time.Time            `json:"created_at"`
+	UpdatedAt        time.Time            `json:"updated_at"`
+}
+
+// Escalation is a human-in-loop case raised for a high-risk/emergency disposition
+// (DB: health_triage_escalations). SC-5: a machine never closes it — a licensed
+// clinician acknowledges then resolves. State machine:
+//
+//	raised → notified → acknowledged → resolved
+type Escalation struct {
+	ID          string                 `json:"id"`
+	SessionID   string                 `json:"session_id"`
+	UserID      string                 `json:"user_id"`
+	State       triage.EscalationState `json:"state"`
+	Reason      string                 `json:"reason"`
+	ClinicianID *string                `json:"clinician_id,omitempty"`
+	RaisedAt    time.Time              `json:"raised_at"`
+	AckAt       *time.Time             `json:"ack_at,omitempty"`
+	ResolvedAt  *time.Time             `json:"resolved_at,omitempty"`
+}
+
+// EmergencyInfo is the SC-8 emergency-screen payload: nearest ER + ambulance hint
+// + first-aid guidance. It carries no PII and is always available.
+type EmergencyInfo struct {
+	FacilityName    string  `json:"facility_name"`
+	FacilityAddress string  `json:"facility_address"`
+	DistanceM       float64 `json:"distance_m"`
+	AmbulanceNumber string  `json:"ambulance_number"`
+	FirstAid        string  `json:"first_aid"`
+}
+
+// ReferResult is what Refer returns: the referral, plus (for emergency) the
+// always-available emergency payload and the raised escalation so the caller can
+// drive the SC-8 emergency screen + SC-5 hand-off in one round-trip.
+type ReferResult struct {
+	Referral   *CareReferral  `json:"referral"`
+	Emergency  *EmergencyInfo `json:"emergency,omitempty"`
+	Escalation *Escalation    `json:"escalation,omitempty"`
+}
+
+// NigeriaAmbulanceNumber is the national emergency line surfaced on the emergency
+// screen. It is a constant (no PII) and always returned with EmergencyInfo.
+const NigeriaAmbulanceNumber = "112"
+
+// defaultFirstAid is the conservative, non-diagnostic first-aid guidance shown on
+// the emergency screen while help is on the way (SC-1: navigation, not diagnosis).
+const defaultFirstAid = "Stay with the patient. Keep them still and calm. " +
+	"If unconscious and not breathing normally, begin CPR if trained. " +
+	"Do not give food or drink. Call the ambulance number now."

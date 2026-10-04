@@ -1,4 +1,3 @@
-// ── Admin — Paymax Social P2P Escrow (dispute arbitration) ops console types ───
 // Field names mirror the Go JSON (snake_case) from /api/p2p/admin/* (escrow).
 // Money is BIGINT kobo (minor units) throughout — display via formatNaira (kobo → ₦).
 // Invariants surfaced in the UI:
@@ -17,7 +16,6 @@ export type EscrowFraudKind = 'mule_account' | 'structuring' | 'collusive_disput
 export type EscrowFraudStatus = 'open' | 'investigating' | 'cleared' | 'blocked';
 export type EscrowFraudAction = 'investigate' | 'clear' | 'block';
 
-// ── A · Dashboard / oversight ────────────────────────────────────────────────
 export interface EscrowDashboardActivity {
   id: string;
   kind: string; // hold_created | released | refunded | dispute_opened | dispute_resolved | mule_flag …
@@ -45,7 +43,6 @@ export interface EscrowDashboard {
   activity: EscrowDashboardActivity[];
 }
 
-// ── B · Disputes list + detail (arbitration console) ─────────────────────────
 export interface DisputeListItem {
   id: string;
   escrow_id: string;
@@ -102,7 +99,6 @@ export interface ArbitrationResult {
   message: string;
 }
 
-// ── C · Escrow fraud — mule / AML detection ──────────────────────────────────
 export interface EscrowFraudSignal {
   id: string;
   escrow_id: string | null;

@@ -6,6 +6,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // Repository is the parameterized data layer for network/override tables. It also
@@ -79,7 +81,7 @@ func (r *Repository) SetAmbassadorStatus(ctx context.Context, ambID, status, app
 		    approved_at = CASE WHEN $2 = 'approved' THEN now() ELSE approved_at END,
 		    updated_at = now()
 		WHERE id = $1`
-	tag, err := r.db.Exec(ctx, q, ambID, status, nullable(approvedBy))
+	tag, err := r.db.Exec(ctx, q, ambID, status, dbutil.NullStr(approvedBy))
 	if err != nil {
 		return fmt.Errorf("network: set ambassador status: %w", err)
 	}
@@ -251,9 +253,9 @@ func (r *Repository) RecordOverride(ctx context.Context, o Override, idemKey str
 		RETURNING id`
 	var id string
 	err := r.db.QueryRow(ctx, q,
-		o.BeneficiaryID, nullable(o.NetworkID), nullable(o.SourceUserID), nullable(o.CampaignID),
+		o.BeneficiaryID, dbutil.NullStr(o.NetworkID), dbutil.NullStr(o.SourceUserID), dbutil.NullStr(o.CampaignID),
 		o.ActivityBaseKobo, o.OverrideBps, o.AmountKobo, o.CapAppliedKobo,
-		nullable(o.RewardLedgerID), idemKey).Scan(&id)
+		dbutil.NullStr(o.RewardLedgerID), idemKey).Scan(&id)
 	if err == pgx.ErrNoRows {
 		var existing string
 		if e := r.db.QueryRow(ctx, `SELECT id FROM referral_overrides WHERE idempotency_key = $1`, idemKey).Scan(&existing); e != nil {
@@ -270,7 +272,7 @@ func (r *Repository) RecordOverride(ctx context.Context, o Override, idemKey str
 // SetOverrideLedgerID backfills the reward-ledger id after RB0 accrual.
 func (r *Repository) SetOverrideLedgerID(ctx context.Context, overrideID, ledgerID string) error {
 	_, err := r.db.Exec(ctx,
-		`UPDATE referral_overrides SET reward_ledger_id = $2 WHERE id = $1`, overrideID, nullable(ledgerID))
+		`UPDATE referral_overrides SET reward_ledger_id = $2 WHERE id = $1`, overrideID, dbutil.NullStr(ledgerID))
 	if err != nil {
 		return fmt.Errorf("network: set override ledger id: %w", err)
 	}
@@ -373,13 +375,6 @@ func (r *Repository) UpsertPolicy(ctx context.Context, in PolicyInput) (*Overrid
 		return nil, fmt.Errorf("network: upsert policy: %w", err)
 	}
 	return &p, nil
-}
-
-func nullable(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 // NetworkSummary is a network with its member count, for the admin directory.

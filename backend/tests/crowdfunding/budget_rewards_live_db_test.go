@@ -1,17 +1,13 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests for campaign budget lines and reward tiers.
-//
 // Both were the milestones story again: cf_reward_tiers existed and nothing ever
 // wrote it, cf_campaign_budget did not exist at all, and GetDetail returned empty
 // arrays for both. The campaign page therefore said "0 budget items" under a
 // heading promising to explain where the money goes, and offered no rewards on a
 // campaign whose creator had defined them in the wizard.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run 'LiveDB_Budget|LiveDB_Reward' -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

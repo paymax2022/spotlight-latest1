@@ -1,9 +1,6 @@
 // Unit tests for the identity /me adapter (nested Go aggregate → flat
 // AcademyProfile), pinned against the real /me shape. Run: npm run test:academy
-//
-// The mobile screens code against a flat AcademyProfile; the Go /me returns
 // {user_id, roles[], profiles[], guardian_links[], guarded_by[]}. adaptMe bridges
-// them: role/kyc mapping, class_id→classCode resolution, guardian-consent
 // derivation, and onboardingComplete inference — so profile state can go live
 // (and persist across launches) without regressing the minor-consent gate.
 

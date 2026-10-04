@@ -1,4 +1,3 @@
-// ── Admin — Restaurant & Delivery types (mirror of backend/internal/finance/restaurant) ──
 // All monetary amounts are integers in minor units (kobo). Never floats.
 
 /**
@@ -113,7 +112,6 @@ export interface AdminRestaurantQuery {
   offset?: number;
 }
 
-// ── Menu (admin store management) ────────────────────────────────────────────
 // Mirrors backend/internal/restaurant/model.go MenuCategory / MenuItem.
 
 export interface MenuItem {
@@ -304,16 +302,13 @@ export interface OrderMessage {
   created_at: string;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Ops-console extensions (dispatch · onboarding · payouts · refunds/disputes).
 // These surfaces mirror the restaurant.order.* state machine and money-path
 // invariants (integer kobo, double-entry ledger, immutable audit, reviewer
 // note). Where a backend admin route already exists it is consumed; where one
 // does not yet exist the shape below is the target contract the service mocks
 // against (documented per-field in restaurantAdminService.ts).
-// ─────────────────────────────────────────────────────────────────────────────
 
-// ── Rider dispatch board ─────────────────────────────────────────────────────
 export type RiderStatus = 'available' | 'on_delivery' | 'offline' | 'suspended';
 
 export interface Rider {
@@ -332,7 +327,6 @@ export interface Rider {
 }
 
 // An order that needs dispatch attention (ready / picked_up / dispatch_failed).
-//
 // `assigned` used to be listed here as an order status. It is not one: whether a
 // rider is carrying the order lives in `orders.dispatch_status`, which is why
 // this now carries both columns rather than conflating them.
@@ -405,7 +399,6 @@ export interface AdminDispatchPage {
   stalledAfterMinutes: number;
 }
 
-// ── Restaurant onboarding / KYC review queue ─────────────────────────────────
 export type OnboardingStatus =
   | 'pending'
   | 'in_review'
@@ -435,13 +428,15 @@ export interface RestaurantApplication {
   bank_name?: string;
   documents: OnboardingDoc[];
   status: OnboardingStatus;
+  /** Raw restaurants.kyb_status — absent means the owner never submitted;
+   *  'status' maps both that and 'submitted' to 'pending' (E2E-PROV-020). */
+  kyb_status?: string | null;
   submitted_at: string;
   reviewed_at?: string | null;
   reviewer_id?: string | null;
   review_note?: string | null;
 }
 
-// ── Payout runs (restaurant settlement + rider earnings) ─────────────────────
 export type PayeeType = 'restaurant' | 'rider';
 export type PayoutRunStatus = 'draft' | 'pending' | 'processing' | 'paid' | 'failed';
 
@@ -468,16 +463,12 @@ export interface PayoutRun {
   total_net_kobo: number;
   created_at: string;
   processed_at?: string | null;
-  // reconciliation: does the sum of line nets equal the ledger-settled total?
   ledger_settled_kobo?: number;
   reconciled?: boolean;
 }
 
-// ── Merchant/rider WITHDRAWALS (money path; FOOD-005) ─────────────────────────
 // Mirrors backend/internal/restaurant/withdrawal.go's Withdrawal struct and the
 // CHECK constraint on restaurant_withdrawals.status. Distinct from PayoutRun
-// above: a payout run pays a provider FROM the platform's settlement account
-// INTO their wallet; a withdrawal is the separate, subsequent step of the
 // provider moving money OUT of that wallet to their bank account.
 export type WithdrawalStatus = 'pending' | 'processing' | 'paid' | 'failed' | 'reversed';
 
@@ -496,7 +487,6 @@ export interface Withdrawal {
   updated_at: string;
 }
 
-// ── Refunds & disputes queue (money path) ────────────────────────────────────
 export type DisputeStatus = 'open' | 'in_review' | 'resolved' | 'closed';
 export type DisputeResolution = 'refunded' | 'settled' | 'dismissed';
 export type DisputeType =

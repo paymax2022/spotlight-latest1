@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { MAIN_POSITION_SUFFIX } from '@/src/server/elections/elections.service';
 
-// GET /api/v1/elections/{id}/ballot — the caller's MyBallot for this election.
+// The caller's MyBallot for this election.
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireRequestUser(request);

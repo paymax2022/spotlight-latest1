@@ -41,7 +41,7 @@ API source of truth: `contracts/openapi.yaml`.
   the migration that reached the base branch **last** renumbers. Enforced by
   `scripts/ci/check-migration-versions.sh` in the `hygiene` CI lane.
 - The golden-path regression suite must be green before and after every change:
-  `cd frontend-web && npm run test:regression` (9 specs, 120 tests).
+  `cd frontend-web && npm run test:regression` (10 specs, 129 tests).
 
 ### Local dev accounts
 - **Never hand-reset a fixture account's password.** Run
@@ -70,12 +70,13 @@ API source of truth: `contracts/openapi.yaml`.
 
 ## Stack & layout
 - **Frontend web:** `frontend-web/` — Next.js 14.2, TypeScript, Tailwind CSS, Supabase SSR;
-  served on cPanel Passenger (Node 20 + `frontend-web/server.js` entrypoint).
+  deploy targets are fragmented across cPanel Passenger (Node 20 + `frontend-web/server.js`),
+  Render (`render.yaml`) and Railway — see AUD-INFRA-003 in docs/full_audit.md.
 - **Admin dashboard:** `frontend-admin/` — Next.js 15.1, port 3001 (console at http://localhost:3001/admin). No Refine.
-- **Backend API:** `backend/` — Go 1.23, Gin v1.10; module `spotlight/backend`.
+- **Backend API:** `backend/` — Go 1.27 (go.mod `go 1.27.1`), Gin v1.10; module `spotlight/backend`.
 - **Mobile:** `mobile-app/reactnative/` (React Native/Expo), `mobile-app/vue-quasar/` (Vue 3).
 - **Database:** PostgreSQL 17 via Supabase (cloud-hosted). No ORM — raw Supabase JS client
-  + SQL RPCs. ~291 additive-only migrations in `supabase/migrations/`. Local DB port 54322.
+  + SQL RPCs. ~570 additive-only migrations in `supabase/migrations/`. Local DB port 54322.
 - **Auth:** Supabase Auth (managed JWT/HS256). HTTP-only cookie session in Next.js middleware
   (`frontend-web/src/middleware.ts`); Bearer token validated via service-role client in API
   route handlers (`frontend-web/src/lib/auth/request.ts`); Go backend uses
@@ -111,11 +112,13 @@ API source of truth: `contracts/openapi.yaml`.
 There is **no root `package.json`** — every `npm run` below must be run from its own
 module directory.
 - `cd frontend-web && npm run test:regression` — golden-path regression suite
-  (must always pass): `tests/unit/golden-path`, 9 specs, 120 tests
+  (must always pass): `tests/unit/golden-path`, 10 specs, 129 tests
 - `cd frontend-web && npm run test:money` — money invariants (`tests/unit/estate`,
   `tests/unit/wallet`, `tests/unit/tiers`)
-- `cd frontend-web && npm run contract:check` — estate implementation vs
-  `contracts/estate.openapi.yaml` (estate only — it does not check `openapi.yaml`)
+- `cd frontend-web && npm run contract:check` — validates every
+  `contracts/*.openapi.yaml` parses + carries openapi/paths, then checks
+  estate implementation vs `contracts/estate.openapi.yaml`
+  (impl-conformance is estate-only — other contracts are syntax-gated only)
 - `cd frontend-web && npm run lint` — ESLint via Next.js lint config
 - `cd frontend-admin && npm run type-check` — TypeScript strict check (`tsc --noEmit`)
 - `cd frontend-web && npx tsc --noEmit` — TypeScript check for the web app

@@ -1,25 +1,19 @@
-// ── Paymax Invest · Stocks — Type Contract ───────────────────────────────────
 // Source of truth the stocks screens code against. Mirrors the crypto module
 // (Asset · Order · Position · Portfolio) for the equities/ETF surface.
-//
 // IRON RULES (same as crypto):
 //  • Money is integer MINOR UNITS — fiat in kobo/cents. Never floats.
 //  • Fees, limits, availability are server-config — the client renders what the
 //    asset/estimate payload says (never hard-coded).
 //  • Every order mutation carries an Idempotency-Key.
 
-// ─── Money primitives ─────────────────────────────────────────────────────────
-
 /** Fiat currencies the invest wallet funds stock orders from (NGN-first, USD where enabled). */
 export type FiatCurrency = 'NGN' | 'USD';
 
 /** Canonical fiat money object — integer minor units (kobo/cents) + ISO-4217. */
 export interface FiatMoney {
-  amount: number;        // integer, minor units (e.g. 105000 = ₦1,050.00)
+  amount: number;
   currency: FiatCurrency;
 }
-
-// ─── Market / asset enums ─────────────────────────────────────────────────────
 
 export type StockExchange = 'NGX' | 'NASDAQ' | 'NYSE';
 export type MarketStatus = 'open' | 'closed' | 'pre' | 'post';
@@ -44,8 +38,6 @@ export type StockOrderStatus =
   | 'Failed'
   | 'ReversalPending'
   | 'Reversed';
-
-// ─── Asset (admin-whitelisted, server-driven config) ──────────────────────────
 
 /**
  * A tradable stock / ETF. Every control here is admin-set / server-driven — the
@@ -93,8 +85,6 @@ export interface Candle {
 
 export type ChartRange = '1D' | '1W' | '1M' | '3M' | '1Y';
 
-// ─── News / dividends / corporate actions ─────────────────────────────────────
-
 export interface StockNews {
   id: string;
   title: string;
@@ -122,8 +112,6 @@ export interface CorporateAction {
   status: string;
 }
 
-// ─── Fees / order estimate ────────────────────────────────────────────────────
-
 export interface Fee {
   type: string;
   amount: FiatMoney;
@@ -140,11 +128,9 @@ export interface OrderEstimate {
   limitPrice?: FiatMoney;    // for limit orders
   gross: FiatMoney;          // qty * (limit ?? est) price
   fees: Fee[];
-  total: FiatMoney;          // buy: gross + fees / sell: gross - fees
+  total: FiatMoney;
   settlementCycle: string;
 }
-
-// ─── Order (server-authoritative result) ──────────────────────────────────────
 
 export interface StockOrder {
   id: string;
@@ -170,8 +156,6 @@ export interface StockOrder {
   createdAt: string;
   statusHistory: { status: StockOrderStatus; at: string }[];
 }
-
-// ─── Portfolio / positions ────────────────────────────────────────────────────
 
 export interface StockPosition {
   assetId: string;
@@ -201,8 +185,6 @@ export interface StockPortfolio {
   positions: StockPosition[];
 }
 
-// ─── Public offers (IPO / rights issues) ──────────────────────────────────────
-
 export interface PublicOffer {
   id: string;
   symbol: string;
@@ -216,8 +198,6 @@ export interface PublicOffer {
   status: 'open' | 'upcoming' | 'closed';
   summary: string;
 }
-
-// ─── Draft the screens build up before hitting a mutation ─────────────────────
 
 export interface OrderDraft {
   assetId: string;

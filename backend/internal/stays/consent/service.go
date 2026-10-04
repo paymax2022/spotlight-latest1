@@ -3,9 +3,18 @@ package consent
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+)
+
+const (
+	keyError = "error"
 )
 
 // NDPA consent for the Stays module. A consent gates ANY guest-PII share with a
@@ -84,4 +93,47 @@ func (s *Service) HasCurrent(ctx context.Context, userID, scope string) (bool, e
 		return false, fmt.Errorf("consent: check: %w", err)
 	}
 	return exists, nil
+}
+
+// Handler exposes the member NDPA consent routes for Stays.
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler constructs the consent handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Status (member): GET /consent?scope= — has the guest granted current consent?
+func (h *Handler) Status(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "unauthenticated"})
+		return
+	}
+	scope := c.DefaultQuery("scope", DefaultScope)
+	ok, err := h.svc.HasCurrent(c.Request.Context(), uid, scope)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"granted": ok, "version": CurrentNDPAVersion, "scope": scope}})
+}
+
+// Grant (member): POST /consent {scope} — record consent for the current version.
+func (h *Handler) Grant(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "unauthenticated"})
+		return
+	}
+	var body struct {
+		Scope string `json:"scope"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	r, err := h.svc.Grant(c.Request.Context(), uid, body.Scope)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": r})
 }

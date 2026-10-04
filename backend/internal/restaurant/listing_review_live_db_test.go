@@ -1,11 +1,9 @@
 package restaurant
 
 // LIVE-DB tests for listing review (foodhub A6 / §6.3).
-//
 // The single most important property is NOT that moderation works — it is that
 // turning it on is a decision, and that with the flag OFF customers see exactly
 // what they saw before this feature existed (PRD §1.4).
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (
@@ -91,13 +89,11 @@ func TestLiveDB_ModerationOnHidesUnapprovedListings(t *testing.T) {
 
 // The backfill's effect ("every pre-existing restaurant is APPROVED, so enabling
 // moderation does not empty the marketplace") is NOT asserted here.
-//
 // I wrote that test twice as a global count over the whole table, and it failed
 // both times in a full run for the same reason: fixtures created by other tests
 // default to DRAFT, so the suite invalidates its own assertion. A test whose
 // result depends on what other tests leave behind measures the suite, not the
 // code — and the second time I had already written that sentence about the first.
-//
 // The claim is a one-off property of migration 20261214000000, verified against
 // the live table when it was applied: 1788 rows discoverable before, 1788 after,
 // and 1897 of 1897 restaurants APPROVED. The behaviour that must hold FOREVER —

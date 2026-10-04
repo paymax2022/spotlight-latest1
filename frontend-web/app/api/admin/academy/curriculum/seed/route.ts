@@ -1,5 +1,4 @@
 // Admin: install the authored Film Craft Pathway into a programme.
-//
 // Idempotent — safe to re-run. Re-running updates the curriculum in place rather
 // than creating a second copy, so correcting a typo in the source data and
 // re-seeding is the intended workflow.

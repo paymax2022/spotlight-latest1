@@ -1,4 +1,3 @@
-// ── FX Exchange — KYC/KYB data hooks ─────────────────────────────────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as kyc from '../api/fxKyc.api';

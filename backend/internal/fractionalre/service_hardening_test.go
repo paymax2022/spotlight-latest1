@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-// ── Idempotent replay (Subscribe / ListFraction / BuyFraction) ────────────────
-
 // TestFetchReplay verifies the shared replay gate every keyed path uses:
 // a key that already produced a row replays it; a fresh key proceeds; a lookup
 // failure propagates (fail-closed — money never moves on an indeterminate check).
@@ -58,8 +56,6 @@ func TestBuyFractionRequiresIdempotencyKey(t *testing.T) {
 		t.Errorf("expected ErrIdempotencyKey, got %v", err)
 	}
 }
-
-// ── Beneficiaries (share cap + input validation) ──────────────────────────────
 
 func TestValidateBeneficiaryInput(t *testing.T) {
 	cases := []struct {
@@ -116,8 +112,6 @@ func TestBeneficiaryCapCheck(t *testing.T) {
 	}
 }
 
-// ── Reconciliation math ───────────────────────────────────────────────────────
-
 func TestReconcileDelta(t *testing.T) {
 	cases := []struct {
 		name               string
@@ -139,8 +133,6 @@ func TestReconcileDelta(t *testing.T) {
 		})
 	}
 }
-
-// ── Auto-invest runner ────────────────────────────────────────────────────────
 
 // fakeAutoInvestStore is an in-memory autoInvestStore (no DB).
 type fakeAutoInvestStore struct {

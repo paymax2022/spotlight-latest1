@@ -1,4 +1,3 @@
-// ── Referral Ambassador Zone React Query hooks (v5) — M-AMB-01..06 ───────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as ambApi from './api';
@@ -50,8 +49,6 @@ export function useWithdrawAmbassadorPayout() {
 export function useTierProgression() {
   return useQuery({ queryKey: ambassadorKeys.tiers(), queryFn: ambApi.getTierProgression, staleTime: 60_000 });
 }
-
-// ── Application (M-AMB-00) ───────────────────────────────────────────────────
 
 /** The caller's ambassador record, or null when they have never applied. */
 export function useMyAmbassadorApplication() {

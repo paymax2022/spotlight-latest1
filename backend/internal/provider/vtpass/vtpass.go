@@ -6,11 +6,7 @@
 // payload shape, sandbox meter simulation) exists because the TS source had it,
 // and diverging from it would silently change behaviour for a live money path.
 // Divergences that WERE deliberate are called out explicitly where they occur.
-//
-// ════════════════════════════════════════════════════════════════════════════
 // THE Params CONTRACT (the seam with the domain layer, backend/internal/utilitybills)
-// ════════════════════════════════════════════════════════════════════════════
-//
 // provider.BillRequest (ports.go) carries only Ref, Type, AmountKobo and a flat
 // Params map[string]string — there is no dedicated field for a biller/service
 // code, a customer reference (meter/phone/smartcard number), a provider product
@@ -37,16 +33,13 @@
 // req.Type selects the category ("airtime" | "education" | "electricity" | any
 // other value, which is treated as the TS source's generic/default branch —
 // "cable_tv" additionally gets subscription_type + quantity within that branch).
-//
-// ════════════════════════════════════════════════════════════════════════════
 // provider.Bill carries the token directly (ports.go Token/Message/Raw fields)
-// ════════════════════════════════════════════════════════════════════════════
-//
 // For a prepaid electricity purchase the token IS the deliverable — it's what
 // the member types into their meter. ports.go's Bill struct carries it
 // (Token/Message/Raw, added alongside this adapter specifically so it doesn't
 // get silently dropped), so PurchaseBill/GetBill populate it directly — no
 // separate "Detailed" result type is needed.
+
 package vtpass
 
 import (
@@ -57,12 +50,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"spotlight/backend/go-common/strutil"
+	"spotlight/backend/internal/provider"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+)
 
-	"spotlight/backend/internal/provider"
+const (
+	strCustomerVerified = "Customer verified."
 )
 
 // Environment selects which VTpass host this client talks to, and — in
@@ -93,7 +90,6 @@ const (
 
 // Sentinel errors for missing credentials, mirroring the TS adapter's
 // readCredentials()/authHeaders() throws.
-//
 // Each wraps provider.ErrProviderRefused because these are PRE-FLIGHT refusals:
 // authHeaders fails before any socket is opened, so nothing reached VTpass and a
 // caller on the money path can safely fail over to the next provider (or reverse
@@ -119,7 +115,6 @@ type Client struct {
 }
 
 // New constructs a VTpass adapter.
-//
 //   - environment selects sandbox vs live. Anything other than
 //     EnvironmentSandbox is treated as live — this matches the TS source's own
 //     default: `process.env.VTPASS_ENVIRONMENT === 'sandbox' ? 'sandbox' : 'live'`,
@@ -163,15 +158,12 @@ func (c *Client) Environment() Environment { return c.environment }
 // mycover.Client.Configured(); never reveals the key itself.
 func (c *Client) Configured() bool { return c.apiKey != "" }
 
-// ════════════════════════════════════════════════════════════════════════════
 // Money boundary — kobo (Paymax) → whole naira (VTpass)
-// ════════════════════════════════════════════════════════════════════════════
 
 // asNaira converts integer kobo to the whole-naira amount VTpass's API expects
 // — the ONE place in this codebase's money path where kobo is not the wire
 // unit. The TS source computes this as `Math.max(1, Math.round(kobo / 100))`
 // using a float64 (JS number) intermediate.
-//
 // This port replicates the exact same rounding behaviour — round-half-up, since
 // kobo is always non-negative in this context, which is what JS Math.round does
 // for non-negative inputs — using ONLY integer arithmetic, per this repo's iron
@@ -193,9 +185,7 @@ func asNaira(kobo int64) int64 {
 	return naira
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // Request-id scheme
-// ════════════════════════════════════════════════════════════════════════════
 
 var (
 	lagosLoc     *time.Location
@@ -279,10 +269,6 @@ func vtpassRequestID(idempotencyKey string, date time.Time) string {
 	return lagosRequestPrefix(date) + suffix
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Auth
-// ════════════════════════════════════════════════════════════════════════════
-
 // authHeaders builds VTpass's auth headers: api-key always; public-key for GET;
 // secret-key for POST. Matches the TS source's authHeaders(method, credentials).
 func (c *Client) authHeaders(method string) (http.Header, error) {
@@ -305,10 +291,6 @@ func (c *Client) authHeaders(method string) (http.Header, error) {
 	}
 	return h, nil
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// Wire types
-// ════════════════════════════════════════════════════════════════════════════
 
 // vtpassResponse mirrors the TS source's VtpassResponse interface. code is
 // decoded as json.RawMessage because VTpass sends it as either a quoted string
@@ -358,10 +340,6 @@ func codeString(raw json.RawMessage) string {
 	}
 	return strings.Trim(string(raw), `"`)
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// Response normalization
-// ════════════════════════════════════════════════════════════════════════════
 
 // normalizeProviderStatus maps a VTpass response onto provider.Bill's Status
 // enum, replicating the TS source's normalizeProviderStatus (which returns
@@ -434,18 +412,7 @@ func normalizePurchase(payload vtpassResponse, req provider.BillRequest, fallbac
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // Purchase payload — shape genuinely differs by category (TS: purchasePayload)
-// ════════════════════════════════════════════════════════════════════════════
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
 
 // metadataString returns the first present, non-blank (trimmed) value among
 // keys, matching the TS source's metadataString helper.
@@ -464,7 +431,7 @@ func metadataString(params map[string]string, keys ...string) string {
 // billerCode, matching the TS source's `request.providerBillerCode ||
 // request.billerCode`.
 func serviceID(req provider.BillRequest) string {
-	return firstNonEmpty(req.Params["providerBillerCode"], req.Params["billerCode"])
+	return strutil.FirstNonEmpty(req.Params["providerBillerCode"], req.Params["billerCode"])
 }
 
 // phoneFor resolves the phone VTpass is sent, matching the TS source's
@@ -552,10 +519,7 @@ func purchasePayload(req provider.BillRequest, requestID string) map[string]any 
 	}
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // Sandbox meter simulation (TS: sandbox.ts / adapters/vtpass.ts L50-116)
-// ════════════════════════════════════════════════════════════════════════════
-//
 // VTpass publishes fixed sandbox meter numbers that deterministically simulate
 // outcomes (https://vtpass.com/documentation/eko-electricity-ekedc-payment-api/).
 // When environment == EnvironmentSandbox this is honoured LOCALLY — no network
@@ -616,10 +580,6 @@ func (c *Client) sandboxPurchase(req provider.BillRequest, requestID string) *pr
 	return &base
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// provider.BillsProvider
-// ════════════════════════════════════════════════════════════════════════════
-
 // PurchaseBill implements provider.BillsProvider. It calls VTpass's POST /pay
 // (or, in sandbox, simulates it locally per the meter table above) and returns
 // the full result including the vended token (ports.go's Bill.Token). Matches
@@ -644,7 +604,6 @@ func (c *Client) PurchaseBill(ctx context.Context, req provider.BillRequest) (*p
 
 // GetBill implements provider.BillsProvider for orphan reconciliation, calling
 // VTpass's POST /requery (secret-key auth).
-//
 // Per ports.go's BillsProvider doc comment, ref MUST be the VTpass request_id
 // previously returned as Bill.ProviderRef by a prior PurchaseBill call — NOT
 // the caller's own BillRequest.Ref. This isn't a stylistic choice: the TS
@@ -677,10 +636,6 @@ func (c *Client) GetBill(ctx context.Context, ref string) (*provider.Bill, error
 	}
 	return normalizePurchase(payload, provider.BillRequest{}, ref, raw), nil
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// HTTP
-// ════════════════════════════════════════════════════════════════════════════
 
 func (c *Client) post(ctx context.Context, path string, body map[string]any) (vtpassResponse, []byte, error) {
 	return c.do(ctx, http.MethodPost, path, body)
@@ -741,4 +696,236 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 	var decoded vtpassResponse
 	_ = json.Unmarshal(raw, &decoded) // best-effort; zero value on failure, like TS's `{}`
 	return decoded, raw, nil
+}
+
+// health.go implements the OPTIONAL provider.HealthChecker capability, ported
+// from frontend-web/src/server/utility/adapters/vtpass.ts's healthCheck().
+// Three details of that source are load-bearing and easy to get wrong:
+//   - the success code here is "1", NOT the "000" that the purchase/requery
+//     endpoints use. VTpass's balance endpoint has its own code vocabulary.
+//   - the balance lives under `contents` (plural), not the `content` key every
+//     other VTpass endpoint uses — which is why this file decodes the raw body
+//     itself rather than reusing vtpassResponse.Content.
+//   - it must be a JSON number. A VTpass balance arriving as the STRING
+//     "1500.00" is not a confirmed balance — the TS source's
+//     `typeof === 'number'` guard rejects it into 'degraded', and that guard
+//     is reproduced exactly.
+
+// compile-time proof the client satisfies the optional capability. Without this
+// a signature drift would only surface as a silent type-assertion miss at
+// runtime, which presents as "this provider does not support health checks" —
+// a wrong answer that looks like a configuration problem.
+var _ provider.HealthChecker = (*Client)(nil)
+
+// vtpassBalance is the balance endpoint's envelope. Deliberately local to this
+// file: `contents` is unique to this one endpoint, and adding it to the shared
+// vtpassResponse would imply every other response carries it.
+type vtpassBalance struct {
+	Contents struct {
+		// Balance is kept as RAW JSON, deliberately, so the wire TYPE survives
+		// to be inspected.
+		// json.Number is the obvious choice here and it is WRONG: Go's decoder
+		// accepts a quoted numeric string into a json.Number field (it only
+		// validates the digits, not the JSON type), so `"balance":"1500.00"`
+		// would decode cleanly and be reported healthy — silently defeating the
+		// TS source's `typeof payload.contents?.balance === 'number'` guard.
+		// Keeping the raw bytes lets isJSONNumber below reject the quoted form.
+		Balance json.RawMessage `json:"balance"`
+	} `json:"contents"`
+}
+
+// isJSONNumber reports whether raw is a JSON NUMBER literal — not a quoted
+// string, not null, not a boolean. This is the Go equivalent of the TS source's
+// `typeof balance === 'number'`.
+func isJSONNumber(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] == '"' {
+		return false
+	}
+	var n json.Number
+	return json.Unmarshal(trimmed, &n) == nil
+}
+
+// HealthCheck asks VTpass for the merchant balance and classifies the answer.
+// It never returns a non-nil error alongside a nil result for a provider that
+// merely answered badly — per the provider.HealthChecker contract, a bad answer
+// is a RESULT ('degraded'/'down'), not an error. The only error path is the
+// adapter refusing to send at all, which is what missing credentials produce:
+// authHeaders returns ErrMissingAPIKey / ErrMissingPublicKey before any socket
+// is opened. That is surfaced as 'down' rather than an error, matching the TS
+// source — vtpassFetch throws on missing credentials and healthCheck's catch
+// turns it into 'down'.
+// NOTE: unlike PurchaseBill and GetBill, this has NO sandbox short-circuit. The
+// TS source's sandbox stubs cover purchase and requery only; healthCheck always
+// went to the network in every environment, so a sandbox-mode client really
+// does call sandbox.vtpass.com here. Anything that needs a hermetic health
+// check must inject its own adapter rather than rely on sandbox mode.
+func (c *Client) HealthCheck(ctx context.Context) (*provider.HealthCheckResult, error) {
+	payload, raw, err := c.do(ctx, http.MethodGet, "/balance", nil)
+	if err != nil {
+		// Transport failure, or the adapter refusing to send for want of
+		// credentials. The TS catch block folds both into 'down'.
+		return &provider.HealthCheckResult{Status: HealthDown, Message: err.Error()}, nil
+	}
+
+	if codeString(payload.Code) == balanceSuccessCode {
+		var balance vtpassBalance
+		if json.Unmarshal(raw, &balance) == nil && isJSONNumber(balance.Contents.Balance) {
+			// The literal digits from the wire, never a reformatted float — the
+			// balance is money and this adapter does not round-trip money through
+			// a float64 even for a log message. (One cosmetic consequence: JSON
+			// `1500.50` renders as "1500.50" where JS template interpolation
+			// would have produced "1500.5". A display-only difference in a
+			// human-readable string, and the safer direction to err in.)
+			return &provider.HealthCheckResult{
+				Status:  HealthHealthy,
+				Message: "Balance: " + string(bytes.TrimSpace(balance.Contents.Balance)),
+			}, nil
+		}
+	}
+
+	message := payload.ResponseDescription
+	if message == "" {
+		message = "Unable to confirm VTPass balance."
+	}
+	return &provider.HealthCheckResult{Status: HealthDegraded, Message: message}, nil
+}
+
+const (
+	// balanceSuccessCode is the balance endpoint's own success code — "1", not
+	// the "000" the transaction endpoints use. Taken from the TS source's
+	// `String(payload.code) === '1'`, not inferred.
+	balanceSuccessCode = "1"
+
+	// HealthHealthy — The three health values the adapter can report. Mirrors
+	// utilitybills.HealthStatus without importing it (provider adapters never
+	// depend on a domain package — the dependency runs the other way).
+	HealthHealthy  = "healthy"
+	HealthDegraded = "degraded"
+	HealthDown     = "down"
+)
+
+// Customer verification (VTpass POST /merchant-verify), implementing
+// provider.BillsValidator.
+// Phase 0 built PurchaseBill/GetBill (provider.BillsProvider) but NOT this — the
+// Phase-1 brief assumed it existed, so it is added here rather than worked around.
+// It is a port of the same TS adapter as the rest of this package
+// (frontend-web/src/server/utility/adapters/vtpass.ts's validateCustomer, L327-367
+// plus the sandboxVerify table at L70-90), following the same rules the rest of
+// this file does: sandbox is simulated locally, live calls the real endpoint.
+
+// Sandbox verification only recognises the two documented EKEDC meters. VTpass's
+// own sandbox behaves the same way ("use any number apart from the one provided
+// to simulate a failed meter number validation"), so a "valid" answer for
+// anything else would be a lie that only shows up as a failed purchase later.
+const (
+	sandboxVerifiedCustomerName = "Eko Electric Customer"
+	sandboxVerifiedAddress      = "21a New Road Avenue"
+)
+
+// ValidateCustomer implements provider.BillsValidator.
+// Three branches, in the TS source's order:
+//  1. Categories VTpass does not verify (airtime / data / education) short-circuit
+//     to Valid=true with an explanatory Raw payload. This is NOT a permissive
+//     fallback — VTpass genuinely has no merchant-verify for a phone number, and
+//     refusing those purchases would break every airtime top-up.
+//  2. Sandbox verifies against the documented test meters locally, so end-to-end
+//     testing works with no credentials and no network.
+//  3. Live posts /merchant-verify and reads code=='000' AND NOT
+//     content.WrongBillersCode — VTpass answers 000 with WrongBillersCode=true for
+//     a syntactically fine but non-existent meter, so checking the code alone
+//     would wave through a meter that does not exist.
+func (c *Client) ValidateCustomer(ctx context.Context, req provider.BillValidationRequest) (*provider.BillValidation, error) {
+	switch req.Type {
+	case "airtime", "data", "education":
+		return &provider.BillValidation{
+			Valid:   true,
+			Message: "VTPass does not require merchant verification for this category.",
+			Raw:     json.RawMessage(`{"skipped":true,"reason":"VTPass does not require merchant verification for this category."}`),
+		}, nil
+	}
+
+	if c.environment == EnvironmentSandbox {
+		return sandboxVerify(req.CustomerReference), nil
+	}
+
+	// TS: metadataString(metadata, ['type','payment_type','paymentType'])
+	//     || (category === 'electricity' ? 'prepaid' : undefined)
+	meterType := metadataString(req.Params, "type", "payment_type", "paymentType")
+	if meterType == "" && req.Type == "electricity" {
+		meterType = "prepaid"
+	}
+
+	body := map[string]any{
+		"billersCode": req.CustomerReference,
+		"serviceID":   serviceID(provider.BillRequest{Params: req.Params}),
+	}
+	if meterType != "" {
+		body["type"] = meterType
+	}
+
+	payload, raw, err := c.post(ctx, "/merchant-verify", body)
+	if err != nil {
+		return nil, err
+	}
+
+	valid := codeString(payload.Code) == "000" &&
+		(payload.Content == nil || !payload.Content.WrongBillersCode)
+
+	name := ""
+	if payload.Content != nil {
+		// TS: payload.content?.Customer_Name || payload.content?.Customer_Number
+		name = strutil.FirstNonEmpty(payload.Content.CustomerName, payload.Content.CustomerNumber)
+	}
+	message := strCustomerVerified
+	if !valid {
+		message = payload.ResponseDescription
+		if strings.TrimSpace(message) == "" {
+			message = "Customer verification failed."
+		}
+	}
+
+	return &provider.BillValidation{
+		Valid:        valid,
+		CustomerName: name,
+		Message:      message,
+		Raw:          raw,
+	}, nil
+}
+
+// sandboxVerify ports the TS sandboxVerify() table: a doc-accurate merchant-verify
+// response for the two valid sandbox meters, and an explicit failure (code 012,
+// WrongBillersCode) for anything else.
+func sandboxVerify(billersCode string) *provider.BillValidation {
+	if billersCode == sandboxMeterPrepaid || billersCode == sandboxMeterPostpaid {
+		meterType := "PREPAID"
+		if billersCode == sandboxMeterPostpaid {
+			meterType = "POSTPAID"
+		}
+		raw, _ := json.Marshal(map[string]any{
+			"code":                 "000",
+			"response_description": strCustomerVerified,
+			"sandbox":              true,
+			"content": map[string]any{
+				"Customer_Name":    sandboxVerifiedCustomerName,
+				"Customer_Number":  billersCode,
+				"Customer_Type":    meterType,
+				"Address":          sandboxVerifiedAddress,
+				"Meter_Number":     billersCode,
+				"Meter_Type":       meterType,
+				"WrongBillersCode": false,
+			},
+		})
+		return &provider.BillValidation{
+			Valid:        true,
+			CustomerName: sandboxVerifiedCustomerName,
+			Message:      strCustomerVerified,
+			Raw:          raw,
+		}
+	}
+	return &provider.BillValidation{
+		Valid:   false,
+		Message: "Meter number could not be validated. (Sandbox: use " + sandboxMeterPrepaid + " for prepaid or " + sandboxMeterPostpaid + " for postpaid.)",
+		Raw:     json.RawMessage(`{"code":"012","sandbox":true,"content":{"WrongBillersCode":true}}`),
+	}
 }

@@ -3,7 +3,6 @@ package utilitybills
 // admin_service.go is the ADMIN half of service.go: catalogue CRUD, provider
 // credential rotation, provider health checks, dispute resolution, the manual
 // sweep trigger, and the three reports.
-//
 // It is a port of the admin functions in frontend-web/src/server/utility/service.ts
 // (adminListUtilityTable / adminCreateUtilityRow / adminUpdateUtilityRow /
 // adminHealthCheckProvider / adminImportUtilityProducts /
@@ -14,7 +13,6 @@ package utilitybills
 // whatever the database rejects. Here each entity is explicit and validated
 // BEFORE the insert, so a bad catalogue write fails as a 400 naming the field
 // rather than as a 500 carrying a raw constraint name.
-//
 // Every mutation records an audit row (s.log). That is net-new: the Go module
 // had no audit sink at all before this phase, and the TS routes' audit went to a
 // different store than the platform audit log.
@@ -24,14 +22,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	ptrx "spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/provider"
 )
-
-// ── Admin-only error sentinels (handler.go's writeErr maps these) ────────────
 
 var (
 	// ErrInvalidStatus — a status value outside the column's CHECK constraint.
@@ -43,7 +41,7 @@ var (
 	// ErrHealthCheckUnsupported — the provider's adapter does not implement the
 	// optional provider.HealthChecker capability. Deliberately an ERROR and not
 	// a silent "unknown": an admin who clicked health-check must not be shown a
-	// status that nothing actually checked, because routing.go trusts that
+	// status that nothing actually checked, because  trusts that
 	// column to exclude 'down' providers from live money routing.
 	ErrHealthCheckUnsupported = errors.New("utilitybills: this provider's adapter does not support health checks")
 	// ErrCredentialsRequired — a credentials rotation with an empty body.
@@ -60,9 +58,10 @@ var (
 	ErrInvalidDisputeStatus = errors.New("utilitybills: status must be 'resolved' or 'rejected'")
 	// ErrInvalidReportType — an unknown report name reached the service.
 	ErrInvalidReportType = errors.New("utilitybills: unknown report type")
+	// ErrCategoryExists — a setting already exists for this category (409);
+	// the repository maps the PK 23505 to this sentinel.
+	ErrCategoryExists = errors.New("utilitybills: a setting for this utility category already exists")
 )
-
-// ── Shared value validation (mirrors the tables' CHECK constraints) ──────────
 
 // Status vocabularies, taken from the live schema's CHECK constraints rather
 // than inferred. They differ per table, which is exactly why they are separate
@@ -75,20 +74,11 @@ var (
 	amountTypes        = []string{string(AmountTypeFixed), string(AmountTypeVariable)}
 )
 
-func oneOf(value string, allowed []string) bool {
-	for _, a := range allowed {
-		if value == a {
-			return true
-		}
-	}
-	return false
-}
-
 // validateStatus accepts a blank value (meaning "leave at the DB default" on a
 // create, or "not being changed" on a patch) and rejects anything else outside
 // the allow-list, so a typo cannot reach the database and come back as a 500.
 func validateStatus(value string, allowed []string, sentinel error) error {
-	if value == "" || oneOf(value, allowed) {
+	if value == "" || slices.Contains(allowed, value) {
 		return nil
 	}
 	return fmt.Errorf("%w: %q (expected one of %s)", sentinel, value, strings.Join(allowed, ", "))
@@ -117,8 +107,6 @@ func validateNonNegative(value *int64, field string) error {
 	}
 	return nil
 }
-
-// ── Providers ────────────────────────────────────────────────────────────────
 
 // AdminListProviders returns every provider, any status, without credentials.
 func (s *Service) AdminListProviders(ctx context.Context, limit, offset int) ([]AdminProviderView, error) {
@@ -156,7 +144,6 @@ func (s *Service) CreateProvider(ctx context.Context, actorUserID string, in Pro
 }
 
 // UpdateProvider validates and applies a partial provider patch.
-//
 // oldValues for the audit row is read BEFORE the write. That extra SELECT is the
 // price of an audit trail that can answer "what did this used to be?" — the
 // question every configuration incident actually asks.
@@ -243,7 +230,6 @@ func requireNonBlank(pairs ...any) error {
 }
 
 // RotateProviderCredentials encrypts and stores a new credentials set.
-//
 // The plaintext map reaches exactly two places: EncryptCredentials, and the
 // garbage collector. It is never logged, never audited, never returned, and
 // never written to the database unencrypted — the repository method below it
@@ -299,7 +285,6 @@ func credentialFieldNames(credentials map[string]any) []string {
 
 // HealthCheckProvider asks the provider's adapter for its live health and
 // persists the answer. Ports adminHealthCheckProvider.
-//
 // Returns the RESULT alongside the updated row. A 'down' result is a successful
 // health check that found a down provider — not an error — so it is reported as
 // 200 with status 'down', exactly as the TS source did.
@@ -331,7 +316,7 @@ func (s *Service) HealthCheckProvider(ctx context.Context, actorUserID, id strin
 		// stored health_status stale.
 		result = &provider.HealthCheckResult{Status: string(HealthDown), Message: cerr.Error()}
 	}
-	if result == nil || !oneOf(result.Status, healthStatuses) {
+	if result == nil || !slices.Contains(healthStatuses, result.Status) {
 		// An adapter returning something outside the CHECK constraint would
 		// otherwise fail at the UPDATE with an opaque constraint error. 'unknown'
 		// is the honest value for "the adapter answered, unintelligibly".
@@ -354,8 +339,6 @@ func (s *Service) HealthCheckProvider(ctx context.Context, actorUserID, id strin
 		map[string]any{"health_status": result.Status, "message": result.Message})
 	return result, updated, nil
 }
-
-// ── Billers ──────────────────────────────────────────────────────────────────
 
 // AdminListBillers returns every biller, any status.
 func (s *Service) AdminListBillers(ctx context.Context, limit, offset int) ([]BillerRow, error) {
@@ -394,7 +377,7 @@ func (s *Service) UpdateBiller(ctx context.Context, actorUserID, id string, patc
 		if err != nil {
 			return nil, err
 		}
-		patch.Category = strPtr(string(cat))
+		patch.Category = ptrx.Of(string(cat))
 	}
 	if patch.Status != nil {
 		if err := validateStatus(*patch.Status, catalogueStatuses, ErrInvalidStatus); err != nil {
@@ -429,8 +412,6 @@ func billerAudit(b *BillerRow) map[string]any {
 	}
 }
 
-// ── Products ─────────────────────────────────────────────────────────────────
-
 // AdminListProducts returns every product, any status.
 func (s *Service) AdminListProducts(ctx context.Context, limit, offset int) ([]ProductRow, error) {
 	return s.repo.AdminListProducts(ctx, limit, offset)
@@ -439,10 +420,9 @@ func (s *Service) AdminListProducts(ctx context.Context, limit, offset int) ([]P
 // validateProductInput enforces the utility_products CHECK constraints ahead of
 // the insert. Shared by create and import so a bulk import cannot smuggle in a
 // row that a single create would have rejected.
-//
 // NOT enforced here, deliberately: "a fixed-price product must have an
 // amount_kobo". The database does not require it, the TS source did not check
-// it, and pricing.go already refuses such a product at purchase time with
+// it, and  already refuses such a product at purchase time with
 // ErrAmountRequired. Adding the rule here would be a real improvement but also a
 // behaviour change that could reject catalogue rows an existing import script
 // writes — flagged for a follow-up rather than slipped in under a port.
@@ -461,7 +441,7 @@ func validateProductInput(in *ProductInput) error {
 	if in.Code, err = requireField(in.Code, "code"); err != nil {
 		return err
 	}
-	if in.AmountType != "" && !oneOf(in.AmountType, amountTypes) {
+	if in.AmountType != "" && !slices.Contains(amountTypes, in.AmountType) {
 		return fmt.Errorf("%w: %q", ErrInvalidAmountType, in.AmountType)
 	}
 	if err := validateStatus(in.Status, catalogueStatuses, ErrInvalidStatus); err != nil {
@@ -486,7 +466,7 @@ func validateProductInput(in *ProductInput) error {
 		return err
 	}
 	// A min above a max makes the product unbuyable at every amount. The database
-	// has no cross-column constraint for it, and pricing.go would reject each
+	// has no cross-column constraint for it, and  would reject each
 	// purchase individually with a confusing message.
 	if in.MinAmountKobo != nil && in.MaxAmountKobo != nil && *in.MinAmountKobo > *in.MaxAmountKobo {
 		return fmt.Errorf("%w: min_amount_kobo exceeds max_amount_kobo", ErrInvalidAmount)
@@ -514,9 +494,9 @@ func (s *Service) UpdateProduct(ctx context.Context, actorUserID, id string, pat
 		if err != nil {
 			return nil, err
 		}
-		patch.Category = strPtr(string(cat))
+		patch.Category = ptrx.Of(string(cat))
 	}
-	if patch.AmountType != nil && !oneOf(*patch.AmountType, amountTypes) {
+	if patch.AmountType != nil && !slices.Contains(amountTypes, *patch.AmountType) {
 		return nil, fmt.Errorf("%w: %q", ErrInvalidAmountType, *patch.AmountType)
 	}
 	if patch.Status != nil {
@@ -603,7 +583,6 @@ func productAudit(p *ProductRow) map[string]any {
 }
 
 // ImportProducts bulk-upserts a catalogue batch keyed on product code.
-//
 // Every row is validated BEFORE any row is written, so a batch with one bad
 // entry writes nothing at all rather than half a catalogue. (The repository also
 // wraps the writes in a transaction, which covers the database-side failures
@@ -632,8 +611,6 @@ func (s *Service) ImportProducts(ctx context.Context, actorUserID string, produc
 		nil, map[string]any{"count": len(imported), "codes": codes})
 	return imported, nil
 }
-
-// ── Provider/product mappings ────────────────────────────────────────────────
 
 // AdminListMappings returns every provider/product mapping, any status.
 func (s *Service) AdminListMappings(ctx context.Context, limit, offset int) ([]MappingRow, error) {
@@ -712,8 +689,6 @@ func mappingAudit(m *MappingRow) map[string]any {
 	}
 }
 
-// ── Routing rules ────────────────────────────────────────────────────────────
-
 // AdminListRoutingRules returns every routing rule, any status.
 func (s *Service) AdminListRoutingRules(ctx context.Context, limit, offset int) ([]RoutingRuleRow, error) {
 	return s.repo.AdminListRoutingRules(ctx, limit, offset)
@@ -764,7 +739,7 @@ func (s *Service) UpdateRoutingRule(ctx context.Context, actorUserID, id string,
 		if err != nil {
 			return nil, err
 		}
-		patch.Category = strPtr(string(cat))
+		patch.Category = ptrx.Of(string(cat))
 	}
 	if patch.Status != nil {
 		if err := validateStatus(*patch.Status, catalogueStatuses, ErrInvalidStatus); err != nil {
@@ -805,8 +780,6 @@ func routingRuleAudit(rr *RoutingRuleRow) map[string]any {
 	}
 }
 
-// ── Category settings ────────────────────────────────────────────────────────
-
 // AdminListCategorySettings returns every category setting, enabled or not.
 func (s *Service) AdminListCategorySettings(ctx context.Context) ([]CategorySettingRow, error) {
 	return s.repo.AdminListCategorySettings(ctx)
@@ -842,7 +815,6 @@ func (s *Service) CreateCategorySetting(ctx context.Context, actorUserID string,
 
 // UpdateCategorySetting validates and applies a partial patch, keyed on the
 // category text column rather than a uuid.
-//
 // This is the switch that can take a whole vertical offline (enabled = false
 // feeds assertCategoryAvailableForPayment), which is why it is audited with both
 // the old and new value rather than just the new one.
@@ -888,15 +860,12 @@ func categoryAudit(c *CategorySettingRow) map[string]any {
 	}
 }
 
-// ── Transactions / disputes / sweep ──────────────────────────────────────────
-
 // AdminListTransactions returns transactions across all members.
-//
 // An unrecognised status filter is a 400 rather than an empty list: a typo'd
 // filter returning "no transactions" reads exactly like a healthy system with
 // nothing wrong in it, which is the worst possible answer for a support tool.
 func (s *Service) AdminListTransactions(ctx context.Context, status string, limit, offset int) ([]TransactionRow, error) {
-	if status != "" && !oneOf(status, allTransactionStatuses) {
+	if status != "" && !slices.Contains(allTransactionStatuses, status) {
 		return nil, fmt.Errorf("%w: %q is not a utility transaction status", ErrInvalidStatus, status)
 	}
 	return s.repo.AdminListTransactions(ctx, status, limit, offset)
@@ -911,13 +880,10 @@ var allTransactionStatuses = []string{
 
 // ResolveDispute closes the dispute attached to a transaction. Ports
 // adminResolveUtilityDispute.
-//
-// ── WHAT THIS DOES NOT DO, AND WHY ──────────────────────────────────────────
 // It does NOT change utility_transactions.status. The TS source does not either:
 // adminResolveUtilityDispute updates utility_disputes, appends the
 // 'dispute_resolved' event, and notifies the customer — the transaction row is
 // only re-READ (to address the notification) and never written.
-//
 // So a transaction moved to 'disputed' by CreateDispute stays 'disputed' after
 // resolution. That is very likely a real gap, but the correct destination is not
 // derivable: a dispute resolved in the member's favour usually implies a
@@ -926,7 +892,7 @@ var allTransactionStatuses = []string{
 // status of settled money. Ported faithfully and raised for a product decision
 // rather than invented here.
 func (s *Service) ResolveDispute(ctx context.Context, actorUserID, transactionID, status, resolutionNote string) (*DisputeRow, error) {
-	if !oneOf(status, disputeResolutions) {
+	if !slices.Contains(disputeResolutions, status) {
 		return nil, fmt.Errorf("%w: %q", ErrInvalidDisputeStatus, status)
 	}
 	resolutionNote, err := requireField(resolutionNote, "resolution_note")
@@ -960,11 +926,10 @@ func (s *Service) ResolveDispute(ctx context.Context, actorUserID, transactionID
 }
 
 // TriggerSweep runs the pending-requery sweep on an admin's explicit request.
-//
 // A thin wrapper over the Phase 3 SweepPending — the sweep logic itself is NOT
 // duplicated here; there is exactly one implementation, shared with the hourly
 // job. The only thing this adds is the audit row, which is precisely what
-// distinguishes a manual trigger from the scheduled run (jobs.go calls
+// distinguishes a manual trigger from the scheduled run (
 // SweepPending directly and stays audit-silent: the clock is not an actor).
 func (s *Service) TriggerSweep(ctx context.Context, actorUserID string, limit int) (*SweepResult, error) {
 	res, err := s.SweepPending(ctx, limit)
@@ -979,8 +944,6 @@ func (s *Service) TriggerSweep(ctx context.Context, actorUserID string, limit in
 	})
 	return res, nil
 }
-
-// ── Reports ──────────────────────────────────────────────────────────────────
 
 // Report type names, as they appear in the route paths.
 const (

@@ -1,5 +1,4 @@
 // Atomic free-vote claim for the voting bridge.
-//
 // This replaces the RACY core of the legacy castFreeVote() (which the bridge
 // must not edit) with a single atomic Postgres claim (claim_free_vote), while
 // keeping the app-side concerns — settings guards, voter identity, fraud
@@ -7,11 +6,10 @@
 //   D-001 — the daily bucket (p_vote_date) is computed in the contest timezone.
 //   D-002 — the per-contestant cap is row-locked in claim_free_vote (no race).
 //   D-003 — vote_totals is upserted atomically + NULL-round-correct in the RPC.
-//
 // Imports (never edits) the protected service helpers.
 import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
-import { FRAUD_SCORE_THRESHOLDS } from '@/src/features/voting/constants';
+import { FRAUD_SCORE_THRESHOLDS } from '@/src/features/voting/types';
 import type {
   CastFreeVoteRequest,
   CastFreeVoteResponse,

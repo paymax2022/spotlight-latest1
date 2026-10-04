@@ -1,8 +1,6 @@
-// ── Doctor — Compliance Centre hooks (Batch 7, Section AB) ───────────────────
 // Query keys under ['doctor', 'compliance', …]. Mutations auto-generate the
 // idempotencyKey. REUSES the Phase 2 useComplianceDashboard / useAcknowledgePolicy
 // (useCompliance.ts) for the dashboard / licence / consent / alerts / policy
-// screens; this file adds the vet licence, data-privacy settings, scoped audit
 // trails, mandatory training, the safety-issue report and the account-review
 // notice, plus the privacy / training / safety / data-request mutations. Hook
 // names are deliberately distinct from useComplianceDashboard to avoid a barrel
@@ -36,8 +34,6 @@ import type {
   RequestDataExportInput,
   RequestAccountDeletionInput,
 } from '@/types/doctor.batch7';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function useVetLicence() {
   return useQuery({
@@ -92,8 +88,6 @@ export function useAccountReviewNotice() {
   });
 }
 
-// ─── Mutations ──────────────────────────────────────────────────────────────
-
 export function useUpdatePrivacySettings() {
   const qc = useQueryClient();
   return useMutation({
@@ -138,8 +132,6 @@ export function useRequestDataExport() {
   });
 }
 
-// CONSOLIDATED: the SINGLE account-deletion mutation, shared by the AB (privacy)
-// and AC (settings) screens. Exported here; useSettingsCenter re-exports it so
 // callers in either section import the same hook.
 export function useRequestAccountDeletion() {
   const qc = useQueryClient();

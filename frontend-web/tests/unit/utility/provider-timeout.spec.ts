@@ -3,7 +3,7 @@ import {
   getUtilityProviderTimeoutMs,
   UtilityProviderTimeoutError,
   withUtilityProviderTimeout,
-} from '@/src/server/utility/provider-timeout';
+} from '@/src/server/utility/helpers';
 
 const OLD_TIMEOUT = process.env.UTILITY_PROVIDER_TIMEOUT_MS;
 

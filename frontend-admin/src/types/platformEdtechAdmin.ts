@@ -1,9 +1,7 @@
-// ── Types — Platform SUPER-ADMIN console for the EdTech module (SU-01..SU-12) ──
 // Platform-operator surface (Paymax staff), RBAC capability `platform_edtech_admin`.
 // This is DISTINCT from any school-level role (school_owner / bursar / class_teacher
 // / head_teacher). A school role has ZERO visibility here — see the RBAC note in
 // platformEdtechAdminService.ts and the nav gate in AdminSidebar.tsx.
-//
 // All money is integer minor units (kobo) per CLAUDE.md iron rules. Render in ₦.
 
 export type VerificationTier = 'unverified' | 'basic' | 'verified' | 'premium';
@@ -81,7 +79,6 @@ export interface RiskCase {
 }
 export interface RiskActionInput { id: string; status: RiskStatus; note: string; }
 
-// SU-05 — Gov / Regulator Sync Oversight (+ SU-11 audit log; ComplianceExport SF-11)
 export interface GovSyncRow {
   school_id: string;
   school_name: string;
@@ -132,7 +129,7 @@ export interface Competition {
   sponsor?: string;
   start_date: string;
   end_date: string;
-  broadcast_ready: boolean;         // E12 broadcast-export gate
+  broadcast_ready: boolean;
 }
 export interface CompetitionTransitionInput { id: string; to: CompetitionStatus; note: string; }
 export const COMPETITION_FLOW: CompetitionStatus[] = [
@@ -193,11 +190,10 @@ export interface FeatureFlag {
 }
 export interface FlagToggleInput { key: string; scope_type: FlagScopeType; scope_ref: string; enabled: boolean; }
 
-// SU-12 — Compliance & Licensing Dashboard (Model-A-only posture; §4)
 export type DriftSeverity = 'ok' | 'warn' | 'critical';
 export interface CompliancePosture {
   model_a_only: boolean;            // must stay true — Paymax never fronts fees
-  bnpl_rail_repurposed: boolean;    // hard flag: BNPL rail advancing fees = factoring drift
+  bnpl_rail_repurposed: boolean;
   license_category: string;
   last_reviewed_at: string;
   drift_signals: {

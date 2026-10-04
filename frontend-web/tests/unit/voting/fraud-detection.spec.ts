@@ -20,13 +20,11 @@ vi.mock('@/lib/supabase/server', () => ({ createAdminClient: vi.fn() }));
 
 import { runFraudChecks } from '@/src/server/voting/fraud.service';
 import { createAdminClient } from '@/lib/supabase/server';
-import { FRAUD_SCORE_THRESHOLDS } from '@/src/features/voting/constants';
+import { FRAUD_SCORE_THRESHOLDS } from '@/src/features/voting/types';
 
 // A minimal, table-routed, chainable+thenable Supabase stand-in. Every chain
-// method returns the same builder object; awaiting the builder at any point
 // resolves to that table's queued result (FIFO) — matching runFraudChecks'
 // real call order: IP volume -> device fingerprint -> bot-speed -> vote-spike
-// -> (self-vote via competition_enrollments).
 function makeFraudSupabase(votesResults: Array<Record<string, unknown>>, enrollmentResult?: { data: unknown; error: unknown }) {
   const queue = [...votesResults];
   function votesBuilder(): any {
@@ -90,7 +88,7 @@ describe('runFraudChecks — fraud detection (VI-004, VI-005, VI-006)', () => {
     expect(ipFlag).toBeDefined();
     expect(ipFlag!.severity).toBe('high');
     expect(ipFlag!.score).toBe(Math.min(40, Math.floor((25 / 10) * 20)));
-    expect(result.score).toBeGreaterThanOrEqual(FRAUD_SCORE_THRESHOLDS.SUSPICIOUS - 100); // sanity: score computed, not thrown
+    expect(result.score).toBeGreaterThanOrEqual(FRAUD_SCORE_THRESHOLDS.SUSPICIOUS - 100);
   });
 
   it('VI-005: does NOT flag IP volume when under the configured limit', async () => {
@@ -183,14 +181,13 @@ describe('runFraudChecks — fraud detection (VI-004, VI-005, VI-006)', () => {
     // Documents the known limitation from the test-plan notes: the 30/min IP
     // limiter in the protected votes/free/route.ts is process-local (no Redis
     // backing), so it under-counts across multiple app instances. That file
-    // cannot be edited here (hook-protected); flagged as a known gap, not
     // fixed by this suite. See docs/qa/voting-contest-test-plan.md VI-005 notes.
     expect(true).toBe(true);
   });
 
   it('VI-006: flags self_vote (score 50, critical) when the voter IS the contestant', async () => {
     const supabase = makeFraudSupabase(
-      [], // no votes-table checks triggered (no ip/device/userId+ip bot-speed path — userId set but botSpeedThresholdMs=0 still queries once)
+      [],
       { data: { user_id: 'u-1' }, error: null },
     );
     vi.mocked(createAdminClient).mockReturnValue(supabase as any);

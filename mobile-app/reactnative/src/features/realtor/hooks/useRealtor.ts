@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Data hooks ───────────────────────────────────────────
 // React Query hooks mirroring useFx.ts so screens stay declarative and share the
 // caching / loading / error contracts used across the app.
 
@@ -11,8 +10,6 @@ import type {
 } from '../types/realtor.types';
 
 const KEY = 'realtor';
-
-// ─── Discovery ────────────────────────────────────────────────────────────────
 
 export function useMarketplaceHome() {
   return useQuery({ queryKey: [KEY, 'home'], queryFn: realtor.getMarketplaceHome, staleTime: 30_000 });
@@ -42,8 +39,6 @@ export function useSimilarListings(id: string) {
     staleTime: 60_000,
   });
 }
-
-// ─── Inspection booking ───────────────────────────────────────────────────────
 
 export function useInspectionSlots(listingId: string) {
   return useQuery({
@@ -85,8 +80,6 @@ export function useCancelInspection() {
   });
 }
 
-// ─── Rental application ───────────────────────────────────────────────────────
-
 export function useCreateApplication() {
   const qc = useQueryClient();
   return useMutation({
@@ -106,8 +99,6 @@ export function useApplication(id: string) {
     enabled: !!id,
   });
 }
-
-// ─── Saved listings ───────────────────────────────────────────────────────────
 
 export function useIsListingSaved(listingId: string) {
   return useQuery({

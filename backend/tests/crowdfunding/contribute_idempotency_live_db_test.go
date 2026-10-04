@@ -1,6 +1,5 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression (INV-001): Contribute() correctly deduplicated the
 // underlying ledger posting on an idempotency-key replay (confirmed via
 // direct ledger_entries inspection: a replay produces zero extra postings —
@@ -11,13 +10,10 @@ package crowdfunding_test
 // violates unique constraint") instead of returning the original result — the
 // exact scenario idempotency keys exist for (a client retrying after a
 // dropped response) surfaced a confusing error for money it had already paid.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL. See
 // campaign_analytics_live_db_test.go in this package for the pattern.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Contribute_Idempotent -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -55,6 +51,7 @@ func TestLiveDB_Contribute_IdempotentReplayReturnsSameContribution(t *testing.T)
 			ON CONFLICT (id) DO NOTHING`, id, "cf-uat-idem-"+id+"@test.local"); err != nil {
 			t.Fatalf("seed user %s: %v", id, err)
 		}
+		testsupport.SetKycTier(t, ctx, pool, id, testsupport.KycTierUnlimited)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO campaigns (id, creator_id, title, goal_kobo, status, review_status, deadline)

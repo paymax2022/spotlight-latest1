@@ -3,37 +3,52 @@ package transfers
 import (
 	"context"
 	"log"
+	"strings"
 
+	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/provider"
 )
 
-// audit writes an immutable audit trail entry for a money-path action. The ledger
-// entries are the authoritative financial record (every leg carries reference +
-// idempotency key); this adds an action-level breadcrumb. Best-effort + non-fatal
-// (a logging failure must never abort the money path).
+// audit writes an action-level audit breadcrumb (the ledger entries are the
+// authoritative financial record). Best-effort and non-fatal — a logging
+// failure must never abort the money path. With a durable sink wired
+// (SetAuditor) every call also persists a row (E2E-X-029).
 func (s *Service) audit(ctx context.Context, userID, action, entityID, detail string) {
 	log.Printf("[audit][transfers] action=%s user=%s entity=%s detail=%s", action, userID, entityID, detail)
+	metadata := map[string]any{}
+	if detail != "" {
+		metadata["detail"] = detail
+	}
+	s.emitAudit(userID, "", action, entityID, metadata, "info")
 }
 
-// maskAccountNumber returns the trailing 4 digits of a bank account number,
-// matching the account_number_last4 convention already used for the persisted
-// bank_transfers row (see the last4 truncation in service.go's ExecuteBankTransfer
-// paths). Callers must NEVER pass a full account number into audit()'s detail
-// field — the audit log is stdout/server logs, not the ledger, and has no
-// redaction of its own.
+// auditEvent is audit() with an explicit target user and structured metadata —
+// used where the audited action names a counterparty (e.g. a wallet transfer's
+// recipient) rather than a bare detail string. Same best-effort contract.
+func (s *Service) auditEvent(_ context.Context, actorID, targetID, action, entityID string, metadata map[string]any) {
+	log.Printf("[audit][transfers] action=%s user=%s target=%s entity=%s detail=%v", action, actorID, targetID, entityID, metadata)
+	s.emitAudit(actorID, targetID, action, entityID, metadata, "info")
+}
+
+// emitAudit is the single funnel onto the durable sink. Nil sink ⇒ the call is
+// a no-op (the stdout breadcrumb was already written by the caller above).
+// LogAction itself is fire-and-forget — the shared auditService swallows repo
+// errors — so an audit outage can never fail or reverse a transfer.
+func (s *Service) emitAudit(actorID, targetID, action, entityID string, metadata map[string]any, severity string) {
+	if s.auditSink == nil {
+		return
+	}
+	s.auditSink.LogAction(actorID, targetID, action, "transfers", "transfer", entityID, nil, metadata, "", "", severity)
+}
+
+// maskAccountNumber returns the trailing 4 digits (the account_number_last4
+// convention). NEVER pass a full account number into audit detail — the log
+// has no redaction of its own.
 func maskAccountNumber(acct string) string {
 	if len(acct) <= 4 {
 		return acct
 	}
 	return acct[len(acct)-4:]
-}
-
-// defaultStr returns v when non-empty, else fallback.
-func defaultStr(v, fallback string) string {
-	if v == "" {
-		return fallback
-	}
-	return v
 }
 
 // bankName resolves a display bank name from payment_banks (falls back to code).
@@ -69,13 +84,10 @@ func (s *Service) cachedRecipients(ctx context.Context, userID, bankCode, accoun
 	return out
 }
 
-// cacheRecipient upserts a recipient code for reuse (does NOT mark a beneficiary
-// favorite; that is a separate explicit save). Keyed by the migration's
-// (user_id, provider, bank_code, account_number) unique index.
-// cacheRecipient stores the provider recipient code in provider_recipient_code.
-// The legacy paystack_recipient_code column (now nullable, but still UNIQUE) is
-// left NULL to avoid a cross-provider unique collision — provider_recipient_code
-// is the generalized field this module reads.
+// cacheRecipient upserts a recipient code for reuse (does NOT mark a
+// beneficiary favorite). The legacy paystack_recipient_code column stays NULL —
+// it is still UNIQUE and would collide across providers;
+// provider_recipient_code is the generalized field this module reads.
 func (s *Service) cacheRecipient(ctx context.Context, userID, prov, bankCode, accountNumber, accountName, recipientCode string) {
 	const q = `
 		INSERT INTO bank_transfer_recipients
@@ -97,9 +109,7 @@ func (s *Service) saveBeneficiaryRow(ctx context.Context, userID, prov, bankCode
 	_, _ = s.db.Exec(ctx, q, userID, prov, bankCode, s.bankName(ctx, bankCode), accountNumber, accountName, recipientCode)
 }
 
-// ---------------------------------------------------------------------------
 // Banks / account resolution
-// ---------------------------------------------------------------------------
 
 // ListBanks returns the provider bank list (registry, with payment_banks fallback).
 func (s *Service) ListBanks(ctx context.Context, preferred string) ([]provider.Bank, error) {
@@ -125,9 +135,12 @@ func (s *Service) ListBanks(ctx context.Context, preferred string) ([]provider.B
 }
 
 // ResolveAccount performs a NUBAN name enquiry via the registry.
+// Two distinct refusals: a malformed request (bad NUBAN shape, missing bank
+// code) is a 400 — ErrInvalidAccountNumber; a well-formed enquiry whose lookup
+// found nothing keeps the 404 ErrInvalidAccount (E2E-MTL-003).
 func (s *Service) ResolveAccount(ctx context.Context, req ResolveAccountRequest) (*provider.AccountResolution, error) {
-	if !looksLikeNUBAN(req.AccountNumber) || req.BankCode == "" {
-		return nil, ErrInvalidAccount
+	if !looksLikeNUBAN(req.AccountNumber) || strings.TrimSpace(req.BankCode) == "" {
+		return nil, ErrInvalidAccountNumber
 	}
 	if s.registry == nil {
 		return nil, ErrProviderUnavailable
@@ -139,9 +152,7 @@ func (s *Service) ResolveAccount(ctx context.Context, req ResolveAccountRequest)
 	return res, nil
 }
 
-// ---------------------------------------------------------------------------
 // Beneficiaries
-// ---------------------------------------------------------------------------
 
 // ListBeneficiaries returns the user's saved payout destinations.
 func (s *Service) ListBeneficiaries(ctx context.Context, userID string) ([]Beneficiary, error) {
@@ -166,13 +177,15 @@ func (s *Service) ListBeneficiaries(ctx context.Context, userID string) ([]Benef
 // SaveBeneficiary resolves the account name and saves a beneficiary (registry
 // recipient created lazily on the first payout). Returns the saved row.
 func (s *Service) SaveBeneficiary(ctx context.Context, userID string, req SaveBeneficiaryRequest) (*Beneficiary, error) {
-	if !looksLikeNUBAN(req.AccountNumber) || req.BankCode == "" {
-		return nil, ErrInvalidAccount
+	// Same validation-vs-lookup split as ResolveAccount: malformed input is a
+	// 400, an unresolvable (but well-formed) destination stays a 404.
+	if !looksLikeNUBAN(req.AccountNumber) || strings.TrimSpace(req.BankCode) == "" {
+		return nil, ErrInvalidAccountNumber
 	}
 	if s.registry == nil {
 		return nil, ErrProviderUnavailable
 	}
-	prov := defaultStr(req.Provider, s.registry.Default())
+	prov := strutil.Or(req.Provider, s.registry.Default())
 	res, _, err := s.registry.ResolveAccountFailover(ctx, req.Provider, req.BankCode, req.AccountNumber)
 	if err != nil || res == nil {
 		return nil, ErrInvalidAccount
@@ -210,9 +223,7 @@ func (s *Service) DeleteBeneficiary(ctx context.Context, userID, id string) erro
 	return nil
 }
 
-// ---------------------------------------------------------------------------
 // Transaction PIN
-// ---------------------------------------------------------------------------
 
 // SetPin sets or replaces the user's transaction PIN. When one already exists the
 // caller must supply the correct current PIN.
@@ -225,10 +236,9 @@ func (s *Service) SetPin(ctx context.Context, userID, newPIN, currentPIN string)
 		return err
 	}
 	if has {
-		// Refuse BEFORE Verify. Verify scores a wrong PIN against the lockout
-		// counter, so passing an empty current PIN through would let a caller
-		// that simply omitted the field burn the user's 5 attempts and lock
-		// them out of transfers. A missing field is a bad request, not a guess.
+		// Refuse BEFORE Verify — an empty current PIN would score a failed
+		// attempt against the 5-strike lockout. A missing field is a bad
+		// request, not a guess.
 		if currentPIN == "" {
 			return ErrPinCurrentRequired
 		}
@@ -253,9 +263,7 @@ func (s *Service) HasPin(ctx context.Context, userID string) (bool, error) {
 	return s.pins.Has(ctx, userID)
 }
 
-// ---------------------------------------------------------------------------
 // Webhook routing helpers
-// ---------------------------------------------------------------------------
 
 // ProviderByName exposes a registered disbursement provider (for webhook verify).
 func (s *Service) ProviderByName(name string) (provider.DisbursementProvider, bool) {

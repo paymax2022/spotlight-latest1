@@ -1,9 +1,7 @@
 package fx_test
 
-// ---------------------------------------------------------------------------
 // LIVE-PROVIDER test for the Maplerad FX quote→exchange pair, driven through the
 // real orchestration adapter (adapters.MapleradLive.ExecuteConversion).
-//
 // Why this exists: both Maplerad FX calls were originally written blind and were
 // wrong in ways only a live call could reveal —
 //   - GET /fx/rates is a rate BOARD (a corridor list, no quote id), not a quote
@@ -12,18 +10,14 @@ package fx_test
 //     on `quote_reference` from POST /fx/quote.
 // Unit tests pin the decoded shapes, but only a live run proves the endpoints,
 // field names and auth are right. This test is that proof.
-//
 // ⚠️ This test MOVES MONEY in the Maplerad SANDBOX, so it is opt-in twice: it runs
 // only when MAPLERAD_SECRET_KEY is set AND FX_LIVE_EXCHANGE=1. It refuses to run
 // against production credentials (MAPLERAD_PROD=true).
-//
 //	cd backend && set -a && . ./.env && set +a && \
 //	  FX_LIVE_EXCHANGE=1 go test ./tests/fx/... -run LiveProviderMapleradExchange -v
-//
 // Corridor choice: the sandbox business has balance in every currency EXCEPT USD,
 // and NGN/GBP/EUR exchanges are disabled on it — KES→USD is funded and enabled.
 // The amount is deliberately tiny (KES 1,000 → ~USD 8.60).
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

@@ -4,7 +4,6 @@ package placement_test
 // diagnostic (no answer key) for a class from the seeded curriculum question
 // bank, and Score marks answers into a per-subject placement. Verifies the
 // engine end-to-end against the seeded NERDC-2025 entry-class questions.
-//
 // Skips unless TEST_DATABASE_URL is set — never DATABASE_URL, which is the
 // production pooler, and this test inserts. Requires the placement
 // question seed (20261102000000_academy_placement_questions.sql).

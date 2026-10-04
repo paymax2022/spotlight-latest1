@@ -3,19 +3,19 @@ import { View, Text, Image, ScrollView, Pressable, StyleSheet, Alert } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { CheckSquare, Square, Pencil } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
-import WizardProgress from '@/features/association/components/WizardProgress';
+import {WizardProgress} from '@/features/association/components';
 import { useOrgDraft } from '@/features/association/store/orgDraftStore';
-import { useCreateOrganisation } from '@/features/association/hooks/useCreateOrganisation';
-import { initials, formatNaira } from '@/features/association/utils/associationFormatters';
-import { CADENCE_LABEL } from '@/features/association/constants/association.constants';
-import { GROUP_TYPE_OPTIONS, APPROVAL_RULE_OPTIONS } from '@/features/association/constants/orgWizard.constants';
+import { useCreateOrganisation } from '@/features/association/hooks';
+import { initials, formatNaira } from '@/features/association/utils';
+import { CADENCE_LABEL } from '@/features/association/constants';
+import { GROUP_TYPE_OPTIONS, APPROVAL_RULE_OPTIONS } from '@/features/association/constants';
 
 export default function WizardPreview() {
   const { draft, patch, reset } = useOrgDraft();

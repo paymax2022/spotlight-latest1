@@ -1,17 +1,12 @@
 package healthlab_test
 
-// ---------------------------------------------------------------------------
-// LIVE-DB regression coverage for a SQL type-ambiguity bug found during
-// Laboratory (Module 16) UAT, in the same shape as PHARMACY-006's
-// AdminListOrders fix: AdminListOrders, AdminCustodyAudit, and
-// AdminEscalations all reused one placeholder as both a `= ''` text-empty
-// check and a `uuid` column comparison — Postgres rejects that the moment
-// the lab_provider_id filter is actually supplied ("operator does not exist:
-// uuid = text"). Fixed with nullable per-parameter comparisons, matching the
-// pharmacy fix exactly, before this was ever hit live.
-//
+// LIVE-DB regression coverage for the SQL type-ambiguity bug class (same shape
+// as PHARMACY-006's AdminListOrders fix): AdminListOrders, AdminCustodyAudit,
+// and AdminEscalations must use nullable per-parameter comparisons — reusing
+// one placeholder as both a `= ''` text-empty check and a `uuid` comparison is
+// rejected by Postgres ("operator does not exist: uuid = text") the moment the
+// lab_provider_id filter is supplied.
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

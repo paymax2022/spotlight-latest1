@@ -1,4 +1,3 @@
-// ── Towing — mock seed data + deterministic engine ───────────────────────────
 // All money is integer kobo. Callout + distance pricing mimics the SERVER.
 
 import type {

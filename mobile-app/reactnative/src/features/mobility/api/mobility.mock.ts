@@ -1,4 +1,3 @@
-// ── Paymax Mobility — Mock seed data + deterministic engines ─────────────────
 // Realistic fixtures so loading/empty/populated states render in USE_MOCK mode.
 // All money is integer kobo. The "pricing engine" here mimics the SERVER: the
 // client screens only ever read the values it returns, never recompute floors.
@@ -29,7 +28,6 @@ const now = () => Date.now();
 const iso = (msAgo = 0) => new Date(now() - msAgo).toISOString();
 const isoAhead = (msAhead: number) => new Date(now() + msAhead).toISOString();
 
-// ─── Pricing config (server-owned; client renders ranges from this) ───────────
 const PER_SERVICE: Record<ServiceType, Omit<PricingConfig, 'zone' | 'serviceType' | 'currency' | 'serviceAvailable'>> = {
   economy: { baseFareKobo: 500_00, perKmKobo: 220_00, perMinKobo: 35_00, minFareKobo: 900_00,  surgeMultiplier: 1.0, fareFloorPct: 0.85, fareCeilingPct: 1.30 },
   comfort: { baseFareKobo: 700_00, perKmKobo: 280_00, perMinKobo: 45_00, minFareKobo: 1_300_00, surgeMultiplier: 1.0, fareFloorPct: 0.85, fareCeilingPct: 1.30 },
@@ -73,7 +71,6 @@ export function mockEstimate(req: RideEstimateRequest): RideEstimate {
   };
 }
 
-// ─── Saved & recent places (Lagos) ─────────────────────────────────────────────
 export const MOCK_SAVED_PLACES: SavedPlace[] = [
   { id: 'sp_home', label: 'Home',   address: '14 Admiralty Way, Lekki Phase 1', lat: 6.4459, lng: 3.4730, icon: 'Home' },
   { id: 'sp_work', label: 'Work',   address: 'Plot 5, Idejo St, Victoria Island', lat: 6.4281, lng: 3.4219, icon: 'Briefcase' },
@@ -88,7 +85,6 @@ export const MOCK_RECENT_PLACES: Place[] = [
 const DEFAULT_PICKUP: Place = { address: '14 Admiralty Way, Lekki Phase 1', lat: 6.4459, lng: 3.4730 };
 const DEFAULT_DEST: Place = { address: 'Plot 5, Idejo St, Victoria Island', lat: 6.4281, lng: 3.4219 };
 
-// ─── Quick tiles ────────────────────────────────────────────────────────────────
 export const MOCK_QUICK_TILES: QuickTile[] = [
   { id: 'ride',     label: 'Ride now',  icon: 'Car',          serviceType: 'economy', enabled: true },
   { id: 'schedule', label: 'Schedule',  icon: 'CalendarClock', enabled: false },
@@ -96,7 +92,6 @@ export const MOCK_QUICK_TILES: QuickTile[] = [
   { id: 'airport',  label: 'Airport',   icon: 'Plane',        serviceType: 'comfort', enabled: true },
 ];
 
-// ─── Drivers / vehicles ────────────────────────────────────────────────────────
 export const MOCK_DRIVER: Driver = {
   id: 'drv_1',
   name: 'Emeka Obi',
@@ -118,13 +113,11 @@ export const MOCK_VEHICLE: Vehicle = {
   capacity: 4,
 };
 
-// ─── Trusted contacts ──────────────────────────────────────────────────────────
 export const MOCK_TRUSTED_CONTACTS: TrustedContact[] = [
   { id: 'tc_1', name: 'Ada (sister)', phone: '+2348030000001' },
   { id: 'tc_2', name: 'Tunde', phone: '+2348030000002' },
 ];
 
-// ─── Rider active trip (mutable, advanced by the mock API) ─────────────────────
 export function makeTrip(overrides: Partial<Trip> = {}): Trip {
   const est = mockEstimate({ pickup: DEFAULT_PICKUP, dest: DEFAULT_DEST, serviceType: 'economy' });
   return {
@@ -219,7 +212,6 @@ export function mockSendTripMessage(tripId: string, role: TripChatRole, body: st
   return m;
 }
 
-// ─── Rider history ───────────────────────────────────────────────────────────
 export const MOCK_HISTORY: Trip[] = [
   makeTrip({
     id: 'trip_h1', phase: 'completed', status: 'completed',
@@ -242,7 +234,6 @@ export const MOCK_HISTORY: Trip[] = [
   }),
 ];
 
-// ─── Driver profile (mutable) ──────────────────────────────────────────────────
 export const mockDriver: { profile: DriverProfile } = {
   profile: {
     id: 'drv_me',
@@ -261,7 +252,6 @@ export const mockDriver: { profile: DriverProfile } = {
   },
 };
 
-// ─── Driver dispatch feed ──────────────────────────────────────────────────────
 export function mockDriverRequests(): DriverRideRequest[] {
   const base = (id: string, pickup: Place, dest: Place, service: ServiceType): DriverRideRequest => {
     const est = mockEstimate({ pickup, dest, serviceType: service });

@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
@@ -33,7 +35,6 @@ func RegisterMockExamRoutes(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 	svc := NewMockExamService(pool)
 	analyticsSvc := NewAnalyticsService(pool)
 
-	// Inject cache service if Redis is available
 	if len(redisClient) > 0 && redisClient[0] != nil {
 		cacheService := NewCacheService(redisClient[0])
 		analyticsSvc.WithCache(cacheService)
@@ -41,25 +42,20 @@ func RegisterMockExamRoutes(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 
 	h := NewMockExamHandler(svc, analyticsSvc)
 
-	// ── Member (learner) routes ──────────────────────────────────────────
 	mockExams := member.Group("/mock-exams")
 
-	// Browse available templates
 	mockExams.GET("/templates", h.ListTemplates)
 	mockExams.GET("/templates/:id", h.GetTemplate)
 
-	// Take an exam
 	mockExams.POST("/start", h.StartExam)
 	mockExams.GET("/attempts/:attempt_id", h.GetExamProgress)
 	mockExams.POST("/attempts/:attempt_id/save", h.SaveProgress)
 	mockExams.POST("/attempts/:attempt_id/submit", h.SubmitExam)
 
-	// Review results & analytics
 	mockExams.GET("/results/:attempt_id", h.GetResults)
 	mockExams.GET("/statistics/:template_id", h.GetStatistics)
 	mockExams.GET("/analytics", h.GetLearnerAnalytics)
 
-	// ── Admin routes ─────────────────────────────────────────────────────
 	guard := func(p string) gin.HandlerFunc { return middleware.RequirePermission(rbac, p) }
 	adminMocks := admin.Group("/mock-exams")
 	adminMocks.GET("/templates", guard("academy.assessment"), h.AdminListTemplates)
@@ -68,7 +64,6 @@ func RegisterMockExamRoutes(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 	adminMocks.DELETE("/templates/:id", guard("academy.assessment"), h.AdminArchiveTemplate)
 	adminMocks.GET("/analytics", guard("academy.assessment"), h.GetAdminAnalytics)
 
-	// ── Advanced Analytics Routes ──────────────────────────────────────────
 	advancedAnalytics := NewAdvancedAnalyticsService(pool)
 	advancedAnalyticsGroup := admin.Group("/analytics")
 	advancedAnalyticsGroup.GET("/trends/performance", guard("academy.assessment"), func(c *gin.Context) {
@@ -152,22 +147,12 @@ func RegisterMockExamRoutes(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 	})
 }
 
-// ── Helper ──────────────────────────────────────────────────────────────
-
 func getUserID(c *gin.Context) (string, error) {
-	userID := c.GetString("user_id")
-	if userID == "" {
-		if u, ok := middleware.GetAuthenticatedUser(c); ok {
-			userID = u.ID
-		}
+	if u := ginutil.UserID(c, authUserID); u != "" {
+		return u, nil
 	}
-	if userID == "" {
-		return "", errors.New("unauthenticated")
-	}
-	return userID, nil
+	return "", errors.New("unauthenticated")
 }
-
-// ── Member Handlers ─────────────────────────────────────────────────────
 
 // ListTemplates returns available exam templates
 // GET /academy/mock-exams/templates?class_id=P6&exam_type=class_mock&limit=20
@@ -185,11 +170,10 @@ func (h *MockExamHandler) ListTemplates(c *gin.Context) {
 
 	templates, err := h.svc.GetTemplates(c.Request.Context(), filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 
-	// Convert to response format
 	resp := make([]MockExamTemplateResponse, len(templates))
 	for i, t := range templates {
 		resp[i] = MockExamTemplateResponse{
@@ -212,7 +196,7 @@ func (h *MockExamHandler) ListTemplates(c *gin.Context) {
 func (h *MockExamHandler) GetTemplate(c *gin.Context) {
 	detail, err := h.svc.GetTemplate(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 
@@ -231,13 +215,13 @@ func (h *MockExamHandler) StartExam(c *gin.Context) {
 
 	var req StartMockExamRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
 	attempt, err := h.svc.StartExam(c.Request.Context(), userID, req.TemplateID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -249,7 +233,7 @@ func (h *MockExamHandler) StartExam(c *gin.Context) {
 func (h *MockExamHandler) GetExamProgress(c *gin.Context) {
 	progress, err := h.svc.GetExamProgress(c.Request.Context(), c.Param("attempt_id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 		return
 	}
 
@@ -262,13 +246,13 @@ func (h *MockExamHandler) GetExamProgress(c *gin.Context) {
 func (h *MockExamHandler) SaveProgress(c *gin.Context) {
 	var req SubmitMockExamRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
 	if err := h.svc.SaveProgress(c.Request.Context(), c.Param("attempt_id"),
 		req.Answers, req.FlaggedQuestions); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 
@@ -281,13 +265,13 @@ func (h *MockExamHandler) SaveProgress(c *gin.Context) {
 func (h *MockExamHandler) SubmitExam(c *gin.Context) {
 	var req SubmitMockExamRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
 	result, err := h.svc.SubmitExam(c.Request.Context(), c.Param("attempt_id"), req.Answers)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -357,8 +341,6 @@ func (h *MockExamHandler) GetStatistics(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": stats})
 }
 
-// ── Admin Handlers ──────────────────────────────────────────────────────
-
 func (h *MockExamHandler) AdminListTemplates(c *gin.Context) {
 	filter := MockExamFilter{
 		Status: "approved",
@@ -367,7 +349,7 @@ func (h *MockExamHandler) AdminListTemplates(c *gin.Context) {
 
 	templates, err := h.svc.GetTemplates(c.Request.Context(), filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 
@@ -391,11 +373,10 @@ func (h *MockExamHandler) AdminListTemplates(c *gin.Context) {
 func (h *MockExamHandler) AdminCreateTemplate(c *gin.Context) {
 	var req MockExamTemplate
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
-	// Validate required fields
 	if req.Name == "" || req.ClassID == "" || req.ExamType == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing required fields: name, class_id, exam_type"})
 		return
@@ -404,7 +385,7 @@ func (h *MockExamHandler) AdminCreateTemplate(c *gin.Context) {
 	// In a full implementation, would insert via repository
 	req.Status = "draft"
 	c.JSON(http.StatusCreated, gin.H{
-		"data": req,
+		"data":    req,
 		"message": "Template created in draft status. Populate questions and approve before learner access.",
 	})
 }
@@ -412,13 +393,13 @@ func (h *MockExamHandler) AdminCreateTemplate(c *gin.Context) {
 func (h *MockExamHandler) AdminUpdateTemplate(c *gin.Context) {
 	var req MockExamTemplate
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
 	// In a full implementation, would update via repository
 	c.JSON(http.StatusOK, gin.H{
-		"data": req,
+		"data":    req,
 		"message": "Template updated successfully",
 	})
 }
@@ -432,10 +413,8 @@ func (h *MockExamHandler) AdminArchiveTemplate(c *gin.Context) {
 	})
 }
 
-// ── Analytics Handlers ──────────────────────────────────────────────────
-
 // GetLearnerAnalytics returns learner's personal analytics with real data
-// GET /api/academy/mock-exams/analytics
+// GET /api/finance/academy/mock-exams/analytics (memberAcad base — see academy_routes.go)
 func (h *MockExamHandler) GetLearnerAnalytics(c *gin.Context) {
 	userID, err := getUserID(c)
 	if err != nil {
@@ -443,7 +422,6 @@ func (h *MockExamHandler) GetLearnerAnalytics(c *gin.Context) {
 		return
 	}
 
-	// Get real analytics from database
 	analytics, err := h.analytics.GetLearnerAnalytics(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch analytics"})
@@ -454,11 +432,10 @@ func (h *MockExamHandler) GetLearnerAnalytics(c *gin.Context) {
 }
 
 // GetAdminAnalytics returns system-wide analytics with real data
-// GET /api/academy/admin/analytics
+// GET /api/academy/admin/mock-exams/analytics (adminAcad base — see academy_routes.go)
 func (h *MockExamHandler) GetAdminAnalytics(c *gin.Context) {
 	timeRange := c.DefaultQuery("timeRange", "week")
 
-	// Get real analytics from database
 	analytics, err := h.analytics.GetAdminAnalytics(c.Request.Context(), timeRange)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch analytics"})

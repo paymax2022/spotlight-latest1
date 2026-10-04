@@ -1,11 +1,8 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // The founder-supplied identity fields: acronym, location, website, founded
 // year and logo.
-//
 // WHY THIS EXISTS
-// ---------------
 // assoc_organisations has carried founded_year, location and website since the
 // schema was written, and the admin console's organisation editor has always
 // read and written them. The publish INSERT never listed them, and OrgDraft had
@@ -13,14 +10,11 @@ package association_test
 // them NULL — and the founder had no way to supply them in the first place. The
 // only way an organisation ever got a location was an admin typing one in
 // afterwards.
-//
 // These tests pin both halves: the values survive publish, and the two fields
 // the wizard marks required are refused server-side rather than trusted to the
 // client that happens to be the only publisher today.
-//
 // Live-DB, same harness as founder_and_scoping_test.go: skipped without
 // TEST_DATABASE_URL.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

@@ -1,7 +1,5 @@
-// ── Doctor — Notifications Centre hooks (Batch 6, Section X) ─────────────────
 // Query keys under ['doctor', 'notifications', …]. Mutations auto-generate the
 // idempotencyKey. REUSES the Phase 1 useNotifications (useAccount.ts) for the
-// plain feed; this file adds the RICH feed (kind/severity/cta), grouped view,
 // preferences, and the mark-read / mark-all / update-prefs flows. Hook names are
 // deliberately distinct from useNotifications to avoid a barrel collision.
 
@@ -23,8 +21,6 @@ import type {
   MarkAllNotificationsReadInput,
   UpdateNotificationPrefsInput,
 } from '@/types/doctor.batch6';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function useNotificationFeed() {
   return useQuery({
@@ -52,8 +48,6 @@ export function useNotificationPreferences() {
     staleTime:       60_000,
   });
 }
-
-// ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useMarkNotificationRead() {
   const qc = useQueryClient();

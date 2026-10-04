@@ -8,14 +8,12 @@ import (
 )
 
 // Block 47: estate-scoped access hardening.
-//
 // Every estate read/write path takes (estateID, userID) and resolves the
 // caller's membership/role via estate_residents scoped to that estate before
 // acting; detail/mutation paths additionally compare the loaded row's estate_id
 // to the caller's estate (404/403 otherwise). These tests prove the guards run
 // *before* any data access — a Service with a nil DB would panic on query if the
 // guard were missing, so a clean error return is evidence the guard fired first.
-//
 // NOTE: a full live-DB cross-estate penetration test (real authenticated token
 // vs another estate's rows under PostgREST RLS) remains environment-blocked and
 // is tracked in docs/estate/SECURITY-RLS-INDEX-AUDIT.md (Block 47d).

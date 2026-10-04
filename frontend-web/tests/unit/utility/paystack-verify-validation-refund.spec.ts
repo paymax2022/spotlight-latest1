@@ -104,7 +104,6 @@ describe('verifyUtilityPaystackPayment — payUtility throws before creating a t
     const secondCall = vi.mocked(creditWallet).mock.calls[0];
 
     // Same idempotency key both times — creditWallet's own idempotency guard
-    // (checkIdempotencyKey) is what actually prevents the double-credit; this
     // just proves the KEY stays stable across retries so that guard can work.
     expect(secondCall[1].idempotencyKey).toBe(firstCall[1].idempotencyKey);
   });

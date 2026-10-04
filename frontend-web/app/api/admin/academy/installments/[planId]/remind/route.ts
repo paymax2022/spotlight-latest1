@@ -2,7 +2,7 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
-import { sendTransactionalEmail } from '@/src/lib/email/transactional';
+import { sendTransactionalEmail } from '@/src/lib/email';
 
 export async function POST(request: Request, ctx: { params: Promise<{ planId: string }> }) {
   const params = await ctx.params;
@@ -10,7 +10,6 @@ export async function POST(request: Request, ctx: { params: Promise<{ planId: st
     await assertAdminPermission(request, 'programs:manage');
     const supabase = createAdminClient();
 
-    // Fetch plan + applicant info + pending payments
     const { data: plan, error } = await supabase
       .from('academy_installment_plans')
       .select('*, academy_applications(full_name, email), academy_installment_payments(*)')
@@ -78,7 +77,6 @@ export async function POST(request: Request, ctx: { params: Promise<{ planId: st
       `,
     });
 
-    // Update reminder timestamps + overdue status
     const today = new Date().toISOString().slice(0, 10);
     await Promise.all(
       pending.map((p: any) =>

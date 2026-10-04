@@ -2,7 +2,6 @@
 // sub-package: scheduled/live tutor classes (streamed via an INJECTED room
 // provider), moderated study groups + Q&A discussions, and a report → moderation
 // queue.
-//
 // GOLDEN RULES enforced here (docs/prd/edtech state-machines.md, nfr.md
 // child-safety, paymax-rails.md streaming):
 //   - Guarded live-session state machine: scheduled→live→ended (+ scheduled→
@@ -25,8 +24,6 @@
 package live
 
 import "time"
-
-// ── Live-session lifecycle ─────────────────────────────────────────────────────
 
 // SessionState mirrors academy_live_sessions.state CHECK.
 type SessionState string
@@ -69,8 +66,6 @@ type Participant struct {
 	JoinedAt  time.Time       `json:"joined_at"`
 	LeftAt    *time.Time      `json:"left_at,omitempty"`
 }
-
-// ── Community ───────────────────────────────────────────────────────────────────
 
 // Discussion scope values (academy_discussions.scope). These are the ONLY scopes a
 // discussion may carry — there is intentionally no "dm" / "direct" / "1:1" scope:
@@ -119,8 +114,6 @@ type Discussion struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
-// ── Moderation ──────────────────────────────────────────────────────────────────
-
 // ReportState mirrors academy_moderation_reports.state CHECK.
 type ReportState string
 
@@ -158,8 +151,6 @@ type ModerationReport struct {
 	CreatedAt   time.Time   `json:"created_at"`
 	DecidedAt   *time.Time  `json:"decided_at,omitempty"`
 }
-
-// ── Request DTOs ────────────────────────────────────────────────────────────────
 
 // ScheduleSessionRequest — admin POST /live/sessions (host = tutor/staff).
 type ScheduleSessionRequest struct {

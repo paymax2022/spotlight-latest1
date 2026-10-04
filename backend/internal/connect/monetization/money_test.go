@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-// ── Test doubles ──────────────────────────────────────────────────────────────
-
 // fakeWallet records the debit it was asked to perform and returns a preset error
 // so the test never proceeds to the (DB-backed) projection step. This lets us
 // assert the MONEY PATH contract — server-resolved amount, idempotency key, and
@@ -62,8 +60,6 @@ func withStubPlan(s *Service, p *Plan) {
 	s.planLookup = func(context.Context, string) (*Plan, error) { return p, nil }
 }
 
-// ── Tests (written before wiring the real wallet) ─────────────────────────────
-
 func boostPlan() *Plan {
 	return &Plan{ID: "p1", Code: "boost_30min", Kind: KindBoost, Name: "Boost",
 		PriceKobo: 80000, Entitlements: json.RawMessage(`{"boost_minutes":30}`), Active: true}
@@ -113,7 +109,6 @@ func TestPurchase_KindGuard(t *testing.T) {
 	s, _ := newServiceWithFakes(w)
 	withStubPlan(s, boostPlan()) // a boost plan...
 
-	// ...bought via the subscriptions endpoint must be rejected before any debit.
 	_, _, err := s.Purchase(context.Background(), "user-1", "idem-x", KindSubscription,
 		PurchaseRequest{PlanCode: "boost_30min"})
 	if !errors.Is(err, ErrKindMismatch) {
@@ -153,8 +148,6 @@ func TestPurchase_RejectsZeroPricePlan(t *testing.T) {
 		t.Fatal("no debit for a zero-price plan")
 	}
 }
-
-// ── Pure entitlement-enforcement logic ────────────────────────────────────────
 
 func TestFeatureEnabled(t *testing.T) {
 	future := time.Now().UTC().Add(24 * time.Hour)

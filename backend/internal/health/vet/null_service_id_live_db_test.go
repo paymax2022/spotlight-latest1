@@ -1,26 +1,12 @@
 package healthvet
 
-// ---------------------------------------------------------------------------
-// LIVE-DB regression guard for VET-3: a latent NULL service_id crash risk
-// found (but not fixed) in a prior session, spun off as task_a86ef5d8. The
-// bug is still live going into this pass — confirmed by re-reading the code.
-//
-// vet_appointment_payments.service_id is ON DELETE SET NULL against
-// vet_services, but Appointment.ServiceID was a plain (non-pointer) string.
-// If a vet_services row is ever hard-deleted after an appointment referenced
-// it, the FK sets service_id NULL and pgx fails "cannot scan NULL into
-// *string" on the very next read of that appointment — both the single
-// load()/Get() path AND ListAppointmentsForPatient (where one bad row fails
-// the whole list, per the same bug class documented in the pharmacy catalog
-// query's own comment).
-//
-// Fixed by making Appointment.ServiceID *string (matching EscrowID/
-// ConsultID/DeliveryRef already on the same struct) — the pgx scan call
-// sites needed no change, since Scan(&a.ServiceID) already works for a
-// nullable column once the field itself is a pointer.
-//
+// LIVE-DB regression guard for VET-3: vet_appointment_payments.service_id is
+// ON DELETE SET NULL against vet_services, so Appointment.ServiceID must stay
+// *string (matching EscrowID/ConsultID/DeliveryRef on the same struct). A
+// plain string would crash pgx with "cannot scan NULL into *string" on the
+// next read after a vet_services hard-delete — on load()/Get() AND on
+// ListAppointmentsForPatient (one bad row fails the whole list).
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

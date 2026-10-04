@@ -1,17 +1,13 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for the customer tip on the food-delivery money path:
 // the tip must be ESCROWED with the order total at placement, PERSISTED on the
 // order row, and paid 100% to the rider at settlement — with conservation intact
 // (escrow released == provider + platform + rider legs).
-//
 // Regression guard: PlaceOrder used to drop req.TipKobo entirely (never added to
 // the escrowed total, never set on the Order, never in the INSERT column list), so
 // a tip was neither charged to the customer nor paid to the rider.
-//
 // Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -100,7 +96,6 @@ func TestLiveDB_OrderTipEscrowAndRiderPayout(t *testing.T) {
 		t.Fatalf("fund customer: %v", err)
 	}
 
-	// --- Placement: the tip is added to the escrowed total AND persisted. ---
 	// No delivery coords → the flat DeliveryFeeKobo applies, so the arithmetic is exact.
 	const tip int64 = 50_000 // ₦500
 	subtotal := int64(2) * 450_000
@@ -152,7 +147,6 @@ func TestLiveDB_OrderTipEscrowAndRiderPayout(t *testing.T) {
 		t.Errorf("customer debited %d, want %d — the tip must be charged at placement", debited, wantTotal)
 	}
 
-	// --- Settlement: the rider is paid its 10% of the NON-tip base + 100% of the tip. ---
 	if _, err := pool.Exec(ctx,
 		`UPDATE orders SET rider_id=$2, status='picked_up', dispatch_status='assigned', delivery_code='4321' WHERE id=$1`,
 		order.ID, rider); err != nil {
@@ -199,7 +193,6 @@ func TestLiveDB_OrderTipEscrowAndRiderPayout(t *testing.T) {
 		t.Errorf("settlement row provider=%d fee=%d, want %d/%d", settledProvider, settledFee, wantProvider, wantPlatform)
 	}
 
-	// --- A negative tip is clamped to 0, never treated as a discount. ---
 	untipped, err := svc.PlaceOrder(ctx, restID, customer, PlaceOrderRequest{
 		Items:           []OrderItemInput{{MenuItemID: item.ID, Quantity: 1}},
 		DeliveryAddress: "Victoria Island",
@@ -216,7 +209,6 @@ func TestLiveDB_OrderTipEscrowAndRiderPayout(t *testing.T) {
 		t.Errorf("negative-tip order total = %d, want %d (a negative tip must not discount the order)", untipped.TotalKobo, want)
 	}
 
-	// --- A tip larger than the order itself is rejected BEFORE any money moves. ---
 	if _, err := svc.PlaceOrder(ctx, restID, customer, PlaceOrderRequest{
 		Items:           []OrderItemInput{{MenuItemID: item.ID, Quantity: 1}},
 		DeliveryAddress: "Victoria Island",

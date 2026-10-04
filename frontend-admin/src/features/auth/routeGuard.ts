@@ -7,7 +7,6 @@ import { hasAnyPermission, hasPermission } from '@/features/auth/rbac';
 // every entry below — so this change never locks out a current admin. It closes
 // the previous default-ALLOW hole (any unmapped route was reachable by anyone)
 // and is the foundation for genuinely scoped operator roles.
-//
 // NOTE: this guard is a client-side UX gate only. It is NOT a security boundary —
 // the Go backend MUST independently enforce RBAC on every admin endpoint. See the
 // admin gap analysis (Phase 0) for the server-side hardening that must accompany it.
@@ -20,7 +19,6 @@ const PUBLIC_ADMIN_ROUTES = new Set<string>(['/admin', '/admin/unauthorized']);
 // Ordered MOST-SPECIFIC FIRST — isRouteAllowed returns on the first prefix match,
 // so a cluster's sensitive sub-routes must precede its catch-all.
 const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
-  // ── Access, audit & identity ───────────────────────────────────────────────
   { prefix: '/admin/audit-logs', permissions: ['audit.logs.view'] },
   { prefix: '/admin/security-events', permissions: ['audit.logs.view'] },
   { prefix: '/admin/login-activity', permissions: ['audit.logs.view'] },
@@ -29,6 +27,13 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/admin/roles', permissions: ['roles.view'] },
   { prefix: '/admin/rbac-settings', permissions: ['roles.view'] },
   { prefix: '/admin/users', permissions: ['users.view'] },
+  // Create-an-admin page (the panel that used to live only inside
+  // /admin/login). Gated on the permission the action actually performs —
+  // granting roles — rather than the baseline, so the sidebar entry and this
+  // guard agree on who sees it. Without an entry it would fall through to the
+  // default-deny baseline (`admin.access`), a slug no seeded role holds, and
+  // only wildcard operators would ever match.
+  { prefix: '/admin/admins', permissions: ['users.roles.assign'] },
 
   // ── Path A consoles (admin consolidation, see ADR-047) ─────────────────────
   // Data for all of these lives in frontend-web, reached through
@@ -52,15 +57,13 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/admin/open-mic', permissions: ['dashboard:view'] },
   { prefix: '/admin/contests', permissions: ['dashboard:view'] },
 
-  // ── Core money path (finance) ──────────────────────────────────────────────
   // Path A console (admin consolidation, see ADR-047): data lives in
   // frontend-web, reached through /api/web-proxy, so its real permission
   // check is server-side there ('finance:view' / 'finance:adjust:initiate' —
   // frontend-web's colon-notation, not this file's dot-notation Go-style
-  // permissions). Listed here with the SAME colon-notation strings so the
-  // finance_admin/finance_maker/finance_checker/finance_viewer roles (see
-  // adminAuth.ts's FINANCE_ROLE_PERMISSIONS) can pass this client-side gate
-  // too — without an entry, this prefix falls through to the default-deny
+  // permissions). Listed here with the SAME colon-notation strings so a
+  // scoped finance operator role can pass this client-side gate too —
+  // without an entry, this prefix falls through to the default-deny
   // baseline below, which none of those roles hold, and the route is
   // unreachable for them even though the server would have allowed them in.
   { prefix: '/admin/payments-finance', permissions: ['finance:view', 'finance:adjust:initiate', 'finance:adjust:approve'] },
@@ -71,7 +74,6 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/admin/finance/wallets', permissions: ['finance.admin.wallets'] },
   { prefix: '/admin/finance', permissions: ['finance.admin.view'] },
 
-  // ── FX / treasury (KYB PII, force-reversals, SAR filing) ───────────────────
   { prefix: '/admin/fx/compliance', permissions: ['compliance.admin.review'] },
   { prefix: '/admin/fx/customers', permissions: ['fx.admin.customers'] },
   { prefix: '/admin/fx/treasury', permissions: ['fx.admin.treasury'] },
@@ -79,7 +81,6 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/admin/fx/transactions', permissions: ['fx.admin.transactions'] },
   { prefix: '/admin/fx', permissions: ['fx.admin.view'] },
 
-  // ── Other money / ledger surfaces ──────────────────────────────────────────
   { prefix: '/admin/crypto', permissions: ['crypto.admin.view'] },
   { prefix: '/admin/savings', permissions: ['savings.admin.view'] },
   { prefix: '/admin/invest', permissions: ['invest.admin.view'] },
@@ -94,7 +95,6 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/admin/p2pmarket', permissions: ['p2p.admin.view'] },
   { prefix: '/admin/spotlight', permissions: ['finance.admin.view'] },
 
-  // ── Compliance / risk / moderation (regulatory + PII) ──────────────────────
   { prefix: '/admin/connect/aml', permissions: ['compliance.admin.review'] },
   { prefix: '/admin/connect/underage', permissions: ['compliance.admin.review'] },
   { prefix: '/admin/connect/media-review', permissions: ['moderation.admin.review'] },
@@ -114,7 +114,6 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/admin/referral-rewards', permissions: ['referral.admin.finance'] },
   { prefix: '/admin/referral', permissions: ['referral.admin.view'] },
 
-  // ── Operational verticals ──────────────────────────────────────────────────
   { prefix: '/admin/merchant-onboarding', permissions: ['merchant.onboarding.view'] },
   { prefix: '/admin/featured-placement', permissions: ['placement.admin.review'] },
   { prefix: '/admin/nutrition', permissions: ['nutrition.admin.manage'] },
@@ -122,8 +121,6 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   // `restaurant.admin.view` was never seeded — it appears in neither
   // 20260919000200_restaurant_admin_rbac.sql nor 20260920000100_rbac_seed_gaps.sql,
   // so this prefix used to admit only wildcard super-admins and locked every
-  // real restaurant operator out of the console. The seeded slugs are
-  // restaurant.manage plus restaurant.admin.{pricing,dispatch,onboarding,payouts,disputes};
   // hasAnyPermission is an OR, so holding any one of them opens the section and
   // each sub-page still gates its own actions via RESTAURANT_PERMS in _ui.tsx.
   {
@@ -153,7 +150,6 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   // surface in the module, so it is listed AHEAD of the catch-all and requires
   // an operator who can act, not merely one who can read a dashboard. Server
   // RBAC (requireOrgAdmin, and platform-super-admin for verify) remains the
-  // real boundary; this only avoids showing an operator a page whose every
   // button will 403.
   { prefix: '/admin/association/organisations', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   // Content authoring (announcements, meetings, documents, events, tasks) is a
@@ -176,12 +172,10 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/admin/health', permissions: ['health.admin.view'] },
   { prefix: '/admin/intake', permissions: ['health.admin.intake'] },
 
-  // Multi-modal mobility: mode pages require mobility.view to enter; sensitive
   // in-page actions are additionally gated by mode-specific mobility.*.manage
   // permissions (see _ui MOBILITY_PERMS).
   { prefix: '/admin/mobility', permissions: ['mobility.view'] },
 
-  // ── Platform config (feature flags, edtech super-admin) ────────────────────
   { prefix: '/admin/platform', permissions: ['platform.admin.manage'] },
 ];
 

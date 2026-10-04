@@ -2,11 +2,11 @@ package merchant
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
+	"errors"
 	"fmt"
+	"time"
 
+	"spotlight/backend/go-common/cryptox"
 	financeledger "spotlight/backend/internal/finance/ledger"
 )
 
@@ -16,6 +16,20 @@ type SettlementHook interface {
 	Settle(ctx context.Context, merchantID, merchantCampaignID string, amountKobo int64, idempotencyKey string) error
 }
 
+// walletDebitLimiter is the minimal seam the Fund money path depends on for
+// the fail-closed KYC-tier / daily-debit gate (E2E-FIN-046). *tiers.Service
+// satisfies it in production (injected via WithTiers — NewService takes no
+// pool, so the gate cannot self-build); unit tests inject a fake. A campaign
+// funding is a wallet DEBIT, so the STRICT gate is used: it is not a checkout
+// purchase, so the Tier-0 checkout allowance (ADR-043) does NOT apply here.
+type walletDebitLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
+// must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
+var ErrTierGateUnwired = errors.New("merchant: money path requires a tier gate (not wired)")
+
 // Service manages merchants, merchant-funded campaigns and partner keys. Funding
 // moves real money via the finance ledger (kobo + Idempotency-Key); settlement is
 // delegated to the (optional) SettlementHook.
@@ -23,13 +37,36 @@ type Service struct {
 	repo       *Repository
 	finance    *financeledger.Service
 	settlement SettlementHook
+	tiers      walletDebitLimiter
 }
 
 func NewService(repo *Repository, finance *financeledger.Service, settlement SettlementHook) *Service {
 	return &Service{repo: repo, finance: finance, settlement: settlement}
 }
 
-// --- merchants / campaigns ---
+// WithTiers injects the tier gate (app-wiring builds tiers.NewService(pool);
+// tests inject a fake). A nil argument is ignored so an unwired injection can
+// never strip the gate — and absent injection Fund fails closed via
+// ErrTierGateUnwired.
+func (s *Service) WithTiers(t walletDebitLimiter) *Service {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
+}
+
+// enforceDebitLimit is the fail-closed guard applied before the Fund wallet
+// debit (E2E-FIN-046): the same EnforceWalletDebitLimit the canonical transfer
+// rail (finance/transfers) runs. Tier 0 → ErrWalletDisabled, over daily cap →
+// ErrDailyLimitExceeded, gate/db errors refuse, and a missing gate refuses via
+// ErrTierGateUnwired. The error propagates UNWRAPPED so the handler maps the
+// tier sentinels to 403 via errors.Is.
+func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	return s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo)
+}
 
 func (s *Service) CreateMerchant(ctx context.Context, in CreateMerchantInput) (*Merchant, error) {
 	if in.Name == "" || in.Slug == "" {
@@ -88,6 +125,20 @@ func (s *Service) Fund(ctx context.Context, mcID string, amountKobo int64, idemp
 		return nil, fmt.Errorf("merchant: finance ledger unavailable")
 	}
 
+	// Tier gate (fail-closed, E2E-FIN-046): funding debits the merchant's
+	// wallet, so the same EnforceWalletDebitLimit the transfer rail applies
+	// runs BEFORE money moves — a refused attempt posts zero ledger legs.
+	// Skipped only when the leg is already durably posted (led.Posted): a
+	// replay then falls through to the ErrDuplicate return below, restoring
+	// the prior idempotent response instead of refusing on today's usage.
+	if posted, perr := s.finance.Posted(ctx, idempotencyKey); perr != nil {
+		return nil, fmt.Errorf("merchant: check funded leg: %w", perr)
+	} else if !posted {
+		if err := s.enforceDebitLimit(ctx, m.FundingWalletUserID, amountKobo); err != nil {
+			return nil, err
+		}
+	}
+
 	// Credit the campaign-escrow standing account; debit the merchant wallet.
 	escrow, err := s.finance.GetOrCreateStandingAccount(ctx, financeledger.AccountEscrow)
 	if err != nil {
@@ -125,8 +176,6 @@ func (s *Service) Settle(ctx context.Context, mcID string, amountKobo int64, ide
 	return s.repo.AddSettlement(ctx, mcID, amountKobo)
 }
 
-// --- partner keys ---
-
 // IssueKey mints a partner API key: a random secret is generated, only its
 // sha256 hash + a non-secret prefix are stored, and the plaintext is returned
 // once for the caller to copy.
@@ -137,13 +186,9 @@ func (s *Service) IssueKey(ctx context.Context, in IssueKeyInput) (*IssuedKey, e
 	if _, err := s.repo.GetMerchant(ctx, in.MerchantID); err != nil {
 		return nil, fmt.Errorf("merchant: merchant not found")
 	}
-	secret, prefix, err := generateKey()
-	if err != nil {
-		return nil, err
-	}
+	secret, prefix := generateKey()
 	plain := prefix + "." + secret
-	sum := sha256.Sum256([]byte(plain))
-	hash := hex.EncodeToString(sum[:])
+	hash := cryptox.SHA256Hex(plain)
 
 	id, err := s.repo.InsertPartnerKey(ctx, in.MerchantID, prefix, hash, in.Scopes)
 	if err != nil {
@@ -183,24 +228,96 @@ func (s *Service) AuthenticateKey(ctx context.Context, presented string) (mercha
 	if err != nil || mid == "" {
 		return "", nil, false, err
 	}
-	sum := sha256.Sum256([]byte(presented))
-	if hex.EncodeToString(sum[:]) != hash {
+	if !cryptox.ConstantTimeEqual(cryptox.SHA256Hex(presented), hash) {
 		return "", nil, false, nil
 	}
 	return mid, sc, true, nil
 }
 
 // generateKey returns a random 32-byte secret (hex) plus an 8-char prefix.
-func generateKey() (secret, prefix string, err error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", "", fmt.Errorf("merchant: generate key: %w", err)
-	}
-	secret = hex.EncodeToString(buf)
-	pbuf := make([]byte, 4)
-	if _, err := rand.Read(pbuf); err != nil {
-		return "", "", fmt.Errorf("merchant: generate prefix: %w", err)
-	}
-	prefix = "pk_" + hex.EncodeToString(pbuf)
-	return secret, prefix, nil
+func generateKey() (string, string) {
+	return cryptox.RandHex(32), "pk_" + cryptox.RandHex(4)
+}
+
+// Merchant statuses.
+const (
+	StatusActive    = "active"
+	StatusSuspended = "suspended"
+)
+
+// Merchant campaign statuses.
+const (
+	MCDraft   = "draft"
+	MCFunded  = "funded"
+	MCActive  = "active"
+	MCSettled = "settled"
+	MCEnded   = "ended"
+)
+
+// Merchant is a brand/partner funding referral campaigns.
+type Merchant struct {
+	ID                  string    `json:"id"`
+	OwnerUserID         string    `json:"owner_user_id,omitempty"`
+	Name                string    `json:"name"`
+	Slug                string    `json:"slug"`
+	Status              string    `json:"status"`
+	FundingWalletUserID string    `json:"funding_wallet_user_id,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
+}
+
+// MerchantCampaign is a merchant-funded campaign envelope.
+type MerchantCampaign struct {
+	ID          string    `json:"id"`
+	MerchantID  string    `json:"merchant_id"`
+	CampaignID  string    `json:"campaign_id,omitempty"`
+	Name        string    `json:"name"`
+	FundedKobo  int64     `json:"funded_kobo"`
+	SettledKobo int64     `json:"settled_kobo"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// PartnerKey is an issued (hashed) partner API key record.
+type PartnerKey struct {
+	ID         string     `json:"id"`
+	MerchantID string     `json:"merchant_id"`
+	KeyPrefix  string     `json:"key_prefix"`
+	Scopes     []string   `json:"scopes"`
+	Status     string     `json:"status"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// CreateMerchantInput is the admin merchant-create payload.
+type CreateMerchantInput struct {
+	Name                string `json:"name"`
+	Slug                string `json:"slug"`
+	OwnerUserID         string `json:"owner_user_id"`
+	FundingWalletUserID string `json:"funding_wallet_user_id"`
+}
+
+// CreateMCInput creates a merchant-funded campaign envelope.
+type CreateMCInput struct {
+	MerchantID string `json:"merchant_id"`
+	CampaignID string `json:"campaign_id"`
+	Name       string `json:"name"`
+}
+
+// FundInput funds a merchant campaign from the merchant's wallet (kobo).
+type FundInput struct {
+	AmountKobo int64 `json:"amount_kobo"`
+}
+
+// IssueKeyInput requests a new scoped partner API key.
+type IssueKeyInput struct {
+	MerchantID string   `json:"merchant_id"`
+	Scopes     []string `json:"scopes"`
+}
+
+// IssuedKey is the one-time response carrying the plaintext key.
+type IssuedKey struct {
+	ID        string   `json:"id"`
+	KeyPrefix string   `json:"key_prefix"`
+	PlainKey  string   `json:"plain_key"` // shown ONCE; never stored in plaintext
+	Scopes    []string `json:"scopes"`
 }

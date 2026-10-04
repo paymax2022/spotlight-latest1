@@ -1,4 +1,3 @@
-// ── Social P2P Escrow marketplace (Phase 3) ──────────────────────────────────
 // NEW file added alongside the Phase-1 social lib (do NOT edit P1 files). Reuses
 // the P1 social.constants helpers (formatNaira, API_BASE, USE_MOCK, idempotency).
 // Escrow holds buyer funds until release/refund (NL-6). State machine:
@@ -12,7 +11,6 @@ export { formatNaira };
 
 // P2P escrow marketplace lives on a DIFFERENT backend module than Social Pay
 // (P1). Confirmed against backend/internal/app/top5_p3_routes.go
-// (RegisterP2PMarket mounts finance.Group("/p2p")) + p2pmarket/handler.go
 // Register, which re-adds "/p2p/..." itself → the full path is
 // /api/finance/p2p/p2p/... "Listings"/"escrow" here map onto p2pmarket's
 // listings/orders vocabulary (checkout/confirm/dispute), not a generic
@@ -26,13 +24,11 @@ function escrowIdempotencyKey(): string {
 const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
 const minsAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
-// ── NL-6 — escrow holds funds; never released without buyer confirmation. ─────
 export const ESCROW_DISCLOSURE =
   'Paymax holds your payment in escrow. Funds are only released to the seller ' +
   'once you confirm you received the item. If something goes wrong, raise a ' +
   'dispute and Paymax will review it — your money stays protected meanwhile.';
 
-// ── Types ──────────────────────────────────────────────────────────────────────
 export type ListingStatus = 'active' | 'sold' | 'paused';
 export type ListingCondition = 'new' | 'used' | 'refurbished';
 
@@ -89,7 +85,6 @@ export interface DisputeInput {
   reason:  string;
 }
 
-// ── Mock fixtures ─────────────────────────────────────────────────────────────
 const MOCK_LISTINGS: Listing[] = [
   { id: 'l_iphone', title: 'iPhone 13 Pro — 256GB', description: 'Clean, no scratches. Battery 89%. Comes with box + charger.', priceKobo: 38_000_000, condition: 'used', category: 'Phones', location: 'Lagos', status: 'active', thumbColor: '#0051D5', sellerHandle: '@bisi', sellerName: 'Bisi Adeyemi', sellerRating: 4.8, sellerSales: 32, createdAtISO: daysAgo(2) },
   { id: 'l_ps5',    title: 'PlayStation 5 (Disc)',  description: 'Boxed, 2 controllers, 3 games included.',                   priceKobo: 55_000_000, condition: 'used', category: 'Gaming', location: 'Abuja', status: 'active', thumbColor: '#9333EA', sellerHandle: '@zeddgames', sellerName: 'Zedd', sellerRating: 4.6, sellerSales: 11, createdAtISO: daysAgo(5) },
@@ -104,7 +99,6 @@ const MOCK_TRADES: EscrowTrade[] = [
   { id: 't_ref',    listingId: 'l_sneaker',listingTitle: 'Air Jordan 1 — UK 9',   amountKobo: 18_500_000, status: 'REFUNDED', role: 'buyer',  counterparty: '@femi',     thumbColor: '#DC2626', createdAtISO: daysAgo(10), disputeReason: 'Wrong size shipped.', disputeStatus: 'resolved_refund' },
 ];
 
-// ── API ─────────────────────────────────────────────────────────────────────
 // Backend: GET /p2p/listings → { success, listings }.
 export async function listListings(query?: string): Promise<Listing[]> {
   if (USE_MOCK) {
@@ -170,7 +164,6 @@ export async function listTrades(): Promise<EscrowTrade[]> {
   return MOCK_TRADES;
 }
 
-// Backend: POST /p2p/listings expects { title, description, price_kobo,
 // condition, category, location } (Idempotency-Key) → { success, listing }.
 export async function createListing(input: CreateListingInput): Promise<Listing> {
   if (USE_MOCK) {
@@ -197,7 +190,6 @@ export async function createListing(input: CreateListingInput): Promise<Listing>
   return mapListing((res.data as { listing?: Record<string, unknown> })?.listing ?? {});
 }
 
-// Backend: POST /p2p/listings/:listingId/checkout (Idempotency-Key) →
 // { success, order }. "order" is the escrow trade in p2pmarket vocabulary.
 export async function checkoutEscrow(input: CheckoutInput): Promise<EscrowTrade> {
   if (USE_MOCK) {
@@ -229,7 +221,6 @@ export async function checkoutEscrow(input: CheckoutInput): Promise<EscrowTrade>
   };
 }
 
-// Backend: POST /p2p/orders/:orderId/confirm (buyer confirms receipt →
 // releases escrow to seller) → { success }.
 export async function releaseEscrow(tradeId: string): Promise<{ ok: boolean; status: EscrowStatus }> {
   if (USE_MOCK) { await delay(); return { ok: true, status: 'RELEASED' }; }
@@ -252,7 +243,6 @@ export async function raiseDispute(input: DisputeInput): Promise<{ ok: boolean; 
   return { ok: true, status: 'DISPUTED' };
 }
 
-// ── Hooks ─────────────────────────────────────────────────────────────────────
 const KEYS = {
   listings: (q: string) => ['social', 'listings', q] as const,
   listing:  (id: string) => ['social', 'listing', id] as const,

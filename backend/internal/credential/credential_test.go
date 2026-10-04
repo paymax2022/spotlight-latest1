@@ -161,7 +161,7 @@ func TestMintTokenRoundTrip(t *testing.T) {
 func TestWindowFor(t *testing.T) {
 	t.Run("floor of unix over ttl seconds", func(t *testing.T) {
 		c := newCred("c", "s", 30*time.Second)
-		now := time.Unix(1000, 0) // 1000 / 30 = 33
+		now := time.Unix(1000, 0)
 		if got := windowFor(c, now); got != 33 {
 			t.Fatalf("windowFor = %d, want 33", got)
 		}

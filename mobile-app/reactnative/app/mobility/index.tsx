@@ -6,11 +6,11 @@ import { goBack } from '@/lib/navigation';
 import { useQuery } from '@tanstack/react-query';
 import * as Icons from 'lucide-react-native';
 import { ArrowLeft, Wallet, ShieldCheck, ChevronRight, Clock, Star, LocateFixed, MapPin, ArrowRight, Plus } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import SectionHeader from '@/components/SectionHeader';
 import BalanceCard from '@/components/BalanceCard';
@@ -28,7 +28,6 @@ import { HomeMenuButton } from '@/components/HomeMenu';
 export default function MobilityHomeScreen() {
   const home = useMobilityHome();
   // Wallet balance is NOT part of the mobility home payload — read it from the
-  // shared wallet feature. Wallet.balance is naira (major units); convert to kobo
   // for formatNaira. undefined-safe so we never render "₦0" from a missing field.
   const wallet = useQuery({ queryKey: ['wallet', 'balance'], queryFn: getWallet, staleTime: 15_000 });
 
@@ -49,7 +48,7 @@ export default function MobilityHomeScreen() {
   const destAddress = trip.destAddress ? String(trip.destAddress) : '';
   const enc = encodeURIComponent;
 
-  // Open the shared AddressEntry autocomplete for either field, preserving the
+  // Open the shared address autocomplete picker for either field, preserving the
   // value already chosen for the other field.
   const pickerHref = (target: 'pickup' | 'destination') => {
     let q = `?target=${target}`;
@@ -109,6 +108,8 @@ export default function MobilityHomeScreen() {
             <BalanceCard
               balance={wallet.data?.balance ?? 0}
               currency="NGN"
+              balanceUnavailable={wallet.data?.balanceUnavailable}
+              unavailableHint="Couldn’t load your balance — pull down to refresh"
               quickActions={[
                 { id: 'topup', label: 'Top up', icon: <Plus size={20} color={Colors.onPrimary} strokeWidth={2.4} />, onPress: () => router.push('/wallet/add') },
                 { id: 'wallet', label: 'Wallet', icon: <Wallet size={20} color={Colors.onPrimary} strokeWidth={2} />, onPress: () => router.push('/(tabs)/wallet') },
@@ -120,7 +121,7 @@ export default function MobilityHomeScreen() {
           <RemoteBanner slug="ride" priority />
 
           {/* Trip planner — Current location + Where to. Both open the same
-              AddressEntry autocomplete (Google-powered lookup + confirm-on-map). */}
+              address autocomplete (Google-powered lookup). */}
           <View style={[styles.plannerCard, shadow1]}>
             <Pressable style={styles.plannerRow} onPress={() => router.push(pickerHref('pickup'))} accessibilityLabel="Set current location">
               <View style={styles.plannerDotWrap}><View style={styles.dotOrigin} /></View>

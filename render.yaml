@@ -8,7 +8,11 @@ services:
     runtime: docker
     region: ohio
     startCommand: /app/server
-    healthCheckPath: /api/v1/public/health
+    # /readyz (not /api/v1/public/health): the public health route is a static
+    # 200 liveness ping — it keeps reporting healthy through a runtime DB
+    # outage, so Render would keep routing to a degraded instance. /readyz
+    # pings the shared pgx pool (2s bound) and 503s while the DB is down.
+    healthCheckPath: /readyz
     healthCheckInterval: 30
     dockerfile: ./Dockerfile
     dockerContext: ./
@@ -27,6 +31,14 @@ services:
         value: "false"
       - key: RUN_WORKERS_INPROCESS
         value: "false"
+
+      # PERF-061: verify JWTs locally against the GoTrue JWKS (SUPABASE_URL)
+      # instead of a per-request GET /auth/v1/user — the per-request call opens
+      # a fresh Postgres conn through GoTrue and capped authed throughput at
+      # ~50-100 req/s. Trade-off accepted by owner: GoTrue revocation (logout /
+      # password change) takes effect at access-token expiry, not immediately.
+      - key: AUTH_JWT_LOCAL_VERIFY
+        value: "true"
 
       # Database (Supabase PostgreSQL)
       - key: DATABASE_URL
@@ -53,6 +65,144 @@ services:
         value: info
       - key: ENVIRONMENT
         value: production
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Notification Worker (AUD-INFRA-006 / AUD-BE-008)
+  #
+  # Consumes the asynq queues (critical/default/low) that backend producers
+  # enqueue to. Without this service every queued push/email/SMS sits in Redis
+  # forever — RUN_WORKERS_INPROCESS=false on the web service by design.
+  # ─────────────────────────────────────────────────────────────────────────────
+  - type: worker
+    name: spotlight-notification-worker
+    plan: starter
+    runtime: docker
+    region: ohio
+    startCommand: /app/notification-worker
+    dockerfile: ./Dockerfile
+    dockerContext: ./
+    autoDeploy: true
+
+    envVars:
+      # asynq queue — the only hard dependency
+      - key: REDIS_URL
+        fromService:
+          name: spotlight-redis
+          property: connectionString
+
+      # Notification provider credentials (dashboard-managed secrets)
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        sync: false
+      - key: TERMII_API_KEY
+        sync: false
+      - key: TERMII_SENDER_ID
+        sync: false
+      - key: EXPO_PUSH_TOKEN
+        sync: false
+
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: info
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Scheduled-Job Workers (AUD-INFRA-006)
+  #
+  # docker-compose gates these behind opt-in profiles (marketplace /
+  # transport-scheduling); Render has no profiles, so flag/dependency-gated
+  # workers idle quietly instead of restart-looping. All run the same
+  # immutable root Dockerfile image as the API service.
+  #
+  # Intentionally NOT deployed here: cmd/fxsmoke (a manual smoke tool, not a
+  # long-running job) and cmd/voting-test-server (test harness).
+  # ─────────────────────────────────────────────────────────────────────────────
+  - type: worker
+    name: spotlight-marketplace-cron
+    plan: starter
+    runtime: docker
+    region: ohio
+    startCommand: /app/marketplace-cron
+    dockerfile: ./Dockerfile
+    dockerContext: ./
+    autoDeploy: true
+
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: spotlight-db
+          property: connectionString
+      - key: FEATURE_MARKETPLACE_ENABLED
+        value: "true"
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: info
+
+  # The indexer drains mkt_listings_outbox into Elasticsearch. This blueprint
+  # provisions no ES cluster, so ES_URL stays dashboard-managed; until it is
+  # set the worker idles rather than error-looping against localhost:9200.
+  - type: worker
+    name: spotlight-marketplace-indexer
+    plan: starter
+    runtime: docker
+    region: ohio
+    startCommand: >-
+      /bin/sh -c 'if [ -z "$ES_URL" ]; then
+      echo "marketplace-indexer: ES_URL unset — idling until provisioned";
+      while true; do sleep 86400; done; fi;
+      exec /app/marketplace-indexer'
+    dockerfile: ./Dockerfile
+    dockerContext: ./
+    autoDeploy: true
+
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: spotlight-db
+          property: connectionString
+      - key: ES_URL
+        sync: false
+      - key: FEATURE_MARKETPLACE_ENABLED
+        value: "true"
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: info
+
+  # The binary exits 0 immediately when FEATURE_TRANSPORT_SCHEDULING_ENABLED is
+  # unset (cmd/transport-scheduler/main.go); on Render that is a restart loop,
+  # so the wrapper idles until the flag ships with the module.
+  - type: worker
+    name: spotlight-transport-scheduler
+    plan: starter
+    runtime: docker
+    region: ohio
+    startCommand: >-
+      /bin/sh -c 'if [ "$FEATURE_TRANSPORT_SCHEDULING_ENABLED" != "true" ]; then
+      echo "transport-scheduler: flag off — idling until enabled";
+      while true; do sleep 86400; done; fi;
+      exec /app/transport-scheduler'
+    dockerfile: ./Dockerfile
+    dockerContext: ./
+    autoDeploy: true
+
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: spotlight-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: spotlight-redis
+          property: connectionString
+      - key: FEATURE_TRANSPORT_SCHEDULING_ENABLED
+        value: "false"
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: info
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Admin Dashboard (Next.js 15.1) — MOVED TO RAILWAY
@@ -118,11 +268,14 @@ services:
   - type: web
     name: spotlight-mobile
     plan: standard
-    runtime: node
     region: ohio
     rootDir: mobile-app/reactnative
-    startCommand: npx expo start --web
-    buildCommand: npm install && npm run build:web
+    # Static export — `expo start --web` is the Metro dev server (unminified,
+    # HMR websocket, not production-sized). `build:web` does not exist; SDK 54
+    # exports to dist/.
+    runtime: static
+    buildCommand: npm install && npx expo export --platform web
+    staticPublishPath: dist
     buildFilter:
       paths:
         - mobile-app/reactnative/**
@@ -134,12 +287,14 @@ services:
     minInstances: 1
 
     envVars:
-      - key: REACT_APP_API_URL
+      # Expo only inlines EXPO_PUBLIC_* vars at build time — REACT_APP_* keys
+      # never reach the bundle (the client would fall back to localhost).
+      - key: EXPO_PUBLIC_API_BASE_URL
         fromService:
           name: spotlight-backend
           property: url
           path: /api/v1
-      - key: REACT_APP_ENVIRONMENT
+      - key: EXPO_PUBLIC_APP_ENV
         value: production
       - key: NODE_ENV
         value: production
@@ -151,9 +306,9 @@ services:
     name: spotlight-redis
     plan: starter
     region: ohio
-    ipAllowList:
-      - source: 0.0.0.0/0
-        description: Allow all (restrict in production)
+    # Empty allowlist = private-network only. The backend reaches it via the
+    # fromService connectionString above; no public endpoint is needed.
+    ipAllowList: []
     maxmemoryPolicy: allkeys-lru
 
   # ─────────────────────────────────────────────────────────────────────────────
@@ -166,9 +321,7 @@ services:
   #   region: ohio
   #   database: spotlight
   #   user: postgres
-  #   ipAllowList:
-  #     - source: 0.0.0.0/0
-  #       description: Allow all (restrict in production)
+  #   ipAllowList: []  # private-network only — never expose Postgres publicly
   #   preDeployCommand: supabase migration up
 
 databases:
@@ -178,9 +331,9 @@ databases:
     version: 15
     databaseName: spotlight
     databaseUser: postgres
-    ipAllowList:
-      - source: 0.0.0.0/0
-        description: Allow all (restrict in production)
+    # Private-network only — the backend connects via the internal
+    # connectionString (envVars above). A public Postgres endpoint is not needed.
+    ipAllowList: []
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Environment Groups (optional - for shared config across services)

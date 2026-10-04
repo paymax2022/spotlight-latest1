@@ -192,13 +192,7 @@ func (r *Repository) SetVisible(ctx context.Context, postID string, visible bool
 // verified-outcome signals, DB-ordered by a score that ALREADY weights verified
 // outcomes above raw engagement (PN-3). The exact ranking is re-applied in Go via
 // the pure RankScore; this query narrows the candidate set and mirrors the formula.
-//
-//	verifiedTier = author_verified + author_passed_assessment + links_completed_outcome
-//	rank_score   = verifiedTier * BandVerifiedOutcome
-//	             + LEAST(reactions*1 + comments*2 + reshares*3, EngagementCap)
-//
 // If `hashtag` is non-empty the feed is filtered to posts carrying that tag.
-//
 // PN-011 (safety invariant 3 — block is absolute & mutual-invisible): posts by a
 // user the viewer has blocked, OR who has blocked the viewer, are excluded from
 // the candidate set. `viewerID` is the authenticated auth user id; when empty

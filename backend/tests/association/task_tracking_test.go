@@ -1,17 +1,12 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // Organisation-wide task tracking.
-//
 // WHY THIS EXISTS
-// ---------------
 // GetTasks filtered every scope to tasks ASSIGNED TO THE CALLER, so nobody —
 // not even an admin — could see whether the organisation's work was getting
 // done. "Track task compliance / closure / status / deadline" was not possible:
 // the only view was your own inbox.
-//
 // Two properties are pinned:
-//
 //   • scope=org returns the organisation's tasks and is ADMIN-ONLY. It is a
 //     management view — who has been given what, and who is late — not a member
 //     one.
@@ -20,9 +15,7 @@ package association_test
 //     date still reads ASSIGNED; trusting the column would report every late
 //     task as on track, which is the exact opposite of what a compliance view
 //     is for.
-//
 // Live-DB, same harness as founder_and_scoping_test.go.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

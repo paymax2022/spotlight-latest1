@@ -17,12 +17,10 @@ package top5events_test
 
 import "testing"
 
-// ---------------------------------------------------------------------------
 // effectLog models the durable side effects as idempotent, replay-counted stores,
 // mirroring the production idempotency keys. A ledger post applies at most once per
 // key (ledger.Credit/Debit/PostJournal dedup on idempotency_key); a state mark is
 // the DB row transition (settled=true / CLOSED / status='PAID').
-// ---------------------------------------------------------------------------
 
 type effectLog struct {
 	ledger map[string]int // idempotency key -> times actually applied (invariant: <= 1)
@@ -53,9 +51,7 @@ type crashClock struct {
 
 func (c *crashClock) tick() bool { c.n++; return c.at < 0 || c.n <= c.at }
 
-// ===========================================================================
 // 1. SettleVendor — ledger legs FIRST, mark settled LAST.
-// ===========================================================================
 
 // runSettle mirrors SettleVendor. gross is re-derived from the UNSETTLED float, so
 // on a retry after a crash (settled never marked) it is unchanged — the same net/
@@ -145,9 +141,7 @@ func TestSettleVendor_OldOrdering_StrandsMoney_DemonstratesWhyFixMatters(t *test
 	}
 }
 
-// ===========================================================================
 // 2. CloseWallet — residual credit FIRST, mark CLOSED LAST.
-// ===========================================================================
 
 func runCloseWallet(e *effectLog, walletID string, residual int64, cc *crashClock) {
 	if e.marked("closed:" + walletID) {
@@ -185,9 +179,7 @@ func TestCloseWallet_RefundBeforeMark_ExactlyOnceUnderCrashAtEveryStep(t *testin
 	}
 }
 
-// ===========================================================================
 // 3. Purchase — PENDING -> debit -> PAID -> ticket; expire only if never posted.
-// ===========================================================================
 
 type purchaseWorld struct {
 	e          *effectLog

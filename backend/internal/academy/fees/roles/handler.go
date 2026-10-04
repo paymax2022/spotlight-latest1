@@ -7,9 +7,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyMessage = "message"
 
 // Handler exposes the EdTech staff role-management surface over Gin. All routes are
 // per-school scoped: the actor must hold PermAssignRoles at the school (enforced in the
@@ -23,10 +27,9 @@ type Handler struct {
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated user (RequireAuthContext sets c.Set("user_id", …)).
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
@@ -34,7 +37,7 @@ func uid(c *gin.Context) string {
 }
 
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return "", false
@@ -46,19 +49,19 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrUnauthenticated):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", keyMessage: httperr.Msg(c, http.StatusUnauthorized, err)})
 	case errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "message": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", keyMessage: httperr.Msg(c, http.StatusForbidden, err)})
 	case errors.Is(err, ErrInvalidRole):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_staff_role", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_staff_role", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrMissingSchool):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_school_id", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_school_id", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrMissingUser):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_user_id", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_user_id", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrRoleNotFound):
-		c.JSON(http.StatusConflict, gin.H{"error": "role_not_found", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "role_not_found", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -115,8 +118,6 @@ func RegisterFeesRoles(admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services
 	return h
 }
 
-// ── Handlers ──────────────────────────────────────────────────────────────────────
-
 func (h *Handler) Assign(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -124,7 +125,7 @@ func (h *Handler) Assign(c *gin.Context) {
 	}
 	var req AssignRoleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.AssignRole(c.Request.Context(), c.Param("schoolId"), req.UserID, StaffRole(req.Role), u); err != nil {
@@ -143,7 +144,7 @@ func (h *Handler) Revoke(c *gin.Context) {
 	}
 	var req RevokeRoleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.RevokeRole(c.Request.Context(), c.Param("schoolId"), req.UserID, StaffRole(req.Role), u); err != nil {

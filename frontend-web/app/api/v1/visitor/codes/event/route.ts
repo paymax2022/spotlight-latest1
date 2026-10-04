@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { ACCESS_CODE_COLUMNS, genNumericCode, mapAccessCode } from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/codes/event — bulk-create event-guest access codes.
+// Bulk-create event-guest access codes.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

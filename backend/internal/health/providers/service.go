@@ -2,12 +2,25 @@ package healthproviders
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"path"
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/fsm"
+	"spotlight/backend/go-common/ginutil"
+	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	keyApplication = "application"
+	keySuccess     = "success"
 )
 
 // Auditor is the minimal slice of services.AuditService the package needs (HL-12).
@@ -348,8 +361,6 @@ func (s *Service) ListApplications(ctx context.Context, ownerID string) ([]Appli
 	return out, nil
 }
 
-// --- internals ---
-
 func (s *Service) getApplication(ctx context.Context, id string) (*Application, error) {
 	var a Application
 	var state string
@@ -432,4 +443,303 @@ func nullTime(t *time.Time) any {
 		return nil
 	}
 	return *t
+}
+
+// State is the ProviderApplication lifecycle (HEALTH-BUILD §5):
+//
+//	DRAFT → SUBMITTED → UNDER_REVIEW ↔ NEEDS_INFO → APPROVED ↔ SUSPENDED | REJECTED
+//
+// On APPROVED the service idempotently grants the provider capability + role
+// (HL-2). Any transition not in allowedTransitions is rejected (guarded SM).
+type State string
+
+const (
+	StateDraft       State = "DRAFT"
+	StateSubmitted   State = "SUBMITTED"
+	StateUnderReview State = "UNDER_REVIEW"
+	StateNeedsInfo   State = "NEEDS_INFO"
+	StateApproved    State = "APPROVED"
+	StateSuspended   State = "SUSPENDED"
+	StateRejected    State = "REJECTED"
+)
+
+// allowedTransitions encodes the guarded application state machine.
+var allowedTransitions = fsm.Table[State]{
+	StateDraft:       fsm.Set(StateSubmitted),
+	StateSubmitted:   fsm.Set(StateUnderReview),
+	StateUnderReview: fsm.Set(StateNeedsInfo, StateApproved, StateRejected),
+	StateNeedsInfo:   fsm.Set(StateUnderReview),
+	StateApproved:    fsm.Set(StateSuspended),
+	StateSuspended:   fsm.Set(StateApproved),
+	StateRejected:    fsm.Set[State](),
+}
+
+func canTransition(from, to State) bool {
+	return allowedTransitions.Can(from, to)
+}
+
+// Provider is the granted capability record (the marketplace-facing identity).
+// It exists only once an application is APPROVED. HL-1: this is a workflow/state
+// record — it carries no diagnose/dispense logic.
+type Provider struct {
+	ID           string    `json:"id"`
+	OwnerUserID  string    `json:"owner_user_id"`
+	Domain       string    `json:"domain"`        // VET | PHARMACY | LAB
+	ProviderType string    `json:"provider_type"` // vet | pharmacy | pharmacist | lab | lab_scientist | phlebotomist
+	DisplayName  string    `json:"display_name"`
+	Status       string    `json:"status"`       // PENDING | APPROVED | SUSPENDED
+	Discoverable bool      `json:"discoverable"` // HL-2 gate
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// Application is the review-state object, separated from the capability it grants.
+type Application struct {
+	ID           string    `json:"id"`
+	OwnerUserID  string    `json:"owner_user_id"`
+	Domain       string    `json:"domain"`
+	ProviderType string    `json:"provider_type"`
+	DisplayName  string    `json:"display_name"`
+	State        State     `json:"state"`
+	ReviewNote   string    `json:"review_note"`
+	ProviderID   *string   `json:"provider_id,omitempty"`
+	GeoLng       *float64  `json:"geo_lng,omitempty"`
+	GeoLat       *float64  `json:"geo_lat,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// CredentialDoc is a license/registration document in the vault. The blob lives
+// in R2; storage_key is a signed-URL ref only (HL-8). expires_at feeds the HL-2
+// auto-suspend signal.
+type CredentialDoc struct {
+	ID            string `json:"id"`
+	ApplicationID string `json:"application_id"`
+	OwnerUserID   string `json:"owner_user_id"`
+	// cred_type admits two vocabularies (CHECK widened by
+	// 20271003000000_health_cred_doc_types.sql): the issuer enum used by
+	// provider onboarding — VCN | PCN | MLSCN | NAFDAC | PREMISES | OTHER — and
+	// the Mode-B evidence-doc types the credential service attaches —
+	// VCN_CERT | ANNUAL_LICENCE | GOV_ID.
+	CredType    string     `json:"cred_type"`
+	ReferenceNo string     `json:"reference_no"`
+	NAFDACRef   string     `json:"nafdac_ref"`
+	StorageKey  string     `json:"storage_key"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	Verified    bool       `json:"verified"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+// presigned R2 uploads for provider-application credential
+// documents (licence/registration proof: doctor.presign.go's five kinds cover
+// the doctor module; this is the equivalent for the shared PHARMACY/LAB/VET
+// onboarding rail). Mirrors the doctor and preconsult presign patterns
+// exactly: a server-controlled object key, content-type bound into the
+// signature, short TTL, fails closed (never a fabricated URL) when the
+// presigner is not configured.
+// AddCredential (service.go) has always required a real storage_key — before
+// this, nothing in the client could ever produce one, so onboarding's
+// licence/registration document was collected as a text field (if at all)
+// and never actually reached the credential vault.
+
+// ErrUploadsNotConfigured is returned when a credential presign is requested
+// but the R2 presigner is not configured — fails closed (503), never a
+// fabricated URL.
+var ErrUploadsNotConfigured = errors.New("providers: uploads are not configured")
+
+var allowedCredentialContentTypes = map[string]bool{
+	"image/png":       true,
+	"image/jpeg":      true,
+	"image/webp":      true,
+	"application/pdf": true,
+}
+
+var allowedCredentialExt = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true, ".webp": true, ".pdf": true,
+}
+
+// PresignResult is what the client uses to PUT the binary directly to R2.
+type PresignResult struct {
+	UploadURL   string `json:"upload_url"`
+	StorageKey  string `json:"storage_key"`
+	ContentType string `json:"content_type"`
+	Bucket      string `json:"bucket"`
+	ExpiresIn   int    `json:"expires_in"`
+	Method      string `json:"method"`
+}
+
+const credentialPresignTTL = 10 * time.Minute
+
+// PresignCredential issues a presigned R2 PUT URL for a credential document,
+// scoped to an application the caller owns (object-level authZ — the same
+// ownership check AddCredential itself uses). The returned storage_key must
+// be echoed back via AddCredential to actually record the document.
+func (s *Service) PresignCredential(ctx context.Context, ownerID, applicationID, fileName, contentType string) (*PresignResult, error) {
+	app, err := s.getApplication(ctx, applicationID)
+	if err != nil {
+		return nil, err
+	}
+	if app.OwnerUserID != ownerID {
+		return nil, errors.New("providers: forbidden")
+	}
+	if s.presigner == nil || !s.presigner.Configured() {
+		return nil, ErrUploadsNotConfigured
+	}
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	if !allowedCredentialContentTypes[ct] {
+		return nil, errors.New("providers: unsupported content type")
+	}
+	ext := strings.ToLower(path.Ext(fileName))
+	if !allowedCredentialExt[ext] {
+		return nil, errors.New("providers: unsupported file extension")
+	}
+	key := fmt.Sprintf("providers/%s/%s/%s%s", ownerID, applicationID, cryptox.Token(), ext)
+	url, err := s.presigner.PresignPut(key, ct, credentialPresignTTL)
+	if err != nil {
+		return nil, ErrUploadsNotConfigured
+	}
+	return &PresignResult{
+		UploadURL:   url,
+		StorageKey:  key,
+		ContentType: ct,
+		Bucket:      s.bucket,
+		ExpiresIn:   int(credentialPresignTTL.Seconds()),
+		Method:      "PUT",
+	}, nil
+}
+
+// Handler exposes the provider onboarding routes. The acting user id is always
+// taken from c.Get("user_id") (mirrored by the finance auth chain) so a caller can
+// never act as another identity (object-level authZ).
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// CreateApplication — POST /providers/applications
+func (h *Handler) CreateApplication(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		Domain       string `json:"domain"`
+		ProviderType string `json:"provider_type"`
+		DisplayName  string `json:"display_name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	app, err := h.svc.CreateApplication(c.Request.Context(), id, req.Domain, req.ProviderType, req.DisplayName)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{keySuccess: true, keyApplication: app})
+}
+
+// AddCredential — POST /providers/applications/:id/credentials
+func (h *Handler) AddCredential(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var d CredentialDoc
+	if err := c.ShouldBindJSON(&d); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	out, err := h.svc.AddCredential(c.Request.Context(), id, c.Param("id"), d)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{keySuccess: true, "credential": out})
+}
+
+// PresignCredential — POST /providers/applications/:id/credentials/presign
+func (h *Handler) PresignCredential(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		FileName    string `json:"file_name" binding:"required"`
+		ContentType string `json:"content_type" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	res, err := h.svc.PresignCredential(c.Request.Context(), id, c.Param("id"), req.FileName, req.ContentType)
+	if err != nil {
+		if errors.Is(err, ErrUploadsNotConfigured) {
+			ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "presign": res})
+}
+
+// Submit — POST /providers/applications/:id/submit
+func (h *Handler) Submit(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	app, err := h.svc.Submit(c.Request.Context(), id, c.Param("id"))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyApplication: app})
+}
+
+// Get — GET /providers/applications/:id
+func (h *Handler) Get(c *gin.Context) {
+	id := ginutil.UserID(c)
+	app, err := h.svc.GetApplication(c.Request.Context(), id, c.Param("id"))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusNotFound, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyApplication: app})
+}
+
+// List — GET /providers/applications
+func (h *Handler) List(c *gin.Context) {
+	apps, err := h.svc.ListApplications(c.Request.Context(), ginutil.UserID(c))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "applications": apps})
+}
+
+// Decision — POST /admin .../providers/applications/:id/decision  (RBAC: health.admin.providers)
+func (h *Handler) Decision(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		Action string `json:"action"` // start_review | need_info | approve | reject
+		Note   string `json:"note"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	app, err := h.svc.Decision(c.Request.Context(), id, c.Param("id"), req.Action, req.Note)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusConflict, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyApplication: app})
 }

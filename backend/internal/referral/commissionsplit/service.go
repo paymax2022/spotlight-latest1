@@ -7,13 +7,11 @@
 // code hits its cap it is retired: the 20% simply stays with Spotlight (the
 // "default referrer is Admin" policy needs no separate payout, since Spotlight
 // already holds its own commission by default — there's nothing to move).
-//
 // Hooked into commission.Service via the ReferralHook interface (see
 // finance/commission/service.go) — this package imports commission for the
 // Earning type; commission never imports this package (the same late-binding
 // shape as ledger.TransactionDetailResolver / Service.SetResolvers), so there
 // is no import cycle.
-//
 // Deliberately independent of the older, tiered (5/8/12/15%) Direct Referral
 // Rewards engine in finance/referrals — that engine computes its own margin
 // from a module-specific proxy and is wired to exactly one path (Maplerad bill

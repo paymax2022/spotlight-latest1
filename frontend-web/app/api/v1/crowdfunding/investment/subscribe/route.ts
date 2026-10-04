@@ -1,10 +1,10 @@
 import { featureFlags } from '@/src/lib/feature-flags';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
+import { clientIpHeaders } from '@/src/lib/rate-limit/client-ip';
 
 const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 
-// POST /api/v1/crowdfunding/investment/subscribe
 // → Go: POST /api/finance/crowdfunding/investment/subscribe
 // Money mutation: requires an Idempotency-Key header, which the shared proxy
 // helper does not forward, so this route forwards the upstream request itself
@@ -23,6 +23,9 @@ export async function POST(request: Request) {
       'Content-Type': 'application/json',
       Accept: 'application/json',
       'Idempotency-Key': idempotencyKey,
+      // Resolved client IP so Go's audit rows/limits see the caller, not the
+      // BFF (AUD-BE-014).
+      ...clientIpHeaders(request),
     };
     const auth = request.headers.get('Authorization') || request.headers.get('authorization');
     if (auth) headers['Authorization'] = auth;

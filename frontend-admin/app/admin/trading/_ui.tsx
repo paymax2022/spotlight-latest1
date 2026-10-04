@@ -6,7 +6,6 @@ import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 import type { TradingKycStatus } from '@/types/tradingAdmin';
 
-// Shared presentational + RBAC helpers for the Trading admin console. Backend RBAC
 // (guard("trading.*")) is authoritative — these are UX-only gates.
 
 export const card = (): CSSProperties => ({ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem', background: '#fff' });
@@ -119,7 +118,6 @@ export function StageBadge({ stage }: { stage: string }) {
   return <span style={{ display: 'inline-block', padding: '0.1rem 0.55rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 700, color: c.fg, background: c.bg, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: 0.3 }}>{String(stage).replace(/_/g, ' ')}</span>;
 }
 
-// ── RBAC — slugs MUST match migrations 20261029000200 + 20261029000300 ─────────
 export const TRADING_PERMS = {
   review: 'trading.kyc.review',
   bypass: 'trading.kyc.bypass',

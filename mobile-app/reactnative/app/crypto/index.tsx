@@ -7,19 +7,19 @@ import {
   ArrowDownToLine, ArrowUpFromLine, PieChart, Receipt, ChevronRight,
   ShieldAlert, Eye, GraduationCap, Star,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1, shadow3 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1, shadow3 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
 import { RemoteBanner } from '@/features/media/banners';
-import AssetRow from '@/features/crypto/components/AssetRow';
-import HoldingRow from '@/features/crypto/components/HoldingRow';
-import CryptoTransactionRow from '@/features/crypto/components/CryptoTransactionRow';
-import PriceChange from '@/features/crypto/components/PriceChange';
+import { AssetRow } from '@/features/crypto/components';
+import { HoldingRow } from '@/features/crypto/components';
+import { CryptoTransactionRow } from '@/features/crypto/components';
+import { PriceChange } from '@/features/crypto/components';
 import {
   useAssets, useCryptoPortfolio, useCryptoTransactions, useCryptoEligibility, useWatchlist,
 } from '@/features/crypto/hooks/useCrypto';

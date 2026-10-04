@@ -10,7 +10,6 @@ import (
 // table (per REUSE-MAP.md: verification_tier + level + owner_user_id added by migration
 // 20260918000000_academy_fees_edtech.sql). Money is int64 minor units everywhere; this
 // package moves NO money — it is onboarding + a guarded verification-tier state machine.
-//
 // Conventions mirror academy/edupay: pgx pool data-access, sentinel errors mapped to
 // snake_case codes by the handler, guarded transitions (verification tier here) never
 // set via a raw `UPDATE ... SET status=` outside the guarded repo method.
@@ -47,8 +46,6 @@ func (s *School) IsVerified() bool {
 	return s.VerificationTier == TierVerified || s.VerificationTier == TierPremium
 }
 
-// ── Request DTOs ────────────────────────────────────────────────────────────────
-
 // CreateSchoolRequest onboards a draft school. owner_user_id is the CALLER (set by the
 // service, never trusted from the body). The school starts at tier 'unverified'.
 type CreateSchoolRequest struct {
@@ -75,12 +72,9 @@ type VerifyRequest struct {
 	Tier string `json:"tier" binding:"required"`
 }
 
-// ── Export (SF-10) ──────────────────────────────────────────────────────────────
-
 // SchoolExport is the roster + fees read that any VERIFIED school may request (SF-10:
 // "Full data export available to any verified school on request"). This is the
 // School-entity-scoped Definition-of-Done export: roster (students) + fee schedules.
-//
 // NOTE: the full government/regulator ComplianceExport (SF-11, immutable per-category
 // audit log) is owned by E8 (backend/internal/academy/fees/export/) and is NOT built
 // here. This is the lightweight, verified-school self-service read only.
@@ -111,8 +105,6 @@ type ExportFee struct {
 	Currency      string `json:"currency"`
 	Locked        bool   `json:"locked"`
 }
-
-// ── Sentinel errors (mapped to snake_case codes by the handler) ──────────────────
 
 var (
 	ErrNotFound          = errors.New("not_found")

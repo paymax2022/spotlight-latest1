@@ -1,26 +1,18 @@
 package transport_scheduled_test
 
-// ---------------------------------------------------------------------------
 // DueForDispatch / ExpireStale window predicates.
-//
 // Both are SQL WHERE-clause predicates evaluated inside Postgres
 // (backend/internal/transport/scheduled_dispatch.go); no Go-level branch
 // exists to unit test directly. This file transcribes each predicate verbatim
 // and proves the boundary behavior the contract depends on, so the SQL text
 // itself is the thing a reviewer diffs against these comments on any future
 // change.
-//
 // Cited verbatim, DueForDispatch:
-//
 //	WHERE status='scheduled'
 //	  AND scheduled_pickup_at - make_interval(mins => lead_time_minutes) <= now()
 //	ORDER BY scheduled_pickup_at ASC LIMIT $1
-//
 // Cited verbatim, ExpireStale:
-//
-//	const grace = 15 * time.Minute
 //	WHERE status='scheduled' AND scheduled_pickup_at < now() - $1::interval
-// ---------------------------------------------------------------------------
 
 import (
 	"testing"
@@ -34,7 +26,7 @@ const expireGrace = 15 * time.Minute // transcribed from ExpireStale's `grace`
 // scheduled_pickup_at - lead_time_minutes <= now()).
 func isDueForDispatch(pickupAt time.Time, leadMinutes int, now time.Time) bool {
 	dispatchAt := pickupAt.Add(-time.Duration(leadMinutes) * time.Minute)
-	return !dispatchAt.After(now) // dispatchAt <= now
+	return !dispatchAt.After(now)
 }
 
 // isExpiredStale transcribes the ExpireStale WHERE predicate:

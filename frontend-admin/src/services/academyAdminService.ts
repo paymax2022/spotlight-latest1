@@ -1,10 +1,8 @@
-// ── Admin — Spotlight Academy admin console service ───────────────────────────
 // Copies the healthVetVerificationService.ts request stack EXACTLY:
 //  • adminBase() rewrites apiRoot() (the proxy origin, /api/v1 already stripped) → …/api/academy
-//  • authHeaders() attaches the admin Bearer token from localStorage
+//  • authHeaders() sends only content headers; the same-origin admin proxy attaches the Bearer from the HttpOnly session cookie server-side
 //  • getJson/sendJson unwrap { data } and throw on non-2xx
 // Per-route RBAC (academy.*) is carried by the admin session token. Mock by
-// default (NEXT_PUBLIC_ACADEMY_USE_MOCK); flip to false to hit the live Go
 // backend. Every state-change is audit-logged server-side.
 
 import { apiRoot } from '@/config/env';
@@ -40,15 +38,11 @@ import type {
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ACADEMY_USE_MOCK);
 
-// Full path = apiRoot() + '/api/academy' + <call path, which every function
 // below spells starting with '/admin/...' or '/commerce/admin/...'>. That
 // matches the real Go mounts: identity/curriculum/commerce are registered on
 // adminGroupTop5(r, "/api") with their own "/academy/..." subpaths (e.g.
-// identity's admin.Group("/academy") + "/admin/users/:id" → /api/academy/admin/users/:id),
 // while gamification/rewards/assessment/exam/fees etc. are registered directly
 // on adminGroupTop5(r, "/api/academy/admin") (see backend/internal/app/academy_routes.go).
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/academy')`, which
 // stopped matching the moment apiBaseUrl became the same-origin proxy path
 // (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
 // the same regression. Every request 404'd against <proxy>/admin/... instead of
@@ -58,10 +52,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 
@@ -70,7 +61,6 @@ const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 // gates in backend/internal/app/academy_routes.go (RegisterAcademy):
 //  1. A real, RBAC-gated route exists (some behind a module feature flag —
 //     spineEnabled/eduPayEnabled/credentialsEnabled/liveEnabled/schoolsEnabled/
-//     tutorEnabled/examEnabled — which is normal deployment config, not a gap;
 //     if the flag is off, getJson/sendJson's existing res.ok check already
 //     surfaces that as a real error rather than a fabricated success).
 //  2. No route exists anywhere in the module (several of the file's own
@@ -100,10 +90,9 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Mock fixture helpers ──────────────────────────────────────────────────────
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysFromNow: number) => new Date(Date.now() + daysFromNow * 86_400_000).toISOString().slice(0, 10);
-const naira = (n: number) => n * 100; // helper: naira → kobo
+const naira = (n: number) => n * 100;
 
 function trend(n: number, base: number, jitter: number) {
   return Array.from({ length: n }, (_, i) => ({
@@ -112,8 +101,6 @@ function trend(n: number, base: number, jitter: number) {
   }));
 }
 
-// ════════════════════════ EXECUTIVE DASHBOARD ════════════════════════
-// RBAC: academy.admin
 const DASHBOARD: AcademyDashboard = {
   active_learners: 48230,
   active_learners_30d: 61140,
@@ -144,8 +131,6 @@ export async function getAcademyDashboard(): Promise<AcademyDashboard> {
   return getJson<AcademyDashboard>('/admin/dashboard');
 }
 
-// ════════════════════════ CURRICULUM ════════════════════════
-// RBAC: academy.curriculum — /api/academy/admin/curriculum/*
 const CURRICULUM: CurriculumTree = {
   versions: [
     { id: 'cv_2024', name: 'NERDC 2024 (current)', status: 'active', effective_date: '2024-09-01', classes_count: 12, subjects_count: 36 },
@@ -173,7 +158,6 @@ const CURRICULUM: CurriculumTree = {
 export async function getCurriculumTree(): Promise<CurriculumTree> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(CURRICULUM)); }
   // TODO(no backend route): curriculum READS (versions/classes/subjects/topics) are MEMBER routes
-  // under /api/finance/academy/curriculum; the curriculum admin group is write-only (create/update/
   // publish) with no /tree aggregate. Not reachable from the admin base. Mock.
   return getJson<CurriculumTree>('/admin/curriculum/tree');
 }
@@ -197,8 +181,6 @@ export async function createCurriculumVersion(input: CurriculumVersionInput): Pr
   return sendJson<CurriculumVersion>('POST', '/admin/curriculum/versions', input);
 }
 
-// ════════════════════════ QUESTION BANK ════════════════════════
-// RBAC: academy.assessment — /api/academy/admin/question-bank/*
 const QUESTIONS: QuestionItem[] = [
   { id: 'q_001', stem: 'A body moves with uniform acceleration. Which graph represents its velocity-time relationship?', type: 'mcq', subject: 'Physics', topic: 'Motion', difficulty: 'medium', objective: 'Describe linear motion graphs', options: ['Straight line through origin', 'Horizontal line', 'Curve', 'Vertical line'], answer_key: 'Straight line through origin', review_status: 'approved', author: 'A. Bello', difficulty_index: 0.58, discrimination: 0.41, created_at: iso(120) },
   { id: 'q_002', stem: 'Which of the following is a balanced chemical equation for the combustion of methane?', type: 'mcq', subject: 'Chemistry', topic: 'Stoichiometry', difficulty: 'hard', objective: 'Balance combustion equations', options: ['CH4 + 2O2 → CO2 + 2H2O', 'CH4 + O2 → CO2 + H2O', 'CH4 + 3O2 → CO2 + 3H2O', '2CH4 + O2 → 2CO + 2H2O'], answer_key: 'CH4 + 2O2 → CO2 + 2H2O', review_status: 'in_review', author: 'C. Okonkwo', difficulty_index: null, discrimination: null, created_at: iso(40) },
@@ -219,12 +201,9 @@ export async function createQuestionItem(input: QuestionItemInput): Promise<Ques
 
 export async function reviewQuestionItem(id: string, input: QuestionReviewInput): Promise<QuestionItem> {
   if (USE_MOCK) throw new Error(`Reviewing a question item ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /question-bank/items/:id/transition (assessment.RegisterAcademyAssessment).
   return sendJson<QuestionItem>('POST', `/admin/question-bank/items/${id}/transition`, input);
 }
 
-// ════════════════════════ EXAMS ════════════════════════
-// RBAC: academy.exam — /api/academy/admin/exam/*
 const ARENAS: ExamArena[] = [
   { id: 'arena_utme26', exam_code: 'UTME', name: 'UTME 2026 Mock Arena', status: 'active', next_session_at: dateStr(12), registered: 18420 },
   { id: 'arena_wassce26', exam_code: 'WASSCE', name: 'WASSCE 2026 (May/June)', status: 'active', next_session_at: dateStr(40), registered: 9810 },
@@ -274,8 +253,6 @@ export async function createExamBlueprint(input: ExamBlueprintInput): Promise<Ex
   return sendJson<ExamBlueprint>('POST', '/admin/exam/blueprints', input);
 }
 
-// ════════════════════════ GAMIFICATION ════════════════════════
-// RBAC: academy.rewards (gamification config) — /api/academy/admin/gamification/*
 const GAMIFICATION: GamificationConfig = {
   xp_curve: [
     { level: 1, xp_required: 0 }, { level: 2, xp_required: 100 }, { level: 3, xp_required: 250 },
@@ -309,8 +286,6 @@ export async function getGamificationConfig(): Promise<GamificationConfig> {
   return getJson<GamificationConfig>('/admin/gamification/config');
 }
 
-// ════════════════════════ REWARDS ════════════════════════
-// RBAC: academy.rewards — /api/academy/admin/rewards/*
 // Invariant: no reward without a funded pool.
 const POOLS: RewardPool[] = [
   { id: 'pool_mtn01', name: 'MTN STEM Drive', status: 'funded', funded_kobo: naira(5_000_000), balance_kobo: naira(4_120_000), spent_kobo: naira(880_000), per_user_cap_kobo: naira(2_000), sponsor: 'MTN Foundation', created_at: iso(60) },
@@ -357,8 +332,6 @@ export async function getRewardLedger(): Promise<RewardLedgerEntry[]> {
   return getJson<RewardLedgerEntry[]>('/admin/rewards/ledger');
 }
 
-// ════════════════════════ COMMERCE ════════════════════════
-// RBAC: academy.commerce — /api/academy/commerce/admin/*
 const PLANS: Plan[] = [
   { id: 'plan_basic', name: 'Academy Basic', cadence: 'monthly', price_kobo: naira(1_500), status: 'active', active_subscribers: 7820 },
   { id: 'plan_pro', name: 'Academy Pro (Exam Prep)', cadence: 'termly', price_kobo: naira(6_000), status: 'active', active_subscribers: 3940 },
@@ -419,7 +392,6 @@ export async function issueRefund(input: RefundInput): Promise<{ ok: true; ref: 
   return sendJson<{ ok: true; ref: string }>('POST', `/commerce/admin/orders/${encodeURIComponent(input.txn_ref)}/refund`, input);
 }
 
-// ── Identity admin (user lookup) — /api/academy/* ──────────────────────────────
 const USERS: AcademyUser[] = [
   { id: 'usr_aa01', display_name: 'Ada Okafor', email: 'ada@example.com', role: 'learner', status: 'active', tier: 'Pro', kyc: 'tier1', joined_at: iso(900) },
   { id: 'usr_bb02', display_name: 'Bola Adeyemi', email: 'bola@example.com', role: 'parent', status: 'active', tier: 'Basic', kyc: 'tier2', joined_at: iso(400) },
@@ -440,8 +412,6 @@ export async function lookupUser(query: string): Promise<AcademyUser[]> {
   return u ? [u] : [];
 }
 
-// ════════════════════════ SPONSORS ════════════════════════
-// RBAC: academy.sponsor — /api/academy/admin/* (sponsor reporting)
 const SPONSORS: Sponsor[] = [
   { id: 'spn_mtn', name: 'MTN Foundation', status: 'active', funded_pools: 1, total_funded_kobo: naira(5_000_000) },
   { id: 'spn_dangote', name: 'Dangote Foundation', status: 'active', funded_pools: 1, total_funded_kobo: naira(2_000_000) },
@@ -466,12 +436,8 @@ export async function listSponsorCampaigns(): Promise<SponsorCampaign[]> {
   return getJson<SponsorCampaign[]>('/admin/sponsors/campaigns');
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 //                              PHASE 2 MODULES
-// ════════════════════════════════════════════════════════════════════════════
 
-// ════════════════════════ CONTENT (CMS) ════════════════════════
-// RBAC: academy.content — /api/academy/admin/content/*
 // Publish workflow: draft → review → approved → live → archived (forward-only).
 const CONTENT_NEXT: Record<string, { status: ContentItem['status']; back?: ContentItem['status'] }> = {
   submit_review: { status: 'review', back: 'draft' },
@@ -519,8 +485,6 @@ export async function listLocalizations(): Promise<Localization[]> {
   return getJson<Localization[]>('/admin/content/localizations');
 }
 
-// ════════════════════════ CONTENT PRODUCTION TRACKER ════════════════════════
-// RBAC: academy.content — /api/academy/admin/production/*
 // Board stages: script → storyboard → shoot → edit → qa → publish.
 export const PRODUCTION_STAGES: ProductionStage[] = ['script', 'storyboard', 'shoot', 'edit', 'qa', 'publish'];
 
@@ -536,24 +500,18 @@ const PRODUCTION: ProductionCard[] = [
 
 export async function listProductionCards(): Promise<ProductionCard[]> {
   if (USE_MOCK) { await delay(); return PRODUCTION.map((c) => ({ ...c })); }
-  // backend: GET /content/productions (content.AdminListProductions).
   return getJson<ProductionCard[]>('/admin/content/productions');
 }
 export async function advanceProductionCard(input: ProductionAdvanceInput): Promise<ProductionCard> {
   if (USE_MOCK) throw new Error(`Advancing a production card ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /content/productions/:id/advance (content.AdminAdvanceProduction).
   return sendJson<ProductionCard>('POST', `/admin/content/productions/${input.id}/advance`, input);
 }
 export async function blockProductionCard(input: ProductionBlockInput): Promise<ProductionCard> {
   if (USE_MOCK) throw new Error(`Blocking a production card ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /content/productions/:id/block (content.AdminBlockProduction) — the OLD
-  // "no block/unblock endpoint" comment here was wrong; the route exists and is registered
   // (spineEnabled), it was just never checked against the actual Go route list before.
   return sendJson<ProductionCard>('POST', `/admin/content/productions/${input.id}/block`, input);
 }
 
-// ════════════════════════ OFFLINE BUNDLE BUILDER ════════════════════════
-// RBAC: academy.content — /api/academy/admin/offline-bundles/*
 const OFFLINE_BUNDLES: OfflineBundle[] = [
   { id: 'ob_utme_phy', name: 'UTME Physics Offline Pack', exam_code: 'UTME', lesson_ids: ['cnt_phy_mot'], size_mb: 28, size_budget_mb: 256, access_card_plan_id: 'plan_pro', status: 'published', updated_at: iso(60) },
   { id: 'ob_wassce_sci', name: 'WASSCE Science Starter', exam_code: 'WASSCE', lesson_ids: ['cnt_chm_stoich', 'cnt_bio_cell'], size_mb: 48, size_budget_mb: 512, access_card_plan_id: 'plan_basic', status: 'packaged', updated_at: iso(20) },
@@ -572,7 +530,6 @@ export async function buildOfflineBundle(input: BundleBuildInput): Promise<Offli
   return sendJson<OfflineBundle>('POST', '/admin/offline-bundles', input);
 }
 
-// ════════════════════════ CURRICULUM (DEEP) ════════════════════════
 // RBAC: academy.curriculum. Adds objectives + exam-relevance + CRUD over the tree.
 const OBJECTIVES: CurriculumObjective[] = [
   { id: 'obj_phy_mot_1', topic_id: 'sub_phy_ss2_t1', code: 'PHY.MOT.1', statement: 'Describe linear motion using velocity-time graphs.', bloom_level: 'understand', exam_relevance: [{ exam_code: 'UTME', relevance: 'core' }, { exam_code: 'WASSCE', relevance: 'frequent' }] },
@@ -611,8 +568,6 @@ export async function createCurriculumObjective(input: CurriculumObjectiveInput)
   return sendJson<CurriculumObjective>('POST', '/admin/curriculum/objectives', input);
 }
 
-// ════════════════════════ EDUPAY / SCHOOL FEES ════════════════════════
-// RBAC: academy.edupay — /api/academy/admin/edupay/*
 // Disbursement state machine: fee_due → funding → collected → disbursed → reconciled.
 export const DISBURSEMENT_FLOW: DisbursementStatus[] = ['fee_due', 'funding', 'collected', 'disbursed', 'reconciled'];
 
@@ -680,7 +635,6 @@ export async function listDisbursements(): Promise<Disbursement[]> {
 }
 export async function reconcileDisbursement(input: DisbursementReconcileInput): Promise<Disbursement> {
   if (USE_MOCK) throw new Error(`Reconciling a disbursement ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /edupay/admin/disbursements/:id/reconcile (edupay admin group).
   return sendJson<Disbursement>('POST', `/admin/edupay/admin/disbursements/${input.id}/reconcile`, input);
 }
 export async function listSchoolPots(): Promise<SchoolPot[]> {
@@ -705,8 +659,6 @@ export async function awardScholarship(input: ScholarshipAwardInput): Promise<Sc
   return sendJson<Scholarship>('POST', '/admin/edupay/admin/scholarships/award', input);
 }
 
-// ════════════════════════ NOTIFICATIONS & MESSAGING ════════════════════════
-// RBAC: academy.notifications — /api/academy/admin/notifications/*
 const TEMPLATES: NotificationTemplate[] = [
   { id: 'nt_streak', name: 'Streak Reminder', channel: 'push', subject: 'Keep your streak alive!', body: 'Hi {{first_name}}, you have a {{streak_days}}-day streak. Do one quiz to keep it going!', segment: 'inactive_7d', schedule: 'triggered', status: 'active', updated_at: iso(30) },
   { id: 'nt_utme', name: 'UTME Countdown', channel: 'in_app', subject: 'UTME is {{days_left}} days away', body: 'Your UTME mock arena is open. Practice now to boost readiness.', segment: 'utme_2026', schedule: 'scheduled', status: 'active', updated_at: iso(50) },
@@ -726,13 +678,8 @@ export async function createNotificationTemplate(input: NotificationTemplateInpu
   return sendJson<NotificationTemplate>('POST', '/admin/notifications/templates', input);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 //                              PHASE 3 MODULES
-//      Trust, learning-ops & support (admin-console.md §7)
-// ════════════════════════════════════════════════════════════════════════════
 
-// ════════════════════════ CREDENTIALS & EARNING BRIDGE ════════════════════════
-// RBAC: academy.credentials — /api/academy/admin/credentials/* + /earning/*
 const CREDENTIAL_TEMPLATES: CredentialTemplate[] = [
   { id: 'ct_wassce_sci', name: 'WASSCE Science Certificate', track: 'academic', issuer: 'Spotlight Academy', validity_months: null, signature_authority: 'Registrar, Spotlight Academy', status: 'active', issued_count: 4120, updated_at: iso(200) },
   { id: 'ct_solar', name: 'Solar PV Installation (Trade)', track: 'trade', issuer: 'Spotlight Academy × REA', signature_authority: 'Lead Assessor, Trade Board', validity_months: 24, status: 'active', issued_count: 318, updated_at: iso(40) },
@@ -808,8 +755,6 @@ export async function listEarningApplications(): Promise<EarningApplication[]> {
   return getJson<EarningApplication[]>('/admin/earning/applications');
 }
 
-// ════════════════════════ LIVE & EVENTS ════════════════════════
-// RBAC: academy.live — /api/academy/admin/live/*
 const LIVE_SESSIONS: LiveSession[] = [
   { id: 'ls_phy', title: 'UTME Physics Crash Class', subject: 'Physics', host: 'A. Bello', status: 'scheduled', starts_at: iso(-24), duration_min: 90, registered: 1240, peak_viewers: null, stream_provider: 'hls', ingest_url: 'rtmps://ingest.spotlight.tv/live/****a91', replay_status: 'none', replay_id: null },
   { id: 'ls_chem', title: 'Stoichiometry Live Solve', subject: 'Chemistry', host: 'C. Okonkwo', status: 'live', starts_at: iso(1), duration_min: 60, registered: 880, peak_viewers: 642, stream_provider: 'webrtc', ingest_url: 'rtmps://ingest.spotlight.tv/live/****b22', replay_status: 'none', replay_id: null },
@@ -840,7 +785,6 @@ export async function listLiveReplays(): Promise<LiveReplay[]> {
 }
 
 // ════════════════════════ MODERATION & TRUST/SAFETY ════════════════════════
-// RBAC: academy.moderation — /api/academy/admin/moderation/*
 // Reports queue: open → triaged → actioned | dismissed | escalated.
 const MODERATION_REPORTS: ModerationReport[] = [
   { id: 'mr_1', entity_type: 'comment', entity_ref: 'cmt_88102', entity_label: 'Comment on "Motion: Velocity-Time Graphs"', reason: 'harassment', reporter_id: 'usr_bb02', severity: 'medium', child_safety: false, state: 'open', decision: null, assignee: null, notes: null, created_at: iso(3), updated_at: iso(3) },
@@ -856,8 +800,6 @@ export async function listModerationReports(): Promise<ModerationReport[]> {
 }
 export async function triageModerationReport(input: ModerationTriageInput): Promise<ModerationReport> {
   if (USE_MOCK) throw new Error(`Triaging a moderation report ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /moderation/reports/:id/triage (live.AdminTriageReport) — the OLD "there is NO
-  // /triage transition" comment here was wrong; the route exists and is registered (liveEnabled),
   // it was just never checked against the actual Go route list before.
   return sendJson<ModerationReport>('POST', `/admin/moderation/reports/${input.id}/triage`, input);
 }
@@ -867,21 +809,13 @@ export async function decideModerationReport(input: ModerationDecisionInput): Pr
 }
 export async function escalateModerationReport(input: ModerationEscalateInput): Promise<ModerationReport> {
   if (USE_MOCK) throw new Error(`Escalating a moderation report ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /moderation/reports/:id/escalate (live.AdminEscalateReport) — the OLD "no
-  // /escalate endpoint" comment here was wrong; the route exists and is registered (liveEnabled),
   // it was just never checked against the actual Go route list before.
   return sendJson<ModerationReport>('POST', `/admin/moderation/reports/${input.id}/escalate`, input);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 //                              PHASE 4 MODULES
-//   Partnerships, marketplace ops & BI depth (admin-console.md §6/§7)
-// ════════════════════════════════════════════════════════════════════════════
 
-// ════════════════════════ SCHOOL & INSTITUTION MGMT ════════════════════════
-// RBAC: academy.schools — /api/academy/admin/schools/*
 // B2B2C institutions, seat-based licences, class groups, seat-capped bulk
-// enrolment, white-label config, and usage billing. Licences are seat-metered;
 // enrolment fails-closed at the seat cap. Invoices are generated then charged.
 const INSTITUTIONS: Institution[] = [
   { id: 'inst_brightstars', name: 'Bright Stars Academy', type: 'school', state: 'Lagos', contact_name: 'Mrs. Adeola Smith', contact_email: 'admin@brightstars.ng', status: 'active', learners: 1180, class_groups: 14, created_at: iso(900) },
@@ -930,7 +864,6 @@ export async function getSchoolsOverview(): Promise<SchoolsOverview> {
     return { institutions_total: INSTITUTIONS.length, institutions_active: active.length, seats_sold: seatsSold, seats_used: seatsUsed, learners_total: INSTITUTIONS.reduce((s, i) => s + i.learners, 0), mrr_kobo: mrr, outstanding_kobo: outstanding };
   }
   // TODO(no backend route): schools admin exposes only per-institution overview
-  // (GET /schools/admin/institutions/:id/overview); there is no cross-institution aggregate
   // overview endpoint. Mock.
   return getJson<SchoolsOverview>('/admin/schools/overview');
 }
@@ -941,7 +874,6 @@ export async function listInstitutions(): Promise<Institution[]> {
 }
 export async function createInstitution(input: InstitutionInput): Promise<Institution> {
   if (USE_MOCK) throw new Error(`Creating an institution ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /schools/admin/institutions (schools.AdminOnboard).
   return sendJson<Institution>('POST', '/admin/schools/admin/institutions', input);
 }
 export async function listLicences(): Promise<Licence[]> {
@@ -952,12 +884,10 @@ export async function listLicences(): Promise<Licence[]> {
 }
 export async function issueLicence(input: LicenceIssueInput): Promise<Licence> {
   if (USE_MOCK) throw new Error(`Issuing a licence ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /schools/admin/licences (schools.AdminIssueLicence).
   return sendJson<Licence>('POST', '/admin/schools/admin/licences', input);
 }
 export async function manageLicence(input: LicenceManageInput): Promise<Licence> {
   if (USE_MOCK) throw new Error(`Managing a licence ${NOT_IN_FIXTURE_MODE}`);
-  // backend: licence lifecycle is split into discrete POST verbs, not a PATCH:
   //   POST /schools/admin/licences/:id/suspend | /reactivate | /expire (schools handler).
   // Map the action → verb for the two verbs the frontend exposes.
   if (input.action === 'suspend' || input.action === 'reactivate') {
@@ -970,13 +900,11 @@ export async function manageLicence(input: LicenceManageInput): Promise<Licence>
 export async function listClassGroups(): Promise<ClassGroup[]> {
   if (USE_MOCK) { await delay(); return CLASS_GROUPS.map((c) => ({ ...c })); }
   // TODO(no backend route): class-groups are listed per-institution only
-  // (GET /schools/admin/institutions/:id/class-groups); there is no flat cross-institution
   // class-groups list. This function takes no institution id, so no route matches. Mock.
   return getJson<ClassGroup[]>('/admin/schools/class-groups');
 }
 export async function createClassGroup(input: ClassGroupInput): Promise<ClassGroup> {
   if (USE_MOCK) throw new Error(`Creating a class group ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /schools/admin/class-groups (schools.AdminCreateClassGroup).
   return sendJson<ClassGroup>('POST', '/admin/schools/admin/class-groups', input);
 }
 export async function bulkEnrol(input: BulkEnrolInput): Promise<BulkEnrolResult> {
@@ -1015,12 +943,9 @@ export async function generateInvoice(input: InvoiceGenerateInput): Promise<Invo
 }
 export async function chargeInvoice(input: InvoiceChargeInput): Promise<Invoice> {
   if (USE_MOCK) throw new Error(`Charging an invoice ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /schools/admin/billing/:id/charge (schools.AdminChargeBilling).
   return sendJson<Invoice>('POST', `/admin/schools/admin/billing/${input.id}/charge`, input);
 }
 
-// ════════════════════════ TUTOR & MARKETPLACE OPS ════════════════════════
-// RBAC: academy.tutor — /api/academy/admin/tutors/*
 // Vetting: applied → in_review → verified | rejected; verified ↔ suspended.
 const TUTORS: Tutor[] = [
   { id: 'tut_okeke', display_name: 'James Okeke', email: 'j.okeke@tutors.ng', subjects: ['Physics', 'Mathematics'], vetting: 'verified', kyc: 'tier2', rating_avg: 4.7, ratings_count: 312, sessions_delivered: 1840, open_disputes: 0, joined_at: iso(700 * 24), updated_at: iso(40) },
@@ -1053,8 +978,6 @@ export async function listTutors(): Promise<Tutor[]> {
 }
 export async function vetTutor(input: TutorVetInput): Promise<Tutor> {
   if (USE_MOCK) throw new Error(`Vetting a tutor ${NOT_IN_FIXTURE_MODE}`);
-  // backend: tutor vetting is split into POST /tutor/:id/verify and POST /tutor/:id/suspend
-  // (singular "tutor" segment; tutor.AdminVerify / AdminSuspend). Map action → verb; treat
   // "reactivate" as a re-verify.
   // "reject" has NO backend endpoint — only verify/suspend exist. This used to silently fall
   // through to /verify, which is actively dangerous: an operator clicking "Reject" on a bad
@@ -1082,10 +1005,7 @@ export async function noteTutorDispute(input: TutorDisputeNoteInput): Promise<Tu
   return sendJson<TutorDispute>('PATCH', `/admin/tutors/disputes/${input.id}`, input);
 }
 
-// ════════════════════════ ANALYTICS & BI DEPTH ════════════════════════
-// RBAC: academy.analyst (or academy.admin) — /api/academy/admin/analytics/*
 // Aggregate dashboards over outcome/engagement/retention/funnel/revenue/exam,
-// cohort analysis, and CSV export. Mock returns a deterministic dataset shaped by
 // the requested date range (range only labels the data here).
 function buildBiDashboard(range: BiDateRange): BiDashboard {
   return {

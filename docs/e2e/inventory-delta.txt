@@ -1,0 +1,112 @@
+academy.openapi.yaml: 302 ops — 302 backend, 0 bff-exact, 0 bff-catchall, 0 unmatched
+associations.openapi.yaml: 126 ops — 126 backend, 0 bff-exact, 0 bff-catchall, 0 unmatched
+connect-phase1-safety.openapi.yaml: 19 ops — 19 backend, 0 bff-exact, 0 bff-catchall, 0 unmatched
+connect-phase1.openapi.yaml: 12 ops — 11 backend, 0 bff-exact, 1 bff-catchall, 0 unmatched
+connect-phases-2to6.openapi.yaml: 39 ops — 35 backend, 0 bff-exact, 4 bff-catchall, 0 unmatched
+doctor.openapi.yaml: 316 ops — 316 backend, 0 bff-exact, 0 bff-catchall, 0 unmatched
+estate.openapi.yaml: 46 ops — 0 backend, 46 bff-exact, 0 bff-catchall, 0 unmatched
+intake.openapi.yaml: 6 ops — 6 backend, 0 bff-exact, 0 bff-catchall, 0 unmatched
+invest.openapi.yaml: 45 ops — 45 backend, 0 bff-exact, 0 bff-catchall, 0 unmatched
+nutrition.openapi.yaml: 8 ops — 0 backend, 0 bff-exact, 8 bff-catchall, 0 unmatched
+openapi.yaml: 155 ops — 142 backend, 1 bff-exact, 12 bff-catchall, 0 unmatched
+placement.openapi.yaml: 19 ops — 18 backend, 0 bff-exact, 1 bff-catchall, 0 unmatched
+property.openapi.yaml: 5 ops — 5 backend, 0 bff-exact, 0 bff-catchall, 0 unmatched
+restaurant.openapi.yaml: 31 ops — 31 backend, 0 bff-exact, 0 bff-catchall, 0 unmatched
+transfers.openapi.yaml: 10 ops — 9 backend, 1 bff-exact, 0 bff-catchall, 0 unmatched
+transport.openapi.yaml: 145 ops — 144 backend, 0 bff-exact, 1 bff-catchall, 0 unmatched
+visitor.openapi.yaml: 49 ops — 0 backend, 49 bff-exact, 0 bff-catchall, 0 unmatched
+voting.openapi.yaml: 16 ops — 5 backend, 6 bff-exact, 5 bff-catchall, 0 unmatched
+
+CONTRACT OPS TOTAL: 1349
+  implemented in Go backend:  1214 (90.0%)
+  implemented in Next.js BFF: 103 (7.6%)
+  only via BFF catch-all proxy: 32 (2.4%)
+  unmatched (neither):        0 (0.0%)
+unique Go-backend paths absent from all contracts: 1698 (of 2752 unique registered paths)
+
+NOTE: approximate — path-shape equality after normalising params; a contract op is
+'implemented' if its method+path (or path under any method) is registered anywhere.
+
+Unmatched contract ops:
+
+Backend paths absent from contracts (first 80 of 1698):
+  GET /api/v1/connect/health (cmd/voting-test-server/main.go)
+  GET /api/academy/admin/analytics/comparison/class (internal/academy/assessment/mock_exam_handler.go)
+  GET /api/academy/admin/analytics/difficulty/subjects/:P (internal/academy/assessment/mock_exam_handler.go)
+  GET /api/academy/admin/analytics/distribution/grades (internal/academy/assessment/mock_exam_handler.go)
+  GET /api/academy/admin/analytics/rankings/exam (internal/academy/assessment/mock_exam_handler.go)
+  POST /api/academy/admin/analytics/refresh (internal/academy/assessment/mock_exam_handler.go)
+  GET /api/academy/admin/analytics/retention/cohorts (internal/academy/assessment/mock_exam_handler.go)
+  GET /api/academy/admin/analytics/trends/performance (internal/academy/assessment/mock_exam_handler.go)
+  GET /api/academy/admin/mock-exams/analytics (internal/academy/assessment/mock_exam_handler.go)
+  GET /api/academy/admin/mock-exams/templates (internal/academy/assessment/mock_exam_handler.go)
+  PUT /api/academy/admin/mock-exams/templates/:P (internal/academy/assessment/mock_exam_handler.go)
+  GET /api/finance/academy/mock-exams/analytics (internal/academy/assessment/mock_exam_handler.go)
+  GET /api/finance/academy/mock-exams/attempts/:P (internal/academy/assessment/mock_exam_handler.go)
+  POST /api/finance/academy/mock-exams/attempts/:P/save (internal/academy/assessment/mock_exam_handler.go)
+  POST /api/finance/academy/mock-exams/attempts/:P/submit (internal/academy/assessment/mock_exam_handler.go)
+  GET /api/finance/academy/mock-exams/results/:P (internal/academy/assessment/mock_exam_handler.go)
+  POST /api/finance/academy/mock-exams/start (internal/academy/assessment/mock_exam_handler.go)
+  GET /api/finance/academy/mock-exams/statistics/:P (internal/academy/assessment/mock_exam_handler.go)
+  GET /api/finance/academy/mock-exams/templates (internal/academy/assessment/mock_exam_handler.go)
+  GET /api/finance/academy/mock-exams/templates/:P (internal/academy/assessment/mock_exam_handler.go)
+  GET /api/academy/commerce/admin/access-cards (internal/academy/commerce/handler.go)
+  GET /api/academy/commerce/admin/payments/overview (internal/academy/commerce/handler.go)
+  GET /api/finance/academy/commerce/bundles/:P (internal/academy/commerce/handler.go)
+  GET /api/academy/admin/content/items (internal/academy/content/handler.go)
+  POST /api/academy/admin/content/productions/:P/block (internal/academy/content/handler.go)
+  GET /api/finance/academy/credentials/:P (internal/academy/credentials/handler.go)
+  GET /api/finance/academy/earning/opportunities/:P (internal/academy/credentials/handler.go)
+  GET /api/academy/admin/curriculum/subjects/:P/topics (internal/academy/curriculum/handler.go)
+  GET /api/academy/admin/curriculum/topics/:P/objectives (internal/academy/curriculum/handler.go)
+  GET /api/academy/admin/curriculum/tree (internal/academy/curriculum/handler.go)
+  GET /api/finance/academy/curriculum/lessons/:P (internal/academy/curriculum/handler.go)
+  GET /api/finance/academy/curriculum/subjects/:P (internal/academy/curriculum/handler.go)
+  GET /api/finance/academy/curriculum/topics/:P (internal/academy/curriculum/handler.go)
+  GET /api/finance/academy/curriculum/topics/:P/lessons (internal/academy/curriculum/handler.go)
+  GET /api/academy/admin/edupay/admin/disbursements (internal/academy/edupay/handler.go)
+  GET /api/academy/admin/edupay/admin/pots (internal/academy/edupay/handler.go)
+  GET /api/academy/admin/exam/blueprints (internal/academy/exam/handler.go)
+  GET /api/finance/academy/exam/attempts/:P/result (internal/academy/exam/handler.go)
+  GET /api/academy/admin/gamification/config (internal/academy/gamification/handler.go)
+  GET /api/finance/academy/gamification/leaderboard/class (internal/academy/gamification/handler.go)
+  GET /api/finance/academy/announcements (internal/academy/learner/handler.go)
+  GET /api/finance/academy/learner/bookmarks (internal/academy/learner/handler.go)
+  DELETE /api/finance/academy/learner/bookmarks/:P (internal/academy/learner/handler.go)
+  GET /api/finance/academy/learner/daily-goal (internal/academy/learner/handler.go)
+  GET /api/finance/academy/learner/notes (internal/academy/learner/handler.go)
+  DELETE /api/finance/academy/learner/notes/:P (internal/academy/learner/handler.go)
+  GET /api/finance/academy/learner/search (internal/academy/learner/handler.go)
+  GET /api/finance/academy/notifications (internal/academy/learner/handler.go)
+  POST /api/finance/academy/notifications/:P/read (internal/academy/learner/handler.go)
+  POST /api/finance/academy/notifications/read-all (internal/academy/learner/handler.go)
+  GET /api/academy/admin/live/replays (internal/academy/live/handler.go)
+  POST /api/academy/admin/moderation/reports/:P/escalate (internal/academy/live/handler.go)
+  POST /api/academy/admin/moderation/reports/:P/triage (internal/academy/live/handler.go)
+  GET /api/finance/academy/live/sessions/:P (internal/academy/live/handler.go)
+  POST /api/finance/academy/sync (internal/academy/offlinesync/handler.go)
+  GET /api/finance/academy/placement (internal/academy/placement/handler.go)
+  POST /api/finance/academy/placement/submit (internal/academy/placement/handler.go)
+  GET /api/academy/admin/rewards/ledger (internal/academy/rewards/handler.go)
+  GET /api/academy/admin/schools/admin/overview (internal/academy/schools/handler.go)
+  GET /api/finance/academy/trade/assessments/:P (internal/academy/trade/handler.go)
+  GET /api/finance/academy/trade/projects/:P (internal/academy/trade/handler.go)
+  GET /api/finance/academy/trade/tracks (internal/academy/trade/handler.go)
+  GET /api/academy/admin/tutor (internal/academy/tutor/handler.go)
+  GET /api/finance/academy/tutor/cohorts (internal/academy/tutor/handler.go)
+  GET /api/finance/academy/tutor/submissions (internal/academy/tutor/handler.go)
+  POST /api/academy/admin/platform/competitions/:P/transition (internal/app/academy_rails.go)
+  POST /api/academy/admin/platform/risk/:P/action (internal/app/academy_rails.go)
+  GET /api/finance/academy/wallet (internal/app/academy_rails.go)
+  PATCH /api/academy/admin/tuition/payments/:P/waive (internal/app/academy_routes.go)
+  POST /api/academy/admin/tuition/plans (internal/app/academy_routes.go)
+  PATCH /api/academy/admin/tuition/plans/:P/mark-complete (internal/app/academy_routes.go)
+  POST /api/finance/academy/tuition/confirm (internal/app/academy_routes.go)
+  GET /api/finance/academy/tuition/status/:P (internal/app/academy_routes.go)
+  POST /api/finance/academy/tuition/validate (internal/app/academy_routes.go)
+  POST /internal/finance/academy/tuition/confirm (internal/app/academy_routes.go)
+  POST /internal/webhooks/academy/billing (internal/app/academy_webhooks.go)
+  POST /internal/webhooks/academy/bnpl (internal/app/academy_webhooks.go)
+  POST /internal/webhooks/academy/disburse (internal/app/academy_webhooks.go)
+  POST /internal/webhooks/academy/payout (internal/app/academy_webhooks.go)
+  GET /api/connect/admin/audit (internal/app/connect_routes.go)

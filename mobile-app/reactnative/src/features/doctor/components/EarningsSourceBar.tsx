@@ -1,9 +1,9 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface Props {
   label:      string;            // source label
@@ -16,7 +16,6 @@ interface Props {
 
 // New component (Y): a per-source earnings bar (label + tinted proportional bar +
 // formatted amount). BarRow takes a points[] series with one shared tint and a
-// 44px label column; the source breakdown needs a per-row tint, a consult count
 // and a wider money column, so a dedicated source bar is justified (no deps).
 export default function EarningsSourceBar({ label, amountKobo, maxKobo, consultCount, tint = Colors.primary, formatValue }: Props) {
   const pct = maxKobo > 0 ? Math.max(4, Math.round((amountKobo / maxKobo) * 100)) : 0;

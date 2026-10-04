@@ -1,9 +1,8 @@
-// ── Spotlight Wealth — Constants ─────────────────────────────────────────────
 // Feature flag, topic → chip styling (design tokens only), and the education /
 // no-advice disclaimers that keep this surface education-first (never hype).
 // All colours/spacing come from the shared design tokens — nothing hard-coded.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { ChallengeKind, SpotlightTopic } from '../types/spotlight.types';
 
 /** Feature flag gating the whole Spotlight Wealth surface (every growth surface flagged). */
@@ -17,8 +16,6 @@ export const CURRENCY_META: Record<string, { symbol: string; decimals: number }>
   NGN: { symbol: '₦', decimals: 0 },
   USD: { symbol: '$', decimals: 2 },
 };
-
-// ─── Topic → chip styling (design tokens only) ────────────────────────────────
 
 export const TOPIC_STYLE: Record<SpotlightTopic, { label: string; fg: string; bg: string }> = {
   'budgeting':        { label: 'Budgeting',        fg: Colors.secondary,             bg: Colors.iconBgBlue },
@@ -39,15 +36,11 @@ export const TOPIC_ORDER: SpotlightTopic[] = [
   'mindset',
 ];
 
-// ─── Challenge kind → label + lucide icon name ────────────────────────────────
-
 export const CHALLENGE_KIND_META: Record<ChallengeKind, { label: string; icon: string; fg: string; bg: string }> = {
   literacy: { label: 'Literacy',  icon: 'BookOpen',     fg: Colors.secondary,         bg: Colors.iconBgBlue },
   quiz:     { label: 'Quiz',      icon: 'HelpCircle',   fg: Colors.onPrimaryFixedVariant, bg: Colors.iconBgPurple },
   savings:  { label: 'Savings',   icon: 'PiggyBank',    fg: Colors.tertiaryContainer, bg: Colors.iconBgGreen },
 };
-
-// ─── Education-first disclaimers (docs/crypto/product.md → strict rules) ───────
 
 /** Shown wherever creator finance content appears. */
 export const CREATOR_DISCLAIMER =

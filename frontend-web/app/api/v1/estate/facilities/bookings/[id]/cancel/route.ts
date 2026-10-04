@@ -7,7 +7,6 @@ import { mapBooking } from '../../route';
 
 const COLS = 'id, estate_id, facility_id, resident_id, starts_at, ends_at, status, amount_kobo, created_at';
 
-// POST /api/v1/estate/facilities/bookings/[id]/cancel
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;
   try {

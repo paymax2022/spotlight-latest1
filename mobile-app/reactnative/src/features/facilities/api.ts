@@ -1,7 +1,7 @@
 // Estate Facilities / Amenities (Block 33) — types + dual mock/live api + constants.
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 
 export type FacilityKind = 'hall' | 'pool' | 'gym' | 'court' | 'park' | 'bbq' | 'parking' | 'other';

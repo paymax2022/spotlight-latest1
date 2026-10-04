@@ -75,8 +75,8 @@ func TestBuildQuoteSell(t *testing.T) {
 }
 
 func TestBuildSwapQuote(t *testing.T) {
-	from := testAsset()                    // ₦100.00
-	to := testAsset()                      // ₦50.00
+	from := testAsset() // ₦100.00
+	to := testAsset()   // ₦50.00
 	to.Symbol, to.ID = "TS2", "ast_ts2"
 	to.Price = domain.Money{Amount: 50_00, Currency: "NGN"}
 
@@ -101,7 +101,7 @@ func TestWithdrawalQuote(t *testing.T) {
 	a := testAsset()
 	q := WithdrawalQuoteFor(a, a.SupportedNetworks[0], 100_000) // 1000.00 TST
 
-	if q.NetworkFee.Amount != 50 { // max(round(100*0.00005), round(100000*0.0005)) = 50
+	if q.NetworkFee.Amount != 50 {
 		t.Fatalf("networkFee = %d, want 50", q.NetworkFee.Amount)
 	}
 	if q.ReceiveAmount.Amount != 99_950 {

@@ -1,16 +1,13 @@
 package referrals_test
 
 // Live-DB tests for the Direct Referral Rewards ENGINE money path (REF-005).
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset, and it does NOT fall back to
 // DATABASE_URL — same convention as
 // backend/internal/referral/ledger/withdraw_integration_test.go and
 // backend/internal/referral/compliance/consent_append_only_live_db_test.go.
 // Point it at a disposable, migrated Postgres:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/finance/referrals/... -v
-//
 // Each test seeds its own users with fresh UUIDs and registers
 // testsupport.CleanupUser, so runs never observe each other's rows and are
 // safe to run repeatedly without a truncate.
@@ -110,9 +107,7 @@ func countRewardRows(t *testing.T, pool *pgxpool.Pool, transactionID string) int
 	return n
 }
 
-// ============================================================================
 // OnPurchaseSettled — normal crediting + idempotency + rounding.
-// ============================================================================
 
 // TestOnPurchaseSettled_CreditsReward_Integration proves the full happy path:
 // one referral_rewards row, CREDITED, reward_kobo == floor(margin*rate), and
@@ -148,7 +143,7 @@ func TestOnPurchaseSettled_CreditsReward_Integration(t *testing.T) {
 	if rewardKobo != wantReward {
 		t.Fatalf("reward_kobo = %d, want %d (floor(%d*%v))", rewardKobo, wantReward, marginKobo, appliedRate)
 	}
-	if rewardKobo != 10_000 { // floor(100_000 * 0.10)
+	if rewardKobo != 10_000 {
 		t.Fatalf("reward_kobo = %d, want 10000", rewardKobo)
 	}
 	if id == "" {
@@ -327,9 +322,7 @@ func TestOnPurchaseSettled_NonPositiveMargin_NoOp_Integration(t *testing.T) {
 	}
 }
 
-// ============================================================================
 // OnPurchaseRefunded — reversal on CREDITED, no-op otherwise, idempotent.
-// ============================================================================
 
 // TestOnPurchaseRefunded_ReversesCredited_Integration settles then refunds:
 // the reward flips to REVERSED, the ledger reversal is balanced (wallet drained
@@ -452,15 +445,11 @@ func TestOnPurchaseRefunded_UnknownTransaction_NoOp_Integration(t *testing.T) {
 	}
 }
 
-// ============================================================================
 // ComputeReward — pure rounding-rule unit tests (no DB).
-// ============================================================================
 
-// ============================================================================
 // ResolveCodeToReferrer — the REF-002 CodeResolver adapter (attribution engine
 // entry point). resolveCode itself is exercised indirectly through this public
 // method, which is what internal/referral/attribution wires against.
-// ============================================================================
 
 // TestResolveCodeToReferrer_ReferralLinksOnly_Integration: a code that exists
 // ONLY in referral_links (the engine's own canonical table, minted via
@@ -532,11 +521,9 @@ func TestResolveCodeToReferrer_UnknownCode_Errors_Integration(t *testing.T) {
 	}
 }
 
-// ============================================================================
 // REF-004 / REF-008 — shared code format across the two generators writing
 // into finance_referral_codes, and case-insensitive resolution of whatever
 // case a legacy row happens to be stored in.
-// ============================================================================
 
 // referralCodeAlphabet mirrors codeAlphabet in code.go — duplicated here
 // (rather than exported test-only) because the point of this test is to
@@ -546,11 +533,9 @@ func TestResolveCodeToReferrer_UnknownCode_Errors_Integration(t *testing.T) {
 const referralCodeAlphabet = "ABCDEFGHJKMNPQRTUVWXY346789"
 
 // TestGetOrCreateCode_Legacy_MatchesSharedAlphabetFormat_Integration is the
-// REF-004 regression: the legacy Service used to generate 8 lowercase hex
-// characters via its own generateCode(), a format incompatible with both
-// referral_links (5 chars, uppercase, curated alphabet) and the frontend's
-// then-SPOT-XXXXXX format — three shapes writing into/reading from the same
-// finance_referral_codes.code column. All issuers must now agree.
+// REF-004 regression: the legacy Service's code path must produce the shared
+// referral_links shape (5 chars, uppercase, curated alphabet) — all issuers
+// of finance_referral_codes.code must agree on one format.
 func TestGetOrCreateCode_Legacy_MatchesSharedAlphabetFormat_Integration(t *testing.T) {
 	ctx := context.Background()
 	pool := liveRewardsPool(t)
@@ -580,9 +565,8 @@ func TestGetOrCreateCode_Legacy_MatchesSharedAlphabetFormat_Integration(t *testi
 // TestResolveCodeToReferrer_LegacyService_CaseInsensitive_Integration is the
 // REF-008 regression on the LEGACY Service.ResolveCodeToReferrer itself
 // (distinct from RewardService's two-table resolver exercised elsewhere in
-// this file): a code stored in lowercase — exactly what the pre-fix
-// generateCode() used to emit — must still resolve when looked up in a
-// different case, mirroring what internal/referral/attribution's
+// this file): a code stored in lowercase must still resolve when looked up in
+// a different case, mirroring what internal/referral/attribution's
 // normalizeCode() does to every code entered at signup.
 func TestResolveCodeToReferrer_LegacyService_CaseInsensitive_Integration(t *testing.T) {
 	ctx := context.Background()
@@ -651,8 +635,8 @@ func TestComputeReward_FloorsFractionalKobo(t *testing.T) {
 		want       int64
 	}{
 		{"exact division", 100_000, 0.10, 10_000},
-		{"truncates down, never rounds", 333, 0.05, 16},        // 16.65 -> 16
-		{"truncates down at .99 fraction", 199, 0.5, 99},       // 99.5 -> 99
+		{"truncates down, never rounds", 333, 0.05, 16}, // 16.65 -> 16
+		{"truncates down at .99 fraction", 199, 0.5, 99},
 		{"zero margin", 0, 0.10, 0},
 		{"zero rate", 100_000, 0, 0},
 		{"negative margin is zeroed (never pays on a loss)", -100, 0.10, 0},
@@ -664,5 +648,270 @@ func TestComputeReward_FloorsFractionalKobo(t *testing.T) {
 				t.Errorf("ComputeReward(%d, %v) = %d, want %d", tc.marginKobo, tc.rate, got, tc.want)
 			}
 		})
+	}
+}
+
+// ── E2E-FIN-042 — Attribute late-claim semantics ────────────────────────────
+// The §7A resolver always writes a referral_attributions row (codeless signups
+// get a global_house placeholder), so a plain ON CONFLICT DO NOTHING insert
+// would silently never apply the code. These tests pin the contract: a
+// claimable house placeholder is REPLACED by the real referrer; a real
+// referrer already on the row always wins (first-real-attribution); a
+// no-longer-claimable house row is left alone and the response says so.
+
+// seedHousePlaceholder simulates the §7A signup resolver's codeless-signup
+// output: a referral_attributions row pointing at a house account
+// (referrer_id NULL, is_house). status/graceOpen pin whether the placeholder
+// is still claimable (mirrors ClaimCode's is_house + grace + open-window check).
+func seedHousePlaceholder(t *testing.T, pool *pgxpool.Pool, referredUserID, status string, graceOpen bool) {
+	t.Helper()
+	var houseID string
+	// The 20260706000000_referral_core.sql seed code; the upsert keeps the test
+	// working on a DB where the seed ran and on one where it did not.
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO referral_house_accounts (scope, code) VALUES ('global','SPOT-HOUSE')
+		 ON CONFLICT (code) DO UPDATE SET scope=EXCLUDED.scope
+		 RETURNING id`).Scan(&houseID); err != nil {
+		t.Fatalf("seed house account: %v", err)
+	}
+	grace := `now() + interval '72 hours'`
+	if !graceOpen {
+		grace = `now() - interval '1 hour'`
+	}
+	mustRewardExec(t, pool,
+		`INSERT INTO referral_attributions
+		   (referred_user_id, house_account_id, attribution_type, is_house, status, grace_expires_at)
+		 VALUES ($1,$2,'global_house',true,$3, `+grace+`)`,
+		referredUserID, houseID, status)
+}
+
+func attributionRow(t *testing.T, pool *pgxpool.Pool, referredUserID string) (*string, *string, bool) {
+	t.Helper()
+	var referrerID, houseAccountID *string
+	var isHouse bool
+	err := pool.QueryRow(context.Background(),
+		`SELECT referrer_id, house_account_id, is_house FROM referral_attributions
+		 WHERE referred_user_id=$1`, referredUserID).Scan(&referrerID, &houseAccountID, &isHouse)
+	if err != nil {
+		t.Fatalf("read attribution row: %v", err)
+	}
+	return referrerID, houseAccountID, isHouse
+}
+
+// A user whose only attribution is the default house placeholder (still in
+// grace) must get the real referrer — the placeholder is replaced, not left
+// in place.
+func TestAttribute_OverridesClaimableHousePlaceholder_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	svc, _ := newRewardSvc(pool)
+
+	referrer := seedRewardUser(t, pool)
+	referred := seedRewardUser(t, pool)
+	link, err := svc.GetOrCreateLink(ctx, referrer)
+	if err != nil {
+		t.Fatalf("GetOrCreateLink: %v", err)
+	}
+	seedHousePlaceholder(t, pool, referred, "grace", true)
+
+	got, attributed, err := svc.Attribute(ctx, referred, link.Code)
+	if err != nil {
+		t.Fatalf("Attribute: %v", err)
+	}
+	if got != referrer {
+		t.Fatalf("referrer_id = %q, want %q", got, referrer)
+	}
+	if !attributed {
+		t.Fatal("attributed = false, want true — the submitted code must be the attribution in effect")
+	}
+
+	refID, houseID, isHouse := attributionRow(t, pool, referred)
+	if refID == nil || *refID != referrer {
+		t.Fatalf("stored referrer_id = %v, want %q", refID, referrer)
+	}
+	if isHouse {
+		t.Fatal("is_house still true after late claim — placeholder not replaced")
+	}
+	if houseID != nil {
+		t.Fatal("house_account_id still set after late claim")
+	}
+}
+
+// A user already attributed to a REAL referrer keeps it: claiming a different
+// code must not steal the row (first-real-attribution wins), and the response
+// honestly reports the existing referrer with attributed=false.
+func TestAttribute_FirstRealAttributionWins_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	svc, _ := newRewardSvc(pool)
+
+	winner := seedRewardUser(t, pool)
+	challenger := seedRewardUser(t, pool)
+	referred := seedRewardUser(t, pool)
+	seedAttribution(t, pool, referred, winner) // already attributed to a real referrer
+	link, err := svc.GetOrCreateLink(ctx, challenger)
+	if err != nil {
+		t.Fatalf("GetOrCreateLink: %v", err)
+	}
+
+	got, attributed, err := svc.Attribute(ctx, referred, link.Code)
+	if err != nil {
+		t.Fatalf("Attribute: %v", err)
+	}
+	if got != winner {
+		t.Fatalf("referrer_id = %q, want existing referrer %q (first-real wins)", got, winner)
+	}
+	if attributed {
+		t.Fatal("attributed = true, want false — a different real referrer already holds the row")
+	}
+
+	refID, _, isHouse := attributionRow(t, pool, referred)
+	if refID == nil || *refID != winner {
+		t.Fatalf("stored referrer_id = %v, want unchanged %q", refID, winner)
+	}
+	if isHouse {
+		t.Fatal("is_house flipped — the real attribution must be untouched")
+	}
+}
+
+// A caller with NO attribution row at all gets a fresh code attribution — the
+// original happy path, unchanged.
+func TestAttribute_FreshInsert_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	svc, _ := newRewardSvc(pool)
+
+	referrer := seedRewardUser(t, pool)
+	referred := seedRewardUser(t, pool)
+	link, err := svc.GetOrCreateLink(ctx, referrer)
+	if err != nil {
+		t.Fatalf("GetOrCreateLink: %v", err)
+	}
+
+	got, attributed, err := svc.Attribute(ctx, referred, link.Code)
+	if err != nil {
+		t.Fatalf("Attribute: %v", err)
+	}
+	if got != referrer || !attributed {
+		t.Fatalf("Attribute = (%q, %v), want (%q, true)", got, attributed, referrer)
+	}
+}
+
+// A house placeholder whose grace window has closed (locked, or expired) is no
+// longer claimable — matching the §7A ClaimCode contract — so the code does
+// NOT apply and the response honestly says so (attributed=false, empty
+// referrer) instead of the old silent no-op.
+func TestAttribute_LockedHousePlaceholder_NotOverridden_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	svc, _ := newRewardSvc(pool)
+
+	referrer := seedRewardUser(t, pool)
+	referred := seedRewardUser(t, pool)
+	link, err := svc.GetOrCreateLink(ctx, referrer)
+	if err != nil {
+		t.Fatalf("GetOrCreateLink: %v", err)
+	}
+	seedHousePlaceholder(t, pool, referred, "locked", false)
+
+	got, attributed, err := svc.Attribute(ctx, referred, link.Code)
+	if err != nil {
+		t.Fatalf("Attribute: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("referrer_id = %q, want empty — locked house placeholder must not be overridden", got)
+	}
+	if attributed {
+		t.Fatal("attributed = true, want false — the house row is no longer claimable")
+	}
+
+	_, _, isHouse := attributionRow(t, pool, referred)
+	if !isHouse {
+		t.Fatal("locked house row was rewritten — a locked attribution is terminal")
+	}
+}
+
+// ── E2E-FIN-044: one code per user across both mint tables ────────────────
+
+// A code minted into referral_links must be what the legacy surface returns —
+// first-minted wins, adopted into finance_referral_codes rather than a second
+// code drawn.
+func TestGetOrCreateCode_AdoptsLinkCode_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	rewardSvc, fin := newRewardSvc(pool)
+	legacySvc := referrals.NewService(pool, fin)
+
+	u := seedRewardUser(t, pool)
+	link, err := rewardSvc.GetOrCreateLink(ctx, u)
+	if err != nil {
+		t.Fatalf("GetOrCreateLink: %v", err)
+	}
+	code, err := legacySvc.GetOrCreateCode(ctx, u)
+	if err != nil {
+		t.Fatalf("GetOrCreateCode: %v", err)
+	}
+	if code.Code != link.Code {
+		t.Fatalf("legacy surface shows %q but the link minted %q — two codes for one user", code.Code, link.Code)
+	}
+}
+
+// Mirror image: a legacy finance_referral_codes seed must be what the rewards
+// engine returns, adopted into referral_links rather than a second code drawn.
+func TestGetOrCreateLink_AdoptsLegacyCode_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	rewardSvc, fin := newRewardSvc(pool)
+	legacySvc := referrals.NewService(pool, fin)
+
+	u := seedRewardUser(t, pool)
+	code, err := legacySvc.GetOrCreateCode(ctx, u)
+	if err != nil {
+		t.Fatalf("GetOrCreateCode: %v", err)
+	}
+	link, err := rewardSvc.GetOrCreateLink(ctx, u)
+	if err != nil {
+		t.Fatalf("GetOrCreateLink: %v", err)
+	}
+	if link.Code != code.Code {
+		t.Fatalf("rewards surface shows %q but the legacy minted %q — two codes for one user", link.Code, code.Code)
+	}
+}
+
+// Users who already hold DIFFERENT codes in each table converge on the older
+// (first-minted) one, and the newer row self-repairs.
+func TestReferralCodeConvergesOnFirstMinted_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	rewardSvc, fin := newRewardSvc(pool)
+	legacySvc := referrals.NewService(pool, fin)
+
+	u := seedRewardUser(t, pool)
+	// Older legacy code, newer link code — link must repair to the legacy.
+	mustRewardExec(t, pool,
+		`INSERT INTO finance_referral_codes (user_id, code, created_at) VALUES ($1,'OLDER', now() - interval '2 days')`, u)
+	mustRewardExec(t, pool,
+		`INSERT INTO referral_links (referrer_id, code, created_at) VALUES ($1,'NEWER', now())`, u)
+
+	link, err := rewardSvc.GetOrCreateLink(ctx, u)
+	if err != nil {
+		t.Fatalf("GetOrCreateLink: %v", err)
+	}
+	if link.Code != "OLDER" {
+		t.Fatalf("GetOrCreateLink = %q, want the first-minted %q", link.Code, "OLDER")
+	}
+	code, err := legacySvc.GetOrCreateCode(ctx, u)
+	if err != nil {
+		t.Fatalf("GetOrCreateCode: %v", err)
+	}
+	if code.Code != "OLDER" {
+		t.Fatalf("GetOrCreateCode = %q, want converged %q", code.Code, "OLDER")
 	}
 }

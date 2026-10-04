@@ -6,25 +6,24 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
-// ─── Event transport (Spotlight) ─────────────────────────────────────────────
-//
 // Organizer (event owner) publishes event_transport_offers tied to a Spotlight
 // event_id (loose ref, no FK). Riders book seats; ticket+ride bundle links a
 // ticket_ref. On book the fare is escrowed then immediately settled to the
 // organizer (the catalog is trusted, like bus). QR = uuid.
-//
 // Offer state:   draft → open → full → departed → completed · (cancelled).
 // Booking state: booked → confirmed → boarded → completed · (cancelled/refunded).
-//
 // Capacity is enforced server-side inside a transaction: the booked_count is
 // incremented with a conditional UPDATE (booked_count + seats <= capacity). If
 // the update affects zero rows the offer is full → 409, and the escrow is
 // refunded.
-
-// ─── Request bodies ──────────────────────────────────────────────────────────
 
 // EventOfferRequest is POST /mobility/events/transport.
 type EventOfferRequest struct {
@@ -54,8 +53,6 @@ type EventValidateRequest struct {
 	QRCode string `json:"qr_code" binding:"required"`
 }
 
-// ─── Organizer: create offer ─────────────────────────────────────────────────
-
 // CreateEventOffer publishes a transport offer for an event (organizer = caller).
 func (s *Service) CreateEventOffer(ctx context.Context, organizerID string, req EventOfferRequest) (map[string]any, error) {
 	offerType := req.Type
@@ -81,9 +78,9 @@ func (s *Service) CreateEventOffer(ctx context.Context, organizerID string, req 
 			 geofence_radius_m, capacity, booked_count, fare_kobo, departure_time, bus_schedule_id, promo_code, status)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12,$13,$14,'open')`
 	if _, err := s.db.Exec(ctx, q,
-		id, nullStr(req.EventID), organizerID, offerType, req.Title, nullStr(req.VenueAddress),
+		id, dbutil.NullStr(req.EventID), organizerID, offerType, req.Title, dbutil.NullStr(req.VenueAddress),
 		nullFloat(req.VenueLat), nullFloat(req.VenueLng), radius, req.Capacity, req.FareKobo,
-		departure, nullStr(req.BusScheduleID), nullStr(req.PromoCode),
+		departure, dbutil.NullStr(req.BusScheduleID), dbutil.NullStr(req.PromoCode),
 	); err != nil {
 		return nil, fmt.Errorf("transport: insert event offer: %w", err)
 	}
@@ -160,8 +157,6 @@ func (s *Service) EventOfferDetail(ctx context.Context, id string) (map[string]a
 		"busScheduleId": busSchedID, "promoCode": promo, "status": status, "createdAt": createdAt,
 	}, nil
 }
-
-// ─── Booking ─────────────────────────────────────────────────────────────────
 
 // BookEventTransport reserves seats: escrow → atomic capacity reservation →
 // settle organizer → issue QR. Overbooking is rejected (409) and the escrow
@@ -246,7 +241,7 @@ func (s *Service) BookEventTransport(ctx context.Context, userID, offerID string
 		INSERT INTO event_transport_bookings
 			(id, offer_id, user_id, ticket_ref, seats, fare_kobo, qr_code, status, settlement_id, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,'booked',$8,$9)`,
-		bookingID, offerID, userID, nullStr(req.TicketRef), req.Seats, total, qr, sett.ID, idempotencyKey,
+		bookingID, offerID, userID, dbutil.NullStr(req.TicketRef), req.Seats, total, qr, sett.ID, idempotencyKey,
 	); err != nil {
 		s.settlement.Refund(ctx, sett.ID, "event_booking_insert_failed")
 		return nil, fmt.Errorf("transport: insert event booking: %w", err)
@@ -305,7 +300,7 @@ func (s *Service) ListEventBookings(ctx context.Context, userID string) ([]map[s
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, offerID, qr, status, title, offerType string
 		var ticketRef *string
@@ -402,4 +397,101 @@ func nullFloat(f float64) any {
 		return nil
 	}
 	return f
+}
+
+// EventOffersList lists transport offers for an event. event_id is taken from
+// the query string (see the route comment for why it is not a path param).
+func (h *Handler) EventOffersList(c *gin.Context) {
+	eventID := c.Query("event_id")
+	if eventID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "event_id required"})
+		return
+	}
+	offers, err := h.svc.ListEventOffers(c.Request.Context(), eventID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"offers": offers})
+}
+
+// EventOfferCreate creates a transport offer (organizer = caller).
+func (h *Handler) EventOfferCreate(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req EventOfferRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	offer, err := h.svc.CreateEventOffer(c.Request.Context(), userID, req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, offer)
+}
+
+// EventOfferGet returns an offer detail.
+func (h *Handler) EventOfferGet(c *gin.Context) {
+	offer, err := h.svc.EventOfferDetail(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, offer)
+}
+
+// EventBook books seats on an offer.
+func (h *Handler) EventBook(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req EventBookRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	booking, err := h.svc.BookEventTransport(c.Request.Context(), userID, c.Param("id"), req, ginutil.IdempotencyKey(c))
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, booking)
+}
+
+// EventBookings lists the user's bookings (QR).
+func (h *Handler) EventBookings(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	bookings, err := h.svc.ListEventBookings(c.Request.Context(), userID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"bookings": bookings})
+}
+
+// EventBookingCancel refunds + cancels a booking.
+func (h *Handler) EventBookingCancel(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req CancelRequest
+	_ = c.ShouldBindJSON(&req)
+	if err := h.svc.CancelEventBooking(c.Request.Context(), c.Param("id"), userID, req.Reason); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "refunded"})
+}
+
+// EventValidate validates a QR → boarded.
+func (h *Handler) EventValidate(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	var req EventValidateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	res, err := h.svc.ValidateEventBooking(c.Request.Context(), userID, req.QRCode)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
 }

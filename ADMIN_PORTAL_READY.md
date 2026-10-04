@@ -111,9 +111,11 @@ Port 3001: Deprecated (no longer needed)
 ### Access the Admin Portal
 1. Start frontend-web dev server: `npm run dev` (port 3000)
 2. Navigate to: **http://localhost:3000/admin**
-3. Login with admin credentials: 
-   - Email: `admin@spotlight.internal`
-   - Password: `admin`
+3. Login with admin credentials:
+   - Username: `admin` (the console rewrites this to `admin@spotlight.internal`)
+   - Password: not stored in this repo. The seeded account's password is set out of band
+     (`scripts/dev/ensure-dev-login.sh` locally, or `PUT /auth/v1/admin/users/{id}` on the
+     Supabase admin API for hosted environments). No migration pins a credential.
 
 ### Navigate Modules
 - Click section headers to expand/collapse (expands all by default)

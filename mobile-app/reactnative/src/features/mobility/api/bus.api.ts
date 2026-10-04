@@ -1,5 +1,3 @@
-// ── Bus booking — API wrapper ────────────────────────────────────────────────
-// Mock-flagged, BASE = '/api/v1'. Booking is a money mutation (escrow →
 // settle operator on issue) and carries an Idempotency-Key. Fares are
 // admin-approved on the SERVER — never computed here.
 
@@ -48,7 +46,6 @@ export async function searchRoutes(origin: string, dest: string): Promise<BusRou
   return unwrap<BusRoute[]>(await api.get(`${BASE}/mobility/bus/routes`, { params: { origin, dest } }));
 }
 
-// ─── Marketplace: interstate trip search (provider-aware) ──────────────────────
 // GET /bus/search?fromState&toState&providerId&date → { trips: BusTrip[] }.
 // Each trip carries its provider (businessName + verified + rating) so results
 // can be grouped/badged per operator. Fares are server-owned (kobo).
@@ -106,7 +103,6 @@ export async function getSchedules(routeId: string, date: string): Promise<BusSc
 // { schedule_id, total_seats, taken: number[], available: number }.
 // A seat is taken if its (1-based) number appears in `taken`. We map this onto
 // the UI-facing BusSeatMap so the seat-picker screen stays declarative. The
-// seat-map endpoint does not carry the fare (fares come from the schedule list);
 // fareKobo defaults to 0 and the booking screens read it from their own source.
 interface BackendSeatMap {
   schedule_id: string;
@@ -136,7 +132,6 @@ export async function getSeatMap(scheduleId: string): Promise<BusSeatMap> {
   };
 }
 
-// ─── Book (money mutation → escrow → settle operator → QR; Idempotency-Key) ────
 export async function bookBus(req: BusBookRequest): Promise<BusTicket> {
   if (USE_MOCK) {
     await delay(900);

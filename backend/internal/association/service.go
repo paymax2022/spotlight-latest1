@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/platform/r2"
 )
 
@@ -27,16 +28,31 @@ var ErrForbidden = errors.New("association: forbidden")
 // ErrNoMembership means the caller holds no association membership at all.
 // Distinct from ErrForbidden: it is a 404-shaped "nothing here for you yet"
 // that the client should render as an onboarding empty state, not an error.
-// Previously every such case fell through statusFor's default branch to a 500,
+// Previously every such case fell through errMap's default branch to a 500,
 // which made the mobile home screen show "Couldn't load / Please try again"
 // and retry forever.
 var ErrNoMembership = errors.New("association: no membership")
 
 // ErrInvalidInput marks a caller-supplied value the server rejects — an
 // incoherent event price, a bad enum, a malformed timestamp. These were plain
-// fmt.Errorf values, so statusFor's default branch mapped them to 500 and a
+// fmt.Errorf values, so errMap's default branch mapped them to 500 and a
 // user's typo looked like a server fault.
 var ErrInvalidInput = errors.New("association: invalid input")
+
+// walletDebitLimiter is the minimal seam the dues money path depends on for
+// the fail-closed KYC-tier / daily-debit gate. *tiers.Service satisfies it in
+// production; unit tests inject a fake via WithTiers. Modeled as a local
+// interface — mirrors social's walletDebitLimiter. A dues payment is a wallet
+// DEBIT (cash leaves the member's wallet into settlement), so the STRICT gate
+// is used: it is not a checkout purchase, so the Tier-0 checkout allowance
+// (ADR-043) does NOT apply here.
+type walletDebitLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
+// must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
+var ErrTierGateUnwired = errors.New("association: money path requires a tier gate (not wired)")
 
 // Service manages association dues payments, receipts, and admin approvals.
 type Service struct {
@@ -47,20 +63,49 @@ type Service struct {
 	// presigner resolves stored logo object keys to signed GET URLs on read;
 	// nil means stored values are passed through unchanged (see presign.go).
 	presigner *r2.Presigner
+	tiers     walletDebitLimiter
 }
 
+// NewService builds the association service. The tier-limit gate is
+// constructed from the same pool (tiers.NewService needs only the DB), so no
+// extra wiring is required at the call site — same convention as
+// social.NewService. A nil pool leaves the gate nil, and enforceDebitLimit
+// then fails closed via ErrTierGateUnwired.
 func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
-	return &Service{db: db, ledger: ledger}
+	s := &Service{db: db, ledger: ledger}
+	if db != nil {
+		s.tiers = tiers.NewService(db)
+	}
+	return s
 }
 
-// CommissionRecorder is the nil-safe seam into the central Commission & Profit
-// module. app-wiring injects a thin adapter over the finance commission service;
-// when the commission feature is off (or no recorder is wired) the field is nil and
-// recording is a silent no-op. Modeled as a LOCAL interface so association never
-// imports the commission package at compile time (mirrors transport/service.go). It
-// records realized profit ONLY; it never moves money. The injected recorder is built
-// WITHOUT a ledger so RecordFor never re-posts (the dues split above already routes
-// the platform fee) — it appends the immutable earning row used by profit reports.
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *Service) WithTiers(t walletDebitLimiter) *Service {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
+}
+
+// enforceDebitLimit is the fail-closed guard applied before the dues wallet
+// debit (E2E-FIN-046): the same EnforceWalletDebitLimit the canonical transfer
+// rail (finance/transfers) runs. Tier 0 → ErrWalletDisabled, over daily cap →
+// ErrDailyLimitExceeded, gate/db errors refuse, and a missing gate refuses via
+// ErrTierGateUnwired. The error is propagated UNWRAPPED so errMap maps the tier
+// sentinels to 403 via errors.Is.
+func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	return s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo)
+}
+
+// CommissionRecorder is the nil-safe seam into the central commission module —
+// a LOCAL interface so association never imports the commission package. It
+// records realized profit ONLY and never moves money: the injected recorder is
+// built WITHOUT a ledger so it only appends the immutable earning row (the
+// dues split already routes the platform fee).
 type CommissionRecorder interface {
 	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
 		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
@@ -72,14 +117,11 @@ type CommissionRecorder interface {
 // post-construction). Nil is accepted and disables recording.
 func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
 
-// recordCommissionSafe records realized Spotlight profit for a settled dues payment.
-// It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
-// no-op, and any error is logged and swallowed so a profit-registry failure can never
-// fail or reverse the member's dues payment. The invoice id doubles as source ref +
-// idempotency key so retries and reconciliation sweeps never double-count. The
-// module's ACTUAL platform cut is the 5% Platform-fee line of the RevenueSplit, NOT a
-// flat 10% of the dues, so we record the EXACT platformKobo via RecordExact (grossKobo
-// = the full dues amount is passed for context/throughput).
+// recordCommissionSafe records realized Spotlight profit for a settled dues
+// payment. Best-effort — a nil recorder is a no-op and any error is swallowed;
+// it must never fail or reverse a dues payment. The invoice id doubles as
+// source ref + idempotency key. The recorded figure is the EXACT 5%
+// platform-fee line of the RevenueSplit (RecordExact), not a flat % of dues.
 func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo, platformKobo int64,
 	sourceRef string, userID *string) {
 	if s.commission == nil || platformKobo <= 0 {
@@ -149,7 +191,6 @@ func (s *Service) PayInvoice(ctx context.Context, userID, invoiceID string, req 
 		return nil, ErrIdempotencyRequired
 	}
 
-	// Load the invoice + its owner.
 	var (
 		amount     int64
 		title      string
@@ -174,6 +215,15 @@ func (s *Service) PayInvoice(ctx context.Context, userID, invoiceID string, req 
 	if status == "PAID" {
 		// Already settled — return the existing receipt id idempotently.
 		return &PayInvoiceResult{ReceiptID: "rcpt_" + invoiceID, Status: "SUCCESS"}, nil
+	}
+
+	// Tier gate (fail-closed, E2E-FIN-046): dues payment is a wallet debit, so
+	// the same EnforceWalletDebitLimit the transfer rail applies runs BEFORE
+	// money moves — a refused attempt posts zero ledger legs and no payment row.
+	// Replays of a PAID invoice already returned the receipt above, so a
+	// completed payment never reaches this gate.
+	if err := s.enforceDebitLimit(ctx, userID, amount); err != nil {
+		return nil, err
 	}
 
 	// Settlement standing account receives the credit (balanced double-entry).
@@ -219,14 +269,8 @@ func (s *Service) PayInvoice(ctx context.Context, userID, invoiceID string, req 
 		return nil, fmt.Errorf("association: commit: %w", err)
 	}
 
-	// Record realized Spotlight profit into the central Commission & Profit registry.
-	// This is the dues-settlement point: the RevenueSplit above realizes the platform
-	// fee (5% of the dues amount). We record that EXACT platform share (not the whole
-	// dues, not a flat 10%) as the profit; gross = the full dues amount is passed for
-	// throughput context. Best-effort + idempotent: the invoice id doubles as source
-	// ref + idempotency key, so retries / the early PAID return never double-count. A
-	// recorder failure is logged and swallowed — it must NEVER fail or reverse the dues
-	// payment above.
+	// Record the realized platform fee into the central profit registry —
+	// best-effort and idempotent via the invoice id (see recordCommissionSafe).
 	s.recordCommissionSafe(ctx, "Community", "Group Membership", "", amount, platformShareKobo(amount), invoiceID, &userID)
 
 	return &PayInvoiceResult{ReceiptID: "rcpt_" + invoiceID, Status: "SUCCESS"}, nil
@@ -334,8 +378,6 @@ func (s *Service) DecideApplication(ctx context.Context, adminID, appID string, 
 	}
 	return tx.Commit(ctx)
 }
-
-// ── Discovery ────────────────────────────────────────────────────────────────
 
 // GetOrganisations lists published organisations, optionally filtered by search
 // term. Ordered newest-first so a freshly published organisation is immediately
@@ -507,8 +549,6 @@ func (s *Service) GetOrganisation(ctx context.Context, viewerID, orgID string) (
 	return &org, nil
 }
 
-// ── Member identity & dashboard ───────────────────────────────────────────────
-
 // GetDashboard returns the authenticated member's overview dashboard.
 func (s *Service) GetDashboard(ctx context.Context, userID string) (*MemberDashboard, error) {
 	card, err := s.GetCard(ctx, userID)
@@ -670,8 +710,6 @@ func (s *Service) GetActivity(ctx context.Context, userID string) ([]ActivityEnt
 	return out, rows.Err()
 }
 
-// ── RBAC ──────────────────────────────────────────────────────────────────────
-
 // GetAdminAccess reads the caller's assoc_member_roles entry and maps it to capabilities.
 func (s *Service) GetAdminAccess(ctx context.Context, userID string) (*AdminAccess, error) {
 	const q = `
@@ -730,14 +768,10 @@ func (s *Service) GetAdminAccess(ctx context.Context, userID string) (*AdminAcce
 }
 
 // isPlatformSuperAdmin mirrors user_has_permission()'s hard-coded bypass
-// (20260527100000_enterprise_auth_rbac.sql): any user holding the platform
-// public.roles 'super-admin' role passes ANY permission check regardless of
-// association-specific role rows. Without this, the platform admin console
-// (which authenticates via platform RBAC, not assoc_member_roles) has no way
-// to reach association admin data at all — every association operator is
-// scoped to organisations they personally joined as a member, which is the
-// right model for association self-governance but wrong for the ops console
-// this function backs.
+// (20260527100000_enterprise_auth_rbac.sql): a platform 'super-admin' passes
+// ANY permission check regardless of assoc_member_roles. Without it the
+// platform admin console — which authenticates via platform RBAC, not
+// association membership — could not reach association admin data at all.
 func (s *Service) isPlatformSuperAdmin(ctx context.Context, userID string) bool {
 	var ok bool
 	if err := s.db.QueryRow(ctx, `
@@ -888,8 +922,6 @@ func (s *Service) membershipOrg(ctx context.Context, membershipID string) (strin
 	return orgID, nil
 }
 
-// ── Directory ─────────────────────────────────────────────────────────────────
-
 // GetDirectory returns the member directory, optionally filtered.
 func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirectoryQuery) ([]MemberProfileSummary, error) {
 	// full_name is nullable and FullName is not a pointer, so an incomplete
@@ -929,7 +961,6 @@ func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirec
 	}
 	// Cross-group isolation (DR-004 / GR-010): restrict to organisations where the
 	// caller holds an ACTIVE membership — a viewer never sees a foreign org's roll.
-	//
 	// The admin console's org picker overrides this with an explicit org_id
 	// instead — a platform admin has no ACTIVE membership of their own, so the
 	// default clause would always return empty for them. requireCapInOrg
@@ -978,10 +1009,9 @@ func (s *Service) GetMember(ctx context.Context, viewerID, targetID string) (*Me
 	// Viewer scoping. The co-membership EXISTS clause is the correct rule for a
 	// member-to-member lookup, but it locked out the admin console entirely: a
 	// platform admin holds no association membership of their own, so this
-	// always missed and statusFor mapped the generic error to a 500 — and the
+	// always missed and errMap mapped the generic error to a 500 — and the
 	// member detail page is the ONLY page hosting suspend/restore/transfer/role,
 	// so every member action was behind a page that could not load.
-	//
 	// An authorized admin of the target's organisation now bypasses the
 	// co-membership requirement (and sees non-ACTIVE members, which is required
 	// for Restore to be reachable at all). Everyone else keeps the old rule.
@@ -1035,8 +1065,6 @@ func (s *Service) GetMember(ctx context.Context, viewerID, targetID string) (*Me
 	}
 	return &mp, nil
 }
-
-// ── Announcements & notifications ─────────────────────────────────────────────
 
 // GetAnnouncements returns announcements for the caller's organisations.
 func (s *Service) GetAnnouncements(ctx context.Context, userID string) ([]AnnouncementSummary, error) {
@@ -1098,8 +1126,6 @@ func (s *Service) GetNotifications(ctx context.Context, userID string) ([]AppNot
 	return out, rows.Err()
 }
 
-// ── Meetings ──────────────────────────────────────────────────────────────────
-
 // GetMeetings returns upcoming and recent meetings for the caller's organisations.
 func (s *Service) GetMeetings(ctx context.Context, userID string) ([]MeetingSummary, error) {
 	rows, err := s.db.Query(ctx, `
@@ -1140,23 +1166,11 @@ func (s *Service) GetMeetings(ctx context.Context, userID string) ([]MeetingSumm
 	return out, rows.Err()
 }
 
-// ── Tasks ─────────────────────────────────────────────────────────────────────
-
-// GetTasks returns tasks assigned to or created by the caller.
 // GetTasks returns the caller's tasks, or — for scope "org" — every task in
-// their organisation.
-//
-// The "org" scope is what makes tracking possible at all: every other scope is
-// filtered to tasks ASSIGNED to the caller, so nobody could see whether the
-// organisation's work was actually getting done. It is admin-only, because a
-// list of who has been given what and who is late is a management view, not a
-// member one.
-//
-// `overdue` is DERIVED, never read from the status column. assoc_tasks has an
-// OVERDUE status value but nothing ever writes it, so a task past its due date
-// still reads ASSIGNED — trusting the column would report every late task as on
-// track. A task with no due date is never overdue, and a completed one stops
-// being overdue the moment it is done rather than staying flagged forever.
+// their organisation (admin-only management view).
+// `overdue` is DERIVED, never read from the status column: assoc_tasks has an
+// OVERDUE value nothing writes, so the column would report every late task as
+// on track. No due date → never overdue; a completed task stops being overdue.
 func (s *Service) GetTasks(ctx context.Context, userID, scope string) ([]TaskSummary, error) {
 	q := `
 		SELECT t.id, t.title, t.status, t.priority, t.due_date::text,
@@ -1214,8 +1228,6 @@ func (s *Service) GetTasks(ctx context.Context, userID, scope string) ([]TaskSum
 	return out, rows.Err()
 }
 
-// ── Documents ─────────────────────────────────────────────────────────────────
-
 // GetDocuments returns accessible documents for the caller's organisations.
 func (s *Service) GetDocuments(ctx context.Context, userID string) ([]DocumentSummary, error) {
 	rows, err := s.db.Query(ctx, `
@@ -1247,8 +1259,6 @@ func (s *Service) GetDocuments(ctx context.Context, userID string) ([]DocumentSu
 	}
 	return out, rows.Err()
 }
-
-// ── Community ─────────────────────────────────────────────────────────────────
 
 // GetCommittees returns committees for the caller's organisations.
 func (s *Service) GetCommittees(ctx context.Context, userID string) ([]CommitteeSummary, error) {
@@ -1328,19 +1338,11 @@ func (s *Service) GetEvents(ctx context.Context, userID string) ([]EventSummary,
 	return out, rows.Err()
 }
 
-// ── Admin reads ───────────────────────────────────────────────────────────────
-
-// resolveOrgID authorizes and resolves the organisation an admin console call
-// is scoped to. An explicit orgID (the frontend's org picker — see
-// ListAdminOrganisations) wins, after verifying the caller may act on it:
-// a platform super-admin may pick any org, and a real per-org officer may
-// only pick an org they hold a role in (requireCapInOrg, org-scoped, closes
-// the cross-org IDOR the same way every other admin mutation already does).
-//
-// An empty orgID falls back to the caller's own primary admin-org
-// membership — unchanged behavior for a real association officer using the
-// mobile in-app admin surface, which has no org picker in front of it and
-// only ever manages the one org they belong to.
+// resolveOrgID authorizes and resolves the org an admin call is scoped to.
+// An explicit orgID (the admin console's org picker) wins after requireCapInOrg
+// verifies the caller may act on it — closing the cross-org IDOR. An empty
+// orgID falls back to the caller's own primary admin-org membership (the
+// mobile in-app admin surface has no picker).
 func (s *Service) resolveOrgID(ctx context.Context, adminID, orgID string) (string, error) {
 	if orgID != "" {
 		if err := s.requireCapInOrg(ctx, adminID, orgID, func(AdminCapabilities) bool { return true }); err != nil {

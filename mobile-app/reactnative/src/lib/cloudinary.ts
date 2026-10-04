@@ -1,4 +1,3 @@
-// ── Cloudinary — responsive CDN URL builder ──────────────────────────────────
 // Marketing banners live in Cloudinary under the SPOTLIGHT/Banners/ folder,
 // uploaded out-of-band (no in-app upload flow yet — same precedent as the
 // existing R2 banner map in frontend-web/app/api/media/banners/[slug]/route.ts).

@@ -1,26 +1,15 @@
 package telemedicine_test
 
-// ---------------------------------------------------------------------------
-// LIVE-DB regression coverage for three defects found live during the
-// Telemedicine (Module 14) UAT pass:
-//
-//   - BookAppointment's idempotent replay was unreachable: assertSlotFree ran
-//     BEFORE the Idempotency-Key check, so a legitimate retry that reused the
-//     doctor's now-occupied slot was rejected with "slot no longer available"
-//     instead of returning the original appointment. Money-safe (no double
-//     charge), but the retry contract was broken.
-//   - GetDoctorDashboard's weekly-revenue query summed `fee_kobo * 0.85`,
-//     which Postgres evaluates as a fractional numeric whenever fee_kobo is
-//     not a multiple of 20. pgx cannot scan that into an int64, the scan
-//     error was discarded, and the figure silently stayed at its Go zero
-//     value — a doctor with an odd consult fee saw ₦0 weekly revenue despite
-//     having been genuinely paid.
-//   - AddReview leaked a raw Postgres unique-violation error (constraint name
-//     and SQLSTATE) to the API response on a duplicate review instead of a
-//     clean domain error.
-//
+// LIVE-DB regression coverage for three invariants:
+//   - BookAppointment: the Idempotency-Key replay check must run BEFORE
+//     assertSlotFree — a retry reusing the doctor's now-occupied slot must
+//     return the original appointment, not "slot no longer available".
+//   - GetDoctorDashboard weekly revenue must be integer kobo — summing
+//     `fee_kobo * 0.85` produces a fractional numeric pgx cannot scan into
+//     int64, leaving the figure silently 0.
+//   - AddReview on a duplicate returns a clean domain error, not a raw
+//     Postgres unique-violation (constraint name + SQLSTATE).
 // Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

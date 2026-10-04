@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { getPaystackOrderStatus } from '@/src/lib/restaurant/api';
+import { getPaystackOrderStatus } from '@/src/lib/restaurant';
 import type { RestaurantPaystackStatus } from '@/src/types/restaurant';
 
 const TERMINAL: Set<string> = new Set(['confirmed', 'order_failed', 'refunded', 'amount_mismatch']);

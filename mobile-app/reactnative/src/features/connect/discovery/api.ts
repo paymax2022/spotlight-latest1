@@ -70,7 +70,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
 function normalizeVerified(v: unknown): DiscoveryProfile['verified'] {
   if (Array.isArray(v)) return v as DiscoveryProfile['verified'];
   // A truthy bool means "verified" but the backend doesn't say which flags — treat
-  // it as a single generic 'identity' flag so the badge row still renders; false/
   // missing → no badges.
   return v === true ? (['identity'] as DiscoveryProfile['verified']) : [];
 }
@@ -99,7 +98,6 @@ function normalizeProfile(raw: Record<string, unknown>): DiscoveryProfile {
 
 // Backend responses are camelCase and wrap collections in { profiles }. This
 // helper pulls the profiles array whether the server returns the envelope or a
-// bare array (defensive; the contract is { profiles }) and normalizes each card
 // to a safe DiscoveryProfile shape (see normalizeProfile).
 function unwrapProfiles(res: { data?: unknown }): DiscoveryProfile[] {
   const body = (res.data as { data?: unknown })?.data ?? res.data;
@@ -116,7 +114,6 @@ function toDirection(action: SwipeAction): SwipeDirection {
 
 const PHOTO = (seed: string) => `https://images.unsplash.com/${seed}?auto=format&fit=crop&w=800&q=60`;
 
-// ── Mock candidates ──────────────────────────────────────────────────────────
 const MOCK_PROFILES: DiscoveryProfile[] = [
   {
     id: 'p1',
@@ -203,8 +200,6 @@ const MOCK_TIER: DiscoveryTierStatus = {
   remainingKobo: 1_850_000,  // ₦18,500 left today
 };
 
-// ── Stack / candidates (DC-01) ───────────────────────────────────────────────
-// GET /discovery/stack?limit= → { profiles: [ProfileCard...] }. ProfileCard has
 // NO raw lat/lng — only distanceLabel/distanceBucket. `limit` is the only query
 // param the contract defines; the rest of the filters shape the client stack.
 export async function getDiscoveryStack(filters: DiscoveryFilters): Promise<DiscoveryProfile[]> {
@@ -241,7 +236,6 @@ export async function getProfileDetail(id: string): Promise<DiscoveryProfile> {
   return unwrap<DiscoveryProfile>(res);
 }
 
-// ── Swipe (DC-01 / DC-06) ────────────────────────────────────────────────────
 // A `like` on someone who already liked you yields a mutual match → unlocks
 // chat (SAFETY INVARIANT §4: chat ONLY after a mutual match). `pass` never matches.
 export async function swipe(profileId: string, action: SwipeAction): Promise<SwipeResult> {
@@ -273,7 +267,6 @@ export async function swipe(profileId: string, action: SwipeAction): Promise<Swi
   };
 }
 
-// ── Likes-you (DC-05) — premium-gated ────────────────────────────────────────
 export async function getLikesYou(premium: boolean): Promise<LikesYouResponse> {
   if (USE_MOCK) {
     await delay();
@@ -292,8 +285,6 @@ export async function getLikesYou(premium: boolean): Promise<LikesYouResponse> {
       })),
     };
   }
-  // Contract: GET /discovery/likes-you → { profiles: [...] }. Premium gating is
-  // enforced server-side (non-premium callers get a blurred/limited set); the
   // client mirrors that into its locked/entries shape. When not premium we show
   // the upsell with a count and never render identities.
   const res = await api.get(`${CONNECT_API_BASE}/discovery/likes-you`);
@@ -313,7 +304,6 @@ export async function getLikesYou(premium: boolean): Promise<LikesYouResponse> {
   };
 }
 
-// ── Daily picks (DC-07) ──────────────────────────────────────────────────────
 export async function getDailyPicks(): Promise<DailyPick[]> {
   if (USE_MOCK) {
     await delay();
@@ -329,7 +319,6 @@ export async function getDailyPicks(): Promise<DailyPick[]> {
   }, []);
 }
 
-// ── Map nearby (DC-04) ───────────────────────────────────────────────────────
 // Contract: GET /discovery/nearby → { profiles: [{ ...ProfileCard, distanceBucket }] }.
 // The backend returns ONLY a coarse distanceBucket (no coordinates) — the client
 // groups by bucket rather than plotting a precise pin (SAFETY INVARIANT §3).
@@ -342,7 +331,6 @@ export async function getNearby(mode: DiscoveryMode): Promise<DiscoveryProfile[]
   return unwrapProfiles(res);
 }
 
-// ── Boost / Spotlight (DC-08) — wallet-funded ────────────────────────────────
 // Contract: GET /discovery/boosts → { activeBoost?, priceKobo, durationMinutes }.
 const MOCK_BOOST_OFFER: BoostOffer = {
   priceKobo: 99_000, // ₦990
@@ -396,9 +384,6 @@ export async function purchaseBoost(idempotencyKey?: string): Promise<BoostPurch
   return unwrap<BoostPurchaseResult>(res);
 }
 
-// ── Rewind / undo (DC-09) — premium ──────────────────────────────────────────
-// Contract: POST /discovery/rewind → undo last swipe (premium). A 200 means the
-// last swipe was undone; a 403 (non-premium) surfaces as an error the caller
 // maps to the upsell. The body may echo the restored profile or be empty.
 export async function rewind(premium: boolean): Promise<RewindResult> {
   if (USE_MOCK) {

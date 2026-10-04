@@ -8,8 +8,6 @@ import "testing"
 // helpers. DB-backed Service/Repository methods need a *pgxpool.Pool and
 // are intentionally not exercised here.
 
-// ── Question-item lifecycle ─────────────────────────────────────────────
-
 func TestValidItemStatus(t *testing.T) {
 	tests := []struct {
 		name string
@@ -67,8 +65,6 @@ func TestCanTransitionItem(t *testing.T) {
 		})
 	}
 }
-
-// ── Learner progression ─────────────────────────────────────────────────
 
 func TestValidMasteryState(t *testing.T) {
 	tests := []struct {
@@ -239,8 +235,6 @@ func TestProgressEventTypeFor(t *testing.T) {
 		})
 	}
 }
-
-// ── Answer scoring ──────────────────────────────────────────────────────
 
 func TestIsCorrect(t *testing.T) {
 	tests := []struct {

@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Hotel + channel sync data layer (V3) ─────────────────
 // Mock by default (REALTOR_USE_MOCK). Real branch hits the hotel tables in
 // migration 20260620040000 + realtor_book_hotel_room RPC (availability-safe).
 
@@ -73,7 +72,6 @@ const CHANNELS: ChannelSyncState = {
 
 function nightsBetween(a: string, b: string) { return Math.max(1, Math.round((+new Date(b) - +new Date(a)) / 86_400_000)); }
 
-// ── Guest API ────────────────────────────────────────────────────────────────
 export async function searchHotels(query?: string): Promise<HotelCard[]> {
   if (USE_MOCK) {
     await delay();
@@ -153,7 +151,6 @@ export async function getReservation(id: string): Promise<HotelReservation> {
   return mapReservation({ ...data, hotel_name: (data as any).hotel?.name });
 }
 
-// ── Front desk / housekeeping ────────────────────────────────────────────────
 export async function getDeskSummary(): Promise<HotelDeskSummary> {
   if (USE_MOCK) {
     await delay(260);
@@ -205,7 +202,6 @@ export async function setRoomStatus(roomId: string, status: RoomBoardItem['statu
   return { id: data.id, number: data.number, roomTypeName: data.room_type_name, status: data.status, guestName: data.guest_name ?? undefined, checkoutDate: data.checkout_date ?? undefined };
 }
 
-// ── Channel sync ─────────────────────────────────────────────────────────────
 export async function getChannelSync(): Promise<ChannelSyncState> {
   if (USE_MOCK) { await delay(240); return JSON.parse(JSON.stringify(CHANNELS)); }
   const supabase = createSupabaseClient();

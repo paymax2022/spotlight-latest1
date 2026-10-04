@@ -1,4 +1,3 @@
-// ── FX Exchange — Cards data hooks ───────────────────────────────────────────
 // React Query hooks for the cards vertical, mirroring useFx.ts conventions.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';

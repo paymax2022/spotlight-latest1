@@ -1,12 +1,8 @@
-// ── Insurance (live) — HTML → renderable blocks ─────────────────────────────
 // PURE. No `@/` imports, no React.
-//
 // MyCover returns `key_benefits`, `full_benefits`, `how_it_works` and
 // `how_to_claim` as HTML strings authored in a rich-text editor — <p>, <ul>/<li>,
-// <strong>, <br>, &amp; entities, and occasional inline style attributes. React
 // Native has no `dangerouslySetInnerHTML`, and shipping the raw markup into a
 // <Text> shows a person literal "<p>" tags.
-//
 // So we parse it into a small block list the UI draws with real components. The
 // parser is deliberately allow-list based: EVERY tag is stripped, and only the
 // structure we recognise (paragraph vs list item vs heading) survives. Nothing
@@ -17,7 +13,6 @@
 // word like " PARA ". A space-delimited marker collides with real copy — a
 // benefit blurb containing the literal word "PARA" would be split in half — and
 // provider HTML can never contain U+E000, so the sentinel is unambiguous.
-//
 // It is U+E000 and not NUL for a boring but expensive reason: a NUL makes the
 // whole file register as binary, and grep then prints NOTHING and exits 1. A
 // blank grep that means "I gave up" is indistinguishable from one that means

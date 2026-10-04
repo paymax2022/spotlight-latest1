@@ -48,7 +48,6 @@ func (s *Service) priceRide(ctx context.Context, req RequestRideRequest) (*rideP
 // can collect payment; requestRide (called after payment is verified, via
 // RequestRidePaystackFunded) independently recomputes and cross-checks this
 // same fare, so this quote is advisory to that caller only.
-//
 // Offer-mode has no single quote (the rider proposes their own price against
 // a floor/ceiling band) — which is exactly why the Paystack-funded rail only
 // accepts instant pricing (see RequestRidePaystackFunded).
@@ -94,7 +93,6 @@ func (s *Service) requestRide(ctx context.Context, riderID string, req RequestRi
 	}
 	cfg, route, systemFare := pricing.cfg, pricing.route, pricing.systemFare
 
-	// Determine the escrow amount + initial phase.
 	escrowKobo := systemFare
 	phase := PhaseRequested
 	offerStatus := "pending"
@@ -142,9 +140,9 @@ func (s *Service) requestRide(ctx context.Context, riderID string, req RequestRi
 	tripID := uuid.New().String()
 
 	// Cash rides settle in-vehicle — the rider pays the driver directly, out of
-	// band, so NOTHING is escrowed from the rider's wallet here (that used to
-	// happen unconditionally, silently wallet-debiting "cash" riders with no
-	// visible authorization). The platform instead collects its commission by
+	// band, so NOTHING is escrowed from the rider's wallet here (a wallet debit
+	// on a cash ride would be an unauthorized charge). The platform instead
+	// collects its commission by
 	// debiting the DRIVER's wallet at trip completion (settleCashTrip); a
 	// driver whose balance can't cover that fee is filtered out of the open
 	// requests feed and blocked from accepting (see driverCanCoverCashFee).
@@ -174,29 +172,15 @@ func (s *Service) requestRide(ctx context.Context, riderID string, req RequestRi
 	}
 
 	// refundOnFailure undoes the escrow above if the trip can't be durably
-	// created at all. e.g. an offer inside the app's own [floor,ceiling]
-	// range can still trip the DB's separate, absolute
-	// trips_fare_kobo_check constraint, which the app-level
-	// validateFareInRange call above does not know about. Found live via
-	// UAT: without this, such an offer escrowed the rider's wallet and then
-	// failed the trip INSERT, leaving a real settlements row in 'escrowed'
-	// state with no owning trip — no FSM state, no cancel path (cancel needs
-	// a trip id), and outside the reconciler's reach (it only re-drives
-	// completed trips). Mirrors this same package's own established pattern
-	// for the identical shape (see BookEventTransport's
-	// event_booking_insert_failed refund).
-	//
-	// NEVER calls settlement.Refund for an externally-funded escrow: Refund's
-	// only mechanism is a LEDGER CREDIT to the payer's WALLET (reversing a
-	// wallet debit that, for an EscrowExternal escrow, never happened) — doing
-	// that here would hand a Tier-0 rider real spendable wallet balance funded
-	// by an external card charge, exactly the hazard this whole feature exists
-	// to avoid (see restaurant/paystackcheckout's package doc comment). For
-	// `external`, this is intentionally a no-op: the settlement stays escrowed
-	// with no owning trip, and the CALLER (transport/paystackcheckout, mirroring
-	// restaurant's paystackcheckout.OnChargeSuccess) reverses the customer's
-	// money the correct way — a real Paystack refund — when RequestRidePaystackFunded
-	// returns this error.
+	// created — e.g. an in-range offer can still trip the DB's absolute
+	// trips_fare_kobo_check, which validateFareInRange doesn't know about.
+	// Without it the trip INSERT fails leaving an 'escrowed' settlement with
+	// no owning trip — no cancel path, outside the reconciler's reach.
+	// NEVER calls settlement.Refund for an externally-funded escrow: Refund
+	// credits the payer's WALLET, which would hand a Tier-0 rider spendable
+	// balance funded by an external card charge. For `external` this is a
+	// no-op; the caller (transport/paystackcheckout, mirroring
+	// restaurant's OnChargeSuccess) issues a real Paystack refund instead.
 	refundOnFailure := func(reason string, err error) error {
 		if settlementID != nil && !external {
 			s.settlement.Refund(ctx, *settlementID, reason)
@@ -264,7 +248,6 @@ func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRi
 // gate applies, because no wallet debit occurs (see settlement.EscrowExternal
 // and requestRide's tier-gate skip). Only instant pricing, non-cash rides are
 // accepted (see requestRide's up-front guard).
-//
 // The caller MUST have already verified, server-side, that a completed
 // Paystack charge exists for reference and that it collected exactly
 // verifiedAmountKobo — this function trusts that verification unconditionally
@@ -274,7 +257,6 @@ func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRi
 // caller's claim about what the ride should cost, only about what was
 // actually collected. On a CodeAmountMismatch error, no escrow and no trip
 // row were written; the caller must reverse the external charge.
-//
 // Must only ever be invoked from a server-initiated flow (a Paystack
 // initiate/verify/webhook handler) that itself carries no client-settable
 // "skip KYC" switch — never from a handler that lets request input choose
@@ -371,7 +353,6 @@ func (s *Service) AcceptCounter(ctx context.Context, tripID, riderID string) (*F
 // No-op for cash trips: negotiation still moves fare_kobo (the agreed price the
 // rider will hand the driver), but nothing is ever escrowed from a cash rider's
 // wallet — see RequestRide.
-//
 // Refused outright for a Paystack-funded trip if the negotiation would RAISE
 // the held amount: that trip has no wallet debit backing it and no open card
 // session left to charge more from, so there is nothing this function could
@@ -425,8 +406,7 @@ func (s *Service) adjustEscrow(ctx context.Context, t *tripRow, newFare int64) e
 //     the SAME key (a safe ledger no-op via unique idempotency key), and
 //   - a genuinely higher target fare produces a DIFFERENT key (a distinct escrow).
 //
-// This is the fix for the original double-charge bug (the key used to embed
-// time.Now().UnixNano(), minting a fresh key on every retry). Extracted as a pure
+// A per-retry key (e.g. timestamp-seeded) would double-charge. Extracted as a pure
 // function so the invariant is provable in a unit test without a database.
 func deltaEscrowKey(tripID string, newFare int64) string {
 	return fmt.Sprintf("trip:%s:delta:%d", tripID, newFare)
@@ -458,7 +438,6 @@ func (s *Service) CancelRide(ctx context.Context, tripID, riderID, reason string
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	// Refund all escrowed settlements for this trip.
 	s.refundTrip(ctx, &t, "trip_cancelled")
 	if t.DriverID != nil {
 		s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *t.DriverID)

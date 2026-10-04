@@ -1,6 +1,4 @@
 // Pure-logic unit tests for multi-outlet selection.
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "tests/unit/outlets/*.spec.ts"
-//
 // The defect: the owner console read stores.data?.[0], so an owner with several
 // outlets could only ever manage the first. 61 owners in the live data run 2–3.
 // The console mutates menu prices, packaging fees and open/closed state, so

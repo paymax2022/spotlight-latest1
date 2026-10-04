@@ -3,6 +3,8 @@ package doctor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log"
 	"time"
 )
 
@@ -15,8 +17,6 @@ import (
 //   * NONE of these post to the money ledger. The payout endpoints here are
 //     READS (list/get/report/account) or REQUEST rows (dispute) — the actual
 //     payout money path is Service.RequestPayout, which is left untouched.
-
-// ── DTOs / request bodies ────────────────────────────────────────────────────
 
 // BankAccountRequest is the body for POST /profile/bank-account.
 type BankAccountRequest struct {
@@ -75,8 +75,6 @@ type EmergencyScheduleRequest struct {
 	Enabled  *bool           `json:"enabled,omitempty"`
 	Schedule json.RawMessage `json:"schedule,omitempty"`
 }
-
-// ── Models / projections ─────────────────────────────────────────────────────
 
 // BankAccount mirrors public.doctor_bank_accounts. AccountNumber is masked to the
 // last 4 digits before the row leaves the service (never returns the full PAN).
@@ -170,15 +168,43 @@ func maskAccountNumber(b *BankAccount) {
 	b.AccountNumber = &masked
 }
 
-// ── Profile ──────────────────────────────────────────────────────────────────
-
 // CreateBankAccount upserts a bank account (idempotent) and masks the account
 // number in the response.
+// If a DisbursementProvider is wired, CreateBankAccount attempts real-time verification
+// against the banking network (Paystack's /bank/resolve). Verification failures are
+// soft-fail: the account is saved with is_verified=false, allowing offline onboarding
+// if the verification provider is unreachable. Verification success sets is_verified=true
+// and stores the authoritative account name from the provider.
 func (s *Service) CreateBankAccount(ctx context.Context, userID, idemKey string, req BankAccountRequest) (*BankAccount, error) {
 	if idemKey == "" {
 		return nil, ErrIdempotencyRequired
 	}
-	acct, err := s.repo.UpsertBankAccount(ctx, userID, idemKey, req)
+
+	// Attempt verification against the provider (Paystack, etc.). If the provider
+	// is wired and the call succeeds, use the authoritative account name from the
+	// provider and set is_verified=true. If the call fails (network, invalid account,
+	// or provider not wired), log the failure and fall back to client-supplied details
+	// with is_verified=false.
+	isVerified := false
+	verifiedAccountName := req.AccountName
+	if s.disbursement != nil && req.BankCode != nil && req.AccountNumber != nil {
+		if resolution, err := s.disbursement.ResolveAccount(ctx, *req.BankCode, *req.AccountNumber); err == nil {
+			isVerified = true
+			verifiedAccountName = &resolution.AccountName
+		} else {
+			// Soft-fail: log the error but proceed with the add. Customers can still
+			// add accounts when the provider is unreachable (allows offline onboarding).
+			log.Printf("doctor: account verification failed for %s/%s: %v", *req.BankCode, *req.AccountNumber, err)
+		}
+	}
+
+	// Prepare the request with verified account name (if verification succeeded)
+	verifyReq := req
+	if isVerified && verifiedAccountName != nil {
+		verifyReq.AccountName = verifiedAccountName
+	}
+
+	acct, err := s.repo.UpsertBankAccount(ctx, userID, idemKey, verifyReq, isVerified)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +233,47 @@ func (s *Service) UpdateTaxInfo(ctx context.Context, userID string, patch json.R
 	return acct, nil
 }
 
-// ── Payouts (reads + dispute request) ────────────────────────────────────────
+// VerifyBankAccount performs real-time verification of a bank account against
+// the disbursement provider (Paystack, etc.) without saving it. Used by the
+// frontend verification endpoint so users can verify before adding an account.
+func (s *Service) VerifyBankAccount(ctx context.Context, userID string, req BankAccountRequest) (map[string]interface{}, error) {
+	if req.BankCode == nil || req.AccountNumber == nil {
+		return nil, ErrIdempotencyRequired // reusing for "missing required field" — could be more specific
+	}
+
+	bankCode := *req.BankCode
+	accountNumber := *req.AccountNumber
+
+	// Soft-fail: if no provider is wired or verification fails, return an error
+	// so the frontend can show the failure to the user.
+	if s.disbursement == nil {
+		return nil, fmt.Errorf("doctor: account verification is not available")
+	}
+
+	resolution, err := s.disbursement.ResolveAccount(ctx, bankCode, accountNumber)
+	if err != nil {
+		return nil, fmt.Errorf("doctor: account verification failed: %w", err)
+	}
+
+	// Mask the account number to last 4 digits
+	maskedAcct := accountNumber
+	if len(accountNumber) > 4 {
+		maskedAcct = "****" + accountNumber[len(accountNumber)-4:]
+	}
+
+	accountNameToReturn := &resolution.AccountName
+	if req.AccountName != nil {
+		accountNameToReturn = req.AccountName
+	}
+
+	return map[string]interface{}{
+		"is_verified":           true,
+		"account_name":          accountNameToReturn,
+		"bank_name":             req.BankName,
+		"bank_code":             bankCode,
+		"account_number_masked": maskedAcct,
+	}, nil
+}
 
 func (s *Service) ListPayouts(ctx context.Context, userID string) ([]Payout, error) {
 	return s.repo.ListPayouts(ctx, userID)
@@ -240,8 +306,6 @@ func (s *Service) DisputePayout(ctx context.Context, userID, payoutID, idemKey s
 	return s.repo.InsertSettlementDispute(ctx, userID, payoutID, idemKey, req)
 }
 
-// ── Privacy ──────────────────────────────────────────────────────────────────
-
 func (s *Service) RequestPrivacyExport(ctx context.Context, userID string) (*DataPrivacySettings, error) {
 	return s.repo.RequestPrivacyExport(ctx, userID)
 }
@@ -261,8 +325,6 @@ func (s *Service) ChangePassword(ctx context.Context, userID, idemKey string) er
 	return s.repo.InsertAudit(ctx, userID, "security.password_change_requested", "auth", userID, idemKey, nil)
 }
 
-// ── Compliance ───────────────────────────────────────────────────────────────
-
 func (s *Service) GetCompliance(ctx context.Context, userID string) (*ComplianceStatus, error) {
 	return s.repo.GetComplianceStatus(ctx, userID)
 }
@@ -278,21 +340,15 @@ func (s *Service) AckPolicy(ctx context.Context, userID, policyKey, idemKey stri
 	return s.repo.GetComplianceStatus(ctx, userID)
 }
 
-// ── Onboarding (legal) ───────────────────────────────────────────────────────
-
 // GetLegalOnboarding returns the legal/consent documents the doctor must accept.
 // Read-only thin projection over the existing ListConsents read.
 func (s *Service) GetLegalOnboarding(ctx context.Context, userID string) ([]LegalConsent, error) {
 	return s.repo.ListConsents(ctx, userID)
 }
 
-// ── Reputation ───────────────────────────────────────────────────────────────
-
 func (s *Service) GetReputation(ctx context.Context, userID string) (*ReputationSummary, error) {
 	return s.repo.GetReputation(ctx, userID)
 }
-
-// ── Patients (composed projections) ──────────────────────────────────────────
 
 // GetPatientFullProfile composes the base patient record with the doctor's recent
 // clinical notes for that patient. Reuses GetPatientRecord (patient + appointments)
@@ -347,8 +403,6 @@ func (s *Service) GetPatientRecordHub(ctx context.Context, userID, patientID str
 		AccessLog:    accessLog,
 	}, nil
 }
-
-// ── Misc ─────────────────────────────────────────────────────────────────────
 
 // SetPresence updates the doctor's presence on doctor_profiles.
 func (s *Service) SetPresence(ctx context.Context, userID string, req PresenceRequest) error {

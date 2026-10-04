@@ -1,12 +1,13 @@
 import axios from 'axios';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getDevUrl } from '@/lib/devUrl';
+import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 import { promptSignIn } from '@/lib/authRedirect';
 
 // Base URL points to the frontend-web Next.js server, which hosts server-side
 // bill payment operations (wallet debit + provider calls + ledger writes).
 // All read-only catalog and wallet data comes directly from Supabase (see each api/*.ts).
-const baseURL = getDevUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:3000');
+const baseURL = getDevUrl(resolveApiBaseUrl());
 
 declare module 'axios' {
   interface AxiosRequestConfig {
@@ -47,7 +48,6 @@ api.interceptors.response.use(
     if (error?.response?.status === 401 && !error?.config?.skipAuthRedirect) {
       try { await createSupabaseClient().auth.signOut(); } catch { /* ignore */ }
       // Come BACK here after signing in, via the shared guarded prompt. The login
-      // screen already accepts a returnTo (and validates it); this redirect simply
       // never passed one, so an expired session cost the user their place as well
       // as their session. Routing through promptSignIn also collapses this with the
       // react-query global handler, so ONE dead session causes ONE navigation

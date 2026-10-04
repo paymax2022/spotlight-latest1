@@ -1,5 +1,3 @@
-// ── Marketplace — Followed sellers (LD-005) ──────────────────────────────────
-// The list of sellers the user follows; tap to open a seller profile, or unfollow
 // inline. Following a seller surfaces their new listings in the notifications feed.
 import React from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, RefreshControl } from 'react-native';
@@ -7,9 +5,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Star, UserCheck, Store } from 'lucide-react-native';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { MarketColors } from '@/features/marketplace';
 import { useFollowedSellers, useUnfollowSeller } from '@/features/marketplace/api/account.hooks';
 import { HomeMenuButton } from '@/components/HomeMenu';

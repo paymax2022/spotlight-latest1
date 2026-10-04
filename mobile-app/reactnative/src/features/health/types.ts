@@ -1,11 +1,9 @@
-// ── Paymax Health — Shared types (Phase 0) ───────────────────────────────────
 // The shared health platform every vertical (pharmacy/lab/vet) reuses.
 // IRON RULE: all monetary amounts are integers in minor units (kobo).
 // NDPA (HL-8): health data is sensitive — consent-gated, access-logged, signed-URL docs.
 
 export type Vertical = 'pharmacy' | 'lab' | 'vet';
 
-// ── Records vault (HL-8) ─────────────────────────────────────────────────────
 // A record subject is either the patient (the consumer identity) or one of their pets.
 export type SubjectType = 'patient' | 'pet';
 
@@ -56,7 +54,6 @@ export interface HealthRecord {
   fields?: { label: string; value: string }[];
 }
 
-// ── Consent & data-sharing (HL-8) ────────────────────────────────────────────
 export type ConsentScope = RecordKind | 'all';
 export type ConsentStatus = 'active' | 'revoked' | 'expired';
 
@@ -85,7 +82,6 @@ export interface ConsentGrantInput {
   expiresAt?: string;
 }
 
-// ── Schema-driven intake (reused by all verticals) ───────────────────────────
 export type IntakeFieldType =
   | 'short_text'
   | 'long_text'
@@ -94,7 +90,6 @@ export type IntakeFieldType =
   | 'multi_select'
   | 'boolean'
   | 'date'
-  // ── Pre-Consult intake extensions ──────────────────────────────────────────
   | 'scale' // 1–10 severity chip selector (no slider lib)
   | 'med_list' // repeatable medication list: [{name, dose}] (M6), stored as JSON
   | 'attachment'; // photo / lab result / prescription upload (M12)
@@ -131,7 +126,6 @@ export interface IntakeField {
   accept?: string;
 }
 
-// ── Conditional intake steps (Pre-Consult wizard, M4–M12) ─────────────────────
 // A step renders only when its `when` predicate (if any) is satisfied by the
 // current answers — symptom detail only if symptomatic, pregnancy only if
 // applicable (§7).
@@ -182,7 +176,6 @@ export interface IntakeResponse {
 /** Field-level validation errors mapped by field id (HEALTH-BUILD: map field errors). */
 export type IntakeErrors = Record<string, string>;
 
-// ── Providers (HL-2 credential-gated) ────────────────────────────────────────
 export type CredentialAuthority = 'VCN' | 'PCN' | 'MLSCN';
 export type CredentialStatus = 'verified' | 'pending' | 'expired';
 
@@ -239,7 +232,6 @@ export interface Consult {
   messages: ConsultChatMessage[];
 }
 
-// ── Pre-Consultation Health Intake (Telemedicine) ────────────────────────────
 // A guarded prerequisite on a telemedicine appointment: the patient completes a
 // save-as-you-go wizard before the consult can start (PRD §1, §7 — M1–M17).
 
@@ -334,7 +326,6 @@ export interface HealthProfile {
   sourceCount: number;
 }
 
-// ── Care-loop hub summary ────────────────────────────────────────────────────
 export interface ActiveOrderSummary {
   id: string;
   vertical: Vertical;

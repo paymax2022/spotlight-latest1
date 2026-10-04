@@ -6,7 +6,6 @@ import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 import { colors, tint } from '@/components/ui/vuexy';
 
-// Shared presentational + RBAC helpers for the Mobility console. Matches the
 // existing admin pages' light-card inline-style convention (see fx/_ui.tsx).
 
 export const card = (): CSSProperties => ({ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card, boxShadow: '0 4px 18px rgba(47, 43, 61, .06)' });
@@ -129,7 +128,6 @@ export function nairaFull(kobo: number): string {
   return `₦${(kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-// ─── RBAC helper ──────────────────────────────────────────────────────────────
 // Reads the cached admin user (same source as AdminSidebar / AdminRouteGuard)
 // and exposes a permission check so pages can disable sensitive affordances.
 // Server still enforces — this only prevents dead-end UI.

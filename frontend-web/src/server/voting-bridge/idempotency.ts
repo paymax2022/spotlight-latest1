@@ -3,8 +3,39 @@
  * Prevents duplicate votes from concurrent requests
  */
 
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
+import { createHash } from 'node:crypto';
+
+/**
+ * Bind a caller-supplied idempotency key to the authenticated user and the
+ * operation's material parameters before it touches any store.
+ *
+ * The raw client key is attacker/user-controlled and nothing scopes it: two
+ * users submitting the same key would collide on the same claim row, and the
+ * second could receive the FIRST user's cached vote result — or be absorbed by
+ * a claim describing a different purchase entirely. Binding key = scope + user
+ * + hash(contest/contestant/votes/amount…) means a replay only dedupes the
+ * operation it actually described; a key reused across users or payloads gets
+ * its own claim and executes as the distinct operation it is.
+ */
+export function boundClaimKey(
+  scope: string,
+  userId: string,
+  clientKey: string,
+  fingerprint: Record<string, string | number>,
+): string {
+  const fp = createHash('sha256')
+    .update(
+      Object.keys(fingerprint)
+        .sort()
+        .map((k) => `${k}=${fingerprint[k]}`)
+        .join('|'),
+    )
+    .digest('hex')
+    .slice(0, 16);
+  return `${scope}:${userId}:${clientKey}:${fp}`;
+}
 
 /**
  * How long a duplicate waits for the in-flight original to publish its result.
@@ -24,7 +55,6 @@ export async function checkAndClaimIdempotencyKey(key: string) {
 
   try {
     // Try to insert the key with an empty response
-    // If it already exists, return the existing result
     const { data, error } = await supabase
       .from('bridge_idempotency_keys')
       .insert({
@@ -39,7 +69,6 @@ export async function checkAndClaimIdempotencyKey(key: string) {
       if (error.code === '23505') {
         // The winner publishes its response only AFTER the vote completes, so a
         // duplicate arriving concurrently used to read the placeholder `{}`, fall
-        // through to `return null`, and cast a SECOND vote. The dedupe was real
         // for sequential retries and absent for concurrent ones — exactly the
         // case an idempotency key exists to cover. Wait for the winner instead.
         for (let attempt = 0; attempt < CLAIM_WAIT_ATTEMPTS; attempt++) {
@@ -68,11 +97,9 @@ export async function checkAndClaimIdempotencyKey(key: string) {
       return null;
     }
 
-    // Key was inserted successfully — continue to call the function
     return null;
   } catch (error) {
     // The 409 above is a DECISION, not a failure. This catch's fail-open policy
-    // (below) would swallow it back into `return null` and let the duplicate
     // vote — reinstating the exact hole the wait closes. Let it through.
     if (error instanceof ApiError) throw error;
     console.error('[Idempotency] checkAndClaimIdempotencyKey error:', error);

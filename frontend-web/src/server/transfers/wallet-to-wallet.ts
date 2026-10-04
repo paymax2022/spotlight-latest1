@@ -19,9 +19,7 @@ import { getOrCreateAccount } from '@/src/server/wallet/service';
 import { enforceWalletLimit } from '@/src/server/tiers/service';
 import { requireTransactionPin } from '@/src/server/transfers/pin-guard';
 
-// ---------------------------------------------------------------------------
 // Fee schedule (PRD §18.2)
-// ---------------------------------------------------------------------------
 
 /** Returns the transfer fee in kobo for a given transfer amount in kobo. */
 export function calculateTransferFee(amountKobo: number): number {
@@ -30,9 +28,7 @@ export function calculateTransferFee(amountKobo: number): number {
   return 2_500;                                  // >₦50,000: ₦25
 }
 
-// ---------------------------------------------------------------------------
 // Recipient types
-// ---------------------------------------------------------------------------
 
 export interface TransferRecipient {
   userId: string;
@@ -41,9 +37,7 @@ export interface TransferRecipient {
   avatarUrl: string | null;
 }
 
-// ---------------------------------------------------------------------------
 // resolvePaymaxUser
-// ---------------------------------------------------------------------------
 
 /**
  * Look up a Paymax user by phone number or email address.
@@ -104,7 +98,6 @@ export async function resolvePaymaxUser(
   let candidates = ((profiles ?? []) as ProfileRow[]).filter(p => p.id !== requestingUserId);
 
   // Re-confirm in code that each row really carries this NSN. The IN list is an
-  // exact-string match against known spellings; anything else the database
   // returned was never a real candidate.
   if (!isEmail) {
     candidates = candidates.filter(p => normalizeNsn(p.phone ?? '') === nsn);
@@ -129,9 +122,7 @@ export async function resolvePaymaxUser(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /**
  * Reduce a phone number to its 10-digit national significant number, so every
@@ -165,9 +156,7 @@ function maskPhone(phone: string): string {
   return `${digits.slice(0, 4)}****${digits.slice(-3)}`;
 }
 
-// ---------------------------------------------------------------------------
 // Transfer input / output types
-// ---------------------------------------------------------------------------
 
 export interface WalletToWalletInput {
   senderId: string;
@@ -193,14 +182,11 @@ export interface WalletTransferResult {
   createdAt: string;
 }
 
-// ---------------------------------------------------------------------------
 // initiateWalletToWallet
-// ---------------------------------------------------------------------------
 
 export async function initiateWalletToWallet(
   input: WalletToWalletInput,
 ): Promise<WalletTransferResult> {
-  // Validate amount
   if (!Number.isInteger(input.amountKobo) || input.amountKobo < 100) {
     throw new ApiError('Minimum transfer amount is 100 kobo (₦1)', 400);
   }
@@ -208,7 +194,6 @@ export async function initiateWalletToWallet(
   const feeKobo = calculateTransferFee(input.amountKobo);
   const totalKobo = input.amountKobo + feeKobo;
 
-  // Idempotency: check if this key was already used for a completed transfer
   const supabase = createAdminClient();
   const { data: existing } = await supabase
     .from('wallet_transfers')

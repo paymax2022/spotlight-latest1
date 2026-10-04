@@ -1,8 +1,6 @@
-// ── Referral Admin types (RA1: overview/config/attribution/campaigns/rewards/house) ──
 // Mirrors the RB0 shared DB contract in docs/prd/referal/REFERRAL-BUILD-PLAN.md §3.
 // All money is BIGINT kobo (integer minor units). Never floats for math.
 
-// ── A-SADM-01: Growth dashboard ──────────────────────────────────────────────
 export interface ReferralDashboard {
   // true K-factor EXCLUDES house-attributed signups (§7A.6)
   k_factor: number;
@@ -29,7 +27,6 @@ export interface ReferralActivity {
   created_at: string;
 }
 
-// ── A-SADM-02: Program config ────────────────────────────────────────────────
 export interface ProgramConfig {
   program_enabled: boolean;
   default_tier: string;
@@ -40,14 +37,12 @@ export interface ProgramConfig {
   updated_at: string;
 }
 
-// ── A-SADM-03: RBAC view (read-only roster of referral.* perms) ───────────────
 export interface ReferralRole {
   role: string;
   scope: string;
   permissions: string[];
 }
 
-// ── A-SADM-04: Feature flags & kill-switches ─────────────────────────────────
 export interface FeatureFlag {
   key: string;
   label: string;
@@ -57,7 +52,6 @@ export interface FeatureFlag {
   phase: 'P1' | 'P2' | 'P3';
 }
 
-// ── A-SADM-06: Audit log ─────────────────────────────────────────────────────
 export interface ReferralAuditEntry {
   id: string;
   actor_id: string;
@@ -69,7 +63,6 @@ export interface ReferralAuditEntry {
   created_at: string;
 }
 
-// ── A-SADM-07: Attribution & default-referrer config (§7A) ───────────────────
 export type FallbackTier =
   | 'code'
   | 'deeplink'
@@ -95,7 +88,6 @@ export interface AttributionConfig {
   updated_at: string;
 }
 
-// ── A-CMP: Campaigns ─────────────────────────────────────────────────────────
 export type CampaignStatus = 'draft' | 'scheduled' | 'active' | 'paused' | 'throttled' | 'ended';
 export type RewardModel = 'flat' | 'dynamic' | 'ltv';
 
@@ -148,7 +140,6 @@ export interface CampaignDraft {
   ends_at: string | null;
 }
 
-// ── A-RWD: Reward ledger ─────────────────────────────────────────────────────
 export type RewardState = 'earned' | 'pending' | 'vesting' | 'eligible' | 'paid' | 'clawed_back';
 export type RewardKind = 'referrer' | 'referee' | 'override' | 'mission' | 'manual';
 
@@ -182,7 +173,6 @@ export interface ClawbackInput {
   reason: string;
 }
 
-// ── A-USR-05: House / system-account ledger (§7A.2) ──────────────────────────
 export interface HouseAccount {
   id: string;
   code: string;
@@ -202,7 +192,6 @@ export interface HouseLedger {
   entries: RewardLedgerEntry[];
 }
 
-// ── A-USR-06: Attribution reassignment & disputes (§7A.5) ────────────────────
 export type ReassignReason = 'late_claim' | 'fraud_correction' | 'dispute';
 export type ReassignStatus = 'pending' | 'approved' | 'rejected';
 

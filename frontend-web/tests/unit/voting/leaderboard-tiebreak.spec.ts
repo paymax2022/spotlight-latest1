@@ -61,7 +61,6 @@ describe('recomputeRanks — fallback path has NO tie-break (genuine gap, docume
   it('falls back to a JS re-rank ordered ONLY by total_confirmed_votes when the RPC errors', async () => {
     const { mock, listData, updateFn, updateEq } = makeSupabaseMock();
     vi.mocked(mock.rpc).mockResolvedValue({ data: null, error: { message: 'RPC unavailable' } });
-    // fallbackRecomputeRanks awaits `.order(...)` directly (no maybeSingle/range) —
     // route the terminal select through a thenable result.
     mock.order = vi.fn().mockImplementation(() => listData());
     // Two ties at 50 votes each (enr-A, enr-B) — the fallback's ORDER BY has
@@ -78,7 +77,6 @@ describe('recomputeRanks — fallback path has NO tie-break (genuine gap, docume
 
     await recomputeRanks('contest-1');
 
-    // Confirms the gap: rank assignment is index-based only (1, 2 in query-return
     // order), with no comparison against paid_votes or last_vote_at at all —
     // unlike the RPC's ORDER BY total_confirmed_votes DESC, paid_votes DESC,
     // last_vote_at ASC. row-A (fewer paid_votes, later last_vote_at) gets

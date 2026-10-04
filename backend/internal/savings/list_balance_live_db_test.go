@@ -1,19 +1,16 @@
 package savings
 
 // Live-DB test for the vault-list balance projection.
-//
 // The savings ledger is append-only (savings_vault_ledger) and a vault's balance
 // is the SUM of its entries — never a stored column (NL-8). ListVaults selects
 // only savings_vaults columns, so before this change every vault in a list read
 // carried a zero balance and the mobile list tiles rendered ₦0 for funded
 // vaults. That is a display bug the pure invariant tests cannot catch, because
 // the projection lives in SQL.
-//
 // ⚠️ GATED ON TEST_DATABASE_URL, DELIBERATELY WITH NO FALLBACK TO DATABASE_URL.
 // The root .env points DATABASE_URL at the PRODUCTION Supabase pooler, so a
 // fallback would create vaults and ledger rows in production. Run it against a
 // local database only:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/savings/ -run TestLiveDB_ListVaults -v
 

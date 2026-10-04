@@ -5,7 +5,7 @@
 import type {
   OnboardingApplication,
   OnboardingQueueRow,
-} from '@/types/onboarding';
+} from '@/src/types';
 
 const hoursAgo = (h: number) =>
   new Date(Date.now() - h * 60 * 60 * 1000).toISOString();

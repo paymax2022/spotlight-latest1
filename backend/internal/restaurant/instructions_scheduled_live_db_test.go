@@ -1,21 +1,16 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the two non-money fields PlaceOrder was dropping:
-//
 //   special_instructions — sanitized (CT-009) and persisted, so the note actually
 //                          reaches the kitchen and the rider.
 //   scheduled_for        — validated against the restaurant's weekly hours
 //                          (SG-001/002) and persisted, so ActivateScheduledOrders
 //                          (the sweeper) can fire for an order placed via the API.
-//
 // Regression guard: sanitizeInstructions and validateScheduledFor both existed,
 // unit-tested and never called. orders.special_instructions and
 // orders.scheduled_for were never written, so notes vanished and every scheduled
 // order silently became an immediate one — the sweeper had nothing to sweep.
-//
 // Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -155,7 +150,6 @@ func TestLiveDB_OrderScheduledForPersistedAndSweepable(t *testing.T) {
 		t.Errorf("escrowed %d, want %d", escrowed, order.TotalKobo)
 	}
 
-	// --- The sweeper now finds it. Restaurant is open ⇒ released into the live queue. ---
 	released, cancelled, err := f.svc.ActivateScheduledOrders(ctx, slot.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("activate: %v", err)

@@ -25,7 +25,6 @@ export async function POST(request: Request) {
     if (!body.votes || body.votes <= 0) return errorResponse('votes must be greater than 0', 400);
     if (body.votes > 10000)             return errorResponse('votes exceeds maximum per request', 400);
 
-    // ── Free vote daily-limit check ──────────────────────────────────────
     if (body.source === 'free') {
       const contest = await getContestById(body.contestId);
       const freeVotesPerDay = contest?.votingConfig?.freeVotesPerDay ?? 3;

@@ -3,11 +3,11 @@ import { View, Text, ScrollView, StyleSheet, Pressable, RefreshControl, TextInpu
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { BusFront, MapPin, Search as SearchIcon, Star, ShieldCheck, Ticket, ChevronRight, Store, ArrowRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import SelectField from '@/components/SelectField';
@@ -26,7 +26,6 @@ import type { BusTrip, BusProviderListItem, BusSearchParams, BusTripKind } from 
 type Tab = 'book' | 'providers' | 'tickets';
 
 const time = (iso: string) => new Date(iso).toLocaleString('en-NG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
-
 
 export default function BusMarketplaceScreen() {
   // Deep-link params from a provider route "Book" action preselect the Book tab.
@@ -92,9 +91,7 @@ export default function BusMarketplaceScreen() {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // BOOK — inter-state (state → state) OR intra-state (city → city within a state)
-// ═══════════════════════════════════════════════════════════════════════════════
 function BookTab({ presetFrom, presetTo, presetProviderId }: { presetFrom?: string; presetTo?: string; presetProviderId?: string }) {
   const validPreset = Boolean(presetFrom) && Boolean(presetTo) && presetFrom !== presetTo;
   const [tripKind, setTripKind] = useState<BusTripKind>('inter');
@@ -261,9 +258,7 @@ export function TripCard({ trip }: { trip: BusTrip }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PROVIDERS — browse operators
-// ═══════════════════════════════════════════════════════════════════════════════
 function ProvidersTab() {
   const [q, setQ] = useState('');
   const [state, setState] = useState('');
@@ -336,9 +331,7 @@ function ProviderCard({ provider }: { provider: BusProviderListItem }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // MY TICKETS
-// ═══════════════════════════════════════════════════════════════════════════════
 function TicketsTab() {
   const tickets = useBusTickets();
 

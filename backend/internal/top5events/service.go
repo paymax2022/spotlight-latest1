@@ -236,7 +236,7 @@ func (s *Service) ListEvents(ctx context.Context, callerID string, filter EventL
 		offset = 0
 	}
 
-	// Build a safe, parameterised WHERE clause.
+	// WHERE clause is parameterised — filter values are never interpolated.
 	args := []any{}
 	where := "WHERE 1=1"
 
@@ -392,7 +392,6 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	}
 	defer tx.Rollback(ctx)
 
-	// Lock the tier row and check capacity.
 	var price int64
 	var capacity, sold int
 	var active bool
@@ -409,7 +408,6 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 		return nil, ErrSoldOut
 	}
 
-	// Apply promo (versioned, max-uses guarded).
 	payable := price
 	if promo != "" {
 		var pid string
@@ -689,10 +687,9 @@ func (s *Service) GiftTicket(ctx context.Context, ownerID, ticketID, recipientHa
 	return s.getTicket(ctx, ticketID)
 }
 
-// ScanTicket validates a presented gate token (steward action). Single-use is
-// enforced inside the credential core; on accept the ticket flips to USED.
-// ScanTicket validates a presented gate token and, on acceptance, marks the
-// ticket USED. callerID must be the event's organiser or a steward the
+// ScanTicket validates a presented gate token (steward action) and, on
+// acceptance, marks the ticket USED. Single-use is enforced inside the
+// credential core. callerID must be the event's organiser or a steward the
 // organiser has designated for that specific event — resolved BEFORE calling
 // Validate so an unauthorized caller never learns anything about the token's
 // validity, only that they're forbidden. A credential that doesn't resolve to
@@ -964,7 +961,7 @@ func (s *Service) TapCharge(ctx context.Context, callerID, vendorID, walletID st
 		return s.chargeByID(ctx, existing)
 	}
 
-	// Lock the wallet's balance projection and check funds.
+	// Balance projection is locked under the row guard (FOR UPDATE).
 	var state string
 	if err := tx.QueryRow(ctx, `SELECT state FROM event_wallets WHERE id=$1 FOR UPDATE`, walletID).Scan(&state); err != nil {
 		if err == pgx.ErrNoRows {
@@ -1036,9 +1033,9 @@ func (s *Service) CloseWallet(ctx context.Context, walletID string) error {
 	// writing the REFUND projection row. Until we commit, the wallet stays open and
 	// the REFUND row absent, so walletBalanceTx still returns the same residual on a
 	// retry; re-crediting the fixed "evtwallet:refund:<id>" key dedups via
-	// alreadyApplied instead of double-refunding. The previous order (mark CLOSED +
-	// REFUND → commit → THEN credit) stranded the attendee's residual on a crash in
-	// the gap, because the CLOSED early-return above then guarantees no re-credit.
+	// alreadyApplied instead of double-refunding. Crediting first is load-bearing:
+	// the CLOSED early-return above guarantees no re-credit, so a crash between
+	// marking CLOSED and crediting would strand the residual.
 	if residual > 0 {
 		escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 		if err != nil {

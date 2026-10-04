@@ -14,7 +14,6 @@ import (
 // the app calls `listingId` leaves as `listing_id`. Handlers here previously
 // read the camelCase spellings, which no request could ever carry: offers bound
 // an empty listing and a zero price, and the negotiation-history GET 400'd.
-//
 // Assert on the decoded values, not on the tags, so this fails if anyone
 // reintroduces camelCase request fields.
 

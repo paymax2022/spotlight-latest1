@@ -3,15 +3,15 @@ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { CheckCircle2, Circle, Lock, ShieldCheck, Trophy, Info, AlertTriangle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useElection, useCastVote } from '@/features/association/hooks/useAssociation';
+import { useElection, useCastVote } from '@/features/association/hooks';
 import type { ElectionPosition, PositionResult, VoteReceipt } from '@/features/association/types/association.types';
 
 export default function ElectionDetailScreen() {

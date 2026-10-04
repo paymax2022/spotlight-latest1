@@ -1,5 +1,3 @@
-// ── Marketplace — Transact OFFER + thread mocks ──────────────────────────────
-//
 // Offers are FIRST-CLASS objects (price + status), not chat text. This mock also
 // backs the Chat inbox + Deal Room: since no dedicated marketplace messaging
 // shell exists in the app yet, we model each conversation ("thread") around its
@@ -16,7 +14,6 @@ const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
 export const MOCK_ME = 'me';
 
-// ── Local (non-escrow) chat text — clearly separate from structured offers ───
 export interface MockMessage {
   id: string;
   threadId: string;
@@ -25,7 +22,6 @@ export interface MockMessage {
   createdAt: string;
 }
 
-// ── A Deal Room thread: listing context + counterparty, per the Chat inbox ───
 export interface DealThread {
   id: string;
   listingId: string;
@@ -118,7 +114,6 @@ const offers: Offer[] = [
   },
 ];
 
-// ── Inbox / thread reads ─────────────────────────────────────────────────────
 export async function mockListThreads(): Promise<DealThread[]> {
   await delay(220);
   return [...threads].sort((a, b) => (a.lastMessageAt < b.lastMessageAt ? 1 : -1));
@@ -133,7 +128,6 @@ export async function mockGetThread(threadId: string): Promise<DealThread> {
 
 // Open-or-create the deal thread for a listing (Contact seller / Make Offer) or
 // a seller (Message from the profile). Reuses an existing thread when one is
-// already modelled; otherwise synthesizes one from the listing/seller fixtures so
 // the Deal Room always has context. Threads are mock-backed in both modes (there
 // is no live messaging shell yet — see offers.api.ts), so this drives both.
 export async function mockGetOrCreateThread(opts: { listingId?: string; sellerId?: string }): Promise<DealThread> {
@@ -197,7 +191,6 @@ export async function mockSendMessage(threadId: string, text: string): Promise<M
   return msg;
 }
 
-// ── Offers ───────────────────────────────────────────────────────────────────
 export async function mockListOffers(listingId: string): Promise<Offer[]> {
   await delay(160);
   return offers.filter((o) => o.listingId === listingId).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));

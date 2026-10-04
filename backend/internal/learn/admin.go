@@ -10,23 +10,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
-// ──────────────────────────────────────────────────────────────────────────
 // Learn Center — ADMIN content management.
-//
 // This file adds the content-authoring surface on top of the read-mostly
 // member API in service.go/handler.go/routes.go (none of those files are
 // modified here — additive only, per house brownfield-safety rules).
-//
 // Scope: create/update/delete for learn_paths, learn_lessons, learn_quizzes
 // (+ questions/options), and learn_glossary. All mutations are RBAC-gated at
 // the route layer (see RegisterLearnAdmin) and audited via the existing
 // nil-safe Auditor sink (learn.Service.audit / AdminService.audit).
-//
 // The answer key (learn_quiz_options.is_correct) IS returned to admins here
 // (unlike the member-facing GetQuiz), since content authors must see/edit it.
-// ──────────────────────────────────────────────────────────────────────────
 
 // AdminService owns the content-authoring mutations. It shares the same pool
 // (and, optionally, the same Auditor) as the read-mostly Service.
@@ -49,8 +46,6 @@ func (s *AdminService) log(actor, action, resType, resID string, oldV, newV map[
 func newID(prefix string) string {
 	return prefix + "_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:20]
 }
-
-// ───────────────────────── Admin DTOs ─────────────────────────
 
 type AdminPathInput struct {
 	ID          string     `json:"id"`
@@ -100,8 +95,6 @@ type AdminGlossaryInput struct {
 
 var isValidLevel = map[LearnLevel]bool{LevelBeginner: true, LevelStock: true, LevelCrypto: true, LevelWealth: true}
 var isValidLessonKind = map[LessonKind]bool{LessonArticle: true, LessonVideo: true}
-
-// ───────────────────────── Paths ─────────────────────────
 
 func (s *AdminService) ListPathsAdmin(ctx context.Context) ([]LearnPath, error) {
 	const q = `SELECT id, title, description, icon_color, level FROM learn_paths ORDER BY sort_order, title`
@@ -176,8 +169,6 @@ func (s *AdminService) DeletePath(ctx context.Context, actor, id string) error {
 	return nil
 }
 
-// ───────────────────────── Lessons ─────────────────────────
-
 func (s *AdminService) CreateLesson(ctx context.Context, actor string, in AdminLessonInput) (*Lesson, error) {
 	if !isValidLessonKind[in.Kind] {
 		return nil, ErrBadInput
@@ -222,8 +213,6 @@ func (s *AdminService) DeleteLesson(ctx context.Context, actor, id string) error
 	s.log(actor, "learn.admin.lesson.delete", "learn_lesson", id, nil, nil)
 	return nil
 }
-
-// ───────────────────────── Quizzes (+questions/options) ─────────────────────────
 
 // AdminGetQuiz returns a quiz WITH the answer key (admin-only view).
 func (s *AdminService) AdminGetQuiz(ctx context.Context, quizID string) (*Quiz, error) {
@@ -372,8 +361,6 @@ func (s *AdminService) DeleteQuiz(ctx context.Context, actor, id string) error {
 	return nil
 }
 
-// ───────────────────────── Glossary ─────────────────────────
-
 func (s *AdminService) UpsertGlossary(ctx context.Context, actor string, in AdminGlossaryInput) (*GlossaryTerm, error) {
 	const ins = `INSERT INTO learn_glossary (term, definition) VALUES ($1,$2)
 	             ON CONFLICT (term) DO UPDATE SET definition=EXCLUDED.definition`
@@ -396,15 +383,11 @@ func (s *AdminService) DeleteGlossary(ctx context.Context, actor, term string) e
 	return nil
 }
 
-// ───────────────────────── Admin handler ─────────────────────────
-
 type AdminHandler struct {
 	svc *AdminService
 }
 
 func NewAdminHandler(svc *AdminService) *AdminHandler { return &AdminHandler{svc: svc} }
-
-func adminActor(c *gin.Context) string { return c.GetString("user_id") }
 
 // RegisterLearnAdmin mounts the Learn Center CONTENT ADMIN routes on the
 // provided group. The caller is responsible for RBAC-gating each route (see
@@ -459,7 +442,7 @@ func (h *AdminHandler) CreatePath(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	p, err := h.svc.CreatePath(c.Request.Context(), adminActor(c), in)
+	p, err := h.svc.CreatePath(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -473,7 +456,7 @@ func (h *AdminHandler) UpdatePath(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	p, err := h.svc.UpdatePath(c.Request.Context(), adminActor(c), c.Param("id"), in)
+	p, err := h.svc.UpdatePath(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -482,7 +465,7 @@ func (h *AdminHandler) UpdatePath(c *gin.Context) {
 }
 
 func (h *AdminHandler) DeletePath(c *gin.Context) {
-	if err := h.svc.DeletePath(c.Request.Context(), adminActor(c), c.Param("id")); err != nil {
+	if err := h.svc.DeletePath(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 		httpErr(c, err)
 		return
 	}
@@ -495,7 +478,7 @@ func (h *AdminHandler) CreateLesson(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	l, err := h.svc.CreateLesson(c.Request.Context(), adminActor(c), in)
+	l, err := h.svc.CreateLesson(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -509,7 +492,7 @@ func (h *AdminHandler) UpdateLesson(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	l, err := h.svc.UpdateLesson(c.Request.Context(), adminActor(c), c.Param("id"), in)
+	l, err := h.svc.UpdateLesson(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -518,7 +501,7 @@ func (h *AdminHandler) UpdateLesson(c *gin.Context) {
 }
 
 func (h *AdminHandler) DeleteLesson(c *gin.Context) {
-	if err := h.svc.DeleteLesson(c.Request.Context(), adminActor(c), c.Param("id")); err != nil {
+	if err := h.svc.DeleteLesson(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 		httpErr(c, err)
 		return
 	}
@@ -540,7 +523,7 @@ func (h *AdminHandler) CreateQuiz(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	q, err := h.svc.CreateQuiz(c.Request.Context(), adminActor(c), in)
+	q, err := h.svc.CreateQuiz(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -554,7 +537,7 @@ func (h *AdminHandler) UpdateQuiz(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	q, err := h.svc.UpdateQuiz(c.Request.Context(), adminActor(c), c.Param("id"), in)
+	q, err := h.svc.UpdateQuiz(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -563,7 +546,7 @@ func (h *AdminHandler) UpdateQuiz(c *gin.Context) {
 }
 
 func (h *AdminHandler) DeleteQuiz(c *gin.Context) {
-	if err := h.svc.DeleteQuiz(c.Request.Context(), adminActor(c), c.Param("id")); err != nil {
+	if err := h.svc.DeleteQuiz(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
 		httpErr(c, err)
 		return
 	}
@@ -576,7 +559,7 @@ func (h *AdminHandler) UpsertGlossary(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	t, err := h.svc.UpsertGlossary(c.Request.Context(), adminActor(c), in)
+	t, err := h.svc.UpsertGlossary(c.Request.Context(), ginutil.UserID(c), in)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -585,7 +568,7 @@ func (h *AdminHandler) UpsertGlossary(c *gin.Context) {
 }
 
 func (h *AdminHandler) DeleteGlossary(c *gin.Context) {
-	if err := h.svc.DeleteGlossary(c.Request.Context(), adminActor(c), c.Param("term")); err != nil {
+	if err := h.svc.DeleteGlossary(c.Request.Context(), ginutil.UserID(c), c.Param("term")); err != nil {
 		httpErr(c, err)
 		return
 	}

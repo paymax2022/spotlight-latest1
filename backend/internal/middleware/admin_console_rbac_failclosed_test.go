@@ -78,9 +78,11 @@ func TestRequireAdminConsoleRole_FailClosed(t *testing.T) {
 	}
 }
 
-// A well-formed bearer token that does not resolve to a real Supabase user
-// must be rejected too — the gate cannot be satisfied by shape alone.
-func TestRequireAdminConsoleRole_RejectsUnresolvableBearerToken(t *testing.T) {
+// A well-formed bearer token that cannot be verified — because the auth
+// backend is absent/unreachable (no baseURL on the client here) — still fails
+// closed, but as a 503: AUD-AUTH-001 reserves 401 for a definitive token
+// rejection so an auth outage never masquerades as session expiry.
+func TestRequireAdminConsoleRole_AuthBackendUnavailableReturns503(t *testing.T) {
 	r := newAdminConsoleTestRouter(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/overview-like", nil)
@@ -89,12 +91,33 @@ func TestRequireAdminConsoleRole_RejectsUnresolvableBearerToken(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("unresolvable bearer token: got %d, want %d (body: %s)", w.Code, http.StatusUnauthorized, w.Body.String())
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("auth backend unavailable: got %d, want %d (body: %s)", w.Code, http.StatusServiceUnavailable, w.Body.String())
 	}
 }
 
-// --- AUTH-012: fail closed when GetUserStatus errors -----------------------
+// The complementary case: a token the auth backend actively rejects (401/403)
+// is a genuine invalid credential and stays a 401.
+func TestRequireAdminConsoleRole_RejectedTokenReturns401(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+	supabase := integrations.NewSupabaseRestClient(srv.URL, "test-key")
+	r := gin.New()
+	r.Use(RequireAdminConsoleRole(supabase, nil))
+	r.GET("/api/v1/admin/overview-like", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/overview-like", nil)
+	req.Header.Set("Authorization", "Bearer rejected-token")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("rejected bearer token: got %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+}
 
 // fakeConsoleRBAC embeds the (large) RBACService interface as a nil value so
 // only the two methods RequireAdminConsoleRole actually calls need overriding

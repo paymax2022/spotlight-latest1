@@ -1,15 +1,12 @@
-// ── Spotlight Wealth — Type Contract ─────────────────────────────────────────
 // The education-first Spotlight ⇄ Invest growth surface (Phase-5 in
 // docs/crypto/product.md). Mirrors the crypto module's typed-contract +
 // mock-flagged-API conventions.
-//
 // STRICT RULES honoured here (docs/crypto/product.md → "Spotlight Integration"):
 //  • Entertainment reach is used for EDUCATION and TRUST, never hype.
 //  • Leaderboards rank LEARNING points (lessons/quizzes) — never profit/gains.
 //  • Contest/challenge rewards are WALLET CREDIT — never a guaranteed
 //    investment return, never an implied profit.
 //  • No celebrity buy-signals, no "buy what your favourite artist buys".
-//
 // Money here is a plain { amount, currency } pair for display reward credits —
 // this surface never executes trades, so it deliberately avoids the crypto
 // module's minor-unit trade machinery.
@@ -55,7 +52,7 @@ export interface Challenge {
   id: string;
   title: string;
   description: string;
-  reward: Money;        // wallet credit on completion (never guaranteed return)
+  reward: Money;
   endsAt: string;       // ISO timestamp
   joined: boolean;
   kind: ChallengeKind;
@@ -76,7 +73,7 @@ export interface LeaderboardEntry {
 export interface RewardWalletEntry {
   id: string;
   label: string;
-  amount: Money;        // positive = credit earned, negative = redeemed
+  amount: Money;
   at: string;           // ISO timestamp
 }
 

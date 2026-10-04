@@ -1,7 +1,5 @@
-// ── Doctor — Batch 3 · Section L · pharmacy & drug fulfilment hooks ────────────
 // Pharmacy directory (nearby / preferred), drug stock availability, pharmacy
 // clarification chat, delivery alerts, patient-received confirmation and
-// pharmacy complaints. Reads use the DEMO_* exports as placeholderData;
 // mutations auto-generate the Idempotency-Key.
 // REUSES Phase 2 `usePharmacyFulfilments`, `usePharmacyFulfilment`,
 // `useDrugDeliveries`, `useDrugDelivery`, `useReviewSubstitute` (substitute
@@ -30,8 +28,6 @@ import type {
   ConfirmPatientReceivedInput,
   ReportPharmacyInput,
 } from '@/types/doctor.batch3';
-
-// ─── Reads ───────────────────────────────────────────────────────────────────
 
 export function usePharmacies(patientId?: string) {
   return useQuery({
@@ -77,8 +73,6 @@ export function useDeliveryAlerts() {
     staleTime:       15_000,
   });
 }
-
-// ─── Mutations ─────────────────────────────────────────────────────────────────
 
 export function useSelectPharmacy() {
   const qc = useQueryClient();

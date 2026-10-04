@@ -7,7 +7,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextRequest } from 'next/server';
 import { makeRequest } from '../golden-path/_fixtures';
 
-// Route handlers are typed against NextRequest; the fixture builds a plain
 // Request (sufficient at runtime — handlers only read headers/body/url).
 const makeNextRequest = (...args: Parameters<typeof makeRequest>) =>
   makeRequest(...args) as unknown as NextRequest;
@@ -32,7 +31,6 @@ vi.mock('@/src/lib/voting/rate-limit', () => ({
 
 // Both routes authenticate via validateRequest, which resolves
 // { user, error } rather than throwing. The mock previously supplied only
-// requireRequestUser, so the module threw "No validateRequest export" and every
 // paid-verify case became a 500.
 vi.mock('@/src/lib/auth/request', () => ({
   validateRequest: vi.fn(),
@@ -45,11 +43,18 @@ vi.mock('@/lib/supabase/server', () => ({
   }),
 }));
 
+// The verify route resolves a missing transactionId from
+// vote_transactions.payment_reference via the service-role client. Factory
+// mock is required: admin.ts re-exports createAdminClient from ./server,
+// which the factory above already replaces (automock sees no export).
+vi.mock('@/lib/supabase/server', () => ({ createAdminClient: vi.fn() }));
+
 import { POST as postFreeVote } from '../../../app/api/v2/votes/free/route';
 import { POST as postPaidVerify } from '../../../app/api/v2/votes/paid/verify/route';
 import { bridgedCastFreeVote, bridgedVerifyPaidVote } from '@/src/server/voting-bridge/bridge';
 import { checkRateLimit } from '@/src/lib/voting/rate-limit';
 import { validateRequest } from '@/src/lib/auth/request';
+import { createAdminClient } from '@/lib/supabase/server';
 
 const FREE_VOTE_RESULT = {
   success: true,
@@ -145,12 +150,80 @@ describe('POST /api/v2/votes/paid/verify', () => {
     expect(body.totalVotes).toBe(20);
   });
 
-  it('returns 400 when transactionId is missing', async () => {
+  it('returns 400 when paymentReference is missing', async () => {
+    const req = makeNextRequest('/api/v2/votes/paid/verify', {
+      body: { transactionId: 'tx-001' },
+    });
+    const res = await postPaidVerify(req);
+    expect(res.status).toBe(400);
+  });
+
+  // AUD-FE-007: Paystack's browser redirect appends only `reference`/`trxref`,
+  // so the vote-callback page can never supply transactionId. The route must
+  // resolve it from vote_transactions.payment_reference instead of 400ing.
+  const stubTxLookup = (result: unknown) => {
+    const maybeSingle = vi.fn().mockResolvedValue(result);
+    const eq = vi.fn(() => ({ maybeSingle }));
+    const select = vi.fn(() => ({ eq }));
+    const from = vi.fn(() => ({ select }));
+    vi.mocked(createAdminClient).mockReturnValue({ from } as never);
+    return { from, eq, maybeSingle };
+  };
+
+  it('resolves transactionId from paymentReference when the caller omits it', async () => {
+    vi.mocked(validateRequest).mockResolvedValue({ user: { id: 'user-1' }, error: null } as any);
+    vi.mocked(bridgedVerifyPaidVote).mockResolvedValue(VERIFY_RESULT as any);
+    const { from, eq } = stubTxLookup({ data: { id: 'tx-resolved' }, error: null });
+
     const req = makeNextRequest('/api/v2/votes/paid/verify', {
       body: { paymentReference: 'PAY_ref_001' },
     });
     const res = await postPaidVerify(req);
-    expect(res.status).toBe(400);
+
+    expect(res.status).toBe(200);
+    expect(from).toHaveBeenCalledWith('vote_transactions');
+    expect(eq).toHaveBeenCalledWith('payment_reference', 'PAY_ref_001');
+    expect(bridgedVerifyPaidVote).toHaveBeenCalledWith(
+      { transactionId: 'tx-resolved', paymentReference: 'PAY_ref_001' },
+      'user-1',
+      expect.any(Object),
+    );
+  });
+
+  it('lets the bridge answer not-found when the reference resolves to nothing', async () => {
+    vi.mocked(validateRequest).mockResolvedValue({ user: { id: 'user-1' }, error: null } as any);
+    vi.mocked(bridgedVerifyPaidVote).mockResolvedValue({
+      success: false,
+      error: 'Transaction not found',
+      statusCode: 404,
+    } as any);
+    stubTxLookup({ data: null, error: null });
+
+    const req = makeNextRequest('/api/v2/votes/paid/verify', {
+      body: { paymentReference: 'PAY_unknown' },
+    });
+    const res = await postPaidVerify(req);
+
+    expect(bridgedVerifyPaidVote).toHaveBeenCalledWith(
+      { transactionId: '', paymentReference: 'PAY_unknown' },
+      'user-1',
+      expect.any(Object),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('does not touch the transaction lookup when transactionId is supplied', async () => {
+    vi.mocked(validateRequest).mockResolvedValue({ user: { id: 'user-1' }, error: null } as any);
+    vi.mocked(bridgedVerifyPaidVote).mockResolvedValue(VERIFY_RESULT as any);
+    const { from } = stubTxLookup({ data: null, error: null });
+
+    const req = makeNextRequest('/api/v2/votes/paid/verify', {
+      body: { transactionId: 'tx-001', paymentReference: 'PAY_ref_001' },
+    });
+    const res = await postPaidVerify(req);
+
+    expect(res.status).toBe(200);
+    expect(from).not.toHaveBeenCalled();
   });
 
   // The route reads validateRequest's error and then deliberately continues, so

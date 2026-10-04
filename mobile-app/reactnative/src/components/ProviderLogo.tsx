@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { View, Text, Image, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { getProviderBrand, providerLogoSources } from '@/constants/providerBrands';
 import { getLocalProviderLogo } from '@/constants/providerLogoAssets';
 

@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Hotel + channel sync types (V3) ──────────────────────
 // Multi-room hospitality on the same property graph. Money is integer minor units.
 
 import type { Kobo, Amenity } from './realtor.types';
@@ -73,8 +72,6 @@ export interface HotelBookingDraft {
   specialRequest?: string;
 }
 
-// ── Front desk / housekeeping ────────────────────────────────────────────────
-
 export type RoomStatus =
   | 'available' | 'reserved' | 'occupied' | 'dirty' | 'cleaning' | 'inspected' | 'out_of_service';
 
@@ -103,8 +100,6 @@ export interface HotelArrival {
   nights: number;
   status: HotelReservationStatus;
 }
-
-// ── Channel sync (AB) ────────────────────────────────────────────────────────
 
 export type ChannelKey = 'airbnb' | 'booking_com' | 'expedia';
 

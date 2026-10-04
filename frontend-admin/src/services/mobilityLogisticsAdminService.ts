@@ -1,5 +1,3 @@
-// ── Admin — Paymax Mobility Business Logistics service ───────────────────────
-// Business accounts · deliveries · invoices. Mock by default; flip USE_MOCK to
 // false and the fetch branches hit /api/finance/admin/transport/business/*.
 // This route IS live — registered under FeatureTransportModesEnabled, same as
 // the sibling mobilityModesAdminService.ts — the OLD "Go backend admin
@@ -15,7 +13,6 @@ import type {
   ModeStatusPatch,
 } from '@/types/mobilityModes';
 
-// Mock by default; flip with NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK=false once the
 // admin control-plane endpoints are live on the Go backend.
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK);
 
@@ -23,8 +20,6 @@ const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK)
 // see backend/internal/app/finance_routes.go's `adminTr` group), so the caller
 // must spell the full path out. apiRoot() strips any trailing /api/v1 from the
 // proxy base and nothing else.
-//
-// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin/transport')`,
 // which stopped matching the moment apiBaseUrl became the same-origin proxy
 // path (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts
 // for the same regression. Every request 404'd against <proxy>/business/accounts
@@ -34,10 +29,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
@@ -60,8 +52,6 @@ async function writeOk(url: string, init: RequestInit): Promise<{ ok: boolean }>
   }
   return { ok: true };
 }
-
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 
 const ACCOUNTS: BusinessAccountRow[] = [
   { id: 'biz_7001', name: 'Jumia Express Lagos', ownerName: 'Chidozie E.', accountType: 'enterprise', billingMode: 'invoice', codEnabled: true, status: 'active', walletBalanceKobo: 0, monthlyVolume: 1840, createdAt: '2026-01-12T09:00:00Z', updatedAt: '2026-06-20T10:00:00Z' },
@@ -86,7 +76,6 @@ const INVOICES: BusinessInvoiceRow[] = [
   { id: 'inv_9004', accountName: 'TechHub Devices', accountId: 'biz_7004', periodLabel: 'Apr 2026', status: 'overdue', deliveryCount: 540, amountKobo: 1_674_000_00, issuedAt: '2026-05-01T09:00:00Z', dueAt: '2026-05-15T00:00:00Z', paidAt: null },
 ];
 
-// ─── Accounts ─────────────────────────────────────────────────────────────────
 export async function getBusinessAccounts(status?: BusinessAccountStatus | ''): Promise<BusinessAccountRow[]> {
   if (USE_MOCK) {
     await delay();
@@ -104,7 +93,6 @@ export async function setBusinessAccountStatus(id: string, patch: ModeStatusPatc
   return writeOk(`${adminBase()}/business/accounts/${id}/status`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
 }
 
-// ─── Deliveries ───────────────────────────────────────────────────────────────
 export async function getBusinessDeliveries(status?: DeliveryStatus | ''): Promise<BusinessDeliveryRow[]> {
   if (USE_MOCK) {
     await delay();
@@ -122,7 +110,6 @@ export async function setBusinessDeliveryStatus(id: string, patch: ModeStatusPat
   return writeOk(`${adminBase()}/business/deliveries/${id}/status`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
 }
 
-// ─── Invoices ─────────────────────────────────────────────────────────────────
 export async function getBusinessInvoices(status?: BusinessInvoiceRow['status'] | ''): Promise<BusinessInvoiceRow[]> {
   if (USE_MOCK) {
     await delay();
@@ -137,14 +124,12 @@ export async function getBusinessInvoices(status?: BusinessInvoiceRow['status'] 
 
 export async function issueBusinessInvoice(id: string, reason: string): Promise<{ ok: boolean }> {
   if (USE_MOCK) throw new Error(`Issuing a business invoice ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /business/invoices/:id/issue (AdminBusinessInvoiceIssue) — the
   // OLD method here was PATCH; the registered route is POST.
   return writeOk(`${adminBase()}/business/invoices/${id}/issue`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ reason }) });
 }
 
 export async function markBusinessInvoicePaid(id: string, reason: string): Promise<{ ok: boolean }> {
   if (USE_MOCK) throw new Error(`Marking a business invoice paid ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /business/invoices/:id/mark-paid (AdminBusinessInvoiceMarkPaid) —
   // the OLD method here was PATCH; the registered route is POST.
   return writeOk(`${adminBase()}/business/invoices/${id}/mark-paid`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ reason }) });
 }

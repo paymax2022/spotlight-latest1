@@ -16,8 +16,6 @@ func carHireCfg() *PricingConfig {
 	return &PricingConfig{ServiceType: "car_hire", BaseFareKobo: 500000, PerKMKobo: 8000, MinFareKobo: 500000}
 }
 
-// ─── Parcel ──────────────────────────────────────────────────────────────────
-
 func TestParcelMultipliers(t *testing.T) {
 	if parcelSizeMultiplier("small") != 1.0 || parcelSizeMultiplier("medium") != 1.4 || parcelSizeMultiplier("large") != 2.0 {
 		t.Error("parcel size multipliers wrong")
@@ -61,8 +59,6 @@ func TestParcelTransitions(t *testing.T) {
 	}
 }
 
-// ─── Towing ──────────────────────────────────────────────────────────────────
-
 func TestTowingFare(t *testing.T) {
 	if got := towingFare(0, towingCfg()); got != 300000 { // callout only, floored at min
 		t.Errorf("towingFare(0) = %d, want 300000", got)
@@ -84,10 +80,8 @@ func TestTowingTransitions(t *testing.T) {
 	}
 }
 
-// ─── Car hire ────────────────────────────────────────────────────────────────
-
 func TestCarHireFare(t *testing.T) {
-	fare, deposit := carHireFare(24, carHireCfg()) // 500000 + 24*8000 = 692000
+	fare, deposit := carHireFare(24, carHireCfg())
 	if fare != 692000 {
 		t.Errorf("carHire fare(24h) = %d, want 692000", fare)
 	}
@@ -109,8 +103,6 @@ func TestCarHireTransitions(t *testing.T) {
 	}
 }
 
-// ─── Business logistics ──────────────────────────────────────────────────────
-
 func TestDeliverySizeMultiplier(t *testing.T) {
 	if deliverySizeMultiplier("small") != 1.0 || deliverySizeMultiplier("medium") != 1.4 || deliverySizeMultiplier("large") != 2.0 {
 		t.Error("delivery size multipliers wrong")
@@ -128,8 +120,6 @@ func TestDeliveryTransitions(t *testing.T) {
 		t.Error("assigned→failed must be legal")
 	}
 }
-
-// ─── Movers ──────────────────────────────────────────────────────────────────
 
 func TestMoverTransitions(t *testing.T) {
 	if !canTransitionMover("bid_accepted", "in_progress") || !canTransitionMover("in_progress", "completion_confirmed") {

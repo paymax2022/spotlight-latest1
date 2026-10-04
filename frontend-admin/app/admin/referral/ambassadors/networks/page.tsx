@@ -7,9 +7,7 @@ import { timeAgo } from '../../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 // A-AMB-03 — Agent networks directory.
-//
 // Reads GET /api/referral/admin/network/networks. The page previously showed
-// depth / max-depth cap / verified activity / override paid from mock data; the
 // referral API exposes none of those, so they are not rendered. What it does
 // expose — member counts and how many of those are house-attributed — is more
 // useful anyway: house-attributed members are excluded from override chains

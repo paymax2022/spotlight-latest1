@@ -1,24 +1,19 @@
 package restaurant
 
 // LIVE-DB tests for the capability ↔ KYB bridge (foodhub A17).
-//
 // Spotlight answers two different questions with two unconnected systems:
 //   • onb_application  — "may this PERSON be a restaurant merchant?" (capability)
 //   • restaurant_kyb   — "may this OUTLET be paid?"  (payout gate, PY-007)
-//
 // Nothing joined them, and the consequence is measurable: 1059 of 1075 outlets
 // have no KYB row at all, and 709 are actively trading while not KYB-approved.
 // payout.go builds runs with `AND res.kyb_status = 'approved'`, so those outlets
 // take orders, settle into provider_kobo, and are then skipped by every payout
 // run — silently. No banner, no admin queue entry, nothing.
-//
 // The bridge does not merge the systems (KYB is per OUTLET, capability is per
 // PERSON — an owner's second outlet can have different banking). It reports the
 // join: per outlet, can it be paid, why not, and how much is already stuck.
-//
 // The readiness rule MUST mirror the payout query exactly. If it drifts, the app
 // tells owners something the payout engine does not honour.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (

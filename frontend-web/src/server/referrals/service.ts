@@ -21,18 +21,13 @@ import { creditWallet } from '@/src/server/wallet/service';
 
 const REFERRAL_REWARD_KOBO = 50_000; // ₦500
 
-// ---------------------------------------------------------------------------
 // Code generation
-// ---------------------------------------------------------------------------
-//
 // REF-004: this used to generate `SPOT-XXXXXX` (6 chars from a curated
 // alphabet, "SPOT-" prefix) while the Go generator writing into the SAME
 // finance_referral_codes.code column generated 8 lowercase hex characters —
 // two incompatible formats sharing one column, with no shared contract.
-//
 // Both generators now use the exact alphabet/length/case already established
 // for System B's own referral_links.code by
-// backend/internal/finance/referrals/code.go (codeAlphabet, CodeMaxLen=5):
 // uppercase A-Z + digits, omitting every confusable character (O/0, I/1, L,
 // S/5, Z/2) because a random code is read aloud and typed back in by hand.
 // No prefix — the whole point is one consistent shape regardless of which
@@ -58,9 +53,7 @@ function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
-// ---------------------------------------------------------------------------
 // getOrCreateCode
-// ---------------------------------------------------------------------------
 
 export async function getOrCreateCode(userId: string): Promise<string> {
   const supabase = createAdminClient();
@@ -82,7 +75,6 @@ export async function getOrCreateCode(userId: string): Promise<string> {
 
     if (!error) return code;
 
-    // 23505 on user_id UNIQUE = concurrent insert won the race
     if (error.code === '23505' && error.message.includes('user_id')) {
       const { data: raced } = await supabase
         .from('finance_referral_codes')
@@ -91,16 +83,13 @@ export async function getOrCreateCode(userId: string): Promise<string> {
         .maybeSingle();
       if (raced) return (raced as { code: string }).code;
     }
-    // 23505 on code UNIQUE = code collision — retry with new code
     if (error.code !== '23505') throw error;
   }
 
   throw new Error('Failed to generate unique referral code after 5 attempts');
 }
 
-// ---------------------------------------------------------------------------
 // getReferralSummary
-// ---------------------------------------------------------------------------
 
 export interface ReferralSummary {
   code: string;
@@ -128,16 +117,13 @@ export async function getReferralSummary(userId: string): Promise<ReferralSummar
   };
 }
 
-// ---------------------------------------------------------------------------
 // resolveCodeToReferrer
-// ---------------------------------------------------------------------------
 
 export async function resolveCodeToReferrer(code: string): Promise<string | null> {
   const supabase = createAdminClient();
   // REF-008: match case-INSENSITIVELY. Rows in finance_referral_codes may be
   // stored in whatever case they were generated in before generateCode()
   // above and its Go counterpart were unified onto one uppercase-only
-  // format — an exact-case `.eq()` match would leave already-issued codes
   // (and any typed in a different case than stored) permanently
   // unresolvable. Mirrors the Go side's `WHERE UPPER(code) = UPPER($1)`.
   const normalized = code.trim();
@@ -149,9 +135,7 @@ export async function resolveCodeToReferrer(code: string): Promise<string | null
   return (data as { user_id: string } | null)?.user_id ?? null;
 }
 
-// ---------------------------------------------------------------------------
 // processReferralReward
-// ---------------------------------------------------------------------------
 
 export interface ReferralRewardInput {
   shareCode: string;
@@ -212,7 +196,6 @@ export async function processReferralReward(
     amount_kobo:     REFERRAL_REWARD_KOBO,
   });
 
-  // 23505 = duplicate (referrer+referred pair already rewarded) — not an error
   if (eventError && eventError.code !== '23505') {
     // Event failed to record but ledger credit already happened — log but don't throw
     console.error('[referrals] Failed to insert referral_event after credit:', eventError.message);
@@ -221,9 +204,7 @@ export async function processReferralReward(
   return { rewarded: true, alreadyRewarded: false, skipped: false, amountKobo: REFERRAL_REWARD_KOBO };
 }
 
-// ---------------------------------------------------------------------------
 // processReferralOutbox — drain pending referral.triggered events
-// ---------------------------------------------------------------------------
 
 export interface OutboxProcessResult {
   processed: number;

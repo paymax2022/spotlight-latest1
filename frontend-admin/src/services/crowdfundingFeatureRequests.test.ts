@@ -95,7 +95,6 @@ describe('crowdfunding feature requests — assumed wire shape', () => {
     const mod = await import('@/services/crowdfundingAdminService');
     const [r] = await mod.listFeatureRequests();
 
-    // 'live' is not a CfCampaignStatus. Mapping it to ACTIVE would let the console
     // offer an approval the backend refuses with 409.
     expect(r.campaignStatus).toBe('UNKNOWN');
   });

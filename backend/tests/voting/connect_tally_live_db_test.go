@@ -2,14 +2,12 @@ package voting_test
 
 // The connect tally follows the credit — guards migrations 20270140000000 and
 // 20270143000000.
-//
 // A money-path audit found the first attempt at this (a TypeScript bridge called
 // from two routes) covered ONE of four entry points: voting/payment/webhook.ts
 // calls verifyAndCreditPaidVote() directly and app/vote-callback still posts to
 // the v1 verify route, and all of those files are brownfield-protected. Every
 // rail ends at vote_transactions.vote_credit_status = 'credited', so the
 // projection is driven from there instead and cannot be bypassed by a new caller.
-//
 // These tests exercise the rails through the TABLE, which is what the webhook
 // does — not through a route, which is what only one rail does.
 

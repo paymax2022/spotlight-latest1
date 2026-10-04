@@ -2,7 +2,9 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 import { appendAuditLog } from '@/src/server/voting/audit.service';
-import { getLeaderboard } from '@/src/server/voting/totals.service';
+// E2E-X-026: bridge-owned getLeaderboard — totals.service's version embeds
+// contestant_share_links with no FK (PGRST200 → swallowed → permanently []).
+import { getLeaderboard } from '@/src/server/voting-bridge/leaderboard.service';
 
 export async function POST(
   request: Request,

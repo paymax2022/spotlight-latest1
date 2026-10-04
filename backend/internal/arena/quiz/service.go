@@ -37,8 +37,6 @@ func NewService(repo *Repository, playalong PlayAlongPort, contestant Contestant
 	return &Service{repo: repo, playalong: playalong, contestant: contestant}
 }
 
-// ── Views ────────────────────────────────────────────────────────────────────
-
 // ContestantView strips correct_index / correct_answer / explanation from a set of
 // bank questions, yielding the contestant-safe projection.
 func ContestantView(qs []Question) []QuestionView {
@@ -78,8 +76,6 @@ func (s *Service) StageView(ctx context.Context, competitionID, bankKey, rubricV
 	}
 	return sv, nil
 }
-
-// ── Scoring ──────────────────────────────────────────────────────────────────
 
 // mark scores the submitted answers against the stage questions. Unanswered /
 // unknown-option → 0 for that question. Returns score, total, per-question reveal
@@ -252,8 +248,6 @@ func (s *Service) SubmitExam(ctx context.Context, competitionID, userID string, 
 	return &ExamResult{OK: true, State: string(arena.StTheoryTaken)}, nil
 }
 
-// ── Import + stats ───────────────────────────────────────────────────────────
-
 // Import binds the bank to the competition (idempotent) and returns per-stage
 // counts.
 func (s *Service) Import(ctx context.Context, competitionID, bankKey, rubricVersion string) (imported int, stages []StageStat, err error) {
@@ -301,8 +295,6 @@ func (s *Service) Stats(ctx context.Context, competitionID, bankKey, rubricVersi
 	}
 	return perStage, total, nil
 }
-
-// ── helpers ──────────────────────────────────────────────────────────────────
 
 func stageName(stage int) string {
 	switch stage {

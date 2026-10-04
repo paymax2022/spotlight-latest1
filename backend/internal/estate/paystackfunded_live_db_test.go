@@ -1,6 +1,5 @@
 package estate
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for PayDuesPaystackFunded / QuoteDuesInvoice
 // (backend/internal/estate/service_dues.go), the externally-funded dues
 // payment path — the estate counterpart of
@@ -8,8 +7,7 @@ package estate
 // transport/paystackfunded_live_db_test.go. Reuses
 // service_dues_live_db_test.go's fixtures (estateDuesTestPool,
 // newDuesTestService, seedDuesUser, seedEstate, seedResident, seedInvoice,
-// walletBalance, standingBalance, paymentCount, invoiceStatus).
-//
+// walletBalance, duesSettlementLegKobo, paymentCount, invoiceStatus).
 // What these pin:
 //  1. A Tier-0 resident — refused by the wallet-funded PayDues — can settle
 //     an invoice via the Paystack-funded path. The tier gate never runs at
@@ -22,19 +20,16 @@ package estate
 //  5. The settlement account is still credited exactly like the wallet-funded
 //     path — externally-funded dues settle into the SAME collection account,
 //     just via a different ledger leg (no wallet debit).
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
 	"testing"
-
-	"spotlight/backend/internal/finance/ledger"
 )
 
 func TestLiveDB_PayDuesPaystackFunded_SkipsTierGate(t *testing.T) {
 	pool := estateDuesTestPool(t)
 	ctx := context.Background()
-	svc, _ := newDuesTestService(pool)
+	svc, led := newDuesTestService(pool)
 
 	admin := seedDuesUser(t, ctx, pool)
 	resident := seedDuesUser(t, ctx, pool)
@@ -49,7 +44,6 @@ func TestLiveDB_PayDuesPaystackFunded_SkipsTierGate(t *testing.T) {
 	invID := seedInvoice(t, ctx, pool, estateID, resident, amount, "pending")
 
 	walletBefore := walletBalance(t, ctx, pool, resident)
-	settleBefore := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
 
 	// Sanity: the WALLET path is refused for this Tier-0 resident.
 	if _, err := svc.PayDues(ctx, estateID, resident, PayDuesRequest{
@@ -66,8 +60,9 @@ func TestLiveDB_PayDuesPaystackFunded_SkipsTierGate(t *testing.T) {
 		t.Fatalf("quoted amount = %d, want the invoice amount %d", quoted, amount)
 	}
 
+	payKey := "duespf-tier0-" + invID
 	receipt, err := svc.PayDuesPaystackFunded(ctx, estateID, resident, PayDuesRequest{
-		InvoiceID: invID, IdempotencyKey: "duespf-tier0-" + invID,
+		InvoiceID: invID, IdempotencyKey: payKey,
 	}, quoted)
 	if err != nil {
 		t.Fatalf("PayDuesPaystackFunded must succeed for a Tier-0 resident, got: %v", err)
@@ -88,16 +83,15 @@ func TestLiveDB_PayDuesPaystackFunded_SkipsTierGate(t *testing.T) {
 	if walletAfter != walletBefore {
 		t.Errorf("resident wallet balance moved on an externally-funded payment: %d -> %d", walletBefore, walletAfter)
 	}
-	settleAfter := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
-	if settleAfter-settleBefore != amount {
-		t.Errorf("settlement credited %d, want exactly %d", settleAfter-settleBefore, amount)
+	if got := duesSettlementLegKobo(t, ctx, pool, led, payKey); got != amount {
+		t.Errorf("settlement credited %d, want exactly %d", got, amount)
 	}
 }
 
 func TestLiveDB_PayDuesPaystackFunded_AmountMismatchRejects(t *testing.T) {
 	pool := estateDuesTestPool(t)
 	ctx := context.Background()
-	svc, _ := newDuesTestService(pool)
+	svc, led := newDuesTestService(pool)
 
 	admin := seedDuesUser(t, ctx, pool)
 	resident := seedDuesUser(t, ctx, pool)
@@ -113,15 +107,16 @@ func TestLiveDB_PayDuesPaystackFunded_AmountMismatchRejects(t *testing.T) {
 	}
 
 	walletBefore := walletBalance(t, ctx, pool, resident)
-	settleBefore := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
 
+	underKey := "duespf-mismatch-under-" + invID
+	overKey := "duespf-mismatch-over-" + invID
 	if _, err := svc.PayDuesPaystackFunded(ctx, estateID, resident, PayDuesRequest{
-		InvoiceID: invID, IdempotencyKey: "duespf-mismatch-under-" + invID,
+		InvoiceID: invID, IdempotencyKey: underKey,
 	}, quoted-1); err == nil {
 		t.Fatal("underpaid amount must be refused")
 	}
 	if _, err := svc.PayDuesPaystackFunded(ctx, estateID, resident, PayDuesRequest{
-		InvoiceID: invID, IdempotencyKey: "duespf-mismatch-over-" + invID,
+		InvoiceID: invID, IdempotencyKey: overKey,
 	}, quoted+1); err == nil {
 		t.Fatal("overpaid amount must be refused")
 	}
@@ -136,9 +131,11 @@ func TestLiveDB_PayDuesPaystackFunded_AmountMismatchRejects(t *testing.T) {
 	if walletAfter != walletBefore {
 		t.Errorf("resident wallet balance moved on rejected payments: %d -> %d", walletBefore, walletAfter)
 	}
-	settleAfter := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
-	if settleAfter != settleBefore {
-		t.Errorf("settlement account moved on rejected payments: %d -> %d", settleBefore, settleAfter)
+	if got := duesSettlementLegKobo(t, ctx, pool, led, underKey); got != 0 {
+		t.Errorf("settlement credited %d for the rejected underpaid attempt, want 0", got)
+	}
+	if got := duesSettlementLegKobo(t, ctx, pool, led, overKey); got != 0 {
+		t.Errorf("settlement credited %d for the rejected overpaid attempt, want 0", got)
 	}
 }
 

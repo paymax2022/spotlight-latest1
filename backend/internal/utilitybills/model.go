@@ -2,21 +2,17 @@
 // (electricity / airtime / data / cable TV / internet / education purchases
 // via third-party providers such as VTpass), being migrated out of
 // frontend-web/src/server/utility into the Go backend.
-//
-// Phase 0 (this file, statemachine.go, pricing.go, routing.go) is
+// Phase 0 (this file — now including the status predicates — plus the pure ports in pure.go) is
 // EXPLICITLY scope-limited to pure types and pure functions: zero I/O,
 // nothing wired into the running app. Phase 1 adds provider_bind.go,
 // credentials.go, repository.go, service.go and handler.go on top of this
 // package — see /Users/paymax/.claude/plans/robust-crunching-simon.md.
-//
 // Types here mirror the shapes in frontend-web/src/server/utility/types.ts
 // that pricing.ts, routing.ts and status.ts consume — not the full DB row
 // shapes (those, and any DB-facing concerns, are Phase 1's repository.go).
 package utilitybills
 
 import "errors"
-
-// ── Category ─────────────────────────────────────────────────────────────
 
 // Category enumerates the utility bill verticals. Mirrors types.ts's
 // UtilityCategory exactly — six values, confirmed by reading types.ts line 1
@@ -34,8 +30,6 @@ const (
 	CategoryEducation   Category = "education"
 )
 
-// ── Status ───────────────────────────────────────────────────────────────
-
 // Status is a utility transaction's lifecycle state. Mirrors types.ts's
 // UtilityTransactionStatus exactly (7 values).
 type Status string
@@ -49,8 +43,6 @@ const (
 	StatusReversed        Status = "reversed"
 	StatusDisputed        Status = "disputed"
 )
-
-// ── Product / mapping / provider configuration ──────────────────────────
 
 // AmountType is a product's pricing mode: a fixed catalog price, or a
 // caller-supplied variable amount (bounded by Min/MaxAmountKobo).
@@ -79,7 +71,7 @@ const (
 )
 
 // HealthStatus is a provider's live operational health, distinct from its
-// admin-configured Status. Only HealthDown excludes a route in routing.go —
+// admin-configured Status. Only HealthDown excludes a route in  —
 // degraded/unknown providers stay eligible, mirroring routing.ts exactly
 // (`provider.health_status !== 'down'`, not an allow-list of "healthy").
 type HealthStatus string
@@ -104,7 +96,7 @@ type Product struct {
 	MinAmountKobo *int64
 	MaxAmountKobo *int64
 	// MarkupBps is Paymax's markup in basis points, applied to the resolved
-	// amount (see pricing.go's applyBasisPoints).
+	// amount (see 's applyBasisPoints).
 	MarkupBps int64
 	// ConvenienceFeeKobo is a flat fee added on top of amount + markup.
 	ConvenienceFeeKobo int64
@@ -115,14 +107,15 @@ type Product struct {
 }
 
 // ProviderMapping mirrors the subset of UtilityProductMappingRow (types.ts)
-// pricing.go and routing.go consume.
+//
+//	and  consume.
 type ProviderMapping struct {
-	// Status gates routing eligibility in routing.go — only
+	// Status gates routing eligibility in  — only
 	// MappingStatusActive is viable. This field is not in the Phase-0 task
 	// prompt's literal field list for ProviderMapping (which named only
-	// ProviderCostKobo/ProviderDiscountBps, the pricing.go inputs); it is
+	// ProviderCostKobo/ProviderDiscountBps, the  inputs); it is
 	// added here because routing.ts's filter chain checks
-	// `candidate.mapping.status === 'active'` and routing.go cannot port
+	// `candidate.mapping.status === 'active'` and  cannot port
 	// that faithfully without it. Flagged in the task report.
 	Status MappingStatus
 	// ProviderCostKobo, when non-nil, is used VERBATIM as the provider cost
@@ -134,7 +127,7 @@ type ProviderMapping struct {
 	ProviderDiscountBps int64
 }
 
-// Provider mirrors the subset of UtilityProviderRow (types.ts) routing.go
+// Provider mirrors the subset of UtilityProviderRow (types.ts)
 // consumes. ID is a small addition beyond the Phase-0 task prompt's literal
 // field list (Status/HealthStatus/SupportedCategories/Priority): Phase 1's
 // service.go needs a way to identify which provider a RouteCandidate
@@ -161,8 +154,6 @@ type RouteCandidate struct {
 	Priority int
 }
 
-// ── Pricing result ───────────────────────────────────────────────────────
-
 // Pricing is CalculateUtilityPricing's result. Mirrors UtilityPricing in
 // types.ts, plus MarkupKobo: pricing.ts computes markupKobo as a local
 // variable but never returns it on UtilityPricing. It is exposed here per
@@ -177,8 +168,6 @@ type Pricing struct {
 	GrossProfitKobo    int64
 	GrossMarginBps     int64
 }
-
-// ── Domain errors (Phase 1's handler.go maps these to HTTP) ─────────────
 
 var (
 	// ErrAmountRequired — a variable-amount product was purchased without an
@@ -205,3 +194,73 @@ var (
 	// `throw new ApiError('No available provider route for this utility product.', 503)`.
 	ErrNoViableRoute = errors.New("utilitybills: no available provider route for this utility product")
 )
+
+// This file ports the exact transition/predicate logic from
+// frontend-web/src/server/utility/status.ts (25 lines) — every function
+// below has a 1:1 TS counterpart, kept in the same order as the source.
+
+// IsTerminalStatus reports whether status is a terminal state that will
+// never transition again. Mirrors status.ts's isTerminalUtilityStatus.
+func IsTerminalStatus(status Status) bool {
+	switch status {
+	case StatusSuccessful, StatusFailed, StatusReversed:
+		return true
+	default:
+		return false
+	}
+}
+
+// CanRequeryStatus reports whether a transaction in this status is eligible
+// for a provider requery. Mirrors status.ts's canRequeryUtilityStatus.
+func CanRequeryStatus(status Status) bool {
+	return status == StatusProviderPending || status == StatusWalletDebited || status == StatusInitiated
+}
+
+// CanReverseTransaction reports whether a transaction in this status may be
+// reversed (wallet auto-refund). Mirrors status.ts's
+// canReverseUtilityTransaction.
+func CanReverseTransaction(status Status) bool {
+	return status == StatusFailed || status == StatusProviderPending || status == StatusWalletDebited
+}
+
+// ProviderOutcome is the raw purchase outcome a BillsProvider adapter
+// reports, prior to being folded into the Status vocabulary above. Mirrors
+// status.ts's inline union type `'successful' | 'pending' | 'failed'`.
+type ProviderOutcome string
+
+const (
+	ProviderOutcomeSuccessful ProviderOutcome = "successful"
+	ProviderOutcomePending    ProviderOutcome = "pending"
+	ProviderOutcomeFailed     ProviderOutcome = "failed"
+)
+
+// NextStatusFromProvider maps a provider outcome to the transaction Status
+// it produces. Mirrors status.ts's nextStatusFromProvider exactly, including
+// its "anything else falls through to failed" shape (the third `if` has no
+// condition in the TS source — only 'successful' and 'pending' are checked
+// explicitly, everything else — including any outcome value outside this
+// package's three named constants — becomes failed).
+func NextStatusFromProvider(outcome ProviderOutcome) Status {
+	if outcome == ProviderOutcomeSuccessful {
+		return StatusSuccessful
+	}
+	if outcome == ProviderOutcomePending {
+		return StatusProviderPending
+	}
+	return StatusFailed
+}
+
+// ClassifyProviderOutcome folds a provider TIMEOUT into the ProviderOutcome
+// vocabulary so a timed-out attempt is never misclassified as failed: our
+// socket giving up does not mean VTpass stopped processing, so a timeout lands
+// in provider_pending (requery resolves it) — never 'failed', which would
+// invite a double-purchase on retry.
+// The attempt row's own status is the distinct string "timeout" (kept verbatim
+// in utility_provider_attempts for observability) — a different vocabulary from
+// ProviderOutcome; recording it stays in service.go.
+func ClassifyProviderOutcome(timedOut bool, outcome ProviderOutcome) ProviderOutcome {
+	if timedOut {
+		return ProviderOutcomePending
+	}
+	return outcome
+}

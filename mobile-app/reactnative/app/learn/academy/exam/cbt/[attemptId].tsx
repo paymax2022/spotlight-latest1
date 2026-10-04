@@ -3,10 +3,10 @@ import { View, Text, Pressable, ScrollView, StyleSheet, Modal } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Flag, Calculator, Grid3x3, ChevronLeft, ChevronRight, CloudOff, X, Info } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import QuestionCard from '@/features/academy/components/QuestionCard';
 import { useAttempt } from '@/features/academy/hooks';
@@ -62,7 +62,6 @@ export default function CbtSimulator() {
 
   const select = (optionId: string) => {
     if (!q) return;
-    // Multi-answer questions toggle membership; single-answer replace. Without
     // the multi branch a `multi` blueprint question is unanswerable/miscored.
     const current = answers[q.id] ?? [];
     const picks = q.type === 'multi'
@@ -85,7 +84,6 @@ export default function CbtSimulator() {
     // Do NOT re-persist from component state here. Answers, flags and the
     // countdown are already saved incrementally (select / toggleFlag / each tick
     // call patchAttemptLocal with fresh values). On the timer's auto-submit this
-    // function runs from the countdown effect's closure, which captured the
     // STALE post-hydration state ({} answers, empty flags) — re-patching it would
     // overwrite the good working copy and score a completed attempt 0%.
     router.replace(`/learn/academy/exam/submit/${attemptId}`);

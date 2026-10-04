@@ -16,8 +16,6 @@ import (
 	"spotlight/backend/internal/integrations"
 )
 
-// ── validateLoginStatus ──────────────────────────────────────────────────
-//
 // AUTH-005: this logic was extensively live-tested during UAT (account
 // lockout, expired-lock retry) with no direct unit coverage — these pin the
 // behaviour so a regression is caught by `go test`, not only another live
@@ -67,8 +65,8 @@ func TestValidateLoginStatus_ExpiredLockDoesNotRefuse(t *testing.T) {
 // status=="locked" with LockedUntil==nil means an indefinite lock (no
 // expiry) and must refuse — this is exactly the state the admin console's
 // "Lock User" action produces (RBACSupabaseRepository.LockUser sets
-// status=locked but never sets locked_until). AUTH-021: this used to NOT
-// refuse, which meant every admin-initiated manual lock had zero effect.
+// status=locked but never sets locked_until). AUTH-021: if this did not
+// refuse, every admin-initiated manual lock would have zero effect.
 func TestValidateLoginStatus_LockedWithNilLockedUntilRefuses(t *testing.T) {
 	u := &platformUser{ID: "u1", Status: "locked", LockedUntil: nil}
 	if err := (&authService{}).validateLoginStatus(u); err == nil {
@@ -90,20 +88,27 @@ func TestValidateLoginStatus_UnknownOrMissingStatusIsNotRefused(t *testing.T) {
 	}
 }
 
-// ── bumpFailedLogin ──────────────────────────────────────────────────────
+// AUD-BE-007: the increment + lockout decision moved into the
+// bump_failed_login_attempts RPC so it is one atomic UPDATE — the read-
+// then-PATCH undercounted concurrent failures. The stub therefore asserts the
+// CALL (function name + policy params + no client-computed counter/status),
+// not the SQL outcome, which is exercised by live-DB suites.
 
-// capturePatch runs bumpFailedLogin against a stub PostgREST server and
-// returns the JSON body of the PATCH it sent.
-func capturePatch(t *testing.T, cfg config.Config, u *platformUser) map[string]any {
+// captureBumpRPC runs bumpFailedLogin against a stub PostgREST server,
+// returns the RPC payload, and captures the count it answered with.
+func captureBumpRPC(t *testing.T, cfg config.Config, u *platformUser, rpcReply string) (map[string]any, string) {
 	t.Helper()
 	var body map[string]any
+	var path string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPatch || !strings.Contains(r.URL.Path, "platform_users") {
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		path = r.URL.Path
+		if r.Method != http.MethodPost || !strings.Contains(path, "/rest/v1/rpc/bump_failed_login_attempts") {
+			t.Fatalf("bump must be a single atomic RPC — got %s %s (a PATCH would reintroduce the read-modify-write race)", r.Method, path)
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(rpcReply))
 	}))
 	defer srv.Close()
 
@@ -111,60 +116,136 @@ func capturePatch(t *testing.T, cfg config.Config, u *platformUser) map[string]a
 	if err := svc.bumpFailedLogin(u); err != nil {
 		t.Fatalf("bumpFailedLogin: %v", err)
 	}
-	return body
+	return body, path
 }
 
-func TestBumpFailedLogin_IncrementsCounter(t *testing.T) {
+func TestBumpFailedLogin_CallsAtomicRPC(t *testing.T) {
 	cfg := config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30}
-	body := capturePatch(t, cfg, &platformUser{ID: "u1", FailedLoginAttempts: 2})
+	u := &platformUser{ID: "u1", FailedLoginAttempts: 2}
+	body, path := captureBumpRPC(t, cfg, u, "3")
 
-	got, ok := body["failed_login_attempts"].(float64)
-	if !ok || int(got) != 3 {
-		t.Fatalf("failed_login_attempts = %v, want 3", body["failed_login_attempts"])
+	if !strings.Contains(path, "/rpc/bump_failed_login_attempts") {
+		t.Fatalf("path = %q, want the atomic bump RPC", path)
+	}
+	if body["p_user_id"] != "u1" {
+		t.Fatalf("p_user_id = %v, want u1", body["p_user_id"])
 	}
 }
 
-func TestBumpFailedLogin_BelowThresholdLeavesStatusAlone(t *testing.T) {
+func TestBumpFailedLogin_SendsPolicyParamsNotComputedOutcome(t *testing.T) {
 	cfg := config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30}
-	body := capturePatch(t, cfg, &platformUser{ID: "u1", FailedLoginAttempts: 2})
+	body, _ := captureBumpRPC(t, cfg, &platformUser{ID: "u1", FailedLoginAttempts: 4}, "5")
 
-	if _, present := body["status"]; present {
-		t.Errorf("status must not be set below the threshold, got: %v", body["status"])
+	if body["p_max_attempts"] != float64(5) || body["p_lock_minutes"] != float64(30) {
+		t.Fatalf("policy params = %v, want max_attempts=5 lock_minutes=30", body)
 	}
-	if _, present := body["locked_until"]; present {
-		t.Errorf("locked_until must not be set below the threshold, got: %v", body["locked_until"])
+	// The pre-RPC code computed next/status/locked_until in Go — the race was
+	// exactly that read-modify-write. None of those may appear in the payload.
+	for _, k := range []string{"failed_login_attempts", "status", "locked_until"} {
+		if _, present := body[k]; present {
+			t.Fatalf("payload carries %q — the lock decision must stay inside the atomic UPDATE", k)
+		}
 	}
 }
 
-func TestBumpFailedLogin_HittingThresholdLocksTheAccount(t *testing.T) {
+func TestBumpFailedLogin_StoresReturnedCount(t *testing.T) {
 	cfg := config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30}
-	// 4 + 1 = 5, which meets the default threshold.
-	body := capturePatch(t, cfg, &platformUser{ID: "u1", FailedLoginAttempts: 4})
-
-	if body["status"] != "locked" {
-		t.Fatalf("status = %v, want \"locked\" at the threshold", body["status"])
-	}
-	lockedUntilStr, _ := body["locked_until"].(string)
-	lockedUntil, err := time.Parse(time.RFC3339, lockedUntilStr)
-	if err != nil {
-		t.Fatalf("locked_until = %q is not a valid RFC3339 timestamp: %v", lockedUntilStr, err)
-	}
-	if !lockedUntil.After(time.Now().UTC()) {
-		t.Errorf("locked_until = %s must be in the future", lockedUntil)
+	u := &platformUser{ID: "u1", FailedLoginAttempts: 2}
+	captureBumpRPC(t, cfg, u, "3")
+	if u.FailedLoginAttempts != 3 {
+		t.Fatalf("FailedLoginAttempts = %d, want the RPC-returned 3", u.FailedLoginAttempts)
 	}
 }
 
-func TestBumpFailedLogin_PastThresholdStaysLocked(t *testing.T) {
-	cfg := config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30}
-	// Already over the threshold — must still (re-)lock, not skip.
-	body := capturePatch(t, cfg, &platformUser{ID: "u1", FailedLoginAttempts: 9})
-
-	if body["status"] != "locked" {
-		t.Fatalf("status = %v, want \"locked\" past the threshold", body["status"])
+func TestBumpFailedLogin_RPCErrorPropagates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	svc := &authService{supabase: integrations.NewSupabaseRestClient(srv.URL, "key"), cfg: config.Config{}}
+	if err := svc.bumpFailedLogin(&platformUser{ID: "u1"}); err == nil {
+		t.Fatal("RPC failure must propagate — silently skipped bumps are free retries against the lockout budget")
 	}
 }
 
-// ── resolveLoginEmail / phoneToEmail ─────────────────────────────────────
+// AUD-BE-009: the success PATCH cleared failed_login_attempts and
+// locked_until but never status, so an expired auto-lockout left the row as
+// status=locked + locked_until=nil — which validateLoginStatus reads as an
+// indefinite ADMIN lock. First login after expiry succeeded, every
+// subsequent one was refused until a manual UnlockUser. These pin that the
+// latch is cleared to "active" only for users who logged in through an
+// expired lock, and untouched for everyone else.
+
+// loginSuccessPatchServer stubs the whole LoginUser path: platform_users GET
+// returns the supplied row, GoTrue token grant succeeds, PATCH bodies are
+// captured into gotPatch, session insert is accepted.
+func loginSuccessPatchServer(t *testing.T, userRow map[string]any, gotPatch *map[string]any) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "platform_users") && r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			b, _ := json.Marshal([]map[string]any{userRow})
+			_, _ = w.Write(b)
+		case strings.Contains(r.URL.Path, "platform_users") && r.Method == http.MethodPatch:
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, gotPatch)
+			w.WriteHeader(http.StatusOK)
+		case strings.Contains(r.URL.Path, "/auth/v1/token"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"at","refresh_token":"rt","expires_in":3600,"user":{"id":"g1","email":"u@x.com"}}`))
+		case strings.Contains(r.URL.Path, "auth_sessions"):
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+}
+
+func TestLoginUser_ExpiredAutoLockClearsStatusToActive(t *testing.T) {
+	past := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	var patch map[string]any
+	srv := loginSuccessPatchServer(t, map[string]any{
+		"id": "u1", "status": "locked", "failed_login_attempts": 5, "locked_until": past, "deleted_at": nil,
+	}, &patch)
+	defer srv.Close()
+
+	svc := &authService{
+		supabase: integrations.NewSupabaseRestClient(srv.URL, "key"),
+		cfg:      config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30},
+	}
+	if _, err := svc.LoginUser(domain.LoginRequest{Email: "u@x.com", Password: "pw"}); err != nil {
+		t.Fatalf("expired auto-lock must allow login, got: %v", err)
+	}
+	if patch["status"] != "active" {
+		t.Fatalf("PATCH status = %v, want \"active\" — the lock latch must be cleared or the next login locks forever", patch["status"])
+	}
+	if got, ok := patch["failed_login_attempts"].(float64); !ok || int(got) != 0 {
+		t.Fatalf("failed_login_attempts = %v, want 0", patch["failed_login_attempts"])
+	}
+	if v, present := patch["locked_until"]; !present || v != nil {
+		t.Fatalf("locked_until = %v (present=%v), want an explicit JSON null to clear it", v, present)
+	}
+}
+
+func TestLoginUser_NonLockedLoginDoesNotTouchStatus(t *testing.T) {
+	var patch map[string]any
+	srv := loginSuccessPatchServer(t, map[string]any{
+		"id": "u1", "status": "active", "failed_login_attempts": 1, "locked_until": nil, "deleted_at": nil,
+	}, &patch)
+	defer srv.Close()
+
+	svc := &authService{
+		supabase: integrations.NewSupabaseRestClient(srv.URL, "key"),
+		cfg:      config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30},
+	}
+	if _, err := svc.LoginUser(domain.LoginRequest{Email: "u@x.com", Password: "pw"}); err != nil {
+		t.Fatalf("active user login must succeed, got: %v", err)
+	}
+	if _, present := patch["status"]; present {
+		t.Fatalf("status must not be written for a non-locked login (would flip e.g. pending→active), got: %v", patch["status"])
+	}
+}
 
 func newAuthServiceWithProfiles(t *testing.T, rows []map[string]any) *authService {
 	t.Helper()
@@ -250,8 +331,6 @@ func TestPhoneToEmail_DiscardsRowsThatDoNotActuallyMatchAfterNormalisation(t *te
 	}
 }
 
-// ── AUTH-014: a missing platform_users row must refuse, not skip the gate ──
-//
 // findPlatformUserByEmail returns (nil, nil) — no error — when the email has
 // zero platform_users rows. LoginUser used to read that as "the gate does not
 // apply" and fall straight through to GoTrue, so a suspended/locked account

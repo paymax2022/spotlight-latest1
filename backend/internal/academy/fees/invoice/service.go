@@ -6,24 +6,23 @@ import (
 	"strings"
 	"time"
 
+	"spotlight/backend/go-common/timeutil"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ptr"
 	feesfeeschedule "spotlight/backend/internal/academy/fees/feeschedule"
 	feesstatemachine "spotlight/backend/internal/academy/fees/statemachine"
 )
 
 // Service owns the Invoice lifecycle (build-spec §3.1) + the SF-2 derived-balance discipline.
-//
 // SF-2 (release blocker): balance and amount_paid are ALWAYS derived — balance =
 // total_amount_minor − SUM(succeeded payments). The service NEVER writes a balance column
 // (none exists) and never caches amount_paid. Every read hydrates them from the payment rows.
-//
 // State changes go through feesstatemachine.InvoiceTransition ONLY (never a raw status write).
-//
 // On first issue the service LOCKS the referenced fee schedule (SF-1) via the injected
 // feeScheduleLocker (feeschedule.Service.Lock) so the schedule becomes immutable. The lock
 // is an interface so tests inject a fake and assert Lock was called (SF-1 interplay).
-//
 // Money is int64 minor units (kobo). RecordPayment records the thin payment row and derives
 // status; the REAL ledger move (guardian wallet → school) is E3's payment-adapter concern —
 // see the E3 hook comment on RecordPayment.
@@ -57,20 +56,16 @@ func NewServiceWithDeps(store Store, locker feeScheduleLocker, feeSvc feeSchedul
 	return &Service{store: store, locker: locker, feeSvc: feeSvc}
 }
 
-const dateLayout = "2006-01-02"
-
 func parseDate(s string) (*time.Time, error) {
-	if s == "" {
-		return nil, nil
-	}
-	t, err := time.Parse(dateLayout, s)
+	t, err := timeutil.ParseDate(s)
 	if err != nil {
 		return nil, ErrInvalidDate
 	}
+	if t.IsZero() {
+		return nil, nil
+	}
 	return &t, nil
 }
-
-// ── Issue (draft → issued) ────────────────────────────────────────────────────────
 
 // Issue creates + issues an invoice for a student against an immutable fee schedule. It:
 //  1. resolves total_amount_minor (from the request or the fee schedule),
@@ -148,8 +143,6 @@ func (s *Service) Issue(ctx context.Context, actorID string, req IssueInvoiceReq
 	return s.hydrate(ctx, out)
 }
 
-// ── Reads (with derived balance) ──────────────────────────────────────────────────
-
 // GetInvoice returns an invoice with its SF-2 derived amount_paid + balance.
 func (s *Service) GetInvoice(ctx context.Context, id string) (*Invoice, error) {
 	inv, err := s.store.GetInvoice(ctx, id)
@@ -207,25 +200,19 @@ func (s *Service) hydrate(ctx context.Context, inv *Invoice) (*Invoice, error) {
 	return inv, nil
 }
 
-// ── RecordPayment (append + derive status) ────────────────────────────────────────
-
 // RecordPayment APPENDS a payment against an invoice and recomputes the invoice status from
 // the DERIVED balance (SF-2). It is a thin record: the real money move (guardian wallet →
 // school escrow/VA via the double-entry ledger) is E3's payment-adapter concern.
-//
-// >>> E3 HOOK <<<
 // E3's payment adapter should perform the actual ledger debit/credit (finance/ledger
 // Debit/Credit or edupay CollectRail) and pass the resulting ledger reference in as
 // ledgerReference here, calling RecordPayment as the invoice-side record of a settled move.
 // This method itself posts NO ledger entry — it only records the row + derives status. The
 // natural attach point is right before AppendPayment (do the ledger move, then record it),
 // sharing the SAME idempotencyKey so the money move and the invoice record replay together.
-//
 // IDEMPOTENCY (money path, required): idempotencyKey is mandatory. AppendPayment is
 // idempotent on the globally-UNIQUE idempotency_key — a replay returns the EXISTING payment
 // row (Replayed=true), inserts nothing, and re-derives (unchanged) status. Never a double
 // insert, never a double state advance.
-//
 // Status derivation (never a raw write; always via feesstatemachine):
 //   - past due_date with a positive balance  → mark_overdue (issued/partially_paid → overdue)
 //   - balance == 0 after the payment          → pay_full (→ paid)
@@ -294,8 +281,8 @@ func (s *Service) RecordPayment(ctx context.Context, actorID, invoiceID, guardia
 		InvoiceID:       invoiceID,
 		GuardianUserID:  guardianUserID,
 		AmountMinor:     amountMinor,
-		GatewayRef:      ptrOrNil(gatewayRef),
-		LedgerReference: ptrOrNil(ledgerReference),
+		GatewayRef:      ptr.OrNil(gatewayRef),
+		LedgerReference: ptr.OrNil(ledgerReference),
 		Status:          PaymentSucceeded,
 		IdempotencyKey:  idempotencyKey,
 	})
@@ -333,6 +320,17 @@ func (s *Service) RecordPayment(ctx context.Context, actorID, invoiceID, guardia
 		return nil, err
 	}
 	return &RecordPaymentResult{Payment: p, Invoice: hydrated, Replayed: false}, nil
+}
+
+// Freeze applies the overdue→frozen transition through the guarded state
+// machine — never a raw status write. Returns the updated invoice or
+// ErrIllegalTransition when the edge is not legal.
+func (s *Service) Freeze(ctx context.Context, actorID, invoiceID string) (*Invoice, error) {
+	inv, err := s.store.GetInvoice(ctx, invoiceID)
+	if err != nil {
+		return nil, err
+	}
+	return s.applyEvent(ctx, actorID, inv, feesstatemachine.EvInvoiceFreeze)
 }
 
 // deriveStatusAfterPayment picks the correct invoice event from the DERIVED balance and the

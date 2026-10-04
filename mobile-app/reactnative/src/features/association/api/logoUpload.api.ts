@@ -1,21 +1,16 @@
-// ── Association — Organisation logo upload (presigned R2) ─────────────────────
-//
 // Two steps, because the binary never travels through our API:
-//
 //   1. Ask the backend for a short-lived presigned PUT URL. It chooses the
 //      object key — the client cannot pick where the file lands.
 //   2. PUT the image straight to R2 with the exact Content-Type the backend
 //      bound into the signature.
-//
 // The caller then submits the returned objectKey as the draft's logoUri. The
 // backend stores it in logo_url and signs it back into a viewable URL on every
 // read, because the bucket is not public.
-//
 // Before this existed the wizard stored the image picker's local file:// URI, so
 // an uploaded logo rendered on the founder's own phone and nowhere else.
 
 import { api } from '@/api/client';
-import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
 
 // This write has a real live endpoint (verified against
 // backend/internal/association/routes.go and a full green run of

@@ -1,4 +1,3 @@
-// ── Spotlight Wealth — Data hooks ────────────────────────────────────────────
 // React Query hooks mirroring useCrypto.ts so the Spotlight Wealth screens stay
 // declarative and share the same caching / loading / error contracts.
 
@@ -8,8 +7,6 @@ import type { SpotlightTopic } from '../types/spotlight.types';
 
 const KEY = 'spotlight';
 
-// ─── Finance videos ───────────────────────────────────────────────────────────
-
 export function useVideos(topic?: SpotlightTopic) {
   return useQuery({
     queryKey: [KEY, 'videos', topic ?? 'all'],
@@ -17,8 +14,6 @@ export function useVideos(topic?: SpotlightTopic) {
     staleTime: 60_000,
   });
 }
-
-// ─── Challenges ───────────────────────────────────────────────────────────────
 
 export function useChallenges() {
   return useQuery({ queryKey: [KEY, 'challenges'], queryFn: spotlight.getChallenges, staleTime: 30_000 });
@@ -44,19 +39,13 @@ export function useJoinChallenge() {
   });
 }
 
-// ─── Learning leaderboard ─────────────────────────────────────────────────────
-
 export function useLeaderboard() {
   return useQuery({ queryKey: [KEY, 'leaderboard'], queryFn: spotlight.getLeaderboard, staleTime: 60_000 });
 }
 
-// ─── Reward wallet ────────────────────────────────────────────────────────────
-
 export function useRewardWallet() {
   return useQuery({ queryKey: [KEY, 'reward-wallet'], queryFn: spotlight.getRewardWallet, staleTime: 30_000 });
 }
-
-// ─── Campaigns ────────────────────────────────────────────────────────────────
 
 export function useCampaigns() {
   return useQuery({ queryKey: [KEY, 'campaigns'], queryFn: spotlight.getCampaigns, staleTime: 60_000 });

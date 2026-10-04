@@ -12,8 +12,6 @@ import (
 // SchoolVerifier to prove the SF-11 opt-in gate, the append-only immutability of the compliance
 // log (no update/delete path exists), and the SF-10 verified-school gate.
 
-// ── in-memory fakes ──────────────────────────────────────────────────────────────
-
 type fakeStore struct {
 	exports []ComplianceExport
 	audits  []auditRow
@@ -73,8 +71,6 @@ func (f *fakeVerifier) VerificationTier(_ context.Context, schoolID string) (str
 	return t, nil
 }
 
-// ── SF-11: an accepted export appends an immutable row ───────────────────────────
-
 func TestTriggerExport_AppendsImmutableRow(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
@@ -115,8 +111,6 @@ func TestTriggerExport_AppendsImmutableRow(t *testing.T) {
 	}
 }
 
-// ── SF-11: an export for a NON-opted-in category is rejected (fail-closed) ────────
-
 func TestTriggerExport_NonOptedInCategory_Rejected(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
@@ -141,8 +135,6 @@ func TestTriggerExport_NonOptedInCategory_Rejected(t *testing.T) {
 		t.Error("rejected export must be audited")
 	}
 }
-
-// ── SF-11: explicit request-carried opt-in fallback (no opt-in store wired) ──────
 
 func TestTriggerExport_RequestCarriedOptInFallback(t *testing.T) {
 	ctx := context.Background()
@@ -174,8 +166,6 @@ func TestTriggerExport_RequestCarriedOptInFallback(t *testing.T) {
 	}
 }
 
-// ── SF-11: the compliance log is append-only (no update/delete path exists) ───────
-//
 // This is a STRUCTURAL guarantee: the Store interface exposes only AppendExport + ListExports.
 // There is no UpdateExport / DeleteExport method to call. We assert the contract by exercising
 // the surface: appended rows are only ever added, never removed or changed by the service.
@@ -212,8 +202,6 @@ func TestComplianceLog_AppendOnly_NoMutationPath(t *testing.T) {
 // real guarantee is the interface definition itself — asserted here by documenting the surface.
 var _ Store = (*fakeStore)(nil)
 
-// ── SF-10: verified-school full data export gate ─────────────────────────────────
-
 func TestSchoolDataExport_VerifiedOnly(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
@@ -248,8 +236,6 @@ func TestSchoolDataExport_NoVerifier_FailsClosed(t *testing.T) {
 		t.Fatalf("no verifier must fail closed with ErrSchoolNotVerified, got %v", err)
 	}
 }
-
-// ── helpers ──────────────────────────────────────────────────────────────────────
 
 func hasAudit(s *fakeStore, action string) bool {
 	for _, a := range s.audits {

@@ -6,10 +6,10 @@ import {
   Ticket, CalendarClock, XCircle, Car, MapPin, MessageSquare, Star,
   ReceiptText, ChevronRight, BadgeAlert,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { BookingStateBanner } from '@/features/stays/components';

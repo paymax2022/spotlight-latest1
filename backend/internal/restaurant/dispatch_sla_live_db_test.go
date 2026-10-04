@@ -1,12 +1,10 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for dispatch fairness + SLA (Phase 7): the candidate
 // gatherer (load + last-assigned + distance signals) and the DispatchOrder SLA
 // timeline (first_offered_at / dispatch_attempts). Skipped unless TEST_DATABASE_URL
 // is set. Requires the restaurant, autodispatch, transport `drivers`, and
 // dispatch-SLA migrations.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

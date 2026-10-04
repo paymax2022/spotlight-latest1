@@ -68,7 +68,6 @@ export async function GET(
     const isLive = !!(settings?.voting_enabled && endsAt && Date.parse(endsAt) > now);
 
     // Effective visibility (per-phase override else contest-level). When vote
-    // count is hidden, do not leak the aggregate total; when the leaderboard is
     // hidden, the client hides the leaderboard surface.
     const vis = await getEffectiveVisibility(id);
 

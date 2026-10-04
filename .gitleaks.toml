@@ -51,6 +51,7 @@ paths = [
     '''^docs/qa/modules/cashtag\.md$''',
     '''^frontend-web/src/server/voting-bridge/README\.md$''',
     '''^IMPLEMENTATION_CHECKLIST\.md$''', # curl-auth-header hits on "Bearer YOUR_TOKEN" example snippets (entropy 3.12)
+    '''^tools/loadtest/integration/write-env\.sh$''',   # emits placeholder Paystack key values into generated local .env files — placeholders, not credentials
 ]
 
 # Matched against the detected SECRET value (gitleaks default regexTarget).

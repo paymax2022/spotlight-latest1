@@ -42,7 +42,6 @@ function makeChain(table: string) {
     maybeSingle: () => Promise.resolve({ data: connectContestRow, error: null }),
   };
   if (table === 'registrations') {
-    // .update({...}).eq('id', applicationId) — awaited directly with no .select()/.single()
     // in the notes-write step; .then is provided so `await` on the chain itself resolves.
     chain.then = (resolve: any) => resolve({ data: null, error: null });
   }

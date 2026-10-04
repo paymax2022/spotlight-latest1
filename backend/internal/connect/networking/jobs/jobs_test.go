@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// ── FSM guards (deny-by-default; illegal transitions rejected) ──────────────
-
 func TestJobApplicationFSM(t *testing.T) {
 	legal := map[AppState][]AppState{
 		AppDraft:       {AppSubmitted, AppWithdrawn},
@@ -113,8 +111,6 @@ func assertFSM[S ~string](t *testing.T, name string, all []S, legal map[S][]S, f
 	}
 }
 
-// ── PN-2: single-level referral is structurally guaranteed ──────────────────
-
 func TestPN2_NoSecondLevelBountyRepresentable(t *testing.T) {
 	rt := reflect.TypeOf(ReferralBounty{})
 	for i := 0; i < rt.NumField(); i++ {
@@ -133,8 +129,6 @@ func TestPN2_NoSecondLevelBountyRepresentable(t *testing.T) {
 		t.Fatal("ReferralBounty must tie to a single job application")
 	}
 }
-
-// ── Test doubles for the money/loyalty ports ────────────────────────────────
 
 type fakeWallet struct {
 	calls  int
@@ -186,8 +180,6 @@ func newTestService(w WalletDebiter, l LedgerCrediter, loy LoyaltyAwarder) *Serv
 	return NewService(&Repository{}, w, l, fakeAccounts{}, loy, &fakeAudit{})
 }
 
-// ── PN-6: unverified company page blocked from paid posting ─────────────────
-
 func TestPN6_UnverifiedCompanyBlockedFromPaidPosting(t *testing.T) {
 	w := &fakeWallet{}
 	s := newTestService(w, &fakeLedger{}, &fakeLoyalty{})
@@ -215,8 +207,6 @@ func TestPN6_UnverifiedCompanyBlockedFromPaidPosting(t *testing.T) {
 		t.Fatalf("wallet must not be debited without idem key, got %d", w.calls)
 	}
 }
-
-// ── PN-10: bounty payout is a ledger write, idempotent by bounty id ─────────
 
 func TestPN10_BountyPayoutLedgerWriteAndIdempotent(t *testing.T) {
 	w := &fakeWallet{}
@@ -278,16 +268,12 @@ func TestPN10_BountyPayoutLedgerWriteAndIdempotent(t *testing.T) {
 	}
 }
 
-// ── Referral creation rejects non-positive amounts (integer kobo) ───────────
-
 func TestCreateReferralRejectsNonPositive(t *testing.T) {
 	s := newTestService(&fakeWallet{}, &fakeLedger{}, &fakeLoyalty{})
 	if _, err := s.CreateReferral(context.Background(), "referrer1", "app1", ReferInput{AmountKobo: 0}); !errors.Is(err, ErrInvalidAmount) {
 		t.Fatalf("expected ErrInvalidAmount for zero bounty, got %v", err)
 	}
 }
-
-// ── PN-10 guard: paying a bounty not yet hire-confirmed is illegal ──────────
 
 func TestPayBountyIllegalBeforeHireConfirmed(t *testing.T) {
 	l := &fakeLedger{}

@@ -5,7 +5,10 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
 type Handler struct{ svc *Service }
@@ -39,22 +42,22 @@ func (h *Handler) GetQuiz(c *gin.Context) {
 	per, _ := strconv.Atoi(c.DefaultQuery("per", "2"))
 	quiz, err := h.svc.BuildQuiz(c.Request.Context(), class, per)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": quiz})
 }
 
 func (h *Handler) Submit(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	var req submitRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	res, err := h.svc.Score(c.Request.Context(), userID, req.ClassCode, req.Answers)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": res})

@@ -2,6 +2,7 @@ package savings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/scheduler"
 )
 
@@ -26,10 +28,42 @@ const AutoSaveJobType = "savings.autosave"
 // before maturity, in basis points (1000 = 10%). It matches the 10% the central
 // commission module already assumes for this fee (see app wiring). Override per
 // deployment with SAVINGS_EARLY_BREAK_PENALTY_BPS.
-//
-// This rate MUST be server-side. It previously arrived in the request body, so
-// any member could break a lock penalty-free by sending penalty_bps: 0.
+// This rate MUST be server-side — a client-supplied penalty_bps would let any
+// member break a lock penalty-free.
 const DefaultEarlyBreakPenaltyBps int64 = 1000
+
+// walletDebitLimiter is the minimal seam every savings money path depends on
+// for the fail-closed KYC-tier / daily-debit gate (E2E-FIN-041). *tiers.Service
+// satisfies it in production; unit tests inject a fake via WithTiers. Modeled
+// as a local interface — mirrors transport's tierLimiter. Savings debits are
+// member-funded wallet DEBITS (deposits, target/pool contributions, Ajo legs),
+// so the STRICT EnforceWalletDebitLimit is used: they hold/move cash, they are
+// not a checkout purchase, so the Tier-0 checkout allowance (ADR-043)
+// deliberately does NOT apply here.
+type walletDebitLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// ErrTierGateUnwired is returned when a savings service has no tier gate — a
+// nil gate must fail CLOSED, never debit ungated (mirrors
+// groups.ErrTierGateUnwired).
+var ErrTierGateUnwired = errors.New("savings: money path requires a tier gate (not wired)")
+
+// enforceDebitLimit is the fail-closed guard applied before EVERY member-funded
+// wallet debit in this package (E2E-FIN-041): the same EnforceWalletDebitLimit
+// the canonical transfer rail (finance/transfers) runs. Tier 0 →
+// ErrWalletDisabled, over daily cap → ErrDailyLimitExceeded, gate/db errors
+// refuse, and a missing gate refuses via ErrTierGateUnwired. The error is
+// propagated UNWRAPPED so handlers map the tier sentinels to 403 via errors.Is.
+// Deliberately NOT applied to: the early-withdrawal penalty debit and any
+// escrow→wallet credits — the penalty is a charge levied while returning the
+// member's own funds; gating it would strand a Tier-0 member's savings forever.
+func enforceDebitLimit(t walletDebitLimiter, ctx context.Context, userID string, amountKobo int64) error {
+	if t == nil {
+		return ErrTierGateUnwired
+	}
+	return t.EnforceWalletDebitLimit(ctx, userID, amountKobo)
+}
 
 // VaultService owns the Vault sub-balance. The dedicated sub-balance is an
 // append-only ledger (savings_vault_ledger): balance is the SUM of its entries
@@ -43,16 +77,34 @@ type VaultService struct {
 	sched      *scheduler.Service
 	audit      Auditor
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	tiers      walletDebitLimiter // fail-closed KYC-tier / daily-debit gate on member debits
 
 	// earlyBreakPenaltyBps is policy, never caller input. See penaltyFor.
 	earlyBreakPenaltyBps int64
 }
 
 func NewVaultService(db *pgxpool.Pool, led *ledger.Service, sched *scheduler.Service, audit Auditor) *VaultService {
-	return &VaultService{
+	s := &VaultService{
 		db: db, led: led, sched: sched, audit: audit,
 		earlyBreakPenaltyBps: DefaultEarlyBreakPenaltyBps,
 	}
+	// The tier-limit gate is constructed from the same pool (tiers.NewService
+	// needs only the DB), so no extra wiring is required at the call site —
+	// same convention as transport.NewService. A nil pool leaves the gate nil,
+	// and enforceDebitLimit then fails closed via ErrTierGateUnwired.
+	if db != nil {
+		s.tiers = tiers.NewService(db)
+	}
+	return s
+}
+
+// WithTiers injects a pre-configured tier gate (app-wiring / tests). A nil
+// argument is ignored so an unwired injection can never strip the gate.
+func (s *VaultService) WithTiers(t walletDebitLimiter) *VaultService {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
 }
 
 // SetEarlyBreakPenaltyBps overrides the early-break rate from config. It fails
@@ -93,19 +145,13 @@ func (s *VaultService) penaltyFor(v *Vault, amountKobo int64) int64 {
 	return amountKobo * s.earlyBreakPenaltyBps / 10000
 }
 
-// CommissionRecorder is the nil-safe seam into the central Commission & Profit
-// module. app-wiring injects a thin adapter over the finance commission service;
-// when the commission feature is off (or no recorder is wired) the field is nil and
-// recording is a silent no-op. Modeled as a LOCAL interface so savings never imports
-// the commission package at compile time (mirrors transport/service.go).
-//
-// This records realized profit ONLY; it never moves money. The savings module's own
-// money movements (the early-break penalty debit into paymax_revenue) are unchanged,
-// and the injected recorder is deliberately constructed WITHOUT a ledger so RecordFor
-// never re-posts to the ledger — it appends the immutable earning row only. It is
-// wired on VaultService ONLY: the ONLY Spotlight-earned fee in savings is the
-// early-withdrawal penalty (deposits, normal withdrawals, target/Ajo flows are all
-// fee-free — NL-2, no yield — so those services record nothing).
+// CommissionRecorder is the nil-safe seam into the central commission module —
+// a LOCAL interface so savings never imports it. It records realized profit
+// ONLY and never moves money; the injected recorder is built WITHOUT a ledger
+// so it appends the immutable earning row and never re-posts. Wired on
+// VaultService only: the ONLY Spotlight-earned fee in savings is the
+// early-withdrawal penalty (NL-2 — deposits, withdrawals, target/Ajo are
+// fee-free and record nothing).
 type CommissionRecorder interface {
 	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
 		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
@@ -117,14 +163,11 @@ type CommissionRecorder interface {
 // post-construction). Nil is accepted and disables recording.
 func (s *VaultService) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
 
-// recordCommissionSafe records realized Spotlight profit for a completed early-
-// withdrawal that incurred a penalty. Best-effort + MUST NEVER affect the caller: a
-// nil recorder is a no-op, and any error is logged and swallowed so a profit-registry
-// failure can never fail or reverse the withdrawal. The module's ACTUAL earning is the
-// exact penalty already computed and debited into paymax_revenue, NOT a % of the
-// principal, so we record the EXACT penaltyKobo via RecordExact (grossKobo = the
-// withdrawal principal is passed for context). source ref + idempotency key = the
-// per-penalty idempotency token so replays never double-count.
+// recordCommissionSafe records realized profit for a completed early-withdrawal
+// penalty. Best-effort — must never fail or reverse the withdrawal. Records the
+// EXACT penaltyKobo already debited into paymax_revenue via RecordExact (gross =
+// withdrawal principal for context); the per-penalty idempotency token doubles
+// as source ref + key so replays never double-count.
 func (s *VaultService) recordCommissionSafe(ctx context.Context, grossKobo, penaltyKobo int64, sourceRef string, userID *string) {
 	if s.commission == nil || penaltyKobo <= 0 {
 		return
@@ -187,7 +230,6 @@ func (s *VaultService) CreateVault(ctx context.Context, ownerID, name string, ki
 // it is safe only on paths that have already established ownership (Deposit,
 // Withdraw, EarlyWithdraw, GetVault). Exposing Balance() directly is what made
 // any authenticated user able to read any vault's balance by id.
-//
 // Note RLS is no defense here: the backend connects through the pgx pool as the
 // table owner, so savings_vault_ledger_own never applies. The check must be in
 // Go.
@@ -228,6 +270,13 @@ func (s *VaultService) Deposit(ctx context.Context, ownerID, vaultID string, amo
 	}
 	if v.State != VaultOpen {
 		return 0, fmt.Errorf("savings: cannot deposit to %s vault", v.State)
+	}
+	// Tier guard (fail-closed, E2E-FIN-041): a deposit debits the member's main
+	// wallet — the same EnforceWalletDebitLimit the transfer rail runs. The
+	// scheduled auto-save path (autoSaveRunner → Deposit) rides through this
+	// check too, so a downgraded member's recurring saves also refuse.
+	if err := enforceDebitLimit(s.tiers, ctx, ownerID, amountKobo); err != nil {
+		return 0, err
 	}
 	// Real money leaves the main wallet into the shared escrow/savings hold.
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)

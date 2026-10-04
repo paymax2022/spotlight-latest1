@@ -8,8 +8,6 @@ import (
 	feesstatemachine "spotlight/backend/internal/academy/fees/statemachine"
 )
 
-// ── In-memory fakes (no live DB) ────────────────────────────────────────────────
-
 // fakeStore is an in-memory Store.
 type fakeStore struct {
 	comps map[string]*Competition
@@ -129,9 +127,7 @@ func newService() (*Service, *fakeStore, *fakeLadder, *fakeIdentity) {
 
 func strptr(s string) *string { return &s }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // SF-7 (RELEASE BLOCKER) — minor-safe serializer
-// ═══════════════════════════════════════════════════════════════════════════════
 
 func minorEntry() LeaderboardEntry {
 	return LeaderboardEntry{
@@ -271,9 +267,7 @@ func TestSF7_List_MixedMinorAdult(t *testing.T) {
 	}
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // Competition state machine (§3.4)
-// ═══════════════════════════════════════════════════════════════════════════════
 
 // Legal linear path succeeds end-to-end.
 func TestCompetition_LegalPath(t *testing.T) {
@@ -372,9 +366,7 @@ func TestCompetition_RegistrationAfterClose_Rejected(t *testing.T) {
 	}
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // Scoring lock (§3.4) — no leaderboard entry once results_pending or later
-// ═══════════════════════════════════════════════════════════════════════════════
 
 func advanceTo(t *testing.T, svc *Service, ctx context.Context, id string, events ...string) {
 	t.Helper()
@@ -459,9 +451,7 @@ func TestScoringLock_MatchesStateMachineBoundary(t *testing.T) {
 	}
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // Leaderboard reuse — read path enriches shared ladder rows and applies SF-7
-// ═══════════════════════════════════════════════════════════════════════════════
 
 // End-to-end: write a score via the shared ladder, read it back enriched, then
 // serialize — proving the extension reuses gamification and SF-7 still applies.

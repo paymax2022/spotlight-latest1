@@ -23,12 +23,14 @@ vi.mock('next/server', () => ({
 }));
 
 vi.mock('@/src/server/voting/totals.service', () => ({ getLeaderboard: vi.fn() }));
+// E2E-X-026: the route now reads the bridge-owned leaderboard service.
+vi.mock('@/src/server/voting-bridge/leaderboard.service', () => ({ getLeaderboard: vi.fn() }));
 vi.mock('@/src/server/voting/free-vote.service', () => ({ getVotingSettings: vi.fn() }));
 vi.mock('@/src/server/voting/visibility.service', () => ({ getEffectiveVisibility: vi.fn() }));
 vi.mock('@/lib/supabase/server', () => ({ createAdminClient: vi.fn() }));
 
 import { GET } from '../../../app/api/leaderboard/[contestId]/route';
-import { getLeaderboard } from '@/src/server/voting/totals.service';
+import { getLeaderboard } from '@/src/server/voting-bridge/leaderboard.service';
 import { getVotingSettings } from '@/src/server/voting/free-vote.service';
 import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
 import { createAdminClient } from '@/lib/supabase/server';

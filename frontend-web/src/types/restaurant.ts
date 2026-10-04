@@ -1,11 +1,9 @@
 // Restaurant/food-delivery domain types.
-//
 // These mirror the Go backend's wire shapes VERBATIM (snake_case field names,
 // integer kobo amounts) — see backend/internal/restaurant/model.go,
 // delivery.go, deliveryfee.go, ratings.go. Unlike the mobile app, frontend-web
 // has no camelCase normalization layer, so these types intentionally match
 // the JSON exactly rather than a "nicer" shape.
-//
 // One deliberate exception: the restaurant Paystack-checkout rail
 // (backend/internal/restaurant/paystackcheckout/model.go) really is
 // camelCase on the wire — a different subsystem than the rest of this
@@ -187,8 +185,6 @@ export interface RateOrderRequest {
   comment?: string;
 }
 
-// ── Cart (persisted via /api/v1/food/cart) ──────────────────────────────────
-//
 // V1 keeps this deliberately simple: one restaurant, one package. The backend
 // supports multi-package/multi-restaurant carts (see PlaceOrderRequest.
 // PackageCount and OrderItemInput.RestaurantID), but that's a larger UX this
@@ -206,8 +202,6 @@ export interface Cart {
   restaurant_name: string;
   lines: CartLine[];
 }
-
-// ── Restaurant Paystack checkout (camelCase — see module doc comment) ──────
 
 export interface RestaurantPaystackIntent {
   restaurantId: string;

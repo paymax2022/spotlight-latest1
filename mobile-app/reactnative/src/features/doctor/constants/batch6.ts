@@ -1,11 +1,7 @@
-// ── Doctor module — Batch 6 constants ────────────────────────────────────────
 // Static option lists / label maps for Batch 6 (Sections W · X · Y · Z —
 // Medical Records · Notifications · Earnings/Wallet/Payout · Ratings/Reputation).
 // Pure data only — no money math. Money is always integers in kobo. ADDITIVE to
 // `@/features/doctor/constants` (re-exported from its barrel).
-//
-// REUSE: the rating/metric labels and the BankAccount shape already exist in
-// Phase 2 / Section B; here we add only the missing record-category,
 // notification-category, earnings-period/source and metric maps used by the
 // Batch 6 screens.
 
@@ -26,8 +22,6 @@ import type {
   ReviewDisputeReason,
   ReviewDisputeStatus,
 } from '@/types/doctor.batch6';
-
-// ─── Section W — medical records ──────────────────────────────────────────────
 
 export const RECORD_CATEGORY_LABELS: Record<RecordCategory, string> = {
   consultations: 'Consultations',
@@ -89,8 +83,6 @@ export const RECORD_SHARE_STATUS_LABELS: Record<RecordShareStatus, string> = {
   revoked: 'Revoked',
   expired: 'Expired',
 };
-
-// ─── Section X — notifications ────────────────────────────────────────────────
 
 export const NOTIFICATION_CATEGORY_LABELS: Record<NotificationCategory, string> = {
   appointments: 'Appointments',
@@ -163,8 +155,6 @@ export const NOTIFICATION_SEVERITY_TONES: Record<NotificationSeverity, string> =
   critical: '#EF4444',
 };
 
-// ─── Section Y — earnings, wallet & payout ───────────────────────────────────
-
 export const EARNINGS_PERIOD_OPTIONS: { value: EarningsPeriod; label: string }[] = [
   { value: 'today', label: 'Today' },
   { value: 'week',  label: 'This week' },
@@ -218,8 +208,6 @@ export const SETTLEMENT_DISPUTE_STATUS_LABELS: Record<SettlementDisputeStatus, s
   resolved:     'Resolved',
   rejected:     'Rejected',
 };
-
-// ─── Section Z — ratings, reviews & reputation ───────────────────────────────
 
 // Metric tile labels for the rating dashboard (response-time / completion-rate /
 // satisfaction). Keyed to the QualityScoreFactor / ReputationMetrics keys.

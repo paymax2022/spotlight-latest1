@@ -3,11 +3,18 @@ package healthrecords
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	keySuccess = "success"
 )
 
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
@@ -131,7 +138,6 @@ func (s *Service) AddDocument(ctx context.Context, accessorID, recordID, storage
 }
 
 // Get returns a record + signed-URL docs, enforcing the HL-8 access discipline:
-//
 //  1. authorize: owner reads own; otherwise an ACTIVE consent grant is required;
 //     admin reads via isAdmin. No grant ⇒ fail closed (forbidden).
 //  2. APPEND an immutable access-log row recording who/why BEFORE returning data.
@@ -243,8 +249,6 @@ func (s *Service) AccessLog(ctx context.Context, requesterID, recordID string, i
 	return out, nil
 }
 
-// --- internals ---
-
 func (s *Service) logAccess(ctx context.Context, recordID, accessorID, basis string, consentID *string) error {
 	const q = `INSERT INTO health_record_access_log (record_id, accessor_id, access_basis, consent_id) VALUES ($1,$2,$3,$4)`
 	if _, err := s.db.Exec(ctx, q, recordID, accessorID, basis, consentID); err != nil {
@@ -300,4 +304,158 @@ func (s *Service) audited(actor, target, action, resourceID string, oldV, newV m
 		return
 	}
 	s.audit.LogAction(actor, target, action, "health", "health_record", resourceID, oldV, newV, "", "", "info")
+}
+
+// AccessBasis is the reason a PHI record read was permitted (or denied). It is
+// recorded on every access-log row so the immutable read trail is attributable
+// (HL-8/HL-12; SC-005).
+type AccessBasis string
+
+const (
+	BasisAdmin   AccessBasis = "ADMIN"
+	BasisOwner   AccessBasis = "OWNER"
+	BasisConsent AccessBasis = "CONSENT"
+	BasisDenied  AccessBasis = "DENIED"
+)
+
+// authorizeRead is the pure object-level authorization decision for a PHI record
+// read (SC-002/003, HR-002, EC-008). Precedence, fail-closed:
+//   - an empty accessor is never authorized (no ambient/unauthenticated access);
+//   - an admin reads via the ADMIN basis (role-scoped; the admin path is itself
+//     audited and PII-masked upstream);
+//   - the data subject (owner) reads their own record;
+//   - a non-owner reads ONLY with an active consent grant (hasConsent);
+//   - everything else is denied.
+//
+// It never depends on ambient state — the caller resolves hasConsent from the
+// consent service first, so the decision is deterministic and unit-testable.
+func authorizeRead(accessorID, owner string, isAdmin, hasConsent bool) (AccessBasis, bool) {
+	if accessorID == "" {
+		return BasisDenied, false
+	}
+	switch {
+	case isAdmin:
+		return BasisAdmin, true
+	case accessorID == owner:
+		return BasisOwner, true
+	case hasConsent:
+		return BasisConsent, true
+	default:
+		return BasisDenied, false
+	}
+}
+
+// Handler — records vault routes. isAdmin is derived from the authenticated user's
+// permission set, injected by the wiring layer via the IsAdmin func.
+type Handler struct {
+	svc     *Service
+	isAdmin func(c *gin.Context) bool
+}
+
+func NewHandler(svc *Service, isAdmin func(c *gin.Context) bool) *Handler {
+	if isAdmin == nil {
+		isAdmin = func(*gin.Context) bool { return false }
+	}
+	return &Handler{svc: svc, isAdmin: isAdmin}
+}
+
+// Create — POST /records
+func (h *Handler) Create(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		OwnerUserID string  `json:"owner_user_id"` // defaults to acting user
+		SubjectType string  `json:"subject_type"`
+		RecordType  string  `json:"record_type"`
+		Title       string  `json:"title"`
+		Body        string  `json:"body"`
+		PetRef      *string `json:"pet_ref"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	owner := req.OwnerUserID
+	if owner == "" {
+		owner = id
+	}
+	// Only the data subject may create records about themselves at MVP (object-level
+	// authZ); clinician-authored records flow through consult.COMPLETE.
+	if owner != id {
+		ginutil.FailOK(c, http.StatusForbidden, "can only create records for self")
+		return
+	}
+	r, err := h.svc.Create(c.Request.Context(), owner, id, req.SubjectType, req.RecordType, req.Title, req.Body, req.PetRef)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{keySuccess: true, "record": r})
+}
+
+// Get — GET /records/:subjectId  (consent-checked; access-logged)
+func (h *Handler) Get(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	r, err := h.svc.Get(c.Request.Context(), id, c.Param("subjectId"), h.isAdmin(c))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "record": r})
+}
+
+// AddDocument — POST /records/:subjectId/docs
+func (h *Handler) AddDocument(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		StorageKey  string `json:"storage_key"`
+		ContentType string `json:"content_type"`
+		Label       string `json:"label"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	d, err := h.svc.AddDocument(c.Request.Context(), id, c.Param("subjectId"), req.StorageKey, req.ContentType, req.Label)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{keySuccess: true, "document": d})
+}
+
+// Erase — DELETE /records/:subjectId  (right-to-erasure)
+func (h *Handler) Erase(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	if err := h.svc.Erase(c.Request.Context(), id, c.Param("subjectId")); err != nil {
+		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keySuccess: true})
+}
+
+// AccessLog — GET /records/:subjectId/access-log
+func (h *Handler) AccessLog(c *gin.Context) {
+	id := ginutil.UserID(c)
+	out, err := h.svc.AccessLog(c.Request.Context(), id, c.Param("subjectId"), h.isAdmin(c))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "access_log": out})
 }

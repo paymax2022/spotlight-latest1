@@ -11,8 +11,6 @@ import (
 // updating the public verification registry. The Service is driven through a small
 // in-memory fake store + fake RoleUpgrader.
 
-// ── Credential SM: allowed + illegal transitions ────────────────────────────────
-
 func TestCanCred_Allowed(t *testing.T) {
 	if !canCred(CredPending, CredIssued) {
 		t.Error("pending→issued must be allowed")
@@ -38,8 +36,6 @@ func TestCanCred_Illegal(t *testing.T) {
 		}
 	}
 }
-
-// ── Eligibility rules (pure) ─────────────────────────────────────────────────────
 
 func sp(s string) *string { return &s }
 
@@ -77,8 +73,6 @@ func TestEligible_Rules(t *testing.T) {
 		t.Error("trade credential must not satisfy {kind: academic}")
 	}
 }
-
-// ── Fake store + upgrader ────────────────────────────────────────────────────────
 
 type fakeStore struct {
 	issued    []Credential
@@ -219,8 +213,6 @@ func newTestService(store credentialStore, up RoleUpgrader) *Service {
 	return &Service{repo: store, upgrader: up, secret: []byte("test-secret")}
 }
 
-// ── Apply idempotency: double call = one route ───────────────────────────────────
-
 func TestApply_Idempotent(t *testing.T) {
 	f := newFakeStore()
 	f.opps["opp-1"] = &EarningOpportunity{
@@ -280,8 +272,6 @@ func TestApply_NotEligible(t *testing.T) {
 		t.Error("ineligible apply must not insert an application")
 	}
 }
-
-// ── Revoke updates the public registry ───────────────────────────────────────────
 
 func TestRevoke_UpdatesRegistry(t *testing.T) {
 	f := newFakeStore()

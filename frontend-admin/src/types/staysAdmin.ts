@@ -1,4 +1,3 @@
-// ── Admin — Paymax Stays (hotel booking) ops console types ───────────────────
 // Field names mirror the Go JSON (snake_case) from /api/stays/admin/*.
 // Money is BIGINT kobo (minor units) throughout. Supplier/source-rail and FX are
 // always disclosed (PRD §5 dual-rail, §12 money/recon).
@@ -7,7 +6,6 @@ export type SourceRail = 'BEDBANK' | 'DIRECT';
 export type SupplierCode = 'ratehawk' | 'zentrumhub' | 'direct';
 export type Currency = 'NGN' | 'USD' | 'EUR' | 'GBP';
 
-// ── Dashboard (§19 overview) ─────────────────────────────────────────────────
 export interface StaysDashboardActivity {
   id: string;
   kind: string; // booking_confirmed | book_failed | refund_issued | reconciliation_break | mapping_conflict | payout_sent …
@@ -43,7 +41,6 @@ export interface StaysDashboard {
   activity: StaysDashboardActivity[];
 }
 
-// ── Suppliers / connectivity (Rail A adapters) ───────────────────────────────
 export interface Supplier {
   supplier_code: SupplierCode;
   display_name: string;
@@ -63,7 +60,6 @@ export interface Supplier {
   updated_at: string;
 }
 
-// ── Mapping / dedup queue (§5) ───────────────────────────────────────────────
 export type MappingStatus = 'pending' | 'merged' | 'split' | 'ignored';
 export interface MappingCandidate {
   supplier_code: SupplierCode;
@@ -90,7 +86,6 @@ export interface MappingResolution {
   resolved_at: string;
 }
 
-// ── Property moderation / approval (direct hotels) ───────────────────────────
 export type ModerationStatus = 'pending_review' | 'approved' | 'rejected' | 'needs_changes';
 export interface ModerationItem {
   id: string;
@@ -110,7 +105,6 @@ export interface ModerationDecision {
   decided_at: string;
 }
 
-// ── Content / photo QA ───────────────────────────────────────────────────────
 export type ContentQaStatus = 'pending' | 'passed' | 'failed';
 export interface ContentQaItem {
   id: string;
@@ -124,7 +118,6 @@ export interface ContentQaItem {
   flagged_at: string;
 }
 
-// ── Inventory coverage ───────────────────────────────────────────────────────
 export interface CoverageRow {
   city: string;
   state: string;
@@ -132,11 +125,10 @@ export interface CoverageRow {
   direct_properties: number;
   total_properties: number;
   demand_index: number; // 0..100 search demand
-  gap_score: number; // 0..100 supply gap (high = under-supplied)
+  gap_score: number;
   bookings_30d: number;
 }
 
-// ── Reservations / support (§19 B) ───────────────────────────────────────────
 export type ReservationState =
   | 'OFFER_SELECTED' | 'PREBOOK_OK' | 'PAYMENT_HELD' | 'BOOKING' | 'CONFIRMED'
   | 'COMPLETED' | 'CANCELLED_BY_GUEST' | 'CANCELLED_BY_HOTEL' | 'NO_SHOW'
@@ -193,7 +185,6 @@ export interface ReservationDetail extends ReservationSummary {
   ledger: ReservationLedgerRef[];
 }
 
-// ── Manual actions ───────────────────────────────────────────────────────────
 export type ManualActionType = 'confirm' | 'force_cancel' | 'rebook' | 'release_hold';
 export interface ManualActionResult {
   reservation_id: string;
@@ -203,7 +194,6 @@ export interface ManualActionResult {
   performed_at: string;
 }
 
-// ── Refunds & disputes (§12 paid-but-unconfirmed fast-path) ──────────────────
 export type RefundStatus = 'pending' | 'approved' | 'paid' | 'rejected';
 export interface RefundRequest {
   id: string;
@@ -225,7 +215,6 @@ export interface RefundDecision {
   decided_at: string;
 }
 
-// ── No-show / overbooking ────────────────────────────────────────────────────
 export type OverbookingStatus = 'open' | 'rebooked' | 'refunded' | 'resolved';
 export interface OverbookingCase {
   id: string;
@@ -242,7 +231,6 @@ export interface OverbookingCase {
   created_at: string;
 }
 
-// ── Reconciliation workbench (§12) ───────────────────────────────────────────
 export type BreakStatus = 'open' | 'investigating' | 'resolved';
 export interface ReconciliationBreak {
   id: string;
@@ -274,7 +262,6 @@ export interface ReconciliationSummary {
   breaks: ReconciliationBreak[];
 }
 
-// ── Hotel payouts (direct rail, Naira) ───────────────────────────────────────
 export type PayoutStatus = 'scheduled' | 'pending' | 'paid' | 'failed' | 'held';
 export interface HotelPayout {
   id: string;
@@ -291,7 +278,6 @@ export interface HotelPayout {
   paid_at: string | null;
 }
 
-// ── Markup / commission rules engine ─────────────────────────────────────────
 export interface MarkupRule {
   id: string;
   scope: 'supplier' | 'destination' | 'tier' | 'season' | 'global';
@@ -304,7 +290,6 @@ export interface MarkupRule {
   updated_at: string;
 }
 
-// ── FX & currency config ─────────────────────────────────────────────────────
 export interface FxRate {
   pair: string; // USD/NGN
   base: Currency;
@@ -324,7 +309,6 @@ export interface FxConfig {
   rates: FxRate[];
 }
 
-// ── Commission ledger / revenue ──────────────────────────────────────────────
 export interface CommissionEntry {
   id: string;
   reservation_id: string;
@@ -339,7 +323,6 @@ export interface CommissionEntry {
   created_at: string;
 }
 
-// ── Loyalty config ───────────────────────────────────────────────────────────
 export interface LoyaltyTier {
   tier: string;
   threshold_nights: number;
@@ -357,7 +340,6 @@ export interface LoyaltyConfig {
   tiers: LoyaltyTier[];
 }
 
-// ── Promotions / campaigns ───────────────────────────────────────────────────
 export type PromotionStatus = 'draft' | 'active' | 'scheduled' | 'expired' | 'paused';
 export interface Promotion {
   id: string;
@@ -374,7 +356,6 @@ export interface Promotion {
   ends_at: string;
 }
 
-// ── Reviews moderation ───────────────────────────────────────────────────────
 export type ReviewStatus = 'pending' | 'published' | 'rejected' | 'flagged';
 export interface Review {
   id: string;
@@ -395,7 +376,6 @@ export interface ReviewModeration {
   decided_at: string;
 }
 
-// ── CMS (cities / landmarks / SEO) ───────────────────────────────────────────
 export type CmsStatus = 'published' | 'draft';
 export interface CmsEntry {
   id: string;
@@ -408,7 +388,6 @@ export interface CmsEntry {
   updated_at: string;
 }
 
-// ── Merchandising / featured slots ───────────────────────────────────────────
 export interface MerchandisingSlot {
   id: string;
   placement: string; // home_hero | city_top | deal_strip | app_banner
@@ -422,7 +401,6 @@ export interface MerchandisingSlot {
   clicks: number;
 }
 
-// ── Fraud / risk console ─────────────────────────────────────────────────────
 export type FraudStatus = 'open' | 'reviewing' | 'cleared' | 'blocked';
 export interface FraudCase {
   id: string;
@@ -438,7 +416,6 @@ export interface FraudCase {
   created_at: string;
 }
 
-// ── Hotelier reliability scoring ─────────────────────────────────────────────
 export interface ReliabilityScore {
   hotelier_id: string;
   hotelier_masked: string;
@@ -453,7 +430,6 @@ export interface ReliabilityScore {
   bookings_90d: number;
 }
 
-// ── Agent management & commissions ───────────────────────────────────────────
 export interface Agent {
   id: string;
   name_masked: string;
@@ -467,7 +443,6 @@ export interface Agent {
   tier: string;
 }
 
-// ── Hotelier KYC / verification ──────────────────────────────────────────────
 export type KycStatus = 'pending' | 'approved' | 'rejected' | 'needs_info';
 export interface KycCase {
   id: string;
@@ -487,7 +462,6 @@ export interface KycDecision {
   decided_at: string;
 }
 
-// ── Platform — RBAC / audit / config / templates ─────────────────────────────
 export interface AdminUserRole {
   id: string;
   user_masked: string;

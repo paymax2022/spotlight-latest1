@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { handleApiError } from '@/src/lib/api/responses';
-import { requireRequestUser } from '@/src/lib/auth/request';
+import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 
 const FACILITY_COLS = 'id, estate_id, name, kind, capacity, fee_kobo';
@@ -21,15 +21,18 @@ function mapBooking(row: any) {
   };
 }
 
-// GET /api/admin/facilities/[id] — Get a specific facility
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+// E2E-SEC-054: gated on requireRequestUser only before; requires
+// programs:manage now. params is a Promise on this Next version — awaiting it
+// also fixes the synchronous-read 500 the route previously threw.
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   try {
-    const user = await requireRequestUser(request);
+    await assertAdminPermission(request, 'programs:manage');
     const supabase = createAdminClient();
     const { data, error } = await supabase
       .from('estate_facilities')
       .select(FACILITY_COLS)
-      .eq('id', params.id)
+      .eq('id', id)
       .single();
 
     if (error) throw error;
@@ -41,10 +44,10 @@ export async function GET(request: Request, { params }: { params: { id: string }
   }
 }
 
-// PATCH /api/admin/facilities/[id] — Update a facility
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   try {
-    const user = await requireRequestUser(request);
+    await assertAdminPermission(request, 'programs:manage');
     const supabase = createAdminClient();
     const body = await request.json();
 
@@ -59,7 +62,7 @@ export async function PATCH(request: Request, { params }: { params: { id: string
     const { data, error } = await supabase
       .from('estate_facilities')
       .update(updates)
-      .eq('id', params.id)
+      .eq('id', id)
       .select(FACILITY_COLS);
 
     if (error) throw error;

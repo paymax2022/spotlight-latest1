@@ -1,15 +1,14 @@
-// ── Association — Settings & Support API wrapper (V/W) ────────────────────────
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
 import type {
   NotificationPrefs, SecuritySettings, Device, Preferences,
   FaqItem, SupportTicket, SupportTicketSummary, TicketMessage, CreateTicketInput,
-} from '../types/settings.types';
+} from '../types';
 import {
   MOCK_NOTIF_PREFS, MOCK_SECURITY, MOCK_DEVICES, MOCK_FAQS, MOCK_TICKETS,
-} from './settings.mock';
+} from './mocks';
 
 const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
 
@@ -38,8 +37,6 @@ export async function updatePreferences(next: Preferences): Promise<Preferences>
   const { data } = await api.put(`${BASE}/me/preferences`, next);
   return data;
 }
-
-// ─── Settings ─────────────────────────────────────────────────────────────────
 
 export async function getNotificationPrefs(): Promise<NotificationPrefs> {
   if (USE_MOCK) { await delay(); return prefs; }
@@ -102,8 +99,6 @@ export async function registerMockDevice(
   devices = [created, ...devices.map((d) => ({ ...d, current: false }))];
   return { id: created.id };
 }
-
-// ─── Support ──────────────────────────────────────────────────────────────────
 
 export async function getFaqs(): Promise<FaqItem[]> {
   if (USE_MOCK) { await delay(); return MOCK_FAQS; }

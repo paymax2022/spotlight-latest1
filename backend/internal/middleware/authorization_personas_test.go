@@ -15,7 +15,6 @@ import (
 // coordinator, judge, sponsor, school rep). The goal is object/scope-level
 // authorization: a grant in one scope must NOT leak into another scope, and the
 // system must deny by default.
-//
 // We use a scope-aware fake RBAC (grantMap keyed by userID|permission|scopeType|scopeID)
 // so CheckPermission models the real "is this user allowed to do X within scope Y"
 // decision — the exact decision RequireScopedPermission delegates.
@@ -44,7 +43,6 @@ func (s *scopedRBAC) CheckPermission(userID, permission, scopeType, scopeID stri
 	return s.grants[scopeKey{userID, permission, scopeType, scopeID}], nil
 }
 
-// --- remaining RBACService methods are unused no-ops for this suite ---
 func (s *scopedRBAC) GetUserRoles(string) ([]string, error)                       { return nil, nil }
 func (s *scopedRBAC) GetUserScopes(string) ([]domain.UserScope, error)            { return nil, nil }
 func (s *scopedRBAC) GetUserPermissions(string, string, string) ([]string, error) { return nil, nil }
@@ -114,8 +112,6 @@ func doGet(r *gin.Engine, path string) int {
 	return w.Code
 }
 
-// --- Contest manager: scoped to a single contest -----------------------------
-
 func TestPersona_ContestManager_ScopedAllowAndCrossScopeDeny(t *testing.T) {
 	rbac := newScopedRBAC()
 	rbac.grant("mgr-1", "contest.manage", "contest", "contest-A")
@@ -130,8 +126,6 @@ func TestPersona_ContestManager_ScopedAllowAndCrossScopeDeny(t *testing.T) {
 	}
 }
 
-// --- State coordinator: scoped to a state ------------------------------------
-
 func TestPersona_StateCoordinator_ScopeIsolation(t *testing.T) {
 	rbac := newScopedRBAC()
 	rbac.grant("coord-lagos", "applicants.review", "state", "lagos")
@@ -145,8 +139,6 @@ func TestPersona_StateCoordinator_ScopeIsolation(t *testing.T) {
 	}
 }
 
-// --- Judge: scoped to a contest, NO write outside judging --------------------
-
 func TestPersona_Judge_CannotActOutsideAssignedContest(t *testing.T) {
 	rbac := newScopedRBAC()
 	rbac.grant("judge-1", "scores.submit", "contest", "contest-X")
@@ -159,8 +151,6 @@ func TestPersona_Judge_CannotActOutsideAssignedContest(t *testing.T) {
 		t.Errorf("judge scoring foreign contest: got %d, want 403", code)
 	}
 }
-
-// --- Sponsor: read-only on sponsored program, denied on others ---------------
 
 func TestPersona_Sponsor_DeniedWritePermission(t *testing.T) {
 	rbac := newScopedRBAC()
@@ -179,8 +169,6 @@ func TestPersona_Sponsor_DeniedWritePermission(t *testing.T) {
 	}
 }
 
-// --- School rep: scoped to a school ------------------------------------------
-
 func TestPersona_SchoolRep_ScopeBoundToOwnSchool(t *testing.T) {
 	rbac := newScopedRBAC()
 	rbac.grant("rep-1", "students.manage", "school", "school-7")
@@ -193,8 +181,6 @@ func TestPersona_SchoolRep_ScopeBoundToOwnSchool(t *testing.T) {
 		t.Errorf("rep on foreign school: got %d, want 403", code)
 	}
 }
-
-// --- Deny-by-default: an ungranted user is forbidden everywhere ---------------
 
 func TestPersona_UngrantedUser_DeniedByDefault(t *testing.T) {
 	rbac := newScopedRBAC() // no grants at all
@@ -209,8 +195,6 @@ func TestPersona_UngrantedUser_DeniedByDefault(t *testing.T) {
 	}
 }
 
-// --- Fail-closed: an RBAC backend error must DENY, never allow ----------------
-
 func TestScopedPermission_FailsClosedOnError(t *testing.T) {
 	rbac := newScopedRBAC()
 	rbac.grant("u", "p", "contest", "c") // would normally pass
@@ -220,8 +204,6 @@ func TestScopedPermission_FailsClosedOnError(t *testing.T) {
 		t.Errorf("fail-closed: got %d, want 403 when RBAC errors", code)
 	}
 }
-
-// --- Unauthenticated: no auth context -> 401 ---------------------------------
 
 func TestScopedPermission_UnauthenticatedIs401(t *testing.T) {
 	gin.SetMode(gin.TestMode)

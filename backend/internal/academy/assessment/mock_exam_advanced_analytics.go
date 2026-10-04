@@ -18,40 +18,40 @@ func NewAdvancedAnalyticsService(pool *pgxpool.Pool) *AdvancedAnalyticsService {
 
 // PerformanceTrend represents performance data over time
 type PerformanceTrend struct {
-	Date               time.Time `json:"date"`
+	Date                time.Time `json:"date"`
 	UniqueLearnersCount int       `json:"unique_learners_count"`
-	TotalAttempts      int       `json:"total_attempts"`
-	SystemAvgScore     float64   `json:"system_avg_score"`
-	SystemPassRate     float64   `json:"system_pass_rate"`
+	TotalAttempts       int       `json:"total_attempts"`
+	SystemAvgScore      float64   `json:"system_avg_score"`
+	SystemPassRate      float64   `json:"system_pass_rate"`
 }
 
 // ClassMetrics represents performance metrics for a class
 type ClassMetrics struct {
-	ClassID       string  `json:"class_id"`
-	UniqueLearnersCount int     `json:"unique_learners_count"`
-	TotalAttempts int     `json:"total_attempts"`
-	AvgScore      float64 `json:"avg_score"`
-	BestScore     float64 `json:"best_score"`
-	WorstScore    float64 `json:"worst_score"`
-	PassRate      float64 `json:"pass_rate"`
-	ExcellentRate float64 `json:"excellent_rate"`
-	FailRate      float64 `json:"fail_rate"`
-	LastAttempt   time.Time `json:"last_attempt"`
+	ClassID             string     `json:"class_id"`
+	UniqueLearnersCount int        `json:"unique_learners_count"`
+	TotalAttempts       int        `json:"total_attempts"`
+	AvgScore            float64    `json:"avg_score"`
+	BestScore           float64    `json:"best_score"`
+	WorstScore          float64    `json:"worst_score"`
+	PassRate            float64    `json:"pass_rate"`
+	ExcellentRate       float64    `json:"excellent_rate"`
+	FailRate            float64    `json:"fail_rate"`
+	LastAttempt         *time.Time `json:"last_attempt"` // nil when a class has no submitted attempts yet
 }
 
 // ExamRanking represents exam popularity and performance
 type ExamRanking struct {
-	TemplateID     string  `json:"template_id"`
-	Name           string  `json:"name"`
-	ExamType       string  `json:"exam_type"`
-	ClassID        string  `json:"class_id"`
-	TotalAttempts  int     `json:"total_attempts"`
+	TemplateID          string  `json:"template_id"`
+	Name                string  `json:"name"`
+	ExamType            string  `json:"exam_type"`
+	ClassID             string  `json:"class_id"`
+	TotalAttempts       int     `json:"total_attempts"`
 	UniqueLearnersCount int     `json:"unique_learners_count"`
-	AvgScore       float64 `json:"avg_score"`
-	PassRate       float64 `json:"pass_rate"`
-	ExcellentRate  float64 `json:"excellent_rate"`
-	PopularityRank int     `json:"popularity_rank"`
-	WeeklyAttempts int     `json:"weekly_attempts"`
+	AvgScore            float64 `json:"avg_score"`
+	PassRate            float64 `json:"pass_rate"`
+	ExcellentRate       float64 `json:"excellent_rate"`
+	PopularityRank      int     `json:"popularity_rank"`
+	WeeklyAttempts      int     `json:"weekly_attempts"`
 }
 
 // GradeDistribution represents grade counts by date
@@ -64,21 +64,21 @@ type GradeDistribution struct {
 
 // RetentionCohort represents learner retention data
 type RetentionCohort struct {
-	CohortWeek     time.Time `json:"cohort_week"`
+	CohortWeek      time.Time `json:"cohort_week"`
 	RetentionBucket string    `json:"retention_bucket"`
-	LearnerCount   int       `json:"learner_count"`
-	RetentionRate  float64   `json:"retention_rate"`
+	LearnerCount    int       `json:"learner_count"`
+	RetentionRate   float64   `json:"retention_rate"`
 }
 
 // SubjectPerformance represents subject difficulty and performance
 type SubjectPerformance struct {
-	ClassID       string  `json:"class_id"`
-	SubjectID     string  `json:"subject_id"`
-	Attempts      int     `json:"attempts"`
+	ClassID             string  `json:"class_id"`
+	SubjectID           string  `json:"subject_id"`
+	Attempts            int     `json:"attempts"`
 	UniqueLearnersCount int     `json:"unique_learners_count"`
-	AvgScore      float64 `json:"avg_score"`
-	PassRate      float64 `json:"pass_rate"`
-	DifficultyRank int     `json:"difficulty_rank"`
+	AvgScore            float64 `json:"avg_score"`
+	PassRate            float64 `json:"pass_rate"`
+	DifficultyRank      int     `json:"difficulty_rank"`
 }
 
 // GetPerformanceTrends retrieves weekly performance trends
@@ -88,8 +88,8 @@ func (s *AdvancedAnalyticsService) GetPerformanceTrends(ctx context.Context, wee
 			week_start,
 			unique_learners,
 			total_attempts,
-			system_avg_score,
-			system_pass_rate
+			COALESCE(system_avg_score, 0),
+			COALESCE(system_pass_rate, 0)
 		FROM mv_performance_trends_weekly
 		WHERE week_start >= CURRENT_DATE - INTERVAL '1 week' * $1
 		ORDER BY week_start DESC
@@ -119,12 +119,12 @@ func (s *AdvancedAnalyticsService) GetClassComparison(ctx context.Context) ([]Cl
 			class_id,
 			unique_learners,
 			total_attempts,
-			avg_score,
-			best_score,
-			worst_score,
-			pass_rate,
-			excellent_rate,
-			fail_rate,
+			COALESCE(avg_score, 0),
+			COALESCE(best_score, 0),
+			COALESCE(worst_score, 0),
+			COALESCE(pass_rate, 0),
+			COALESCE(excellent_rate, 0),
+			COALESCE(fail_rate, 0),
 			last_attempt
 		FROM mv_class_performance_analytics
 		ORDER BY avg_score DESC
@@ -155,14 +155,14 @@ func (s *AdvancedAnalyticsService) GetExamRankings(ctx context.Context, limit in
 	rows, err := s.pool.Query(ctx, `
 		SELECT
 			template_id,
-			name,
-			exam_type,
+			COALESCE(name, ''),
+			COALESCE(exam_type, ''),
 			class_id,
 			total_attempts,
 			unique_learners,
-			avg_score,
-			pass_rate,
-			excellent_rate,
+			COALESCE(avg_score, 0),
+			COALESCE(pass_rate, 0),
+			COALESCE(excellent_rate, 0),
 			popularity_rank,
 			weekly_attempts
 		FROM mv_exam_popularity_ranking
@@ -191,9 +191,9 @@ func (s *AdvancedAnalyticsService) GetGradeDistributionTrend(ctx context.Context
 	rows, err := s.pool.Query(ctx, `
 		SELECT
 			date,
-			grade,
+			COALESCE(grade, 'UNGRADED'),
 			count,
-			percentage
+			COALESCE(percentage, 0)
 		FROM mv_grade_distribution_trends
 		WHERE date >= CURRENT_DATE - INTERVAL '1 day' * $1
 		ORDER BY date DESC, grade
@@ -221,9 +221,9 @@ func (s *AdvancedAnalyticsService) GetRetentionAnalysis(ctx context.Context) ([]
 	rows, err := s.pool.Query(ctx, `
 		SELECT
 			cohort_week,
-			retention_bucket,
+			COALESCE(retention_bucket, 'UNKNOWN'),
 			learner_count,
-			retention_rate
+			COALESCE(retention_rate, 0)
 		FROM mv_learner_retention_cohorts
 		ORDER BY cohort_week DESC, retention_bucket
 	`)
@@ -252,8 +252,8 @@ func (s *AdvancedAnalyticsService) GetSubjectDifficulty(ctx context.Context, cla
 			subject_id,
 			attempts,
 			unique_learners,
-			avg_score,
-			pass_rate,
+			COALESCE(avg_score, 0),
+			COALESCE(pass_rate, 0),
 			difficulty_rank
 		FROM mv_subject_performance_comparison
 		WHERE class_id = $1
@@ -300,11 +300,11 @@ func (s *AdvancedAnalyticsService) RefreshAnalyticsViews(ctx context.Context) (m
 
 // GetAnalyticsHealth returns health information about materialized views
 type AnalyticsHealth struct {
-	ViewName       string    `json:"view_name"`
-	RowCount       int64     `json:"row_count"`
-	LastRefresh    time.Time `json:"last_refresh"`
-	RefreshTimeMs  float64   `json:"refresh_time_ms"`
-	IsHealthy      bool      `json:"is_healthy"`
+	ViewName      string    `json:"view_name"`
+	RowCount      int64     `json:"row_count"`
+	LastRefresh   time.Time `json:"last_refresh"`
+	RefreshTimeMs float64   `json:"refresh_time_ms"`
+	IsHealthy     bool      `json:"is_healthy"`
 }
 
 // GetViewsHealth checks the health of all materialized views

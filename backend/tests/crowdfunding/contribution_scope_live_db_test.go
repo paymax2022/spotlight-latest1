@@ -1,39 +1,29 @@
 package crowdfunding_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests: the per-contribution endpoints are OWNER-SCOPED.
-//
 //	GET  /crowdfunding/contributions/:id
 //	POST /crowdfunding/contributions/:id/refund-request
-//
 // WHY THIS EXISTS
-// ---------------
 // GetContribution used to read a contribution by id alone, on the reasoning
 // that "the proxy auth layer gates the caller". That gate only proves the
 // caller is *some* logged-in user — not that they are *this* contribution's
 // contributor. A contribution id is a bare uuid a client holds after paying and
 // passes around in navigation params, so any authenticated account holding one
 // could read another person's amount, campaign and payment reference.
-//
 // The endpoint is now the confirmation read the mobile contribute flow depends
 // on, which makes the scoping load-bearing rather than incidental.
-//
 // The three properties pinned here would all fail against the unscoped version:
 // the owner still reads their own row, a stranger gets ErrNotFound (the same
 // answer as a nonexistent id, so the endpoint never confirms an id it will not
 // serve), and a missing caller identity is refused rather than treated as a
 // wildcard.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL, which the root .env
 // points at the production pooler and this test INSERTs (see
 // scripts/ci/check-live-db-gate.sh).
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_Contribution -v
 //	cd backend && go test ./tests/crowdfunding/... -run LiveDB_RefundRequest -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -114,7 +104,6 @@ func TestLiveDB_ContributionReadIsOwnerScoped(t *testing.T) {
 // alone and take requester_id from the row, so a stranger could open a refund
 // dispute on someone else's contribution — correctly attributed to the real
 // contributor, which is precisely what made it invisible.
-//
 // Two properties are pinned: a stranger cannot file at all, and a stranger
 // cannot reword a request the owner already filed (the INSERT's
 // ON CONFLICT ... DO UPDATE SET reason branch was reachable by anyone).

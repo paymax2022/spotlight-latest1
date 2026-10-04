@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext, genNumericCode, toDbCodeType } from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/codes/import — bulk-create access codes from a CSV file.
+// Bulk-create access codes from a CSV file.
 // CSV columns (header row required): visitor_name,code_type,valid_from,valid_until,unit_label
 export async function POST(request: Request) {
   try {
@@ -21,7 +21,6 @@ export async function POST(request: Request) {
     const lines = text.split(/\r?\n/).filter(Boolean);
     if (lines.length < 2) throw new ApiError('CSV must have a header row and at least one data row', 400);
 
-    // Parse header.
     const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
     const idx = {
       visitor_name: headers.indexOf('visitor_name'),

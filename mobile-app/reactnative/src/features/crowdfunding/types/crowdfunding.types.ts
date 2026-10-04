@@ -1,9 +1,7 @@
-// ── Crowdfunding — Type Contract ─────────────────────────────────────────────
 // Source of truth the screens code against (Backend role owns this file).
 // IRON RULE: all monetary amounts are integers in minor units (kobo). Never floats.
 
 // The MODERATOR's column (`review_status` server-side). Owner-pausing is NOT a
-// value here — see `Campaign.paused`. Overloading this union would have let a
 // creator's Resume clear an admin's FROZEN fraud stop, and would have thrown
 // away whether a paused campaign was ACTIVE or COMPLETED underneath.
 export type CampaignStatus =
@@ -112,7 +110,7 @@ export interface RewardTier {
   description: string;
   estimatedDelivery: string | null;
   claimed: number;
-  limit: number | null;      // null = unlimited
+  limit: number | null;
   requiresShipping: boolean;
 }
 
@@ -153,7 +151,7 @@ export interface Campaign {
   raisedKobo: number;
   currency: 'NGN';
   contributorCount: number;
-  deadline: string | null;   // ISO; null = no deadline (flexible)
+  deadline: string | null;
   createdAt: string;
 
   creator: CampaignCreator;
@@ -215,8 +213,6 @@ export type CampaignSummary = Pick<
   | 'paused'
 > & { creatorName: string; creatorType: CreatorType; creatorVerification: VerificationLevel };
 
-// ─── Discovery query params ───────────────────────────────────────────────────
-
 export type CampaignSort =
   | 'recommended'
   | 'trending'
@@ -242,8 +238,6 @@ export interface CampaignQuery extends CampaignFilter {
   page?: number;
   limit?: number;
 }
-
-// ─── Contribution flow ────────────────────────────────────────────────────────
 
 export type PaymentMethod = 'WALLET' | 'CARD' | 'BANK_TRANSFER' | 'USSD';
 
@@ -319,8 +313,6 @@ export interface InitiateContributionResult {
   authorizationUrl?: string;   // for card/bank redirect
 }
 
-// ─── Creator dashboard (Section F) ────────────────────────────────────────────
-
 export interface CreatorStats {
   totalRaisedKobo: number;
   contributorCount: number;
@@ -394,8 +386,6 @@ export interface CampaignAnalytics {
   trafficSources: TrafficSource[];
 }
 
-// ─── Campaign creation (Section G) ────────────────────────────────────────────
-
 export interface DraftBudgetItem {
   id: string;
   label: string;
@@ -428,7 +418,7 @@ export interface CampaignDraftInput {
   videoUri: string | null;
   goalKobo: number;
   currency: 'NGN';
-  deadline: string | null;        // ISO; null = no deadline
+  deadline: string | null;
   location: string;
   beneficiaryName: string;
   beneficiaryRelationship: string;
@@ -447,8 +437,6 @@ export interface SubmitCampaignResult {
   reference: string;
 }
 
-// ─── Owner self-management (Section G2) ───────────────────────────────────────
-
 /**
  * Patch body for `PATCH /creator/campaigns/:id`. Every key is OPTIONAL and the
  * server applies subset semantics: an absent key is left unchanged. That is why
@@ -464,8 +452,6 @@ export interface CampaignEditInput {
   coverImage?: string | null;
   goalKobo?: number;
 }
-
-// ─── Wallet, ledger & withdrawal (Section I) ──────────────────────────────────
 
 export interface CampaignWalletSummary {
   campaignId: string;
@@ -513,8 +499,6 @@ export interface BankAccount {
   isDefault: boolean;
 }
 
-// ─── Support & disputes (Section O) ───────────────────────────────────────────
-
 export type TicketStatus = 'OPEN' | 'PENDING' | 'RESOLVED' | 'CLOSED';
 
 export type TicketCategory =
@@ -557,8 +541,6 @@ export interface HelpArticle {
   topic: string;
 }
 
-// ─── Notifications (Section N) ────────────────────────────────────────────────
-
 export type AppNotificationType =
   | 'CONTRIBUTION_RECEIVED'
   | 'GOAL_MILESTONE'
@@ -579,8 +561,6 @@ export interface AppNotification {
   campaignId: string | null;
 }
 
-// ─── Reward fulfilment (Section K) ────────────────────────────────────────────
-
 export type RewardFulfilmentStatus =
   | 'PENDING_PRODUCTION'
   | 'READY'
@@ -600,8 +580,6 @@ export interface RewardBacker {
   claimedAt: string;
 }
 
-// ─── Settings (Section P) ─────────────────────────────────────────────────────
-
 export interface NotificationPrefs {
   push: boolean;
   email: boolean;
@@ -610,8 +588,6 @@ export interface NotificationPrefs {
   campaignUpdates: boolean;
   marketing: boolean;
 }
-
-// ─── Updates & communication (Section H) ──────────────────────────────────────
 
 export interface CommentReply {
   id: string;

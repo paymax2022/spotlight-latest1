@@ -1,17 +1,14 @@
 package restaurantpayout_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test for the merchant order-management happy path (slice 3): the
 // restaurant owner advances a placed order through the kitchen-side lifecycle
 // pending → confirmed → preparing → ready. Marking `ready` kicks off rider
 // auto-dispatch; a dispatch hiccup in the test env (no geocoder / no riders)
 // must NOT roll back the transition (service.transitionInternal contract), so
 // the status must still land on `ready`.
-//
 // This locks the state transitions the merchant order-detail screen drives
 // (app/food/restaurant/order/[orderId].tsx: Confirm → Start preparing →
 // Mark ready). Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

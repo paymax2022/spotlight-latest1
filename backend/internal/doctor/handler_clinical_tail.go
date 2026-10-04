@@ -4,20 +4,19 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
 )
 
 // handler_clinical_tail.go — Gin handlers for the "clinical tail" endpoint groups
 // (appointment transitions, rich clinical notes, prescription lifecycle, call
 // disputes/feedback, chat state/annotations, emergency cases/escalations, AI
 // read-back, HMO eligibility).
-//
 // One handler per service_clinical_tail.go method. Reuses the shared helpers from
-// handler.go / handler_account.go (h.userID, h.fail, h.idemKey, h.rawBody). Reads
+// handler.go / handler_account.go (h.userID, h.fail, h.rawBody). Reads
 // return 200; creates return 201; transitions return 200. Mutations on tables with a
 // UNIQUE idempotency_key require the Idempotency-Key header (the service enforces it).
 // Everything is scoped to the authenticated doctor.
-
-// ══ APPOINTMENT TRANSITIONS ═════════════════════════════════════════════════
 
 func (h *Handler) StartAppointment(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -87,8 +86,6 @@ func (h *Handler) MarkNoShow(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
-// ══ CLINICAL NOTES ══════════════════════════════════════════════════════════
-
 func (h *Handler) GetClinicalNote(c *gin.Context) {
 	uid, ok := h.userID(c)
 	if !ok {
@@ -111,7 +108,7 @@ func (h *Handler) SaveClinicalNote(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SaveClinicalNote(c.Request.Context(), uid, c.Param("appointmentId"), h.idemKey(c), raw)
+	res, err := h.svc.SaveClinicalNote(c.Request.Context(), uid, c.Param("appointmentId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -153,8 +150,6 @@ func (h *Handler) ShareClinicalNote(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
-// ══ PRESCRIPTIONS ═══════════════════════════════════════════════════════════
-
 func (h *Handler) GetIssuedPrescription(c *gin.Context) {
 	uid, ok := h.userID(c)
 	if !ok {
@@ -173,7 +168,7 @@ func (h *Handler) IssuePrescription(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.IssuePrescription(c.Request.Context(), uid, c.Param("id"), h.idemKey(c))
+	res, err := h.svc.IssuePrescription(c.Request.Context(), uid, c.Param("id"), ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -254,15 +249,13 @@ func (h *Handler) RequestRefillConsultation(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.RequestRefillConsultation(c.Request.Context(), uid, c.Param("id"), h.idemKey(c), raw)
+	res, err := h.svc.RequestRefillConsultation(c.Request.Context(), uid, c.Param("id"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, res)
 }
-
-// ══ CALLS ═══════════════════════════════════════════════════════════════════
 
 func (h *Handler) GetCallPreCheck(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -299,7 +292,7 @@ func (h *Handler) DisputeCall(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.DisputeCall(c.Request.Context(), uid, c.Param("appointmentId"), h.idemKey(c), raw)
+	res, err := h.svc.DisputeCall(c.Request.Context(), uid, c.Param("appointmentId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -340,8 +333,6 @@ func (h *Handler) SwitchCallProvider(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, res)
 }
-
-// ══ CHAT ════════════════════════════════════════════════════════════════════
 
 func (h *Handler) GetChatPresence(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -404,7 +395,7 @@ func (h *Handler) SendChatAttachment(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SendChatAttachment(c.Request.Context(), uid, c.Param("threadId"), h.idemKey(c), raw)
+	res, err := h.svc.SendChatAttachment(c.Request.Context(), uid, c.Param("threadId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -421,7 +412,7 @@ func (h *Handler) SendChatVoice(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.SendChatVoice(c.Request.Context(), uid, c.Param("threadId"), h.idemKey(c), raw)
+	res, err := h.svc.SendChatVoice(c.Request.Context(), uid, c.Param("threadId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -510,8 +501,6 @@ func (h *Handler) AnnotateChatMessage(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
-// ══ EMERGENCY ═══════════════════════════════════════════════════════════════
-
 func (h *Handler) GetEmergencyCase(c *gin.Context) {
 	uid, ok := h.userID(c)
 	if !ok {
@@ -534,7 +523,7 @@ func (h *Handler) CreateEmergencyCase(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.CreateEmergencyCase(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.CreateEmergencyCase(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -551,7 +540,7 @@ func (h *Handler) NotifyEmergencyContact(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.NotifyEmergencyContact(c.Request.Context(), uid, c.Param("patientId"), h.idemKey(c), raw)
+	res, err := h.svc.NotifyEmergencyContact(c.Request.Context(), uid, c.Param("patientId"), ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -568,7 +557,7 @@ func (h *Handler) EscalateAmbulance(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.EscalateAmbulance(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.EscalateAmbulance(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -585,15 +574,13 @@ func (h *Handler) EscalateHospital(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.EscalateHospital(c.Request.Context(), uid, h.idemKey(c), raw)
+	res, err := h.svc.EscalateHospital(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, res)
 }
-
-// ══ AI READ-BACK (advisory; nothing is stored) ══════════════════════════════
 
 func (h *Handler) GetStoredNoteSummary(c *gin.Context) {
 	uid, ok := h.userID(c)
@@ -633,8 +620,6 @@ func (h *Handler) GetStoredLabExplanation(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, res)
 }
-
-// ══ HMO ELIGIBILITY ═════════════════════════════════════════════════════════
 
 func (h *Handler) GetHMOEligibility(c *gin.Context) {
 	uid, ok := h.userID(c)

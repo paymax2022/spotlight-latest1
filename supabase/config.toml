@@ -67,7 +67,7 @@ enabled = true
 # is seeded idempotently by migrations (e.g. 20260527100000_enterprise_auth_rbac.sql),
 # so prod gets it via `db push`. rbac_seed.sql below is redundant-but-idempotent
 # convenience; seed_voting_engine.sql is demo data for local development only.
-sql_paths = ["./seeds/rbac_seed.sql", "./seed_voting_engine.sql"]
+sql_paths = ["./seeds/rbac_seed.sql", "./seed_voting_engine.sql", "./seeds/insurance_products.sql"]
 
 [db.network_restrictions]
 # Enable management of network restrictions.
@@ -160,7 +160,7 @@ site_url = "http://127.0.0.1:3000"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000"]
+additional_redirect_urls = ["https://127.0.0.1:3000", "http://localhost:3000", "http://localhost:3000/**", "http://localhost:3000/auth/reset-password", "http://127.0.0.1:3000", "http://127.0.0.1:3000/**", "http://127.0.0.1:3000/auth/reset-password"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.

@@ -1,10 +1,8 @@
 'use client';
 
 // Meetings authoring — agenda, mode/state, attendance code, minutes.
-//
 // assoc_meetings had reads and no writer, so RSVP and check-in had nothing to
 // attach to. The attendance code is issued by the backend on create
-// (generateAttendanceCode) and is what the member app checks in against; there
 // is no separate "issue code later" route, which is why the toggle is only
 // offered on the create form and shown read-only afterwards.
 

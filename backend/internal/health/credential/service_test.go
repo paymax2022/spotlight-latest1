@@ -9,8 +9,6 @@ import (
 	providers "spotlight/backend/internal/health/providers"
 )
 
-// ---- fakes (no DB) ----
-
 type fakeStore struct {
 	records   map[string]*VerificationRecord
 	meta      map[string]*AppMeta // applicationID → meta
@@ -179,8 +177,6 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// ---- helpers ----
-
 const (
 	vetOwner = "owner-vet-1"
 	appID    = "app-1"
@@ -211,8 +207,6 @@ func validSubmit() SubmitInput {
 		},
 	}
 }
-
-// ---- 1. record state machine (allowed + rejected) ----
 
 func TestRecordStateMachine(t *testing.T) {
 	allow := []struct{ from, to Status }{
@@ -247,8 +241,6 @@ func TestPublicStageNeverLeaksRegisterData(t *testing.T) {
 	}
 }
 
-// ---- 2. identity cross-check ----
-
 func TestComputeMatchedFields(t *testing.T) {
 	dob := "1990-01-01"
 	m := computeMatchedFields("jane  DOE", "1990-01-01", IdentitySnapshot{FullName: "Jane Doe", DOB: &dob, KYCTier: 1})
@@ -273,8 +265,6 @@ func TestComputeMatchedFields(t *testing.T) {
 		t.Error("unverifiable must not be a hard flag")
 	}
 }
-
-// ---- 3. Submit ----
 
 func TestSubmit_HappyPath(t *testing.T) {
 	svc, store, prov, audit, _ := newHarness(t)
@@ -329,8 +319,6 @@ func TestSubmit_IdentityFlagSurfaced(t *testing.T) {
 		t.Errorf("expected identity mismatch flag, got %v", rec.MatchedFields)
 	}
 }
-
-// ---- 4. Decide: authZ / idempotency / capability grant / expiry ----
 
 func TestDecide_NoSelfApproval(t *testing.T) {
 	svc, store, _, _, _ := newHarness(t)
@@ -406,8 +394,6 @@ func TestDecide_IllegalTransition(t *testing.T) {
 	}
 }
 
-// ---- 5. licence-expiry auto-suspend (HL-2) ----
-
 func TestRunLicenceSweep_AutoSuspends(t *testing.T) {
 	svc, _, prov, audit, _ := newHarness(t)
 	prov.suspendReturn = 2
@@ -422,8 +408,6 @@ func TestRunLicenceSweep_AutoSuspends(t *testing.T) {
 		t.Error("expected auto-suspend audit (HL-12)")
 	}
 }
-
-// ---- 6. NDPA: document access is access-logged + signed-URL gated ----
 
 func TestDocSignedURL_AccessLoggedAndGated(t *testing.T) {
 	svc, store, _, audit, _ := newHarness(t)

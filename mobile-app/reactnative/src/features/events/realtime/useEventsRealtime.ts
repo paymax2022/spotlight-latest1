@@ -1,5 +1,3 @@
-// ── Events realtime (SSE) client ─────────────────────────────────────────────
-//
 // Opt-in Server-Sent Events push for the organiser's live check-in feed. When
 // a scan is accepted (backend: Service.publishCheckinSafe, called from
 // ScanTicket), the organiser and any current stewards for that event get an
@@ -8,7 +6,6 @@
 // immediately instead of waiting for the next poll. The normal poll on those
 // queries stays in place as the safety net — this hook only ADDS
 // invalidations, it never replaces them.
-//
 // Same transport, same gating, same shared /api/v1/realtime/stream connection
 // as useMarketplaceRealtime — see that file's header comment for the full
 // rationale (react-native-sse for custom headers, auto-reconnect, the
@@ -23,13 +20,14 @@ import { useQueryClient } from '@tanstack/react-query';
 import EventSource from 'react-native-sse';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getDevUrl } from '@/lib/devUrl';
+import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 import { useAuthStore } from '@/store/authStore';
 import { USE_MOCK } from '../constants/events.constants';
 import { KEYS } from '../hooks';
 
 const REALTIME_ENABLED = (process.env.EXPO_PUBLIC_REALTIME_ENABLED ?? 'false') === 'true';
 
-const BASE_URL = getDevUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:3000');
+const BASE_URL = getDevUrl(resolveApiBaseUrl());
 
 type EventsSSEEvent = 'events.checkin';
 

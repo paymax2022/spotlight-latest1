@@ -1,4 +1,3 @@
-// ── Paymax Invest · Crypto — Data hooks ──────────────────────────────────────
 // React Query hooks mirroring useFx.ts so screens stay declarative and share the
 // same caching / loading / error contracts. Money mutations attach an
 // Idempotency-Key (iron rule) and invalidate portfolio + transactions on success.
@@ -21,13 +20,9 @@ import type {
 
 const KEY = 'crypto';
 
-// ─── Eligibility ──────────────────────────────────────────────────────────────
-
 export function useCryptoEligibility() {
   return useQuery({ queryKey: [KEY, 'eligibility'], queryFn: crypto.getEligibility, staleTime: 60_000 });
 }
-
-// ─── Assets & chart ─────────────────────────────────────────────────────────--
 
 export function useAssets() {
   return useQuery({ queryKey: [KEY, 'assets'], queryFn: crypto.getAssets, staleTime: 20_000, refetchInterval: 30_000 });
@@ -51,13 +46,9 @@ export function useChart(symbol: string | undefined, range: ChartRange) {
   });
 }
 
-// ─── Quotes ─────────────────────────────────────────────────────────────────--
-
 export function useCreateQuote() {
   return useMutation({ mutationFn: (req: QuoteRequest) => crypto.createQuote(req) });
 }
-
-// ─── Buy / sell (money mutations → Idempotency-Key) ───────────────────────────
 
 export function useExecuteBuy() {
   const qc = useQueryClient();
@@ -83,8 +74,6 @@ export function useExecuteSell() {
   });
 }
 
-// ─── Swap ─────────────────────────────────────────────────────────────────────
-
 export function useCreateSwapQuote() {
   return useMutation({ mutationFn: (draft: SwapDraft) => crypto.createSwapQuote(draft) });
 }
@@ -101,8 +90,6 @@ export function useExecuteSwap() {
   });
 }
 
-// ─── Portfolio & positions ────────────────────────────────────────────────────
-
 export function useCryptoPortfolio() {
   return useQuery({ queryKey: [KEY, 'portfolio'], queryFn: crypto.getPortfolio, staleTime: 15_000 });
 }
@@ -110,8 +97,6 @@ export function useCryptoPortfolio() {
 export function usePositions() {
   return useQuery({ queryKey: [KEY, 'positions'], queryFn: crypto.getPositions, staleTime: 15_000 });
 }
-
-// ─── Transactions ─────────────────────────────────────────────────────────────
 
 export function useCryptoTransactions(side?: 'buy' | 'sell') {
   return useQuery({
@@ -129,8 +114,6 @@ export function useCryptoTransaction(id?: string) {
   });
 }
 
-// ─── Deposit ──────────────────────────────────────────────────────────────────
-
 export function useDepositAddress(symbol?: string, networkId?: string) {
   return useQuery({
     queryKey: [KEY, 'deposit-address', symbol, networkId],
@@ -139,8 +122,6 @@ export function useDepositAddress(symbol?: string, networkId?: string) {
     staleTime: 5 * 60_000,
   });
 }
-
-// ─── Watchlist ────────────────────────────────────────────────────────────────
 
 export function useWatchlist() {
   return useQuery({ queryKey: [KEY, 'watchlist'], queryFn: crypto.getWatchlist, staleTime: 20_000 });
@@ -154,8 +135,6 @@ export function useToggleWatchlist() {
     onSettled: () => qc.invalidateQueries({ queryKey: [KEY, 'watchlist'] }),
   });
 }
-
-// ─── Price alerts ─────────────────────────────────────────────────────────────
 
 export function useAlerts() {
   return useQuery({ queryKey: [KEY, 'alerts'], queryFn: crypto.getAlerts, staleTime: 30_000 });
@@ -176,8 +155,6 @@ export function useDeleteAlert() {
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'alerts'] }),
   });
 }
-
-// ─── Withdrawal address book ──────────────────────────────────────────────────
 
 export function useAddresses(symbol?: string) {
   return useQuery({
@@ -206,8 +183,6 @@ export function useDeleteAddress() {
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'addresses'] }),
   });
 }
-
-// ─── Withdrawal ───────────────────────────────────────────────────────────────
 
 export function useWithdrawalEligibility() {
   return useQuery({ queryKey: [KEY, 'withdrawal-eligibility'], queryFn: crypto.getWithdrawalEligibility, staleTime: 60_000 });

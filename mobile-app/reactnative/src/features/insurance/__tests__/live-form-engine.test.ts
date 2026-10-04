@@ -1,6 +1,5 @@
 // The schema-driven form engine — the piece the whole buy flow rests on.
 //   node --experimental-strip-types --test src/features/insurance/__tests__/live-form-engine.test.ts
-//
 // Every schema below is a real MyCover one, verified live (see
 // docs/prd/Insurance/MYCOVER-API-MAP.md). Testing against invented schemas would
 // prove nothing — the point of this module is that it handles the ones that
@@ -32,7 +31,6 @@ const f = (over: Partial<Field> & { name: string }): Field => ({
   ...over,
 });
 
-// ── Bastion health family, verified live ────────────────────────────────────
 const BASTION: Field[] = [
   f({ name: 'first_name', label: 'First name', required: true, minLength: 2 }),
   f({ name: 'last_name', label: 'Last name', required: true, minLength: 2 }),
@@ -55,7 +53,6 @@ const BASTION: Field[] = [
   f({ name: 'product_id', label: 'Product', type: 'text', required: true, hidden: true }),
 ];
 
-// ── Validation ──────────────────────────────────────────────────────────────
 test('NIN must be exactly 11 digits, as the provider enforces', () => {
   const nin = BASTION.find((x) => x.name === 'nin')!;
   assert.equal(validateField(nin, '12345678901'), null);
@@ -105,7 +102,6 @@ test('optional and blank passes everything else', () => {
   assert.equal(validateField(opt, ''), null);
 });
 
-// ── Dependent fields ────────────────────────────────────────────────────────
 test('a dependent field is hidden, unvalidated and unsent until its controller matches', () => {
   const fields = [
     f({ name: 'is_business_policy', label: 'Business', type: 'boolean', required: true }),
@@ -148,7 +144,6 @@ test('an options-only dependency does not hide the field, it gates the lookup', 
   assert.equal(optionsQueryFor(f({ name: 'colour', remoteOptions: true }), {}), null);
 });
 
-// ── Hidden / system fields ──────────────────────────────────────────────────
 test('product_id is submitted but never shown or demanded of the user', () => {
   const values: FormValues = { product_id: 'b0d0f39c-0b8a-452f-a876-78bef8de3347' };
   const hidden = BASTION.find((x) => x.name === 'product_id')!;
@@ -157,7 +152,6 @@ test('product_id is submitted but never shown or demanded of the user', () => {
   assert.equal(buildInputs([hidden], values).product_id, values.product_id);
 });
 
-// ── Step chunking ───────────────────────────────────────────────────────────
 test('a small schema stays on one page', () => {
   const small = BASTION.slice(0, 4);
   const steps = buildSteps({ fields: small }, {});
@@ -202,7 +196,6 @@ test('nested blocks and repeating groups get a step of their own', () => {
   for (const s of composite) assert.equal(s.fields.length, 1);
 });
 
-// ── Server-error attribution ────────────────────────────────────────────────
 test('a server field error routes to the step that owns the input', () => {
   const steps = buildSteps({ fields: BASTION }, {});
   const target = firstErroredStep(steps, { nin: 'nin must be exactly 11 characters' });
@@ -222,7 +215,6 @@ test('validateStep only judges its own step', () => {
   }
 });
 
-// ── Payload building ────────────────────────────────────────────────────────
 test('the payload carries typed values, nested objects and repeating rows', () => {
   const fields = [
     f({ name: 'value', label: 'Value', type: 'money', required: true }),
@@ -261,7 +253,6 @@ test('the declared value a percentage plan is rated on is found in kobo', () => 
   assert.equal(declaredValueKobo(fields, {}), 0);
 });
 
-// ── Prefill ─────────────────────────────────────────────────────────────────
 test('prefill fills only declared fields and never overwrites the user', () => {
   const seeded = prefillFromProfile(
     BASTION,
@@ -275,7 +266,6 @@ test('prefill fills only declared fields and never overwrites the user', () => {
   assert.equal(seeded.nin, undefined); // not in the profile, so not invented
 });
 
-// ── Plans & pricing levers ──────────────────────────────────────────────────
 test('sibling plans group by family and always include the product itself', () => {
   const plan = (code: string, familyCode: string) => ({ code, familyCode, productLine: 'health' });
   const catalog = [plan('a', 'bastion'), plan('b', 'bastion'), plan('c', 'goxi')];

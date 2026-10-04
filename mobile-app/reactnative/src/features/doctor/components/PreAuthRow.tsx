@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import StatusBadge from './StatusBadge';
 import type { StatusTone } from './StatusBadge';
 
@@ -20,7 +20,6 @@ interface Props {
 }
 
 // New component: a pre-authorisation list row (Section O). Mirrors the existing
-// ClaimRow / ReferralRow list-card pattern but for a PreAuthRequest; no shared
 // row component takes a service + ref + amount + status, so this row keeps the
 // pre-auth list consistent with the rest of the doctor list screens.
 export default function PreAuthRow({ service, reference: paRef, provider, patientName, amountLabel, statusLabel, statusTone, onPress }: Props) {

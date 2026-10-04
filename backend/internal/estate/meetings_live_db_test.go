@@ -1,25 +1,20 @@
 package estate
 
-// ---------------------------------------------------------------------------
 // LIVE-DB UAT for the Estate module's meeting FSM (meetings.go — transitionMeeting,
 // CancelMeeting, RescheduleMeeting) and the election concurrent-vote path
 // (service.go — CastVote). Closes docs/qa/modules/estate.md ESTATE-FSM-009..013
 // and ESTATE-CONC-002 — the last two remaining P0/P1 cases in the Estate UAT
 // plan; everything else (money-path, authz, admin console, resident mobile
 // journey) was live-tested and fixed in prior batches this session.
-//
 // Follows the exact conventions of service_dues_live_db_test.go /
 // vendor_payout_live_db_test.go: TEST_DATABASE_URL-gated pgxpool via
 // t.Cleanup, real seed data (estate + estate_admin + resident rows), package
 // `estate` (not `estate_test`) so unexported helpers are reachable if needed.
-//
 // Run:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/estate/... -run TestLiveDB_Meeting -v
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/estate/... -run TestLiveDB_Vote -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -31,8 +26,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// ── pool / service wiring ─────────────────────────────────────────────────
 
 func estateMeetingsTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -80,8 +73,6 @@ func meetingStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, meetin
 	return s
 }
 
-// ── ESTATE-FSM-009 ───────────────────────────────────────────────────────────
-
 func TestLiveDB_Meeting_StartMeeting_ScheduledToLive(t *testing.T) {
 	pool := estateMeetingsTestPool(t)
 	ctx := context.Background()
@@ -102,8 +93,6 @@ func TestLiveDB_Meeting_StartMeeting_ScheduledToLive(t *testing.T) {
 	}
 }
 
-// ── ESTATE-FSM-010 ───────────────────────────────────────────────────────────
-
 func TestLiveDB_Meeting_EndMeeting_LiveToEnded(t *testing.T) {
 	pool := estateMeetingsTestPool(t)
 	ctx := context.Background()
@@ -123,8 +112,6 @@ func TestLiveDB_Meeting_EndMeeting_LiveToEnded(t *testing.T) {
 		t.Errorf("MEETING_END audit rows = %d, want 1", n)
 	}
 }
-
-// ── ESTATE-FSM-011 ───────────────────────────────────────────────────────────
 
 func TestLiveDB_Meeting_CancelMeeting_FromScheduledOrLive(t *testing.T) {
 	pool := estateMeetingsTestPool(t)
@@ -149,8 +136,6 @@ func TestLiveDB_Meeting_CancelMeeting_FromScheduledOrLive(t *testing.T) {
 		})
 	}
 }
-
-// ── ESTATE-FSM-012 ───────────────────────────────────────────────────────────
 
 func TestLiveDB_Meeting_RescheduleMeeting_BackToScheduled(t *testing.T) {
 	pool := estateMeetingsTestPool(t)
@@ -183,8 +168,6 @@ func TestLiveDB_Meeting_RescheduleMeeting_BackToScheduled(t *testing.T) {
 		})
 	}
 }
-
-// ── ESTATE-FSM-013 ───────────────────────────────────────────────────────────
 
 func TestLiveDB_Meeting_TerminalStates_RejectAllTransitions(t *testing.T) {
 	pool := estateMeetingsTestPool(t)
@@ -242,8 +225,6 @@ func TestLiveDB_Meeting_TerminalStates_RejectAllTransitions(t *testing.T) {
 		})
 	}
 }
-
-// ── ESTATE-CONC-002 ──────────────────────────────────────────────────────────
 
 // seedOpenElection creates an election directly at status='open' with two
 // candidates and no eligibility rules row (loadEligibilityRules' fast path:

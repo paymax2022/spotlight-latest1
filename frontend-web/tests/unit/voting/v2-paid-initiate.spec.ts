@@ -66,7 +66,6 @@ describe('POST /api/v2/votes/paid/initiate', () => {
 
     // The bug this fixes: the broken version never called initiatePaidVote()
     // at all, so it never ran the voting-open/package-pricing validation
-    // that function performs.
     expect(vi.mocked(initiatePaidVote)).toHaveBeenCalledOnce();
     expect(vi.mocked(initiatePaidVote)).toHaveBeenCalledWith(
       makeInitiateBody(),

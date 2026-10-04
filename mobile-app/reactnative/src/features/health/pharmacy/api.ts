@@ -1,4 +1,3 @@
-// ── Paymax Health — Pharmacy API layer (Phase 1) ─────────────────────────────
 // Self-contained, mock-first data layer for the Pharmacy vertical. Reuses the
 // shared USE_MOCK flag + HEALTH_API_BASE; live endpoints live under /pharmacy.
 // IRON RULES: kobo only · HL-3 Rx gating · HL-5 NAFDAC catalog · HL-9 held payment
@@ -7,7 +6,7 @@
 import { api } from '@/api/client';
 import { USE_MOCK, HEALTH_API_BASE } from '../constants/health.constants';
 import { uploadProviderCredential, addProviderCredential } from '../api';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type {
   PharmacyProduct,
   PharmacyVendor,
@@ -36,7 +35,6 @@ const PHARMACY_API = `${HEALTH_API_BASE}/pharmacy`;
 const PROVIDERS_API = `${HEALTH_API_BASE}/providers`;
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
-// ── Mock data ─────────────────────────────────────────────────────────────────
 const MOCK_PRODUCTS: PharmacyProduct[] = [
   {
     id: 'prod_amox',
@@ -369,8 +367,6 @@ const MOCK_REVIEWS: PharmacyReview[] = [
   { id: 'rv_2', author: 'Funke A.', rating: 4, body: 'Good service, packaging was discreet. Delivery was slightly late.', at: new Date(Date.now() - 9 * 86_400_000).toISOString() },
 ];
 
-// ── Customer: catalog ─────────────────────────────────────────────────────────
-
 // Deterministic thumbnail tint so the same product always renders the same colour
 // (the minimal backend catalog carries no image/colour of its own).
 const PRODUCT_TINTS = [
@@ -383,10 +379,8 @@ function tintForId(id: string): string {
   return PRODUCT_TINTS[h];
 }
 
-// Map the backend's minimal money-path product row (snake_case; see Go
 // pharmacy.Product) onto the richer mobile PharmacyProduct display shape.
 // Fields the backend does not (yet) store — brand/form/description/rating/
-// manufacturer — default to empty/zero so the card still renders; the card and
 // detail screens already guard on these. pharmacyId/pharmacyName carry the
 // owning-pharmacy attribution added in ADR-017.
 function mapProduct(raw: any): PharmacyProduct {
@@ -397,7 +391,6 @@ function mapProduct(raw: any): PharmacyProduct {
     name: raw.name ?? '',
     brand: raw.brand ?? '',
     form: raw.form ?? '',
-    // Backend has no category column; approximate from the Rx flag so the
     // category filter still buckets sensibly until the catalog model is enriched.
     category: raw.rx_required ? 'prescription' : 'otc',
     priceKobo: raw.price_kobo ?? 0,
@@ -446,9 +439,7 @@ export async function getProduct(id: string): Promise<PharmacyProduct> {
   return mapProduct(data.product);
 }
 
-// ── Customer: pharmacies ───────────────────────────────────────────────────────
 // GET /pharmacy/pharmacies — multi-pharmacy discovery (ADR-017). Sorted by
-// PostGIS distance when lat/lng are supplied, otherwise by rating/name; the
 // server resolves the actual sort (see backend resolveSort) so a caller
 // without coordinates gets a sensible rating-sorted list rather than an error.
 export interface DiscoverPharmaciesOpts {
@@ -460,7 +451,6 @@ export interface DiscoverPharmaciesOpts {
   q?: string;
 }
 
-// The Go handler returns snake_case (health_providers-shaped) JSON; this app's
 // types are camelCase, so live responses are mapped explicitly rather than
 // assumed pass-through-compatible with the mock shape.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -510,14 +500,11 @@ export async function getPharmacy(id: string): Promise<PharmacyVendor> {
   return mapPharmacyProfile(data.pharmacy);
 }
 
-// ── Customer: prescriptions (HL-3) ────────────────────────────────────────────
-
 // The backend's list route (GET /prescriptions) returns { success, prescriptions }
 // where each row is the narrow PrescriptionSummary read model (see Go
 // healthpharmacy.PrescriptionSummary) — id/state/prescriber_id/pharmacy_provider_id/
 // reject_reason/item_count/created_at only. It carries no item names, patient
 // name, pharmacy/pharmacist name, or verified-at timestamp, so those fields
-// default to empty/absent here rather than being invented; the screens that
 // render this list (home banner, Rx wallet) already fall back gracefully when
 // `items` is empty.
 const RX_STATUS_FROM_STATE: Record<string, RxStatus> = {
@@ -579,7 +566,6 @@ function mapPrescription(raw: any): Prescription {
 // GET /health/prescriptions/:id — NOT under PHARMACY_API (/health/pharmacy/...):
 // this route is owned by the rx package and mounted directly under /health
 // (backend/internal/app/health_routes.go), so it used to 404 at
-// .../health/pharmacy/prescriptions/:id (an extra /pharmacy segment that isn't
 // part of the real path).
 export async function getPrescription(id: string): Promise<Prescription> {
   if (USE_MOCK) {
@@ -613,8 +599,6 @@ export async function uploadPrescription(input: { patientName: string; note?: st
   return data;
 }
 
-// ── Customer: orders (HL-9 payment HELD; Idempotency-Key) ─────────────────────
-
 const ORDER_STATUS_FROM_STATE: Record<string, OrderStatus> = {
   CREATED: 'created',
   RX_PENDING_VERIFICATION: 'rx_pending',
@@ -629,7 +613,6 @@ const ORDER_STATUS_FROM_STATE: Record<string, OrderStatus> = {
   REFUNDED: 'refunded',
 };
 
-// Map the backend's minimal money-path order row (snake_case; see Go
 // pharmacy.Order/OrderLine) onto the richer mobile PharmacyOrder display
 // shape. The backend has no `reference` (falls back to the order id), no
 // `subtotalKobo`/`deliveryFeeKobo` split (total_kobo only, so the whole
@@ -774,7 +757,6 @@ export async function reorder(orderId: string): Promise<PharmacyOrder['lines']> 
   return data;
 }
 
-// ── Customer: medications & refills ───────────────────────────────────────────
 export async function getMedications(): Promise<MedicationItem[]> {
   if (USE_MOCK) {
     await delay();
@@ -806,7 +788,6 @@ export async function scheduleRefill(id: string, autoRefill: boolean): Promise<R
   return data;
 }
 
-// ── Customer: ratings ─────────────────────────────────────────────────────────
 // GET /pharmacy/pharmacies/{id}/reviews (ADR-017) — the live surface is always
 // scoped to a specific pharmacy; there is no cross-pharmacy review feed.
 export async function getReviews(pharmacyId?: string): Promise<PharmacyReview[]> {
@@ -851,7 +832,6 @@ export async function submitReview(input: SubmitReviewInput): Promise<PharmacyRe
   return { id: r.id, author: 'You', rating: r.rating, body: r.body, at: r.created_at, orderRef: input.orderId };
 }
 
-// ── Customer: pharmacist consult (lightweight chat) ───────────────────────────
 let CONSULT_THREAD: PharmacistConsultMessage[] = [
   { id: 'pc_1', fromPharmacist: true, author: 'Pharm. Grace E.', body: 'Hello! How can I help with your medication today?', at: new Date(Date.now() - 8 * 60_000).toISOString() },
 ];
@@ -876,27 +856,20 @@ export async function sendConsultMessage(body: string): Promise<PharmacistConsul
   return data;
 }
 
-// ── Provider: onboarding (HL-2) ───────────────────────────────────────────────
 // `${PHARMACY_API}/provider/onboarding[/submit]` was never implemented backend
 // side — backend/internal/app/health_pharmacy_routes.go has no /provider group
-// at all, so both calls 404'd on every non-mock request; onboarding could never
 // actually complete. A real, working generic provider-application backend
 // already exists (backend/internal/health/providers/*, mounted at
 // /api/finance/health/providers/applications*) and explicitly supports
-// domain=PHARMACY (service.go validType) — it was simply never called by any
 // client. Repointed here instead of building a duplicate pharmacy-specific
 // backend.
-//
 // Application.State (DRAFT/SUBMITTED/UNDER_REVIEW/NEEDS_INFO/APPROVED/
-// SUSPENDED/REJECTED) is mapped onto this screen's simpler status vocabulary;
 // SUSPENDED/REJECTED fold into 'needs_info' since this type has no equivalent
 // terminal-failure state to route to instead.
-//
 // NOT fixed here: the generic API's AddCredential (the licence-document upload)
 // requires a real uploaded file's storage_key — this screen only ever collected
 // a licence NUMBER as a text field, with no upload step at all, so there is no
 // file to attach. The PCN licence number is carried in the returned state for
-// display, but is not persisted anywhere server-side; wiring an actual
 // credential upload needs a presign endpoint for this module (mirroring
 // internal/doctor/presign.go) plus a document-picker step in this screen —
 // out of scope for this fix, flagged as a follow-up.
@@ -941,7 +914,6 @@ export async function getProviderOnboarding(): Promise<ProviderOnboardingState> 
   };
 }
 
-// licenceFile: previously flagged as a real gap — the onboarding screen only
 // ever collected the PCN licence NUMBER, with no document-upload step, so
 // AddCredential (which requires a real uploaded file's storage_key) could
 // never be called. Now optional on this input: when the screen supplies a
@@ -971,7 +943,6 @@ export async function submitProviderOnboarding(
     const storageKey = await uploadProviderCredential(app.id, input.licenceFile);
     await addProviderCredential(app.id, { credType: 'PCN', referenceNo: input.pcnLicenseNo, storageKey });
   }
-  // Submit only transitions DRAFT/NEEDS_INFO forward; calling it again on an
   // already-submitted application is a 409, so skip the call rather than
   // treat a resubmit as a failure.
   if (app.state === 'DRAFT' || app.state === 'NEEDS_INFO') {
@@ -987,7 +958,6 @@ export async function submitProviderOnboarding(
   };
 }
 
-// ── Provider: catalog / stock ─────────────────────────────────────────────────
 const MOCK_CATALOG: CatalogStockItem[] = [
   { productId: 'prod_amox', name: 'Amoxicillin', form: '500mg · 21 capsules', priceKobo: 285000, nafdacReg: 'A4-0123', rxRequired: true, stock: 48, reorderLevel: 20, active: true },
   { productId: 'prod_lisin', name: 'Lisinopril', form: '10mg · 30 tablets', priceKobo: 420000, nafdacReg: 'A4-7781', rxRequired: true, stock: 12, reorderLevel: 15, active: true },
@@ -1030,7 +1000,6 @@ export async function getStockAlerts(): Promise<StockAlert[]> {
   return data;
 }
 
-// ── Provider: orders queue + dispense + handoff ───────────────────────────────
 // GET /orders (h.ListMine) — the pharmacist's owner-scoped fulfilment inbox.
 // NOT /provider/orders (doesn't exist), and NOT /orders/mine (that's the
 // PATIENT's own order history — see getOrders above).
@@ -1069,7 +1038,6 @@ export async function handoffOrder(orderId: string, mode: 'dispatch' | 'pickup',
   }
   // Dispatch (backend/internal/health/pharmacy/service.go) handles BOTH
   // fulfilment methods through the ONE endpoint, branching internally on the
-  // order's own fulfilment_method (DELIVERY books a courier; PICKUP just
   // generates a pickup code) — there is no separate .../ready route, so the
   // 'pickup' mode used to 404 every time.
   const { data } = await api.post<{ order?: unknown }>(`${PHARMACY_API}/orders/${orderId}/dispatch`, {}, {
@@ -1079,7 +1047,6 @@ export async function handoffOrder(orderId: string, mode: 'dispatch' | 'pickup',
   return mapOrder(data.order);
 }
 
-// ── Provider: Rx verification (HL-3) ──────────────────────────────────────────
 export async function getProviderRxQueue(): Promise<ProviderRxQueueItem[]> {
   if (USE_MOCK) {
     await delay();
@@ -1129,7 +1096,6 @@ export async function decideRx(rxId: string, decision: RxDecision, note?: string
   return getPrescription(rxId);
 }
 
-// ── Provider: controlled-substance log (HL-4) ─────────────────────────────────
 export async function getControlledLog(): Promise<ControlledLogEntry[]> {
   if (USE_MOCK) {
     await delay();
@@ -1141,7 +1107,6 @@ export async function getControlledLog(): Promise<ControlledLogEntry[]> {
   return data;
 }
 
-// ── Provider: earnings & payouts (HL-9/HL-10) ─────────────────────────────────
 export async function getProviderEarnings(): Promise<ProviderEarnings> {
   if (USE_MOCK) {
     await delay();
@@ -1159,7 +1124,6 @@ export async function getProviderEarnings(): Promise<ProviderEarnings> {
       ],
     };
   }
-  // GET /earnings (h.Earnings) — the real path; /provider/earnings doesn't
   // exist. The backend's PharmacyEarnings is three flat totals (released_kobo,
   // held_kobo, orders_paid — backend/internal/health/pharmacy/model.go) with NO
   // per-payout or per-settlement breakdown, so payouts[]/settlements[] are left

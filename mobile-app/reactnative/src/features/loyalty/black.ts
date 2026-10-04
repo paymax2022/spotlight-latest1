@@ -1,7 +1,5 @@
-// ── Paymax Black (Phase 3) ───────────────────────────────────────────────────
 // Black extends the P2 loyalty ladder (TIER3 → BLACK). NEW file alongside the P2
 // loyalty lib (do NOT edit P2 files). Reuses the P2 loyalty constants helpers.
-// Perks redeem via a single-use credential at events; partner offers settle off
 // the partner-offer ledger.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -27,7 +25,6 @@ export const BLACK_BENEFITS = [
   'Exclusive partner offers & perks',
 ] as const;
 
-// ── Types ──────────────────────────────────────────────────────────────────────
 export type BlackEligibility = 'eligible' | 'enrolled' | 'locked';
 
 export interface BlackStatus {
@@ -75,7 +72,6 @@ export interface PerkCredential {
   expiresAtISO: string;
 }
 
-// ── Mock fixtures ─────────────────────────────────────────────────────────────
 const MOCK_STATUS: BlackStatus = {
   isBlack: false,
   eligibility: 'eligible',
@@ -98,7 +94,6 @@ const MOCK_OFFERS: PartnerOffer[] = [
   { id: 'of_filmhouse', partner: 'Filmhouse',  title: 'Buy-one-get-one cinema', description: 'BOGO on cinema tickets, Black exclusive.',  valueKobo: 350_000, category: 'Entertainment', expiresAtISO: daysFromNow(14), thumbColor: '#9333EA' },
 ];
 
-// ── API ─────────────────────────────────────────────────────────────────────
 // Backend: GET /api/finance/loyalty/black/me → { success, is_black, member? }.
 // There is no separate "eligibility"/"pointsToUnlock" field — the client
 // derives a coarse eligibility from is_black (server-authoritative on
@@ -148,7 +143,6 @@ export async function upgradeToBlack(): Promise<{ ok: boolean; memberSinceISO: s
   return { ok: true, memberSinceISO: new Date().toISOString() };
 }
 
-// Backend: POST /api/finance/loyalty/black/redeem expects { perk_code,
 // context_ref } → { success, redemption }. NOTE: no single-use token is
 // returned in the response envelope today (MISSING: a presentable credential
 // token) — we surface the redemption id as a stand-in reference.
@@ -178,7 +172,6 @@ export async function redeemPerk(input: RedeemPerkInput): Promise<PerkCredential
   };
 }
 
-// ── Hooks ─────────────────────────────────────────────────────────────────────
 const KEYS = {
   status: ['loyalty', 'black', 'status'] as const,
   perks:  ['loyalty', 'black', 'perks'] as const,

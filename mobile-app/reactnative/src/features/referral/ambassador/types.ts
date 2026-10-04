@@ -1,9 +1,7 @@
-// ── Referral Ambassador Zone types (M-AMB-01..06) ────────────────────────────
 // Dashboard funnel, creative toolkit, referred-audience, analytics, payouts,
 // tier progression. Money is ALWAYS integer kobo. Ambassador earnings tie to
 // referred users' verified activity (§7) — never to recruitment.
 
-// ── Dashboard (M-AMB-01) ─────────────────────────────────────────────────────
 export interface FunnelStage {
   key: 'clicks' | 'signups' | 'kyc' | 'activated' | 'retained';
   label: string;
@@ -23,7 +21,6 @@ export interface AmbassadorDashboard {
   funnel: FunnelStage[];
 }
 
-// ── Creative toolkit (M-AMB-02) ──────────────────────────────────────────────
 export type AssetKind = 'banner' | 'caption' | 'vanity_link' | 'video';
 
 export interface CreativeAsset {
@@ -37,7 +34,6 @@ export interface CreativeAsset {
   icon: string;
 }
 
-// ── Referred audience (M-AMB-03) ─────────────────────────────────────────────
 export type AudienceStatus = 'invited' | 'signed_up' | 'kyc' | 'activated' | 'retained' | 'churned';
 
 export interface AudienceMember {
@@ -50,7 +46,6 @@ export interface AudienceMember {
   earnedKobo: number;
 }
 
-// ── Analytics (M-AMB-04) ─────────────────────────────────────────────────────
 export interface TrendPoint {
   label: string;
   clicks: number;
@@ -71,7 +66,6 @@ export interface AmbassadorAnalytics {
   bestChannel: string;
 }
 
-// ── Payouts (M-AMB-05) ───────────────────────────────────────────────────────
 export interface AmbassadorPayouts {
   eligibleKobo: number;
   pendingKobo: number;
@@ -89,7 +83,6 @@ export interface AmbassadorWithdrawResult {
   error?: 'below_min' | 'insufficient' | 'kyc_required';
 }
 
-// ── Tier progression (M-AMB-06) ──────────────────────────────────────────────
 export interface AmbassadorTier {
   key: string;
   name: string;
@@ -110,7 +103,6 @@ export interface TierProgression {
   tiers: AmbassadorTier[];
 }
 
-// ── Application (M-AMB-00) ───────────────────────────────────────────────────
 // Becoming an ambassador. The disclosure is mandatory and stored verbatim: the
 // programme pays commission on referrals, and NDPC/FTC-style rules require the
 // ambassador to have acknowledged that they must disclose it to their audience.

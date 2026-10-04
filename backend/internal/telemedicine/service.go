@@ -3,13 +3,14 @@ package telemedicine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"spotlight/backend/internal/finance/settlement"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/internal/finance/settlement"
 )
 
 // Service manages doctors, appointments, prescriptions, SOAP notes, and pharmacy.
@@ -54,8 +55,6 @@ func (s *Service) quote(consultFeeKobo int64) BookingQuote {
 	return QuoteAt(consultFeeKobo, s.platformFeeBp)
 }
 
-// ─── Specialties ─────────────────────────────────────────────────────────────
-
 // ListSpecialties returns all consultation specialty categories.
 func (s *Service) ListSpecialties(ctx context.Context) ([]Specialty, error) {
 	const q = `
@@ -78,8 +77,6 @@ func (s *Service) ListSpecialties(ctx context.Context) ([]Specialty, error) {
 	}
 	return out, rows.Err()
 }
-
-// ─── Doctors ─────────────────────────────────────────────────────────────────
 
 // RegisterDoctor creates a doctor profile for an authenticated user (legacy v1).
 func (s *Service) RegisterDoctor(ctx context.Context, userID string, req RegisterDoctorRequest) (*Doctor, error) {
@@ -175,13 +172,8 @@ func (s *Service) ListDoctors(ctx context.Context, q ListDoctorsQuery) ([]Doctor
 	// and Doctor.About), unlike sub_specialty/avatar_url/mdcn_number/phone which are
 	// already *string and tolerate NULL. pgx fails the whole scan on either —
 	// "cannot scan NULL into *string" — and because that happens per-row inside the
-	// loop, ONE such doctor 500s the ENTIRE list rather than omitting itself. Every
-	// doctor in the local database has about=NULL, so the doctor list — the front
-	// door of telemedicine — returned 500 outright.
-	//
-	// bio has no NULLs today but the column allows them, so it is coalesced too
-	// rather than left as the next instance of this bug. Empty string matches the
-	// struct's `omitempty` JSON tags: an absent bio simply does not appear.
+	// loop, ONE such doctor 500s the ENTIRE list rather than omitting itself.
+	// COALESCE keeps NULL → "" which matches the struct's `omitempty` JSON tags.
 	sql := fmt.Sprintf(`
 		SELECT d.id, d.user_id, d.name, d.specialty, d.sub_specialty, COALESCE(d.bio, ''), COALESCE(d.about, ''),
 		       d.consult_fee_kobo, d.avatar_url, d.is_available, d.is_online, d.is_hmo_verified,
@@ -239,7 +231,6 @@ func (s *Service) ToggleDoctorAvailability(ctx context.Context, userID string, i
 
 // GetDoctorDashboard returns aggregated stats and schedule for a doctor.
 func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*DoctorDashboard, error) {
-	// Verify doctor exists and get ID/rating/online status.
 	var doctorID string
 	var rating float64
 	var isOnline bool
@@ -255,13 +246,9 @@ func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*Docto
 	// floor arithmetic CompleteAppointment's settlement.Split uses for the doctor's
 	// actual provider leg (consult − floor(0.15·consult)) — NOT `fee_kobo * 0.85`,
 	// which Postgres evaluates as a fractional numeric whenever fee_kobo isn't a
-	// multiple of 20. pgx cannot scan a fractional numeric into int64, and the
-	// error was previously discarded (`_ = ...Scan(...)`), so weeklyRevenue
-	// silently stayed at its Go zero value for any doctor with an odd consult fee
-	// — found live via UAT (a doctor who was genuinely credited 85003 kobo saw a
-	// dashboard reading exactly 0). Integer division avoids the numeric type
-	// entirely, so the scan can never fail this way again, and the figure now
-	// matches what the doctor was actually paid to the kobo.
+	// multiple of 20 and pgx cannot scan into int64 (a discarded scan error leaves
+	// weeklyRevenue silently 0). Integer division avoids the numeric type entirely,
+	// so the figure matches what the doctor was actually paid to the kobo.
 	var weeklyRevenue int64
 	if err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(fee_kobo - (fee_kobo * 15 / 100)), 0)
@@ -272,7 +259,6 @@ func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*Docto
 		return nil, fmt.Errorf("telemedicine: compute weekly revenue: %w", err)
 	}
 
-	// Prior-week revenue for growth %.
 	var priorRevenue int64
 	if err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(fee_kobo - (fee_kobo * 15 / 100)), 0)
@@ -289,7 +275,6 @@ func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*Docto
 		growthPct = float64(weeklyRevenue-priorRevenue) / float64(priorRevenue) * 100
 	}
 
-	// Today's patient count (completed this week).
 	var patientsSeen int
 	_ = s.db.QueryRow(ctx, `
 		SELECT COUNT(*) FROM appointments
@@ -326,7 +311,6 @@ func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*Docto
 		pending = append(pending, pr)
 	}
 
-	// Today's confirmed/in-progress appointments.
 	apptRows, err := s.db.Query(ctx, `
 		SELECT a.id, a.scheduled_at, a.consultation_type, a.notes, a.status
 		FROM appointments a
@@ -358,8 +342,6 @@ func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*Docto
 		TodaysAppointments: coalesceAppts(scheduled),
 	}, nil
 }
-
-// ─── Appointments ────────────────────────────────────────────────────────────
 
 // assertDoctorApproved is the fail-closed MDCN credential gate. A telemedicine
 // doctor (doctors.user_id) may only take/complete consultations once their MDCN
@@ -415,7 +397,7 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 	// assertSlotFree below before ever reaching settlement.Escrow's own
 	// idempotency handling — money-safe (no double charge), but the caller sees
 	// a spurious "slot no longer available" error instead of the expected
-	// idempotent success (found live via UAT).
+	// idempotent success.
 	if req.IdempotencyKey != "" {
 		if existing, err := s.appointmentByIdempotencyKey(ctx, patientID, req.IdempotencyKey); err != nil {
 			return nil, fmt.Errorf("telemedicine: check idempotency key: %w", err)
@@ -477,7 +459,6 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 	// writing the appointment from the fresh quote would record a price that was
 	// never charged: the patient's receipt, the platform's fee and the doctor's
 	// earnings figure would all describe money that does not exist in escrow.
-	//
 	// Fail closed against the escrow, which is the money that actually moved.
 	if err := assertEscrowMatchesQuote(sett.TotalKobo, quote.TotalKobo); err != nil {
 		return nil, err
@@ -610,7 +591,7 @@ func (s *Service) GetAppointment(ctx context.Context, id, userID string) (*Appoi
 // CompleteAppointment marks an appointment as completed and settles the fee (85/15).
 func (s *Service) CompleteAppointment(ctx context.Context, appointmentID, doctorUserID string) error {
 	var appt Appointment
-	const q = `SELECT id, doctor_id, status, settlement_id, COALESCE(platform_fee_kobo,0)
+	const q = `SELECT id, doctor_id, status, COALESCE(settlement_id::text,''), COALESCE(platform_fee_kobo,0)
 	            FROM appointments WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, appointmentID).
 		Scan(&appt.ID, &appt.DoctorID, &appt.Status, &appt.SettlementID, &appt.PlatformFeeKobo); err != nil {
@@ -630,11 +611,9 @@ func (s *Service) CompleteAppointment(ctx context.Context, appointmentID, doctor
 	// The platform booking fee rides on TOP of the 85/15 split as a 100%-platform
 	// leg (ServiceFeeKobo — the mirror of a rider tip), so it does not dilute the
 	// doctor. Working Settle's algebra through with total = consult + fee:
-	//
 	//	base     = total − tip − serviceFee = consult
 	//	platform = base×0.15 + serviceFee   = 0.15·consult + fee
 	//	provider = total − platform         = 0.85·consult   ← unchanged
-	//
 	// Appointments escrowed before ADR-044 carry platform_fee_kobo = 0, which
 	// reproduces the old pure 85/15 split exactly — they settle unchanged.
 	split := settlement.Split{
@@ -655,7 +634,7 @@ func (s *Service) CompleteAppointment(ctx context.Context, appointmentID, doctor
 func (s *Service) CancelAppointment(ctx context.Context, appointmentID, actorID string) error {
 	var patientID, status, settlementID, doctorID string
 	if err := s.db.QueryRow(ctx,
-		`SELECT patient_id, doctor_id, status, settlement_id FROM appointments WHERE id=$1`,
+		`SELECT patient_id, doctor_id, status, COALESCE(settlement_id::text,'') FROM appointments WHERE id=$1`,
 		appointmentID).Scan(&patientID, &doctorID, &status, &settlementID); err != nil {
 		return fmt.Errorf("telemedicine: appointment not found")
 	}
@@ -744,11 +723,8 @@ func (s *Service) GetPrescription(ctx context.Context, appointmentID, callerUser
 	return p, nil
 }
 
-// ─── SOAP Notes ──────────────────────────────────────────────────────────────
-
 // SubmitSOAPNote saves a SOAP consultation note for a completed appointment.
 func (s *Service) SubmitSOAPNote(ctx context.Context, doctorUserID string, req SubmitSOAPNoteRequest) (*SOAPNote, error) {
-	// Verify appointment & doctor.
 	var patientID, doctorID string
 	if err := s.db.QueryRow(ctx,
 		`SELECT patient_id, doctor_id FROM appointments WHERE id=$1`,
@@ -788,8 +764,6 @@ func (s *Service) SubmitSOAPNote(ctx context.Context, doctorUserID string, req S
 	return note, err
 }
 
-// ─── Licence Documents ───────────────────────────────────────────────────────
-
 // UploadLicenceDoc records a licence document upload for a doctor.
 func (s *Service) UploadLicenceDoc(ctx context.Context, userID string, req UploadLicenceRequest) (*LicenceDocument, error) {
 	doc := &LicenceDocument{
@@ -815,8 +789,6 @@ func (s *Service) UploadLicenceDoc(ctx context.Context, userID string, req Uploa
 		doc.Filename, doc.StorageKey, doc.IdempotencyKey)
 	return doc, err
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 type pgRows interface {
 	Next() bool
@@ -897,4 +869,113 @@ func coalesceAppts(appts []ScheduledAppt) []ScheduledAppt {
 		return []ScheduledAppt{}
 	}
 	return appts
+}
+
+// ErrQuoteMismatch is returned when the total a client quoted the patient
+// disagrees with the server's own computation. The handler maps it to 409 so the
+// app can re-read the doctor's quote instead of retrying a charge that would be
+// wrong by construction.
+var ErrQuoteMismatch = errors.New("telemedicine: booking quote is stale")
+
+// PlatformFeeBp is the platform booking fee charged on a consultation, in basis
+// points of the doctor's consultation fee (500 = 5%).
+// This constant is the SINGLE authority for the rate. The mobile app used to carry
+// its own copy and compute the fee client-side, which meant the wallet rail debited
+// the consultation fee while the screen showed a higher total, and the card rail
+// collected the difference with no ledger entry at all. The app now renders the
+// quote this package returns and holds no rate of its own — see ADR-044.
+const PlatformFeeBp = 500
+
+// maxConsultFeeKobo bounds what this package will price. A consultation fee above
+// ₦100,000,000 is data corruption, not a price, and pricing it risks overflowing
+// the int64 total. Out-of-range fees produce an unpriceable quote (below) rather
+// than a silently clamped one, so booking fails closed instead of charging a
+// number nobody chose.
+const maxConsultFeeKobo int64 = 10_000_000_000
+
+// BookingQuote is the server-computed price breakdown for booking a consultation.
+// It is what the client renders on the confirm screen and what BookAppointment
+// escrows, so the amount displayed and the amount charged cannot diverge.
+type BookingQuote struct {
+	ConsultFeeKobo  int64 `json:"consult_fee_kobo"`
+	PlatformFeeBp   int   `json:"platform_fee_bp"`
+	PlatformFeeKobo int64 `json:"platform_fee_kobo"`
+	TotalKobo       int64 `json:"total_kobo"`
+}
+
+// QuoteFor prices a consultation: the doctor's fee plus the platform booking fee.
+// Money invariants held by every return value:
+//   - integer arithmetic only, never floats (CLAUDE.md);
+//   - the fee FLOORS — `c * bp / 10000` truncates, so a derived fee can never round
+//     UP past its exact fraction and charge a kobo no rule entitles us to (this
+//     mirrors restaurant.applyBp; the old client-side Math.round could round up);
+//   - PlatformFeeKobo >= 0 and TotalKobo == ConsultFeeKobo + PlatformFeeKobo;
+//   - no overflow: inputs that cannot be priced return the zero quote.
+//
+// A non-positive or out-of-range consultation fee yields a zero quote, which is
+// unpriceable (see Priceable) and so cannot be mistaken for a free consultation.
+func QuoteFor(consultFeeKobo int64) BookingQuote {
+	return QuoteAt(consultFeeKobo, PlatformFeeBp)
+}
+
+// QuoteAt is QuoteFor at an explicit rate, used to honour the
+// FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED flag: the flag resolves to a rate of
+// PlatformFeeBp when on and 0 when off, and a 0-bp quote is exactly the
+// pre-ADR-044 behaviour — the patient pays the consultation fee alone and the
+// booking escrows it alone. A negative rate is treated as 0 (never a discount).
+func QuoteAt(consultFeeKobo int64, bp int) BookingQuote {
+	if bp < 0 {
+		bp = 0
+	}
+	if consultFeeKobo <= 0 || consultFeeKobo > maxConsultFeeKobo {
+		return BookingQuote{PlatformFeeBp: bp}
+	}
+	feeKobo := consultFeeKobo * int64(bp) / 10000
+	return BookingQuote{
+		ConsultFeeKobo:  consultFeeKobo,
+		PlatformFeeBp:   bp,
+		PlatformFeeKobo: feeKobo,
+		TotalKobo:       consultFeeKobo + feeKobo,
+	}
+}
+
+// Priceable reports whether this quote represents a real, chargeable price.
+// BookAppointment refuses to escrow an unpriceable quote — fail-closed, because a
+// zero total would otherwise book a consultation for free.
+func (q BookingQuote) Priceable() bool { return q.TotalKobo > 0 }
+
+// validateExpectedTotal bounds the card rail. The Paystack gateway charges the
+// amount the CLIENT computed, at the PSP, before this server escrows anything — so
+// a client working from a stale quote (the doctor edited their fee after the
+// confirm screen loaded) would put the charged and escrowed amounts back out of
+// step, which is the exact defect ADR-044 removes.
+// The client sends the total it quoted the patient. A disagreement rejects the
+// booking before any money moves. Zero means the client did not quote a total
+// (older clients), and skips the check rather than breaking them.
+func validateExpectedTotal(expected, computed int64) error {
+	if expected == 0 || expected == computed {
+		return nil
+	}
+	return fmt.Errorf("%w: client quoted %d kobo, server computed %d kobo — re-read the doctor's booking quote",
+		ErrQuoteMismatch, expected, computed)
+}
+
+// assertEscrowMatchesQuote guards the REPLAY path, which validateExpectedTotal
+// cannot see.
+// Escrow is idempotent on the Idempotency-Key: replaying a booking returns the
+// settlement that already exists, escrowed at whatever the price was on the first
+// attempt. But the quote is recomputed from the doctor's live consult_fee_kobo on
+// every attempt, so a fee edit between attempts makes them disagree — and the
+// appointment row is written from the quote. Recording a price that was never
+// charged would put the patient's receipt, the platform's fee leg and the doctor's
+// earnings figure all out of step with the money actually held in escrow.
+// Unlike validateExpectedTotal there is no skip case: an escrowed amount always
+// exists by the time this runs, so zero here means a broken settlement, not
+// "unspecified".
+func assertEscrowMatchesQuote(escrowedKobo, quotedKobo int64) error {
+	if escrowedKobo == quotedKobo {
+		return nil
+	}
+	return fmt.Errorf("%w: this booking was already escrowed for %d kobo, but now prices at %d kobo — start a new booking",
+		ErrQuoteMismatch, escrowedKobo, quotedKobo)
 }

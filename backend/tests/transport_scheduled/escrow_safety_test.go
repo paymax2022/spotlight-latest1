@@ -1,10 +1,8 @@
 package transport_scheduled_test
 
-// ---------------------------------------------------------------------------
 // Escrow-safety invariant: "a booking that ever escrowed funds MUST reach a
 // terminal state that refunds or settles them — never strand an escrow"
 // (SWARM_INTEGRATION_CONTRACT.md §"FROZEN FSM", last line).
-//
 // Service.DispatchScheduled / onDispatchFailure / cancelScheduledInternal
 // (backend/internal/transport/scheduled_dispatch.go, scheduled.go) take a
 // concrete *pgxpool.Pool + *settlement.Service, so their DB code paths cannot
@@ -14,21 +12,13 @@ package transport_scheduled_test
 // paths are built to uphold using a fakeStore modeled on the exact control
 // flow read from source (cited inline at each test), the same pattern as
 // settlement's split_invariant_test.go fakeStore.
-//
 // Control flow transcribed from backend/internal/transport/scheduled_dispatch.go:
-//
 //   - onDispatchFailure(ctx, b, cause, settlementID):
-//     if settlementID != "" { settlement.Refund(ctx, settlementID, "scheduled_dispatch_failed") }
-//     nextAttempts := b.DispatchAttempts + 1
 //     if nextAttempts >= maxDispatchAttempts (=3) { status -> failed_no_driver, settlement_id=NULL }
 //     else                                          { status -> scheduled (retry), settlement_id=NULL }
-//
 //   - cancelScheduledInternal(ctx, b, actorID, reason, event):
-//     if b.Status == cancelled { return b, nil } // idempotent no-op
-//     guardScheduled(b.Status, cancelled)
 //     UPDATE status='cancelled' WHERE status=$3 (optimistic)
 //     if b.SettlementID != nil && *b.SettlementID != "" { settlement.Refund(...) }
-// ---------------------------------------------------------------------------
 
 import "testing"
 

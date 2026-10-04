@@ -131,6 +131,30 @@ security:
   - bearerAuth: []
 
 paths:
+  /onboarding/phone/request:
+    post:
+      summary: Start phone verification — stores the number pending verification and SMSes an OTP (Termii). Requesting a code for a different number resets phone_verified until the new one verifies.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [phone], properties: { phone: { type: string, description: "E.164 or national format; normalised server-side" } } } } }
+      responses:
+        '200': { description: Code sent, content: { application/json: { schema: { type: object, properties: { sent: { type: boolean } } } } } }
+        '400': { description: invalid phone }
+        '429': { description: resend cooldown / rate limited }
+        '503': { description: phone verification not configured (OTP_PEPPER / TERMII_API_KEY unset) }
+
+  /onboarding/phone/verify:
+    post:
+      summary: Confirm phone verification — checks the SMS code and flips phone_verified, unblocking the onboarding 'complete' status
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [code], properties: { code: { type: string } } } } }
+      responses:
+        '200': { description: Verified — returns updated OnboardingStatus }
+        '400': { description: invalid/expired code, or no pending phone }
+        '429': { description: too many attempts }
+        '503': { description: phone verification not configured }
+
   /profile:
     get:
       summary: Get the caller's identity profile (creates an empty one on first access)

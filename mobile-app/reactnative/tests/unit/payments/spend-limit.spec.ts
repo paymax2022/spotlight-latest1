@@ -1,6 +1,5 @@
 // Pure-logic tests for the KYC spend pre-check that runs before either payment rail.
 //   npm run test:payments
-//
 // This decision is what stops the card rail from charging Paystack for a spend the
 // server's fail-closed tier gate will refuse — so the cases below mirror
 // backend/internal/finance/tiers EnforceWalletDebitLimit exactly.
@@ -39,7 +38,6 @@ test('a spend inside the remaining allowance is allowed', () => {
 });
 
 test('a spend equal to the remaining allowance is allowed (matches the server boundary)', () => {
-  // Server: used + amount > cap → reject. 2,000,000 + 3,000,000 = 5,000,000 is NOT
   // greater than the 5,000,000 cap, so the server accepts it and so must we.
   assert.equal(evaluateSpendLimit(tier1, 3_000_000).allowed, true);
 });

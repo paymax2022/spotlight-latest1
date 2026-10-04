@@ -21,9 +21,7 @@ describe('resolveVoteDate — timezone-correct day bucket (D-001)', () => {
   });
 
   it('resets exactly at LOCAL midnight, not UTC midnight (Africa/Lagos)', () => {
-    // 22:59 UTC == 23:59 local (still Jul 30)
     expect(resolveVoteDate(new Date('2026-07-30T22:59:00Z'), 'Africa/Lagos')).toBe('2026-07-30');
-    // 23:00 UTC == 00:00 local (now Jul 31)
     expect(resolveVoteDate(new Date('2026-07-30T23:00:00Z'), 'Africa/Lagos')).toBe('2026-07-31');
   });
 
@@ -48,7 +46,7 @@ describe('resolveVoteDate — timezone-correct day bucket (D-001)', () => {
 
 describe('nextLocalMidnightIso — reset boundary (FV-003)', () => {
   it('returns the next LOCAL midnight as an instant after now', () => {
-    const now = new Date('2026-07-30T23:30:00Z'); // 00:30 Jul 31 in Lagos
+    const now = new Date('2026-07-30T23:30:00Z');
     const reset = new Date(nextLocalMidnightIso(now, 'Africa/Lagos'));
     // Next local midnight is 00:00 Aug 1 Lagos == 23:00 UTC Jul 31.
     expect(reset.toISOString()).toBe('2026-07-31T23:00:00.000Z');

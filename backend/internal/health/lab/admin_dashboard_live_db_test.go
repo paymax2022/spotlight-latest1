@@ -1,15 +1,12 @@
 package healthlab_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB coverage for the Laboratory (Module 16) admin-portal gap closure:
 // GET /admin/dashboard (order-state aggregate + trailing-7-day platform
 // revenue + APPROVED-lab count, mirroring PHARMACY-001's AdminDashboard
 // exactly), and the AdminCustodyAudit sample_id filter added so the admin
 // console's per-sample custody-chain drawer can reuse the existing
 // custody-audit query instead of a second read path.
-//
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

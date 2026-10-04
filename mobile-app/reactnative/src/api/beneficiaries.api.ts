@@ -15,9 +15,7 @@ import type { Beneficiary, BankTransferResult } from '@/types/wallet';
 
 type ApiRecord = Record<string, unknown>;
 
-// ---------------------------------------------------------------------------
 // Fee schedule — mirrors backend calculateBankTransferFee()
-// ---------------------------------------------------------------------------
 
 export function calculateBankTransferFee(amountKobo: number): number {
   if (amountKobo <= 500_000)   return 1_000;  // ₦0–₦5,000: ₦10
@@ -25,9 +23,7 @@ export function calculateBankTransferFee(amountKobo: number): number {
   return 5_000;                               // > ₦50,000: ₦50
 }
 
-// ---------------------------------------------------------------------------
 // Beneficiary CRUD
-// ---------------------------------------------------------------------------
 
 export async function fetchBeneficiaries(): Promise<Beneficiary[]> {
   const response = await api.get('/api/v1/beneficiaries');
@@ -49,9 +45,7 @@ export async function removeBeneficiary(id: string): Promise<void> {
   await api.delete(`/api/v1/beneficiaries/${id}`);
 }
 
-// ---------------------------------------------------------------------------
 // Bank account resolution
-// ---------------------------------------------------------------------------
 
 export interface ResolvedAccount {
   accountName: string;
@@ -73,9 +67,7 @@ export async function resolveBankAccount(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Bank transfer initiation
-// ---------------------------------------------------------------------------
 
 export interface InitiateBankTransferPayload {
   bankCode: string;
@@ -122,9 +114,7 @@ export async function initiateBankTransfer(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Mapper
-// ---------------------------------------------------------------------------
 
 function mapBeneficiary(row: ApiRecord): Beneficiary {
   return {

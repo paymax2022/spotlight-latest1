@@ -2,12 +2,15 @@ package claims
 
 import (
 	"errors"
+	"github.com/gin-gonic/gin"
 	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strconv"
 	"time"
-
-	"github.com/gin-gonic/gin"
 )
+
+const keyData = "data"
 
 // Handler exposes member + admin claim routes.
 type Handler struct {
@@ -16,8 +19,6 @@ type Handler struct {
 
 // NewHandler constructs the claims handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
-
-func userID(c *gin.Context) string { return c.GetString("user_id") }
 
 // mapErr maps service sentinel errors to HTTP responses.
 func mapErr(c *gin.Context, err error) {
@@ -29,23 +30,20 @@ func mapErr(c *gin.Context, err error) {
 	case errors.Is(err, ErrNotBound):
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "policy_not_bound"})
 	case errors.Is(err, ErrBadState):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
-
-// --- member ---
 
 // SubmitFNOL (member): POST /claims — Idempotency-Key header REQUIRED.
 // body: {policy_id, loss_event_at, claimed_amount_kobo, description, inputs}
 func (h *Handler) SubmitFNOL(c *gin.Context) {
-	uid := userID(c)
-	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+	uid, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
-	idemKey := c.GetHeader("Idempotency-Key")
+	idemKey := ginutil.IdempotencyKey(c)
 	if idemKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 		return
@@ -58,7 +56,7 @@ func (h *Handler) SubmitFNOL(c *gin.Context) {
 		Inputs            map[string]any `json:"inputs"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if body.LossEventAt.IsZero() {
@@ -75,35 +73,35 @@ func (h *Handler) SubmitFNOL(c *gin.Context) {
 		// A claim row may still be returned (DRAFT) when only the provider hand-off
 		// failed — surface it so the client can retry.
 		if cl != nil {
-			c.JSON(http.StatusAccepted, gin.H{"warning": err.Error(), "data": cl})
+			c.JSON(http.StatusAccepted, gin.H{"warning": httperr.Msg(c, http.StatusAccepted, err), keyData: cl})
 			return
 		}
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"data": cl})
+	c.JSON(http.StatusCreated, gin.H{keyData: cl})
 }
 
 // List (member): GET /claims
 func (h *Handler) List(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	cs, err := h.svc.ListClaims(c.Request.Context(), userID(c), limit, offset)
+	cs, err := h.svc.ListClaims(c.Request.Context(), ginutil.UserID(c), limit, offset)
 	if err != nil {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": cs})
+	c.JSON(http.StatusOK, gin.H{keyData: cs})
 }
 
 // Get (member): GET /claims/:id
 func (h *Handler) Get(c *gin.Context) {
-	cl, err := h.svc.GetClaim(c.Request.Context(), userID(c), c.Param("id"))
+	cl, err := h.svc.GetClaim(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": cl})
+	c.JSON(http.StatusOK, gin.H{keyData: cl})
 }
 
 // AddEvidence (member): POST /claims/:id/evidence
@@ -115,28 +113,26 @@ func (h *Handler) AddEvidence(c *gin.Context) {
 		StorageRef  string `json:"storage_ref"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	ev, err := h.svc.UploadEvidence(c.Request.Context(), userID(c), c.Param("id"), body.FileName, body.ContentType, body.StorageRef)
+	ev, err := h.svc.UploadEvidence(c.Request.Context(), ginutil.UserID(c), c.Param("id"), body.FileName, body.ContentType, body.StorageRef)
 	if err != nil {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"data": ev})
+	c.JSON(http.StatusCreated, gin.H{keyData: ev})
 }
 
 // ListEvidence (member): GET /claims/:id/evidence
 func (h *Handler) ListEvidence(c *gin.Context) {
-	evs, err := h.svc.ListEvidence(c.Request.Context(), userID(c), c.Param("id"))
+	evs, err := h.svc.ListEvidence(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": evs})
+	c.JSON(http.StatusOK, gin.H{keyData: evs})
 }
-
-// --- admin ---
 
 // AdminSearch (admin): GET /claims?state=&policy_id=
 func (h *Handler) AdminSearch(c *gin.Context) {
@@ -144,10 +140,10 @@ func (h *Handler) AdminSearch(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	cs, err := h.svc.SearchAdmin(c.Request.Context(), c.Query("state"), c.Query("policy_id"), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": cs})
+	c.JSON(http.StatusOK, gin.H{keyData: cs})
 }
 
 // AdminGet (admin): GET /claims/:id
@@ -157,7 +153,7 @@ func (h *Handler) AdminGet(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": cl})
+	c.JSON(http.StatusOK, gin.H{keyData: cl})
 }
 
 // AdminDecision (admin): POST /claims/:id/decision
@@ -169,7 +165,7 @@ func (h *Handler) AdminDecision(c *gin.Context) {
 		Reason             string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	ctx := c.Request.Context()
@@ -199,5 +195,33 @@ func (h *Handler) AdminDecision(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": cl})
+	c.JSON(http.StatusOK, gin.H{keyData: cl})
+}
+
+// Register wires the member + admin claim routes. The aggregator
+// (insurance_claims_routes.go) constructs the handler and the per-route RBAC
+// guards; this keeps the package self-describing about its own surface.
+//   - member (object-level authZ; claimant owns claim):
+//     POST   /claims                  (FNOL — Idempotency-Key REQUIRED)
+//     GET    /claims
+//     GET    /claims/:id
+//     POST   /claims/:id/evidence
+//     GET    /claims/:id/evidence
+//   - admin (per-route RBAC insurance.claim.*):
+//     GET    /claims/:id              (insurance.claim.view)
+//     POST   /claims/:id/decision     (insurance.claim.manage)
+func Register(member *gin.RouterGroup, admin *gin.RouterGroup, h *Handler, guard func(permission string) gin.HandlerFunc) {
+	// Member routes.
+	mc := member.Group("/claims")
+	mc.POST("", h.SubmitFNOL)
+	mc.GET("", h.List)
+	mc.GET("/:id", h.Get)
+	mc.POST("/:id/evidence", h.AddEvidence)
+	mc.GET("/:id/evidence", h.ListEvidence)
+
+	// Admin routes (claim search + decisioning).
+	ac := admin.Group("/claims")
+	ac.GET("", guard("insurance.claim.view"), h.AdminSearch)
+	ac.GET("/:id", guard("insurance.claim.view"), h.AdminGet)
+	ac.POST("/:id/decision", guard("insurance.claim.manage"), h.AdminDecision)
 }

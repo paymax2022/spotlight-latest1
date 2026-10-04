@@ -1,16 +1,12 @@
-// ─────────────────────────────────────────────────────────────────────────────
 // Local filesystem fallback for uploads.
-//
 // Cloudflare R2 is the durable store in production. In local development (and
 // any environment where the R2_* env vars are not set) `hasR2Config()` is false
 // and the registration upload routes fall back to this helper so uploads still
 // work end-to-end without any cloud credentials.
-//
 // Files are written under `<cwd>/.uploads/<key>` where `<key>` is the same
 // slash-namespaced object key R2 would use (e.g.
 // `registration/<userId>/<uuid>.png`). Keys are validated by the callers
 // (must start with `registration/`, no `..`) before reaching this module.
-// ─────────────────────────────────────────────────────────────────────────────
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';

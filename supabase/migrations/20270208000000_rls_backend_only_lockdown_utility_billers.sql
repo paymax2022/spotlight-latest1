@@ -9,16 +9,11 @@
 -- from querying this table directly if RLS policy logic is ever written.
 -- Service role ALWAYS bypasses RLS, so the Go backend is unaffected.
 
--- ENABLE ROW LEVEL SECURITY is itself already idempotent (Postgres does not
--- error when RLS is already enabled on a table), so no existence guard is
--- needed. The previous guard here queried a `row_security` column on
--- information_schema.tables that does not exist in Postgres, which made
--- this statement fail unconditionally (SQLSTATE 42703) before the ALTER
--- ever ran — breaking any fresh replay of the migration chain (`supabase db
--- reset`). Fixed in place rather than via a later forward-fixing migration,
--- since a later migration cannot unblock an earlier failure in replay
--- order, and no environment could ever have gotten past the broken
--- statement to begin with (a DO block's error fails the whole migration
--- transaction — there is no "already applied with the old behavior"
--- environment to preserve compatibility with).
+-- ENABLE ROW LEVEL SECURITY is itself idempotent (a no-op if already enabled),
+-- so no existence guard is needed — see 20261215000100_module_registry_rls.sql
+-- and 20261222000000_academy_interest_areas_rls.sql for the same pattern.
+--
+-- (This migration originally guarded on `information_schema.tables.row_security`,
+-- which is not a real Postgres column and made every fresh-replay fail outright —
+-- fixed here rather than via a correction migration since it never applied.)
 ALTER TABLE public.utility_billers ENABLE ROW LEVEL SECURITY;

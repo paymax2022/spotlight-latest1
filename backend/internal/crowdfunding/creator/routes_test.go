@@ -1,7 +1,6 @@
 package creator
 
 // Route-registration guard.
-//
 // The creator package shares one router group with the sibling discovery and
 // wallet packages, all of which register routes on the /campaigns/:id tree.
 // Gin PANICS at registration time on a wildcard conflict (a differently-named
@@ -9,7 +8,6 @@ package creator
 // bad route here takes down the whole API at boot rather than failing one
 // endpoint. routes.go carries a comment warning about exactly this; this test
 // makes the warning enforceable.
-//
 // Register only stores the pool, so a nil pool is fine — nothing here touches a
 // database.
 

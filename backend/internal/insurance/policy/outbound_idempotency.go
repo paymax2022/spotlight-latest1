@@ -10,20 +10,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ════════════════════════════════════════════════════════════════════════════
 // OUTBOUND BIND IDEMPOTENCY
-// ════════════════════════════════════════════════════════════════════════════
-//
 // MyCover documents NO idempotency mechanism on POST /products/buy. A retried
 // purchase creates a SECOND policy and debits Paymax's prefunded float twice.
 // Paymax's iron rule requires an Idempotency-Key on every money mutation, so the
 // guarantee has to be built here rather than assumed of the provider.
-//
 // The mechanism is the primary key on insurance_provider_bind: claiming a key is
 // an INSERT, so a concurrent or replayed attempt with the same key cannot claim
 // it and therefore cannot reach the provider. No locks, no windows, no reliance
 // on anything the provider does.
-//
 // The hard case is a TRANSPORT failure. When a purchase call times out or the
 // connection drops, the request may or may not have been processed — the error
 // genuinely does not say. That outcome is recorded as `unknown` and is NEVER
@@ -76,7 +71,6 @@ func NewBindRegistry(db *pgxpool.Pool) *BindRegistry { return &BindRegistry{db: 
 
 // Claim attempts to take ownership of an idempotency key for one outbound
 // purchase.
-//
 //   - Nobody has used the key      → Fresh=true; the caller MUST make the call.
 //   - A previous attempt succeeded → Fresh=false with the policy ref; replay it.
 //   - A previous attempt failed    → Fresh=true; the provider rejected it and
@@ -194,7 +188,6 @@ func (r *BindRegistry) Failed(ctx context.Context, key, reason string) {
 }
 
 // Unknown records that a purchase was SENT but its outcome was never learned.
-//
 // This is the state that must not be guessed. The key stays locked: a later
 // attempt gets ErrBindOutcomeUnknown rather than a silent second purchase, and
 // the row shows up in the reconciliation query until a human or a reconciler

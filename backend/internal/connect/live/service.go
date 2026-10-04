@@ -2,13 +2,22 @@ package connectlive
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/services"
+	"strconv"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const keyError = "error"
 
 var (
 	ErrNotFound      = errors.New("connect: live session not found")
@@ -39,7 +48,7 @@ type RTCConfig struct {
 
 // RTCTokenIssuer mints a join credential for a session/user. The default
 // implementation (hmacIssuer) signs a deterministic claim with the configured
-// secret; a real deployment can swap in an Agora/LiveKit adapter behind this
+// secret; a real deployment can swap in a VideoSDK adapter behind this
 // interface without touching the service.
 type RTCTokenIssuer interface {
 	Issue(ctx context.Context, sessionID, userID, role string) (*RTCToken, error)
@@ -287,10 +296,8 @@ func (s *Service) requireHost(ctx context.Context, actorID, sessionID string) er
 	return nil
 }
 
-// --- Default RTC issuer (config-driven HMAC stub) ---------------------------
-
 // hmacIssuer is a provider-agnostic default that signs a deterministic claim with
-// the configured secret. It is a STUB: real provider SDKs (Agora/LiveKit) plug in
+// the configured secret. It is a STUB: a real provider SDK (VideoSDK) plugs in
 // behind RTCTokenIssuer. The secret is supplied via RTCConfig (read from env/
 // config at wiring time) and never hard-coded.
 type hmacIssuer struct{ cfg RTCConfig }
@@ -311,14 +318,191 @@ func (h *hmacIssuer) Issue(_ context.Context, sessionID, userID, role string) (*
 	exp := time.Now().Add(h.cfg.TokenTTL)
 	channel := "connect_live_" + sessionID
 	claim := fmt.Sprintf("%s|%s|%s|%s|%d", h.cfg.AppID, channel, userID, role, exp.Unix())
-	mac := hmac.New(sha256.New, []byte(h.cfg.AppSecret))
-	mac.Write([]byte(claim))
 	return &RTCToken{
 		SessionID: sessionID,
 		UserID:    userID,
 		Channel:   channel,
 		Role:      role,
-		Token:     hex.EncodeToString(mac.Sum(nil)),
+		Token:     cryptox.HMACSHA256Hex(h.cfg.AppSecret, claim),
 		ExpiresAt: exp,
 	}, nil
+}
+
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// fail maps a service error to an HTTP status.
+func fail(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+	case errors.Is(err, ErrNotHost):
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+	case errors.Is(err, ErrBadState), errors.Is(err, ErrCohostFull),
+		errors.Is(err, ErrBadModeration), errors.Is(err, ErrInvalidInput):
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+	case errors.Is(err, ErrRTCUnconfig):
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+	}
+}
+
+// Create — POST /live/sessions.
+func (h *Handler) Create(c *gin.Context) {
+	var in CreateSessionInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	sess, err := h.svc.CreateSession(c.Request.Context(), ginutil.UserID(c), in)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": sess})
+}
+
+// Start — POST /live/sessions/:id/start.
+func (h *Handler) Start(c *gin.Context) {
+	sess, err := h.svc.Start(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": sess})
+}
+
+// End — POST /live/sessions/:id/end.
+func (h *Handler) End(c *gin.Context) {
+	sess, err := h.svc.End(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": sess})
+}
+
+// Discover — GET /live/sessions?low_bandwidth=&limit=.
+func (h *Handler) Discover(c *gin.Context) {
+	low, _ := strconv.ParseBool(c.Query("low_bandwidth"))
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	out, err := h.svc.Discover(c.Request.Context(), low, limit)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// Get — GET /live/sessions/:id.
+func (h *Handler) Get(c *gin.Context) {
+	sess, err := h.svc.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": sess})
+}
+
+// Cohost — POST /live/sessions/:id/cohost (invite or accept/decline).
+func (h *Handler) Cohost(c *gin.Context) {
+	var in CohostInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	p, err := h.svc.Cohost(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": p})
+}
+
+// PK — POST /live/sessions/:id/pk (create battle / apply non-cash score).
+func (h *Handler) PK(c *gin.Context) {
+	var in PKInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	b, err := h.svc.PK(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": b})
+}
+
+// Moderate — POST /live/sessions/:id/moderate (mute/unmute/kick).
+func (h *Handler) Moderate(c *gin.Context) {
+	var in ModerateInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	if err := h.svc.Moderate(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in); err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+}
+
+// RTCToken — POST /live/sessions/:id/rtc-token.
+func (h *Handler) RTCToken(c *gin.Context) {
+	tok, err := h.svc.IssueRTCToken(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": tok})
+}
+
+// AdminList — GET /live/sessions (admin moderation view).
+func (h *Handler) AdminList(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	out, err := h.svc.AdminList(c.Request.Context(), limit)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminTerminate — POST /live/sessions/:id/terminate.
+func (h *Handler) AdminTerminate(c *gin.Context) {
+	sess, err := h.svc.AdminTerminate(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": sess})
+}
+
+// Register wires the live module onto the shared Connect member + admin groups
+// (both already carry RequireAuthContext + user_id). Admin routes add per-route
+// RBAC (connect.live.*). The RTC issuer is supplied by the caller from config —
+// provider secrets are never read here.
+func Register(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit Auditor, rtc RTCTokenIssuer) {
+	svc := NewService(NewRepository(pool), audit, rtc)
+	h := NewHandler(svc)
+
+	g := member.Group("/live")
+	g.POST("/sessions", h.Create)
+	g.GET("/sessions", h.Discover)
+	g.GET("/sessions/:id", h.Get)
+	g.POST("/sessions/:id/start", h.Start)
+	g.POST("/sessions/:id/end", h.End)
+	g.POST("/sessions/:id/cohost", h.Cohost)
+	g.POST("/sessions/:id/pk", h.PK)
+	g.POST("/sessions/:id/moderate", h.Moderate)
+	g.POST("/sessions/:id/rtc-token", h.RTCToken)
+
+	ag := admin.Group("/live")
+	ag.GET("/sessions",
+		middleware.RequirePermission(rbac, "connect.live.view"), h.AdminList)
+	ag.POST("/sessions/:id/terminate",
+		middleware.RequirePermission(rbac, "connect.live.moderate"), h.AdminTerminate)
 }

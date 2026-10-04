@@ -52,7 +52,6 @@ export async function POST(request: Request) {
     // Resolve account name (validates the account exists at the bank)
     const resolved = await resolveBankAccount(bankCode, accountNumber);
 
-    // Use bank_name from the request body when provided; fall back to bank_code
     // so the stored record is always human-readable.
     const bankName = typeof body.bank_name === 'string' && body.bank_name.trim()
       ? body.bank_name.trim()

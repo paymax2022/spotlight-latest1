@@ -1,8 +1,6 @@
-// ── Admin — Paymax Savings (Goal Vaults + Ajo/Esusu) ops console types ───────
 // Field names mirror the Go JSON (snake_case) from /api/savings/admin/*.
 // Money is BIGINT kobo (minor units) throughout.
 // Invariants surfaced in the UI: NL-2 (no yield — savings/pools earn zero),
-// NL-7 (Ajo is peer rotation; Paymax is ledger/escrow only, never a lender),
 // NL-8 (money is a ledger; balances are projections), NL-12 (immutable audit).
 
 export type VaultLockType = 'LOCKED' | 'FLEX';
@@ -12,7 +10,6 @@ export type MemberStatus = 'invited' | 'active' | 'defaulted' | 'exited';
 export type DefaultStatus = 'open' | 'grace' | 'make_good' | 'recovered' | 'defaulted' | 'dismissed';
 export type ReconStatus = 'balanced' | 'flagged' | 'reconciled';
 
-// ── Dashboard ────────────────────────────────────────────────────────────────
 export interface SavingsDashboardActivity {
   id: string;
   kind: string; // vault_matured | force_unlock | ajo_payout | member_defaulted | recon_break | auto_save_run …
@@ -50,7 +47,6 @@ export interface SavingsDashboard {
   activity: SavingsDashboardActivity[];
 }
 
-// ── Vaults ───────────────────────────────────────────────────────────────────
 export interface VaultRecord {
   id: string;
   owner_masked: string;
@@ -69,7 +65,6 @@ export interface VaultRecord {
   matured_at: string | null;
 }
 
-// ── Float reconciliation ─────────────────────────────────────────────────────
 export interface FloatReconLine {
   id: string;
   product: 'vault' | 'circle' | 'target';
@@ -87,7 +82,6 @@ export interface FloatRecon {
   lines: FloatReconLine[];
 }
 
-// ── Ajo / Esusu circles ──────────────────────────────────────────────────────
 export interface AjoCircleSummary {
   id: string;
   name: string;
@@ -133,7 +127,6 @@ export interface AjoCircleDetail extends AjoCircleSummary {
   cycles: AjoCycle[];
 }
 
-// ── Defaults queue ───────────────────────────────────────────────────────────
 export interface DefaultRecord {
   id: string;
   circle_id: string;

@@ -3,10 +3,10 @@ import { View, Text, StyleSheet, ActivityIndicator, Pressable, Animated } from '
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { AlertCircle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { useVerifyPaidVote } from '@/features/voting/hooks/useVote';
 
 // Bounded verification backoff. Paystack settlement is usually quick but can lag,
@@ -103,7 +103,6 @@ export default function PaymentProcessingScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Manual "Check Status" — fires an immediate verify; only routes on a terminal
   // status so a still-pending payment leaves the user on this screen.
   const handleCheckStatus = useCallback(async () => {
     if (settledRef.current) return;

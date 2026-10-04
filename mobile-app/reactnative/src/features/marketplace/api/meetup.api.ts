@@ -1,5 +1,3 @@
-// ── Marketplace — Meetup safe-spots + reviews API (mock/live dispatch) ───────
-//
 // Connect model: no escrow orders. Safe-spots come from /meetup/safe-spots
 // (mock-backed until it lands). Reviews are the OPTIONAL self-reported rating a
 // user leaves after marking a deal complete in the Deal Room — posted against a
@@ -10,7 +8,6 @@ import type { Review } from '../types';
 
 export type { SafeSpot } from './meetup.mock';
 
-// ── Meetup safe-spots — GET /meetup/safe-spots (being added elsewhere) ───────
 export async function getSafeSpots(): Promise<M.SafeSpot[]> {
   if (MKT_USE_MOCK) return M.mockGetSafeSpots();
   try {
@@ -21,7 +18,6 @@ export async function getSafeSpots(): Promise<M.SafeSpot[]> {
   }
 }
 
-// ── Mark met — POST /deals/:id/mark-met ──────────────────────────────────────
 // The ADR-023 "mark met" signal: a thread participant marks the deal met (they
 // transacted off-platform), unlocking review-writes. Idempotent on the backend
 // (first mark wins). Mock mode is a no-op — mock threads are unlocked locally.
@@ -30,7 +26,6 @@ export async function markDealMet(dealId: string): Promise<void> {
   await mktPost<unknown>(`/deals/${dealId}/mark-met`);
 }
 
-// ── Reviews — POST /deals/:id/review {rating, product_quality_rating, tags, text} ─
 // productQualityRating is the second sub-score — how the buyer rates the ITEM,
 // separate from `rating` (the overall/counterparty score). Optional: a
 // reviewer who skips it still submits a valid review with rating alone.

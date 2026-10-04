@@ -1,17 +1,25 @@
 package ledger_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB suite for the centralized admin "Transactions" console
 // (AdminListTransactions / GET /api/finance/admin/transactions).
-//
 // ledger_entries has no module/source column and no per-module transactions
 // table exists — this console is the only cross-module read of money
 // movement, built entirely on real rows. Every assertion here is scoped to a
 // unique, randomly-tagged fixture (a brand-new fixture user + wallet account,
-// and references carrying a unique test tag) so it is safe to run against the
-// shared local Supabase instance, which already carries ~3,226 unrelated
-// ledger_entries rows — assertions never depend on an absolute table count.
-//
+// and references carrying a unique test tag), so no assertion depends on an
+// absolute table count and the suite is safe to re-run against the shared
+// local Supabase instance, which already carries thousands of unrelated
+// ledger_entries rows.
+// Two database-enforced invariants constrain HOW the fixture writes:
+//   • ledger_entries is APPEND-ONLY (the immutability trigger rejects every
+//     DELETE/UPDATE), so nothing this suite writes can ever be cleaned up — the
+//     fixture deliberately leaves its rows behind, accumulating one user +
+//     wallet + entries per run.
+//   • ADR-040 requires SUM(signed amount_kobo) over the WHOLE table to stay 0,
+//     so every synthetic single-sided row is offset by a contra leg
+//     (postContra). An unbalanced fixture row poisons
+//     TestLiveDB_LedgerGlobalConservation permanently, because nothing can
+//     remove it afterwards.
 // What it proves:
 //  1. Join shape: a NULL-user (standing account) row is returned, not dropped,
 //     and carries account_type so the UI can label it "System: <type>".
@@ -24,14 +32,11 @@ package ledger_test
 //  7. RBAC: a caller lacking finance.admin.transactions.view is 403'd by
 //     middleware.RequirePermission; a caller holding it reaches the handler
 //     and gets a real 200 with real rows.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset, so `go test ./...` without a
 // DB stays green.
-//
 // Bring-up:
 //   export TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 //   cd backend && go test ./internal/finance/ledger/... -run TestAdmin -v -count=1
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -75,10 +80,18 @@ type adminTxFixture struct {
 	userID                       string
 	walletAcct                   string
 	commAcct                     string
+	contraAcct                   string
 	rowA, rowB, rowC, rowD, rowE string // ledger_entries.id
-	rowDBalance                  string // ledger_entries.id — balances rowD, see setup comment
-	rowABalance                  string // ledger_entries.id — balances rowA, see setup comment
 }
+
+// contraAccountType is the ADR-040 quarantine account (20261207000100 admits
+// `legacy_wallet_contra`) so reconstructed legs stay out of observed money
+// movement — finance reporting excludes it. It is also the one standing account
+// no other suite delta-asserts: `settlement` is asserted exactly by estate's
+// live-DB tests, and packages run concurrently under `go test ./...`, so a
+// contra there would make them intermittently fail. Only the backfill migration
+// writes this type today, so no Go constant exists for it.
+var contraAccountType = ledger.AccountType("legacy_wallet_contra")
 
 func mustLiveTxPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -135,6 +148,10 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 	if err != nil {
 		t.Fatalf("get/create standing commission account: %v", err)
 	}
+	contraAcc, err := svc.GetOrCreateStandingAccount(ctx, contraAccountType)
+	if err != nil {
+		t.Fatalf("get/create standing %s account: %v", contraAccountType, err)
+	}
 
 	now := time.Now().UTC()
 	insert := func(accountID, entryType string, amountKobo int64, reference string, createdAt time.Time) string {
@@ -163,86 +180,89 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 		return id
 	}
 
-	f := &adminTxFixture{pool: pool, svc: svc, tag: tag, fullName: fullName, userID: userID, walletAcct: walletAcc.ID, commAcct: commAcc.ID}
+	f := &adminTxFixture{pool: pool, svc: svc, tag: tag, fullName: fullName, userID: userID,
+		walletAcct: walletAcc.ID, commAcct: commAcc.ID, contraAcct: contraAcc.ID}
+
+	// Per-run references: the tag keeps every assertion scoped to this run's rows
+	// (never an absolute table count), except refE — a bare random UUID so the
+	// "search matches the joined user" assertion has a row findable ONLY by
+	// name/email.
+	refA := fmt.Sprintf("fx:convert:%s-A", tag)
+	refB := fmt.Sprintf("arena:support:%s-B", tag)
+	refD := fmt.Sprintf("%sopaqueNoColon", tag)
+	refE := uuid.NewString()
 
 	// rowA: 10 days ago, CREDIT 150000 kobo, colon-namespaced reference "fx:convert:...".
-	f.rowA = insert(walletAcc.ID, "CREDIT", 150000, fmt.Sprintf("fx:convert:%s-A", tag), now.Add(-10*24*time.Hour))
-	// rowA must stay genuinely alone — TestAdminGetTransaction_ReturnsRelatedLegAndFullDetail
-	// asserts it has ZERO related legs, which is incompatible with giving it a
-	// same-reference balancing leg (unlike rowD/rowE below). Global conservation
-	// only requires the WHOLE table's signed sum to be zero, not that every
-	// individual reference group balances — so rowA's +150000 contribution is
-	// offset here by an UNRELATED reference (a random UUID, not derived from
-	// tag), which therefore never matches any Search=tag/amount-range/date-range
-	// assertion in this file and never becomes a "related entry" of anything.
-	f.rowABalance = insert(commAcc.ID, "REVERSAL_CREDIT", 150000, uuid.NewString(), now.Add(-101*24*time.Hour))
+	f.rowA = insert(walletAcc.ID, "CREDIT", 150000, refA, now.Add(-10*24*time.Hour))
+	f.postContra(t, "CREDIT", 150000, refA, now.Add(-10*24*time.Hour))
 	// rowB: 1 day ago, DEBIT 50000 kobo, "arena:support:..." — paired with rowC
 	// below, seeded with real metadata (proves the detail endpoint's JSON
 	// round-trip; ledger_entries is append-only, so this must be set at insert).
-	f.rowB = insertWithMetadata(walletAcc.ID, "DEBIT", 50000, fmt.Sprintf("arena:support:%s-B", tag), now.Add(-24*time.Hour), `{"note":"admtx detail test"}`)
+	f.rowB = insertWithMetadata(walletAcc.ID, "DEBIT", 50000, refB, now.Add(-24*time.Hour), `{"note":"admtx detail test"}`)
 	// rowC: same reference as rowB (its ledger counterpart), posted to the STANDING
 	// commission account (user_id IS NULL) — proves standing-account rows are
-	// returned, not dropped, and are distinguishable via account_type.
-	f.rowC = insert(commAcc.ID, "CREDIT", 50000, fmt.Sprintf("arena:support:%s-B", tag), now.Add(-24*time.Hour+time.Second))
+	// returned, not dropped, and are distinguishable via account_type. No contra
+	// here: B/C are already a balanced pair, which is exactly what the console is
+	// meant to show as one transaction with two legs.
+	f.rowC = insert(commAcc.ID, "CREDIT", 50000, refB, now.Add(-24*time.Hour+time.Second))
 	// rowD: 100 days ago, DEBIT 999999 kobo, NO colon in the reference at all —
 	// proves the SPLIT_PART fallback for non-colon references (whole string).
-	f.rowD = insert(walletAcc.ID, "DEBIT", 999999, fmt.Sprintf("%sopaqueNoColon", tag), now.Add(-100*24*time.Hour))
-	// rowD's own balancing leg: this row deliberately has no natural counterpart
-	// (it exists purely to test reference parsing), but ledger_entries is
-	// append-only — the DELETE in this fixture's cleanup below silently no-ops
-	// against it (confirmed live), so an unbalanced rowD would permanently pollute
-	// the shared table and fail TestLiveDB_LedgerGlobalConservation on every run
-	// after the first. REVERSAL_DEBIT is the sanctioned correction type (ADR-040)
-	// for offsetting an unwanted DEBIT; it nets rowD to zero under GROUP BY
-	// reference without changing anything about rowD itself (id/type/amount/
-	// reference all untouched, so every assertion keyed on rowD is unaffected).
-	// Posted to commAcc (not walletAcc) and one second further back than rowD so
-	// it never appears in this fixture's own tag/date/amount-scoped queries
-	// except the plain Search=tag ones, where it adds exactly one row — see the
-	// "+1 for rowD's balancing leg" comments on the affected Total assertions.
-	f.rowDBalance = insert(commAcc.ID, "REVERSAL_DEBIT", 999999, fmt.Sprintf("%sopaqueNoColon", tag), now.Add(-100*24*time.Hour-time.Second))
+	f.rowD = insert(walletAcc.ID, "DEBIT", 999999, refD, now.Add(-100*24*time.Hour))
+	f.postContra(t, "DEBIT", 999999, refD, now.Add(-100*24*time.Hour))
 	// rowE: now, CREDIT 1234 kobo, reference is an unrelated random UUID (no tag,
 	// no colon) — isolates the "search matches by joined user field" assertion,
 	// since this row can ONLY be found via the user's name/email, not the tag.
-	rowERef := uuid.NewString()
-	f.rowE = insert(walletAcc.ID, "CREDIT", 1234, rowERef, now)
-	// Balances rowE the same way rowDBalance balances rowD (see that comment).
-	// rowE's reference is a random UUID unrelated to tag/fullName, so this
-	// counter-leg can never be picked up by any Search-based assertion in this
-	// file regardless of which account it's posted to.
-	rowEBalance := insert(commAcc.ID, "REVERSAL_CREDIT", 1234, rowERef, now.Add(time.Second))
+	f.rowE = insert(walletAcc.ID, "CREDIT", 1234, refE, now)
+	f.postContra(t, "CREDIT", 1234, refE, now)
 
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM ledger_entries WHERE id = ANY($1)`,
-			[]string{f.rowA, f.rowABalance, f.rowB, f.rowC, f.rowD, f.rowDBalance, f.rowE, rowEBalance})
-		_, _ = pool.Exec(context.Background(), `DELETE FROM ledger_accounts WHERE id = $1`, f.walletAcct)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM user_profiles WHERE id = $1`, f.userID)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1`, f.userID)
-	})
-
+	// No cleanup: it cannot work, and attempting it would only hide a real
+	// failure behind a discarded error. DELETE on ledger_entries is rejected by
+	// ledger_entries_immutable(), which leaves ledger_accounts pinned by
+	// ledger_entries_account_id_fkey and auth.users pinned by the accounts'
+	// ON DELETE CASCADE — verified against a live database: repeated runs leave
+	// the users, accounts and entries behind (only user_profiles deletes, and
+	// that is the one row nobody needs).
 	return f
 }
 
-// insertTaggedLedgerRow inserts one extra ledger_entries row beyond a
-// fixture's standard rowA-E set (for tests needing a reference matching a
-// specific module's naming convention, e.g. "UTL-..."). The registered
-// cleanup is best-effort only and WILL silently no-op: ledger_entries is
-// append-only (a DB trigger rejects any DELETE, confirmed live — the same is
-// already true of setupAdminTxFixture's own rowA-E cleanup above). Every
-// assertion using this helper must therefore be collision-safe on its own —
-// scoped by this run's random tag/reference, never by an absolute count or a
-// fixed calendar date another run could have already touched.
-func insertTaggedLedgerRow(t *testing.T, pool *pgxpool.Pool, accountID, entryType string, amountKobo int64, reference string, createdAt time.Time) string {
+// postContra writes the offsetting leg for a synthetic single-sided fixture row,
+// keeping this suite inside ADR-040's global conservation invariant
+// (SUM(signed amount_kobo) == 0 over the whole table, asserted by the live-DB
+// conservation tests in backend/tests/ledger).
+// It is invisible to every assertion in this file by construction:
+//   - a STANDING account (user_id IS NULL) can never match the search-by-user
+//     assertions (AdminListTransactions searches le.reference plus the joined
+//     user's full_name/display_name/email);
+//   - its reference is tag-free and unique, so it never matches Search=<tag>,
+//     never appears in another row's RelatedEntries (reference-scoped), and
+//     never contributes to CommissionKobo (which sums only revenue-account
+//     entries sharing a reference — legacy_wallet_contra is not revenue);
+//   - created_at mirrors the row it offsets, and every date-range filter here is
+//     combined with Search=<tag>, so those counts stay exact.
+//
+// metadata records what it offsets: the row is permanent, and a human looking at
+// this table later deserves the pointer.
+func (f *adminTxFixture) postContra(t *testing.T, originalType string, amountKobo int64, forReference string, createdAt time.Time) string {
 	t.Helper()
-	var id string
-	err := pool.QueryRow(context.Background(), `
-		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-		accountID, entryType, amountKobo, reference, "idem-"+uuid.NewString(), createdAt).Scan(&id)
-	if err != nil {
-		t.Fatalf("insert tagged ledger_entries row (ref=%s): %v", reference, err)
+	offsetType := "DEBIT"
+	if originalType == "DEBIT" {
+		offsetType = "CREDIT"
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM ledger_entries WHERE id = $1`, id) })
+	meta, err := json.Marshal(map[string]string{
+		"fixture":    "admin_transactions_live_db_test",
+		"contra_for": forReference,
+	})
+	if err != nil {
+		t.Fatalf("marshal contra metadata: %v", err)
+	}
+	var id string
+	if err := f.pool.QueryRow(context.Background(), `
+		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, created_at, metadata)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+		f.contraAcct, offsetType, amountKobo, "admtxcontra-"+uuid.NewString(),
+		"idem-"+uuid.NewString(), createdAt, string(meta)).Scan(&id); err != nil {
+		t.Fatalf("insert contra leg offsetting %s: %v", forReference, err)
+	}
 	return id
 }
 
@@ -274,8 +294,8 @@ func TestAdminListTransactions_ShapeAndJoin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AdminListTransactions: %v", err)
 	}
-	if page.Total != 5 { // +1 for rowD's balancing leg (rowDBalance) — see setup comment
-		t.Fatalf("expected 5 tagged rows (A,B,C,D,rowDBalance), got total=%d rows=%v", page.Total, rowIDs(page.Rows))
+	if page.Total != 4 {
+		t.Fatalf("expected 4 tagged rows (A,B,C,D), got total=%d rows=%v", page.Total, rowIDs(page.Rows))
 	}
 	if !containsID(page.Rows, f.rowC) {
 		t.Fatalf("standing-account row (rowC) missing from results — NULL-user rows must not be dropped")
@@ -405,12 +425,8 @@ func TestAdminListTransactions_Pagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AdminListTransactions page1: %v", err)
 	}
-	// Total is 5, not 4 (A,B,C,D + rowDBalance) — rowDBalance is timestamped
-	// one second older than rowD, so it sorts last and never displaces
-	// page1/page2's expected rows; it would only appear on a page3 this test
-	// doesn't request. See setup comment on rowDBalance.
-	if page1.Total != 5 || len(page1.Rows) != 2 {
-		t.Fatalf("page1: expected total=5 len=2, got total=%d len=%d", page1.Total, len(page1.Rows))
+	if page1.Total != 4 || len(page1.Rows) != 2 {
+		t.Fatalf("page1: expected total=4 len=2, got total=%d len=%d", page1.Total, len(page1.Rows))
 	}
 	// Newest-first: rowC (now-1d+1s) then rowB (now-1d).
 	if page1.Rows[0].ID != f.rowC || page1.Rows[1].ID != f.rowB {
@@ -421,8 +437,8 @@ func TestAdminListTransactions_Pagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AdminListTransactions page2: %v", err)
 	}
-	if page2.Total != 5 || len(page2.Rows) != 2 {
-		t.Fatalf("page2: expected total=5 len=2, got total=%d len=%d", page2.Total, len(page2.Rows))
+	if page2.Total != 4 || len(page2.Rows) != 2 {
+		t.Fatalf("page2: expected total=4 len=2, got total=%d len=%d", page2.Total, len(page2.Rows))
 	}
 	if page2.Rows[0].ID != f.rowA || page2.Rows[1].ID != f.rowD {
 		t.Fatalf("page2: expected [rowA,rowD] next, got %v", rowIDs(page2.Rows))
@@ -477,8 +493,8 @@ func TestAdminListTransactions_RBAC(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 			t.Fatalf("decode response: %v (body: %s)", err, w.Body.String())
 		}
-		if !body.Success || body.Total != 5 || len(body.Rows) == 0 { // +1 for rowD's balancing leg
-			t.Fatalf("expected success with 5 real rows, got success=%v total=%d rows=%d (body: %s)",
+		if !body.Success || body.Total != 4 || len(body.Rows) == 0 {
+			t.Fatalf("expected success with 4 real rows, got success=%v total=%d rows=%d (body: %s)",
 				body.Success, body.Total, len(body.Rows), w.Body.String())
 		}
 	})
@@ -588,30 +604,19 @@ func TestAdminGetTransaction_NonUniqueReferenceCapsButReportsRealTotal(t *testin
 		}
 		ids = append(ids, id)
 	}
-	// The 25 rows above are all CREDIT 1 kobo — unbalanced by 25 kobo, and the
-	// type/amount here are irrelevant to what this test actually checks
-	// (related-entries pagination cap, not money conservation). Add one more
-	// row on the same reference that nets it to zero — it's itself a 26th
-	// "related" row, so the assertions below count off len(ids), not extraRows.
-	var balanceID string
-	if err := f.pool.QueryRow(ctx, `
-		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-		f.commAcct, "REVERSAL_CREDIT", extraRows, sharedRef, "idem-"+uuid.NewString(), time.Now().UTC()).Scan(&balanceID); err != nil {
-		t.Fatalf("insert shared-reference balancing row: %v", err)
-	}
-	ids = append(ids, balanceID)
-	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM ledger_entries WHERE id = ANY($1)`, ids)
-	})
+	// One contra leg offsets the group. It must carry its OWN reference, not
+	// sharedRef: sharing it would make RelatedEntriesTotal 25 instead of 24 (the
+	// cap assertion below). And it must not carry the tag, or Search=<tag> would
+	// see a 5th row.
+	f.postContra(t, "CREDIT", int64(extraRows), sharedRef, time.Now().UTC())
 
 	detail, err := f.svc.AdminGetTransaction(ctx, ids[0])
 	if err != nil {
 		t.Fatalf("AdminGetTransaction: %v", err)
 	}
-	if detail.RelatedEntriesTotal != int64(len(ids)-1) {
-		t.Fatalf("expected RelatedEntriesTotal=%d (the other %d rows sharing this reference, including the balancing leg), got %d",
-			len(ids)-1, len(ids)-1, detail.RelatedEntriesTotal)
+	if detail.RelatedEntriesTotal != int64(extraRows-1) {
+		t.Fatalf("expected RelatedEntriesTotal=%d (the other %d rows sharing this reference), got %d",
+			extraRows-1, extraRows-1, detail.RelatedEntriesTotal)
 	}
 	if len(detail.RelatedEntries) != 20 {
 		t.Fatalf("expected the returned related list capped at 20, got %d", len(detail.RelatedEntries))
@@ -667,86 +672,5 @@ func TestAdminGetTransaction_NotFound(t *testing.T) {
 	}
 	if !body.Success || body.Transaction.ID != f.rowB || len(body.Transaction.RelatedEntries) != 1 {
 		t.Fatalf("expected success with rowB + 1 related entry via HTTP, got %+v", body)
-	}
-}
-
-// TestAdminListTransactions_ModuleFilter proves the dashboard tab filter
-// narrows to ONE module's reference convention, using this fixture's rowA
-// ("fx:convert:...", NOT the fx_conversion resolver's own "fx:<uuid>" shape —
-// deliberately close enough to prove the filter doesn't over-match) and a
-// purpose-built "UTL-" row for the utility_bill module.
-func TestAdminListTransactions_ModuleFilter(t *testing.T) {
-	f := setupAdminTxFixture(t)
-	ctx := context.Background()
-
-	utlRef := "UTL-" + f.tag
-	utlRow := insertTaggedLedgerRow(t, f.pool, f.walletAcct, "DEBIT", 42000, utlRef, time.Now().UTC())
-	// utlRow deliberately has no natural counterpart in this test's own domain
-	// tables, but an unbalanced entry permanently pollutes the shared
-	// ledger_entries table the same way rowD did (see setupAdminTxFixture's
-	// comment) — ledger_entries is append-only, so cleanup can't undo it.
-	// Balance it with a REVERSAL_DEBIT on the SAME reference; it necessarily
-	// also matches Module=utility_bill (the filter is a reference-prefix
-	// match), so it's expected in page.Rows alongside utlRow.
-	utlBalance := insertTaggedLedgerRow(t, f.pool, f.commAcct, "REVERSAL_DEBIT", 42000, utlRef, time.Now().UTC())
-
-	page, err := f.svc.AdminListTransactions(ctx, ledger.AdminTransactionFilter{Module: "utility_bill", Search: f.tag, Limit: 50})
-	if err != nil {
-		t.Fatalf("AdminListTransactions: %v", err)
-	}
-	if !containsID(page.Rows, utlRow) {
-		t.Fatalf("expected the UTL- row to match module=utility_bill, rows=%+v", rowIDs(page.Rows))
-	}
-	for _, r := range page.Rows {
-		if r.ID != utlRow && r.ID != utlBalance {
-			t.Errorf("module=utility_bill matched an unexpected row: id=%s reference=%s", r.ID, r.Reference)
-		}
-	}
-	// The list is expected to carry ModuleDetail too — nil here is fine (this
-	// fixture's UTL- row has no real utility_transactions row behind it), but
-	// the field must exist and not panic the resolver loop.
-	_ = page.Rows[0].ModuleDetail
-}
-
-// TestAdminGetTransactionsSummary_DedupsBalancedLegs proves the dashboard
-// chart counts ONE real transaction, not one per ledger leg, for a balanced
-// double-entry post — and that its amount is not double-counted either.
-// Isolated by a synthetic historic day unlikely to collide with real or other
-// tests' data, since module=utility_bill matches every "UTL-" row that has
-// ever existed in this shared database.
-func TestAdminGetTransactionsSummary_DedupsBalancedLegs(t *testing.T) {
-	f := setupAdminTxFixture(t)
-	ctx := context.Background()
-
-	// ledger_entries is append-only (immutable by DB trigger — confirmed live:
-	// even this suite's own fixture cleanup silently fails to delete its rows,
-	// same as every prior test run's), so a FIXED calendar day would collide
-	// with this same test's own leftovers from an earlier run and inflate the
-	// count. Derive a day from this run's random tag instead — collision-free
-	// the same way the tag itself is.
-	var tagSeed uint32
-	for _, c := range f.tag {
-		tagSeed = tagSeed*31 + uint32(c)
-	}
-	day := time.Date(2000, 1, 1, 12, 0, 0, 0, time.UTC).AddDate(0, 0, int(tagSeed%36500))
-	ref := "UTL-" + f.tag
-	insertTaggedLedgerRow(t, f.pool, f.walletAcct, "DEBIT", 55500, ref, day)
-	insertTaggedLedgerRow(t, f.pool, f.commAcct, "CREDIT", 55500, ref, day.Add(time.Minute)) // same reference, same amount — the other leg
-
-	from := day.Add(-time.Hour)
-	to := day.Add(24 * time.Hour)
-	summary, err := f.svc.AdminGetTransactionsSummary(ctx, "utility_bill", from, to)
-	if err != nil {
-		t.Fatalf("AdminGetTransactionsSummary: %v", err)
-	}
-	if summary.TotalCount != 1 {
-		t.Fatalf("TotalCount = %d, want 1 (two legs of ONE balanced transaction must collapse to one)", summary.TotalCount)
-	}
-	if summary.TotalAmountKobo != 55500 {
-		t.Fatalf("TotalAmountKobo = %d, want 55500 (must not sum both legs)", summary.TotalAmountKobo)
-	}
-	wantDay := day.Format("2006-01-02")
-	if len(summary.Days) != 1 || summary.Days[0].Day != wantDay {
-		t.Fatalf("Days = %+v, want exactly one day bucket for %s", summary.Days, wantDay)
 	}
 }

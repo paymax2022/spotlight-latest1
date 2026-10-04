@@ -51,8 +51,6 @@ func (s *Service) AllotmentRelease(ctx context.Context, roomTypeID string, dr Da
 	return s.repo.ReleaseAllotment(ctx, roomTypeID, dr, rooms)
 }
 
-// --- calendar reads ---
-
 // RateCalendar returns the rate-day grid for a plan over [from,to].
 func (s *Service) RateCalendar(ctx context.Context, ratePlanID, from, to string) ([]RateDay, error) {
 	if err := validRange(from, to); err != nil {
@@ -68,8 +66,6 @@ func (s *Service) AvailabilityCalendar(ctx context.Context, roomTypeID, from, to
 	}
 	return s.repo.ListAvailabilityDays(ctx, roomTypeID, from, to)
 }
-
-// --- single-cell writes ---
 
 // SetRateDay upserts one rate-calendar cell.
 func (s *Service) SetRateDay(ctx context.Context, d RateDay) error {
@@ -92,8 +88,6 @@ func (s *Service) SetAvailabilityDay(ctx context.Context, d AvailabilityDay) err
 	}
 	return s.repo.UpsertAvailabilityDay(ctx, d)
 }
-
-// --- bulk date-range edit ---
 
 // BulkEditRates applies a bulk edit to a rate plan's rate calendar for every date
 // in the range. Existing cells are merged (unset fields preserved); new cells are
@@ -149,19 +143,14 @@ func (s *Service) BulkEditAvailability(ctx context.Context, roomTypeID string, e
 	return n, nil
 }
 
-// --- restrictions ---
-
 // SetRestrictions applies min/max LOS + CTA/CTD + stop_sell to a rate plan's
 // calendar over a range (a thin wrapper over BulkEditRates).
 func (s *Service) SetRestrictions(ctx context.Context, ratePlanID string, e BulkEdit) (int, error) {
 	return s.BulkEditRates(ctx, ratePlanID, e)
 }
 
-// --- derived / linked rates ---
-
 // ApplyDerivedRate computes a child plan's rate calendar from its parent's over a
 // range using a rule cascade (parent price + AdjustBps + FixedKobo, floored). E.g.
-// non-refundable = BAR - 10% (AdjustBps -1000); breakfast = room-only + fixed
 // (FixedKobo). This is rule-driven and idempotent: re-running re-derives the cells.
 func (s *Service) ApplyDerivedRate(ctx context.Context, rule DerivedRateRule, from, to string) (int, error) {
 	if rule.ParentRatePlanID == "" || rule.ChildRatePlanID == "" {
@@ -193,8 +182,6 @@ func (s *Service) ApplyDerivedRate(ctx context.Context, rule DerivedRateRule, fr
 	return n, nil
 }
 
-// --- promotions ---
-
 // CreatePromotion validates + inserts a promotion.
 func (s *Service) CreatePromotion(ctx context.Context, p Promotion) (string, error) {
 	if p.PropertyID == "" || p.Name == "" {
@@ -219,8 +206,6 @@ func (s *Service) SetPromotionActive(ctx context.Context, promotionID, propertyI
 	return s.repo.SetPromotionActive(ctx, promotionID, propertyID, active)
 }
 
-// --- object-scope resolvers (used by extranet authZ) ---
-
 // PropertyOfRatePlan resolves a rate plan's owning property.
 func (s *Service) PropertyOfRatePlan(ctx context.Context, ratePlanID string) (string, error) {
 	return s.repo.PropertyIDForRatePlan(ctx, ratePlanID)
@@ -230,8 +215,6 @@ func (s *Service) PropertyOfRatePlan(ctx context.Context, ratePlanID string) (st
 func (s *Service) PropertyOfRoomType(ctx context.Context, roomTypeID string) (string, error) {
 	return s.repo.PropertyIDForRoomType(ctx, roomTypeID)
 }
-
-// --- helpers ---
 
 // applyRateEdit merges set fields of a BulkEdit into a rate-day cell.
 func applyRateEdit(d *RateDay, e BulkEdit) {

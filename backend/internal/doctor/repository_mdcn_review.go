@@ -239,8 +239,6 @@ func (r *Repository) SuspendExpiredDoctorLicences(ctx context.Context, now time.
 	return int(ct.RowsAffected()), nil
 }
 
-// ── helpers ──
-
 func decodeMatched(b []byte) map[string]string {
 	m := map[string]string{}
 	if len(b) > 0 {

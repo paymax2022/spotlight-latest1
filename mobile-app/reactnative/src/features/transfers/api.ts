@@ -31,8 +31,6 @@ type ApiRecord = Record<string, unknown>;
 const unwrap = (res: { data?: ApiRecord }): ApiRecord =>
   (res.data?.data ?? res.data ?? {}) as ApiRecord;
 
-// ── Bank list ────────────────────────────────────────────────────────────────
-
 export async function fetchBanks(): Promise<Bank[]> {
   if (USE_MOCK) return transfersMock.fetchBanks();
   const res = await api.get('/api/v1/transfers/banks');
@@ -44,8 +42,6 @@ export async function fetchBanks(): Promise<Bank[]> {
     slug: String(b.slug ?? ''),
   }));
 }
-
-// ── Account-name resolution ──────────────────────────────────────────────────
 
 export async function resolveAccount(
   bankCode: string,
@@ -65,8 +61,6 @@ export async function resolveAccount(
     bankCode,
   };
 }
-
-// ── Transaction PIN gate ─────────────────────────────────────────────────────
 
 export async function getPinStatus(): Promise<{ hasPin: boolean }> {
   if (USE_MOCK) return transfersMock.getPinStatus();
@@ -98,8 +92,6 @@ export async function verifyPin(pin: string): Promise<void> {
   await api.post('/api/v1/transfers/pin/verify', { pin });
 }
 
-// ── Wallet → Bank ────────────────────────────────────────────────────────────
-
 export async function walletToBankTransfer(
   input: WalletBankTransferInput,
 ): Promise<TransferReceiptData> {
@@ -130,8 +122,6 @@ export async function walletToBankTransfer(
     createdAt: String(t.created_at ?? new Date().toISOString()),
   };
 }
-
-// ── Bank → Bank (provider pass-through) ──────────────────────────────────────
 
 export async function bankToBankTransfer(
   input: BankToBankTransferInput,
@@ -166,8 +156,6 @@ export async function bankToBankTransfer(
     provider: (t.provider as string | undefined) ?? 'Paystack',
   };
 }
-
-// ── Fee schedule (display only; backend is authoritative) ─────────────────────
 
 export function walletBankFee(amountKobo: number): number {
   if (amountKobo <= 500_000) return 1_000;

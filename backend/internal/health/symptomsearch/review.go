@@ -2,11 +2,9 @@ package symptomsearch
 
 // Review-case engine (pharmacy_review_cases) — the gated state machine that
 // keeps the licence (PRD §6):
-//
 //	SUBMITTED → AUTO_CLEARED (T1) | PHARMACIST_REVIEW (T2/POM)
 //	PHARMACIST_REVIEW → APPROVED | REJECTED | NEEDS_INFO
 //	NEEDS_INFO → PHARMACIST_REVIEW
-//
 // Every transition is guarded (explicit edge map), idempotent (re-applying the
 // current state is a no-op), optimistic-locked (version CAS in the repo) and
 // audit-logged with the actor. REJECTED signals the pharmacy order flow to run
@@ -33,7 +31,6 @@ const maxDecisionNoteLen = 2000
 // CreateReviewCaseForOrder opens (or idempotently returns) the review case for
 // a pharmacy order and auto-routes it: T1 ⇒ AUTO_CLEARED, anything else ⇒
 // PHARMACIST_REVIEW.
-//
 // EXPORTED INTEGRATION POINT: the pharmacy order flow calls this at order
 // submission time (see the comment in internal/app/health_symptom_routes.go).
 // It is safe to call more than once per order — one case per order (UNIQUE
@@ -46,7 +43,6 @@ func (s *Service) CreateReviewCaseForOrder(ctx context.Context, actorID, orderID
 // pharmacy CreateOrder path invokes it (via healthpharmacy's optional
 // ReviewCaseOpener collaborator) after a successful order creation. The triage
 // tier is resolved SERVER-SIDE, never re-declared by the client:
-//
 //   - search context linked  ⇒ tier read from the symptom_search_events row;
 //     an unknown event or a missing tier fails CLOSED to T2 pharmacist review
 //     (and the dangling id is NOT linked onto the case);

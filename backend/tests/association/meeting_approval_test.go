@@ -1,14 +1,10 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // Member-proposed meetings, approved by an organisation admin.
-//
 // WHY THIS EXISTS
-// ---------------
 // Only an admin could schedule a meeting: the create route is gated on
 // requireOrgAdmin and the member-facing routes were read/RSVP/check-in only.
 // A member now proposes, and an admin decides.
-//
 // The properties that matter are about VISIBILITY and AUTHORITY, not CRUD:
 //   • an admin's own proposal is scheduled, not queued — otherwise the owner
 //     would be asking themselves for permission
@@ -16,10 +12,8 @@ package association_test
 //     is the entire point of approval
 //   • but visible to its proposer, or they cannot see what they submitted
 //   • only an admin may decide, and only once
-//
 // Live-DB, same harness as founder_and_scoping_test.go: skipped without
 // TEST_DATABASE_URL.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

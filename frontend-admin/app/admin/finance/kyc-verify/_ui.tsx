@@ -72,8 +72,6 @@ export function BackToQueue() {
   );
 }
 
-// ── Badges ──────────────────────────────────────────────────────────────────
-
 const CHECK_STATUS_COLORS: Record<CheckStatus, { fg: string; bg: string }> = {
   PASSED:    { fg: '#15803d', bg: '#dcfce7' }, // green
   FAILED:    { fg: '#b91c1c', bg: '#fee2e2' }, // red
@@ -120,7 +118,6 @@ export function ConfidencePill({ value }: { value?: number | null }) {
   );
 }
 
-// ── RBAC ──────────────────────────────────────────────────────────────────
 // Reads the cached admin user and exposes a permission check to gate the
 // sensitive KYC decisions/config. Server RBAC (finance.admin.kyc) remains
 // authoritative — this is a UX gate only.

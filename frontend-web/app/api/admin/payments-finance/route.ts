@@ -27,7 +27,6 @@ const CUSTOMER_ACCOUNT_TYPES = ['wallet', 'user_wallet', 'group_wallet'] as cons
 
 // WAL-013: rolling window for the "volume" and "active wallets" stats.
 // 30 days is a conventional default for a recent-activity figure on an
-// admin dashboard — the route owns this choice; the aggregate RPC just
 // takes a window_start it's given. "Active wallet" = at least one ledger
 // movement inside this same window, reusing the volume window rather than
 // inventing a second, differently-scoped definition of "active" — there is
@@ -35,7 +34,6 @@ const CUSTOMER_ACCOUNT_TYPES = ['wallet', 'user_wallet', 'group_wallet'] as cons
 // (backend/internal/finance included) to align with instead.
 const STATS_WINDOW_DAYS = 30;
 
-// `any` here mirrors the original page's own `filter: (query: any) => any`
 // signature — the Supabase query builder's fluent type is not worth chaining
 // through a helper.
 async function queryRows<T>(

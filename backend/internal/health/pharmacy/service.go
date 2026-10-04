@@ -2,14 +2,19 @@ package healthpharmacy
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"log"
-	"math/big"
+	"net/http"
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/tiers"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -181,7 +186,6 @@ func (s *Service) MyPrescriptions(ctx context.Context, patientID string) ([]Pres
 // pharmacy never imports the commission package at compile time (mirrors the
 // transport/doctor seams) — the adapter, which lives in app-wiring, discards the
 // returned earning row and surfaces only the error.
-//
 // This records realized profit ONLY; it never moves money. The pharmacy module's
 // own money movements (the order escrow HELD→RELEASE of the patient payment to the
 // pharmacy) are unchanged, and the injected recorder is deliberately constructed
@@ -260,8 +264,6 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 	}
 }
 
-// ─── Catalog (HL-5 NAFDAC gating at write) ──────────────────────────────────
-
 // UpsertProduct writes a catalog product. HL-5: an unregistered or banned NAFDAC
 // status is REJECTED at write time (not merely hidden) — the product never lands
 // in the catalog. HL-4: a controlled item is rejected at write (excluded at MVP).
@@ -305,13 +307,21 @@ func (s *Service) UpsertProduct(ctx context.Context, ownerID string, p Product) 
 	if p.ID == "" {
 		p.ID = uuid.New().String()
 	}
+	// pharmacy_products.category is NOT NULL with a legacy enum ('prescription',
+	// 'otc', …) and no default — the legacy storefront still reads it, so the
+	// insert must fill it. Derive it from rx_required (POM ⇒ 'prescription',
+	// else 'otc'); never client-supplied.
+	category := "otc"
+	if p.RxRequired {
+		category = "prescription"
+	}
 	const q = `
 		INSERT INTO pharmacy_products
-			(id, pharmacy_provider_id, name, nafdac_ref, nafdac_status, rx_required, is_controlled, price_kobo, stock_qty, active)
-		VALUES ($1,$2,$3,$4,$5,$6,false,$7,$8,$9)
+			(id, pharmacy_provider_id, name, category, nafdac_ref, nafdac_status, rx_required, is_controlled, price_kobo, stock_qty, active)
+		VALUES ($1,$2,$3,$10,$4,$5,$6,false,$7,$8,$9)
 		ON CONFLICT (id) DO UPDATE SET
-			name=$3, nafdac_ref=$4, nafdac_status=$5, rx_required=$6, price_kobo=$7, stock_qty=$8, active=$9, updated_at=now()`
-	if _, err := s.db.Exec(ctx, q, p.ID, p.PharmacyProviderID, p.Name, p.NAFDACRef, p.NAFDACStatus, p.RxRequired, p.PriceKobo, p.StockQty, p.Active); err != nil {
+			name=$3, category=$10, nafdac_ref=$4, nafdac_status=$5, rx_required=$6, price_kobo=$7, stock_qty=$8, active=$9, updated_at=now()`
+	if _, err := s.db.Exec(ctx, q, p.ID, p.PharmacyProviderID, p.Name, p.NAFDACRef, p.NAFDACStatus, p.RxRequired, p.PriceKobo, p.StockQty, p.Active, category); err != nil {
 		return nil, fmt.Errorf("pharmacy: upsert product: %w", err)
 	}
 	s.audited(ownerID, "", "health.pharmacy.product.upsert", p.ID, nil,
@@ -345,11 +355,9 @@ func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuer
 	// per-row inside the loop, ONE such product returned 500 for the entire
 	// catalog rather than omitting itself. Every product in the local database has
 	// both NULL, so the catalog was completely unreachable.
-	//
 	// The LEFT JOIN and the COALESCE on display_name beside them already
 	// anticipate an unresolvable provider; these columns simply were not given the
 	// same treatment. Empty string is the signal the name already uses.
-	//
 	// Note nafdac_ref is documented on the struct as "HL-5: required" but the
 	// column is nullable and no row has one — a data/schema question this does not
 	// settle, and deliberately: a catalog that 500s hides it instead of showing it.
@@ -397,8 +405,6 @@ func (s *Service) GetProduct(ctx context.Context, id string) (*Product, error) {
 	return &p, nil
 }
 
-// ─── Pharmacist Rx verification workflow (HL-3) ─────────────────────────────
-
 // VerifyPrescription is the pharmacist decision delegated to the P0 e-Rx engine
 // (HL-3): begin → SENT_TO_PHARMACY→VERIFYING, then approve → VERIFIED, otherwise
 // REJECTED. healthrx records verified_by and enforces the guarded transition;
@@ -422,8 +428,6 @@ type RxVerifier interface {
 	Verify(ctx context.Context, pharmacistID, rxID string, approve bool, reason string) error
 	BeginVerify(ctx context.Context, pharmacistID, rxID string) error
 }
-
-// ─── PharmacyOrder lifecycle ────────────────────────────────────────────────
 
 // CreateOrderInput is the validated order-creation payload.
 type CreateOrderInput struct {
@@ -494,73 +498,8 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		}
 	}
 
-	// Price + Rx-flag every line from the catalog (server-side, kobo integers).
-	var total int64
-	rxRequired := false
-	lines := make([]OrderLine, 0, len(in.Lines))
-	for _, li := range in.Lines {
-		if li.Quantity <= 0 {
-			return nil, fmt.Errorf("pharmacy: line quantity must be positive")
-		}
-		// Upper bound: keeps price_kobo * quantity far from int64 overflow (a
-		// crafted huge quantity could otherwise wrap the total to a small
-		// positive hold) and keeps the qty-cap window sum arithmetic safe.
-		if li.Quantity > maxOrderLineQty {
-			return nil, fmt.Errorf("pharmacy: line quantity exceeds the maximum of %d per line", maxOrderLineQty)
-		}
-		var name, status string
-		var price int64
-		var lineRx, controlled, active, inStock bool
-		const pq = `SELECT name, nafdac_status, rx_required, is_controlled, price_kobo, active, in_stock
-		            FROM pharmacy_products WHERE id=$1 AND pharmacy_provider_id=$2`
-		if err := s.db.QueryRow(ctx, pq, li.ProductID, in.PharmacyProviderID).Scan(&name, &status, &lineRx, &controlled, &price, &active, &inStock); err != nil {
-			if err == pgx.ErrNoRows {
-				return nil, fmt.Errorf("pharmacy: product not found in this pharmacy catalog")
-			}
-			return nil, err
-		}
-		// HL-5 / HL-4 defence in depth at order time.
-		if status != "REGISTERED" {
-			return nil, fmt.Errorf("pharmacy: product not NAFDAC-registered (HL-5)")
-		}
-		if controlled {
-			return nil, fmt.Errorf("pharmacy: controlled substances excluded at MVP (HL-4)")
-		}
-		if !active {
-			return nil, fmt.Errorf("pharmacy: product is not active")
-		}
-		// in_stock is the durable "still available" signal for a TRACKED
-		// product (stock_qty > 0 at some point) once it has been sold out —
-		// see the stock-decrement step below, which flips it false the
-		// moment stock_qty reaches 0. It defaults true for every product
-		// (including untracked ones, stock_qty==0 from creation), so this
-		// only ever refuses a product this pharmacy explicitly tracked and
-		// has genuinely run out of.
-		if !inStock {
-			return nil, ErrInsufficientStock
-		}
-		lineTotal := price * int64(li.Quantity)
-		total += lineTotal
-		if lineRx {
-			rxRequired = true
-		}
-		lines = append(lines, OrderLine{
-			ID: uuid.New().String(), ProductID: li.ProductID, ProductName: name,
-			RxRequired: lineRx, Quantity: li.Quantity, UnitPriceKobo: price, LineTotalKobo: lineTotal,
-		})
-	}
-	if total <= 0 {
-		return nil, fmt.Errorf("pharmacy: order total must be positive")
-	}
-	// HL-3: an Rx-required order needs a prescription reference up front.
-	if rxRequired && (in.PrescriptionID == nil || *in.PrescriptionID == "") {
-		return nil, fmt.Errorf("pharmacy: this order contains Rx-required items and needs a prescription (HL-3)")
-	}
-	// Symptom-Search PRD §5.5: per-SKU rolling-window quantity caps, enforced
-	// server-side and fail-closed BEFORE the escrow hold (no money moves on a
-	// capped order). nil gate (flag off) ⇒ no-op; runs after the idempotent
-	// replay short-circuit above so replays never re-count themselves.
-	if err := s.checkQuantityCaps(ctx, patientID, in.Lines); err != nil {
+	total, rxRequired, lines, err := s.priceAndValidateLines(ctx, patientID, in)
+	if err != nil {
 		return nil, err
 	}
 
@@ -625,27 +564,20 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 			return failAfterHold(fmt.Errorf("pharmacy: insert line: %w", err))
 		}
 	}
-	// Decrement stock atomically for TRACKED products, conditioned on enough
-	// stock still being available — closes an unlimited-oversell hole found
-	// live via UAT (no stock write existed anywhere in this file; two
-	// concurrent orders could both succeed against a single unit of stock).
-	// stock_qty=0 means "not inventory-tracked" (the DB default, and the
-	// current value for most of the live catalog — owners are not required
-	// to set a count), NOT "zero available": treating 0 as a hard floor would
-	// block checkout on the majority of today's products, a bigger
-	// regression than the bug being fixed. Only products an owner has opted
-	// into tracking by setting stock_qty > 0 are gated and decremented.
+	// Decrement stock atomically for TRACKED products only — this closes an
+	// unlimited-oversell hole (two concurrent orders could both succeed
+	// against a single unit of stock).
+	// stock_qty=0 means "not inventory-tracked" (the DB default; owners are
+	// not required to set a count), NOT "zero available": treating 0 as a hard
+	// floor would block checkout on most of the catalog. Only products an
+	// owner opted into tracking (stock_qty > 0) are gated and decremented.
 	// WHERE stock_qty >= quantity makes this a compare-and-swap: if a
 	// concurrent order already consumed the remaining stock, RowsAffected is
 	// 0 and the order is refused — fail closed, never oversell a tracked item.
-	//
-	// The moment a tracked product's stock_qty reaches exactly 0, in_stock
-	// flips false (checked earlier, in the pricing loop, before any money
-	// moves). Without that second signal, a depleted tracked product's
-	// stock_qty==0 would be indistinguishable from an untracked product's
-	// stock_qty==0 default — the fix's own first version had exactly this
-	// bug: once sold out, the "untracked = unlimited" branch let further
-	// orders straight through again.
+	// When a tracked product's stock_qty reaches exactly 0, in_stock flips
+	// false (checked in the pricing loop before money moves) — without that
+	// second signal, a depleted tracked product's stock_qty==0 would be
+	// indistinguishable from an untracked product's default.
 	const decStock = `
 		UPDATE pharmacy_products
 		SET stock_qty = stock_qty - $2, in_stock = ((stock_qty - $2) > 0)
@@ -682,6 +614,86 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		map[string]any{"state": string(initial), "total_kobo": total, "escrow_id": escrowID, "rx_required": rxRequired})
 	s.openReviewCase(ctx, patientID, orderID, in.PharmacyProviderID, in.SearchEventID, rxRequired)
 	return o, nil
+}
+
+// priceAndValidateLines prices + Rx-flags every line server-side from the
+// catalog (kobo integers), applies the HL-4/HL-5 catalogue gates and the
+// rolling-window quantity caps, and returns the order total, whether any line
+// needs a prescription, and the built OrderLines. Runs BEFORE the escrow hold:
+// no money moves on a rejected order.
+func (s *Service) priceAndValidateLines(ctx context.Context, patientID string, in CreateOrderInput) (int64, bool, []OrderLine, error) {
+	var rxRequired bool
+	var lines []OrderLine
+
+	var total int64
+
+	lines = make([]OrderLine, 0, len(in.Lines))
+	for _, li := range in.Lines {
+		if li.Quantity <= 0 {
+			return 0, false, nil, errors.New("pharmacy: line quantity must be positive")
+		}
+		// Upper bound: keeps price_kobo * quantity far from int64 overflow (a
+		// crafted huge quantity could otherwise wrap the total to a small
+		// positive hold) and keeps the qty-cap window sum arithmetic safe.
+		if li.Quantity > maxOrderLineQty {
+			return 0, false, nil, fmt.Errorf("pharmacy: line quantity exceeds the maximum of %d per line", maxOrderLineQty)
+		}
+		var name, status string
+		var price int64
+		var lineRx, controlled, active, inStock bool
+		const pq = `SELECT name, nafdac_status, rx_required, is_controlled, price_kobo, active, in_stock
+		            FROM pharmacy_products WHERE id=$1 AND pharmacy_provider_id=$2`
+		if err := s.db.QueryRow(ctx, pq, li.ProductID, in.PharmacyProviderID).Scan(&name, &status, &lineRx, &controlled, &price, &active, &inStock); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return 0, false, nil, errors.New("pharmacy: product not found in this pharmacy catalog")
+			}
+			return 0, false, nil, err
+		}
+		// HL-5 / HL-4 defence in depth at order time.
+		if status != "REGISTERED" {
+			return 0, false, nil, errors.New("pharmacy: product not NAFDAC-registered (HL-5)")
+		}
+		if controlled {
+			return 0, false, nil, errors.New("pharmacy: controlled substances excluded at MVP (HL-4)")
+		}
+		if !active {
+			return 0, false, nil, errors.New("pharmacy: product is not active")
+		}
+		// in_stock is the durable "still available" signal for a TRACKED
+		// product (stock_qty > 0 at some point) once it has been sold out —
+		// see the stock-decrement step below, which flips it false the
+		// moment stock_qty reaches 0. It defaults true for every product
+		// (including untracked ones, stock_qty==0 from creation), so this
+		// only ever refuses a product this pharmacy explicitly tracked and
+		// has genuinely run out of.
+		if !inStock {
+			return 0, false, nil, ErrInsufficientStock
+		}
+		lineTotal := price * int64(li.Quantity)
+		total += lineTotal
+		if lineRx {
+			rxRequired = true
+		}
+		lines = append(lines, OrderLine{
+			ID: uuid.New().String(), ProductID: li.ProductID, ProductName: name,
+			RxRequired: lineRx, Quantity: li.Quantity, UnitPriceKobo: price, LineTotalKobo: lineTotal,
+		})
+	}
+	if total <= 0 {
+		return 0, false, nil, errors.New("pharmacy: order total must be positive")
+	}
+	// HL-3: an Rx-required order needs a prescription reference up front.
+	if rxRequired && (in.PrescriptionID == nil || *in.PrescriptionID == "") {
+		return 0, false, nil, errors.New("pharmacy: this order contains Rx-required items and needs a prescription (HL-3)")
+	}
+	// Symptom-Search PRD §5.5: per-SKU rolling-window quantity caps, enforced
+	// server-side and fail-closed BEFORE the escrow hold (no money moves on a
+	// capped order). nil gate (flag off) ⇒ no-op; runs after the idempotent
+	// replay short-circuit above so replays never re-count themselves.
+	if err := s.checkQuantityCaps(ctx, patientID, in.Lines); err != nil {
+		return 0, false, nil, err
+	}
+	return total, rxRequired, lines, nil
 }
 
 // openReviewCase invokes the optional symptom-search review seam (PRD §10 POM
@@ -994,8 +1006,6 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 	return o, nil
 }
 
-// ─── Multi-pharmacy discovery + ratings (HL-2 gated) ────────────────────────
-
 // DiscoverPharmacies returns APPROVED + discoverable PHARMACY providers (HL-2),
 // mirroring healthvet.DiscoverVets: when lat/lng are supplied and sort resolves
 // to distance, it ranks by PostGIS distance within radiusM; otherwise it ranks
@@ -1225,8 +1235,6 @@ func (s *Service) ListReviews(ctx context.Context, providerID string) ([]Pharmac
 	return out, nil
 }
 
-// ─── internals ──────────────────────────────────────────────────────────────
-
 func (s *Service) transition(ctx context.Context, actorID, orderID string, to OrderState, side func(pgx.Tx, *Order) error, action string) (*Order, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -1355,17 +1363,10 @@ func generatePickupCode() string {
 	const digits = "0123456789"
 	b := make([]byte, 6)
 	for i := range b {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(digits))))
-		if err != nil {
-			b[i] = digits[0]
-			continue
-		}
-		b[i] = digits[n.Int64()]
+		b[i] = digits[cryptox.RandUint(uint64(len(digits)))]
 	}
 	return string(b)
 }
-
-// ─── Owner order inbox ──────────────────────────────────────────────────────
 
 // maxOwnerOrderPage bounds a client-supplied page size. Without it, `limit` is a
 // lever for pulling the whole order table in one request.
@@ -1374,17 +1375,14 @@ const defaultOwnerOrderPage = 50
 
 // ListForOwner returns orders belonging to the pharmacies this user OWNS, newest
 // first, optionally narrowed to one state.
-//
 // This is the pharmacist's inbox, and until it existed a pharmacy could take
 // money (CreateOrder holds the payment) and complete a fulfilment lifecycle —
 // confirm → dispense → dispatch → complete — with no way to discover WHICH orders
 // were waiting: the only reads were GET /orders/:id, which needs an id you
 // already have, and an admin-only list.
-//
 // Scoping is by ownership, resolved server-side from health_providers; the caller
 // never names a pharmacy. An owner with no pharmacies gets an empty list, not
 // everyone's orders.
-//
 // pickup_code is deliberately NOT selected. Service.Get strips it for every
 // reader who is not the patient, because it is the credential the patient
 // presents at the counter — returning it here would hand the pharmacy the very
@@ -1442,7 +1440,6 @@ const defaultPatientOrderPage = 50
 
 // ListForPatient returns the caller's own orders, newest first, optionally
 // narrowed to one state.
-//
 // This is the patient-facing counterpart to ListForOwner. Before it existed,
 // the mobile "my orders" screen called GET /orders — the same path the
 // pharmacist inbox (ListForOwner) is bound to — so a patient either got an
@@ -1450,7 +1447,6 @@ const defaultPatientOrderPage = 50
 // fulfilment queue (if they happened to also own one). Registered as
 // /orders/mine, a sibling of the existing /products/mine convention, so it
 // never collides with the owner inbox at /orders.
-//
 // pickup_code IS selected here, unlike ListForOwner: it is the patient's own
 // counter credential, and this is the patient reading their own order.
 func (s *Service) ListForPatient(ctx context.Context, patientID, state string, limit, offset int) ([]Order, error) {
@@ -1508,16 +1504,13 @@ func (s *Service) ListForPatient(ctx context.Context, patientID, state string, l
 
 // EarningsForOwner totals what this owner's pharmacies have been paid and what is
 // still held for them.
-//
 // A pharmacy is paid by escrow RELEASE on completion, straight to the owner's
 // wallet — there is no payout-run batching as there is for restaurants. That made
 // the money invisible as a BUSINESS figure: the owner saw undifferentiated wallet
 // credits with no attribution to orders, and no idea how much was still held.
-//
 // Amounts come from escrow_holds rather than pharmacy_orders.total_kobo, because
 // the hold is the money record: it knows whether funds were released, refunded or
 // are still held, which the order's workflow state only implies.
-//
 // Scoped by ownership, resolved server-side. An owner with no pharmacies gets
 // zeros, not the platform's totals.
 func (s *Service) EarningsForOwner(ctx context.Context, ownerID string) (*PharmacyEarnings, error) {
@@ -1541,7 +1534,6 @@ func (s *Service) EarningsForOwner(ctx context.Context, ownerID string) (*Pharma
 
 // ListProductsForOwner returns every product belonging to the pharmacies this
 // user OWNS — including the ones customers cannot see.
-//
 // ListProducts is the CUSTOMER catalogue: it filters to
 // `active = true AND nafdac_status = 'REGISTERED'`, which is right for a shopper
 // and useless for a merchant. Under it an owner could write a product but never
@@ -1549,7 +1541,6 @@ func (s *Service) EarningsForOwner(ctx context.Context, ownerID string) (*Pharma
 // from their own view, with no way to reprice, restock, or reactivate it, and a
 // product still awaiting NAFDAC verification was invisible to the person meant to
 // chase it.
-//
 // Managing stock means seeing all of it, so this deliberately applies NO status
 // filter. Scoped by ownership, resolved server-side — a rival's pricing and stock
 // levels are commercially sensitive, and an owner of nothing gets nothing.
@@ -1582,4 +1573,152 @@ func (s *Service) ListProductsForOwner(ctx context.Context, ownerID string) ([]P
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// Server-side rolling-window quantity caps (Symptom-Search PRD §5.5). The
+// mobile stepper caps at max_qty_per_window COSMETICALLY; production fails
+// closed HERE, at order creation, before any funds are held.
+// Seam style mirrors ReviewCaseOpener: an optional, nil-safe collaborator
+// injected at wiring time (finance_routes wires it only when the symptom-
+// search flag is on — flag off ⇒ nil gate ⇒ CreateOrder behavior unchanged).
+// Unlike the review opener (best-effort, post-payment), the quantity gate is
+// BLOCKING: it runs after the idempotent-replay short-circuit and the catalog
+// pricing loop, immediately before escrow.Hold — a capped line rejects the
+// order with 422 QTY_CAP_EXCEEDED and no money moves.
+// Cap semantics: order lines are product-keyed (pharmacy_order_lines has no
+// sku_id), so the cap keys on the PRODUCT via its pharmacy_skus rows — the
+// strictest non-null max_qty_per_window among the product's active SKUs wins,
+// with that SKU's qty_window_days as the rolling window. Only products with
+// at least one capped SKU are gated. The window sum counts the user's ordered
+// quantity across all their orders in the window EXCLUDING terminally
+// unwound ones (CANCELLED / REFUNDED — the schema's equivalents of the PRD's
+// "cancelled/rejected"; a review-case REJECT lands the order in exactly
+// those states via the refund path).
+
+// CodeQtyCapExceeded is the machine-readable 422 code the clients key on
+// (contracts/openapi.yaml QuantityCapError).
+const CodeQtyCapExceeded = "QTY_CAP_EXCEEDED"
+
+// QuantityGate is the optional per-SKU quantity-cap seam. nil is safe (no
+// gating — pre-hardening behavior unchanged).
+type QuantityGate interface {
+	// CheckQuantity returns nil when patientID may order qty more units of
+	// productID, a *QuantityCapError when the rolling-window cap rejects it,
+	// or a plain error on infrastructure failure (fail-closed upstream).
+	CheckQuantity(ctx context.Context, patientID, productID string, qty int) error
+}
+
+// SetQuantityGate injects the optional quantity-cap seam at wiring time.
+func (s *Service) SetQuantityGate(g QuantityGate) { s.qty = g }
+
+// QuantityCapError carries the structured 422 payload (code, cap, window,
+// remaining allowance) per the contract.
+type QuantityCapError struct {
+	ProductID  string
+	MaxQty     int
+	WindowDays int
+	Requested  int
+	Remaining  int
+}
+
+func (e *QuantityCapError) Error() string {
+	return fmt.Sprintf("pharmacy: quantity cap exceeded for this item — limit %d per %d days, %d remaining (requested %d)",
+		e.MaxQty, e.WindowDays, e.Remaining, e.Requested)
+}
+
+// checkQuantityCaps runs every order line through the gate (nil-safe no-op).
+// Called from CreateOrder after the replay short-circuit and pricing loop,
+// BEFORE escrow.Hold — the cap rejects the order before money moves.
+func (s *Service) checkQuantityCaps(ctx context.Context, patientID string, lines []OrderLineInput) error {
+	if s.qty == nil {
+		return nil
+	}
+	for _, li := range lines {
+		if err := s.qty.CheckQuantity(ctx, patientID, li.ProductID, li.Quantity); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// failCreateOrder maps a CreateOrder error onto the 422 body: a quantity-cap
+// rejection gets the structured QuantityCapError shape (code + remaining);
+// everything else keeps the plain {success,error} envelope.
+func failCreateOrder(c *gin.Context, err error) {
+	// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
+	// unwired escrow gate is a dependency failure → 503 (E2E-FIN-046).
+	switch {
+	case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+		ginutil.FailOK(c, http.StatusForbidden, err.Error())
+		return
+	case errors.Is(err, escrow.ErrTierGateUnwired):
+		ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if qe, ok := errors.AsType[*QuantityCapError](err); ok {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"success":     false,
+			"code":        CodeQtyCapExceeded,
+			"error":       httperr.Msg(c, http.StatusUnprocessableEntity, qe),
+			"product_id":  qe.ProductID,
+			"max_qty":     qe.MaxQty,
+			"window_days": qe.WindowDays,
+			"remaining":   qe.Remaining,
+		})
+		return
+	}
+	ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+}
+
+// PgxQuantityGate enforces the cap against pharmacy_skus (cap definition) and
+// pharmacy_orders/pharmacy_order_lines (window consumption).
+type PgxQuantityGate struct{ db *pgxpool.Pool }
+
+func NewPgxQuantityGate(db *pgxpool.Pool) *PgxQuantityGate { return &PgxQuantityGate{db: db} }
+
+func (g *PgxQuantityGate) CheckQuantity(ctx context.Context, patientID, productID string, qty int) error {
+	if qty <= 0 {
+		return nil // CreateOrder validates positivity itself
+	}
+	// Strictest capped SKU of the product; ties broken by the SHORTER window
+	// being stricter is not true in general, so ties prefer the LONGER window
+	// (more conservative: same cap spread over more days).
+	const qCap = `
+		SELECT max_qty_per_window, qty_window_days
+		FROM pharmacy_skus
+		WHERE product_id = $1 AND active = true AND max_qty_per_window IS NOT NULL
+		ORDER BY max_qty_per_window ASC, qty_window_days DESC
+		LIMIT 1`
+	var maxQty, windowDays int
+	err := g.db.QueryRow(ctx, qCap, productID).Scan(&maxQty, &windowDays)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // no capped SKU ⇒ product is not gated
+	}
+	if err != nil {
+		return fmt.Errorf("pharmacy: quantity cap lookup: %w", err)
+	}
+
+	// Summed consumption in the rolling window, excluding terminally unwound
+	// orders (CANCELLED / REFUNDED).
+	const qUsed = `
+		SELECT COALESCE(SUM(l.quantity), 0)
+		FROM pharmacy_order_lines l
+		JOIN pharmacy_orders o ON o.id = l.order_id
+		WHERE o.patient_id = $1
+		  AND l.product_id = $2
+		  AND o.state NOT IN ('CANCELLED','REFUNDED')
+		  AND o.created_at >= now() - make_interval(days => $3)`
+	var used int
+	if err := g.db.QueryRow(ctx, qUsed, patientID, productID, windowDays).Scan(&used); err != nil {
+		return fmt.Errorf("pharmacy: quantity cap window sum: %w", err)
+	}
+
+	if used+qty > maxQty {
+		remaining := max(maxQty-used, 0)
+		return &QuantityCapError{
+			ProductID: productID, MaxQty: maxQty, WindowDays: windowDays,
+			Requested: qty, Remaining: remaining,
+		}
+	}
+	return nil
 }

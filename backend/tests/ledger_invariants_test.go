@@ -3,7 +3,6 @@
 // in-memory reference implementation of the double-entry ledger that mirrors the
 // exact projection logic used by the production pgx repository
 // (internal/finance/ledger/repository.go GetBalance + PostJournal).
-//
 // Why an in-memory mirror?
 //   - The production ledger requires a live Postgres pool + migrations that
 //     cannot be provisioned in this CI lane (no `go get`, no DB container).
@@ -27,9 +26,7 @@ import (
 	"testing"
 )
 
-// ---------------------------------------------------------------------------
 // Reference in-memory ledger — mirrors production projection semantics.
-// ---------------------------------------------------------------------------
 
 type entryType string
 
@@ -139,9 +136,7 @@ func journalBalances(es []entry) bool {
 	return dr == cr
 }
 
-// ---------------------------------------------------------------------------
 // 1. Double-entry balance invariant
-// ---------------------------------------------------------------------------
 
 func TestDoubleEntry_EveryJournalIsBalanced(t *testing.T) {
 	l := newMemLedger()
@@ -196,9 +191,7 @@ func TestDoubleEntry_BalanceIsProjectionOfEntries(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // 2. Idempotency: replay + concurrent same-key collapses to a single posting
-// ---------------------------------------------------------------------------
 
 func TestIdempotency_ReplayIsNoOp(t *testing.T) {
 	l := newMemLedger()
@@ -248,9 +241,7 @@ func TestIdempotency_ConcurrentSameKeySingleRow(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // 3. Insufficient funds / no overdraw
-// ---------------------------------------------------------------------------
 
 func TestDebit_RejectsOverdraw(t *testing.T) {
 	l := newMemLedger()
@@ -269,9 +260,7 @@ func TestDebit_RejectsOverdraw(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // 4. Reversal-on-failure restores the prior balance (immutable corrections)
-// ---------------------------------------------------------------------------
 
 func TestReversal_RestoresPriorBalance(t *testing.T) {
 	l := newMemLedger()
@@ -328,9 +317,7 @@ func TestReversal_IsIdempotent(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // 5. No-float / positive-integer-kobo invariant
-// ---------------------------------------------------------------------------
 
 func TestNoFloat_RejectsNonPositiveAmounts(t *testing.T) {
 	l := newMemLedger()

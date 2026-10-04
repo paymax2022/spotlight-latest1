@@ -1,19 +1,16 @@
-// ── Sell — dynamic attribute form (Attribute form, screen 12) ────────────────
 // Renders a form from the selected category's attribute schema (GET /categories/:id
 // → attributeSchema). Required-field validation is inline, never on-submit-only.
-//
 // Architecture mirrors features/insurance/components/live/DynamicField.tsx: one
 // switch over the field's widget type, composing existing shared form controls
 // rather than hand-rolling inputs per type. 'enum'/'bool' are legacy aliases —
 // pre-existing fixtures/DB rows keep rendering exactly as 'select'/'toggle' do.
-//
 // Widget catalog: text | number | currency | select (enum) | multiselect |
 // radio | segmented | toggle (bool) | stepper | date | color.
 import React from 'react';
 import { View, Text, StyleSheet, Switch } from 'react-native';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { MarketColors } from '@/features/marketplace';
 import SelectField from '@/components/SelectField';
 import MultiSelectField from '@/components/MultiSelectField';

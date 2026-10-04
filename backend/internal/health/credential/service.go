@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	providers "spotlight/backend/internal/health/providers"
 	"time"
 
-	providers "spotlight/backend/internal/health/providers"
+	"github.com/gin-gonic/gin"
 )
 
 // ErrForbidden is an object-level authZ failure.
@@ -14,8 +18,6 @@ var ErrForbidden = errors.New("credential: forbidden")
 
 // ErrIllegalTransition guards the record SM.
 var ErrIllegalTransition = errors.New("credential: illegal status transition")
-
-// ---- Ports (reuse existing platform services; never rebuilt) ----
 
 // ProvidersPort is the slice of the providers.Service this package drives. It is
 // satisfied directly by *providers.Service. The credential layer never writes the
@@ -372,4 +374,246 @@ func (s *Service) metaForRecord(ctx context.Context, recordID string) (*AppMeta,
 		return nil, err
 	}
 	return s.repo.GetApplicationMeta(ctx, rec.ProviderApplicationID)
+}
+
+// Source identifies the issuing register the credential is checked against.
+type Source string
+
+const (
+	SourceVCN   Source = "VCN"   // Veterinary Council of Nigeria
+	SourceMDCN  Source = "MDCN"  // Medical and Dental Council of Nigeria
+	SourcePCN   Source = "PCN"   // Pharmacists Council (future)
+	SourceMLSCN Source = "MLSCN" // Med Lab Science Council (future)
+)
+
+// Method is HOW a credential is verified.
+type Method string
+
+const (
+	// MethodAssisted (Mode B): the provider submits docs + details in-app; an ops
+	// reviewer confirms them out-of-band and records the decision. No external API.
+	MethodAssisted Method = "ASSISTED"
+	// MethodAPI (Mode A, future): an official register API returns a synchronous
+	// verdict. Not built here; the interface accommodates it with no flow change.
+	MethodAPI Method = "API"
+)
+
+// Outcome is the normalised, source-agnostic verdict a verifier returns.
+type Outcome string
+
+const (
+	OutcomePending  Outcome = "PENDING"  // assisted: awaiting ops decision
+	OutcomeVerified Outcome = "VERIFIED" // api: confirmed by register
+	OutcomeRejected Outcome = "REJECTED" // api: not found / invalid
+)
+
+// VerifyRequest carries the provider-entered details + uploaded evidence for a
+// verification attempt. The verifier NEVER receives raw register data.
+type VerifyRequest struct {
+	ApplicationID string
+	OwnerUserID   string
+	Capability    string   // "vet"
+	RegNumber     string   // e.g. VCN registration number (entered by the vet)
+	FullName      string   // entered, for register cross-check
+	DOB           string   // entered (YYYY-MM-DD), for register cross-check
+	EvidenceDocs  []string // CredentialDoc ids (VCN_CERT, ANNUAL_LICENCE, GOV_ID)
+}
+
+// VerifyResult is the normalised verdict. For ASSISTED it is always PENDING; a
+// future API adapter would populate Outcome + LicenceExpiry from the register.
+type VerifyResult struct {
+	Source        Source
+	Method        Method
+	Outcome       Outcome
+	LicenceExpiry *string // ISO date when the verifier itself can determine it (API mode)
+	// Notes carries adapter-side context for the audit/reviewer; never PII.
+	Notes string
+}
+
+// CredentialVerifier is the one interface every register/method implements.
+// Adding PCN/MLSCN, or VCN Mode A, is a new adapter + config — not a flow change.
+type CredentialVerifier interface {
+	Source() Source
+	Method() Method
+	// Verify kicks off verification for a submitted application.
+	Verify(ctx context.Context, req VerifyRequest) (VerifyResult, error)
+}
+
+// VCNAdapter is the Mode B (assisted) verifier for the Veterinary Council of
+// Nigeria. It performs NO external call: it records intent and returns PENDING so
+// an ops reviewer can confirm out-of-band. A future VCNAPIAdapter (Mode A) would
+// implement the same interface with Method()=API and a synchronous Outcome.
+type VCNAdapter struct{}
+
+func NewVCNAdapter() *VCNAdapter { return &VCNAdapter{} }
+
+func (a *VCNAdapter) Source() Source { return SourceVCN }
+func (a *VCNAdapter) Method() Method { return MethodAssisted }
+
+func (a *VCNAdapter) Verify(_ context.Context, req VerifyRequest) (VerifyResult, error) {
+	// Mode B: no register call. The vet never sees the VCN portal; ops confirms
+	// out-of-band and records the decision via the service. We return PENDING.
+	return VerifyResult{
+		Source:  SourceVCN,
+		Method:  MethodAssisted,
+		Outcome: OutcomePending,
+		Notes:   "assisted: awaiting out-of-band ops confirmation against VCN register",
+	}, nil
+}
+
+// MDCNAdapter is the Mode B (assisted) verifier for the Medical and Dental
+// Council of Nigeria — covers both medical doctors and dentists. Like the VCN
+// adapter it performs NO external call: the doctor never sees the MDCN portal
+// (https://portal.mdcn.gov.ng/get-doctor-status); an ops reviewer confirms the
+// MDCN registration out-of-band and records the decision. A future MDCN API
+// adapter (Mode A) would implement the same interface with Method()=API.
+type MDCNAdapter struct{}
+
+func NewMDCNAdapter() *MDCNAdapter { return &MDCNAdapter{} }
+
+func (a *MDCNAdapter) Source() Source { return SourceMDCN }
+func (a *MDCNAdapter) Method() Method { return MethodAssisted }
+
+func (a *MDCNAdapter) Verify(_ context.Context, req VerifyRequest) (VerifyResult, error) {
+	return VerifyResult{
+		Source:  SourceMDCN,
+		Method:  MethodAssisted,
+		Outcome: OutcomePending,
+		Notes:   "assisted: awaiting out-of-band ops confirmation against MDCN register",
+	}, nil
+}
+
+// Handler exposes the Mode-B VCN verification API. Member routes are owner-scoped
+// (object-level authZ in the service); admin routes are RBAC-gated by the wiring
+// (health.vet.review) and additionally enforce no-self-approval in the service.
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+var credErrMap = httperr.New(http.StatusBadRequest,
+	httperr.R(http.StatusForbidden, ErrForbidden),
+	httperr.R(http.StatusNotFound, ErrNotFound),
+	httperr.R(http.StatusConflict, ErrIllegalTransition),
+)
+
+// Submit POST /verification/submit
+func (h *Handler) Submit(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	var body struct {
+		ApplicationID string `json:"application_id" binding:"required"`
+		RegNumber     string `json:"reg_number" binding:"required"`
+		FullName      string `json:"full_name" binding:"required"`
+		DOB           string `json:"dob"`
+		Consent       bool   `json:"consent"`
+		Docs          []struct {
+			Type       string `json:"type"`
+			StorageKey string `json:"storage_key"`
+		} `json:"docs"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	in := SubmitInput{ApplicationID: body.ApplicationID, RegNumber: body.RegNumber, FullName: body.FullName, DOB: body.DOB, Consent: body.Consent}
+	for _, d := range body.Docs {
+		in.Docs = append(in.Docs, SubmitDoc{Type: d.Type, StorageKey: d.StorageKey})
+	}
+	rec, err := h.svc.Submit(c.Request.Context(), uid, in)
+	if err != nil {
+		credErrMap.Write(c, err)
+		return
+	}
+	// Return only the sanitised stage to the vet (never record internals).
+	c.JSON(http.StatusCreated, gin.H{"application_id": rec.ProviderApplicationID, "stage": publicStage(rec.Status)})
+}
+
+// MyStatus GET /verification/status?application_id=
+func (h *Handler) MyStatus(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	appID := c.Query("application_id")
+	if appID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "application_id required"})
+		return
+	}
+	st, err := h.svc.MyStatus(c.Request.Context(), uid, appID)
+	if err != nil {
+		credErrMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, st)
+}
+
+// MyDocURL GET /verification/documents/:docId/url — owner-scoped signed URL.
+func (h *Handler) MyDocURL(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	url, err := h.svc.DocSignedURL(c.Request.Context(), uid, c.Param("docId"), false)
+	if err != nil {
+		credErrMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"url": url})
+}
+
+// Queue GET /verification/queue
+func (h *Handler) Queue(c *gin.Context) {
+	items, err := h.svc.ListQueue(c.Request.Context(), 0)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// GetRecord GET /verification/:recordId
+func (h *Handler) GetRecord(c *gin.Context) {
+	rec, err := h.svc.GetRecordAdmin(c.Request.Context(), c.Param("recordId"))
+	if err != nil {
+		credErrMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, rec)
+}
+
+// ReviewerDocURL GET /verification/documents/:docId/url — reviewer signed URL (access-logged).
+func (h *Handler) ReviewerDocURL(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	url, err := h.svc.DocSignedURL(c.Request.Context(), uid, c.Param("docId"), true)
+	if err != nil {
+		credErrMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"url": url})
+}
+
+// Decide POST /verification/:recordId/decision
+func (h *Handler) Decide(c *gin.Context) {
+	uid := ginutil.UserID(c)
+	var body struct {
+		Action        string `json:"action" binding:"required"` // approve | need_info | reject
+		LicenceExpiry string `json:"licence_expiry"`            // YYYY-MM-DD (required for approve)
+		Notes         string `json:"notes"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	var expiry *time.Time
+	if body.LicenceExpiry != "" {
+		t, perr := time.Parse("2006-01-02", body.LicenceExpiry)
+		if perr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "licence_expiry must be YYYY-MM-DD"})
+			return
+		}
+		expiry = &t
+	}
+	rec, err := h.svc.Decide(c.Request.Context(), uid, c.Param("recordId"), body.Action, expiry, body.Notes)
+	if err != nil {
+		credErrMap.Write(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, rec)
 }

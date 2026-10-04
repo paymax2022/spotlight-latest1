@@ -2,16 +2,16 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useCreateTicket } from '@/features/association/hooks/useSettings';
-import { TICKET_CATEGORY_OPTIONS, TICKET_CATEGORY_LABEL } from '@/features/association/constants/support.constants';
-import type { TicketCategory } from '@/features/association/types/settings.types';
+import { useCreateTicket } from '@/features/association/hooks';
+import { TICKET_CATEGORY_OPTIONS, TICKET_CATEGORY_LABEL } from '@/features/association/constants';
+import type { TicketCategory } from '@/features/association/types';
 
 export default function NewTicket() {
   const create = useCreateTicket();

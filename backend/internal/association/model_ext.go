@@ -4,8 +4,6 @@ package association
 // AI notes, join, bulk import, organisation publish). Kept separate from
 // model.go to reduce merge surface. None of these names collide with model.go.
 
-// ─── Settings (V) ─────────────────────────────────────────────────────────────
-
 type NotificationPrefs struct {
 	Announcements bool `json:"announcements"`
 	DuesReminders bool `json:"duesReminders"`
@@ -33,8 +31,6 @@ type Device struct {
 	Current    bool    `json:"current"`
 	Location   *string `json:"location"`
 }
-
-// ─── Support (W) ──────────────────────────────────────────────────────────────
 
 type FaqItem struct {
 	ID       string `json:"id"`
@@ -69,8 +65,6 @@ type CreateTicketInput struct {
 	Message  string `json:"message" binding:"required"`
 }
 
-// ─── Chat (I) ─────────────────────────────────────────────────────────────────
-
 type ChatThreadSummary struct {
 	ID           string  `json:"id"`
 	Title        string  `json:"title"`
@@ -103,8 +97,6 @@ type ChatThread struct {
 	Messages    []ChatMessage `json:"messages"`
 }
 
-// ─── AI notes (L) ─────────────────────────────────────────────────────────────
-
 type AiNoteSummary struct {
 	ID            string `json:"id"`
 	MeetingTitle  string `json:"meetingTitle"`
@@ -131,8 +123,6 @@ type CreateAiNoteInput struct {
 	MeetingTitle string  `json:"meetingTitle" binding:"required"`
 	MeetingID    *string `json:"meetingId"`
 }
-
-// ─── Join (B) ─────────────────────────────────────────────────────────────────
 
 type CodeValidation struct {
 	Valid               bool    `json:"valid"`
@@ -178,8 +168,6 @@ type ApplicationResult struct {
 	NextStep         *string `json:"nextStep"`
 }
 
-// ─── Bulk import (R) ──────────────────────────────────────────────────────────
-
 type ImportRow struct {
 	RowNum  int     `json:"rowNum"`
 	Name    string  `json:"name"`
@@ -213,8 +201,6 @@ type ImportResult struct {
 	Invited  int    `json:"invited"`
 	BatchID  string `json:"batchId"`
 }
-
-// ─── Organisation publish (U) ─────────────────────────────────────────────────
 
 type OrgDraftChapter struct {
 	Name  string `json:"name"`

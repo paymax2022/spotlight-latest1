@@ -1,8 +1,6 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the association module.
-//
 // association.Service (association.NewService(pool, ledgerSvc)) talks to a
 // concrete *pgxpool.Pool for every mutation (PayInvoice, DecideApplication,
 // DecideOfflinePayment, SuspendMember/RestoreMember/TransferMember/AssignRole,
@@ -15,7 +13,6 @@ package association_test
 // written end-to-end so it can be un-skipped the moment infra is available —
 // the skip is NOT a stub; every step below drives the real Service against
 // real tables.
-//
 // ── Bring-up note (read before running) ───────────────────────────────────
 //  1. Apply migrations in order, in particular:
 //       supabase/migrations/20260628000000_association_module.sql
@@ -37,11 +34,9 @@ package association_test
 //       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  4. Run:
 //       cd backend && go test ./tests/association/... -run LiveDB -v
-//
 // Every row this file touches is created by the test itself with a fresh
 // uuid.New() id — no truncation, no shared fixtures, safe to run repeatedly
 // against the same test database.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -123,6 +118,7 @@ func seedActiveMembership(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, userID)
+	testsupport.SetKycTier(t, ctx, pool, userID, testsupport.KycTierUnlimited)
 	_, err := pool.Exec(ctx, `
 		INSERT INTO assoc_memberships (id, organisation_id, user_id, member_code, status, payment_standing, joined_at)
 		VALUES ($1, $2, $3, $4, 'ACTIVE', 'DUE', now())`,
@@ -176,9 +172,7 @@ func seedWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 	}
 }
 
-// ---------------------------------------------------------------------------
 // PayInvoice: idempotency, balanced double-entry, audit, already-PAID receipt.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_PayInvoice_IdempotentSamePostingSameReceipt drives a real dues
 // payment twice with the SAME Idempotency-Key and proves: (a) exactly one
@@ -345,9 +339,7 @@ func TestLiveDB_PayInvoice_RequiresIdempotencyKey(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // DecideApplication: persistence + audit.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_DecideApplication_ApprovePersistsAndActivatesMembership seeds a
 // PENDING application + a matching (not-yet-active) membership row, approves
@@ -457,9 +449,7 @@ func TestLiveDB_DecideApplication_RejectDoesNotActivateMembership(t *testing.T) 
 	}
 }
 
-// ---------------------------------------------------------------------------
 // DecideOfflinePayment: persistence + balanced journal on approve.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_DecideOfflinePayment_ApprovePostsBalancedJournal seeds a pending
 // offline payment against a DUE invoice, approves it as a FINANCE_ADMIN, and
@@ -601,10 +591,8 @@ func TestLiveDB_DecideOfflinePayment_NonFinanceAdminForbidden(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Member actions: suspend / restore / transfer / role — persistence + audit +
 // OLA (only association admins).
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_SuspendThenRestoreMember_PersistsStatusAndAudit exercises the
 // full suspend -> restore cycle and proves each transition persists and is
@@ -761,10 +749,8 @@ func TestLiveDB_AssignRole_PersistsRoleAndAudit_ChapterAdminForbidden(t *testing
 	}
 }
 
-// ---------------------------------------------------------------------------
 // PublishOrganisation: state persists (org + chapters + committees +
 // categories + audit) in one transaction.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_PublishOrganisation_PersistsFullGraphAndAudit publishes a new
 // organisation with chapters, committees, and membership categories, then
@@ -888,13 +874,11 @@ func TestLiveDB_PublishOrganisation_RejectsWithoutAcceptedTerms(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // AI-note approve/publish: state transitions persist. (See
 // money_invariants_test.go TestAiNoteStatus_NoAuthorizationGate_DocumentsKnownGap
 // for the accompanying authorization-gap finding — these tests only prove the
 // STATE TRANSITION persists as coded; they do not assert an authz boundary
 // that does not currently exist in source.)
-// ---------------------------------------------------------------------------
 
 // seedAiNote inserts an assoc_ai_notes row in READY status and returns its id.
 func seedAiNote(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID string) string {

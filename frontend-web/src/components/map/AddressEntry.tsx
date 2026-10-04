@@ -64,7 +64,7 @@ export default function AddressEntry({
         const s = await mapsClient.autocomplete(value, { sessionToken, surface, near: pin ?? initialCenter });
         setSuggestions(s);
       } catch {
-        setSuggestions([]); // graceful: user can still drop a pin manually
+        setSuggestions([]);
       }
     }, 250);
   };

@@ -8,7 +8,6 @@ import (
 // Service computes and (optionally) overrides a School Trust Score. The computation is PURE and
 // DETERMINISTIC: same inputs → same score, no clocks, no randomness, no I/O in Compute. Inputs
 // are read via injected ports; overrides are persisted + audited via injected ports.
-//
 // This service moves NO money.
 type Service struct {
 	metrics   MetricsReader
@@ -35,20 +34,15 @@ func NewService(metrics MetricsReader, overrides OverrideStore) *Service {
 	return &Service{metrics: metrics, overrides: overrides}
 }
 
-// ── Weights (deterministic blend; MUST sum to 1.0) ──────────────────────────────
-
 const (
 	weightCollection = 0.50 // collection health is the dominant signal
 	weightOnTime     = 0.30 // on-time payment rate
 	weightDispute    = 0.20 // dispute rate (inverted: fewer disputes → higher score)
 )
 
-// ── Compute (PURE) ──────────────────────────────────────────────────────────────
-
 // ComputeFromInputs is the PURE scoring function. It is exported + input-only (no ctx, no I/O)
 // so it can be unit-tested directly and reused. Score = Σ(component.Value × component.Weight),
 // all on a 0..100 scale.
-//
 // Components:
 //   - collection_health = collected / billed            (no billing ⇒ neutral 100: nothing owed)
 //   - on_time_rate      = paidOnTime / due               (no due ⇒ neutral 100)
@@ -126,8 +120,6 @@ func (s *Service) Compute(ctx context.Context, schoolID string) (*TrustScore, er
 	return &ts, nil
 }
 
-// ── Override (records actor + reason; audited) ──────────────────────────────────
-
 // Override records an admin override of a school's trust score. actor + reason are mandatory
 // (an override must always be attributable). Score must be within 0..100.
 func (s *Service) Override(ctx context.Context, actorID string, req OverrideRequest) (*TrustScore, error) {
@@ -151,8 +143,6 @@ func (s *Service) Override(ctx context.Context, actorID string, req OverrideRequ
 	}
 	return s.Compute(ctx, req.SchoolID)
 }
-
-// ── pure helpers ──────────────────────────────────────────────────────────────────
 
 // ratioScore returns 100 * num/den on a 0..100 scale, clamped to [0,100]. A zero denominator is
 // NEUTRAL (100): nothing was owed/due, so the school is not penalised.

@@ -1,13 +1,11 @@
 // Paymax Connect — Networking CONTENT / FEED API (PRD §6.2 CN-01/CN-02).
 // Mock-first (USE_MOCK). Live path hits `${CONNECT_API_BASE}/networking/...`.
-//
 // Contract (camelCase, {data:...}):
 //   GET  /networking/feed                     → FeedPost[]   (content feed, ranked PN-3)
 //   POST /networking/posts   (Idempotency-Key)→ FeedPost     (compose, CN-01)
 //   GET  /networking/posts/:id                → PostDetail   (CN-02)
 //   POST /networking/posts/:id/reactions      → ReactionResult
 //   POST /networking/posts/:id/comments       → PostComment
-//
 // The mock keeps mutable module-level state so reactions/comments are fully
 // walkable offline (compose → detail → react → comment all persist in-session).
 
@@ -36,7 +34,6 @@ const VIEWER: FeedPost['author'] = {
   headline: 'Product Engineer · Lagos',
 };
 
-// ── Mutable mock state (in-session persistence) ──────────────────────────────
 const MOCK_POSTS: FeedPost[] = [
   {
     id: 'p1',
@@ -102,7 +99,6 @@ function findPost(id: string): FeedPost {
   return MOCK_POSTS.find((p) => p.id === id) ?? MOCK_POSTS[0];
 }
 
-// ── Feed (CN — ranked, PN-3) ─────────────────────────────────────────────────
 export async function getContentFeed(): Promise<FeedPost[]> {
   if (USE_MOCK) {
     await delay();
@@ -117,7 +113,6 @@ export async function getContentFeed(): Promise<FeedPost[]> {
   return unwrap<FeedPost[]>(res);
 }
 
-// ── Post detail (CN-02) ──────────────────────────────────────────────────────
 export async function getPost(id: string): Promise<PostDetail> {
   if (USE_MOCK) {
     await delay(180);
@@ -129,7 +124,6 @@ export async function getPost(id: string): Promise<PostDetail> {
   return unwrap<PostDetail>(res);
 }
 
-// ── Compose (CN-01) — Idempotency-Key required ───────────────────────────────
 export async function createPost(input: ComposePostInput): Promise<FeedPost> {
   if (USE_MOCK) {
     await delay(460);
@@ -155,7 +149,6 @@ export async function createPost(input: ComposePostInput): Promise<FeedPost> {
   return unwrap<FeedPost>(res);
 }
 
-// ── React (CN-02) ────────────────────────────────────────────────────────────
 export async function reactToPost(id: string, reaction: ReactionType): Promise<ReactionResult> {
   if (USE_MOCK) {
     await delay(160);
@@ -175,7 +168,6 @@ export async function reactToPost(id: string, reaction: ReactionType): Promise<R
   return unwrap<ReactionResult>(res);
 }
 
-// ── Comment (CN-02) ──────────────────────────────────────────────────────────
 export async function commentOnPost(id: string, body: string): Promise<PostComment> {
   if (USE_MOCK) {
     await delay(220);

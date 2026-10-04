@@ -1,25 +1,28 @@
 #!/usr/bin/env node
 /**
- * contract:check — implementation ↔ OpenAPI drift guard for the estate module.
+ * contract:check — OpenAPI contract guard.
  *
- * 1. Parses contracts/estate.openapi.yaml (fails on malformed YAML).
- * 2. Walks frontend-web/app/api/v1/estate/** for route.ts files, derives each
- *    URL path (turning [id] → {id}, stripping the /api/v1 server prefix), and
- *    reads which HTTP methods it exports (GET/POST/PATCH/...).
- * 3. Asserts every implemented (path, method) pair is documented in the spec,
- *    and that the spec documents no estate path that has no handler.
+ * 1. Validates EVERY contracts/*.openapi.yaml parses and carries
+ *    openapi+paths (AUD-DOC-003: 18 contract files existed but only estate
+ *    was ever validated — a malformed contract was silently deployable).
+ * 2. Estate conformance (unchanged): walks app/api/v1/estate/** route.ts
+ *    files, derives (path, method) pairs, and asserts both directions of the
+ *    implementation ↔ spec mapping hold. Impl-conformance for the other
+ *    contracts needs a module↔route-prefix mapping — follow-up work; this
+ *    script reports their op counts so the surface is at least visible.
  *
- * Exit 0 = in sync; exit 1 = drift (prints the offending entries).
- * Pure Node (no deps): a tiny YAML path/method extractor is sufficient here
- * because we only need the `paths:` keys and their method children.
+ * Exit 0 = all contracts valid + estate in sync; exit 1 = drift (prints
+ * offending entries).
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
+import { parse as parseYaml } from 'yaml';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '..', '..');
-const SPEC = join(repo, 'contracts', 'estate.openapi.yaml');
+const CONTRACTS_DIR = join(repo, 'contracts');
+const SPEC = join(CONTRACTS_DIR, 'estate.openapi.yaml');
 const ROUTES_ROOT = join(repo, 'frontend-web', 'app', 'api', 'v1', 'estate');
 const METHODS = ['get', 'post', 'put', 'patch', 'delete'];
 
@@ -73,6 +76,32 @@ function implOps() {
   }
   return ops;
 }
+
+// ── 0. Validate every contract file parses and is structurally OpenAPI ──
+function validateAllContracts() {
+  const files = readdirSync(CONTRACTS_DIR).filter((f) => /\.(yaml|yml)$/.test(f));
+  const bad = [];
+  let totalOps = 0;
+  for (const f of files) {
+    try {
+      const doc = parseYaml(readFileSync(join(CONTRACTS_DIR, f), 'utf8'));
+      if (!doc?.openapi || typeof doc.paths !== 'object' || doc.paths === null) {
+        throw new Error('missing openapi version or paths block');
+      }
+      for (const ops of Object.values(doc.paths)) {
+        if (ops && typeof ops === 'object') {
+          totalOps += Object.keys(ops).filter((m) => METHODS.includes(m)).length;
+        }
+      }
+    } catch (e) {
+      bad.push(`${f}: ${e.message}`);
+    }
+  }
+  if (bad.length) fail('invalid contract files in contracts/', bad);
+  console.log(`✓ ${files.length} contract files valid (${totalOps} documented operations)`);
+}
+
+validateAllContracts();
 
 const spec = specOps();
 const impl = implOps();

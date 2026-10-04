@@ -1,11 +1,9 @@
-// ── Types — Paymax Health admin (Pharmacy vertical; shared by Lab + Vet later) ──
 // Money is BIGINT kobo (minor units) throughout — formatNaira() converts kobo → ₦.
 // Surfaces the HEALTH invariants HL-1..HL-12 (HEALTH-BUILD §4):
 //  HL-2 credential-gated supply · HL-3 Rx discipline (dispense-once) ·
 //  HL-4 controlled substances · HL-5 NAFDAC-only catalog · HL-8 NDPA sensitive data ·
 //  HL-9 money held→released→refunded · HL-10 payout KYC gate · HL-12 immutable audit.
 
-// ── A · Dashboard ─────────────────────────────────────────────────────────────
 export type PharmacyActivity = {
   id: string;
   kind: string; // pcn_approved | catalog_rejected | rx_verified | order_dispensed | recall_issued | payout_held ...
@@ -42,7 +40,6 @@ export type PharmacyDashboard = {
   gmv_trend: { date: string; gmv_kobo: number; net_kobo: number }[];
   activity: PharmacyActivity[];
 
-  // ── PHARMACY-001: fields actually computed by the real backend
   // (GET /admin/dashboard → healthpharmacy.AdminDashboard). Additive/optional
   // so the mock fixture above (which doesn't set them) still type-checks.
   // See healthPharmacyAdminService.ts getPharmacyDashboard for the mapping
@@ -52,7 +49,6 @@ export type PharmacyDashboard = {
   platform_revenue_kobo_week?: number;
 };
 
-// ── B · PCN / premises verification audit queue (HL-2) ─────────────────────────
 export type PcnApplicationStatus =
   | 'draft'
   | 'submitted'
@@ -97,7 +93,6 @@ export type PcnDecisionResult = {
   message: string;
 };
 
-// ── C · Catalog / NAFDAC governance (HL-5) ─────────────────────────────────────
 export type CatalogStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 
 export type CatalogItem = {
@@ -127,7 +122,6 @@ export type CatalogGovernanceResult = {
   message: string;
 };
 
-// ── D · Rx & controlled-substance audit (HL-3 / HL-4) ──────────────────────────
 export type RxStatus =
   | 'issued'
   | 'sent_to_pharmacy'
@@ -165,7 +159,6 @@ export type ControlledLogEntry = {
   created_at: string;
 };
 
-// ── E · Order / delivery oversight ─────────────────────────────────────────────
 export type PharmacyOrderStatus =
   | 'created'
   | 'rx_pending_verification'
@@ -222,7 +215,6 @@ export type PharmacyOrderDetail = PharmacyOrderSummary & {
   timeline: PharmacyOrderTimeline[];
 };
 
-// ── F · Pharmacovigilance / recall ─────────────────────────────────────────────
 export type RecallSeverity = 'low' | 'medium' | 'high' | 'critical';
 export type RecallStatus = 'open' | 'investigating' | 'resolved' | 'closed';
 
@@ -255,7 +247,6 @@ export type CreateRecallResult = {
   message: string;
 };
 
-// ── G · Payouts (KYC-gated — HL-10) ────────────────────────────────────────────
 export type PayoutStatus = 'pending' | 'approved' | 'paid' | 'kyc_hold' | 'rejected';
 
 export type PayoutRecord = {
@@ -280,7 +271,6 @@ export type PayoutDecisionResult = {
   message: string;
 };
 
-// ── H · Reporting ──────────────────────────────────────────────────────────────
 export type ReportingData = {
   generated_at: string;
   period_label: string;

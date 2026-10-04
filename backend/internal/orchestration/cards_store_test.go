@@ -21,8 +21,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ─── in-memory CardStore fake ─────────────────────────────────────────────────
-
 type memCardStore struct {
 	mu      sync.Mutex
 	cards   map[string]Card   // id → card
@@ -163,8 +161,6 @@ func (m *memCardStore) RevealCard(_ context.Context, business, id string) (CardS
 	return CardSensitive{Pan: "4242 4242 4242 4242", Cvv: "123", Expiry: "01/30"}, true, nil
 }
 
-// ─── test router ──────────────────────────────────────────────────────────────
-
 func cardsRouter(store CardStore, userID string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -189,8 +185,6 @@ func doCardJSON(t *testing.T, r *gin.Engine, method, path, body string, headers 
 	r.ServeHTTP(w, req)
 	return w
 }
-
-// ─── tests ────────────────────────────────────────────────────────────────────
 
 func TestFundCard_InsufficientFunds_402(t *testing.T) {
 	store := newMemCardStore()

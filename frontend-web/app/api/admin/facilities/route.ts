@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { handleApiError } from '@/src/lib/api/responses';
-import { requireRequestUser } from '@/src/lib/auth/request';
+import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 
 const COLS = 'id, estate_id, name, kind, capacity, fee_kobo';
@@ -9,10 +9,13 @@ function mapFacility(row: any) {
   return { id: row.id, estateId: row.estate_id, name: row.name, kind: row.kind, capacity: row.capacity ?? undefined, feeKobo: row.fee_kobo };
 }
 
-// GET /api/admin/facilities — List all facilities across all estates
+// List all facilities across all estates
+// E2E-SEC-054: was gated on requireRequestUser only (any signed-in user could
+// enumerate every estate's facilities via the RLS-bypassing service client).
+// Now requires the same admin permission as /api/admin/programs.
 export async function GET(request: Request) {
   try {
-    const user = await requireRequestUser(request);
+    await assertAdminPermission(request, 'programs:manage');
     const supabase = createAdminClient();
     const { data: rows, error } = await supabase
       .from('estate_facilities')
@@ -25,10 +28,12 @@ export async function GET(request: Request) {
   }
 }
 
-// POST /api/admin/facilities — Create a new facility
+// E2E-SEC-054: a plain user could create real estate_facilities rows (verified
+// 201 live). Now requires programs:manage, resolved from user_roles — not the
+// self-assignable user_profiles.role.
 export async function POST(request: Request) {
   try {
-    const user = await requireRequestUser(request);
+    await assertAdminPermission(request, 'programs:manage');
     const supabase = createAdminClient();
     const body = await request.json();
 
@@ -38,8 +43,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Name and kind are required' }, { status: 400 });
     }
 
-    // If estateId is not provided, you may want to use a default or require it
-    // For now, we'll require it
     if (!estateId) {
       return NextResponse.json({ error: 'Estate ID is required' }, { status: 400 });
     }

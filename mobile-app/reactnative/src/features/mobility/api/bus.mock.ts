@@ -1,5 +1,3 @@
-// ── Bus booking — mock seed data ─────────────────────────────────────────────
-// All money is integer kobo. Fares are server-owned (admin-approved); the client
 // only displays them.
 
 import type {

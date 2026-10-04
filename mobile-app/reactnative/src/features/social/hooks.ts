@@ -13,7 +13,6 @@ const KEYS = {
   pool:     (id: string) => ['social', 'pool', id] as const,
 };
 
-// ── Reads ────────────────────────────────────────────────────────────────────
 export const useMyCashtag = () =>
   useQuery({ queryKey: KEYS.me, queryFn: api.getMyCashtag });
 
@@ -41,7 +40,6 @@ export const usePool = (id: string) =>
 // resolveCashtag is invoked imperatively (on input change) — exported from api.
 export { resolveCashtag } from './api';
 
-// ── Mutations ────────────────────────────────────────────────────────────────
 export function useSendMoney() {
   const qc = useQueryClient();
   return useMutation({

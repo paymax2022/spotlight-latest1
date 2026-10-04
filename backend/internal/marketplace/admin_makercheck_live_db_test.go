@@ -1,15 +1,11 @@
 package marketplace
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test for the MKT-007 maker-checker flows (Users ban, Appeals
 // overturn). Follows the same pattern as service_boost_live_db_test.go:
 // TEST_DATABASE_URL-gated, real pgxpool, no mocking of the DB layer.
-//
 // Run:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/marketplace/... -run TestLiveDB_MakerChecker -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

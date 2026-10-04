@@ -3,12 +3,9 @@
 // BACKEND drive the crypto module through Quidax without the business logic ever
 // importing a vendor SDK — a single *Client satisfies all three adapter contracts
 // (MarketData, Liquidity, Custody), exactly like internal/httpadapter.
-//
 // Credentials come only from config.ProviderCreds (BaseURL/APIKey), never from
 // os.Getenv or a literal. The config agent selects and wires this adapter.
-//
 // # Endpoints used (relative to creds.BaseURL, e.g. https://app.quidax.io/api/v1)
-//
 // Every request carries "Authorization: Bearer <APIKey>" and every response is
 // the Quidax envelope {status, message, data}; only `data` is decoded here.
 //
@@ -18,7 +15,6 @@
 //	                    → one domain.Asset per fiat-quoted market (price = ticker.last)
 //	  Asset(key)        scans Assets() for a matching symbol/id (Quidax has no by-symbol asset route)
 //	  Chart(sym,rng)    GET /markets/{sym+ngn}/k?period=&limit=  (OHLC rows) → close price per point
-//
 //	Liquidity
 //	  Quote(...)        GET /markets/tickers/{key+currency} → best-effort fiat buy/sell quote.
 //	                    Quidax has no first-class "fiat buy/sell quote" on this base URL
@@ -27,7 +23,6 @@
 //	                    uses ticker.sell; crypto/fiat legs are computed with integer math.
 //	  SwapQuote(...)    POST /users/me/temporary_swap_quotation {from_currency,to_currency,from_amount}
 //	                    → maps Quidax quoted from/to amounts to domain.SwapQuote (no side effects).
-//
 //	Custody
 //	  DepositAddress()  GET  /users/me/wallets/{symbol}/address   (address, destination_tag=memo)
 //	  WithdrawalQuote() GET  /users/me/fee_rule?currency=&network=&amount=  (network fee)
@@ -37,7 +32,6 @@
 // non-2xx, envelope-error or decode failure so the caller degrades gracefully.
 // ScreenAddress fails SAFE — any error yields a "flagged" result so an
 // unreachable provider never silently clears a withdrawal address.
-//
 // Money is always integer minor units. Quidax returns decimal strings/numbers;
 // they are converted with big.Int (never float — see decimalToMinor) so no
 // rounding drift enters the money path. Percentage/display-only rates that are
@@ -114,8 +108,6 @@ func New(creds config.ProviderCreds) *Client {
 // CircuitState exposes the breaker state ("closed"/"open"/"half-open").
 func (c *Client) CircuitState() string { return c.cb.State() }
 
-// ── HTTP core ────────────────────────────────────────────────────────────────
-
 // envelope is the standard Quidax response wrapper. Only Data is decoded further.
 type envelope struct {
 	Status  string          `json:"status"`
@@ -149,7 +141,6 @@ func (c *Client) postData(path string, body interface{}) (json.RawMessage, error
 
 // do sets Bearer auth, runs the request under the breaker, enforces a 2xx status
 // + non-error envelope and returns the raw data payload. It always closes the body.
-//
 // Breaker accounting mirrors httpadapter: only transport errors and 5xx count as
 // failures (provider-down). A 4xx means Quidax is healthy but the request was
 // client-side, so it does NOT trip the breaker. When the breaker is open the call
@@ -187,8 +178,6 @@ func (c *Client) do(req *http.Request) (json.RawMessage, error) {
 	}
 	return env.Data, nil
 }
-
-// ── Money helpers (integer minor units only — never float) ───────────────────
 
 // decimalToMinor converts a decimal string (e.g. "93694580.55" or Quidax's
 // "0.0005241693633765") into an integer scaled by 10**scale, truncating any
@@ -280,8 +269,6 @@ func pow10(n int) int64 {
 	}
 	return p
 }
-
-// ── MarketData ───────────────────────────────────────────────────────────────
 
 type quidaxMarket struct {
 	ID        string `json:"id"`
@@ -463,8 +450,6 @@ func chartParams(rng string) (period, limit int) {
 	}
 }
 
-// ── Liquidity ────────────────────────────────────────────────────────────────
-
 // Quote builds a best-effort executable buy/sell quote from the live Quidax
 // ticker (Quidax has no first-class fiat buy/sell quote on this base URL). The
 // ticker's buy/sell price is used as the all-in rate; the crypto/fiat legs are
@@ -590,8 +575,6 @@ func swapRate(fromAmount, toAmount string) float64 {
 	return t / f
 }
 
-// ── Custody ──────────────────────────────────────────────────────────────────
-
 // paymentAddressData is the decoded `data` from the fetch-payment-address route.
 type paymentAddressData struct {
 	Address        string `json:"address"`
@@ -688,7 +671,6 @@ type screeningData struct {
 // transport error, 5xx, non-2xx, missing endpoint or unparseable/empty result
 // yields a "flagged" outcome, so an unreachable or absent screening service never
 // silently clears a withdrawal address.
-//
 // NOTE: Quidax has no first-class address-screening API. Unless a compatible
 // screening endpoint is provisioned at creds.BaseURL, this method conservatively
 // returns "flagged" (manual review), which is the correct fail-closed default for

@@ -1,13 +1,11 @@
 package association_test
 
 // Live-DB authorization / IDOR-scope suite for the association module.
-//
 // These tests prove the cross-group data-isolation, admin org-scoping, and
 // invite-only discovery invariants from the Groups & Associations test plan
 // (SEC-001, DR-004, GR-004, GR-010, CH-005, AI-007, EC-013). They drive the
 // REAL Service against a live Postgres and assert fail-closed denials across
 // organisation boundaries.
-//
 // Gated on TEST_DATABASE_URL exactly like live_db_integration_test.go
 // (shared liveDBPool + seed helpers). Run:
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:54322/postgres"
@@ -22,8 +20,6 @@ import (
 
 	"spotlight/backend/internal/association"
 )
-
-// ── local seed helpers (build on live_db_integration_test.go helpers) ──────────
 
 func seedOrgOfType(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name, groupType string) string {
 	t.Helper()
@@ -81,8 +77,6 @@ func seedOfflinePayment(t *testing.T, ctx context.Context, pool *pgxpool.Pool, m
 	}
 	return paymentID
 }
-
-// ── Group 1: cross-org data isolation ─────────────────────────────────────────
 
 func TestLiveDB_IDOR_GetChatThread_CrossOrgForbidden(t *testing.T) {
 	pool := liveDBPool(t)
@@ -250,8 +244,6 @@ func TestLiveDB_IDOR_GetMember_CrossOrgForbidden(t *testing.T) {
 	}
 }
 
-// ── Group 2: admin cross-org authorization ────────────────────────────────────
-
 func TestLiveDB_IDOR_DecideApplication_RequiresSameOrgAdmin(t *testing.T) {
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
@@ -362,8 +354,6 @@ func TestLiveDB_IDOR_AssignRole_CrossOrgForbidden(t *testing.T) {
 		t.Fatalf("role granted in foreign org despite forbidden action (%d rows)", n)
 	}
 }
-
-// ── Group 3: invite-only discovery hiding ─────────────────────────────────────
 
 func TestLiveDB_IDOR_Discovery_HidesInviteOnly(t *testing.T) {
 	pool := liveDBPool(t)

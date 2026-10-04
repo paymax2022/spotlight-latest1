@@ -12,8 +12,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeRequest, makeSupabaseMock } from './_fixtures';
 
-// ── Module mocks ──────────────────────────────────────────────────────────────
-
 vi.mock('next/server', () => ({
   NextResponse: {
     json: (body: unknown, init?: ResponseInit) =>
@@ -37,19 +35,15 @@ vi.mock('@/src/server/user/profile', () => ({
   getOrCreateUserProfile: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('@/src/lib/payments/paystack', () => ({
+vi.mock('@/src/lib/payments', () => ({
   verifyPaystackTransaction: vi.fn(),
 }));
-
-// ── Import after mocks ────────────────────────────────────────────────────────
 
 import { POST, GET } from '../../../app/api/academy/apply/route';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { verifyPaystackTransaction } from '@/src/lib/payments/paystack';
+import { verifyPaystackTransaction } from '@/src/lib/payments';
 import { getOrCreateUserProfile } from '@/src/server/user/profile';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 const TEST_USER = { id: 'user-001', email: 'student@example.com' };
 
@@ -123,8 +117,6 @@ function setupHappyPathMock() {
   vi.mocked(createAdminClient).mockReturnValue(mock as any);
   return { mock, maybySingle, insertFn, updateFn, updateEq };
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('POST /api/academy/apply', () => {
   beforeEach(() => {
@@ -224,11 +216,8 @@ describe('POST /api/academy/apply', () => {
     expect(body.error).toMatch(/already applied/i);
   });
 
-
-  // ── Application fee: base + selected areas ────────────────────────────────
   // The client renders a running total, but it is the SERVER that decides what
   // must be paid. These pin the arithmetic and the three ways it could be
-  // subverted: an understated payment, an unknown slug priced at zero, and a
   // retired area still being chargeable.
 
   /** Paid-mode settings + areas + a batch that exists and no prior application. */
@@ -379,7 +368,6 @@ describe('POST /api/academy/apply', () => {
     expect(body.error).toContain('5,000');
   });
 
-
   it('rejects an area the chosen batch does not offer', async () => {
     const { mock } = setupPaidMock(5000, [{ slug: 'acting', fee_ngn: 2000 }]);
     paystackPaid(7000);
@@ -417,7 +405,6 @@ describe('POST /api/academy/apply', () => {
     expect(body.error).toMatch(/area of interest/i);
   });
 
-  // ── The two-area cap ────────────────────────────────────────────────────────
   // A commercial rule, so it is enforced on the SERVER. The mobile form stops at
   // two, but an application that slipped past the form would be CHARGED for every
   // area it named — which is why these are route tests, not UI tests.
@@ -470,6 +457,80 @@ describe('POST /api/academy/apply', () => {
 
     expect(res.status).toBe(400);
     expect(body.error).toMatch(/more than once/i);
+  });
+
+  // academy_batches.enrolled_count is bumped by a DB trigger on every INSERT
+  // into academy_applications regardless of status, so it is NOT "seats
+  // taken" — a pile of rejected applications would inflate it forever. The
+  // route must count 'pending'/'approved' applications itself instead, and
+  // must never treat a null max_students (unlimited) as a cap of zero.
+
+  /**
+   * Sets up: free settings, a batch with the given max_students, no existing
+   * application for THIS applicant, then a capacity count for
+   * academy_applications filtered by batch/status resolving to `seatsTaken`.
+   */
+  function setupCapacityMock(maxStudents: number | null, seatsTaken: number) {
+    const { mock, maybySingle, insertFn } = makeSupabaseMock();
+    mockInterestAreas(mock);
+
+    maybySingle
+      .mockResolvedValueOnce({
+        data: { registration_type: 'free', application_fee: 0 },
+        error: null,
+      })
+      .mockResolvedValueOnce({ data: { id: 'batch-001', max_students: maxStudents }, error: null })
+      .mockResolvedValueOnce({ data: null, error: null }) // no existing by userId
+      .mockResolvedValueOnce({ data: null, error: null }); // no existing by email
+
+    // selected areas of interest ('slug', [...]) and counting seat-occupying
+    // applications ('status', [...]). Branch on the column so both resolve to
+    // the shape their caller expects.
+    (mock as { in: unknown }).in = vi.fn().mockImplementation((column: string) => {
+      if (column === 'status') {
+        return Promise.resolve({ count: seatsTaken, data: null, error: null });
+      }
+      return Promise.resolve({
+        data: [{ slug: 'acting', fee_ngn: 0, is_active: true }],
+        error: null,
+      });
+    });
+
+    insertFn.mockResolvedValue({ error: null });
+    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+    return { mock, insertFn };
+  }
+
+  it('rejects a new application when the batch is at full capacity', async () => {
+    // max_students = 1, one seat already occupied by an approved application.
+    setupCapacityMock(1, 1);
+
+    const res = await POST(makeRequest('/api/academy/apply', { body: makeApplyBody() }));
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.error).toMatch(/full capacity/i);
+  });
+
+  it('accepts an application to an unlimited batch (max_students null) regardless of count', async () => {
+    const { insertFn } = setupCapacityMock(null, 999);
+
+    const res = await POST(makeRequest('/api/academy/apply', { body: makeApplyBody() }));
+
+    expect(res.status).toBe(201);
+    expect(insertFn).toHaveBeenCalled();
+  });
+
+  it('does not count a rejected application against capacity', async () => {
+    // it does not occupy a seat — the capacity count itself reflects that
+    // (the route filters status IN ('pending','approved'), so a batch whose
+    // sole application was rejected reports 0 seats taken).
+    const { insertFn } = setupCapacityMock(1, 0);
+
+    const res = await POST(makeRequest('/api/academy/apply', { body: makeApplyBody() }));
+
+    expect(res.status).toBe(201);
+    expect(insertFn).toHaveBeenCalled();
   });
 
   it('publishes the cap on GET so the client does not hardcode its own copy', async () => {

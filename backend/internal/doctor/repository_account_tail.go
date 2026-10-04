@@ -3,6 +3,8 @@ package doctor
 import (
 	"context"
 	"errors"
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/ptr"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -11,30 +13,28 @@ import (
 // repository_account_tail.go — pgx data access for the Wave-2 "account tail"
 // endpoints (bank accounts, payout reads, settlement disputes, privacy requests,
 // compliance, reputation, patient projections, presence, misc).
-//
 // Conventions mirror repository_account.go exactly:
 //   * every read/mutation is scoped to the owning doctor's user_id (defence in
 //     depth on top of RLS);
 //   * mutations on a table with a UNIQUE idempotency_key dedupe with
 //     ON CONFLICT (idempotency_key) DO NOTHING + replay re-select, like
-//     InsertReviewDispute / InsertSupportTicket;
 //   * no money mutation here posts to the ledger — these are request/read rows.
 //     The actual payout money path (Service.RequestPayout) is untouched.
 
-// ── Profile: bank accounts ───────────────────────────────────────────────────
-
 // UpsertBankAccount inserts a bank account row idempotently (UNIQUE idempotency_key).
 // account_number is stored as supplied; the service masks it to last-4 in responses.
-func (r *Repository) UpsertBankAccount(ctx context.Context, userID, idemKey string, req BankAccountRequest) (*BankAccount, error) {
+// isVerified indicates whether the account was successfully verified against a banking
+// network (e.g., Paystack's /bank/resolve).
+func (r *Repository) UpsertBankAccount(ctx context.Context, userID, idemKey string, req BankAccountRequest, isVerified bool) (*BankAccount, error) {
 	id := uuid.New().String()
 	const q = `
 		INSERT INTO doctor_bank_accounts
 			(id, user_id, bank_name, bank_code, account_number, account_name, is_verified, is_default, tax_info, idempotency_key)
-		VALUES ($1,$2,$3,$4,$5,$6,false,$7,$8,$9)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	isDefault := boolOrDefault(req.IsDefault, false)
+	isDefault := ptr.Deref(req.IsDefault, false)
 	tag, err := r.db.Exec(ctx, q, id, userID, req.BankName, req.BankCode, req.AccountNumber,
-		req.AccountName, isDefault, jsonOrEmptyObject(req.TaxInfo), idemKey)
+		req.AccountName, isVerified, isDefault, jsonx.RawOrEmptyObject(req.TaxInfo), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func (r *Repository) UpdateBankAccountTaxInfo(ctx context.Context, userID string
 			ORDER BY is_default DESC, updated_at DESC
 			LIMIT 1
 		)`
-	tag, err := r.db.Exec(ctx, q, userID, jsonOrEmptyObject(patch))
+	tag, err := r.db.Exec(ctx, q, userID, jsonx.RawOrEmptyObject(patch))
 	if err != nil {
 		return nil, err
 	}
@@ -159,14 +159,12 @@ func (r *Repository) UpdateBankAccountTaxInfo(ctx context.Context, userID string
 	return r.getDefaultBankAccount(ctx, userID)
 }
 
-// ── Profile: documents / photo ───────────────────────────────────────────────
-
 // InsertProfileDocument inserts a verification/profile document row. The table has
 // no idempotency_key column, so this is a plain insert; the read shape matches
 // ListVerificationDocuments (reused by Service.ListProfileDocuments).
 func (r *Repository) InsertProfileDocument(ctx context.Context, userID string, req ProfileDocumentRequest) (*VerificationDocument, error) {
 	id := uuid.New().String()
-	required := boolOrDefault(req.Required, false)
+	required := ptr.Deref(req.Required, false)
 	const q = `
 		INSERT INTO doctor_verification_documents
 			(id, user_id, doc_type, label, file_name, file_url, mime_type, size_bytes, required)
@@ -211,8 +209,6 @@ func (r *Repository) SetProfilePhoto(ctx context.Context, userID, photoURL strin
 	}
 	return r.GetProfile(ctx, userID)
 }
-
-// ── Payouts: reads ───────────────────────────────────────────────────────────
 
 // ListPayouts returns the doctor's payout request rows newest-first.
 func (r *Repository) ListPayouts(ctx context.Context, userID string) ([]Payout, error) {
@@ -299,7 +295,7 @@ func (r *Repository) InsertSettlementDispute(ctx context.Context, userID, payout
 		INSERT INTO doctor_settlement_disputes (id, user_id, payout_id, status, reason, detail, idempotency_key)
 		VALUES ($1,$2,$3,'open',$4,$5,$6)
 		ON CONFLICT (idempotency_key) DO NOTHING`
-	tag, err := r.db.Exec(ctx, q, id, userID, payoutRef, req.Reason, jsonOrEmptyObject(req.Detail), idemKey)
+	tag, err := r.db.Exec(ctx, q, id, userID, payoutRef, req.Reason, jsonx.RawOrEmptyObject(req.Detail), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -333,8 +329,6 @@ func (r *Repository) scanSettlementDispute(row pgx.Row) (*SettlementDispute, err
 	return d, err
 }
 
-// ── Privacy: export / delete requests ────────────────────────────────────────
-
 // RequestPrivacyExport stamps export_requested_at = now() and returns the row.
 func (r *Repository) RequestPrivacyExport(ctx context.Context, userID string) (*DataPrivacySettings, error) {
 	if _, err := r.GetPrivacySettings(ctx, userID); err != nil { // ensures the row exists
@@ -358,8 +352,6 @@ func (r *Repository) RequestPrivacyDelete(ctx context.Context, userID string) (*
 	}
 	return r.scanPrivacy(ctx, userID)
 }
-
-// ── Compliance projection ────────────────────────────────────────────────────
 
 // GetComplianceStatus builds a read-only projection from doctor_mandatory_training
 // (completion summary) and doctor_compliance_audit (policy acknowledgements).
@@ -397,8 +389,6 @@ func (r *Repository) GetComplianceStatus(ctx context.Context, userID string) (*C
 	return out, rows.Err()
 }
 
-// ── Reputation projection ────────────────────────────────────────────────────
-
 // GetReputation aggregates doctor_reviews (avg rating + count) and the latest
 // doctor_quality_scores row. Read-only; zeroes when no data.
 func (r *Repository) GetReputation(ctx context.Context, userID string) (*ReputationSummary, error) {
@@ -422,8 +412,6 @@ func (r *Repository) GetReputation(ctx context.Context, userID string) (*Reputat
 	}
 	return out, nil
 }
-
-// ── Misc: presence / support / emergency schedule ────────────────────────────
 
 // SetPresence updates doctor_profiles.presence (allowed values online/offline/busy/away).
 func (r *Repository) SetPresence(ctx context.Context, userID, presence string) error {
@@ -452,7 +440,7 @@ func (r *Repository) SetEmergencySchedule(ctx context.Context, userID string, en
 		    rules = COALESCE(rules, '{}'::jsonb) || jsonb_build_object('emergency', $3::jsonb),
 		    updated_at = now()
 		WHERE user_id = $1`
-	if _, err := r.db.Exec(ctx, q, userID, enabled, jsonOrEmptyObject(schedule)); err != nil {
+	if _, err := r.db.Exec(ctx, q, userID, enabled, jsonx.RawOrEmptyObject(schedule)); err != nil {
 		return err
 	}
 	return nil

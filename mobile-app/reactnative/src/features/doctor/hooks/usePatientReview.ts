@@ -1,4 +1,3 @@
-// ── Doctor — Batch 2 · Section G · patient profile review hooks ────────────────
 // The full patient profile (demographics, symptoms, allergy/surgery/family
 // history, vitals timeseries, documents/images, previous consults/rx/labs, HMO,
 // emergency contact, dependents, clinical alerts). Section G is read-only — the

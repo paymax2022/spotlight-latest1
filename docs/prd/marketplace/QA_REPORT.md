@@ -240,6 +240,13 @@ k6 run \
 
 ### `tools/loadtest/marketplace/checkout_mutation_load.js`
 
+> **Removed (AUD-TEST-008).** The script load-tested `POST /v1/marketplace/orders`
+> → `/fund` — routes removed by ADR-023 when marketplace became a contact
+> directory (no escrow orders). It could never pass; delete-and-rewrite if a
+> money mutation surface (e.g. `POST /boosts`) needs mutation-load coverage.
+
+<details><summary>Historical description (pre-ADR-023)</summary>
+
 Load-tests the §6.1 mutation path: `POST /orders` → `POST /orders/{id}/fund`,
 ramping 0→50→80 VUs. Beyond latency thresholds (create p95<400ms, fund
 p95<500ms), it asserts the **idempotency invariant under load**: every
@@ -260,6 +267,8 @@ k6 run \
   -e LISTING_IDS=uuid1,uuid2,uuid3 \
   tools/loadtest/marketplace/checkout_mutation_load.js
 ```
+
+</details>
 
 ---
 
@@ -286,10 +295,6 @@ MARKETPLACE_TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/post
 # k6 (requires `k6` installed: https://k6.io/docs/get-started/installation/):
 k6 run -e BASE_URL=http://localhost:8080 -e TOKEN=$JWT \
   tools/loadtest/marketplace/search_load.js
-
-k6 run -e BASE_URL=http://localhost:8080 -e TOKEN=$BUYER_JWT \
-  -e LISTING_IDS=<uuid1,uuid2,...> \
-  tools/loadtest/marketplace/checkout_mutation_load.js
 ```
 
 ---
@@ -301,7 +306,7 @@ k6 run -e BASE_URL=http://localhost:8080 -e TOKEN=$BUYER_JWT \
 | Go test files | 5 (`fsm_invariant_test.go`, `contract_test.go`, `sequence_flow_test.go`, `chaos_error_taxonomy_test.go`, `hmac_helper_test.go`) |
 | Go test functions runnable now (no DB) | 39 |
 | Go test functions requiring live Postgres (written, self-skipping) | 10 |
-| k6 scripts | 2 (`search_load.js`, `checkout_mutation_load.js`) |
+| k6 scripts | 1 (`search_load.js`) — `checkout_mutation_load.js` removed: its routes were deleted by ADR-023 (AUD-TEST-008) |
 | §2 FSMs covered exhaustively | Listing (2.1), Order/Escrow (2.2), Dispute (2.3), Boost (2.4) — all 4 |
 | §6 sequence flows encoded | All 3 (checkout→funding, delivery→auto-release, dispute dual-approval) |
 | §8 chaos scenarios covered | All 7 required rows |

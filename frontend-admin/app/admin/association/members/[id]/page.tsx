@@ -58,7 +58,6 @@ export default function AssociationMemberDetailPage({ params }: { params: Promis
 
   // Suspend requires a reason (backend accepts optional but we enforce it in
   // the UI since a suspension without a written reason is not auditable in
-  // practice). Transfer requires a chapter; role requires a role. Restore
   // needs no input — it's a single confirm.
   function canSubmit(): boolean {
     if (action === 'suspend') return reason.trim().length > 0;

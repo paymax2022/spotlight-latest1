@@ -1,4 +1,3 @@
-// ── Paymax Health — Vet component barrel ─────────────────────────────────────
 export { default as VetMapView } from './VetMapView';
 export { default as VetStatusPill } from './VetStatusPill';
 export { default as StarRating } from './StarRating';

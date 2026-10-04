@@ -26,8 +26,6 @@ func rawJSON(b []byte) any {
 	return v
 }
 
-// ─── Dashboard / reports ─────────────────────────────────────────────────────
-
 // Dashboard returns top-line mobility KPIs.
 func (a *AdminService) Dashboard(ctx context.Context) (map[string]any, error) {
 	db := a.svc.db
@@ -95,8 +93,6 @@ func (a *AdminService) ReportsSummary(ctx context.Context) (map[string]any, erro
 	}, nil
 }
 
-// ─── Drivers ─────────────────────────────────────────────────────────────────
-
 func (a *AdminService) ListDrivers(ctx context.Context, status string) ([]map[string]any, error) {
 	db := a.svc.db
 	q := `SELECT id, user_id, name, vehicle_type, status, rating, verification_status, completed_trips, cancelled_trips, created_at FROM drivers`
@@ -162,8 +158,6 @@ func (a *AdminService) SetVerification(ctx context.Context, adminID, driverID, n
 		map[string]any{"verification_status": oldStatus}, map[string]any{"verification_status": newStatus}, reason)
 }
 
-// ─── Vehicles ────────────────────────────────────────────────────────────────
-
 func (a *AdminService) ListVehicles(ctx context.Context, status string) ([]Vehicle, error) {
 	db := a.svc.db
 	q := `SELECT id, driver_id, plate_number, make, model, year, color, category, capacity,
@@ -212,8 +206,6 @@ func (a *AdminService) SetVehicleStatus(ctx context.Context, adminID, vehicleID 
 		map[string]any{"status": req.Status, "inspection_status": req.InspectionStatus, "insurance_status": req.InsuranceStatus}, req.Reason)
 }
 
-// ─── Trips / dispatch ────────────────────────────────────────────────────────
-
 func (a *AdminService) ListTrips(ctx context.Context, phase string) ([]map[string]any, error) {
 	db := a.svc.db
 	q := `SELECT id, rider_id, driver_id, phase, status, fare_kobo, final_fare_kobo, safety_status, created_at FROM trips`
@@ -252,7 +244,6 @@ func (a *AdminService) DispatchLive(ctx context.Context) (map[string]any, error)
 	if err != nil {
 		return nil, err
 	}
-	// Filter to in-flight phases.
 	var inflight []map[string]any
 	for _, t := range activeTrips {
 		switch t["phase"] {
@@ -297,8 +288,6 @@ func (a *AdminService) ManualAssign(ctx context.Context, adminID, tripID, driver
 	return writeAudit(ctx, db, adminID, "dispatch.assign", "trip", tripID,
 		map[string]any{"driver_id": oldDriver}, map[string]any{"driver_id": driverID}, reason)
 }
-
-// ─── Pricing / commission ────────────────────────────────────────────────────
 
 func (a *AdminService) GetPricing(ctx context.Context, zone, serviceType string) (*PricingConfig, error) {
 	return a.svc.loadPricingConfig(ctx, zone, serviceType)
@@ -435,15 +424,12 @@ func (a *AdminService) PatchIncident(ctx context.Context, adminID, incidentID st
 		WHERE id=$1`, incidentID, req.Status, req.AssignedAdmin, req.ResolutionNote); err != nil {
 		return err
 	}
-	// Clear the trip safety hold if the incident is resolved.
 	if req.Status == "resolved" || req.Status == "closed" {
 		db.Exec(ctx, `UPDATE trips SET safety_status='resolved' WHERE id=(SELECT trip_id FROM safety_incidents WHERE id=$1)`, incidentID)
 	}
 	return writeAudit(ctx, db, adminID, "safety.update", "safety_incident", incidentID,
 		map[string]any{"status": oldStatus}, map[string]any{"status": req.Status, "resolution_note": req.ResolutionNote}, "")
 }
-
-// ─── Audit feed ──────────────────────────────────────────────────────────────
 
 func (a *AdminService) AuditFeed(ctx context.Context) ([]map[string]any, error) {
 	rows, err := a.svc.db.Query(ctx, `

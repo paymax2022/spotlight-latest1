@@ -4,8 +4,6 @@ import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { authHeaders } from '@/src/lib/auth/client';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
 type Profile = Record<string, any>;
 type Completion = { percentage: number; missingRequired: string[] };
 type Opportunity = {
@@ -42,8 +40,6 @@ type Application = {
 type Summary = Record<string, number>;
 
 type Tab = 'contests' | 'applications' | 'overview';
-
-// ─── Status helpers ───────────────────────────────────────────────────────────
 
 const STATUS_COLOR: Record<string, string> = {
   draft:        'background:#e5e7eb;color:#374151',
@@ -95,8 +91,6 @@ function programIcon(type: string) {
   }
   return '🏆';
 }
-
-// ─── Quick Access ────────────────────────────────────────────────────────────
 
 type QuickLink = {
   href: string;
@@ -237,8 +231,6 @@ function QuickAccessGrid() {
     </div>
   );
 }
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function ContestCard({
   item,
@@ -494,8 +486,6 @@ function ApplicationRow({ item }: { item: Application }) {
   );
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
-
 export default function UserDashboardClient() {
   const [profile,      setProfile]      = useState<Profile | null>(null);
   const [completion,   setCompletion]   = useState<Completion | null>(null);
@@ -584,7 +574,6 @@ export default function UserDashboardClient() {
     });
   }, [applications, search, statusFilter]);
 
-  // ── Not signed in ─────────────────────────────────────────────────────────
   if (!loading && authError) {
     return (
       <div style={{ maxWidth: 480, margin: '0 auto', padding: '40px 20px', textAlign: 'center' }}>
@@ -602,7 +591,6 @@ export default function UserDashboardClient() {
     );
   }
 
-  // ── Loading skeleton ───────────────────────────────────────────────────────
   if (loading) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -613,7 +601,6 @@ export default function UserDashboardClient() {
     );
   }
 
-  // ── Name resolution ────────────────────────────────────────────────────────
   const rawName =
     profile?.firstName ||
     profile?.displayName ||
@@ -623,7 +610,6 @@ export default function UserDashboardClient() {
 
   const completionPct = Number(completion?.percentage || 0);
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 

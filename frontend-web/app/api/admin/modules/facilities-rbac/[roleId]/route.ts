@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { handleApiError } from '@/src/lib/api/responses';
-import { requireRequestUser } from '@/src/lib/auth/request';
+import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 
 const FACILITIES_PERMISSIONS = [
@@ -12,10 +12,16 @@ const FACILITIES_PERMISSIONS = [
   'estate.admin.facilities.bookings.cancel',
 ];
 
-// PATCH /api/admin/modules/facilities-rbac/[roleId] — Update facilities permissions for a role
-export async function PATCH(request: Request, { params }: { params: { roleId: string } }) {
+// E2E-SEC-054: was gated on requireRequestUser only — this handler deletes and
+// inserts role_permissions rows via the service-role client, i.e. it was a raw
+// RBAC-permission forge endpoint for ANY authenticated user (it only 500'd on
+// the synchronous params read, a framework bug — the authz hole was latent).
+// Now requires roles:manage, and params is awaited (Promise on this Next
+// version), which is also what makes the route actually work.
+export async function PATCH(request: Request, { params }: { params: Promise<{ roleId: string }> }) {
+  const { roleId } = await params;
   try {
-    const user = await requireRequestUser(request);
+    await assertAdminPermission(request, 'roles:manage');
     const supabase = createAdminClient();
     const body = await request.json();
 
@@ -37,22 +43,19 @@ export async function PATCH(request: Request, { params }: { params: { roleId: st
       facilitiesBookingsCancel: 'estate.admin.facilities.bookings.cancel',
     };
 
-    // Get permission IDs
     const { data: permsData, error: permsError } = await supabase
       .from('permissions')
       .select('id, slug');
 
     if (permsError) throw permsError;
 
-    // Get current role permissions
     const { data: currentPerms, error: currentError } = await supabase
       .from('role_permissions')
       .select('id, permission_id, permissions(slug)')
-      .eq('role_id', params.roleId);
+      .eq('role_id', roleId);
 
     if (currentError) throw currentError;
 
-    // Build the set of permissions to keep
     const permissionsToKeep = new Set<string>();
     const permissionKey = body as { [key: string]: boolean };
 
@@ -63,7 +66,6 @@ export async function PATCH(request: Request, { params }: { params: { roleId: st
       }
     });
 
-    // Remove permissions that should be removed
     const toDelete = (currentPerms ?? [])
       .filter((rp: any) => FACILITIES_PERMISSIONS.includes(rp.permissions.slug) && !permissionsToKeep.has(rp.permissions.slug))
       .map((rp: any) => rp.id);
@@ -77,7 +79,6 @@ export async function PATCH(request: Request, { params }: { params: { roleId: st
       if (deleteError) throw deleteError;
     }
 
-    // Add new permissions
     const existingSlugs = new Set(
       (currentPerms ?? [])
         .filter((rp: any) => FACILITIES_PERMISSIONS.includes(rp.permissions.slug))
@@ -90,7 +91,7 @@ export async function PATCH(request: Request, { params }: { params: { roleId: st
         const perm = (permsData ?? []).find((p: any) => p.slug === slug);
         if (perm) {
           toAdd.push({
-            role_id: params.roleId,
+            role_id: roleId,
             permission_id: perm.id,
           });
         }

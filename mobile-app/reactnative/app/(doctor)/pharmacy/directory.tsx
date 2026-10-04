@@ -4,10 +4,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { Store, AlertTriangle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { formatKobo } from '@/api/doctor.batch3.api';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
@@ -21,7 +21,6 @@ import {
 import type { Pharmacy } from '@/types/doctor.batch3';
 import { alertAsync } from '@/lib/confirm';
 
-// ── Section L — Pharmacy directory ────────────────────────────────────────────
 // NEW screen: preferred + nearby verified pharmacies (PharmacyRow), per-drug
 // stock availability (StockBadge) with a drug-unavailable alert (L8), and select
 // (L6). Reachable from the send-to-pharmacy flow and the pharmacy list.

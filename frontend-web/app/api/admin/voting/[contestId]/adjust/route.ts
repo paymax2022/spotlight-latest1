@@ -8,7 +8,6 @@ import type { AdminAdjustmentType } from '@/src/features/voting/types';
 // action — the actual adjustment runs from
 // sensitive-actions.service.ts#executeVoteAdjustment, invoked by a second
 // approver via POST /api/admin/voting/approvals/[approvalId]/approve.
-//
 // Admin vote adjustment — every change requires a reason and creates an audit trail.
 export async function POST(
   request: Request,

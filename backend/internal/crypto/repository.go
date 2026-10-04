@@ -17,8 +17,6 @@ type Repository struct {
 
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
-// ── Assets ────────────────────────────────────────────────────────────────────
-
 // ListAssets returns catalogue assets. activeOnly filters to tradable ones.
 func (r *Repository) ListAssets(ctx context.Context, activeOnly bool) ([]Asset, error) {
 	q := `SELECT id, symbol, name, minor_unit_scale, is_active, created_at, updated_at
@@ -72,8 +70,6 @@ func (r *Repository) UpsertAsset(ctx context.Context, symbol, name string, minor
 	}
 	return &a, nil
 }
-
-// ── Price snapshots ──────────────────────────────────────────────────────────
 
 // InsertSnapshot records a quote used for a fill (audit trail).
 func (r *Repository) InsertSnapshot(ctx context.Context, assetID string, priceKobo int64, source string) error {
@@ -137,8 +133,6 @@ func (r *Repository) GetOrder(ctx context.Context, userID, orderID string) (*Ord
 	}
 	return &o, nil
 }
-
-// ── Orders + holdings (money path) ───────────────────────────────────────────
 
 // HoldingUnits returns the user's current minor-unit position for an asset.
 func (r *Repository) HoldingUnits(ctx context.Context, userID, assetID string) (int64, error) {

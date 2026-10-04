@@ -1,4 +1,3 @@
-// ── Association — Mock dataset ───────────────────────────────────────────────
 // Realistic Nigeria-first sample data. All money is in kobo.
 
 import type {

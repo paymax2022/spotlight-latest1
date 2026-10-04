@@ -1,9 +1,7 @@
 // Paymax Connect — Unified Profile types (PRD §10.4 PR-*).
-//
 // Self-contained profile slice. Mirrors the agent-owned PrivacyPrefs / ConnectMode
 // shapes locally so this slice never hard-depends on those beyond a read-only
 // import where convenient. Money is never handled here.
-//
 // SAFETY INVARIANTS upheld here (docs/prd/dating/CLAUDE.md):
 //  §3 location approximate-by-default — PrivacySettings.locationPrecision defaults
 //     to 'approximate'.
@@ -14,7 +12,6 @@
 // Re-declared locally so the slice stays self-contained.
 export type ConnectMode = 'date' | 'network';
 
-// A single per-mode profile. Date and Network each own one of these; they are
 // never blended. `visible` is the per-mode discovery wall (SAFETY: a hidden mode
 // is undiscoverable in that surface regardless of the other mode's state).
 export interface ModeProfile {
@@ -23,11 +20,10 @@ export interface ModeProfile {
   intent: string;        // romantic intent (date) OR professional intent (network)
   headline: string;
   bio: string;
-  photos: string[];      // remote URIs (primary = index 0)
+  photos: string[];
   interests: string[];
 }
 
-// The unified account view. Identity (name/age) is shared; everything else that
 // is mode-specific lives behind dateProfile / networkProfile.
 export interface UnifiedProfile {
   id: string;

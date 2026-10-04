@@ -1,4 +1,3 @@
-// ── Restaurant & Delivery — Data hooks ───────────────────────────────────────
 // React Query hooks mirroring useMobility.ts so screens stay declarative and
 // share caching / loading / error contracts. Money mutations attach
 // Idempotency-Keys (generated here, never reused across retries by the caller).
@@ -11,8 +10,6 @@ import type { OrderRole, OrderStatus, PlaceOrderRequest, RateOrderRequest, LatLn
 import { goneRestaurantIds } from './availability';
 
 const KEY = 'food';
-
-// ─── Discovery ────────────────────────────────────────────────────────────────
 
 /**
  * The paged restaurant list, with search and cuisine applied SERVER-side.
@@ -218,7 +215,6 @@ export function useDeliveryQuote(restaurantId?: string, coords?: LatLng | null) 
   });
 }
 
-// ─── Orders ───────────────────────────────────────────────────────────────────
 export function useOrder(orderId?: string, options?: { poll?: boolean }) {
   return useQuery({
     queryKey: [KEY, 'order', orderId],
@@ -307,7 +303,6 @@ export function useRateOrder() {
   });
 }
 
-// ─── Chat ─────────────────────────────────────────────────────────────────────
 export function useMessages(orderId?: string, options?: { poll?: boolean }) {
   return useQuery({
     queryKey: [KEY, 'messages', orderId],
@@ -337,9 +332,7 @@ export function useSendMessage(orderId?: string) {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // RIDER hooks
-// ═══════════════════════════════════════════════════════════════════════════════
 export function useRiderOffers(options?: { poll?: boolean }) {
   return useQuery({
     queryKey: [KEY, 'rider', 'offers'],

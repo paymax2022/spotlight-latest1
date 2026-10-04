@@ -1,5 +1,5 @@
 import { mockAllowed } from '@/config/mockPolicy';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { MeetingMode, MeetingStatus, RsvpResponse } from '../types/meetings.types';
 
 // Flip to false once the estate meetings endpoints are verified (or set

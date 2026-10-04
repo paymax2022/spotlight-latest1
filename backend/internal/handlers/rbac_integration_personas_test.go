@@ -1,14 +1,11 @@
 package handlers
 
 // rbac_integration_personas_test.go
-//
 // Table-driven persona permission tests.
-//
 // These tests serve as living documentation of the RBAC permission model.
 // They assert against an in-memory permission map and run without a database.
 // When the test-DB infrastructure is in place, extend each test case to also
 // call the real RBACService.CheckPermission() and compare.
-//
 // To run:
 //   cd backend && go test ./internal/handlers/... -run TestPersona -v
 
@@ -72,8 +69,6 @@ func hasPermission(role, permission string) bool {
 	}
 	return false
 }
-
-// ─── Individual persona tests ────────────────────────────────────────────────
 
 func TestPersona_ContestManager_CanCreateContest(t *testing.T) {
 	if !hasPermission("contest_manager", "contests:create") {
@@ -168,8 +163,6 @@ func TestPersona_StateCoordinator_CannotCreateContestInOtherState(t *testing.T) 
 		t.Fatal("state_coordinator must be able to view applicants")
 	}
 }
-
-// ─── Table-driven matrix test ─────────────────────────────────────────────────
 
 // TestPersonaMatrix validates the full permission matrix via table-driven cases.
 // Each case specifies: role, permission, and whether it should be granted.

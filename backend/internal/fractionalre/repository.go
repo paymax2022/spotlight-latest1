@@ -2,12 +2,13 @@ package fractionalre
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
-
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/dbutil"
+	"time"
 )
 
 // Repository owns all DB access for the fractionalre module over a pgx pool.
@@ -18,8 +19,6 @@ type Repository struct {
 }
 
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
-
-// ── Sponsors ──────────────────────────────────────────────────────────────────
 
 func (r *Repository) CreateSponsor(ctx context.Context, s *Sponsor) error {
 	const q = `
@@ -48,8 +47,6 @@ func (r *Repository) ListSponsors(ctx context.Context) ([]Sponsor, error) {
 	}
 	return out, rows.Err()
 }
-
-// ── Assets ────────────────────────────────────────────────────────────────────
 
 func (r *Repository) CreateAsset(ctx context.Context, a *Asset) error {
 	const q = `
@@ -146,8 +143,6 @@ func (r *Repository) PatchAsset(ctx context.Context, id string, navKobo *int64, 
 	}
 	return nil
 }
-
-// ── Offerings ─────────────────────────────────────────────────────────────────
 
 func (r *Repository) CreateOffering(ctx context.Context, o *Offering) error {
 	const q = `
@@ -256,8 +251,6 @@ func (r *Repository) RecomputeOfferingProjections(ctx context.Context, offeringI
 	return err
 }
 
-// ── Subscriptions ─────────────────────────────────────────────────────────────
-
 // InsertSubscription writes a new subscription. The UNIQUE idempotency_key makes
 // a duplicate (double-subscribe) a no-op: pgx returns a unique-violation which
 // the caller maps to a fetch of the existing row.
@@ -308,8 +301,6 @@ func (r *Repository) UpdateSubscriptionStatus(ctx context.Context, id string, st
 	_, err := r.db.Exec(ctx, q, id, string(status))
 	return err
 }
-
-// ── Cap table ─────────────────────────────────────────────────────────────────
 
 // UpsertCapTable adds units to an investor's holding in an asset (allocation or
 // secondary buy). pct_bps is recomputed by RecomputeCapTablePct afterwards.
@@ -426,8 +417,6 @@ func (r *Repository) ListHoldings(ctx context.Context, userID string) ([]CapTabl
 	return out, rows.Err()
 }
 
-// ── Investor profile ──────────────────────────────────────────────────────────
-
 func (r *Repository) GetInvestorProfile(ctx context.Context, userID string) (*InvestorProfile, error) {
 	const q = `
 		SELECT id, user_id, classification, declared_annual_income_kobo, ytd_invested_kobo, ytd_year,
@@ -537,8 +526,6 @@ func (r *Repository) InsertOverride(ctx context.Context, userID string, override
 	return err
 }
 
-// ── Risk acknowledgements ─────────────────────────────────────────────────────
-
 func (r *Repository) InsertRiskAck(ctx context.Context, a *RiskAcknowledgement) error {
 	const q = `INSERT INTO fre_risk_acknowledgements (user_id, offering_id, scope, disclosure_ref, scroll_completed, ip_address)
 		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, acknowledged_at`
@@ -561,8 +548,6 @@ func (r *Repository) GetOfferRiskAck(ctx context.Context, userID, offeringID str
 	}
 	return id, true, nil
 }
-
-// ── Distributions ─────────────────────────────────────────────────────────────
 
 func (r *Repository) InsertDistribution(ctx context.Context, d *Distribution) error {
 	const q = `INSERT INTO fre_distributions
@@ -686,8 +671,6 @@ func (r *Repository) ListPayoutsForUser(ctx context.Context, userID string, limi
 	return out, rows.Err()
 }
 
-// ── Secondary market ──────────────────────────────────────────────────────────
-
 // InsertListing writes a listing carrying the client's Idempotency-Key. The
 // partial UNIQUE index on idempotency_key makes a duplicate list-for-sale a
 // unique-violation which the service maps to a replay of the original listing.
@@ -760,7 +743,7 @@ func (r *Repository) DecrementListing(ctx context.Context, id string, units int6
 
 func (r *Repository) SetListingStatus(ctx context.Context, id, status, reason string) error {
 	const q = `UPDATE fre_secondary_listings SET status=$2, halted_reason=$3, updated_at=now() WHERE id=$1`
-	_, err := r.db.Exec(ctx, q, id, status, nullStr(reason))
+	_, err := r.db.Exec(ctx, q, id, status, dbutil.NullStr(reason))
 	return err
 }
 
@@ -825,8 +808,6 @@ func (r *Repository) UpdateMarketControls(ctx context.Context, enabled bool, fee
 	_, err := r.db.Exec(ctx, q, enabled, feeBps, adminID)
 	return err
 }
-
-// ── Watchlist / goals / auto-invest / documents ───────────────────────────────
 
 func (r *Repository) AddWatch(ctx context.Context, userID, offeringID string) error {
 	const q = `INSERT INTO fre_watchlist (user_id, offering_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`
@@ -975,8 +956,6 @@ func (r *Repository) FindOpenOfferingForAutoInvest(ctx context.Context, assetTyp
 	return r.GetOffering(ctx, id)
 }
 
-// ── Escrow reconciliation (admin read) ────────────────────────────────────────
-
 // ListReconciliation compares, per live offering, the raised_kobo projection
 // against the recomputed sum of escrowed/allocated subscription amounts.
 // Read-only; both figures are integer kobo.
@@ -1063,4 +1042,62 @@ func (r *Repository) GetCertificate(ctx context.Context, userID, investmentID st
 		return nil, ErrNotFound
 	}
 	return d, err
+}
+
+// auditLogger writes immutable, append-only rows to fre_audit_log. Every admin
+// mutation and every money-path event emits one (iron rule: emit an audit event
+// on every money mutation). Failures are non-fatal to the caller but logged.
+type auditLogger struct {
+	db *pgxpool.Pool
+}
+
+func newAuditLogger(db *pgxpool.Pool) *auditLogger { return &auditLogger{db: db} }
+
+// log appends an audit row. oldVal/newVal may be nil. Returns the insert error
+// so money paths can decide whether to treat audit failure as fatal (they do
+// for the critical mutations — see service callers).
+func (a *auditLogger) log(ctx context.Context, actorID, action, entityType, entityID, reason string, oldVal, newVal any) error {
+	var oldJSON, newJSON []byte
+	if oldVal != nil {
+		oldJSON, _ = json.Marshal(oldVal)
+	}
+	if newVal != nil {
+		newJSON, _ = json.Marshal(newVal)
+	}
+	const q = `
+		INSERT INTO fre_audit_log (actor_id, action, entity_type, entity_id, old_value, new_value, reason)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)`
+	_, err := a.db.Exec(ctx, q, actorID, action, entityType, dbutil.NullStr(entityID), oldJSON, newJSON, dbutil.NullStr(reason))
+	return err
+}
+
+// AuditEntry is a read row from fre_audit_log.
+type AuditEntry struct {
+	ID         string    `json:"id"`
+	ActorID    string    `json:"actor_id"`
+	Action     string    `json:"action"`
+	EntityType string    `json:"entity_type"`
+	EntityID   *string   `json:"entity_id,omitempty"`
+	Reason     *string   `json:"reason,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// ListAudit returns recent audit entries (admin read).
+func (s *Service) ListAudit(ctx context.Context, limit, offset int) ([]AuditEntry, error) {
+	const q = `SELECT id, actor_id, action, entity_type, entity_id, reason, created_at
+		FROM fre_audit_log ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+	rows, err := s.repo.db.Query(ctx, q, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.ID, &e.ActorID, &e.Action, &e.EntityType, &e.EntityID, &e.Reason, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }

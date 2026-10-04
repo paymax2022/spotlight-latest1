@@ -6,8 +6,13 @@ import (
 	"fmt"
 	"strings"
 
+	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
+)
+
+const (
+	keyMaker = "maker"
 )
 
 // SubscribeRequest is the investor commitment into a funding round.
@@ -17,7 +22,6 @@ type SubscribeRequest struct {
 
 // Subscribe commits an investor's funds into an open funding round (primary
 // market). This is a MONEY PATH and follows every iron rule in order:
-//
 //  1. Idempotency-Key required (passed by handler); a duplicate key returns the
 //     existing subscription (idempotent double-subscribe is a no-op).
 //  2. Fail-closed KYC gate (investor must be KYC-verified, tier >= 1).
@@ -90,7 +94,7 @@ func (s *Service) Subscribe(ctx context.Context, userID, idempotencyKey, offerin
 
 	// 6. Escrow: debit investor wallet → escrow standing account (balanced ledger).
 	ref := fmt.Sprintf("fre-sub:%s:%s", offeringID, userID)
-	settlementRef := derefOr(o.EscrowReference, "fre-round:"+offeringID)
+	settlementRef := ptr.Deref(o.EscrowReference, "fre-round:"+offeringID)
 	sett, err := s.settlement.Escrow(ctx, userID, settlementRef+":"+ref, idempotencyKey, moduleType, amountKobo)
 	if err != nil {
 		if errors.Is(err, ledger.ErrInsufficientFunds) {
@@ -131,8 +135,6 @@ func (s *Service) Subscribe(ctx context.Context, userID, idempotencyKey, offerin
 	s.notify(ctx, userID, "Investment confirmed", "Your investment is held in escrow pending round close.")
 	return sub, nil
 }
-
-// ── Round close — MAKER-CHECKER ───────────────────────────────────────────────
 
 // ProposeClose records the maker's intent to close a round (step 1 of 2). The
 // approver (checker) must be a different user — enforced in ApproveClose.
@@ -216,7 +218,6 @@ func (s *Service) allocate(ctx context.Context, checkerID string, o *Offering) (
 		}
 		_ = s.repo.UpdateSubscriptionStatus(ctx, sub.ID, SubAllocated)
 		_ = s.repo.SetCertRef(ctx, o.AssetID, sub.UserID, certKey)
-		// Record the certificate document row.
 		_ = s.repo.InsertDocument(ctx, &Document{
 			AssetID:    &o.AssetID,
 			OfferingID: &o.ID,
@@ -229,12 +230,12 @@ func (s *Service) allocate(ctx context.Context, checkerID string, o *Offering) (
 	if err := s.repo.RecomputeCapTablePct(ctx, o.AssetID); err != nil {
 		return nil, err
 	}
-	if err := s.repo.SetClose(ctx, o.ID, derefOr(o.CloseProposedBy, ""), checkerID, OfferingFunded); err != nil {
+	if err := s.repo.SetClose(ctx, o.ID, ptr.Deref(o.CloseProposedBy, ""), checkerID, OfferingFunded); err != nil {
 		return nil, err
 	}
 	_ = s.repo.UpdateAssetStatus(ctx, o.AssetID, AssetFunded)
 	_ = s.audit.log(ctx, checkerID, "offering.close.allocate", "offering", o.ID, "threshold met",
-		map[string]string{"maker": derefOr(o.CloseProposedBy, "")}, map[string]any{"raised_kobo": o.RaisedKobo})
+		map[string]string{keyMaker: ptr.Deref(o.CloseProposedBy, "")}, map[string]any{"raised_kobo": o.RaisedKobo})
 	o.Status = OfferingFunded
 	return o, nil
 }
@@ -263,12 +264,12 @@ func (s *Service) refundAll(ctx context.Context, checkerID string, o *Offering) 
 		_ = s.repo.UpdateSubscriptionStatus(ctx, sub.ID, SubRefunded)
 		s.notify(ctx, sub.UserID, "Investment refunded", "The round did not reach its minimum; your funds were returned to your wallet.")
 	}
-	if err := s.repo.SetClose(ctx, o.ID, derefOr(o.CloseProposedBy, ""), checkerID, OfferingRefunded); err != nil {
+	if err := s.repo.SetClose(ctx, o.ID, ptr.Deref(o.CloseProposedBy, ""), checkerID, OfferingRefunded); err != nil {
 		return nil, err
 	}
 	_ = s.repo.UpdateAssetStatus(ctx, o.AssetID, AssetRefundClose)
 	_ = s.audit.log(ctx, checkerID, "offering.close.refund", "offering", o.ID, "threshold not met",
-		map[string]string{"maker": derefOr(o.CloseProposedBy, "")}, map[string]any{"raised_kobo": o.RaisedKobo})
+		map[string]string{keyMaker: ptr.Deref(o.CloseProposedBy, "")}, map[string]any{"raised_kobo": o.RaisedKobo})
 	o.Status = OfferingRefunded
 	return o, nil
 }
@@ -286,15 +287,10 @@ func (s *Service) RefundRound(ctx context.Context, checkerID, offeringID string)
 	return s.refundAll(ctx, checkerID, o)
 }
 
-func derefOr(p *string, def string) string {
-	if p != nil {
-		return *p
-	}
-	return def
-}
-
 // isUniqueViolation reports a Postgres unique_violation (SQLSTATE 23505) without
-// importing pgconn directly at call sites.
+// importing pgconn directly at call sites. Deliberately a message scan, not
+// dbutil.IsUniqueViolation: callers here can wrap the driver error such that
+// the SQLState interface is lost while the code remains in the message.
 func isUniqueViolation(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "23505")
 }

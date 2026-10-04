@@ -40,7 +40,7 @@ func TestAuthorizeStatusChange(t *testing.T) {
 		name    string
 		actor   string
 		to      OrderStatus
-		wantErr error // nil = allowed
+		wantErr error
 	}
 	cases := []tc{
 		// Owner owns the kitchen-side transitions.

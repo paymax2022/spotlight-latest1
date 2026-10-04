@@ -7,7 +7,6 @@ import { handleApiError } from '@/src/lib/api/responses';
 // resolve-account, bank-to-bank, beneficiaries (+ DELETE by id), and the
 // transaction-PIN routes (pin, pin/verify, pin/status). Authed — the Go backend
 // enforces feature flags, tier limits, PIN, idempotency and RBAC.
-//
 // NOTE: sibling static routes (transfers/bank, transfers/paymax) take precedence
 // in Next.js routing and are intentionally left untouched (brownfield-safe legacy
 // money-path). This catch-all only handles paths not matched by those segments.

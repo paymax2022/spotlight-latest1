@@ -1,4 +1,3 @@
-// ── Crowdfunding — Wallet / support / notifications / rewards mock ────────────
 // All money in kobo.
 
 import type {

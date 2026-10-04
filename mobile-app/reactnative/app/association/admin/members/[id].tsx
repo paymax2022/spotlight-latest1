@@ -3,23 +3,23 @@ import { View, Text, Image, ScrollView, Pressable, StyleSheet } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { Briefcase, MapPin, CalendarDays, UserCog, ArrowRightLeft, Ban, RotateCcw, Lock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
-import MembershipStatusBadge, { PaymentStandingBadge } from '@/features/association/components/MembershipStatusBadge';
-import { useMember, useOrganisation } from '@/features/association/hooks/useAssociation';
+import {MembershipStatusBadge, PaymentStandingBadge} from '@/features/association/components';
+import { useMember, useOrganisation } from '@/features/association/hooks';
 import {
   useAdminAccess, useSuspendMember, useRestoreMember, useTransferMember, useAssignRole,
-} from '@/features/association/hooks/useAdminMembers';
-import { initials, formatDate } from '@/features/association/utils/associationFormatters';
-import { ASSIGNABLE_ROLES } from '@/features/association/types/adminRole.types';
-import type { AdminRole } from '@/features/association/types/adminRole.types';
+} from '@/features/association/hooks';
+import { initials, formatDate } from '@/features/association/utils';
+import { ASSIGNABLE_ROLES } from '@/features/association/types';
+import type { AdminRole } from '@/features/association/types';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 export default function AdminMemberDetail() {

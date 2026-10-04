@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { mapGateEvent } from '@/src/server/visitor/gate.service';
 import { ACCESS_CODE_COLUMNS } from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/codes/{id}/exit — record a visitor check-out.
+// Record a visitor check-out.
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireRequestUser(request);
@@ -38,7 +38,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       .single();
     if (evtErr) throw evtErr;
 
-    // Notify issuer.
     await supabase.from('visitor_notifications').insert({
       estate_id: (code as any).estate_id,
       user_id: (code as any).issued_by,

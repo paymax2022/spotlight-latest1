@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ptr"
 )
 
 // Store is the data-access contract the service depends on. Defining it as an in-package
@@ -40,6 +42,15 @@ type Repository struct {
 // NewRepository builds the pgx-backed Store.
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
+// notFoundOnBadID guards uuid-typed lookups: a non-uuid id can never match a
+// row, so answer ErrNotFound rather than leaking 22P02 as a 500.
+func notFoundOnBadID(id string) error {
+	if _, err := uuid.Parse(id); err != nil {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // querier abstracts *pgxpool.Pool and pgx.Tx.
 type querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
@@ -67,14 +78,17 @@ func (r *Repository) Insert(ctx context.Context, s School) (*School, error) {
 	const q = `INSERT INTO academy_schools
 	    (id, name, code, level, virtual_account_ref, contact, owner_user_id, verification_tier, status, created_at)
 	    VALUES ($1,$2,$3,$4,$5,$6,$7,'unverified','active',$8)`
-	if _, err := r.db.Exec(ctx, q, id, s.Name, nullStr(deref(s.Code)), nullStr(deref(s.Level)),
-		nullStr(deref(s.VirtualAccountRef)), nullStr(deref(s.Contact)), nullStr(deref(s.OwnerUserID)), now); err != nil {
+	if _, err := r.db.Exec(ctx, q, id, s.Name, dbutil.NullStr(ptr.ZeroIfNil(s.Code)), dbutil.NullStr(ptr.ZeroIfNil(s.Level)),
+		dbutil.NullStr(ptr.ZeroIfNil(s.VirtualAccountRef)), dbutil.NullStr(ptr.ZeroIfNil(s.Contact)), dbutil.NullStr(ptr.ZeroIfNil(s.OwnerUserID)), now); err != nil {
 		return nil, err
 	}
 	return r.Get(ctx, id)
 }
 
 func (r *Repository) Get(ctx context.Context, id string) (*School, error) {
+	if err := notFoundOnBadID(id); err != nil {
+		return nil, err
+	}
 	q := `SELECT ` + schoolCols + ` FROM academy_schools WHERE id = $1`
 	s, err := scanSchool(r.db.QueryRow(ctx, q, id))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -112,6 +126,9 @@ func (r *Repository) List(ctx context.Context, ownerUserID string) ([]School, er
 // Update sets only the descriptive columns supplied (empty string ⇒ leave unchanged via
 // COALESCE). It NEVER touches verification_tier or status.
 func (r *Repository) Update(ctx context.Context, id string, req UpdateSchoolRequest) (*School, error) {
+	if err := notFoundOnBadID(id); err != nil {
+		return nil, err
+	}
 	const q = `UPDATE academy_schools SET
 	    name = COALESCE($2, name),
 	    code = COALESCE($3, code),
@@ -119,8 +136,8 @@ func (r *Repository) Update(ctx context.Context, id string, req UpdateSchoolRequ
 	    virtual_account_ref = COALESCE($5, virtual_account_ref),
 	    contact = COALESCE($6, contact)
 	    WHERE id = $1`
-	tag, err := r.db.Exec(ctx, q, id, nullStr(req.Name), nullStr(req.Code), nullStr(req.Level),
-		nullStr(req.VirtualAccountRef), nullStr(req.Contact))
+	tag, err := r.db.Exec(ctx, q, id, dbutil.NullStr(req.Name), dbutil.NullStr(req.Code), dbutil.NullStr(req.Level),
+		dbutil.NullStr(req.VirtualAccountRef), dbutil.NullStr(req.Contact))
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +151,9 @@ func (r *Repository) Update(ctx context.Context, id string, req UpdateSchoolRequ
 // already validated the move via VerifyTransition; this re-asserts the precondition at
 // the DB (WHERE verification_tier=$from FOR UPDATE) so concurrent verifies can't race.
 func (r *Repository) SetVerificationTier(ctx context.Context, id string, from, to VerificationTier) (*School, error) {
+	if err := notFoundOnBadID(id); err != nil {
+		return nil, err
+	}
 	var out *School
 	err := r.withTx(ctx, func(tx pgx.Tx) error {
 		const sel = `SELECT verification_tier FROM academy_schools WHERE id = $1 FOR UPDATE`
@@ -165,6 +185,9 @@ func (r *Repository) SetVerificationTier(ctx context.Context, id string, from, t
 }
 
 func (r *Repository) ExportRoster(ctx context.Context, schoolID string) ([]ExportStudent, error) {
+	if err := notFoundOnBadID(schoolID); err != nil {
+		return nil, err
+	}
 	const q = `SELECT id, admission_number, class_id, status, minor_flag
 	           FROM academy_students WHERE school_id = $1 ORDER BY created_at ASC`
 	rows, err := r.db.Query(ctx, q, schoolID)
@@ -184,6 +207,9 @@ func (r *Repository) ExportRoster(ctx context.Context, schoolID string) ([]Expor
 }
 
 func (r *Repository) ExportFees(ctx context.Context, schoolID string) ([]ExportFee, error) {
+	if err := notFoundOnBadID(schoolID); err != nil {
+		return nil, err
+	}
 	const q = `SELECT id, name, amount_minor, currency, locked
 	           FROM academy_fee_schedules WHERE school_id = $1 ORDER BY created_at ASC`
 	rows, err := r.db.Query(ctx, q, schoolID)
@@ -215,7 +241,7 @@ func writeAudit(ctx context.Context, q querier, actorID, action, entityID, from,
 	const ins = `INSERT INTO public.academy_commerce_audit
 	             (actor_id, action, entity_type, entity_id, from_state, to_state, detail)
 	             VALUES ($1,$2,'academy_school',$3,$4,$5,$6)`
-	_, err := q.Exec(ctx, ins, nullStr(actorID), action, nullUUID(entityID), nullStr(from), nullStr(to), toJSON(detail))
+	_, err := q.Exec(ctx, ins, dbutil.NullStr(actorID), action, dbutil.NullUUID(entityID), dbutil.NullStr(from), dbutil.NullStr(to), toJSON(detail))
 	return err
 }
 

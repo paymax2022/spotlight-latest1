@@ -2,11 +2,9 @@ package handlers
 
 // The admin overview: one call that answers "what needs me today?" across every
 // module, instead of a dashboard that counts contestants.
-//
 // WHY THIS IS NOT A LOOP OVER A TEMPLATE. Each module spells its queue
 // differently, and the differences are invisible until a filter silently matches
 // nothing. Verified against the live CHECK constraints:
-//
 //	cf_withdrawals            'PENDING'                   (upper)
 //	restaurant_withdrawals    'pending'                   (lower)
 //	stays_property            'PENDING_REVIEW'            (upper)
@@ -16,12 +14,10 @@ package handlers
 //	insurance_claim           'FNOL_SUBMITTED','UNDER_ASSESSMENT'
 //	creator_payouts           'REQUESTED'                 (column is `state`)
 //	escrow_disputes           'OPEN'   vs  disputes 'open'
-//
 // A generic WHERE status='pending' would report ZERO outstanding work for
 // crowdfunding, stays, referrals, crypto, insurance and creators — a dashboard
 // confidently showing an all-clear while the queues fill. Every predicate below
 // is written per module and taken from that module's own constraint.
-//
 // UNKNOWN IS NOT ZERO. A query that fails (table absent on a partially migrated
 // environment, permission denied, timeout) yields a nil value, which the console
 // renders as "—". It must never render as 0: "nothing to do" and "we could not
@@ -30,12 +26,21 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
+	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	goredis "github.com/redis/go-redis/v9"
+
+	"spotlight/backend/internal/domain"
+	"spotlight/backend/internal/platform/buildinfo"
+	"spotlight/backend/internal/services"
 )
 
 // queryTimeout caps EACH count independently. The whole endpoint is only as slow
@@ -63,7 +68,6 @@ type moduleSpec struct {
 // specs is the registry. Adding a module means adding one row — and verifying
 // its predicate against that module's CHECK constraint, not assuming.
 var overviewSpecs = []moduleSpec{
-	// ---- Money & risk: a stuck queue here is somebody's money not moving.
 	{"marketplace", "Marketplace", "Commerce", "/admin/marketplace",
 		"Live listings", `SELECT count(*) FROM public.mkt_listings WHERE status='active'`,
 		"Awaiting moderation", `SELECT count(*) FROM public.mkt_listings WHERE status='pending_review'`,
@@ -105,7 +109,6 @@ var overviewSpecs = []moduleSpec{
 		"Open, unassigned", `SELECT count(*) FROM public.disputes WHERE status='open'`,
 		"/admin/disputes", "critical"},
 
-	// ---- Onboarding & verification: people blocked from trading.
 	{"stays", "Stays", "Travel", "/admin/stays",
 		"Active properties", `SELECT count(*) FROM public.stays_property WHERE status='ACTIVE'`,
 		"Properties to review", `SELECT count(*) FROM public.stays_property WHERE status='PENDING_REVIEW'`,
@@ -215,4 +218,300 @@ func (h *AdminOverviewHandler) count(ctx context.Context, sql string) *int64 {
 		return nil
 	}
 	return &n
+}
+
+// Ops and admin auxiliary handlers: platform health probes, the legacy admin
+// dashboard endpoints, analytics and the audit-log read surface.
+
+type AdminHandler struct {
+	service services.AdminService
+}
+
+func NewAdminHandler(service services.AdminService) *AdminHandler {
+	return &AdminHandler{service: service}
+}
+
+func (h *AdminHandler) MenuCounts(c *gin.Context) {
+	counts, err := h.service.GetMenuCounts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not load admin counts"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "counts": counts})
+}
+
+type AnalyticsHandler struct{ service services.AnalyticsService }
+
+func NewAnalyticsHandler(service services.AnalyticsService) *AnalyticsHandler {
+	return &AnalyticsHandler{service: service}
+}
+
+func (h *AnalyticsHandler) Summary(c *gin.Context) {
+	analytics, err := h.service.GetChatAnalytics()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not load chatbot analytics"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "analytics": analytics})
+}
+
+type AuditHandler struct{ svc services.AuditService }
+
+func NewAuditHandler(svc services.AuditService) *AuditHandler { return &AuditHandler{svc: svc} }
+
+func auditFilterFromQuery(c *gin.Context) domain.AuditFilter {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	return domain.AuditFilter{
+		Limit:      limit,
+		ActorUser:  c.Query("actorUser"),
+		TargetUser: c.Query("targetUser"),
+		Module:     c.Query("module"),
+		Action:     c.Query("action"),
+		Severity:   c.Query("severity"),
+		DateFrom:   c.Query("dateFrom"),
+		DateTo:     c.Query("dateTo"),
+		Status:     c.Query("status"),
+		Email:      c.Query("email"),
+	}
+}
+
+func (h *AuditHandler) AuditLogs(c *gin.Context) {
+	rows, err := h.svc.ListAuditLogs(auditFilterFromQuery(c))
+	if err != nil {
+		log.Printf("[audit.logs] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "logs": rows})
+}
+
+func (h *AuditHandler) LoginActivity(c *gin.Context) {
+	rows, err := h.svc.ListLoginActivity(auditFilterFromQuery(c))
+	if err != nil {
+		log.Printf("[audit.login_activity] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "activity": rows})
+}
+
+func (h *AuditHandler) SecurityEvents(c *gin.Context) {
+	rows, err := h.svc.ListSecurityEvents(auditFilterFromQuery(c))
+	if err != nil {
+		log.Printf("[audit.security_events] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "events": rows})
+}
+
+func (h *AuditHandler) ExportAuditLogs(c *gin.Context) {
+	rows, err := h.svc.ListAuditLogs(auditFilterFromQuery(c))
+	if err != nil {
+		log.Printf("[audit.export] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
+		return
+	}
+	payload, err := json.MarshalIndent(rows, "", "  ")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "export failed"})
+		return
+	}
+	c.Header("Content-Disposition", "attachment; filename=audit-logs.json")
+	c.Data(http.StatusOK, "application/json", payload)
+}
+
+type HealthHandler struct {
+	pool *pgxpool.Pool
+
+	// Redis component for /readyz (E2E-FR-050). redisRequired comes from
+	// REDIS_REQUIRED: Redis is a latency optimization with DB-unique fallbacks,
+	// so by default a Redis outage reports "degraded" and the probe stays 200;
+	// only when the operator marks Redis required does a ping failure 503.
+	redis         *goredis.Client
+	redisRequired bool
+
+	// Probe hooks — nil means "ping the real client". Overridable in tests so
+	// the up/down/degraded matrix can run without live infra.
+	pingDB    func(ctx context.Context) error
+	pingRedis func(ctx context.Context) error
+
+	// Readiness verdict is probed at most once per readyProbeInterval and
+	// cached between probes — otherwise every LB/uptime/k8s probe issues its
+	// own pool.Ping, which under a saturated pool queues, times out, and flaps
+	// the pod exactly when load is highest. The same window covers the Redis
+	// ping — one probe per component, never more.
+	mu          sync.Mutex
+	lastReady   bool
+	lastReason  string
+	lastDB      string
+	lastRedis   string
+	lastProbeAt time.Time
+}
+
+const readyProbeInterval = 2 * time.Second
+
+// Readiness component verdicts, emitted under "components" in the payload.
+const (
+	componentUp            = "up"
+	componentDown          = "down"
+	componentDegraded      = "degraded"       // down, but not a required component
+	componentNotConfigured = "not_configured" // client never wired — nothing to ping
+
+	keyReadyStatus     = "status"
+	keyReadyReason     = "reason"
+	keyReadyComponents = "components"
+)
+
+func NewHealthHandler() *HealthHandler { return &HealthHandler{} }
+
+// WithPool supplies the shared DB pool for the readiness probe. The pool is
+// created late in router construction, after /healthz-worthy liveness routes
+// are registered, so it arrives via a setter rather than the constructor.
+func (h *HealthHandler) WithPool(pool *pgxpool.Pool) *HealthHandler {
+	h.pool = pool
+	return h
+}
+
+// WithRedis supplies the shared Redis client for the readiness probe and
+// whether Redis is a required component (REDIS_REQUIRED). A nil client reports
+// the component "not_configured" and never affects the verdict.
+func (h *HealthHandler) WithRedis(client *goredis.Client, required bool) *HealthHandler {
+	h.redis = client
+	h.redisRequired = required
+	return h
+}
+
+func (h *HealthHandler) PublicHealth(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"success": true, "service": "backend", "status": "ok"})
+}
+
+// Ready is the readiness probe backing /readyz. Distinct from liveness: the
+// process must also be able to serve DB-backed traffic. A nil pool (dev/test
+// boots without DATABASE_URL) reports not-ready — on deployed tiers a failed
+// pool is fatal at boot anyway, so this state is only reachable locally.
+//
+// Per-component verdicts (E2E-FR-050) are reported under "components":
+//   - db:    up | down | not_configured — always a REQUIRED component; a
+//     failure (or nil pool) fails readiness with 503.
+//   - redis: up | degraded | down | not_configured — optional by default.
+//     When wired but unreachable it reports "degraded" (still 200 — every
+//     Redis consumer has a DB-unique or nil-safe fallback, so an outage is a
+//     latency loss, not a serving outage). Only when WithRedis(required=true)
+//     — REDIS_REQUIRED=true — does a Redis failure report "down" and fail the
+//     probe with 503.
+//
+// The DB+Redis ping pair is rate-limited (see the struct comment): concurrent
+// probes within readyProbeInterval share the previous verdict rather than each
+// acquiring a pool connection. The mutex is held across the ping so at most
+// one probe is ever in flight.
+func (h *HealthHandler) Ready(c *gin.Context) {
+	if h.pool == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false, keyReadyStatus: "not_ready", keyReadyReason: "database pool not configured",
+			keyReadyComponents: gin.H{"db": componentNotConfigured, "redis": h.redisComponentLabel()},
+		})
+		return
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if time.Since(h.lastProbeAt) < readyProbeInterval {
+		h.writeReady(c, h.lastReady, h.lastReason, h.lastDB, h.lastRedis)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+	dbErr := h.probeDB(ctx)
+	redisStatus := h.probeRedis(ctx)
+	cancel()
+	h.lastProbeAt = time.Now()
+
+	reason := ""
+	if dbErr != nil {
+		reason = "database ping failed"
+	}
+	h.lastDB = componentUp
+	if dbErr != nil {
+		h.lastDB = componentDown
+	}
+	h.lastRedis = redisStatus
+	h.lastReady = dbErr == nil && redisStatus != componentDown
+	if redisStatus == componentDown {
+		if reason != "" {
+			reason += "; "
+		}
+		reason += "redis ping failed (required component)"
+	}
+	h.lastReason = reason
+	h.writeReady(c, h.lastReady, h.lastReason, h.lastDB, h.lastRedis)
+}
+
+// probeDB pings Postgres, honoring the test override hook.
+func (h *HealthHandler) probeDB(ctx context.Context) error {
+	if h.pingDB != nil {
+		return h.pingDB(ctx)
+	}
+	return h.pool.Ping(ctx)
+}
+
+// probeRedis returns the component verdict for Redis. "down" is only produced
+// when the component is required; otherwise an unreachable Redis is "degraded".
+func (h *HealthHandler) probeRedis(ctx context.Context) string {
+	if h.redis == nil {
+		return componentNotConfigured
+	}
+	ping := h.pingRedis
+	if ping == nil {
+		ping = func(ctx context.Context) error { return h.redis.Ping(ctx).Err() }
+	}
+	if err := ping(ctx); err != nil {
+		if h.redisRequired {
+			return componentDown
+		}
+		return componentDegraded
+	}
+	return componentUp
+}
+
+// redisComponentLabel reports the Redis verdict without probing — used on the
+// early-return path where no probe has run (nil pool).
+func (h *HealthHandler) redisComponentLabel() string {
+	if h.redis == nil {
+		return componentNotConfigured
+	}
+	return "unknown"
+}
+
+func (h *HealthHandler) writeReady(c *gin.Context, ready bool, reason, db, redisStatus string) {
+	components := gin.H{"db": db, "redis": redisStatus}
+	if components["db"] == "" {
+		components["db"] = "unknown"
+	}
+	if components["redis"] == "" {
+		components["redis"] = h.redisComponentLabel()
+	}
+	if !ready {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, keyReadyStatus: "not_ready", keyReadyReason: reason, keyReadyComponents: components})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, keyReadyStatus: "ready", keyReadyComponents: components})
+}
+
+func (h *HealthHandler) GenericHealth(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// Build reports which commit this process is serving — PublicHealth's body is a
+// fixed string, byte-identical on every build, so it cannot distinguish
+// "deployed" from "did not deploy".
+// Exposes ONLY build identity (commit, branch, dirty flag, process start): the
+// endpoint is unauthenticated, so no config/environment/dependency inventory.
+// Reports commit "" with source "unknown" rather than inventing a value — a
+// wrong commit would be believed.
+func (h *HealthHandler) Build(c *gin.Context) {
+	dir, err := os.Getwd()
+	if err != nil {
+		dir = "."
+	}
+	c.JSON(http.StatusOK, buildinfo.CurrentRelease(c.Request.Context(), dir))
 }

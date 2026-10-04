@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getWallet } from '@/api/wallet.api';
@@ -27,10 +27,10 @@ export type PayPhase =
   | 'checking'        // resolving the caller's KYC spend allowance
   | 'blocked'         // the KYC tier will not permit this spend — no rail can succeed
   | 'pin'             // collecting the wallet transaction PIN
-  | 'initializing'    // card: server is opening the top-up transaction
+  | 'initializing'
   | 'charging'        // verifying PIN / running the module's wallet charge
   | 'awaiting'        // user is on the Paystack gateway
-  | 'confirming'      // card: waiting for the webhook to credit the wallet
+  | 'confirming'
   | 'done'
   | 'error';
 
@@ -117,6 +117,16 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
   const [request, setRequest] = useState<PurchaseRequest<T> | null>(null);
   const [spendBlock, setSpendBlock] = useState<Extract<SpendDecision, { allowed: false }> | null>(null);
 
+  // Re-entry locks. The sheet swaps the pay options for a spinner only AFTER a
+  // re-render commits, so two taps landing in the same frame both invoke
+  // runPay/submitPin while the captured `phase` still reads 'idle'/'pin'.
+  // Without these, a double-tap on "Pay with Card" starts two server-side
+  // top-up charges, and a double-tap on "Confirm & pay" debits the wallet
+  // twice. The lock releases when the launch/charge attempt settles — a
+  // cancelled or failed attempt can always be retried.
+  const payInflight = useRef(false);
+  const pinInflight = useRef(false);
+
   const gateway = usePaystackGateway();
   const user = useAuthStore((s) => s.user);
   const queryClient = useQueryClient();
@@ -173,7 +183,6 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
   // Resolves the caller's KYC spend allowance and decides whether this purchase can
   // proceed. Reads through the same query cache the sheet warms on open, so the
   // common path is a cache hit; a cold or stale cache fetches once.
-  //
   // An allowance that cannot be read is treated as "unknown" and ALLOWED — the
   // server gate still refuses the debit, so failing closed here would block checkout
   // on a network hiccup while protecting nothing.
@@ -198,8 +207,12 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
   // preselected — without depending on the async `request` state.
   const runPay = useCallback(
     async (req: PurchaseRequest<T>, method: PayMethod) => {
-      setError(null);
-      setSpendBlock(null);
+      // Re-entry guard — see payInflight's declaration comment.
+      if (payInflight.current) return;
+      payInflight.current = true;
+      try {
+        setError(null);
+        setSpendBlock(null);
 
       // Module-specific card flow (e.g. a server-initiated Paystack redirect that
       // collects payment directly and never touches the wallet — see onCard's doc
@@ -223,7 +236,6 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
         return;
       }
 
-      // ── KYC spend pre-check — MUST stay ahead of both remaining rails ────────
       // The card rail tops the wallet up first and only then runs the module's
       // wallet charge, so without this a Tier 0 customer would pay real money into
       // a wallet the tier gate forbids them from spending: the funds are recorded
@@ -242,10 +254,8 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
       setPhase('idle');
 
       if (method === 'card') {
-        // Card = top up the wallet for the exact amount, wait for the webhook to
         // credit it, then run the module's ordinary wallet charge. Net wallet
         // change is zero and the money moves on ONE ledger.
-        //
         // Previously this opened a client-initialized charge for req.amountKobo
         // and then ran the module's charge anyway — which debits the wallet. The
         // customer paid twice, and if the wallet was short the debit failed after
@@ -315,7 +325,6 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
         return;
       }
 
-      // Wallet: gate on the 4-digit transaction PIN (uniform across all modules),
       // then charge. The sheet renders the PIN entry during the 'pin' phase and
       // calls submitPin(); the kill-switch flag skips straight to the charge.
       if (requiresPin('wallet', WALLET_PIN_REQUIRED)) {
@@ -323,6 +332,9 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
         return;
       }
       await walletCharge(req);
+      } finally {
+        payInflight.current = false;
+      }
     },
     [gateway, user, finalize, walletCharge, checkSpendAllowed],
   );
@@ -332,21 +344,30 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
   const submitPin = useCallback(
     async (pin: string) => {
       const req = request;
-      if (!req) return;
-      setError(null);
-      setPhase('charging');
+      if (!req || pinInflight.current) return;
+      pinInflight.current = true;
       try {
-        await verifyPin(pin);
-      } catch (e) {
-        // /pin/verify answers 403 for five different reasons. Returning to the PIN
-        // pad for all of them told a locked-out or PIN-less customer to keep
-        // guessing — and every guess is scored against the lockout.
-        const failure = describePinFailure(e);
-        setPhase(failure.retryable ? 'pin' : 'error');
-        setError(failure.message);
-        return;
+        setError(null);
+        setPhase('charging');
+        try {
+          await verifyPin(pin);
+        } catch (e) {
+          // /pin/verify answers 403 for five different reasons. Returning to the PIN
+          // pad for all of them told a locked-out or PIN-less customer to keep
+          // guessing — and every guess is scored against the lockout.
+          const failure = describePinFailure(e);
+          setPhase(failure.retryable ? 'pin' : 'error');
+          setError(failure.message);
+          return;
+        }
+        // The lock is held across walletCharge so a double-tap on "Confirm & pay"
+        // in the same frame cannot debit the wallet twice; it releases once the
+        // charge settles or errors (walletCharge captures failures into the
+        // sheet itself).
+        await walletCharge(req, pin);
+      } finally {
+        pinInflight.current = false;
       }
-      await walletCharge(req, pin);
     },
     [request, walletCharge],
   );

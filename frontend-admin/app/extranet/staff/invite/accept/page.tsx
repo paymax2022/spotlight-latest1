@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { syncAdminSession } from '@/features/auth/adminSession';
+import { syncAdminSession } from '@/features/auth/adminAuth';
 import { acceptStaffInvite } from '@/services/staysExtranetService';
 import { PageHeader, Card, btnPrimary } from '../../../_ui';
 

@@ -1,4 +1,3 @@
-// ── Spotlight Academy — React Query hooks (v5) ───────────────────────────────
 // Declarative data hooks the learner screens reuse. Mirrors the health module.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -8,7 +7,6 @@ import type { AcademyRole, PracticeSubmission, Bundle, UsageControls, SavingsPot
 
 const KEY = 'academy';
 
-// ── Identity ──────────────────────────────────────────────────────────────────
 export function useMe() {
   return useQuery({ queryKey: [KEY, 'me'], queryFn: Api.getMe, staleTime: 30_000 });
 }
@@ -45,7 +43,6 @@ export function useRecordConsent() {
   });
 }
 
-// ── Curriculum ────────────────────────────────────────────────────────────────
 export function useCurriculumVersions() {
   return useQuery({ queryKey: [KEY, 'cv'], queryFn: Api.getCurriculumVersions, staleTime: 5 * 60_000 });
 }
@@ -82,7 +79,6 @@ export function useLesson(id?: string) {
   return useQuery({ queryKey: [KEY, 'lesson', id], queryFn: () => Api.getLesson(id as string), enabled: !!id, staleTime: 60_000 });
 }
 
-// ── Assessment ────────────────────────────────────────────────────────────────
 export function usePractice(objectiveId?: string) {
   return useQuery({ queryKey: [KEY, 'practice', objectiveId ?? 'mixed'], queryFn: () => Api.getPractice(objectiveId), staleTime: 0 });
 }
@@ -102,7 +98,6 @@ export function useMastery() {
   return useQuery({ queryKey: [KEY, 'mastery'], queryFn: Api.getMastery, staleTime: 30_000 });
 }
 
-// ── Exam ──────────────────────────────────────────────────────────────────────
 export function useArenas() {
   return useQuery({ queryKey: [KEY, 'arenas'], queryFn: Api.getArenas, staleTime: 60_000 });
 }
@@ -142,7 +137,6 @@ export function useSubmitAttempt() {
   });
 }
 
-// ── Gamification ─────────────────────────────────────────────────────────────
 export function useGamificationProfile() {
   return useQuery({ queryKey: [KEY, 'gamification'], queryFn: Api.getGamificationProfile, staleTime: 30_000 });
 }
@@ -163,7 +157,6 @@ export function useClassLeaderboard() {
   return useQuery({ queryKey: [KEY, 'class-leaderboard'], queryFn: Api.getClassLeaderboard, staleTime: 60_000 });
 }
 
-// ── Rewards ──────────────────────────────────────────────────────────────────
 export function useRewardBalance() {
   return useQuery({ queryKey: [KEY, 'rewards', 'balance'], queryFn: Api.getRewardBalance, staleTime: 15_000 });
 }
@@ -187,7 +180,6 @@ export function useRedeemReward() {
   });
 }
 
-// ── Commerce ─────────────────────────────────────────────────────────────────
 export function usePlans() {
   return useQuery({ queryKey: [KEY, 'plans'], queryFn: Api.getPlans, staleTime: 60_000 });
 }
@@ -231,16 +223,12 @@ export function useActivateAccessCard() {
   });
 }
 
-// ── Wallet ───────────────────────────────────────────────────────────────────
 export function useWallet() {
   return useQuery({ queryKey: [KEY, 'wallet'], queryFn: Api.getWallet, staleTime: 15_000 });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 2 — hooks
-// ═══════════════════════════════════════════════════════════════════════════════
 
-// ── Progression ──────────────────────────────────────────────────────────────
 export function usePath(subjectId?: string) {
   return useQuery({ queryKey: [KEY, 'path', subjectId], queryFn: () => Api.getPath(subjectId as string), enabled: !!subjectId, staleTime: 60_000 });
 }
@@ -269,7 +257,6 @@ export function useRecommendations() {
   return useQuery({ queryKey: [KEY, 'recommendations'], queryFn: Api.getRecommendations, staleTime: 60_000 });
 }
 
-// ── Parent / Guardian ────────────────────────────────────────────────────────
 export function useChildren() {
   return useQuery({ queryKey: [KEY, 'children'], queryFn: Api.getChildren, staleTime: 30_000 });
 }
@@ -330,7 +317,6 @@ export function useInvoices() {
   return useQuery({ queryKey: [KEY, 'invoices'], queryFn: Api.getInvoices, staleTime: 60_000 });
 }
 
-// ── EduPay ───────────────────────────────────────────────────────────────────
 export function useSchools(query?: string) {
   return useQuery({ queryKey: [KEY, 'schools', query ?? 'all'], queryFn: () => Api.getSchools(query), staleTime: 60_000 });
 }
@@ -400,7 +386,6 @@ export function useApplyScholarship() {
   });
 }
 
-// ── Learner: daily goal, search, bookmarks, notes, downloads ─────────────────
 export function useDailyGoal() {
   return useQuery({ queryKey: [KEY, 'daily-goal'], queryFn: Api.getDailyGoal, staleTime: 30_000 });
 }
@@ -465,9 +450,7 @@ export function useSyncDownload() {
   return useMutation({ mutationFn: (bundleId: string) => Api.syncDownload(bundleId), onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'downloads'] }) });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 3 — hooks (Trade & Skills, credentials/earning, live/community)
-// ═══════════════════════════════════════════════════════════════════════════════
 import type {
   SubmitProjectInput,
   TakeAssessmentInput,
@@ -476,7 +459,6 @@ import type {
 } from './api';
 import type { ModerationReport, ReportReason } from './types';
 
-// ── Trade & Skills ─────────────────────────────────────────────────────────────
 export function useTradeHub() {
   return useQuery({ queryKey: [KEY, 'trade-hub'], queryFn: Api.getTradeHub, staleTime: 30_000 });
 }
@@ -531,7 +513,6 @@ export function useRequestMentor() {
   return useMutation({ mutationFn: (mentorId: string) => Api.requestMentor(mentorId), onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'mentors'] }) });
 }
 
-// ── Credentials & earning bridge ───────────────────────────────────────────────
 export function useCredentials() {
   return useQuery({ queryKey: [KEY, 'credentials'], queryFn: Api.getCredentials, staleTime: 30_000 });
 }
@@ -560,7 +541,6 @@ export function useApplyOpportunity() {
   });
 }
 
-// ── Live, community & notifications ─────────────────────────────────────────────
 export function useLiveSessions() {
   return useQuery({ queryKey: [KEY, 'live-sessions'], queryFn: Api.getLiveSessions, staleTime: 15_000 });
 }
@@ -623,12 +603,9 @@ export function useAnnouncements() {
   return useQuery({ queryKey: [KEY, 'announcements'], queryFn: Api.getAnnouncements, staleTime: 60_000 });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PHASE 4 — hooks (Tutor & School, ECCE)
-// ═══════════════════════════════════════════════════════════════════════════════
 import type { TutorOnboardInput, CreateAssignmentInput, GradeInput } from './types';
 
-// ── Tutor identity (T1, T2) ────────────────────────────────────────────────────
 export function useTutorMe() {
   return useQuery({ queryKey: [KEY, 'tutor', 'me'], queryFn: Api.getTutorMe, staleTime: 30_000 });
 }
@@ -645,12 +622,10 @@ export function useTutors(subject?: string) {
   return useQuery({ queryKey: [KEY, 'tutors', subject ?? 'all'], queryFn: () => Api.getTutors(subject), staleTime: 60_000 });
 }
 
-// ── Cohorts & roster (T3) ──────────────────────────────────────────────────────
 export function useCohorts() {
   return useQuery({ queryKey: [KEY, 'cohorts'], queryFn: Api.getCohorts, staleTime: 30_000 });
 }
 
-// ── Assignments (T4) ───────────────────────────────────────────────────────────
 export function useAssignments(cohortId?: string) {
   return useQuery({ queryKey: [KEY, 'assignments', cohortId ?? 'all'], queryFn: () => Api.getAssignments(cohortId), staleTime: 15_000 });
 }
@@ -663,7 +638,6 @@ export function useCreateAssignment() {
   });
 }
 
-// ── Review & grade (T5) ────────────────────────────────────────────────────────
 export function useSubmissions(assignmentId?: string) {
   return useQuery({ queryKey: [KEY, 'submissions', assignmentId ?? 'all'], queryFn: () => Api.getSubmissions(assignmentId), staleTime: 15_000 });
 }
@@ -680,7 +654,6 @@ export function useGradeSubmission() {
   });
 }
 
-// ── Earnings & payouts (T7) ────────────────────────────────────────────────────
 export function useTutorEarnings() {
   return useQuery({ queryKey: [KEY, 'tutor', 'earnings'], queryFn: Api.getTutorEarnings, staleTime: 15_000 });
 }
@@ -693,7 +666,6 @@ export function useRequestPayout() {
   });
 }
 
-// ── School admin (lite) (T8) ───────────────────────────────────────────────────
 export function useMySchools() {
   return useQuery({ queryKey: [KEY, 'schools', 'mine'], queryFn: Api.getMySchools, staleTime: 60_000 });
 }
@@ -702,7 +674,6 @@ export function useSchoolOverview(schoolId?: string) {
   return useQuery({ queryKey: [KEY, 'school-overview', schoolId], queryFn: () => Api.getSchoolOverview(schoolId as string), enabled: !!schoolId, staleTime: 30_000 });
 }
 
-// ── ECCE / Little Learners (E1, E2) ────────────────────────────────────────────
 export function useEcceHome() {
   return useQuery({ queryKey: [KEY, 'ecce', 'home'], queryFn: Api.getEcceHome, staleTime: 30_000 });
 }

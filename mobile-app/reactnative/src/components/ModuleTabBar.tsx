@@ -1,5 +1,3 @@
-// ── In-module bottom navigation ──────────────────────────────────────────────
-//
 // A module-scoped footer for the Stack-based modules (association, crowdfunding,
 // film academy, voting, utility payments). Each of those is an expo-router
 // Stack with a deep sub-tree — association alone has ~20 nested route folders —
@@ -8,7 +6,6 @@
 // MarketTabBar documents. This renders as a sibling of <Stack/> in the module
 // layout instead: navigation semantics are untouched, and the bar draws only the
 // destinations it is given.
-//
 // VISIBILITY IS DELIBERATELY NARROW. The bar shows only when the current path is
 // one of its own tabs — never on a pushed detail screen. Those screens are
 // reached with a back affordance and several carry their own bottom CTA (the
@@ -19,10 +16,10 @@ import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 export interface ModuleTab {
   /** Absolute route, e.g. '/association/directory'. Must be a real screen. */

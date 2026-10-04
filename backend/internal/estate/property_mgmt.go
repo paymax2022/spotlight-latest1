@@ -259,7 +259,6 @@ func (s *Service) ReviewPropertyTransfer(ctx context.Context, estateID, adminID,
 	}
 	r.Status = decision
 	r.ReviewedBy = &adminID
-	// Notify the requester of the outcome.
 	s.notify(ctx, estateID, r.RequestedBy, NotifAdminApprovalRequired, "Property transfer "+decision,
 		"Your property transfer request was "+decision+".", map[string]any{"request_id": requestID})
 	return &r, nil

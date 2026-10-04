@@ -30,23 +30,26 @@ on:
   # Docs-only PUSHES are skipped to conserve private-repository Actions minutes.
   #
   # `pull_request` deliberately has NO paths-ignore. This workflow's jobs are
-  # required status checks on develop (.github/required-checks.txt), and GitHub
-  # reports a path-SKIPPED required check as perpetually "Expected — waiting for
-  # status", not as passed. With a paths-ignore here, a docs-only PR would never
-  # start this workflow and could never merge. Docs-only PRs are cheap now: the
-  # router skips every module lane, leaving only the core gates.
+  # required status checks on develop AND main (.github/required-checks.txt),
+  # and GitHub reports a path-SKIPPED required check as perpetually "Expected —
+  # waiting for status", not as passed. With a paths-ignore here, a docs-only
+  # PR would never start this workflow and could never merge. Docs-only PRs are
+  # cheap now: the router skips every module lane, leaving only the core gates.
+  #
+  # `main` IS included: AUD-TEST-003 — merges land on main (it's the default
+  # branch) and AUD-BE-001 shipped a compile break because no required check
+  # ran on main-bound PRs. The deploy lanes below still only fire via
+  # workflow_dispatch, so a main push here is CI-only.
   push:
-    branches: [develop, staging, prod]
+    branches: [develop, staging, prod, main]
     paths-ignore:
       - '**.md'
       - 'docs/**'
   pull_request:
-    branches: [develop, staging, prod]
-  # Manual dispatch also doubles as the only way to run this pipeline's CI
-  # gates against `main` — push/pull_request above deliberately don't include
-  # it (Railway has no Production branch mapping to `main`, so it never needed
-  # its own push trigger), which meant `main`'s last real CI result could go
-  # stale indefinitely with nothing to refresh it. Both deploy inputs are
+    branches: [develop, staging, prod, main]
+  # Manual dispatch still works for re-running this pipeline against any
+  # branch, but `main` is covered by push/pull_request above (AUD-TEST-003).
+  # Both deploy inputs are
   # optional: leave them blank to run CI only (against whichever branch you
   # pick in the dispatch UI/API `ref`), or fill both in to also deploy — the
   # deploy jobs below still gate strictly on confirm_deploy being the exact
@@ -281,9 +284,9 @@ jobs:
       RAILS_MODE: fake # FAKEs only — no external provider secrets in CI
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.25.x"
+          go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       # A full-schema drop needs a lock per object and the ~400-migration schema
       # blows the default 64. ALTER SYSTEM needs a restart to take effect.
@@ -428,9 +431,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.x'
+          go-version-file: 'backend/go.mod'
       # Pinned version, built from source — no curl|bash installer.
       - name: Install actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
@@ -499,7 +502,7 @@ jobs:
             path: frontend-admin
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: Install Railway CLI
@@ -584,7 +587,7 @@ jobs:
             path: frontend-admin
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: Install Railway CLI
@@ -610,10 +613,55 @@ jobs:
             --detach \
             --message "${{ github.sha }}"
           for attempt in {1..40}; do
-            status="$(railway deployment list --service ${{ matrix.service }} --environment staging --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 10 --json | jq -r --arg message "${{ github.sha }}" '[.[] | select(.meta.cliMessage == $message)] | first | .status // empty')"
+            row="$(railway deployment list --service ${{ matrix.service }} --environment staging --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 10 --json | jq -c --arg message "${{ github.sha }}" '[.[] | select(.meta.cliMessage == $message)] | first // {}')"
+            status="$(echo "$row" | jq -r '.status // empty')"
+            id="$(echo "$row" | jq -r '.id // empty')"
             case "$status" in
               SUCCESS) exit 0 ;;
-              FAILED|CRASHED|REMOVED) echo "Railway deployment ended with $status"; exit 1 ;;
+              FAILED|CRASHED|REMOVED)
+                echo "Railway deployment ended with $status"
+                # This deployment never became the one serving traffic, so
+                # `railway logs --deployment` (which targets the CURRENT/active
+                # deployment) reports the OLD, still-running deployment's logs
+                # instead — silently pointing at the wrong process. Target this
+                # exact deployment id so a crash-after-build actually surfaces
+                # its own reason instead of unrelated old traffic.
+                #
+                # Filtered, never dumped: application logs can contain anything,
+                # and a raw dump into a job log is how a secret escapes (see the
+                # --kv incident documented in staging-inspect.yml's header).
+                echo "--- crash signatures for deployment $id ---"
+                # `railway logs --help`: DEPLOYMENT_ID is a bare POSITIONAL
+                # argument, not a value for --deployment (which is a boolean
+                # flag selecting deploy-logs over build-logs) — `--deployment
+                # "$id"` silently failed with "No service linked" because $id
+                # was consumed as if it were --deployment's value, leaving
+                # --service/--environment/--project all unset. `--latest`
+                # ("show logs from the latest deployment, even if it failed or
+                # is still building") is simpler and more robust than passing
+                # the id at all, so use that instead of the positional form.
+                # stderr is KEPT (redacted below, never discarded): a CLI usage
+                # error looks identical to "zero log lines exist" otherwise,
+                # and those are very different problems to chase.
+                railway logs --deployment --latest --service "${{ matrix.service }}" \
+                  --environment staging --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
+                  --lines 300 > dep.log 2>&1 || true
+                echo "  fetched $(wc -l < dep.log) log lines for this deployment"
+                echo "  --- raw output (redacted) ---"
+                sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g' dep.log | head -20
+                if grep -qaiE "panic:|fatal error|nil pointer|runtime error|goroutine [0-9]+ \[|listen tcp|bind: address already in use|Validate\(\)|refusing to start|exit status|SIGSEGV|SIGABRT" dep.log; then
+                  grep -aiE "panic:|fatal error|nil pointer|runtime error|goroutine [0-9]+ \[|listen tcp|bind: address already in use|Validate\(\)|refusing to start|exit status|SIGSEGV|SIGABRT" dep.log | tail -60
+                else
+                  # No known crash signature — most likely a startup HANG that
+                  # never reached "listening" before Railway's healthcheck timed
+                  # it out, which prints no panic at all. Show whatever DID print
+                  # (redacted, same doctrine as staging-inspect.yml) so a stuck
+                  # init step is visible instead of a bare "no match".
+                  echo "  no crash signature matched — last lines emitted before the deployment ended:"
+                  tail -40 dep.log | sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g'
+                fi
+                exit 1
+                ;;
               *) echo "Waiting for Railway deployment (attempt $attempt/40; status: ${status:-not-found})"; sleep 15 ;;
             esac
           done
@@ -669,7 +717,7 @@ jobs:
             path: frontend-admin
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: Install Railway CLI

@@ -18,8 +18,6 @@ import (
 	"spotlight/backend/internal/health/triage"
 )
 
-// ───────────────────────────── fake store (no DB) ────────────────────────────
-
 type fakeStore struct {
 	content map[string]*ContentItem
 	rules   map[string]*RedFlagRule
@@ -175,7 +173,6 @@ func (f *fakeStore) ListLanguagePacks(_ context.Context) ([]LanguagePack, error)
 	return out, nil
 }
 
-// vignettes (VignetteStore)
 func (f *fakeStore) UpsertVignette(_ context.Context, v *Vignette) (*Vignette, error) {
 	if ex, ok := f.vigs[v.Code]; ok {
 		v.ID = ex.ID
@@ -203,8 +200,6 @@ func (f *fakeStore) audit(_ context.Context, _, action, _, _ string, _ map[strin
 	f.audits = append(f.audits, action)
 	return nil
 }
-
-// ───────────────────────────── content/rule SM tests ─────────────────────────
 
 func TestContentLifecycle_RequiresSignOffToPublish(t *testing.T) {
 	st := newFakeStore()
@@ -270,8 +265,6 @@ func TestRuleEdit_AfterPublish_BumpsVersion(t *testing.T) {
 	}
 }
 
-// ───────────────────────────── DBRedFlagEngine tests ─────────────────────────
-
 type fakeRuleSrc struct{ rules []RedFlagRule }
 
 func (f *fakeRuleSrc) ListPublishedRules(_ context.Context) ([]RedFlagRule, error) {
@@ -323,8 +316,6 @@ func TestDBRedFlagEngine_DraftRuleIsInert(t *testing.T) {
 	}
 }
 
-// ───────────────────────────── sensitivity calc test ─────────────────────────
-
 func TestSensitivity_EmergencyRecallFirst(t *testing.T) {
 	st := newFakeStore()
 	val := NewValidationService(st)
@@ -359,8 +350,6 @@ func TestSensitivity_EmergencyRecallFirst(t *testing.T) {
 		t.Fatalf("want %d eval runs, got %d", rep.TotalVignettes, len(st.evals))
 	}
 }
-
-// ───────────────────────────── WhatsApp tests ────────────────────────────────
 
 type fakeDriver struct {
 	reply     string

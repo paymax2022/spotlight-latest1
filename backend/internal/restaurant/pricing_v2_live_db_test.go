@@ -1,12 +1,10 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for pricing v2 (Phase 10): the free-delivery promo
 // (discount == the delivery fee) and the platform pricing-config setter
 // (service_fee_bp / surge_bp). Skipped unless TEST_DATABASE_URL is set.
 // The settlement money legs (service fee → platform, surge in gross) are proven by
 // the settlement package's pure conservation tests.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

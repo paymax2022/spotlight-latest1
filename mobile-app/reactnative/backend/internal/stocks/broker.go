@@ -6,7 +6,6 @@ import "paymax/crypto-backend/internal/engine"
 // found missing (fills were computed inline, so a real venue could not be plugged
 // in). Implementations decide ONLY the resulting order state; all pre-trade checks,
 // pricing, persistence and idempotency stay in Service.
-//
 //   - MockBroker fills market orders instantly (today's behavior, unchanged).
 //   - A real venue (e.g. Alpaca) returns an accepted order and drives fills
 //     asynchronously via webhooks; that adapter implements this same interface and

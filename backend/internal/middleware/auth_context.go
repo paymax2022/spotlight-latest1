@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/domain"
@@ -38,7 +40,14 @@ func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACSe
 		token := strings.TrimSpace(h[7:])
 		info, err := supabase.AuthUser(token)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "invalid token"})
+			// AUD-AUTH-001: only a definitive rejection means a bad token. A
+			// transport error/5xx means the auth backend is down — answer 503 so
+			// clients don't treat a Supabase/Kong blip as session expiry.
+			if errors.Is(err, integrations.ErrTokenInvalid) {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "invalid token"})
+			} else {
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"success": false, "error": "authentication service unavailable"})
+			}
 			return
 		}
 		id, _ := info["id"].(string)
@@ -47,20 +56,60 @@ func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACSe
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "invalid token subject"})
 			return
 		}
-		status, _ := rbac.GetUserStatus(id)
+		// AUD-PERF-001: the four lookups below are mutually independent — all
+		// derive only from the verified token identity — so they run
+		// concurrently, cutting ~3 sequential Supabase RTTs to ~1. The checks
+		// afterwards run in the same order and with the same status codes as
+		// before; rejected requests simply pay for fetches they no longer need.
+		var (
+			status  string
+			serr    error
+			roles   []string
+			perms   []string
+			sessErr error
+		)
+		var wg sync.WaitGroup
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			status, serr = rbac.GetUserStatus(id)
+		}()
+		go func() {
+			defer wg.Done()
+			roles, _ = rbac.GetUserRoles(id)
+		}()
+		go func() {
+			defer wg.Done()
+			perms, _ = rbac.GetUserPermissions(id, "global", "")
+		}()
+		if enforce && sessions != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, sessErr = sessions.ValidateAccess(token)
+			}()
+		}
+		wg.Wait()
+
+		// Fail closed on a lookup ERROR: GetUserStatus returns ("pending", err)
+		// when PostgREST/Supabase is unreachable, and treating that as an allowed
+		// status let suspended/locked accounts through for the whole outage.
+		// A missing row still resolves to ("pending", nil) and is allowed —
+		// pending is a real status, not an error signal. Same pattern as the
+		// admin-console gate (admin_console_rbac.go resolveVerifiedIdentity).
+		if serr != nil {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"success": false, "error": "account status check unavailable"})
+			return
+		}
 		if status == "suspended" || status == "locked" || status == "deleted" {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "error": "account restricted"})
 			return
 		}
 		// Session revocation enforcement (fail-closed when enabled).
-		if enforce && sessions != nil {
-			if _, serr := sessions.ValidateAccess(token); serr != nil {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "session revoked"})
-				return
-			}
+		if enforce && sessions != nil && sessErr != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "session revoked"})
+			return
 		}
-		roles, _ := rbac.GetUserRoles(id)
-		perms, _ := rbac.GetUserPermissions(id, "global", "")
 		au := domain.AuthenticatedUser{ID: id, Email: email, Status: status, Roles: roles, Permissions: perms}
 		c.Set(AuthUserContextKey, au)
 		c.Set(AuthTokenContextKey, token)

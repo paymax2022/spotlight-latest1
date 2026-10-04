@@ -1,4 +1,3 @@
-// ── Admin — Crowdfunding types ───────────────────────────────────────────────
 // All monetary amounts are integers in minor units (kobo).
 
 export type CfCampaignStatus =
@@ -117,8 +116,6 @@ export interface CfFraudAlert {
   createdAt: string;
 }
 
-// ─── Finance (refunds, chargebacks, settlement) ───────────────────────────────
-
 export type CfRefundStatus = 'REQUESTED' | 'APPROVED' | 'REJECTED' | 'PROCESSED';
 
 export interface CfRefundRequest {
@@ -172,8 +169,6 @@ export interface CfFinanceSummary {
   demoSettlementRows: number;
 }
 
-// ─── Support & disputes ───────────────────────────────────────────────────────
-
 export type CfDisputeType = 'FAKE_CAMPAIGN' | 'REFUND' | 'REWARD' | 'PAYMENT' | 'WITHDRAWAL' | 'OTHER';
 export type CfDisputeStatus = 'OPEN' | 'INVESTIGATING' | 'ESCALATED' | 'RESOLVED' | 'CLOSED';
 export type CfDisputeResolution = 'NO_ACTION' | 'REFUND' | 'PARTIAL_REFUND' | 'FREEZE' | 'WARN_CREATOR';
@@ -192,8 +187,6 @@ export interface CfDispute {
   resolution: CfDisputeResolution | null;
   adminNote: string | null;
 }
-
-// ─── Platform configuration ───────────────────────────────────────────────────
 
 export interface CfCategoryConfig {
   id: string;
@@ -220,8 +213,6 @@ export interface CfFeatureFlag {
   locked: boolean;             // e.g. investment flag stays off until licensed
 }
 
-// ─── KYC / KYB verification ───────────────────────────────────────────────────
-
 export type CfKycStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
 // Sourced from the platform's shared KYC (finance/kyc), not a crowdfunding-
@@ -238,8 +229,6 @@ export interface CfKycCase {
   submittedAt: string;
   verifiedAt: string | null;
 }
-
-// ─── Compliance ───────────────────────────────────────────────────────────────
 
 export interface CfAuditLog {
   id: string;
@@ -273,8 +262,6 @@ export interface CfComplianceSummary {
   auditEventsToday: number;
 }
 
-// ─── User & Creator management ────────────────────────────────────────────────
-
 export type CfUserStatus = 'ACTIVE' | 'SUSPENDED' | 'RESTRICTED';
 export type CfUserRole = 'CONTRIBUTOR' | 'CREATOR' | 'ORGANISATION';
 
@@ -302,7 +289,6 @@ export interface CfUser {
   activity: CfUserActivity[];
 }
 
-// ─── Featured / promotion management ─────────────────────────────────────────
 // Promotion flags are editorial placement, not money — but they are only valid on
 // a LIVE campaign, so the backend refuses (4xx) setting any of them true on a
 // campaign whose status is not ACTIVE. See CfCampaignStatus above.
@@ -349,12 +335,10 @@ export interface CfFeaturedReport {
   pendingRequestCount?: number;
 }
 
-// ─── Feature requests (owner-initiated) ──────────────────────────────────────
 // Featuring is deliberately NOT self-serve: `featured` is an editorial placement
 // on the public discovery rail, so a campaign owner can only REQUEST it and an
 // admin approves. (Owners can always UNfeature themselves without approval, which
 // is why there is no "un-feature request" in this model.)
-//
 // Approving sets the campaign's `featured` flag, so it inherits the same rule the
 // PATCH .../flags endpoint enforces: only an ACTIVE campaign can be promoted, and
 // anything else is refused with 409. `campaignStatus` is carried on the request so
@@ -389,7 +373,6 @@ export interface CfFeatureRequest {
   decidedAt: string | null;
 }
 
-// ─── Campaign directory ───────────────────────────────────────────────────────
 // The "every campaign" surface. Distinct from CfReviewCampaign, which is only
 // the moderation queue (PENDING_REVIEW) and carries no funding figures.
 

@@ -3,15 +3,14 @@ import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Inbox, AlertTriangle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { StateView, ResultInboxRow } from '@/features/doctor/components';
 import { useResultInbox } from '@/features/doctor/hooks';
 
-// ── Section N — Lab results inbox (N1–N4) ─────────────────────────────────────
 // NEW screen: results inbox with new/critical flags and pending/ready/delayed
 // states (ResultInboxRow). Reachable from the records hub and lab detail.
 

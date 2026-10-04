@@ -4,11 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"time"
-
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"maps"
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/strutil"
+	"time"
+)
+
+const (
+	colTargetId   = "target_id"
+	colReasonCode = "reason_code"
+	colTargetType = "target_type"
+
+	sqlOrderByCreatedAtDescLimit = " ORDER BY created_at DESC LIMIT $2 OFFSET $3"
 )
 
 // Repository is the pgx data layer for the marketplace. It NEVER mutates ledger
@@ -21,15 +30,6 @@ type Repository struct {
 
 // NewRepository constructs the marketplace repository.
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
-
-func nullStr(s *string) any {
-	if s == nil || *s == "" {
-		return nil
-	}
-	return *s
-}
-
-// ─── Listings ────────────────────────────────────────────────────────────────
 
 const listingCols = `id, market_id, seller_id, category_id, title, description,
 	price_kobo, currency, condition, attrs, status, quality_score, escrow_eligible,
@@ -70,8 +70,8 @@ func (r *Repository) InsertListing(ctx context.Context, l *Listing) (*Listing, e
 			 condition, attrs, status, escrow_eligible, state, lga)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING `+listingCols,
-		l.MarketID, l.SellerID, l.CategoryID, l.Title, l.Description, l.PriceKobo, orStr(l.Currency, "NGN"),
-		orStr(l.Condition, "used"), attrs, string(l.Status), l.EscrowEligible, l.State, nullStr(&l.LGA),
+		l.MarketID, l.SellerID, l.CategoryID, l.Title, l.Description, l.PriceKobo, strutil.Or(l.Currency, "NGN"),
+		strutil.Or(l.Condition, "used"), attrs, string(l.Status), l.EscrowEligible, l.State, dbutil.NullStrP(&l.LGA),
 	)
 	out, err := scanListing(row)
 	if err != nil {
@@ -80,15 +80,7 @@ func (r *Repository) InsertListing(ctx context.Context, l *Listing) (*Listing, e
 	return out, nil
 }
 
-// ─── Listing media ───────────────────────────────────────────────────────────
-
 // InsertListingMedia persists the photos a seller uploaded for a listing.
-//
-// This is what was missing: CreateListingInput has always carried MediaIDs and
-// the service parsed them, but nothing ever wrote a mkt_listing_media row — so
-// the table was empty for every listing ever created, and every card in the app
-// fell back to a placeholder.
-//
 // The three size variants are the same object today: the presign path stores one
 // upload per photo and there is no derivative pipeline yet. They are separate
 // columns so a later resizer can fill them in without a migration or a change
@@ -116,7 +108,6 @@ func (r *Repository) InsertListingMedia(ctx context.Context, listingID string, k
 }
 
 // ThumbKeysFor returns each listing's first photo key, for the listings given.
-//
 // Batched deliberately: the alternative is a correlated subselect inside
 // listingCols, but that constant is also fed through prefixCols (which splits on
 // commas to alias each column), so a subselect there would be silently mangled.
@@ -370,7 +361,7 @@ func (r *Repository) ListSellerListings(ctx context.Context, sellerID string, li
 	if onlyActive {
 		q += ` AND status='active'::listing_status`
 	}
-	q += ` ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+	q += sqlOrderByCreatedAtDescLimit
 	rows, err := r.db.Query(ctx, q, sellerID, limit, offset)
 	if err != nil {
 		return nil, wrapInternal("list seller listings", err)
@@ -380,7 +371,6 @@ func (r *Repository) ListSellerListings(ctx context.Context, sellerID string, li
 }
 
 // ModerationQueue returns pending_review listings for the admin moderation queue.
-//
 // The placeholders are $1/$2 and must stay that way: two arguments are passed, so
 // numbering them $2/$3 leaves $1 bound but unreferenced and Postgres cannot infer
 // its type — every call failed with 42P18 "could not determine data type of
@@ -476,8 +466,6 @@ func collectListings(rows pgx.Rows) ([]Listing, error) {
 	return out, rows.Err()
 }
 
-// ─── Outbox (A writes, Agent B reads) ────────────────────────────────────────
-
 // InsertOutbox appends a search-CDC row. Called inside the same tx/flow as any
 // listing status change that affects discovery.
 func (r *Repository) InsertOutbox(ctx context.Context, tx pgx.Tx, listingID, op string, payload any) error {
@@ -490,8 +478,6 @@ func (r *Repository) InsertOutbox(ctx context.Context, tx pgx.Tx, listingID, op 
 	_, err := r.db.Exec(ctx, q, listingID, op, b)
 	return err
 }
-
-// ─── Orders ──────────────────────────────────────────────────────────────────
 
 const orderCols = `id, market_id, listing_id, buyer_id, seller_id, offer_id,
 	amount_kobo, escrow_fee_kobo, delivery_fee_kobo, status,
@@ -529,7 +515,7 @@ func (r *Repository) InsertOrder(ctx context.Context, o *Order) (*Order, error) 
 	)
 	out, err := scanOrder(row)
 	if err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return nil, ErrConflict // caller maps to idempotency replay
 		}
 		return nil, wrapInternal("insert order", err)
@@ -595,13 +581,13 @@ func (r *Repository) InsertOrderAtomic(ctx context.Context, o *Order) (*Order, e
 	)
 	out, err := scanOrder(row)
 	if err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return nil, ErrConflict // caller maps to idempotency replay
 		}
 		return nil, wrapInternal("insert order", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return nil, ErrConflict
 		}
 		return nil, wrapInternal("commit order tx", err)
@@ -701,7 +687,7 @@ func (r *Repository) ListOrders(ctx context.Context, userID, role, status string
 		q += ` AND status=$2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`
 		args = append(args, status, limit, offset)
 	} else {
-		q += ` ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+		q += sqlOrderByCreatedAtDescLimit
 		args = append(args, limit, offset)
 	}
 	rows, err := r.db.Query(ctx, q, args...)
@@ -768,8 +754,6 @@ func (r *Repository) AgingOrders(ctx context.Context, olderThan time.Time, limit
 	}
 	return out, rows.Err()
 }
-
-// ─── Disputes ────────────────────────────────────────────────────────────────
 
 const disputeCols = `id, order_id, opened_by, reason_code, status, decision,
 	decision_notes, decided_by, second_approver_id, requires_dual_approval,
@@ -904,8 +888,6 @@ func (r *Repository) DisputeQueue(ctx context.Context, status string, limit, off
 	return out, rows.Err()
 }
 
-// ─── Boosts ──────────────────────────────────────────────────────────────────
-
 const boostCols = `id, listing_id, seller_id, tier, duration_days, price_kobo, weight,
 	ledger_charge_ref, status, rejection_reason_code, refund_ref, refunded_kobo, starts_at, ends_at, created_at`
 
@@ -1005,8 +987,6 @@ func scanAdminBoost(row pgx.Row) (*AdminBoostRow, error) {
 	b.Status = BoostStatus(status)
 	return &b, nil
 }
-
-// ─── Boost pricing (ADM-002/MO-002) ────────────────────────────────────────────
 
 const boostPackageCols = `tier, label, duration_days, price_kobo, weight, is_active, updated_at, updated_by, created_at`
 
@@ -1201,8 +1181,6 @@ func (r *Repository) CompleteDueBoosts(ctx context.Context, now time.Time, limit
 	return ids, rows.Err()
 }
 
-// ─── Offers ──────────────────────────────────────────────────────────────────
-
 const offerCols = `id, listing_id, buyer_id, offer_price_kobo, status, parent_offer_id, created_at, expires_at`
 
 func scanOffer(row pgx.Row) (*Offer, error) {
@@ -1278,8 +1256,6 @@ func (r *Repository) SetOfferStatus(ctx context.Context, id, status string) erro
 	return nil
 }
 
-// ─── Reviews ─────────────────────────────────────────────────────────────────
-
 // InsertReview inserts a review (UNIQUE on order_id enforces transaction-gating, §1).
 func (r *Repository) InsertReview(ctx context.Context, rev *Review) error {
 	_, err := r.db.Exec(ctx, `
@@ -1287,7 +1263,7 @@ func (r *Repository) InsertReview(ctx context.Context, rev *Review) error {
 		VALUES ($1,$2,$3,$4,$5,$6,'visible')`,
 		rev.OrderID, rev.ReviewerID, rev.RevieweeID, rev.Rating, rev.Comment, rev.IsPlaceholder)
 	if err != nil {
-		if isUniqueViolation(err) {
+		if dbutil.IsUniqueViolation(err) {
 			return &CodedError{Status: 409, Code: CodeReviewExists, Message: "a review already exists for this order"}
 		}
 		return wrapInternal("insert review", err)
@@ -1317,16 +1293,18 @@ func (r *Repository) ListSellerReviews(ctx context.Context, revieweeID string, l
 	return out, rows.Err()
 }
 
-// ─── Saved searches ──────────────────────────────────────────────────────────
-
 // InsertSavedSearch creates a saved search.
 func (r *Repository) InsertSavedSearch(ctx context.Context, s *SavedSearch) (*SavedSearch, error) {
-	filters, _ := json.Marshal(orMapAny(s.Filters))
+	f := s.Filters
+	if f == nil {
+		f = map[string]any{}
+	}
+	filters, _ := json.Marshal(f)
 	row := r.db.QueryRow(ctx, `
 		INSERT INTO public.mkt_saved_searches (user_id, market_id, query, filters, alert_enabled)
 		VALUES ($1,$2,$3,$4,$5)
 		RETURNING id, user_id, market_id, query, filters, alert_enabled, created_at`,
-		s.UserID, orStr(s.MarketID, DefaultMarketID), s.Query, filters, s.AlertEnabled)
+		s.UserID, strutil.Or(s.MarketID, DefaultMarketID), s.Query, filters, s.AlertEnabled)
 	out, err := scanSavedSearch(row)
 	if err != nil {
 		return nil, wrapInternal("insert saved search", err)
@@ -1390,8 +1368,6 @@ func (r *Repository) SetSavedSearchAlert(ctx context.Context, id string, enabled
 	_, err := r.db.Exec(ctx, `UPDATE public.mkt_saved_searches SET alert_enabled=$2 WHERE id=$1`, id, enabled)
 	return err
 }
-
-// ─── Categories ──────────────────────────────────────────────────────────────
 
 // ListCategories returns active categories for a market.
 func (r *Repository) ListCategories(ctx context.Context, marketID string) ([]Category, error) {
@@ -1464,8 +1440,6 @@ func scanCategory(row pgx.Row) (*Category, error) {
 	return &c, nil
 }
 
-// ─── Trust profiles ──────────────────────────────────────────────────────────
-
 // GetTrustProfile loads a seller's trust card (nil-safe defaults when absent).
 func (r *Repository) GetTrustProfile(ctx context.Context, userID string) (*TrustProfile, error) {
 	row := r.db.QueryRow(ctx, `
@@ -1512,8 +1486,6 @@ func (r *Repository) SetVerifiedBadge(ctx context.Context, userID string, busine
 	return err
 }
 
-// ─── Flags ───────────────────────────────────────────────────────────────────
-
 // ListFlags returns open moderation flags.
 func (r *Repository) ListFlags(ctx context.Context, status string, limit, offset int) ([]Flag, error) {
 	limit = clampLimit(limit)
@@ -1552,8 +1524,6 @@ func (r *Repository) ActionFlag(ctx context.Context, id, status, reviewerID stri
 	return nil
 }
 
-// ─── Admin audit log (append-only, immutable) ────────────────────────────────
-
 // InsertAdminAudit writes one immutable mkt_admin_audit_log row. reason_code is
 // mandatory (§1 NOT NULL) — the service guarantees it non-empty before calling.
 func (r *Repository) InsertAdminAudit(ctx context.Context, e AuditEntry) error {
@@ -1561,7 +1531,7 @@ func (r *Repository) InsertAdminAudit(ctx context.Context, e AuditEntry) error {
 		INSERT INTO public.mkt_admin_audit_log
 			(admin_id, admin_role, action, target_type, target_id, reason_code, before_state, after_state)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		e.AdminID, orStr(e.AdminRole, "admin"), e.Action, e.TargetType, e.TargetID, e.ReasonCode,
+		e.AdminID, strutil.Or(e.AdminRole, "admin"), e.Action, e.TargetType, e.TargetID, e.ReasonCode,
 		jsonOrNil(e.BeforeState), jsonOrNil(e.AfterState))
 	return err
 }
@@ -1612,8 +1582,6 @@ type AuditRow struct {
 	CreatedAt   time.Time       `json:"created_at"`
 }
 
-// ─── Admin dashboard ─────────────────────────────────────────────────────────
-//
 // marketplace_metrics / marketplace_activity_stream (the tables the admin
 // dashboard was originally designed against) have no writer anywhere in this
 // codebase — nothing ever populates them. Rather than serve permanently-zero
@@ -1635,7 +1603,6 @@ type AdminMetrics struct {
 }
 
 // AdminMetrics computes the live KPI snapshot in one round trip.
-//
 // ADR-023 removed escrow/orders entirely (see marketplace_routes.go and
 // service.go:~323) — mkt_orders has no writer left and can only ever read
 // back zero, so a "GMV" built on order totals would be permanently, silently
@@ -1733,26 +1700,10 @@ func (r *Repository) AdminActivityFeed(ctx context.Context, limit int) ([]AdminA
 	return out, rows.Err()
 }
 
-// ─── Transactions ────────────────────────────────────────────────────────────
-
 // BeginTx starts a pgx transaction (used where a state change + outbox insert must
 // commit atomically).
 func (r *Repository) BeginTx(ctx context.Context) (pgx.Tx, error) {
 	return r.db.Begin(ctx)
-}
-
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-// sqlStater matches a pgx-wrapped *pgconn.PgError without importing pgconn.
-type sqlStater interface{ SQLState() string }
-
-// isUniqueViolation reports whether err is a Postgres 23505 unique_violation.
-func isUniqueViolation(err error) bool {
-	var pgErr sqlStater
-	if errors.As(err, &pgErr) {
-		return pgErr.SQLState() == "23505"
-	}
-	return false
 }
 
 func clampLimit(limit int) int {
@@ -1762,21 +1713,74 @@ func clampLimit(limit int) int {
 	return limit
 }
 
-func orStr(s, def string) string {
-	if s == "" {
-		return def
-	}
-	return s
-}
-
-func orMapAny(m map[string]any) map[string]any {
-	if m == nil {
-		return map[string]any{}
-	}
-	return m
-}
-
 // ErrNotFoundCoded builds a 404 for a named resource.
 func ErrNotFoundCoded(resource string) error {
-	return &CodedError{Status: 404, Code: CodeNotFound, Message: fmt.Sprintf("%s not found", resource)}
+	return &CodedError{Status: 404, Code: CodeNotFound, Message: resource + " not found"}
+}
+
+// Audit writes append-only rows to mkt_admin_audit_log on EVERY admin mutation.
+// reason_code is mandatory (§1: NOT NULL) — the service refuses an admin mutation
+// with an empty reason_code before this is ever called.
+// The trail is immutable: this is INSERT-only; there is no update/delete path.
+
+// AuditEntry is one admin action record (mkt_admin_audit_log).
+type AuditEntry struct {
+	AdminID     string
+	AdminRole   string
+	Action      string
+	TargetType  string
+	TargetID    string
+	ReasonCode  string
+	BeforeState map[string]any
+	AfterState  map[string]any
+}
+
+// writeAudit inserts an immutable admin-audit row. A nil BeforeState/AfterState is
+// stored as SQL NULL. Best-effort telemetry to the optional external Auditor sink
+// is also fanned out. The DB insert failing does not roll back the already-committed
+// mutation (mirrors the placement house pattern) but is surfaced via the returned err
+// so callers on the critical path can decide.
+func (s *Service) writeAudit(ctx context.Context, e AuditEntry) error {
+	if err := s.repo.InsertAdminAudit(ctx, e); err != nil {
+		// non-fatal: money/state already committed; log via external sink
+		if s.audit != nil {
+			s.audit.Audit(ctx, e.AdminID, e.Action+".audit_write_failed", map[string]any{
+				colTargetType: e.TargetType, colTargetId: e.TargetID, "err": err.Error(),
+			})
+		}
+		return nil
+	}
+	if s.audit != nil {
+		detail := map[string]any{colTargetType: e.TargetType, colTargetId: e.TargetID, colReasonCode: e.ReasonCode}
+		maps.Copy(detail, e.AfterState)
+		s.audit.Audit(ctx, e.AdminID, e.Action, detail)
+	}
+	return nil
+}
+
+// requireReason enforces the mandatory reason_code on admin mutations.
+func requireReason(reason string) error {
+	if reason == "" {
+		return ErrReasonRequired
+	}
+	return nil
+}
+
+// jsonOrNil marshals a state map or returns nil for a nil map (→ SQL NULL jsonb).
+func jsonOrNil(m map[string]any) any {
+	if m == nil {
+		return nil
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// Auditor is an optional secondary telemetry sink (e.g. the global AuditService).
+// The primary immutable trail is always mkt_admin_audit_log; this is best-effort.
+// Nil-safe.
+type Auditor interface {
+	Audit(ctx context.Context, actorID, action string, detail map[string]any)
 }

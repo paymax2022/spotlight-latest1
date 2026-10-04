@@ -1,25 +1,19 @@
-// ─────────────────────────────────────────────────────────────────────────────
 // Account prefill for the registration engine.
-//
 // The applicant already gave these details when they created their account, so
 // no registration form should ask for them a second time. This module is the
 // single place that maps a Spotlight user profile onto registration field keys
 // and records which of those keys the ACCOUNT supplied.
-//
 // Two rules keep it safe:
-//
 //   1. Only NON-EMPTY profile values are treated as supplied. A blank column is
 //      not an answer, so its field stays asked-for and editable.
 //   2. A value that must match a fixed option list (gender, state) is only used
 //      when it actually matches. A select cannot display an option it does not
 //      have, so an unmatched value would sit invisibly in the draft and be
 //      submitted as an answer the applicant never saw — worse than a blank.
-//
 // Free-text identity — the applicant's own name and phone — is rendered
 // read-only, because the account is where those are changed. Everything else is
 // pre-filled but still editable: state, city and date of birth are per-
 // application answers a user may reasonably restate.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NIGERIA_STATES } from './reference-data';
 import type { RegistrationDraft, RegistrationStep } from './types';
 

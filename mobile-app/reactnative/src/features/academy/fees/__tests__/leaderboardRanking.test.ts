@@ -1,6 +1,4 @@
 // Pure-logic unit tests for competition leaderboard ranking.
-// Run: npm run test:academy-fees  (node --test with the ts-path resolver)
-//
 // The bug this pins: the leaderboard was a static array — the viewer's row score
 // was hardcoded and never reflected their earned points, and the board never
 // re-ranked, so playing a challenge changed the profile's totalPoints but not the

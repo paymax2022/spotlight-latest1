@@ -30,8 +30,6 @@ func (s *Service) roleIn(ctx context.Context, estateID, userID string) (string, 
 	return role, nil
 }
 
-// ── Block 31: Tasks ──────────────────────────────────────────────────────────
-
 func (s *Service) CreateTask(ctx context.Context, estateID, adminID string, req CreateTaskRequest) (*Task, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
@@ -109,8 +107,6 @@ func (s *Service) UpdateTaskStatus(ctx context.Context, estateID, userID, taskID
 	}
 	return nil
 }
-
-// ── Block 32: Maintenance / Repairs ──────────────────────────────────────────
 
 func (s *Service) CreateRepair(ctx context.Context, estateID, reporterID string, req CreateRepairRequest) (*RepairRequest, error) {
 	if err := s.assertResident(ctx, estateID, reporterID); err != nil {
@@ -221,8 +217,6 @@ func (s *Service) ListRepairUpdates(ctx context.Context, estateID, userID, repai
 	return out, rows.Err()
 }
 
-// ── Block 33: Facilities / Amenities ─────────────────────────────────────────
-
 func (s *Service) CreateFacility(ctx context.Context, estateID, adminID string, req CreateFacilityRequest) (*Facility, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
@@ -314,8 +308,6 @@ func (s *Service) ListMyBookings(ctx context.Context, estateID, residentID strin
 	return out, rows.Err()
 }
 
-// ── Block 34: Announcements / Communication ──────────────────────────────────
-
 func (s *Service) CreateAnnouncement(ctx context.Context, estateID, adminID string, req CreateAnnouncementRequest) (*Announcement, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
@@ -377,8 +369,6 @@ func (s *Service) MarkAnnouncementRead(ctx context.Context, estateID, userID, an
 	return err
 }
 
-// ── Block 35: Emergencies / Incidents ────────────────────────────────────────
-
 func (s *Service) RaiseEmergency(ctx context.Context, estateID, reporterID string, req RaiseEmergencyRequest) (*EmergencyAlert, error) {
 	if err := s.assertResident(ctx, estateID, reporterID); err != nil {
 		return nil, err
@@ -437,8 +427,6 @@ func (s *Service) UpdateEmergencyStatus(ctx context.Context, estateID, adminID, 
 	}
 	return nil
 }
-
-// ── Block 36: Documents ──────────────────────────────────────────────────────
 
 // CreateDocument records an uploaded document. Upload happens via a prior
 // presigned-R2 step; here we validate the declared content type / size against
@@ -544,8 +532,6 @@ func allowedContentType(ct string) bool {
 	return false
 }
 
-// ── Block 37: Vendors / Artisans ─────────────────────────────────────────────
-
 func (s *Service) CreateVendor(ctx context.Context, estateID, adminID string, req CreateVendorRequest) (*Vendor, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
@@ -610,8 +596,6 @@ func (s *Service) VerifyVendor(ctx context.Context, estateID, adminID, vendorID,
 	return nil
 }
 
-// ── Block 40: Finance dashboard (derived, single round of scalar queries) ────
-
 func (s *Service) FinanceDashboard(ctx context.Context, estateID, adminID string) (*FinanceDashboard, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
@@ -640,8 +624,6 @@ func (s *Service) FinanceDashboard(ctx context.Context, estateID, adminID string
 	return d, nil
 }
 
-// ── Block 43: Notifications (unified feed, derived) ──────────────────────────
-
 func (s *Service) Notifications(ctx context.Context, estateID, userID string) ([]Notification, error) {
 	if err := s.assertResident(ctx, estateID, userID); err != nil {
 		return nil, err
@@ -669,8 +651,6 @@ func (s *Service) Notifications(ctx context.Context, estateID, userID string) ([
 	}
 	return out, rows.Err()
 }
-
-// ── Block 44: Reports & analytics (derived aggregates) ───────────────────────
 
 func (s *Service) Report(ctx context.Context, estateID, adminID string) (*EstateReport, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {

@@ -1,8 +1,6 @@
 // Paymax Connect — Mentorship API (Phase 6 §6.6 MN-01..03).
 // Mock-first (USE_MOCK) — fully walkable offline. Live path hits
 // `${CONNECT_API_BASE}/networking/mentorship…`.
-//
-// PN-7: the discovery payload is professional-only; no dating-mode signal is ever
 // joined in. PN-9: opt-in is self-service, no approval gate.
 
 import { api } from '@/api/client';
@@ -24,7 +22,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
 
 const PHOTO = (seed: string) => `https://images.unsplash.com/${seed}?auto=format&fit=crop&w=400&q=60`;
 
-// ── Mock mentors (MN-02) — professional fields ONLY (PN-7) ───────────────────
 const MOCK_MENTORS: MentorProfile[] = [
   {
     id: 'm1',
@@ -94,7 +91,6 @@ let MY_PROFILE: MentorshipProfile | null = null;
 
 export const MENTORSHIP_DOMAINS = ['Engineering', 'Product', 'Design', 'Data'];
 
-// ── Opt-in (MN-01) ───────────────────────────────────────────────────────────
 export async function optInMentorship(input: MentorshipOptInInput): Promise<MentorshipProfile> {
   if (USE_MOCK) {
     await delay(360);
@@ -121,7 +117,6 @@ export async function getMyMentorshipProfile(): Promise<MentorshipProfile | null
   return unwrap<MentorshipProfile | null>(res);
 }
 
-// ── Discovery (MN-02) — safe mentor list, filter by domain ───────────────────
 export async function getMentorDiscovery(domain?: string): Promise<MentorProfile[]> {
   if (USE_MOCK) {
     await delay();
@@ -144,7 +139,6 @@ export async function getMentor(id: string): Promise<MentorProfile> {
   return unwrap<MentorProfile>(res);
 }
 
-// ── Match request (MN-03) — send ─────────────────────────────────────────────
 export async function requestMentorshipMatch(mentorId: string, domain: string, message: string): Promise<MentorshipMatch> {
   if (USE_MOCK) {
     await delay(360);
@@ -164,7 +158,6 @@ export async function requestMentorshipMatch(mentorId: string, domain: string, m
   return unwrap<MentorshipMatch>(res);
 }
 
-// ── Match respond (MN-03) — accept / decline ─────────────────────────────────
 export async function respondMentorshipMatch(matchId: string, action: MatchResponse, mentorId?: string): Promise<MatchRespondResult> {
   if (USE_MOCK) {
     await delay(300);

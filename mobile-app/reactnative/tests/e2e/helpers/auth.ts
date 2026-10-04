@@ -21,7 +21,6 @@ function supabaseAuthUser(user: AnyTestUser) {
   };
 }
 
-// ── Transaction-PIN gate ─────────────────────────────────────────────────────
 // AuthGate in app/_layout.tsx parks EVERY signed-in user on /security/set-pin
 // until getPinStatus() reports a PIN. Two paths have to be satisfied because
 // transfers defaults to mock mode (EXPO_PUBLIC_TRANSFERS_USE_MOCK unset/'true'):
@@ -70,6 +69,10 @@ export async function mockAuth(page: Page, user: AnyTestUser = users.funded) {
         user: authUser,
       }),
     });
+  });
+
+  await page.route('**/auth/v1/logout**', async (route) => {
+    await route.fulfill({ status: 204, contentType: 'application/json', body: '' });
   });
 
   await page.route('**/auth/v1/user', async (route) => {
@@ -125,7 +128,9 @@ export async function seedSession(page: Page, user: AnyTestUser = users.funded) 
       expires_at: Math.floor(Date.now() / 1000) + 3600,
       user: authUser,
     };
-    window.localStorage.setItem('paymax_secure_sb-127-auth-token', JSON.stringify(session));
+    const encoded = JSON.stringify(session);
+    window.localStorage.setItem('paymax_secure_sb-127-auth-token', encoded);
+    window.localStorage.setItem('paymax_secure_sb-wnicsubiznmishkmunsv-auth-token', encoded);
   }, { seededUser: user });
 }
 
@@ -140,7 +145,12 @@ export async function loginAs(
   await mockAuth(page, user);
   await mockPinStatus(page, withPin);
   await seedSession(page, user);
-  await page.goto('/home', { waitUntil: 'domcontentloaded' });
+  // The PIN gate only fires on money routes (features/security/moneyRoutes.ts),
+  // so a PIN-less user must be steered at one — plain /home is deliberately
+  // reachable without a PIN and would render instead of gating. /services/bills
+  // is the choice over /wallet because mockWallet routes '**/wallet', which
+  // would intercept the page navigation itself and serve JSON as the document.
+  await page.goto(withPin ? '/home' : '/services/bills', { waitUntil: 'domcontentloaded' });
   // Without a PIN the gate redirects to /security/set-pin, so home never renders.
   if (withPin) await expect(page.getByText('Explore Services')).toBeVisible();
 }

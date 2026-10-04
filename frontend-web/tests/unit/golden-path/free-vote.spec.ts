@@ -10,8 +10,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeRequest, withAuth, makeFreeVoteResult, makeSupabaseMock } from './_fixtures';
 
-// ── Module mocks (hoisted by Vitest before imports) ──────────────────────────
-
 vi.mock('next/server', () => ({
   NextResponse: {
     json: (body: unknown, init?: ResponseInit) =>
@@ -35,14 +33,10 @@ vi.mock('@/lib/supabase/server', () => ({
   createAdminClient: vi.fn(),
 }));
 
-// ── Import after mocks ────────────────────────────────────────────────────────
-
 import { POST } from '../../../app/api/votes/free/route';
 import { castFreeVote } from '@/src/server/voting/free-vote.service';
 import { checkRateLimit } from '@/src/lib/voting/rate-limit';
 import { createClient } from '@/lib/supabase/server';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeVoteBody(overrides: Record<string, unknown> = {}) {
   return {
@@ -60,8 +54,6 @@ function allowRateLimit() {
 function denyRateLimit() {
   vi.mocked(checkRateLimit).mockReturnValue({ allowed: false, remaining: 0, resetInMs: 59000 });
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('POST /api/votes/free', () => {
   beforeEach(() => {
@@ -162,7 +154,6 @@ describe('POST /api/votes/free', () => {
 
   it('should pass userId from Bearer token to castFreeVote when authenticated', async () => {
     const { mock } = makeSupabaseMock();
-    // Override auth.getUser to return a specific user
     mock.auth.getUser = vi.fn().mockResolvedValue({
       data: { user: { id: 'logged-in-user', email: 'me@example.com' } },
       error: null,

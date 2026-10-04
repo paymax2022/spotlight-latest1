@@ -30,11 +30,7 @@ name: _reusable go verify
 
 on:
   workflow_call:
-    inputs:
-      go-version:
-        required: false
-        type: string
-        default: '1.25.x'
+    inputs: {}
 
 permissions:
   contents: read
@@ -68,9 +64,13 @@ jobs:
       RAILS_MODE: fake # FAKEs only — no external provider secrets in CI
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: ${{ inputs.go-version }}
+          # go-version-file, not a hardcoded '1.2x.x' — a literal version goes
+          # stale the moment go.mod's directive bumps (it did at 1.27.1) and
+          # `go build` then fails on "go.mod requires go >= X (running go Y)"
+          # for a reason that says nothing about the actual drift.
+          go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
 
       # The migrations assume the surface Supabase provides at runtime (auth

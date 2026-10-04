@@ -1,9 +1,7 @@
-// ── Naija Driver quiz — stage bank mock (dev / offline) ──────────────────────
 // Derived from docs/prd/driver contest/naija_driver_quiz_seed.json (the real
 // 90-question bank: 3 stages × 30, 120s per question). To keep the bundle small
 // we inline ~10 questions per stage — the exact seed SHAPE — so every screen is
 // fully walkable offline in USE_MOCK mode.
-//
 // IMPORTANT (contestant-safe contract): each entry here carries `answerIndex` +
 // `explanation` so the MOCK scorer can build the `perQuestion` reveal exactly
 // like the backend does on submit. The question-FEED accessors below STRIP those
@@ -59,7 +57,6 @@ const SEED: Record<QuizStage, SeedQuestion[]> = {
       options: ['NAFDAC', 'FRSC (Federal Road Safety Corps)', 'NDLEA', 'EFCC'], answerIndex: 1,
       explanation: "The FRSC administers road safety, driver's licences and highway regulations in Nigeria.",
     },
-    // ── Sign-identification questions (render a bundled road-sign SVG) ──
     {
       id: 'ND-S1-SIGN01', category: 'road_signs', imageUrl: 'sign:no-overtaking',
       question: 'What does this sign mean?',
@@ -329,9 +326,7 @@ export function mockScorePlayAlong(
   return { score, total, passed, perQuestion, credentialIssued, credentialHash, cashbackKobo };
 }
 
-// ─── Proctored exam mock (C6) ────────────────────────────────────────────────
 // The exam draws from stage 3 of the same bank (the hardest tier). Contestant-
-// safe: NO answers leave this module for the exam path (never revealed, never
 // scored client-side — the backend signs the Merit entry).
 
 const MOCK_EXAM_BATCH: TheoryBatch = 'B1';

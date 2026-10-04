@@ -78,7 +78,6 @@ func TestMapIDNumber(t *testing.T) {
 	if res.ProviderRef != "jb" {
 		t.Fatalf("providerRef = %q, want jb", res.ProviderRef)
 	}
-	// not found
 	nf := youverify.MapIDNumberForTest([]byte(`{"success":false,"message":"not found","data":null}`), "cref")
 	if nf.Status != provider.KycFailed {
 		t.Fatalf("want failed, got %q", nf.Status)

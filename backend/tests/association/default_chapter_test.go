@@ -1,24 +1,18 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // Every published organisation has at least one chapter.
-//
 // WHY THIS EXISTS
-// ---------------
 // Chapters were created only from the wizard's state multi-select, so a founder
 // who did not pick states published an organisation with ZERO chapters. That was
 // not a harmless empty list: members had no chapter to be filed under, the join
 // screen's chapter picker had nothing to offer (it had to be special-cased to
 // hide itself), and chapter-scoped admin views had nothing to scope to.
-//
 // PublishOrganisation now defaults a single chapter named "Home" when the draft
 // names none, and skips blank names — the wizard's chapter field is optional
 // free text, so a whitespace-only entry arrives as a real slice element and
 // would otherwise create a nameless chapter that renders as an empty row.
-//
 // Live-DB, same harness as founder_and_scoping_test.go: skipped without
 // TEST_DATABASE_URL.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

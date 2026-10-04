@@ -1,7 +1,11 @@
 package connectvoting
 
 import (
+	"context"
+	"fmt"
 	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strconv"
 	"time"
 
@@ -52,7 +56,7 @@ type SaveResponse struct {
 // TriggerEvictions — POST /api/v1/connect/contests/:id/stages/:stageNum/evict (admin only).
 // Marks the bottom 20% of contestants for eviction.
 func (h *Handler) TriggerEvictions(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -67,11 +71,10 @@ func (h *Handler) TriggerEvictions(c *gin.Context) {
 
 	var req EvictionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
-	// Set defaults
 	if req.EvictionPercentage == 0 {
 		req.EvictionPercentage = 20
 	}
@@ -94,7 +97,7 @@ func (h *Handler) TriggerEvictions(c *gin.Context) {
 // SaveContestant — POST /api/v1/connect/contests/:id/save (judge/admin).
 // Saves a contestant marked for eviction.
 func (h *Handler) SaveContestant(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -102,13 +105,11 @@ func (h *Handler) SaveContestant(c *gin.Context) {
 
 	var req SaveRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
-	// Determine save type (admin vs judge) - implement your RBAC here
-	saveType := "judge" // Default to judge
-	// if isAdmin(uid) { saveType = "admin" }
+	saveType := "judge"
 
 	result, err := h.svc.SaveContestant(c.Request.Context(), req.EvictionID, uid, saveType, req.Reason)
 	if err != nil {
@@ -122,7 +123,7 @@ func (h *Handler) SaveContestant(c *gin.Context) {
 // ExtendGracePeriod — POST /api/v1/connect/contests/:id/extend-grace-period (admin only).
 // Extends the grace period for evictions.
 func (h *Handler) ExtendGracePeriod(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -130,7 +131,7 @@ func (h *Handler) ExtendGracePeriod(c *gin.Context) {
 
 	var req ExtendGracePeriodRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -150,7 +151,7 @@ func (h *Handler) ExtendGracePeriod(c *gin.Context) {
 // FinalizeEvictions — POST /api/v1/connect/contests/:id/stages/:stageNum/finalize-evictions (admin only).
 // Finalizes evictions after grace period ends.
 func (h *Handler) FinalizeEvictions(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -213,7 +214,7 @@ func (h *Handler) GetEvictions(c *gin.Context) {
 // AdminVote — POST /api/v1/connect/contests/:id/admin-vote (admin only, unlimited).
 // Allows admin to vote unlimited without payment.
 func (h *Handler) AdminVote(c *gin.Context) {
-	uid := userID(c)
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -229,7 +230,7 @@ func (h *Handler) AdminVote(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
@@ -244,4 +245,141 @@ func (h *Handler) AdminVote(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"data": vote})
+}
+
+// TriggerEvictions marks the bottom 20% of contestants for eviction.
+func (s *Service) TriggerEvictions(ctx context.Context, contestID string, req EvictionRequest, actorID string) ([]EvictionResponse, error) {
+	results, err := s.repo.TriggerEvictions(ctx, contestID, req.StageNumber, req.EvictionPercentage, req.GracePeriodHours, actorID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to trigger evictions: %w", err)
+	}
+
+	if s.audit != nil {
+		s.audit.WriteAudit(ctx, "evict_contestants", actorID, "contest", contestID, map[string]any{
+			"stage_number":        req.StageNumber,
+			"eviction_percentage": req.EvictionPercentage,
+			"grace_period_hours":  req.GracePeriodHours,
+			"count":               len(results),
+		})
+	}
+
+	return results, nil
+}
+
+// SaveContestant saves a contestant from eviction.
+// Judges can save only one per stage; admins can save unlimited.
+func (s *Service) SaveContestant(ctx context.Context, evictionID, actorID, saveType, reason string) (*SaveResponse, error) {
+	result, err := s.repo.SaveContestant(ctx, evictionID, actorID, saveType, reason)
+	if err != nil {
+		return nil, fmt.Errorf("failed to save contestant: %w", err)
+	}
+
+	if s.audit != nil {
+		s.audit.WriteAudit(ctx, "save_contestant", actorID, "eviction", evictionID, map[string]any{
+			"save_type": saveType,
+			"reason":    reason,
+		})
+	}
+
+	return result, nil
+}
+
+// ExtendGracePeriod extends the grace period for evictions.
+func (s *Service) ExtendGracePeriod(ctx context.Context, evictionID string, additionalHours int, actorID string) (*SaveResponse, error) {
+	result, err := s.repo.ExtendGracePeriod(ctx, evictionID, additionalHours, actorID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extend grace period: %w", err)
+	}
+
+	if s.audit != nil {
+		s.audit.WriteAudit(ctx, "extend_grace_period", actorID, "eviction", evictionID, map[string]any{
+			"additional_hours": additionalHours,
+		})
+	}
+
+	return result, nil
+}
+
+// FinalizeEvictions finalizes evictions after grace period ends.
+func (s *Service) FinalizeEvictions(ctx context.Context, contestID string, stageNumber int) (*SaveResponse, error) {
+	result, err := s.repo.FinalizeEvictions(ctx, contestID, stageNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to finalize evictions: %w", err)
+	}
+
+	if s.audit != nil {
+		s.audit.WriteAudit(ctx, "finalize_evictions", "system", "contest", contestID, map[string]any{
+			"stage_number": stageNumber,
+		})
+	}
+
+	return result, nil
+}
+
+// StageContestant — GetContestantsByStage retrieves all contestants in a stage with eviction status.
+type StageContestant struct {
+	ID               string     `json:"id"`
+	Name             string     `json:"name"`
+	PhotoURL         string     `json:"photo_url"`
+	VoteCount        int        `json:"vote_count"`
+	EvictionStatus   string     `json:"eviction_status"`
+	EvictionTemplate string     `json:"eviction_template"`
+	EvictionID       *string    `json:"eviction_id,omitempty"`
+	GracePeriodEnd   *time.Time `json:"grace_period_end,omitempty"`
+}
+
+func (s *Service) GetContestantsByStage(ctx context.Context, contestID string, stageNumber int) ([]StageContestant, error) {
+	contestants, err := s.repo.GetContestantsByStage(ctx, contestID, stageNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get contestants: %w", err)
+	}
+
+	return contestants, nil
+}
+
+// EvictionInfo represents a single pending eviction
+type EvictionInfo struct {
+	ID                string    `json:"id"`
+	ContestantID      string    `json:"contestant_id"`
+	ContestantName    string    `json:"contestant_name"`
+	StageNumber       int       `json:"stage_number"`
+	VoteCount         int       `json:"vote_count"`
+	EvictionRank      int       `json:"eviction_rank"`
+	GracePeriodEndsAt time.Time `json:"grace_period_ends_at"`
+	Status            string    `json:"status"`
+	SaveCount         int       `json:"save_count"`
+	CanBeSaved        bool      `json:"can_be_saved"`
+}
+
+// GetEvictions retrieves all pending evictions for a contest.
+func (s *Service) GetEvictions(ctx context.Context, contestID string, stageNum string) ([]EvictionInfo, error) {
+	evictions, err := s.repo.GetEvictions(ctx, contestID, stageNum)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get evictions: %w", err)
+	}
+
+	return evictions, nil
+}
+
+// AdminVote allows admin to vote unlimited without payment.
+func (s *Service) AdminVote(ctx context.Context, contestID, contestantID, actorID string, voteQuantity int) (*Vote, error) {
+	_, err := s.repo.GetContest(ctx, contestID)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+
+	// Admin votes bypass the ledger — no debit, no idempotency key.
+	vote, err := s.repo.AdminVote(ctx, contestID, contestantID, actorID, voteQuantity)
+	if err != nil {
+		return nil, fmt.Errorf("failed to record admin vote: %w", err)
+	}
+
+	if s.audit != nil {
+		s.audit.WriteAudit(ctx, "admin_vote", actorID, "contest", contestID, map[string]any{
+			"contestant_id": contestantID,
+			"vote_quantity": voteQuantity,
+		})
+	}
+
+	return vote, nil
 }

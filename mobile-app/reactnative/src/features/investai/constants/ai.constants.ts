@@ -1,4 +1,3 @@
-// ── Paymax Invest · AI Investment Education Assistant — Constants ─────────────
 // Compliance copy + starter prompts. These encode the guardrail policy from
 // docs/crypto/modules.md so the UI and mock share one source of truth:
 //  • DISCLAIMER is attached to every assistant turn (educational answers + refusals).

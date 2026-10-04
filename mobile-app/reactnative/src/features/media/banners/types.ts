@@ -1,4 +1,3 @@
-// ── Paymax Media — remote marketing banner types ─────────────────────────────
 
 /**
  * Descriptor returned by GET /api/media/banners/:slug. Two shapes, matching

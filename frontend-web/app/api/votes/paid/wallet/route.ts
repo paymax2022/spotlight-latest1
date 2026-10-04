@@ -16,6 +16,11 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { featureFlags } from '@/src/lib/feature-flags';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { debitWallet, reverseWalletDebit } from '@/src/server/wallet/service';
+import { checkIdempotencyKey } from '@/src/server/wallet/idempotency';
+import { boundClaimKey } from '@/src/server/voting-bridge/idempotency';
+import { enqueueOutboxEvent } from '@/src/server/voting-bridge/outbox';
+import { checkRateLimit } from '@/src/lib/voting/rate-limit';
+import { getRequestIp } from '@/src/lib/rate-limit/client-ip';
 import { getVotingSettings, assertVotingOpen } from '@/src/server/voting/free-vote.service';
 import { incrementVoteTotals } from '@/src/server/voting/totals.service';
 import { appendAuditLog } from '@/src/server/voting/audit.service';
@@ -42,7 +47,15 @@ export async function POST(request: Request) {
 
   try {
     const user = await requireRequestUser(request);
-    const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
+
+    // Wallet-debit money path — per-user throttle (AUD-SEC-001). Shares the
+    // bucket key with the v2 wallet route so both draw one allowance.
+    const rl = checkRateLimit(`vote:paid:wallet:${user.id}`, 10, 60_000);
+    if (!rl.allowed) {
+      return errorResponse('Too many requests. Please slow down.', 429);
+    }
+
+    const ip = getRequestIp(request);
     const ua = request.headers.get('user-agent') ?? 'unknown';
 
     const body = (await request.json()) as WalletVoteBody;
@@ -80,11 +93,23 @@ export async function POST(request: Request) {
     // vote_packages.amount is stored in naira; convert to kobo for the ledger
     const amountKobo = Math.round(Number(pkg.amount) * 100);
     const paymentReference = `WVOTE-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`;
-    const walletLedgerKey = `wallet-vote:${idempotencyKey}`;
+    // The raw Idempotency-Key is unscoped — a key reused by another user, or by
+    // this user for a different package/contestant, must never collide with the
+    // original ledger entry or transaction row. The bound key scopes the
+    // ledger idempotency key AND vote_transactions.idempotency_key to
+    // user + purchase shape, so a replay dedupes only the exact purchase it
+    // describes and everything else executes as the distinct operation it is.
+    const walletLedgerKey = boundClaimKey('wallet-vote', user.id, idempotencyKey, {
+      contestId: body.contestId,
+      contestantId: body.contestantId,
+      packageId: body.packageId,
+      votes: totalVotesToCredit,
+      amountKobo,
+    });
 
     // Atomic wallet debit — enforces available balance + tier daily cap via RPC.
     // Throws 402 on INSUFFICIENT_BALANCE, 403 on TIER_LIMIT_EXCEEDED.
-    await debitWallet(user.id, {
+    const debit = await debitWallet(user.id, {
       amountKobo,
       reference: paymentReference,
       idempotencyKey: walletLedgerKey,
@@ -96,6 +121,18 @@ export async function POST(request: Request) {
         packageId: body.packageId,
       },
     });
+
+    if (debit.alreadyProcessed) {
+      // A prior attempt consumed this ledger key. If its compensation already
+      // posted, the money is NOT held — proceeding would record a transaction
+      // and deliver votes against a refunded debit. The reversal's derived key
+      // is the durable spent-marker, so it answers even when the prior attempt
+      // failed before its vote_transactions row could commit.
+      const refunded = await checkIdempotencyKey(`rev:${walletLedgerKey}`);
+      if (refunded.alreadyProcessed) {
+        return errorResponse('This purchase was refunded — submit again with a new Idempotency-Key.', 409);
+      }
+    }
 
     const now = new Date().toISOString();
 
@@ -119,7 +156,7 @@ export async function POST(request: Request) {
         vote_credit_status: 'credited',
         voter_email: body.voterEmail,
         voter_name: body.voterName,
-        idempotency_key: idempotencyKey,
+        idempotency_key: walletLedgerKey,
         paid_at: now,
         verified_at: now,
         credited_at: now,
@@ -143,8 +180,8 @@ export async function POST(request: Request) {
     if (txErr?.code === '23505') {
       const { data: prior, error: priorErr } = await supabase
         .from('vote_transactions')
-        .select('id, payment_reference, total_votes_to_credit, amount_expected')
-        .eq('idempotency_key', idempotencyKey)
+        .select('id, payment_reference, total_votes_to_credit, amount_expected, vote_credit_status, contest_id, contestant_id, voter_user_id, votes_purchased, bonus_votes')
+        .eq('idempotency_key', walletLedgerKey)
         .maybeSingle();
 
       // If the READ failed we cannot tell a replay from a genuine failure, and
@@ -161,7 +198,62 @@ export async function POST(request: Request) {
         const p = prior as {
           id: string; payment_reference: string;
           total_votes_to_credit: number; amount_expected: number;
+          vote_credit_status: string;
+          contest_id: string; contestant_id: string; voter_user_id: string;
+          votes_purchased: number; bonus_votes: number | null;
         };
+
+        // A refunded purchase is terminal — the key is spent and a new purchase
+        // needs a new one. Never re-fulfil against money that already went back.
+        if (p.vote_credit_status === 'reversed') {
+          return errorResponse('This purchase was refunded — submit again with a new Idempotency-Key.', 409);
+        }
+
+        // 'credited' — but a prior crash (or a pre-fix request that swallowed
+        // the votes insert error) may have committed the transaction without
+        // ever delivering the votes row. Money is held, so the correct replay
+        // result is to complete the fulfilment, not to report phantom success.
+        const { data: priorVote, error: voteReadErr } = await supabase
+          .from('votes')
+          .select('id')
+          .eq('transaction_id', p.id)
+          .maybeSingle();
+        if (voteReadErr) {
+          return errorResponse('Could not confirm the existing fulfilment. Retry with the same Idempotency-Key.', 503);
+        }
+        if (!priorVote) {
+          const { error: healErr } = await supabase.from('votes').insert({
+            contest_id: p.contest_id,
+            contestant_id: p.contestant_id,
+            voter_user_id: p.voter_user_id,
+            vote_type: 'paid',
+            vote_quantity: Number(p.total_votes_to_credit ?? 0),
+            vote_status: 'confirmed',
+            transaction_id: p.id,
+            payment_reference: p.payment_reference,
+            fraud_score: 0,
+            fraud_status: 'clean',
+            confirmed_at: new Date().toISOString(),
+          });
+          if (healErr) {
+            // A concurrent replay of this same bound key can win the insert —
+            // uq_votes_paid_transaction makes the loser 23505, which is
+            // fulfilment-by-the-other-caller, not a failure.
+            if (healErr.code !== '23505') {
+              console.error('[votes/paid/wallet] replay found credited transaction without votes; fulfilment retry failed',
+                { transactionId: p.id, error: healErr.message });
+              return errorResponse('Vote fulfilment is still pending. Retry with the same Idempotency-Key.', 503);
+            }
+          } else {
+            // Preserve the recorded paid/bonus split — totals consumers
+            // report them separately, and folding bonus into paid skews it.
+            await incrementVoteTotals(p.contest_id, p.contestant_id, {
+              paidVotes: Number(p.votes_purchased ?? p.total_votes_to_credit ?? 0),
+              bonusVotes: Number(p.bonus_votes ?? 0),
+            });
+          }
+        }
+
         return NextResponse.json(
           {
             success: true,
@@ -177,19 +269,35 @@ export async function POST(request: Request) {
     }
 
     if (txErr || !txRow) {
-      // A genuine failure: the debit posted and nothing recorded it. Reverse.
-      await reverseWalletDebit(user.id, {
+      // A genuine failure: the debit posted and nothing recorded it. Reverse —
+      // and if THAT fails, the money is still held with no transaction row, so
+      // flag it for reconciliation rather than swallowing it silently.
+      const reversed = await reverseWalletDebit(user.id, {
         amountKobo,
         reference: paymentReference,
         idempotencyKey: `rev:${walletLedgerKey}`,
         description: 'Reversal: vote transaction record failed after wallet debit',
-      }).catch(() => { /* best-effort — logged at Supabase level */ });
+      }).then(() => true).catch(() => false);
+      if (!reversed) {
+        await enqueueOutboxEvent('votes.wallet.reversal_failed', {
+          idempotencyKey: walletLedgerKey,
+          clientIdempotencyKey: idempotencyKey,
+          contestId: body.contestId,
+          contestantId: body.contestantId,
+          voterId: user.id,
+          costKobo: amountKobo,
+          cause: 'vote_transactions insert failed',
+        }).catch(() => {});
+      }
 
       return errorResponse('Failed to record vote transaction', 500);
     }
 
-    // Insert the confirmed vote record
-    await supabase.from('votes').insert({
+    // Insert the confirmed vote record. This error MUST be observed: the
+    // transaction row is already committed 'credited' and the debit already
+    // posted, so a swallowed failure strands the money and every later replay
+    // reports alreadyProcessed over an unfulfilled purchase.
+    const { error: voteErr } = await supabase.from('votes').insert({
       contest_id: body.contestId,
       contestant_id: body.contestantId,
       voter_user_id: user.id,
@@ -202,6 +310,43 @@ export async function POST(request: Request) {
       fraud_status: 'clean',
       confirmed_at: now,
     });
+
+    if (voteErr) {
+      // Compensate the committed debit, then mark the transaction 'reversed'
+      // so the connect-tally trigger removes the credited mirror and replays
+      // get the spent-key 409 rather than free votes. The reversal posts by
+      // the debit's recorded amount under `rev:<bound key>` — never the raw
+      // client key.
+      const reversed = await reverseWalletDebit(user.id, {
+        amountKobo,
+        reference: paymentReference,
+        idempotencyKey: `rev:${walletLedgerKey}`,
+        description: 'Reversal: vote fulfilment failed after wallet debit',
+      }).then(() => true).catch(() => false);
+
+      if (reversed) {
+        await supabase
+          .from('vote_transactions')
+          .update({ vote_credit_status: 'reversed' })
+          .eq('id', txRow.id);
+      } else {
+        // Money is still held but nothing was delivered — flag for manual
+        // reconciliation instead of masking it behind a 500.
+        await enqueueOutboxEvent('votes.wallet.reversal_failed', {
+          idempotencyKey: walletLedgerKey,
+          clientIdempotencyKey: idempotencyKey,
+          transactionId: txRow.id,
+          contestId: body.contestId,
+          contestantId: body.contestantId,
+          voterId: user.id,
+          costKobo: amountKobo,
+        }).catch(() => {});
+      }
+
+      console.error('[votes/paid/wallet] votes insert failed after committed debit',
+        { transactionId: txRow.id, reversed, error: voteErr.message });
+      return errorResponse('Vote fulfilment failed; the wallet charge was reversed.', 500);
+    }
 
     // Increment running vote totals (updates contestant ranking)
     await incrementVoteTotals(body.contestId, body.contestantId, {

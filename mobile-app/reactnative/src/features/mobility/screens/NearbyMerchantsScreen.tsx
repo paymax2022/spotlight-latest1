@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import MapView, { type MapMarker } from '../components/MapView';
-import AddressEntry, { type ConfirmedAddress } from '../components/AddressEntry';
+import type { SelectedAddress } from '@/components/AddressAutocompleteInput';
+import AddressField from '../components/AddressField';
 import { useNearbyOwn } from '../hooks/useNearby';
 import { upsertLocation } from '../api/maps.api';
 
@@ -32,7 +33,7 @@ function randomId(): string {
 
 /**
  * NearbyMerchantsScreen demonstrates the whole MapService loop on mobile:
- *   1) AddressEntry captures a confirmed pin + Plus Code (Nigeria rule),
+ *   1) AddressField captures a picked address (Google autocomplete),
  *   2) optionally upsertLocation() writes it into merchant_locations,
  *   3) useNearbyOwn() reads neighbours back via PostGIS ST_DWithin (no maps API).
  *
@@ -48,9 +49,9 @@ export default function NearbyMerchantsScreen() {
   const radiusM = 3000;
   const nearby = useNearbyOwn(entityType, pin, radiusM);
 
-  const onConfirmed = (addr: ConfirmedAddress) => {
+  const onConfirmed = (addr: SelectedAddress) => {
     setPin({ lat: addr.lat, lng: addr.lng });
-    setLastPlusCode(addr.plusCode);
+    setLastPlusCode(addr.plusCode ?? '');
     setNote(null);
   };
 
@@ -82,7 +83,7 @@ export default function NearbyMerchantsScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Near me" subtitle="Find places around a confirmed pin" />
+      <ScreenHeader title="Near me" subtitle="Find places around an address" />
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Entity-type selector */}
         <View style={styles.segment}>
@@ -101,8 +102,8 @@ export default function NearbyMerchantsScreen() {
         </View>
 
         {/* Pin capture */}
-        <Text style={styles.sectionLabel}>1 · Drop a pin for where you are</Text>
-        <AddressEntry surface="delivery" onConfirmed={onConfirmed} />
+        <Text style={styles.sectionLabel}>1 · Enter where you are</Text>
+        <AddressField initial="" near={{ lat: 6.4541, lng: 3.3947 }} placeholder="Enter your location" onSelect={onConfirmed} currentLocation minHeight={320} />
 
         {pin && (
           <Pressable style={styles.secondaryBtn} onPress={registerHere}>
@@ -115,7 +116,7 @@ export default function NearbyMerchantsScreen() {
         <Text style={styles.sectionLabel}>2 · {ENTITY_TYPES.find((t) => t.key === entityType)!.label} within 3 km</Text>
 
         {!pin ? (
-          <StateView kind="empty" title="Confirm a pin first" message="Drop and confirm a pin above to search nearby." compact />
+          <StateView kind="empty" title="Enter a location first" message="Pick an address above to search nearby." compact />
         ) : nearby.isLoading ? (
           <StateView kind="loading" compact />
         ) : nearby.isError ? (

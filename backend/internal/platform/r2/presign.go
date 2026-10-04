@@ -2,7 +2,6 @@
 // Go standard library — no aws-sdk dependency. It implements AWS Signature V4
 // query-string presigning (the "X-Amz-*" query params form), which R2 accepts on
 // its S3 API endpoint.
-//
 // Security model:
 //   - Credentials (access key / secret) are SERVER-SIDE ONLY and never shipped to
 //     a client. The presigner mints a short-lived URL the client uses for a single
@@ -24,6 +23,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"spotlight/backend/go-common/cryptox"
 )
 
 // UnsignedPayload is the SigV4 sentinel allowing a presigned URL whose body is not
@@ -136,7 +137,7 @@ func (p *Presigner) presign(method, key, contentType string, expiry time.Duratio
 		"AWS4-HMAC-SHA256",
 		amzDate,
 		scope,
-		hashHex([]byte(canonicalRequest)),
+		cryptox.SHA256HexBytes([]byte(canonicalRequest)),
 	}, "\n")
 
 	signingKey := deriveSigningKey(p.cfg.SecretAccessKey, dateStamp, p.cfg.Region, "s3")
@@ -146,17 +147,10 @@ func (p *Presigner) presign(method, key, contentType string, expiry time.Duratio
 	return p.cfg.AccountEndpoint + canonicalURI + "?" + encodeQuery(q), nil
 }
 
-// ── SigV4 primitives ─────────────────────────────────────────────────────────
-
 func hmacSHA256(key, data []byte) []byte {
 	h := hmac.New(sha256.New, key)
 	h.Write(data)
 	return h.Sum(nil)
-}
-
-func hashHex(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
 }
 
 func deriveSigningKey(secret, dateStamp, region, service string) []byte {

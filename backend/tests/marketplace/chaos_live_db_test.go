@@ -1,21 +1,17 @@
 package marketplace_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests replacing two stubs that reported `ok` while asserting nothing.
-//
 // The stubs they replace were gated on newTestService(), whose constructor
 // t.Skip()s unconditionally — so no environment could ever run them, and the
 // bodies behind the gate were commented-out prose. A test that cannot fail is
 // worse than an absent one: it reads as coverage in every CI lane, including
 // the promotion to main that is meant to be the safety net for direct develop
 // pushes.
-//
 // Both drive the REAL exported Service against live Postgres via liveMktService
 // (remoderation_live_db_test.go), which is the harness in this package that
 // actually works — it falls back from MARKETPLACE_TEST_DATABASE_URL to
 // TEST_DATABASE_URL, so `TEST_DATABASE_URL=… go test ./tests/marketplace/...`
 // executes them.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -46,7 +42,6 @@ func walletBalanceKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 }
 
 // seedLedgerCapableSeller seeds a seller that can actually hold money.
-//
 // seedTrustedSeller writes only mkt_trust_scores, so its id has no auth.users
 // row — and ledger_accounts.user_id references auth.users. Any test whose
 // assertion reaches the ledger therefore fails on a foreign key AFTER the
@@ -68,7 +63,6 @@ func seedLedgerCapableSeller(t *testing.T, ctx context.Context, pool *pgxpool.Po
 // TestLiveDB_BoostOnRejectedListing_AutoRefundsSeller executes the §8 boost
 // cascade: rejecting a listing must not leave the seller paying for a boost that
 // promotes a policy-removed listing.
-//
 // This is the case the replaced stub flagged as possibly missing entirely ("if
 // moderation rejection doesn't auto-cascade to active boosts, this is a real gap
 // against §8's row"). The cascade does exist in RejectListing, but nothing
@@ -124,7 +118,6 @@ func TestLiveDB_BoostOnRejectedListing_AutoRefundsSeller(t *testing.T) {
 // TestLiveDB_VerifyID_IsIdempotentUpsertOnly executes the badge-permanence
 // guarantee against the database: VerifyID is an upsert that only ever SETS, so a
 // retried call after a provider timeout must not toggle an existing badge off.
-//
 // The structural sibling of this test proves it by reading service.go and noting
 // no revoke method exists. That reasoning is sound but cannot catch a regression
 // in the repository's SQL — an UPSERT written as an overwrite would satisfy the
@@ -165,14 +158,12 @@ func verifiedIDBadge(t *testing.T, ctx context.Context, pool *pgxpool.Pool, user
 
 // TestLiveDB_RejectListing_WorksOnALiveListing is the regression test for the
 // from-state bug this suite uncovered.
-//
 // RejectListing hardcoded pending_review as the from-state it wrote against,
 // while SetListingStatus updates `WHERE status = from`. Rejecting an ACTIVE
 // listing therefore matched zero rows and surfaced as ErrConflict, "conflicting
 // concurrent write" — a race that was not happening. The FSM lists
 // active → removed_policy as a legal edge and the guard allowed it, so the
 // failure was purely the write disagreeing with the rule it had just enforced.
-//
 // It mattered most in the worst case: a live, selling, prohibited listing could
 // not be pulled, and because the error returned before the §8 cascade, its paid
 // boost kept promoting it.

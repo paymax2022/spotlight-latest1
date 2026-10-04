@@ -27,19 +27,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-// ---------------------------------------------------------------------------
 // EC-009 — Vote after contest close is rejected, not counted
-// ---------------------------------------------------------------------------
-//
-// assertVotingOpen() itself (the pure guard function) already has full branch
 // coverage in free-vote.spec.ts ("throws if voting has closed" etc). What is
 // NOT yet covered anywhere is the *integration* claim in EC-009's Expected
-// Result column: "Rejected; not counted" — i.e. that a late paid-vote
 // initiation, when voting is closed, (a) throws before creating any
 // vote_transactions row and (b) never calls the payment provider. These tests
-// close that gap for the paid path (initiatePaidVote); the free path's
 // equivalent (castFreeVote) shares the exact same assertVotingOpen() call
-// site and pure-function coverage, so the remaining integration risk is
 // concentrated in the paid path's extra side effects (Paystack init, DB
 // writes), which is what's asserted here.
 
@@ -209,23 +202,16 @@ describe('EC-009: vote after contest close is rejected, not counted (paid path)'
   });
 });
 
-// ---------------------------------------------------------------------------
 // EC-012 — Same person registers in two contests: isolated entries, no bleed
-// ---------------------------------------------------------------------------
-//
 // contest-distinctness.spec.ts already proves the two contests' FORM SCHEMAS
 // don't bleed into each other. It never touches stored registration entries.
 // The actual per-contest isolation guarantee lives in
-// findLiveRegistrationForContest() (src/server/registration-v2/registration-for-contest.ts)
 // — the duplicate-application guard startRegistrationDraft() calls before
 // inserting a new row — backed by the DB's composite partial unique index
 // `registrations_one_live_per_user_contest ON (user_id, contest_slug)`
 // (supabase/migrations/20270125000000_registration_review_seam_and_dedupe.sql).
-// These tests exercise that guard function directly against a mocked
 // Supabase client that behaves like the real composite filter.
-//
 // Reuses the SAME '@/lib/supabase/server' mock registered above for the
-// EC-009 section (one vi.mock per module path per file; a second call would
 // just re-hoist redundantly) — createAdminClient is re-pointed per-test via
 // vi.mocked(...).mockReturnValue(...) below, same as EC-009's tests do.
 
@@ -293,7 +279,6 @@ describe('EC-012: same person registers in two contests — isolated entries, no
 
     const foundInB = await findLiveRegistrationForContest(USER, { contestSlug: 'open-mic-competition' });
 
-    // Isolated: the guard must not find a "live registration" in B just
     // because the same user has one in A. This is the exact bleed EC-012 guards against.
     expect(foundInB).toBeNull();
   });
@@ -353,10 +338,7 @@ describe('EC-012: same person registers in two contests — isolated entries, no
   });
 });
 
-// ---------------------------------------------------------------------------
 // EC-003 — Paid vote succeeds but count-apply fails: no longer reachable
-// ---------------------------------------------------------------------------
-//
 // Before the PV-005 fix (20270211000000_vote_bridge_paid_vote_atomic_credit.sql),
 // crediting a paid vote was: separate RPC to "lock" -> separate SELECT ->
 // separate INSERT into votes -> separate UPDATE of vote_totals. Each of those
@@ -365,15 +347,11 @@ describe('EC-012: same person registers in two contests — isolated entries, no
 // `votes` could commit while the following `vote_totals` UPDATE/INSERT failed
 // or was skipped (crash, timeout, disconnect between calls) — money/vote
 // credited, contestant's tally not updated.
-//
 // After the fix, credit_paid_vote_transaction() does the INSERT into `votes`
-// AND the vote_totals upsert inside ONE PL/pgSQL function body, invoked via a
 // SINGLE Supabase RPC call — i.e. one Postgres transaction. Postgres commits
-// or rolls back a function body atomically: there is no window where the vote
 // row exists but the totals row does not (or vice versa) short of the whole
 // database process dying mid-commit, which is a durability question (WAL/fsync),
 // not an application-level "count-apply" step that can independently fail.
-//
 // This is a structural/static proof (reads the migration source and asserts
 // the invariant architecturally), which is what "no longer possible" claims
 // about atomicity require — no flaky timing-based mock can prove a race is
@@ -391,7 +369,6 @@ describe('EC-003: paid-vote count-apply-fail reconciliation is no longer a reach
     const fnMatches = sql.match(/CREATE OR REPLACE FUNCTION public\.credit_paid_vote_transaction/g);
     expect(fnMatches).toHaveLength(1);
 
-    // Both the vote insert and the totals write are inside that one function's
     // body (i.e. appear after its opening and before its closing `$$;`).
     const bodyStart = sql.indexOf('LANGUAGE plpgsql');
     const bodyEnd = sql.indexOf('$$;', bodyStart);
@@ -419,7 +396,6 @@ describe('EC-003: paid-vote count-apply-fail reconciliation is no longer a reach
   // safe success with vote_id undefined, i.e. no partial "credited but not
   // counted" state is ever exposed to a caller — is already exercised at
   // runtime by paid-vote-concurrency.spec.ts's "a losing concurrent caller
-  // (already_credited=true) succeeds without double-crediting side effects"
   // test. Not duplicated here to avoid a second, conflicting set of module
   // mocks for '@/src/server/voting/core' within this same file.
 });

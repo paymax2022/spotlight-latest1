@@ -1,5 +1,3 @@
-// ── Spotlight Realtor — Maintenance triangle data layer (V2) ─────────────────
-// Tenant → manager → vendor SLA. Mock by default (REALTOR_USE_MOCK); real branch
 // hits realtor_maintenance_requests (migration 20260620030000). Costs surface in
 // the owner cockpit. Money is integer minor units.
 
@@ -53,7 +51,6 @@ export function buildTimeline(status: MaintenanceStatus): MaintenanceEvent[] {
   }));
 }
 
-// ── Mock store ───────────────────────────────────────────────────────────────
 const store: Record<string, MaintenanceRequest> = {};
 function seed() {
   if (Object.keys(store).length) return;
@@ -85,7 +82,6 @@ function mapRow(row: any): MaintenanceRequest {
   };
 }
 
-// ── Tenant API ───────────────────────────────────────────────────────────────
 export async function listRequests(): Promise<MaintenanceRequest[]> {
   if (USE_MOCK) { await delay(); seed(); return Object.values(store).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)); }
   const supabase = createSupabaseClient();
@@ -161,7 +157,6 @@ export const confirmCompletion = (id: string) => patch(id, 'tenant_confirmed');
 export const cancelRequest = (id: string) => patch(id, 'cancelled');
 export const rateRequest = (id: string, rating: number) => patch(id, 'closed', { rating });
 
-// ── Vendor API ───────────────────────────────────────────────────────────────
 export async function listVendorJobs(): Promise<VendorJob[]> {
   const requests = await listRequests();
   return requests

@@ -1,4 +1,3 @@
-// ── Paymax Health — Mock dataset (Phase 0) ───────────────────────────────────
 // Self-contained mock backing for the shared health platform: records for a
 // patient + a pet, consent grants, intake schemas + responses, a provider, a
 // consult. Money in kobo. Used while USE_MOCK is true.
@@ -18,13 +17,11 @@ const now = Date.now();
 const daysAgo = (d: number) => new Date(now - d * 86_400_000).toISOString();
 const daysAhead = (d: number) => new Date(now + d * 86_400_000).toISOString();
 
-// ── Subjects: the patient (consumer identity) + one pet ──────────────────────
 export const MOCK_SUBJECTS: RecordSubject[] = [
   { id: 'subj_self', type: 'patient', name: 'Adaeze Okafor', detail: 'DOB 14 Mar 1991 · 34 yrs', avatarColor: 'iconBgPurple' },
   { id: 'subj_pet1', type: 'pet', name: 'Milo', detail: 'Dog · Boerboel · 3 yrs', avatarColor: 'iconBgTeal' },
 ];
 
-// ── Records (patient + pet) ──────────────────────────────────────────────────
 export const MOCK_RECORDS: HealthRecord[] = [
   {
     id: 'rec_001',
@@ -124,7 +121,6 @@ export const MOCK_RECORDS: HealthRecord[] = [
   },
 ];
 
-// ── Consent grants (cross-vertical sharing) ──────────────────────────────────
 export const MOCK_CONSENTS: ConsentGrant[] = [
   {
     id: 'con_001',
@@ -165,7 +161,6 @@ export const MOCK_CONSENTS: ConsentGrant[] = [
   },
 ];
 
-// ── Providers (eligible grantees for new shares + provider profile) ──────────
 export const MOCK_PROVIDERS: HealthProvider[] = [
   {
     id: 'prov_vet1',
@@ -211,7 +206,6 @@ export const MOCK_PROVIDERS: HealthProvider[] = [
   },
 ];
 
-// ── Intake schemas (versioned, schema-driven) ────────────────────────────────
 export const MOCK_INTAKE_SCHEMAS: IntakeSchema[] = [
   {
     id: 'vet_triage_v2',
@@ -303,7 +297,6 @@ export const MOCK_INTAKE_RESPONSES: IntakeResponse[] = [
   },
 ];
 
-// ── Consult (tele-consult lobby + room) ──────────────────────────────────────
 export const MOCK_CONSULTS: Consult[] = [
   {
     id: 'cns_001',
@@ -329,7 +322,6 @@ export const MOCK_CONSULTS: Consult[] = [
   },
 ];
 
-// ── Active care-loop items for the hub summary ───────────────────────────────
 export const MOCK_ACTIVE_ORDERS: ActiveOrderSummary[] = [
   {
     id: 'ord_pharm_1',

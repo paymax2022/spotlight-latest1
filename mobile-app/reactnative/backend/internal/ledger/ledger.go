@@ -3,7 +3,6 @@
 // module posts balanced cash legs through this interface instead of keeping its
 // own balances, so spotlight/backend's finance/ledger stays the single source of
 // truth.
-//
 //   - MockLedger (this package): an in-memory, dependency-free double-entry ledger
 //     for offline/dev builds. Balances are DERIVED from immutable entries, posts are
 //     balanced pairs, replays are idempotent, balance-checked debits fail closed.

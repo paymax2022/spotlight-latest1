@@ -46,7 +46,6 @@ export interface LiveChatMessage {
   isSystem?: boolean;
 }
 
-// A gift = a wallet amount in kobo (LV-06). Rendered as a gamified item but it
 // is REAL money. priceKobo is the actual debit.
 export interface LiveGift {
   id: string;
@@ -61,7 +60,7 @@ export interface GiftSendResult {
   ok: boolean;
   giftId: string;
   amountKobo: number;
-  newRemainingKobo: number | null; // updated daily allowance (null => unlimited)
+  newRemainingKobo: number | null;
   ledgerRef: string;               // audit/ledger entry reference
 }
 

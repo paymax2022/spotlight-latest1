@@ -40,7 +40,7 @@ func TestModuleForResolvesOnlyVerifiedPrefixes(t *testing.T) {
 		"/api/finance/wallet":           "wallet",
 		"/api/finance/wallet/balance":   "wallet",
 		"/api/finance/transfers/paymax": "walletTransfers", // NOT "wallet"
-		"/api/finance/va/provision":     "virtualAccounts", // name != prefix
+		"/api/finance/va/provision":     "virtualAccounts",
 		"/api/v1/pharmacy/orders":       "healthPharmacy",
 		"/api/finance/unmapped-thing":   "",
 		"/api/v1/trading/orders":        "",

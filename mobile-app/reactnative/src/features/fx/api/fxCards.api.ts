@@ -1,4 +1,3 @@
-// ── FX Exchange — Cards API wrapper ──────────────────────────────────────────
 // Typed data layer for the cards vertical (Backend role owns this file).
 // Mock-flagged; flip USE_MOCK=false once /v1/cards endpoints land.
 // IRON RULES: money is minor units; every money mutation carries an Idempotency-Key.

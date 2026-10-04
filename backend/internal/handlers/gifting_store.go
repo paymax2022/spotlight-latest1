@@ -21,14 +21,14 @@ func NewGiftingStore(db *pgxpool.Pool) *GiftingStore {
 
 // GiftCatalogItem represents a giftable item.
 type GiftCatalogItem struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Description     string `json:"description"`
-	AmountKobo      int64  `json:"amountKobo"`
-	Currency        string `json:"currency"`
-	ImageURL        string `json:"imageUrl"`
-	Category        string `json:"category"`
-	Available       bool   `json:"available"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	AmountKobo  int64  `json:"amountKobo"`
+	Currency    string `json:"currency"`
+	ImageURL    string `json:"imageUrl"`
+	Category    string `json:"category"`
+	Available   bool   `json:"available"`
 }
 
 // GetCatalog retrieves all giftable items.
@@ -93,7 +93,6 @@ type Recipient struct {
 }
 
 // GetRecipients retrieves user's saved gift recipients.
-//
 // Reads platform_users, not auth.users: this pool runs as service_role, which
 // Supabase never grants auth-schema access to, and platform_users.id mirrors
 // auth.users.id 1:1. The name join also had to move off "profiles" — that
@@ -165,14 +164,12 @@ func (s *GiftingStore) SendGift(ctx context.Context, senderID string, recipientI
 		return nil, fmt.Errorf("send gift: %w", err)
 	}
 
-	// Query sender and recipient names for response
 	s.enrichGiftTransaction(ctx, &gt)
 	return &gt, nil
 }
 
 // GetSentGifts retrieves gifts sent by user (paginated).
 func (s *GiftingStore) GetSentGifts(ctx context.Context, userID string, limit int, offset int) ([]GiftTransaction, int64, error) {
-	// Get total count
 	var total int64
 	err := s.db.QueryRow(ctx, `
 		SELECT COUNT(*) FROM gift_transactions WHERE sender_id = $1
@@ -180,8 +177,6 @@ func (s *GiftingStore) GetSentGifts(ctx context.Context, userID string, limit in
 	if err != nil {
 		return nil, 0, fmt.Errorf("count sent: %w", err)
 	}
-
-	// Get paginated results
 	rows, err := s.db.Query(ctx, `
 		SELECT
 			id, reference, sender_id, recipient_id, item_id, amount_kobo,
@@ -213,7 +208,6 @@ func (s *GiftingStore) GetSentGifts(ctx context.Context, userID string, limit in
 
 // GetReceivedGifts retrieves gifts received by user (paginated).
 func (s *GiftingStore) GetReceivedGifts(ctx context.Context, userID string, limit int, offset int) ([]GiftTransaction, int64, error) {
-	// Get total count
 	var total int64
 	err := s.db.QueryRow(ctx, `
 		SELECT COUNT(*) FROM gift_transactions WHERE recipient_id = $1
@@ -221,8 +215,6 @@ func (s *GiftingStore) GetReceivedGifts(ctx context.Context, userID string, limi
 	if err != nil {
 		return nil, 0, fmt.Errorf("count received: %w", err)
 	}
-
-	// Get paginated results
 	rows, err := s.db.Query(ctx, `
 		SELECT
 			id, reference, sender_id, recipient_id, item_id, amount_kobo,
@@ -278,26 +270,20 @@ func (s *GiftingStore) GetGiftTransaction(ctx context.Context, userID string, tx
 }
 
 // enrichGiftTransaction loads sender/recipient names and item name.
-//
 // Reads platform_users/user_profiles, not auth.users/profiles: this pool runs
 // as service_role (no auth-schema grants), and the old "profiles" table has
 // no name column at all — full_name lives on user_profiles, keyed by id.
 func (s *GiftingStore) enrichGiftTransaction(ctx context.Context, gt *GiftTransaction) {
-	// Get sender name
 	_ = s.db.QueryRow(ctx, `
 		SELECT COALESCE(NULLIF(p.full_name, ''), u.email) FROM platform_users u
 		LEFT JOIN user_profiles p ON u.id = p.id
 		WHERE u.id = $1
 	`, gt.SenderID).Scan(&gt.SenderName)
-
-	// Get recipient name
 	_ = s.db.QueryRow(ctx, `
 		SELECT COALESCE(NULLIF(p.full_name, ''), u.email) FROM platform_users u
 		LEFT JOIN user_profiles p ON u.id = p.id
 		WHERE u.id = $1
 	`, gt.RecipientID).Scan(&gt.RecipientName)
-
-	// Get item name
 	_ = s.db.QueryRow(ctx, `
 		SELECT name FROM gift_catalog WHERE id = $1
 	`, gt.ItemID).Scan(&gt.ItemName)

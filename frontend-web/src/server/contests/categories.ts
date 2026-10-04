@@ -1,6 +1,5 @@
 // Contest categories — the admin-managed replacement for the hardcoded
 // `allowedCategories` consts that gated contest create/update.
-//
 // contests.category is plain TEXT with no CHECK constraint, so this list is the
 // only thing deciding which categories exist. It is read on every contest
 // create/update, hence the deliberate fallback below.

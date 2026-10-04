@@ -3,13 +3,13 @@ package estate
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 )
 
 // election_eligibility.go — Block 31 extended elections: KYC + payment voter gating.
-//
 // An estate admin configures per-election rules (require_kyc, require_payment,
 // resident_types). CastVote consults these before accepting a ballot, and the
 // GET …/eligibility endpoint lets the client show the voter why they can/can't
@@ -81,19 +81,10 @@ func evaluateEligibility(rules EligibilityRules, kycVerified, kycAvailable, hasO
 	if rules.RequirePayment && hasOutstandingDues {
 		reasons = append(reasons, ReasonOutstandingDues)
 	}
-	if len(rules.ResidentTypes) > 0 && !containsString(rules.ResidentTypes, voterType) {
+	if len(rules.ResidentTypes) > 0 && !slices.Contains(rules.ResidentTypes, voterType) {
 		reasons = append(reasons, ReasonResidentTypeError)
 	}
 	return Eligibility{Eligible: len(reasons) == 0, Reasons: reasons}
-}
-
-func containsString(xs []string, target string) bool {
-	for _, x := range xs {
-		if x == target {
-			return true
-		}
-	}
-	return false
 }
 
 // loadEligibilityRules returns the rules for an election; a missing row means no
@@ -211,3 +202,4 @@ func (s *Service) CheckVoterEligibility(ctx context.Context, estateID, electionI
 	}
 	return evaluateEligibility(rules, kycVerified, kycAvail, outstanding, vtype), nil
 }
+func containsString(xs []string, target string) bool { return slices.Contains(xs, target) }

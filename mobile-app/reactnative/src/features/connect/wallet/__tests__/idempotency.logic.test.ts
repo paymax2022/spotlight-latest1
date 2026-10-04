@@ -1,7 +1,6 @@
 // Pure-logic unit tests for the money-path retry contract.
 // Run with Node's native TS type-stripping (`npm run test:wallet-idempotency`):
 //   node --experimental-strip-types --test src/features/connect/wallet/__tests__/idempotency.logic.test.ts
-//
 // What these guard: a retry of a money mutation must reuse the original
 // Idempotency-Key, and a request whose outcome is unknown must not be reported
 // to the user as "did not happen".

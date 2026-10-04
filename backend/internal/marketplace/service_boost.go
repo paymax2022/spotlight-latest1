@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"time"
-
+	"net/http"
+	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/internal/finance/ledger"
+	"time"
 )
 
 // minCustomBoostDays/maxCustomBoostDays bound a "custom" date-range boost.
@@ -22,7 +23,6 @@ const (
 
 // service_boost.go implements the §2.4 Boost FSM: wallet-direct charge on purchase
 // (no separate ad-balance) and an automatic refund on admin/system reject.
-//
 // Ledger refs / idem keys:
 //   - charge : ref "mkt:boost:<id>:charge" idem "mkt:boost:<id>:charge"
 //   - refund : ref "mkt:boost:<id>:refund" idem "mkt:boost:<id>:refund"
@@ -58,10 +58,8 @@ func (s *Service) GetBoost(ctx context.Context, id string) (*Boost, error) {
 // by both the read-only GET /boosts/quote preview and PurchaseBoost itself, so
 // a quote shown to a buyer and what they're actually charged can never drift.
 // Never trusts a client-sent price.
-//
 // Package mode (tier set, and not "custom"): tier must name an ACTIVE row in
 // mkt_boost_packages; price/duration/weight come from that row.
-//
 // Custom mode (tier empty or "custom", endsAt set): starts now (a boost always
 // activates immediately on purchase — there is no scheduler to promote a
 // future-dated "purchased" boost to "active" later), duration rounds UP to the
@@ -229,32 +227,13 @@ func (s *Service) PurchaseBoost(ctx context.Context, sellerID, idemKey string, i
 // RejectBoost (admin/system) rejects an active/purchased boost for a policy
 // violation and AUTO-REFUNDS in the same flow (§2.4 reject → rejected_with_reason →
 // auto_refunded). reason_code MANDATORY.
-//
-// Ordering (UAT fix — three sibling agents independently found the OLD two-UPDATE
-// sequence non-atomic and got a boost permanently stranded):
-//
-//  1. The refund is posted FIRST, before mkt_boosts.status is touched at all.
-//  2. Only on refund success does the row transition, in ONE UPDATE, straight from
-//     its ORIGINAL status to the terminal auto_refunded (reason code + refund ref +
-//     refunded_kobo stamped together).
-//
-// This mirrors the "partial completion must be safely resumable" precedent in
-// estate's RequestPayout/PayDues (backend/internal/estate/vendor.go,
-// service_dues.go: ledger call first, status-row update last, so a mid-flight
-// failure changes nothing in the row and a retry is just another first attempt).
-//
-// The OLD code flipped status → rejected_with_reason in its own committed UPDATE
-// BEFORE attempting the refund. A refund failure (e.g. the seller has no
-// ledger_accounts row yet — Postgres FK violation on ledger_accounts_user_id_fkey,
-// since GetOrCreateAccount's INSERT requires the user to already exist in
-// auth.users) left the row stuck at rejected_with_reason with refund_ref=NULL —
-// and every retry then hit guardBoostTransition's rejected_with_reason →
-// rejected_with_reason as an ILLEGAL self-edge (409 INVALID_BOOST_TRANSITION),
-// permanently wedging the boost with no way to complete the refund from the admin
-// console. rejected_with_reason is never independently read or filtered on
-// anywhere else in this codebase (grep confirms), so collapsing the two legs into
-// one atomic write closes the intermediate-state window entirely rather than just
-// narrowing it.
+// Ordering is load-bearing (ledger-first, status-last — the same partial-
+// completion precedent as estate's RequestPayout/PayDues): the refund posts
+// FIRST, before mkt_boosts.status is touched, and only on success does the row
+// transition in ONE UPDATE straight to terminal auto_refunded (reason code +
+// refund ref + refunded_kobo stamped together). A committed intermediate
+// rejected_with_reason row would wedge every retry on the FSM's illegal
+// self-edge with no path to complete the refund.
 func (s *Service) RejectBoost(ctx context.Context, adminID, boostID, reasonCode string) (*Boost, error) {
 	if err := requireReason(reasonCode); err != nil {
 		return nil, err
@@ -307,7 +286,7 @@ func (s *Service) RejectBoost(ctx context.Context, adminID, boostID, reasonCode 
 	_ = s.writeAudit(ctx, AuditEntry{
 		AdminID: adminID, Action: "mkt.boost.reject", TargetType: "boost", TargetID: boostID, ReasonCode: reasonCode,
 		BeforeState: map[string]any{"status": string(from)},
-		AfterState:  map[string]any{"status": string(BoostAutoRefunded), "reason_code": reasonCode},
+		AfterState:  map[string]any{"status": string(BoostAutoRefunded), colReasonCode: reasonCode},
 	})
 	s.notifySafe(ctx, b.SellerID, "mkt.boost.refunded", "Your boost was rejected and refunded: "+reasonCode)
 	return b, nil
@@ -392,7 +371,7 @@ func (s *Service) CancelBoost(ctx context.Context, sellerID, boostID string) (*B
 		BeforeState: map[string]any{"status": string(from)},
 		AfterState:  map[string]any{"status": string(BoostAutoRefunded), "refund_kobo": refundKobo},
 	})
-	s.notifySafe(ctx, b.SellerID, "mkt.boost.cancelled", fmt.Sprintf("Your boost was cancelled and %s refunded for the unused days.", formatKobo(refundKobo)))
+	s.notifySafe(ctx, b.SellerID, "mkt.boost.cancelled", fmt.Sprintf("Your boost was cancelled and ₦%.2f refunded for the unused days.", float64(refundKobo)/100))
 	return b, nil
 }
 
@@ -402,7 +381,6 @@ func (s *Service) CancelBoost(ctx context.Context, sellerID, boostID string) (*B
 // window. Pure and DB-free so the money math itself has an executed test
 // independent of CancelBoost's DB/ledger plumbing (mirrors customBoostDuration
 // above).
-//
 // Rounds DOWN (integer division truncates) — a platform financial calculation
 // must never round in the payer's favor by accident. Clamped to [0, PriceKobo]
 // so clock skew or a boost already past ends_at can never refund more than
@@ -427,13 +405,6 @@ func proratedBoostRefund(b *Boost, now time.Time) int64 {
 		refund = b.PriceKobo
 	}
 	return refund
-}
-
-// formatKobo renders kobo as a naira string for a user-facing notification
-// message ONLY — never used for money math, which stays integer kobo
-// throughout (CLAUDE.md money rule).
-func formatKobo(kobo int64) string {
-	return fmt.Sprintf("₦%.2f", float64(kobo)/100)
 }
 
 // UpsertBoostPackage creates or edits a boost package's price/duration/weight/
@@ -551,4 +522,53 @@ func (s *Service) postBoostRefund(ctx context.Context, sellerID, boostID string,
 		return "", wrapInternal("boost auto-refund", err)
 	}
 	return refundRef, nil
+}
+
+// Boost FSM (§2.4). Explicit guarded transitions only.
+//	purchased             → active (auto on purchase) | rejected_with_reason
+//	active                → completed (ends_at passed) | rejected_with_reason | cancelled_by_seller
+//	rejected_with_reason  → auto_refunded (automatic refund ledger tx)
+//	cancelled_by_seller   → auto_refunded (automatic PRORATED refund ledger tx)
+//	(terminal: completed, auto_refunded)
+
+var boostTransitions = fsm.Table[BoostStatus]{
+	BoostPurchased: fsm.Set(
+		BoostActive,
+		BoostRejectedWithReason,
+	),
+	BoostActive: fsm.Set(
+		BoostCompleted,
+		BoostRejectedWithReason,
+		BoostCancelledBySeller,
+	),
+	BoostRejectedWithReason: fsm.Set(
+		BoostAutoRefunded,
+	),
+	BoostCancelledBySeller: fsm.Set(
+		BoostAutoRefunded,
+	),
+}
+
+// guardBoostTransition returns a typed error when from → to is illegal.
+func guardBoostTransition(from, to BoostStatus) error {
+	if !boostTransitions.Can(from, to) {
+		return &CodedError{
+			Status:  http.StatusConflict,
+			Code:    CodeInvalidBoostTransition,
+			Message: "illegal boost transition " + string(from) + " → " + string(to),
+		}
+	}
+	return nil
+}
+
+// BoostTier is one resolved, purchasable boost — either a preset package
+// (mkt_boost_packages, admin-editable via ADM-002) or a synthesized "custom"
+// entry priced by the admin-set ₦/day rate (ComputeBoostQuote in
+// service_boost.go resolves either shape into this same struct so
+// postBoostCharge/postBoostRefund need not know which).
+type BoostTier struct {
+	Tier         string  `json:"tier"`
+	DurationDays int     `json:"duration_days"`
+	PriceKobo    int64   `json:"price_kobo"`
+	Weight       float64 `json:"weight"` // additive boost_weight in ES function_score (§4)
 }

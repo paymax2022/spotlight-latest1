@@ -35,12 +35,12 @@ import (
 // event-wallet), vendor (with its own operator user), through GoLive, one
 // ticket tier, and an open event-wallet ready to tap-charge against.
 type tapChargeSettleFixture struct {
-	svc                        *top5events.Service
-	eventID                    string
-	organiser, buyer           string
-	vendorOperator, vendorID   string
-	stranger                   string
-	walletID                   string
+	svc                      *top5events.Service
+	eventID                  string
+	organiser, buyer         string
+	vendorOperator, vendorID string
+	stranger                 string
+	walletID                 string
 }
 
 func seedTapChargeSettleFixture(t *testing.T, ctx context.Context) tapChargeSettleFixture {

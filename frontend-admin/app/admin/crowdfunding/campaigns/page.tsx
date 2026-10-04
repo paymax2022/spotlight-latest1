@@ -10,11 +10,9 @@ import type { CfDirectoryPage, CfDirectoryFilter, CfDirectoryRow, CfCategoryConf
 
 // Every campaign, with its category, status, funding and backers — the surface
 // the console was missing. What existed was the REVIEW QUEUE
-// (GET /admin/campaigns = AdminListPending), which shows only campaigns awaiting
 // moderation, capped at 60, with no money on it at all. An operator could
 // approve a campaign but could not then answer "how much has it raised, and who
 // funded it".
-//
 // Actions here are the ones the backend already proves out — freeze/unfreeze and
 // the feature/verify flags. Arbitrary status writes are NOT offered: campaign
 // status transitions run through the guarded review decision endpoint

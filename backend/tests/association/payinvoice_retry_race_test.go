@@ -1,10 +1,8 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB reproduction: does PayInvoice recover from a retry after the ledger
 // debit succeeded but the bookkeeping transaction never committed (a crash,
 // or any failure between service.go's ledger.Debit call and tx.Commit)?
-//
 // PayInvoice posts the ledger debit BEFORE opening the bookkeeping tx that
 // inserts assoc_payments / flips the invoice to PAID. If the process dies in
 // that window, a retry with the SAME Idempotency-Key re-enters PayInvoice
@@ -16,13 +14,10 @@ package association_test
 // that is true, the invoice can never be paid again: every retry fails with
 // a duplicate-debit error while the invoice permanently sits at DUE, even
 // though the member's money was already, correctly, debited exactly once.
-//
 // Gated on TEST_DATABASE_URL alone — see live_db_integration_test.go's
 // bring-up note for this package.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/association/... -run LiveDB_PayInvoice_RetryAfterDebitButBeforeCommit -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

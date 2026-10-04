@@ -5,9 +5,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"strconv"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	keyError = "error"
+	keyData  = "data"
 )
 
 var (
@@ -166,7 +177,6 @@ func (s *Service) ScanQR(ctx context.Context, scannerID, eventID, qr string) (st
 	if organizer != scannerID {
 		return "", fmt.Errorf("connect: only the organiser may scan tickets")
 	}
-	// Resolve ticket + holder from QR within the event.
 	var ticketID, ownerID, status string
 	if err := s.db.QueryRow(ctx,
 		`SELECT id, owner_id, status FROM event_tickets WHERE qr_code=$1 AND event_id=$2`,
@@ -249,4 +259,149 @@ func (s *Service) ListContacts(ctx context.Context, ownerID, eventID string) ([]
 		out = append(out, ec)
 	}
 	return out, rows.Err()
+}
+
+type OptIn struct {
+	ID         string          `json:"id"`
+	EventID    string          `json:"event_id"`
+	UserID     string          `json:"user_id"`
+	OptedIn    bool            `json:"opted_in"`
+	Visibility json.RawMessage `json:"visibility"`
+	CheckedIn  bool            `json:"checked_in"`
+	CreatedAt  time.Time       `json:"created_at"`
+}
+
+// Attendee is a discovery card honouring the other party's opt-in privacy mask.
+type Attendee struct {
+	UserID    string `json:"user_id"`
+	CheckedIn bool   `json:"checked_in"`
+	// Masked fields are populated only where the attendee's visibility allows.
+	Name     string `json:"name,omitempty"`
+	Headline string `json:"headline,omitempty"`
+	Company  string `json:"company,omitempty"`
+}
+
+type EventContact struct {
+	ID        string    `json:"id"`
+	EventID   string    `json:"event_id"`
+	OwnerID   string    `json:"owner_id"`
+	ContactID string    `json:"contact_id"`
+	Note      string    `json:"note,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type OptInInput struct {
+	OptedIn    bool            `json:"opted_in"`
+	Visibility json.RawMessage `json:"visibility"`
+}
+
+type ScanInput struct {
+	QRCode string `json:"qr_code" binding:"required"` // event_tickets.qr_code
+}
+
+type SaveContactInput struct {
+	ContactID string `json:"contact_id" binding:"required"`
+	Note      string `json:"note"`
+}
+
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// OptIn — POST /api/v1/connect/events/:id/networking/opt-in.
+func (h *Handler) OptIn(c *gin.Context) {
+	var in OptInInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	o, err := h.svc.OptIn(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
+	if err != nil {
+		if errors.Is(err, ErrNoTicket) {
+			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: o})
+}
+
+// Attendees — GET /api/v1/connect/events/:id/attendees.
+func (h *Handler) Attendees(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	out, err := h.svc.Attendees(c.Request.Context(), ginutil.UserID(c), c.Param("id"), limit)
+	if err != nil {
+		if errors.Is(err, ErrNotOptedIn) {
+			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: out})
+}
+
+// CheckIn — POST /api/v1/connect/events/:id/checkin (self check-in).
+func (h *Handler) CheckIn(c *gin.Context) {
+	if err := h.svc.CheckInSelf(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
+		if errors.Is(err, ErrNoTicket) {
+			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"checked_in": true}})
+}
+
+// ScanQR — POST /api/v1/connect/events/:id/qr/scan (organiser scans a ticket QR).
+func (h *Handler) ScanQR(c *gin.Context) {
+	var in ScanInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	ownerID, err := h.svc.ScanQR(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in.QRCode)
+	if err != nil {
+		if errors.Is(err, ErrBadQR) {
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+			return
+		}
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: gin.H{"checked_in_user": ownerID}})
+}
+
+// SaveContact — POST /api/v1/connect/events/:id/contacts.
+func (h *Handler) SaveContact(c *gin.Context) {
+	var in SaveContactInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	ec, err := h.svc.SaveContact(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrSelfContact):
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		case errors.Is(err, ErrNotOptedIn):
+			c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		}
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{keyData: ec})
+}
+
+// ListContacts — GET /api/v1/connect/events/contacts?event_id=.
+func (h *Handler) ListContacts(c *gin.Context) {
+	out, err := h.svc.ListContacts(c.Request.Context(), ginutil.UserID(c), c.Query("event_id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }

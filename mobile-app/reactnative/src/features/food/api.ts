@@ -1,10 +1,5 @@
-// ── Restaurant & Delivery — API wrapper ──────────────────────────────────────
 // Typed data layer the food screens code against. Mirrors parcel.api.ts:
-// mock-flagged, shared axios `api` client, BASE = '/api/finance/restaurant',
-// Idempotency-Key on money mutations. Flip EXPO_PUBLIC_FOOD_USE_MOCK=false (or
 // EXPO_PUBLIC_RESTAURANT_USE_MOCK) once the Go endpoints are reachable.
-//
-// IRON RULES: all money is integer kobo; placing an order carries an
 // Idempotency-Key; price breakdowns come from the SERVER — never computed here.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -50,7 +45,6 @@ export const USE_MOCK =
 
 // Was '/api/v1/restaurant' — no such route exists on the Go backend, only
 // '/api/finance/restaurant' (see finance_routes.go's restGroup, which is also
-// what restaurantmerchant/api.ts already targets). Every live call here 404'd;
 // masked in local dev because USE_MOCK defaults to true, so a new restaurant
 // (created through the merchant flow, which IS wired to the real backend)
 // never showed up in customer discovery even after the is_open fix below.
@@ -64,8 +58,6 @@ const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
  * The API otherwise returns the camelCase Order shape; this only normalizes the
  * newer auto-dispatch fields (`dispatch_status`, `delivery_code`, `rider_id`).
  */
-
-// ─── Discovery ────────────────────────────────────────────────────────────────
 
 /** One page of discovery results, with the totals needed to keep paging. */
 export interface RestaurantPage {
@@ -148,7 +140,6 @@ export async function listRestaurants(params: RestaurantQuery = {}): Promise<Res
   // envelope — hands back that OBJECT rather than an array. mapRestaurants peels
   // the `restaurants` key, tolerating a bare array in case the handler is ever
   // flattened.
-  //
   // It also NORMALIZES each row. The rows were previously cast straight to
   // `Restaurant`, but the server sends neither `tags` nor `etaLabel` nor the icon
   // triple — those only existed in mock.ts. A cast is compile-time only, so the
@@ -216,7 +207,6 @@ export async function unlikeRestaurant(id: string): Promise<{ liked: boolean }> 
   return unwrap<{ liked: boolean }>(await api.delete(`${BASE}/${encodeURIComponent(id)}/like`));
 }
 
-// ─── Delivery quote ─────────────────────────────────────────────────────────
 /**
  * Distance/time-based delivery-fee quote for a picked drop-off coordinate.
  * The price breakdown is SERVER-authoritative on placeOrder; this only powers
@@ -245,7 +235,6 @@ export async function getDeliveryQuote(
   return unwrap<DeliveryQuote>(res);
 }
 
-// ─── Orders ───────────────────────────────────────────────────────────────────
 export async function getOrder(orderId: string): Promise<Order> {
   if (USE_MOCK) {
     await delay(220);
@@ -312,7 +301,6 @@ export async function placeOrder(req: PlaceOrderRequest): Promise<Order> {
   );
 }
 
-// ─── Paystack-funded checkout (no wallet, no KYC-tier gate) ────────────────
 // backend/internal/restaurant/paystackcheckout — a genuinely separate,
 // server-initiated Paystack rail (mirrors utility bills' airtime.tsx +
 // useGatewayCheckout pattern), NOT the wallet-top-up-then-spend trick
@@ -423,7 +411,6 @@ export async function cancelOrder(restaurantId: string, orderId: string): Promis
   );
 }
 
-// ─── Ratings ──────────────────────────────────────────────────────────────────
 export async function rateOrder(orderId: string, req: RateOrderRequest): Promise<void> {
   if (USE_MOCK) {
     await delay(500);
@@ -438,7 +425,6 @@ export async function rateOrder(orderId: string, req: RateOrderRequest): Promise
   });
 }
 
-// ─── Chat ─────────────────────────────────────────────────────────────────────
 export async function getMessages(orderId: string): Promise<ChatMessage[]> {
   if (USE_MOCK) {
     await delay(200);
@@ -501,9 +487,7 @@ export async function sendMessage(
   };
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // RIDER endpoints
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getRiderOffers(): Promise<RiderOffer[]> {
   if (USE_MOCK) {
     await delay(300);
@@ -624,8 +608,6 @@ export async function postRiderLocation(orderId: string, loc: LatLng): Promise<v
     lng: loc.lng,
   });
 }
-
-// ─── Cart Persistence ──────────────────────────────────────────────────────────
 
 export interface SavedCart {
   restaurantId: string | null;

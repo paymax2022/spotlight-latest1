@@ -11,7 +11,6 @@ import (
 // Service implements the academy trade domain: trade hub reads, guarded project
 // submission/review, skill assessments with credential issuance, and the mentor
 // directory + matching. No money path.
-//
 // The CredentialIssuer is INJECTED (the integration wires the credentials package to
 // it). A nil issuer falls back to a no-op stub so the package runs in dev.
 type Service struct {
@@ -33,8 +32,6 @@ var (
 	ErrInvalidInput        = errors.New("trade: invalid input")
 	ErrIdempotencyRequired = errors.New("trade: idempotency key required")
 )
-
-// ── Member reads ──────────────────────────────────────────────────────────────
 
 // GetTradeHub returns the learner's chosen trade track: every module with its ordered
 // lessons and projects. tradeTrack is required (the learner's selected trade).
@@ -111,8 +108,6 @@ func (s *Service) GetProject(ctx context.Context, id string) (*TradeProject, err
 	return s.repo.GetProject(ctx, id)
 }
 
-// ── Project submission & review ───────────────────────────────────────────────
-
 // SubmitProject opens a submission in 'submitted'. files are signed-URL refs only
 // (no blobs). The referenced project must exist.
 func (s *Service) SubmitProject(ctx context.Context, userID, projectID string, files []map[string]any) (*ProjectSubmission, error) {
@@ -144,8 +139,6 @@ func (s *Service) ListMySubmissions(ctx context.Context, userID string) ([]Proje
 	}
 	return s.repo.ListSubmissionsForUser(ctx, userID)
 }
-
-// ── Skill assessments ─────────────────────────────────────────────────────────
 
 // ListSkillAssessments returns active assessments for a trade track (or all).
 func (s *Service) ListSkillAssessments(ctx context.Context, tradeTrack string) ([]SkillAssessment, error) {
@@ -204,8 +197,6 @@ func (s *Service) TakeSkillAssessment(ctx context.Context, userID, assessmentID 
 	return res, nil
 }
 
-// ── Mentors ───────────────────────────────────────────────────────────────────
-
 // ListMentors returns active mentors, optionally filtered by trade track.
 func (s *Service) ListMentors(ctx context.Context, tradeTrack string) ([]Mentor, error) {
 	return s.repo.ListMentors(ctx, tradeTrack)
@@ -237,8 +228,6 @@ func (s *Service) CloseMatch(ctx context.Context, actorID, matchID string) (*Men
 	}
 	return s.repo.TransitionMatch(ctx, actorID, matchID, MatchClosed)
 }
-
-// ── Admin CRUD (academy.content) ──────────────────────────────────────────────
 
 func (s *Service) CreateModule(ctx context.Context, actor string, req CreateModuleRequest) (*TradeModule, error) {
 	if req.TradeTrack == "" || req.Title == "" {

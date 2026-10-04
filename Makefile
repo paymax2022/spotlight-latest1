@@ -1,5 +1,5 @@
 # Paymax / Spotlight — developer + CI entrypoints (ENVIRONMENT-AND-GOLIVE.md).
-# Adapted to the real repo: Go module at backend/ (go 1.25), npm frontends
+# Adapted to the real repo: Go module at backend/ (go 1.27), npm frontends
 # (frontend-web, frontend-admin), additive supabase migrations applied via psql.
 # All targets are runnable inside the dev container and mirrored 1:1 by CI.
 

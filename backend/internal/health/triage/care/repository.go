@@ -217,8 +217,6 @@ func (r *pgxRepo) log(actor, target, action, resourceType, resourceID string, ol
 	r.audit.LogAction(actor, target, action, "health.triage.care", resourceType, resourceID, oldV, newV, "", "", "info")
 }
 
-// ─── row scanning ────────────────────────────────────────────────────────────
-
 type scannable interface {
 	Scan(dest ...any) error
 }

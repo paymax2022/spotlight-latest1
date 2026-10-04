@@ -11,13 +11,10 @@ import (
 
 func testCfg() Config { return DefaultConfig() }
 
-// ── levelForXP ───────────────────────────────────────────────────────────────────
-
 func TestLevelForXP(t *testing.T) {
 	cfg := testCfg() // LevelBaseXP=100, LevelStepXP=150, MaxLevel=100
 
 	// threshold(L) to REACH level L+1 uses the curve in logic.go:
-	//   next(level) = level*Base + (level-1)*level/2 * Step
 	// level 1→2 boundary = 1*100 + 0 = 100
 	// level 2→3 boundary = 2*100 + 1*150 = 350
 	cases := []struct {
@@ -60,8 +57,6 @@ func TestXPForNextLevel(t *testing.T) {
 	}
 }
 
-// ── applyStreak ──────────────────────────────────────────────────────────────────
-
 func day(s string) time.Time {
 	t, _ := time.Parse("2006-01-02", s)
 	return t
@@ -102,8 +97,6 @@ func TestApplyStreak_GapNoFreezeResets(t *testing.T) {
 	}
 }
 
-// ── grantFreeze ──────────────────────────────────────────────────────────────────
-
 func TestGrantFreeze_CappedAtConfig(t *testing.T) {
 	cfg := Config{FreezeMaxStored: 3}
 	if got := grantFreeze(0, cfg); got != 1 {
@@ -113,8 +106,6 @@ func TestGrantFreeze_CappedAtConfig(t *testing.T) {
 		t.Errorf("grantFreeze at cap = %d want 3 (capped)", got)
 	}
 }
-
-// ── badgeEarned (idempotency-adjacent: deterministic, no auto-grant on empty) ─────
 
 func TestBadgeEarned_EmptyCriteriaNeverEarns(t *testing.T) {
 	if badgeEarned(map[string]any{}, BadgeStats{XP: 9999, Level: 99}) {

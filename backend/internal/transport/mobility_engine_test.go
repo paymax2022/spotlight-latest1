@@ -27,8 +27,6 @@ func testPricingCfg() *PricingConfig {
 	}
 }
 
-// ─── SystemFare ──────────────────────────────────────────────────────────────
-
 func TestSystemFare_Composition(t *testing.T) {
 	cfg := testPricingCfg()
 	// 10 km, 20 min: 50000 + 10*12000 + 20*2500 = 50000+120000+50000 = 220000.
@@ -56,8 +54,6 @@ func TestSystemFare_SurgeApplied(t *testing.T) {
 		t.Fatalf("surge fare %d should exceed base fare %d", surged, base)
 	}
 }
-
-// ─── offerBounds + range validation ──────────────────────────────────────────
 
 func TestOfferBounds(t *testing.T) {
 	cfg := testPricingCfg()
@@ -110,8 +106,6 @@ func TestValidateFareInRange(t *testing.T) {
 	}
 }
 
-// ─── Driver-profit floor (the core differentiator) ───────────────────────────
-
 func TestEnforceDriverProfitFloor(t *testing.T) {
 	cfg := testPricingCfg() // profit floor ₦1,200; floor enforced on driver NET
 	comm := &CommissionConfig{Tier: "standard", ProviderPct: 0.80, PlatformPct: 0.20}
@@ -145,8 +139,6 @@ func TestProfitFloor_LowerCommissionAllowsLowerFare(t *testing.T) {
 		t.Fatalf("low tier should allow 140000 (net 123200 >= 120000), got %v", err)
 	}
 }
-
-// ─── Trip state machine ──────────────────────────────────────────────────────
 
 func TestCanTransition_HappyPath(t *testing.T) {
 	path := []TripPhase{
@@ -196,8 +188,6 @@ func TestCanTransition_SafetyHoldFromActive(t *testing.T) {
 	}
 }
 
-// ─── Mock maps adapter ───────────────────────────────────────────────────────
-
 func TestMockMaps_RouteDeterministic(t *testing.T) {
 	m := NewMockMaps()
 	from := LatLng{Lat: 6.45, Lng: 3.39}
@@ -240,8 +230,6 @@ func TestMockMaps_GeocodeStable(t *testing.T) {
 		t.Error("empty address should error")
 	}
 }
-
-// ─── Commission split integrity ──────────────────────────────────────────────
 
 func TestCommissionSplitsSumToWhole(t *testing.T) {
 	cases := []CommissionConfig{

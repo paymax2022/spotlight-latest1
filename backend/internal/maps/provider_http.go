@@ -5,29 +5,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"strings"
 	"time"
+
+	"spotlight/backend/go-common/strutil"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // HTTPProvider — a REAL, config-driven maps provider behind a documented generic
 // JSON contract. It mirrors the invest module's provider_http.go pattern: the
 // same interfaces the mock satisfies (Geocoder / Router / Matrixer), so swapping
 // it in is a config change — never a business-logic change. Feature code (and the
 // transport pricing engine) keep depending only on MapService / MapsAdapter.
-//
 // Point it at:
 //   - a thin gateway/shim you control that fronts Google Distance Matrix /
 //     Directions / Geocoding, or Mapbox Directions / Matrix / Geocoding, mapping
 //     the partner response onto the contract below, OR
 //   - any service that already speaks this contract.
-//
 // The selection is config-driven: MAPS_PROVIDER=http + MAPS_BASE_URL (+ optional
 // MAPS_API_KEY). When unconfigured the deterministic MockProvider stays the
 // default, so dev/CI stay fully functional and offline.
-//
-// ── Units (IMPORTANT) ────────────────────────────────────────────────────────
+// Units (IMPORTANT)
 // The wire contract speaks SI base units so no provider-specific scaling leaks
 // in: distance in METRES, duration in SECONDS — exactly what Route.DistanceM /
 // Route.DurationS / MatrixCell.* carry. The transport pricing engine
@@ -35,14 +34,12 @@ import (
 // route.DurationS (seconds → minutes), so emitting metres+seconds here means the
 // fare math is correct with zero conversion at the call site. If a partner returns
 // kilometres or minutes, convert in the gateway/shim, not here.
-//
-// ── License/Source ───────────────────────────────────────────────────────────
+// License/Source
 // Results are tagged with a configurable Source (default SourceOpenStack) so the
 // cache + renderer guards behave coherently. Use SourceOpenStack for an OSM-based
 // gateway (Mapbox/OSRM/Geoapify-style, cacheable) and SourceGoogle for a Google
 // gateway (never cached, Google-basemap-only). Distance/route geometry itself is
 // not subject to the geocode cache, but the Source still travels for coherence.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // HTTPProviderConfig configures the real HTTP maps provider.
 type HTTPProviderConfig struct {
@@ -91,10 +88,7 @@ func NewHTTPProvider(cfg HTTPProviderConfig) *HTTPProvider {
 
 func (h *HTTPProvider) Name() string { return h.cfg.Name }
 
-// ── Geocoder ─────────────────────────────────────────────────────────────────
-
 // Geocode resolves an address to a coordinate.
-//
 // Expected GET {base}/geocode?address=... → 200
 //
 //	{ "lat":6.4541,"lng":3.3947,"address":"12 Marina, Lagos","plus_code":"6FR5C8R4+8Q" }
@@ -111,11 +105,10 @@ func (h *HTTPProvider) Geocode(ctx context.Context, address string) (GeoResult, 
 	if err := h.get(ctx, "/geocode?address="+queryEscape(address), &body); err != nil {
 		return GeoResult{}, err
 	}
-	return h.geoResult(body.Lat, body.Lng, firstNonEmpty(body.Address, address), body.PlusCode), nil
+	return h.geoResult(body.Lat, body.Lng, strutil.FirstNonEmpty(body.Address, address), body.PlusCode), nil
 }
 
 // ReverseGeocode resolves a coordinate to an address.
-//
 // Expected GET {base}/reverse?lat=..&lng=.. → 200
 //
 //	{ "lat":6.4541,"lng":3.3947,"address":"12 Marina, Lagos","plus_code":"..." }
@@ -149,10 +142,7 @@ func (h *HTTPProvider) geoResult(lat, lng float64, address, plusCode string) Geo
 	}
 }
 
-// ── Router ───────────────────────────────────────────────────────────────────
-
 // Route computes a single origin→destination route.
-//
 // Expected GET {base}/route?from_lat=..&from_lng=..&to_lat=..&to_lng=..&profile=driving → 200
 //
 //	{ "distance_m":4230,"duration_s":612,"polyline":"a~l~Fjk~uOwHJy@P" }
@@ -183,10 +173,7 @@ func (h *HTTPProvider) Route(ctx context.Context, origin, dest Point, opts Route
 	}, nil
 }
 
-// ── Matrixer ─────────────────────────────────────────────────────────────────
-
 // Matrix computes a many-to-many distance/ETA grid (dispatch).
-//
 // Expected POST {base}/matrix → 200
 //
 //	req:  { "origins":[{"lat":..,"lng":..}],"destinations":[{"lat":..,"lng":..}] }
@@ -231,8 +218,6 @@ func (h *HTTPProvider) Matrix(ctx context.Context, origins, dests []Point) (Matr
 	return Matrix{Rows: rows, Provider: h.cfg.Name, Source: h.cfg.Source}, nil
 }
 
-// ── Health ───────────────────────────────────────────────────────────────────
-
 // Healthy probes GET {base}/health and reports connectivity. Used by ops/readiness
 // checks to confirm the gateway is reachable before relying on the real provider.
 func (h *HTTPProvider) Healthy(ctx context.Context) (bool, string) {
@@ -251,8 +236,6 @@ func (h *HTTPProvider) Healthy(ctx context.Context) (bool, string) {
 	}
 	return true, "ok"
 }
-
-// ── HTTP plumbing ────────────────────────────────────────────────────────────
 
 func (h *HTTPProvider) auth(req *http.Request) {
 	if h.cfg.APIKey != "" {
@@ -320,13 +303,6 @@ func queryEscape(s string) string {
 	return b.String()
 }
 
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
-}
-
 // Compile-time assertions: the HTTP provider satisfies the same primitive roles
 // the mock does for geocode / route / matrix.
 var (
@@ -335,3 +311,78 @@ var (
 	_ Matrixer = (*HTTPProvider)(nil)
 	_ Named    = (*HTTPProvider)(nil)
 )
+
+// defaultHTTP is the shared client for all provider HTTP calls. Provider keys
+// are read server-side and attached here — they never reach the client.
+var defaultHTTP = &http.Client{Timeout: 8 * time.Second}
+
+// Retry policy for idempotent provider GETs. GETs are safe to retry, so a couple
+// of quick, jittered retries smooth over transient network blips and 5xx/429s
+// without user-visible failures. Non-idempotent calls do NOT go through here.
+const (
+	httpMaxAttempts = 3                      // 1 initial + 2 retries
+	httpRetryBase   = 150 * time.Millisecond // base backoff before jitter
+)
+
+// getJSON performs a GET and decodes a JSON body into dst. Transient failures
+// (network error, HTTP 429, or 5xx) are retried up to httpMaxAttempts with
+// exponential backoff + full jitter. The context deadline still bounds total time,
+// and the deterministic mock providers don't use this path, so offline dev is
+// unaffected.
+func getJSON(ctx context.Context, url string, dst any) error {
+	var lastErr error
+	for attempt := range httpMaxAttempts {
+		if attempt > 0 {
+			// Exponential base with full jitter: sleep in [0, base*2^(attempt-1)).
+			backoff := httpRetryBase * time.Duration(1<<(attempt-1))
+			jittered := time.Duration(rand.Int63n(int64(backoff) + 1))
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(jittered):
+			}
+		}
+		retryable, err := doGetJSON(ctx, url, dst)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !retryable {
+			return err // 4xx (except 429), decode error, bad request — don't retry
+		}
+	}
+	return lastErr
+}
+
+// doGetJSON performs a single GET+decode. It returns retryable=true for transient
+// failures (network error, HTTP 429, or 5xx) so the caller can back off and retry.
+func doGetJSON(ctx context.Context, url string, dst any) (bool, error) {
+	var err error
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "spotlight-mapservice/1.0")
+	resp, err := defaultHTTP.Do(req)
+	if err != nil {
+		return true, err // network/transport error — safe to retry an idempotent GET
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		httpErr := fmt.Errorf("maps: http %d from %s: %s", resp.StatusCode, redact(url), string(body))
+		transient := resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
+		return transient, httpErr
+	}
+	return false, json.NewDecoder(resp.Body).Decode(dst)
+}
+
+// redact hides query strings (which may carry API keys) from error messages/logs.
+func redact(url string) string {
+	if before, _, ok := strings.Cut(url, "?"); ok {
+		return before + "?<redacted>"
+	}
+	return url
+}

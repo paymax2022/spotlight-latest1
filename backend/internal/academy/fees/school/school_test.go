@@ -4,14 +4,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"spotlight/backend/go-common/ptr"
 )
 
 // These tests are PURE — no DB, no pgx. The pgx-backed Repository is replaced by an
 // in-memory fakeStore (mirroring edupay_test.go / schools_test.go isolation), so the
 // verification-tier guard, ownership fail-closed checks, and SF-10 export gate are all
 // exercised without a live DB.
-
-// ── in-memory fake Store ─────────────────────────────────────────────────────────
 
 type fakeStore struct {
 	schools map[string]*School
@@ -48,7 +48,7 @@ func (f *fakeStore) Get(_ context.Context, id string) (*School, error) {
 func (f *fakeStore) List(_ context.Context, ownerUserID string) ([]School, error) {
 	out := []School{}
 	for _, s := range f.schools {
-		if ownerUserID == "" || deref(s.OwnerUserID) == ownerUserID {
+		if ownerUserID == "" || ptr.ZeroIfNil(s.OwnerUserID) == ownerUserID {
 			out = append(out, *s)
 		}
 	}
@@ -108,8 +108,6 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
-// ── Verification-tier state machine: legal + illegal (pure) ──────────────────────
-
 func TestVerifyTransition_LegalMoves(t *testing.T) {
 	legal := [][2]VerificationTier{
 		{TierUnverified, TierPending},
@@ -148,8 +146,6 @@ func TestVerifyTransition_IllegalSkipsAndUnknown(t *testing.T) {
 		t.Errorf("expected ErrInvalidTier for unknown tier, got %v", err)
 	}
 }
-
-// ── Service.Verify: legal transition succeeds; invalid rejected ──────────────────
 
 func TestServiceVerify_LegalTransitionSucceeds(t *testing.T) {
 	fs := newFakeStore()
@@ -204,8 +200,6 @@ func TestServiceVerify_MissingActorRejected(t *testing.T) {
 	}
 }
 
-// ── Create sets owner = caller and requires a name ───────────────────────────────
-
 func TestServiceCreate_OwnerIsCaller(t *testing.T) {
 	svc := NewServiceWithStore(newFakeStore())
 	ctx := context.Background()
@@ -213,8 +207,8 @@ func TestServiceCreate_OwnerIsCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if deref(sch.OwnerUserID) != "owner-42" {
-		t.Fatalf("owner_user_id must be the caller, got %q", deref(sch.OwnerUserID))
+	if ptr.ZeroIfNil(sch.OwnerUserID) != "owner-42" {
+		t.Fatalf("owner_user_id must be the caller, got %q", ptr.ZeroIfNil(sch.OwnerUserID))
 	}
 }
 
@@ -227,8 +221,6 @@ func TestServiceCreate_RejectsEmptyName(t *testing.T) {
 		t.Fatalf("expected unauthenticated for empty owner, got %v", err)
 	}
 }
-
-// ── SF-10 export: verified-only + owner-only, fail-closed ────────────────────────
 
 func TestServiceExport_RequiresVerifiedAndOwner(t *testing.T) {
 	fs := newFakeStore()
@@ -260,5 +252,27 @@ func TestServiceExport_RequiresVerifiedAndOwner(t *testing.T) {
 	}
 	if exp.Tier != TierVerified {
 		t.Fatalf("export must report the verified tier, got %s", exp.Tier)
+	}
+}
+
+// A non-uuid id can never match a uuid PK — the repository answers ErrNotFound
+// instead of leaking 22P02 as a 500. Nil pool is safe: the guard runs first.
+func TestRepository_NonUUIDID_ReturnsNotFound(t *testing.T) {
+	repo := NewRepository(nil)
+	ctx := context.Background()
+	if _, err := repo.Get(ctx, "institutions"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Get(non-uuid): want ErrNotFound, got %v", err)
+	}
+	if _, err := repo.Update(ctx, "institutions", UpdateSchoolRequest{}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Update(non-uuid): want ErrNotFound, got %v", err)
+	}
+	if _, err := repo.SetVerificationTier(ctx, "institutions", TierPending, TierVerified); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetVerificationTier(non-uuid): want ErrNotFound, got %v", err)
+	}
+	if _, err := repo.ExportRoster(ctx, "institutions"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ExportRoster(non-uuid): want ErrNotFound, got %v", err)
+	}
+	if _, err := repo.ExportFees(ctx, "institutions"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ExportFees(non-uuid): want ErrNotFound, got %v", err)
 	}
 }

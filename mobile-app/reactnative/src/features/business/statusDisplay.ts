@@ -2,7 +2,7 @@
 // Kept tiny + framework-free so the hub, verify and register screens render
 // status chips identically.
 
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 import type { BusinessStatus } from '@/types/business';
 
 export type StatusTone = 'success' | 'pending' | 'danger' | 'neutral';

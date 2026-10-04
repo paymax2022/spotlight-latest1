@@ -229,8 +229,6 @@ func mapWebhookStatus(s string) provider.KycCheckStatus {
 	}
 }
 
-// --- small helpers ---
-
 // flatten turns a shallow JSON object into a string map for ExtractedFields.
 func flatten(raw json.RawMessage) map[string]string {
 	out := map[string]string{}

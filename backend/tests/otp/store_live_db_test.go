@@ -1,38 +1,28 @@
 package otp_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test: the OTP store's atomicity guarantees, against real SQL.
-//
 // WHY THIS EXISTS
-// ---------------
 // The unit suite drives an in-memory store whose Consume and IncrementAttempts
 // are correct BY CONSTRUCTION — they hold a mutex. That proves the service's
 // logic and proves nothing about the property the store was chosen for.
-//
 // Single use and the attempt ceiling are not statements about one request. They
 // are statements about concurrent ones:
-//
 //   - Two simultaneous submissions of the SAME CORRECT code must produce one
 //     success and one failure. If both succeed, the code is replayable and the
 //     mechanism is decorative. Nothing in a single-threaded test can see this.
 //   - Two simultaneous WRONG guesses must produce attempts 1 and 2, never 1 and
 //     1. A lost update there is how an attacker gets unlimited guesses at a
 //     six-digit code while the counter reads 5.
-//
 // Both are guaranteed here by SQL — one DELETE ... WHERE finds the row, and
 // UPDATE ... RETURNING serialises on it — and both are worth pinning, because
 // the tempting refactor (read, check in Go, then write) reintroduces the race
 // and passes every non-concurrent test.
-//
 // Gated on TEST_DATABASE_URL alone — never DATABASE_URL, which the root .env
 // points at the production pooler and this test INSERTs (see
 // scripts/ci/check-live-db-gate.sh).
-//
 // Bring-up:
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/otp/... -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -142,16 +132,13 @@ func TestLiveDB_ConsumeIsSingleUseUnderConcurrency(t *testing.T) {
 
 // TestLiveDB_ConsumeNeverSucceedsOnARowAnotherWriterTook is the test that
 // actually has teeth.
-//
 // The plain goroutine race above does NOT discriminate: measured against a
 // read-check-then-delete implementation of Consume it passed 20 runs out of 20,
 // because each racer finishes its read and its delete before the next one is
 // scheduled, so the window it is supposed to exercise never opens. A concurrency
 // test that cannot fail on the broken implementation is decoration.
-//
 // This one forces the window open with a row lock instead of hoping for a
 // scheduler interleaving:
-//
 //  1. A separate transaction takes SELECT ... FOR UPDATE on the row.
 //  2. The racers call Consume. Under MVCC a plain SELECT does not block, so a
 //     read-first implementation reads the row and sees it valid; every
@@ -163,7 +150,6 @@ func TestLiveDB_ConsumeIsSingleUseUnderConcurrency(t *testing.T) {
 // A Consume that reports success from rows-affected returns false for every
 // racer, always. One that decided on its earlier read returns TRUE for a code
 // that no longer exists, which is the same defect as accepting a replay.
-//
 // The assertion is therefore one a correct implementation can never fail,
 // independent of timing.
 func TestLiveDB_ConsumeNeverSucceedsOnARowAnotherWriterTook(t *testing.T) {
@@ -366,8 +352,6 @@ func TestLiveDB_DeleteExpiredSweeps(t *testing.T) {
 		t.Errorf("expired row survived the sweep (err=%v)", err)
 	}
 }
-
-// ── rate limiter ────────────────────────────────────────────────────────────
 
 func TestLiveDB_LimiterCountsAtomicallyAndRollsTheWindow(t *testing.T) {
 	ctx := context.Background()

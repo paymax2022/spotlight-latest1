@@ -1,4 +1,3 @@
-// ── AI Trading — module entry: Landing (pre-access) or Dashboard (post-access) ─
 // §16A #1 (landing / honest risk framing / fee model) + #16 (portfolio dashboard)
 // + #7 (KYC status). Access is decided ONLY by Module-KYC (decoupled from app
 // tiers). Paper mode: the fund holds cash and mints/redeems units — no live venue
@@ -9,10 +8,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, ShieldAlert, TrendingUp, Wallet, Info, Lock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useKyc, usePosition } from '@/features/aitrading/hooks';
 import { formatNaira, formatUnits, type TradingKycStatus } from '@/features/aitrading/api';
@@ -46,7 +45,6 @@ export default function AiTradingHome() {
   );
 }
 
-// ── Landing (no access yet) ────────────────────────────────────────────────────
 function Landing({ status, onRefresh, refreshing }: { status: TradingKycStatus; onRefresh: () => void; refreshing: boolean }) {
   const pending = status === 'SUBMITTED' || status === 'UNDER_REVIEW';
   return (
@@ -100,7 +98,6 @@ function Landing({ status, onRefresh, refreshing }: { status: TradingKycStatus; 
   );
 }
 
-// ── Dashboard (has access) ──────────────────────────────────────────────────────
 function Dashboard() {
   const pos = usePosition();
   const p = pos.data;
@@ -143,7 +140,6 @@ function Dashboard() {
   );
 }
 
-// ── bits ───────────────────────────────────────────────────────────────────────
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return <View style={styles.section}><Text style={styles.sectionTitle}>{title}</Text><View style={styles.card}>{children}</View></View>;
 }

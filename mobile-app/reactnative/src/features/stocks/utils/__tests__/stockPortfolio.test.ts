@@ -1,7 +1,5 @@
 // Pure-logic unit tests for stocks portfolio aggregation (money-path).
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs \
 //        --test "src/features/stocks/utils/__tests__/*.test.ts"
-//
 // BUG 2 (mixed-currency total): positions can be priced in NGN (NGX) or USD (US
 // stocks). Summing marketValue.amount across currencies with no FX conversion
 // adds kobo to cents and badly understates the portfolio. Every value must be
@@ -14,7 +12,6 @@ import { aggregatePortfolio, convertMinor } from '../stockFormatters.ts';
 import { midRate } from '../../../fx/utils/fxFormatters.ts';
 import type { StockPosition } from '../../types/stocks.types.ts';
 
-// ── Fixtures (mirror the UAT holdings: 2 NGN + 1 USD) ──────────────────────────
 function pos(over: Partial<StockPosition>): StockPosition {
   return {
     assetId: 'x', symbol: 'X', name: 'X', exchange: 'NGX', iconColor: '#000',
@@ -36,8 +33,6 @@ const usd1 = pos({ symbol: 'AAPL', exchange: 'NASDAQ', marketValue: { amount: 41
 
 const positions = [ngn1, ngn2, usd1];
 const RATE = midRate('USD', 'NGN'); // NGN per USD
-
-// ── convertMinor ────────────────────────────────────────────────────────────────
 
 test('convertMinor: same-currency is a passthrough', () => {
   assert.equal(convertMinor({ amount: 5_826_000, currency: 'NGN' }, 'NGN'), 5_826_000);

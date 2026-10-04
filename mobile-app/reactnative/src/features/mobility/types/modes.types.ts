@@ -1,7 +1,5 @@
-// ── Paymax Mobility — Multi-mode types ───────────────────────────────────────
 // Types for the 5 new mobility modes: parcel · bus · towing · movers · car-hire.
 // Mirrors docs/prd/transportation/BUILD-CONTRACT-MODES.md payloads.
-//
 // IRON RULES: all money is integer minor units (kobo). Never floats for money.
 // Fares/deposits/bids are server-computed — the client only *displays* them.
 
@@ -10,9 +8,7 @@ import type { Kobo, Place } from './mobility.types';
 // Re-exported so mode screens can import the shared error helpers from one place.
 export type { Kobo, Place } from './mobility.types';
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PARCEL DELIVERY
-// ═══════════════════════════════════════════════════════════════════════════════
 export type ParcelCategory = 'documents' | 'electronics' | 'food' | 'clothing' | 'fragile' | 'other';
 export type ParcelSize = 'small' | 'medium' | 'large';
 export type ParcelSpeed = 'standard' | 'express' | 'same_day';
@@ -110,9 +106,7 @@ export interface CourierParcelRequest {
   expiresAt: string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // BUS BOOKING
-// ═══════════════════════════════════════════════════════════════════════════════
 export type BusTicketPhase = 'booked' | 'issued' | 'boarding' | 'boarded' | 'completed' | 'rescheduled' | 'cancelled' | 'refunded';
 
 export interface BusRoute {
@@ -180,9 +174,7 @@ export interface BusTicket {
   createdAt: string;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // TOWING
-// ═══════════════════════════════════════════════════════════════════════════════
 export type TowingServiceType = 'flatbed' | 'wheel_lift' | 'heavy_duty' | 'roadside';
 export type TowingIssue = 'breakdown' | 'accident' | 'flat_tyre' | 'no_fuel' | 'battery' | 'locked_out';
 export type TowingVehicleType = 'sedan' | 'suv' | 'van' | 'truck' | 'motorcycle';
@@ -253,9 +245,7 @@ export interface TowingJob {
   rated: boolean;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // MOVERS
-// ═══════════════════════════════════════════════════════════════════════════════
 export type TruckSize = 'pickup' | 'small_van' | 'box_truck' | 'large_truck';
 
 export type MoverPhase =
@@ -307,9 +297,7 @@ export interface MoverJob {
   rated: boolean;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // CAR HIRE
-// ═══════════════════════════════════════════════════════════════════════════════
 export type HireType = 'hourly' | 'daily' | 'airport' | 'event';
 export type VehicleClass = 'economy' | 'executive' | 'suv' | 'luxury' | 'van';
 

@@ -8,6 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/escrow"
 	"spotlight/backend/internal/finance/commission"
@@ -29,25 +31,15 @@ import (
 // RegisterHealthVet wires HEALTH-BUILD Phase-3 Veterinary onto the finance member
 // group + a health vet admin group. It is the ONLY wiring point for the vet
 // vertical and edits no existing file. All reuse is by import:
-//
 //   - escrow.Service          — HL-9 payment HELD→RELEASE→REFUND (idempotent).
-//
 //   - transport.Service       — home-visit dispatch (last-mile/MapService rail).
-//
 //   - healthscheduling.Service — appointment state machine (subject_type=PET).
-//
 //   - healthconsult.Service   — tele-consult engine + SOAP ClinicalNote.
-//
 //   - healthrx.Service        — e-prescription engine → pharmacy handoff (HL-3).
-//
 //   - healthrecords.Service   — HL-8 pet records vault (subject_type=PET).
-//
 //   - scheduler.Service       — vaccination reminders.
-//
 //   - finance/kyc.Service     — HL-10 payout KYC gating.
-//
 //   - member: /api/finance/health/vet/*  (member-authenticated; user_id mirrored)
-//
 //   - admin : /api/health/vet/admin/*    (per-route RBAC health.vet.*)
 //
 // Gated by FeatureHealthVetEnabled at the orchestrator. Auditing is nil-safe.
@@ -109,7 +101,6 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		return middleware.RequirePermission(rbac, permission)
 	}
 
-	// --- Member routes (/api/finance/health/vet) — HEALTH-BUILD §6 Veterinary ---
 	vg := member.Group("/health/vet")
 	vg.POST("/pets", h.CreatePet)                            // owner; seeds PET vault record (HL-8)
 	vg.GET("/pets", h.ListPets)                              // owner reads own pets (HL-8)
@@ -127,11 +118,10 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	vg.POST("/consults/:id/complete", h.CompleteConsult)     // SOAP + e-Rx/lab handoff; RELEASE (HL-9)
 	vg.POST("/sos", h.EmergencySOS)                          // HL-11: nearest in-person vet + disclaimer
 
-	// --- Admin routes (/api/health/vet/admin, RBAC health.vet.*) ---
 	ag := admin.Group("")
 	// Identical bug to PHARMACY-006/LAB-003: `admin` here is adminGroupTop5
 	// (top5_admin_group.go), which applies ONLY requireUserID() — a guard
-	// that checks c.GetString("user_id") with nothing upstream of it ever
+	// that checks ginutil.UserID(c) with nothing upstream of it ever
 	// setting that context key. Every vet admin route (old and new) 401'd
 	// "authentication required" regardless of token validity. Fixed the same
 	// way pharmacy/lab were: the caller (finance_routes.go) now passes a
@@ -157,15 +147,13 @@ func isHealthVetAdmin(c *gin.Context, rbac services.RBACService) bool {
 	if rbac == nil {
 		return false
 	}
-	uid := c.GetString("user_id")
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		return false
 	}
 	ok, err := rbac.CheckPermission(uid, "health.vet.appointments", "global", "")
 	return err == nil && ok
 }
-
-// ─── Adapters: bridge the reused rails to the package's narrow interfaces ─────
 
 type vetEscrowAdapter struct{ e *escrow.Service }
 

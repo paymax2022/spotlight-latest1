@@ -1,4 +1,3 @@
-// ── Registration — file picker helper ────────────────────────────────────────
 // Wraps expo-image-picker (photos / video) and expo-document-picker (any doc)
 // so the field renderer stays declarative. Returns a PickedUpload ready for the
 // multipart /api/registration/uploads endpoint, or null on cancel/denied.

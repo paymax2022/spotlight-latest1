@@ -1,4 +1,3 @@
-// ── Admin — MapService v2 cost/coverage dashboard + OSM contribution review ─────
 // JSON field names mirror the Go backend (…/api/maps/admin) exactly. MapService v2
 // is a Nigeria-tuned geocoding layer that deflects paid Google/HERE calls using a
 // private gazetteer + cache + prediction, escalates by coverage tier + confidence,

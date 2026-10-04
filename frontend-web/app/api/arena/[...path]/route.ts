@@ -7,11 +7,9 @@ import { handleApiError } from '@/src/lib/api/responses';
 // (FEATURE_ARENA_ENABLED), scoped RBAC, idempotency, the Merit firewall (NDC-1),
 // and all authZ. The Idempotency-Key header is forwarded verbatim by
 // proxyToGoBackend — required for the money-path Support and Play-Along POSTs.
-//
 // Auth boundary: member + admin calls require a user (requireRequestUser). But a
 // handful of GETs are PUBLIC (competition catalogue/detail, Merit leaderboard,
 // pot transparency, credential verify) and must work WITHOUT a bearer token, so
-// we forward those unauthenticated. Everything else is authed at the edge; Go
 // still re-checks authZ.
 
 // Returns true when the (method, subpath) pair is a public, no-auth Arena GET.

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { CODE_STATUS_LABELS, STATUS_STYLE } from '../constants/visitor.constants';
 import type { AccessCodeStatus } from '../types/visitor.types';
 

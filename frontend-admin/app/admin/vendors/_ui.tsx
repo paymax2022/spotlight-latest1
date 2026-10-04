@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 
 // Permission keys for the vendor-oversight module. The estate vendor endpoints
-// are gated estate-object-side (assertEstateAdmin); the closest admin-console
 // capability is estate.manage (the estate section uses it, see AdminSidebar
 // '/admin/estate/vendors'). Reuse it so a single estate-admin grant lights up
 // both the estate workspace and this cross-estate oversight view.

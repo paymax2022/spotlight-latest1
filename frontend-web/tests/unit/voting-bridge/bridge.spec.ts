@@ -23,11 +23,15 @@ vi.mock('@/src/server/voting-bridge/free-vote-atomic', () => ({
   castFreeVoteAtomic: vi.fn(),
 }));
 
-vi.mock('@/src/server/voting-bridge/idempotency', () => ({
-  checkAndClaimIdempotencyKey: vi.fn(),
-  storeIdempotencyResult: vi.fn(),
-  releaseIdempotencyKey: vi.fn(),
-}));
+vi.mock('@/src/server/voting-bridge/idempotency', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/src/server/voting-bridge/idempotency')>();
+  return {
+    ...real, // real boundClaimKey — the bridge's key binding is under test
+    checkAndClaimIdempotencyKey: vi.fn(),
+    storeIdempotencyResult: vi.fn(),
+    releaseIdempotencyKey: vi.fn(),
+  };
+});
 
 vi.mock('@/src/server/voting-bridge/kyc-gate', () => ({
   assertKycTier: vi.fn(),
@@ -45,6 +49,7 @@ vi.mock('@/src/server/voting/free-vote.service', () => ({
 import { bridgedCastFreeVote } from '@/src/server/voting-bridge/bridge';
 import { castFreeVoteAtomic } from '@/src/server/voting-bridge/free-vote-atomic';
 import {
+  boundClaimKey,
   checkAndClaimIdempotencyKey,
   storeIdempotencyResult,
   releaseIdempotencyKey,
@@ -55,6 +60,12 @@ import { castFreeVote } from '@/src/server/voting/free-vote.service';
 
 const REQ = { contestId: 'contest-001', contestantId: 'contestant-001' };
 const CTX = { ipAddress: '1.2.3.4', userAgent: 'agent', deviceFingerprint: 'fp-1' };
+
+/** The claim key bridgedCastFreeVote should derive for REQ + a given voter. */
+const bound = (userId: string | undefined, clientKey: string, fp = {
+  contestId: 'contest-001', contestantId: 'contestant-001',
+  voteQuantity: 1, voter: '', device: 'fp-1',
+}) => boundClaimKey('free-vote', userId ?? 'anon', clientKey, fp);
 
 /** What castFreeVoteAtomic resolves — CastFreeVoteResponse. */
 const CLAIM = {
@@ -114,7 +125,6 @@ describe('bridgedCastFreeVote — bridge off', () => {
 
     const result = await bridgedCastFreeVote(REQ, 'user-001', 'key-000', CTX);
 
-    // The legacy service throws; the bridge returns. Without the mapping this
     // would escape as an unhandled rejection and the route would answer 500.
     expect(result.success).toBe(false);
     expect(result.error).toBe('Free voting is not enabled');
@@ -150,7 +160,7 @@ describe('bridgedCastFreeVote — bridge on', () => {
 
     expect(assertKycTier).toHaveBeenCalledWith('user-001', 'contestant-001');
     expect(castFreeVoteAtomic).toHaveBeenCalledOnce();
-    expect(storeIdempotencyResult).toHaveBeenCalledWith('key-002', expect.objectContaining({
+    expect(storeIdempotencyResult).toHaveBeenCalledWith(bound('user-001', 'key-002'), expect.objectContaining({
       success: true,
       votesAdded: 1,
       freeVotesRemaining: 4,
@@ -188,6 +198,35 @@ describe('bridgedCastFreeVote — bridge on', () => {
     expect(storeIdempotencyResult).not.toHaveBeenCalled();
     // Without this release the claim row would strand and every retry of this
     // key would be refused 409 forever.
-    expect(releaseIdempotencyKey).toHaveBeenCalledWith('key-005');
+    expect(releaseIdempotencyKey).toHaveBeenCalledWith(bound('user-001', 'key-005'));
+  });
+
+  it('binds the claim to the voter — the same raw key never crosses users', async () => {
+    await bridgedCastFreeVote(REQ, 'user-001', 'key-x', CTX);
+    await bridgedCastFreeVote(REQ, 'user-002', 'key-x', CTX);
+    await bridgedCastFreeVote(REQ, undefined, 'key-x', CTX);
+
+    const keys = vi.mocked(checkAndClaimIdempotencyKey).mock.calls.map((c) => c[0]);
+    expect(keys[0]).toBe(bound('user-001', 'key-x'));
+    expect(keys[1]).toBe(bound('user-002', 'key-x'));
+    expect(keys[2]).toBe(bound(undefined, 'key-x'));
+    expect(new Set(keys).size).toBe(3);
+    // Each voter's vote actually executes — nobody absorbs another's claim.
+    expect(castFreeVoteAtomic).toHaveBeenCalledTimes(3);
+  });
+
+  it('binds the claim to the vote shape — a changed contestant is a new vote', async () => {
+    await bridgedCastFreeVote(REQ, 'user-001', 'key-y', CTX);
+    await bridgedCastFreeVote(
+      { ...REQ, contestantId: 'contestant-002' }, 'user-001', 'key-y', CTX,
+    );
+
+    const keys = vi.mocked(checkAndClaimIdempotencyKey).mock.calls.map((c) => c[0]);
+    expect(keys[1]).toBe(bound('user-001', 'key-y', {
+      contestId: 'contest-001', contestantId: 'contestant-002',
+      voteQuantity: 1, voter: '', device: 'fp-1',
+    }));
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(castFreeVoteAtomic).toHaveBeenCalledTimes(2);
   });
 });

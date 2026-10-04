@@ -1,12 +1,9 @@
-// ── Paymax Health — Pharmacy symptom-based medication search (addon) ─────────
 // Typed client for POST /pharmacy/symptom-search + GET /pharmacy/classes/{id}/skus
 // (contracts/openapi.yaml is the source of truth for these shapes).
-//
 // POSITIONING (PRD §0): symptom-guided product DISCOVERY with professional
 // review — NOT diagnosis, NOT prescribing. Copy discipline (PRD §5.6): always
 // "options for your symptoms", never "treatment for your condition". No dosing
 // advice beyond "use as directed on pack / by your pharmacist".
-//
 // Mock-first (shared USE_MOCK flag), mirroring pharmacy/api.ts. Money in kobo.
 
 import { api } from '@/api/client';
@@ -16,13 +13,11 @@ import { USE_MOCK, HEALTH_API_BASE } from '../constants/health.constants';
 const PHARMACY_API = `${HEALTH_API_BASE}/pharmacy`;
 const delay = (ms = 350) => new Promise((r) => setTimeout(r, ms));
 
-// ── Feature flag ──────────────────────────────────────────────────────────────
 // Follows the EXPO_PUBLIC_HEALTH_* convention (see PHARMACY_BNPL_ENABLED).
 // Server-side twin: FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED.
 export const PHARMACY_SYMPTOM_SEARCH_ENABLED =
   (process.env.EXPO_PUBLIC_HEALTH_PHARMACY_SYMPTOM_SEARCH ?? 'true') === 'true';
 
-// ── Types (mirror openapi.yaml SymptomSearchResult & friends) ────────────────
 export type TriageTier = 'T1' | 'T2' | 'T3' | 'T4';
 
 export type SymptomWho = 'ADULT' | 'CHILD_6_12' | 'CHILD_UNDER_6' | 'PREGNANT_OR_BF';
@@ -59,7 +54,6 @@ export interface SymptomClassGroup {
 }
 
 // NOTE: UPLOAD_RX is NOT in the openapi enum (PHARMACIST_CHAT | TELEHEALTH_CONSULT |
-// EMERGENCY_GUIDANCE | NEAREST_FACILITY) — kept here for forward-compat; unknown
 // types are rendered as plain links routed by `target`.
 export type EscalationActionType =
   | 'PHARMACIST_CHAT'
@@ -118,7 +112,6 @@ export interface PharmacySkuOption {
   max_qty_per_window: number | null;
 }
 
-// ── Copy (PRD §5.6 — versioned, "options" never "treatment") ─────────────────
 export const SYMPTOM_DISCLAIMER_COPY =
   'These are general options for your symptoms, not a diagnosis.';
 export const SYMPTOM_PHARMACIST_LINK_COPY = 'Speak to a pharmacist free — tap here.';
@@ -148,7 +141,6 @@ export const DURATION_OPTIONS: { value: SymptomDuration; label: string }[] = [
   { value: 'GT_3D', label: 'More than 3 days' },
 ];
 
-// ── "No term matched" (contract: 404, logged server-side for curation) ───────
 export class SymptomNotMatchedError extends Error {
   readonly code = 'SYMPTOM_NOT_MATCHED';
   constructor() {
@@ -162,7 +154,6 @@ export function isNotMatched(err: unknown): boolean {
   return status === 404;
 }
 
-// ── Mock taxonomy (term → concept → cluster → class), PRD §4 shape ────────────
 type Concept =
   | 'headache'
   | 'fever'
@@ -334,10 +325,8 @@ function mockResolve(input: SymptomSearchInput): SymptomSearchResult {
   };
 }
 
-// ── Device id (X-Device-Id) ───────────────────────────────────────────────────
 // Stable per-install uuid for the backend's per-user+device symptom-search rate
 // limit (the handler only ever stores a salted SHA-256 of it, never the raw id).
-// Persisted via secure storage; sent ONLY on symptom-search requests. Failures
 // degrade to no header — the backend then meters by client IP instead.
 const DEVICE_ID_KEY = 'symptom_search_device_id';
 
@@ -353,8 +342,6 @@ async function getDeviceId(): Promise<string | null> {
     return null;
   }
 }
-
-// ── Client ────────────────────────────────────────────────────────────────────
 
 /**
  * POST /pharmacy/symptom-search — resolves terms to exactly one triage tier.

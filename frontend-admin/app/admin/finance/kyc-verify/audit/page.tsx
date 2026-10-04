@@ -1,7 +1,6 @@
 'use client';
 
 // AK13 — Audit & consent log (SCAFFOLD).
-// RBAC: finance.admin.kyc (role: Compliance). Immutable trail of checks, admin
 // decisions, EVIDENCE ACCESS (from AK2's logged fetches), and consent grants.
 // Shell: table + empty state. Backend endpoint TBD (e.g. GET /kyc/audit-log).
 

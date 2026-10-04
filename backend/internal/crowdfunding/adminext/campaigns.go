@@ -2,14 +2,12 @@ package adminext
 
 // Campaign directory — the "show me every campaign" surface the admin console
 // never had.
-//
 // What existed before: GET /admin/campaigns is AdminListPending, which returns
 // campaigns awaiting review (default PENDING_REVIEW), capped at 60, with no
 // pagination, no funding figures and no backer counts. Every other admin route
 // addresses ONE campaign by id (flags, freeze, decision). So an operator could
 // moderate the queue but could not answer "what campaigns exist, who funded
 // them, and how much have they raised".
-//
 // These routes are additive and live on their own paths. The list is deliberately
 // NOT mounted at /campaigns: that path already belongs to the review queue, and
 // Gin cannot register a static sibling next to the existing /campaigns/:id
@@ -24,9 +22,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/go-common/timeutil"
 )
 
-// ── models ──────────────────────────────────────────────────────────────────
+const keyError = "error"
 
 // CampaignDirectoryRow is one line of the directory: the campaign, who owns it,
 // how it is classified, and what it has actually raised.
@@ -104,7 +105,6 @@ type StatusBreakdown struct {
 }
 
 // CampaignFunding is the money rollup for one campaign.
-//
 // Refunds and settlements are ABSENT on purpose. cf_refunds has no campaign_id —
 // it carries a denormalised campaign_title — and cf_settlements is platform-wide
 // with no campaign link either. Joining refunds on a title would be a guess that
@@ -144,11 +144,8 @@ type CampaignDirectoryFilter struct {
 	Limit        int
 }
 
-// ── service ─────────────────────────────────────────────────────────────────
-
 // ListCampaignDirectory returns one page of campaigns with their funding
 // aggregates.
-//
 // The aggregates are computed in a LATERAL subquery rather than a GROUP BY over
 // a join: a campaign with no contributions must still appear (a LEFT JOIN with
 // GROUP BY would too, but the LATERAL keeps the row shape flat and lets the
@@ -202,7 +199,7 @@ func (s *Service) ListCampaignDirectory(ctx context.Context, f CampaignDirectory
 	case "frozen":
 		// Two mechanisms exist and both mean frozen. SetCampaignFreeze writes
 		// review_status='FROZEN' (adminext/service.go) while the public discovery
-		// query gates on paused_at (query.go, migration 20270112000000). Checking
+		// query gates on paused_at (service_discovery.go, migration 20270112000000). Checking
 		// only paused_at would have shown every admin-frozen campaign as live.
 		where = append(where, "(c.review_status = 'FROZEN' OR c.paused_at IS NOT NULL)")
 	}
@@ -266,10 +263,10 @@ func (s *Service) ListCampaignDirectory(ctx context.Context, f CampaignDirectory
 			return CampaignDirectoryPage{}, err
 		}
 		if deadline != nil {
-			r.Deadline = rfc3339(*deadline)
+			r.Deadline = timeutil.RFC3339(*deadline)
 		}
 		if createdAt != nil {
-			r.CreatedAt = rfc3339(*createdAt)
+			r.CreatedAt = timeutil.RFC3339(*createdAt)
 		}
 		if r.GoalKobo > 0 {
 			r.PercentOfGoal = float64(r.RaisedKobo) / float64(r.GoalKobo) * 100
@@ -315,7 +312,7 @@ func (s *Service) ListCampaignBackers(ctx context.Context, campaignID string, pa
 			&b.ContributorEmail, &b.AmountKobo, &b.Status, &createdAt, &total); err != nil {
 			return CampaignBackersPage{}, err
 		}
-		b.CreatedAt = rfc3339(createdAt)
+		b.CreatedAt = timeutil.RFC3339(createdAt)
 		out.Total = total
 		out.Backers = append(out.Backers, b)
 	}
@@ -355,10 +352,10 @@ func (s *Service) CampaignFundingRollup(ctx context.Context, campaignID string) 
 		f.AverageContributionKobo = f.RaisedKobo / int64(f.ContributionCount)
 	}
 	if first != nil {
-		f.FirstContributionAt = rfc3339(*first)
+		f.FirstContributionAt = timeutil.RFC3339(*first)
 	}
 	if last != nil {
-		f.LastContributionAt = rfc3339(*last)
+		f.LastContributionAt = timeutil.RFC3339(*last)
 	}
 
 	rows, err := s.db.Query(ctx, `
@@ -401,8 +398,6 @@ func (s *Service) CampaignFundingRollup(ctx context.Context, campaignID string) 
 	return f, nil
 }
 
-// ── handlers ────────────────────────────────────────────────────────────────
-
 func atoiOr(s string, def int) int {
 	if s == "" {
 		return def
@@ -428,7 +423,7 @@ func (h *Handler) CampaignDirectory(c *gin.Context) {
 	}
 	out, err := h.svc.ListCampaignDirectory(c.Request.Context(), f)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, out)
@@ -439,7 +434,7 @@ func (h *Handler) CampaignBackers(c *gin.Context) {
 	out, err := h.svc.ListCampaignBackers(c.Request.Context(), c.Param("id"),
 		atoiOr(c.Query("page"), 1), atoiOr(c.Query("limit"), 50))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, out)
@@ -449,7 +444,7 @@ func (h *Handler) CampaignBackers(c *gin.Context) {
 func (h *Handler) CampaignFundingHandler(c *gin.Context) {
 	out, err := h.svc.CampaignFundingRollup(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, out)

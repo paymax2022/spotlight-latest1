@@ -1,5 +1,4 @@
 // Why the learning area is closed, in words a learner can act on.
-//
 // Kept in one place because the curriculum screen and the assignments screen must
 // never give different explanations for the same server reason.
 import type { LearningLockReason } from './types';

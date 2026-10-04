@@ -1,14 +1,10 @@
 package healthvet
 
-// Live-DB regression for the patient appointment-history read the mobile Vet
-// module calls (getAppointments()) but which had no backend route at all
-// until now:
+// Live-DB coverage for the patient appointment-history read the mobile Vet
+// module calls (getAppointments()):
 //   GET /health/vet/appointments  (patient's own appointment history, ListAppointmentsForPatient)
-//
-// Previously 404ed unconditionally — this pins that the service method behind
-// the new route actually returns real rows, correctly scoped.
-//
-// Skips unless TEST_DATABASE_URL is set.
+// Pins that the service method behind the route returns real rows, correctly
+// scoped. Skips unless TEST_DATABASE_URL is set.
 
 import (
 	"context"

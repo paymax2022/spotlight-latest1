@@ -9,10 +9,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/jsonx"
+	"spotlight/backend/go-common/strutil"
 )
 
-// ─── Bus PROVIDER MARKETPLACE ────────────────────────────────────────────────
-//
 // Interstate (state→state) bus marketplace layered additively over the existing
 // admin bus catalog. A "provider" is the current user's bus_providers row
 // (owner_user_id = user_id). Providers self-register, publish interstate routes
@@ -20,11 +22,8 @@ import (
 // departures. Customers search by state pair / provider and book seats; the
 // booking money-path (BookBusTicket) settles the ROUTE's provider owner when a
 // provider_id is set, else the legacy operator_id.
-//
 // Ownership guard: every provider mutation resolves the caller's provider row via
 // owner_user_id and rejects (403) if the target route/provider is not theirs.
-
-// ─── Request bodies (snake_case) ─────────────────────────────────────────────
 
 // BusProviderRegisterRequest is POST /bus/provider/register.
 type BusProviderRegisterRequest struct {
@@ -73,8 +72,6 @@ type BusProviderScheduleRequest struct {
 	FareKobo      int64  `json:"fare_kobo" binding:"required,min=0"`
 }
 
-// ─── Provider identity / ownership ───────────────────────────────────────────
-
 // providerForUser resolves the caller's provider row id. Returns a 403 when the
 // caller is not a provider — this is the ownership gate for all provider routes.
 func (s *Service) providerForUser(ctx context.Context, userID string) (string, error) {
@@ -100,7 +97,7 @@ func (s *Service) RegisterBusProvider(ctx context.Context, userID string, req Bu
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
 	if _, err := s.db.Exec(ctx, q,
 		id, userID, req.BusinessName, slug, req.ContactPhone,
-		nullStr(req.ContactEmail), nullStr(req.BaseState), nullStr(req.Description),
+		dbutil.NullStr(req.ContactEmail), dbutil.NullStr(req.BaseState), dbutil.NullStr(req.Description),
 	); err != nil {
 		return nil, fmt.Errorf("transport: create bus provider: %w", err)
 	}
@@ -185,8 +182,6 @@ func (s *Service) UpdateMyBusProvider(ctx context.Context, userID string, req Bu
 	return s.busProviderRow(ctx, providerID)
 }
 
-// ─── Provider routes ─────────────────────────────────────────────────────────
-
 // CreateProviderRoute inserts an interstate route owned by the caller's provider.
 // Rejects from_state===to_state (interstate-only). Legacy NOT NULL columns
 // origin_terminal/dest_terminal are populated from city (or state) so the shared
@@ -204,9 +199,9 @@ func (s *Service) CreateProviderRoute(ctx context.Context, userID string, req Bu
 		category = "standard"
 	}
 	// Legacy NOT NULL terminals: prefer city, fall back to state.
-	origin := firstNonEmpty(req.FromCity, req.FromState)
-	dest := firstNonEmpty(req.ToCity, req.ToState)
-	amenities, err := marshalAmenities(req.Amenities)
+	origin := strutil.FirstNonBlank(req.FromCity, req.FromState)
+	dest := strutil.FirstNonBlank(req.ToCity, req.ToState)
+	amenities, err := jsonx.MarshalArray(req.Amenities)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +213,7 @@ func (s *Service) CreateProviderRoute(ctx context.Context, userID string, req Bu
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,TRUE,'active')`
 	if _, err := s.db.Exec(ctx, q,
 		id, userID, providerID, origin, dest,
-		req.FromState, req.ToState, nullStr(req.FromCity), nullStr(req.ToCity),
+		req.FromState, req.ToState, dbutil.NullStr(req.FromCity), dbutil.NullStr(req.ToCity),
 		category, req.BaseFareKobo, amenities,
 	); err != nil {
 		return nil, fmt.Errorf("transport: create provider route: %w", err)
@@ -239,7 +234,7 @@ func (s *Service) UpdateProviderRoute(ctx context.Context, userID, routeID strin
 	}
 	var amenities any
 	if req.Amenities != nil {
-		m, err := marshalAmenities(req.Amenities)
+		m, err := jsonx.MarshalArray(req.Amenities)
 		if err != nil {
 			return nil, err
 		}
@@ -323,7 +318,7 @@ func (s *Service) ProviderBookings(ctx context.Context, userID, scheduleID strin
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, uid, pname, boardStatus, status, qr string
 		var pphone *string
@@ -350,8 +345,6 @@ func (s *Service) assertRouteOwned(ctx context.Context, routeID, providerID stri
 	}
 	return nil
 }
-
-// ─── Customer discovery ──────────────────────────────────────────────────────
 
 // SearchBusTrips returns bookable interstate trips joined provider→route→schedule.
 // Only active providers, active routes, upcoming scheduled departures. Rejects
@@ -493,8 +486,6 @@ func (s *Service) GetBusProvider(ctx context.Context, providerID string) (map[st
 	return map[string]any{"provider": prov, "routes": routes}, nil
 }
 
-// ─── Route projections ───────────────────────────────────────────────────────
-
 // providerRouteRow returns one route (owner projection).
 func (s *Service) providerRouteRow(ctx context.Context, routeID string) (map[string]any, error) {
 	const q = `
@@ -614,8 +605,6 @@ func (s *Service) listProviderUpcomingSchedules(ctx context.Context, providerID 
 	return out, nil
 }
 
-// ─── Small pure helpers ──────────────────────────────────────────────────────
-
 // sameState is the PURE interstate guard: two state names are "the same" iff they
 // are equal after trimming, case-insensitively. Extracted so the interstate
 // invariant — search and route-create both reject from==to — is provable without a
@@ -645,28 +634,6 @@ func seatsAvailable(totalSeats, booked int) int {
 		return 0
 	}
 	return n
-}
-
-// firstNonEmpty returns the first non-blank string.
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// marshalAmenities encodes a string slice as a JSON array (defaults to []).
-func marshalAmenities(a []string) (string, error) {
-	if a == nil {
-		return "[]", nil
-	}
-	b, err := json.Marshal(a)
-	if err != nil {
-		return "", fmt.Errorf("transport: encode amenities: %w", err)
-	}
-	return string(b), nil
 }
 
 // unmarshalAmenities decodes a jsonb amenities column into a string slice.

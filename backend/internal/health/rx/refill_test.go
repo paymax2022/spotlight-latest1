@@ -14,7 +14,7 @@ func TestCanRefill(t *testing.T) {
 		{0, 2, true},  // first refill of 2
 		{1, 2, true},  // second refill of 2
 		{2, 2, false}, // exhausted
-		{3, 2, false}, // over (defensive)
+		{3, 2, false},
 	}
 	for _, c := range cases {
 		if got := canRefill(c.used, c.authorized); got != c.want {

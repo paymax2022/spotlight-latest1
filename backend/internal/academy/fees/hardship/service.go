@@ -21,7 +21,6 @@ import (
 //
 // Approve/Deny are additionally fail-closed on reviewer authorization: an unauthorized
 // caller is rejected with ErrForbidden BEFORE any request or invoice state changes.
-//
 // This package moves NO money. Every mutation is audit-logged (module 'academy.fees').
 type Service struct {
 	store    Store
@@ -32,7 +31,6 @@ type Service struct {
 // InvoiceFreezer is the slice of the invoice domain this package depends on. It is
 // implemented by the integration task as a thin adapter over feesinvoice.Service so that the
 // overdue→frozen move ALWAYS runs through feesstatemachine (never a raw status write):
-//
 //   - CurrentStatus reports the invoice's current status (so the service can pre-validate the
 //     overdue→frozen edge via feesstatemachine.InvoiceTransition and audit the from-state).
 //   - Freeze applies the EvInvoiceFreeze event through feesinvoice's guarded status writer
@@ -61,8 +59,8 @@ type ReviewerAuthorizer interface {
 }
 
 // NewService wires the pgx-backed store. The invoice-freezer + reviewer-authorizer ports are
-// injected by the integration task (composed at the academy registration root), mirroring
-// how feesscholarship takes its ledger/invoice ports.
+// injected by the integration layer (internal/app registerAcademyFees — E2E-ACAD-004),
+// mirroring how feesscholarship takes its ledger/invoice ports.
 func NewService(db *pgxpool.Pool, invoices InvoiceFreezer, authz ReviewerAuthorizer) *Service {
 	return &Service{store: NewRepository(db), invoices: invoices, authz: authz}
 }
@@ -71,8 +69,6 @@ func NewService(db *pgxpool.Pool, invoices InvoiceFreezer, authz ReviewerAuthori
 func NewServiceWithDeps(store Store, invoices InvoiceFreezer, authz ReviewerAuthorizer) *Service {
 	return &Service{store: store, invoices: invoices, authz: authz}
 }
-
-// ── SubmitRequest (creates a `pending` request — SF-9, NO terminal transition) ────
 
 // SubmitRequest records a guardian's hardship/freeze request against an invoice. It ALWAYS
 // creates the request in `pending` and returns it. It NEVER:
@@ -106,8 +102,6 @@ func (s *Service) SubmitRequest(ctx context.Context, guardianUserID string, req 
 		map[string]any{"invoiceId": req.InvoiceID})
 	return out, nil
 }
-
-// ── Approve / Deny (HUMAN action only — the sole way off `pending`) ───────────────
 
 // Approve is the HUMAN reviewer action that approves a pending hardship request AND freezes
 // the invoice (overdue→frozen) through the injected invoice service's guarded state machine.
@@ -198,8 +192,6 @@ func (s *Service) authorizeReview(ctx context.Context, reviewerID, requestID str
 	}
 	return req, nil
 }
-
-// ── Reads ─────────────────────────────────────────────────────────────────────────
 
 // Get returns a single hardship request.
 func (s *Service) Get(ctx context.Context, id string) (*HardshipRequest, error) {

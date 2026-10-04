@@ -50,7 +50,6 @@ func TestIsAdviceSeeking_Refuses(t *testing.T) {
 		{"tenx", "Can this 10x my money?"},
 		{"double_money", "how do I double my money fast"},
 		{"get_rich", "what's the fastest way to get rich"},
-		// direct "tell me what to..."
 		{"tell_me_what_to_buy", "Tell me what to buy"},
 		{"tell_me_what_to_invest", "Could you tell me what to invest in?"},
 		// "is X a good buy/investment".

@@ -41,7 +41,6 @@ func Del(ctx context.Context, c *redis.Client, keys ...string) error {
 	return c.Del(ctx, keys...).Err()
 }
 
-// --- Redlock (single-node advisory lock) ---
 // For true distributed Redlock across multiple Redis nodes, use a dedicated
 // library. This single-node implementation covers the MVP where one Redis
 // instance is used.

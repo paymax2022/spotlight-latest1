@@ -2,10 +2,10 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Check } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface Props {
   label:       string;
@@ -18,7 +18,6 @@ interface Props {
 
 // New component (Section A · entry 4): a selectable card for the provider-type
 // choice list. Existing rows (ProfileMenuItem / AlertCard) are navigation/CTA
-// affordances without a selected-state tick; this is a radio-style selectable
 // surface, so it is genuinely new. Prop named `selected` (never `ref`).
 export default function ProviderTypeCard({ label, description, icon: Icon, selected, onPress, disabled }: Props) {
   return (

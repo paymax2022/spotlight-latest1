@@ -1,19 +1,15 @@
 package property
 
-// ---------------------------------------------------------------------------
 // context.go coverage: the pure validContextTypes gate (DB-free), plus
 // live-DB tests for GetContext's role-merge/de-dup behavior and
 // SwitchContext's fail-closed membership check — both of which query real
 // tables (estate_residents, estates, estate_properties, realtor_portfolios,
 // property_active_context) and cannot be exercised without a live Postgres.
-//
 // Gated on TEST_DATABASE_URL only (never DATABASE_URL — see
 // backend/tests/TEST_STRATEGY.md "Live-DB suites" rule 1; DATABASE_URL points
 // at the production Supabase pooler). Run locally with:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./backend/internal/property/... -run TestLiveDB -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -23,8 +19,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// ── validContextTypes gate (pure, no DB) ──────────────────────────────────
 
 func TestValidContextTypes_OnlyFourAccepted(t *testing.T) {
 	cases := []struct {
@@ -49,8 +43,6 @@ func TestValidContextTypes_OnlyFourAccepted(t *testing.T) {
 		t.Errorf("validContextTypes has %d entries, want exactly 4 (estate|property|agency|org)", len(validContextTypes))
 	}
 }
-
-// ── Live-DB fixtures ───────────────────────────────────────────────────────
 
 func newPropertyTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -84,8 +76,6 @@ func seedAuthUser(t *testing.T, pool *pgxpool.Pool) string {
 	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id) })
 	return id
 }
-
-// ── GetContext: role merge / de-duplication ───────────────────────────────
 
 // TestLiveDB_GetContext_MergesDualRolesOnOneEntity is PROPERTY-UNIT-002: a
 // user who is BOTH landlord and tenant of the same property, and both
@@ -235,8 +225,6 @@ func hasRole(roles []string, want string) bool {
 	}
 	return false
 }
-
-// ── SwitchContext: fail-closed membership ─────────────────────────────────
 
 // TestLiveDB_SwitchContext_FailClosedOnNonHeldContext is PROPERTY-AUTHZ-006:
 // switching into a context the caller has NO role in must error and must NOT

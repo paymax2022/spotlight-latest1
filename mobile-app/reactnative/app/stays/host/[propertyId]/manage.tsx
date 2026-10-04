@@ -3,10 +3,10 @@ import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, Switch } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { BedDouble, CalendarDays, CheckCircle2, Circle, MapPin } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import SelectField from '@/components/SelectField';
@@ -147,7 +147,6 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ── Go-live checklist ────────────────────────────────────────────────────────
 function VerificationCard({ propertyId, propertyStatus }: { propertyId: string; propertyStatus: string }) {
   const vs = useVerificationStatus(propertyId);
   const submit = useSubmitForReview(propertyId);
@@ -194,7 +193,6 @@ function VerificationCard({ propertyId, propertyStatus }: { propertyId: string; 
   );
 }
 
-// ── Basics & description ────────────────────────────────────────────────────
 function BasicsEditor({ propertyId, property }: { propertyId: string; property: PropertyDetail }) {
   const [name, setName] = useState(property.name);
   const [description, setDescription] = useState(property.description);
@@ -238,7 +236,6 @@ function BasicsEditor({ propertyId, property }: { propertyId: string; property: 
   );
 }
 
-// ── Location ─────────────────────────────────────────────────────────────────
 function LocationEditor({ propertyId, property }: { propertyId: string; property: PropertyDetail }) {
   const [address, setAddress] = useState(property.address);
   const [city, setCity] = useState(property.city);
@@ -288,7 +285,6 @@ function LocationEditor({ propertyId, property }: { propertyId: string; property
   );
 }
 
-// ── Amenities ────────────────────────────────────────────────────────────────
 function AmenitiesEditor({ propertyId, amenities }: { propertyId: string; amenities: string[] }) {
   const [selected, setSelected] = useState<Set<string>>(new Set(amenities));
   const update = useUpdatePropertyDetails(propertyId);
@@ -331,7 +327,6 @@ function AmenitiesEditor({ propertyId, amenities }: { propertyId: string; amenit
   );
 }
 
-// ── Policies ─────────────────────────────────────────────────────────────────
 function PoliciesEditor({ propertyId, property }: { propertyId: string; property: PropertyDetail }) {
   const [checkInFrom, setCheckInFrom] = useState(property.checkInFrom);
   const [checkOutUntil, setCheckOutUntil] = useState(property.checkOutUntil);

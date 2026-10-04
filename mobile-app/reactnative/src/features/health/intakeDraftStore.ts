@@ -1,8 +1,5 @@
-// ── Pre-Consult intake — offline draft store ─────────────────────────────────
 // Persists the in-progress wizard answers locally so the patient can complete
-// the intake offline; reconciled with the server draft on next load and cleared
 // on submit (PRD §3 offline-first; M3 resume).
-//
 // SecureStore keys may only contain [A-Za-z0-9._-] — colons are NOT allowed, so
 // the appointment id is sanitised into the key.
 

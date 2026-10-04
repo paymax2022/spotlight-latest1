@@ -26,7 +26,7 @@ function toClient(row: Record<string, any>) {
   };
 }
 
-// GET /api/v1/estate/settings — returns saved settings or defaults.
+// Returns saved settings or defaults.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -39,7 +39,7 @@ export async function GET(request: Request) {
   } catch (error) { return handleApiError(error, 'Failed to load settings'); }
 }
 
-// PATCH /api/v1/estate/settings — upsert the member's settings.
+// Upsert the member's settings.
 export async function PATCH(request: Request) {
   try {
     const user = await requireRequestUser(request);

@@ -16,7 +16,7 @@ type SearchParams struct {
 	Query       string   // free text over name + description + dish (menu-item) names
 	Cuisine     string   // exact (case-insensitive) cuisine tag
 	DietaryTags []string // keep restaurants with an available item carrying any tag
-	MinRating   float64  // rating >= this
+	MinRating   float64
 	OpenNow     bool     // only restaurants open right now (honors business hours)
 	NearLat     *float64 // near-me centre (both lat+lng required to activate)
 	NearLng     *float64
@@ -37,7 +37,6 @@ const (
 // DB) so the whole filter/sort/pagination policy is unit-testable, and it uses ONLY
 // parameterized placeholders for caller-supplied values — no string interpolation of
 // user input — so it is injection-safe by construction.
-//
 // The result always selects the same fixed column list (…, distance_m) so the scanner
 // is stable whether or not a near-me point was supplied (distance is NULL without one).
 // open_now mirrors hours.go's windowContains exactly, evaluated at `now` in `loc`.

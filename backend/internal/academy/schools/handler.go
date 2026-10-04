@@ -7,9 +7,19 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
+
+const keyMessage = "message"
+
+const keyInvalidInput = "invalid_input"
+
+const keyIllegalTransition = "illegal_transition"
+
+const keyError = "error"
 
 // Handler exposes the academy schools (B2B2C) surface over Gin.
 //   - admin (RBAC academy.schools): institutions CRUD, licences issue/suspend/
@@ -23,23 +33,19 @@ type Handler struct {
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // uid resolves the authenticated user (finance/connect groups mirror it into c).
-func uid(c *gin.Context) string {
-	if v := c.GetString("user_id"); v != "" {
-		return v
-	}
+// authUserID adapts middleware.GetAuthenticatedUser to ginutil.UserID’s
+// fallback signature for contexts missing the "user_id" key.
+func authUserID(c *gin.Context) string {
 	if u, ok := middleware.GetAuthenticatedUser(c); ok {
 		return u.ID
 	}
 	return ""
 }
 
-// idemKey reads the Idempotency-Key header (required for money-path mutations).
-func idemKey(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
-
 func (h *Handler) requireUser(c *gin.Context) (string, bool) {
-	u := uid(c)
+	u := ginutil.UserID(c, authUserID)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "unauthenticated"})
 		return "", false
 	}
 	return u, true
@@ -49,29 +55,29 @@ func (h *Handler) requireUser(c *gin.Context) (string, bool) {
 func (h *Handler) fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrLicenceNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "licence_not_found", "message": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "licence_not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrIllegalTransition):
-		c.JSON(http.StatusConflict, gin.H{"error": "illegal_transition", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: keyIllegalTransition, keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrIdempotencyRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "idempotency_key_required", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrIdempotencyKeyReused):
-		c.JSON(http.StatusConflict, gin.H{"error": "idempotency_key_reused", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "idempotency_key_reused", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrInvalidAmount):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_amount", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid_amount", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrInstitutionInactive):
-		c.JSON(http.StatusConflict, gin.H{"error": "institution_inactive", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "institution_inactive", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrNoActiveLicence):
-		c.JSON(http.StatusConflict, gin.H{"error": "no_active_licence", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "no_active_licence", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrSeatLimitExceeded):
-		c.JSON(http.StatusConflict, gin.H{"error": "seat_limit_exceeded", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "seat_limit_exceeded", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	case errors.Is(err, ErrBillingNotOpen):
-		c.JSON(http.StatusConflict, gin.H{"error": "billing_not_open", "message": err.Error()})
+		c.JSON(http.StatusConflict, gin.H{keyError: "billing_not_open", keyMessage: httperr.Msg(c, http.StatusConflict, err)})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
 
@@ -80,7 +86,6 @@ func (h *Handler) fail(c *gin.Context, err error) {
 // gates admin routes with middleware.RequirePermission(rbac, "academy.schools"). A nil
 // rail falls back to the deterministic dev stub; nil pool / member / admin groups are
 // skipped (nil-safe stub).
-//
 // Member routes use BARE subpaths — the aggregator passes the /api/finance/academy base
 // group. Admin routes are grouped under /schools/admin on the admin base.
 //
@@ -143,8 +148,6 @@ func RegisterAcademySchools(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 	}
 }
 
-// ── Member handlers (school-admin lite) ──────────────────────────────────────────
-
 func (h *Handler) MyInstitutions(c *gin.Context) {
 	u, ok := h.requireUser(c)
 	if !ok {
@@ -170,15 +173,13 @@ func (h *Handler) MemberOverview(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── Admin handlers (RBAC academy.schools) ─────────────────────────────────────────
-
 func (h *Handler) AdminOnboard(c *gin.Context) {
 	var req OnboardInstitutionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.OnboardInstitution(c.Request.Context(), uid(c), req)
+	out, err := h.svc.OnboardInstitution(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -257,10 +258,10 @@ func (h *Handler) AdminListBilling(c *gin.Context) {
 func (h *Handler) AdminIssueLicence(c *gin.Context) {
 	var req IssueLicenceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.IssueLicence(c.Request.Context(), uid(c), req)
+	out, err := h.svc.IssueLicence(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -269,7 +270,7 @@ func (h *Handler) AdminIssueLicence(c *gin.Context) {
 }
 
 func (h *Handler) AdminSuspendLicence(c *gin.Context) {
-	out, err := h.svc.SuspendLicence(c.Request.Context(), uid(c), c.Param("id"))
+	out, err := h.svc.SuspendLicence(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -278,7 +279,7 @@ func (h *Handler) AdminSuspendLicence(c *gin.Context) {
 }
 
 func (h *Handler) AdminReactivateLicence(c *gin.Context) {
-	out, err := h.svc.ReactivateLicence(c.Request.Context(), uid(c), c.Param("id"))
+	out, err := h.svc.ReactivateLicence(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -287,7 +288,7 @@ func (h *Handler) AdminReactivateLicence(c *gin.Context) {
 }
 
 func (h *Handler) AdminExpireLicence(c *gin.Context) {
-	out, err := h.svc.ExpireLicence(c.Request.Context(), uid(c), c.Param("id"))
+	out, err := h.svc.ExpireLicence(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -298,10 +299,10 @@ func (h *Handler) AdminExpireLicence(c *gin.Context) {
 func (h *Handler) AdminCreateClassGroup(c *gin.Context) {
 	var req CreateClassGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.CreateClassGroup(c.Request.Context(), uid(c), req)
+	out, err := h.svc.CreateClassGroup(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -312,15 +313,15 @@ func (h *Handler) AdminCreateClassGroup(c *gin.Context) {
 func (h *Handler) AdminBulkEnroll(c *gin.Context) {
 	var req BulkEnrollRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.BulkEnroll(c.Request.Context(), uid(c), req, idemKey(c))
+	out, err := h.svc.BulkEnroll(c.Request.Context(), ginutil.UserID(c, authUserID), req, ginutil.IdempotencyKey(c))
 	if err != nil {
 		// Seat-cap is a partial success: return the result (how many succeeded) alongside
 		// the seat_limit_exceeded code so the caller knows where the run stopped.
 		if errors.Is(err, ErrSeatLimitExceeded) {
-			c.JSON(http.StatusConflict, gin.H{"error": "seat_limit_exceeded", "message": err.Error(), "data": out})
+			c.JSON(http.StatusConflict, gin.H{keyError: "seat_limit_exceeded", keyMessage: httperr.Msg(c, http.StatusConflict, err), "data": out})
 			return
 		}
 		h.fail(c, err)
@@ -338,10 +339,10 @@ type RemoveEnrollmentRequest struct {
 func (h *Handler) AdminRemoveEnrollment(c *gin.Context) {
 	var req RemoveEnrollmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.RemoveEnrollment(c.Request.Context(), uid(c), req.InstitutionID, req.LearnerUserID); err != nil {
+	if err := h.svc.RemoveEnrollment(c.Request.Context(), ginutil.UserID(c, authUserID), req.InstitutionID, req.LearnerUserID); err != nil {
 		h.fail(c, err)
 		return
 	}
@@ -351,10 +352,10 @@ func (h *Handler) AdminRemoveEnrollment(c *gin.Context) {
 func (h *Handler) AdminGenerateBilling(c *gin.Context) {
 	var req GenerateBillingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidInput, keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	out, err := h.svc.GenerateBilling(c.Request.Context(), uid(c), req)
+	out, err := h.svc.GenerateBilling(c.Request.Context(), ginutil.UserID(c, authUserID), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -363,7 +364,7 @@ func (h *Handler) AdminGenerateBilling(c *gin.Context) {
 }
 
 func (h *Handler) AdminChargeBilling(c *gin.Context) {
-	out, err := h.svc.ChargeBilling(c.Request.Context(), uid(c), c.Param("id"), idemKey(c))
+	out, err := h.svc.ChargeBilling(c.Request.Context(), ginutil.UserID(c, authUserID), c.Param("id"), ginutil.IdempotencyKey(c))
 	if err != nil {
 		h.fail(c, err)
 		return

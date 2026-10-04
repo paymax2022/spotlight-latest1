@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/colors';
+import { Colors } from '@/constants/tokens';
 
 /**
  * Paymax Stays (SM2) — agent segment. Covers BOTH the traveller-context

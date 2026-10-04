@@ -10,6 +10,9 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/otp"
@@ -72,14 +75,12 @@ func (h *AuthHandler) WithSessions(sessions services.SessionService, enabled boo
 }
 
 // OTPIssuer sends a verification code to a freshly-registered address.
-//
 // A function rather than the otp.Service itself, for the same reason
 // ReferralAttributor is: the service needs the shared pgx pool, which is built
 // after this handler.
 type OTPIssuer func(ctx context.Context, email, name, purpose string, ip string) error
 
 // WithOTPIssuer makes Register send our own verification code.
-//
 // Without it Register is unchanged and verification stays entirely with Supabase
 // Auth, which is the shipped behaviour.
 func (h *AuthHandler) WithOTPIssuer(fn OTPIssuer) *AuthHandler {
@@ -88,7 +89,6 @@ func (h *AuthHandler) WithOTPIssuer(fn OTPIssuer) *AuthHandler {
 }
 
 // SignupGate reports whether another registration may be attempted from ip.
-//
 // It stands in for GoTrue's sign_in_sign_ups budget, which /auth/v1/admin/users
 // does not apply. Backed by Postgres rather than the in-process
 // middleware.AuthRateLimiter that also guards this route: that one is per
@@ -170,7 +170,6 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	// Signup budget. Only present when registration takes the admin path — on
 	// /auth/v1/signup GoTrue applies its own, and a second one here would halve
 	// the shipped allowance.
-	//
 	// Checked BEFORE the account is created, and fails CLOSED: a limiter that
 	// answers "allowed" when its store is unreachable reports protection it is
 	// not providing.
@@ -199,11 +198,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	if err != nil {
 		h.audit.LogAction("", "", "register.failed", "auth", "user", "", nil, map[string]any{"email": in.Email}, c.ClientIP(), c.Request.UserAgent(), "medium")
 
-		// Signups being closed is a PROJECT-WIDE policy, not a fact about this
-		// address, so saying so leaks nothing and telling the user their "details"
-		// are wrong would send them round a loop they cannot win. Every other
-		// failure stays deliberately generic — echoing "already registered" would
-		// let anyone test which addresses have accounts.
+		// Signups-closed is a project-wide policy, not a fact about this
+		// address, so saying so leaks nothing. Every other failure stays generic
+		// and unconditional — confirming "already registered" would let anyone
+		// test which addresses have accounts — while pointing at the real next
+		// steps (sign in / reset password) without confirming either applies.
 		if errors.Is(err, services.ErrSignupDisabled) {
 			c.JSON(http.StatusForbidden, gin.H{
 				"success": false,
@@ -212,7 +211,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			})
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Registration failed. Please check your details and try again."})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "We couldn't create this account. Try signing in if you have one, or use Forgot Password — otherwise, double-check your details and try again."})
 		return
 	}
 
@@ -234,14 +233,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		message = "Registration successful."
 	}
 
-	// Send our own verification code.
-	//
 	// Best-effort, exactly like referral attribution above: THE ACCOUNT ALREADY
 	// EXISTS. Failing the response here would send the user back to a register
 	// form that answers "registration failed" for an account that is genuinely
 	// theirs — the worst outcome available. A user who receives no code can ask
 	// for one at POST /api/auth/otp/request, which is rate-limited the same way.
-	//
 	// ⚠️ While Supabase's own confirmation mailer is enabled on the project, a
 	// registering user receives TWO codes from two systems, and each is redeemed
 	// at a different endpoint. Turning that mailer off is a prerequisite for
@@ -280,13 +276,25 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 	out, err := h.auth.LoginUser(in)
 	if err != nil {
+		// LoginUser wraps its errors with the identity it resolved before
+		// failing — a phone identifier becomes the account email, and the
+		// platform user id is attached once platform_users has answered — so
+		// the login_activity row is attributable even on a refusal
+		// (E2E-AUTH-007). Falling back to in.Email preserves direct-email
+		// callers whose identifier was never resolved.
+		failUserID, failEmail := "", in.Email
+		if fail, ok := errors.AsType[*services.LoginFailureError](err); ok {
+			failUserID = fail.UserID
+			if fail.Email != "" {
+				failEmail = fail.Email
+			}
+		}
 		// Correct password, unverified address. Answered distinctly so the client
-		// can send the user to enter their code instead of telling them their
-		// password is wrong — which is what it used to say, leaving them stuck
-		// with no route forward. See ErrEmailNotConfirmed for why this does not
-		// leak account existence.
+		// can route the user to enter their code instead of reporting a wrong
+		// password. See ErrEmailNotConfirmed for why this does not leak account
+		// existence.
 		if errors.Is(err, services.ErrEmailNotConfirmed) {
-			h.audit.LogLogin("", in.Email, "failed", "email_not_confirmed", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+			h.audit.LogLogin(failUserID, failEmail, "failed", "email_not_confirmed", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
 			c.JSON(http.StatusForbidden, gin.H{
 				"success": false,
 				"code":    "email_not_confirmed",
@@ -294,31 +302,43 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			})
 			return
 		}
-		h.audit.LogLogin("", in.Email, "failed", "invalid_credentials", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+		// GoTrue was unreachable/degraded — the service never reached a
+		// credential verdict and counted NO strike. This must not look like a
+		// wrong password (E2E-FR-049). The row is written too — an outage window
+		// is exactly what forensics needs to reconstruct — but with the honest
+		// "upstream_error" reason rather than a false invalid_credentials
+		// (failure_reason is free text; only status is CHECK-constrained).
+		if errors.Is(err, services.ErrAuthUnavailable) {
+			h.audit.LogLogin(failUserID, failEmail, "failed", "upstream_error", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"success": false,
+				"code":    "auth_unavailable",
+				"error":   "Sign-in is temporarily unavailable. Please try again shortly.",
+			})
+			return
+		}
+		h.audit.LogLogin(failUserID, failEmail, "failed", "invalid_credentials", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "invalid credentials"})
 		return
 	}
-	h.audit.LogLogin("", in.Email, "success", "", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
 
-	// Strip the internal hints BEFORE any branch can return `out` to a client.
-	// They were previously removed only inside the session-hardening branch, so
-	// with that flag off __user_id was shipped to the caller despite the comment
-	// saying it never is.
+	// Strip the internal hints BEFORE any branch can return `out` to a client —
+	// they must never reach the caller regardless of which flags are on.
 	loginUserID, _ := out["__user_id"].(string)
 	resolvedEmail, _ := out["__email"].(string)
 	delete(out, "__user_id")
 	delete(out, "__email")
 
-	// Second factor. The password was correct, so GoTrue has already minted a
-	// session in `out` — it is DISCARDED here rather than parked anywhere, and a
-	// fresh one is minted by the verify step once the code is redeemed. Holding
-	// it would mean writing an access and a refresh token to storage to wait for
-	// an email, which is a worse trade than one extra GoTrue round trip.
-	//
-	// Fails CLOSED: if the code cannot be sent, no session is returned. That is
-	// the opposite of Register, where the account already exists and refusing
-	// would strand the user — here refusing is the whole point of the factor.
-	// ⚠️ It also means an email outage is a total login outage. See the runbook.
+	// Success is attributed the same way the failure paths are: the resolved
+	// account identity, not the raw request fields — identifier logins carry
+	// no email (E2E-AUTH-007).
+	h.audit.LogLogin(loginUserID, resolvedEmail, "success", "", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+
+	// Second factor. The password was correct, so GoTrue already minted a
+	// session in `out` — it is DISCARDED and a fresh one is minted on code
+	// redemption (parking it would mean persisting live tokens while waiting
+	// on an email). Fails CLOSED: if the code cannot be sent, no session is
+	// returned — an email outage is a total login outage. See the runbook.
 	if h.mfaActive() {
 		if resolvedEmail == "" {
 			// Nothing to send to. Refusing beats returning a session that the
@@ -383,10 +403,39 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "user": u})
 }
 
+// Logout revokes the caller's session server-side (E2E-SEC-055): the bearer
+// token goes to GoTrue's /auth/v1/logout so the session stops validating, and
+// the tracked auth_sessions row is revoked when session hardening is on (it is
+// the enforcement gate for locally-verified tokens). A GoTrue outage still
+// answers 200 — the client's local logout must not depend on upstream health —
+// but the failure is logged and carried in the audit row.
 func (h *AuthHandler) Logout(c *gin.Context) {
-	if u, ok := middleware.GetAuthenticatedUser(c); ok {
-		h.audit.LogAction(u.ID, u.ID, "logout", "auth", "session", "", nil, nil, c.ClientIP(), c.Request.UserAgent(), "info")
+	u, ok := middleware.GetAuthenticatedUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
+		return
 	}
+	token := c.GetString(middleware.AuthTokenContextKey)
+	if token == "" {
+		if ah := strings.TrimSpace(c.GetHeader("Authorization")); strings.HasPrefix(strings.ToLower(ah), "bearer ") {
+			token = strings.TrimSpace(ah[7:])
+		}
+	}
+	revoked := false
+	if token != "" {
+		if err := h.auth.LogoutUser(token); err != nil {
+			log.Printf("[auth] logout: GoTrue session revoke failed for user %s: %v", u.ID, err)
+		} else {
+			revoked = true
+		}
+		if h.sessionHardening && h.sessions != nil {
+			if sess, err := h.sessions.ValidateAccess(token); err == nil && sess != nil {
+				_ = h.sessions.RevokeOne(u.ID, u.ID, sess.ID, "logout")
+			}
+		}
+	}
+	h.audit.LogAction(u.ID, u.ID, "logout", "auth", "session", "", nil,
+		map[string]any{"upstream_revoked": revoked}, c.ClientIP(), c.Request.UserAgent(), "info")
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Logged out"})
 }
 
@@ -403,11 +452,9 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 		}
 		// Our own code, ALONGSIDE Supabase's reset link rather than instead of it,
 		// so no existing client that completes a reset through the link breaks.
-		//
 		// ⚠️ The cost is that a user asking to reset gets TWO emails offering two
 		// different mechanisms. That is a deliberate, temporary state — see
 		// docs/runbooks/otp-email-brevo.md.
-		//
 		// Best-effort and silent: the response must not vary, and the link has
 		// already been sent, so a code failure still leaves the user a way in.
 		if h.issueOTP != nil {
@@ -421,17 +468,9 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 }
 
 // ResetPassword completes a reset with an emailed CODE.
-//
-// It used to accept {token, newPassword}, hand the token to a service method
-// that returned nil for any non-empty string, and answer "Password reset
-// successful" — for a password it had not changed. That is the same defect the
-// audit removed as B4 on verify-email, still live here. Nothing called it: web
-// and mobile both complete resets through Supabase's own recovery session, which
-// is why nobody noticed.
-//
-// The token form is now REFUSED rather than answered with a false success. A
-// caller relying on it was already getting nothing; the difference is that it
-// now says so.
+// The legacy {token, newPassword} form is REFUSED rather than answered with a
+// false success — no service method can honor a bare token here; web and mobile
+// complete resets through Supabase's own recovery session.
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	var in struct {
 		Email       string `json:"email"`
@@ -514,7 +553,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 	if err := h.auth.ChangePassword(authz[7:], in.CurrentPassword, in.NewPassword); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(u.ID, u.ID, "password.change", "auth", "user", u.ID, nil, nil, c.ClientIP(), c.Request.UserAgent(), "high")
@@ -536,9 +575,134 @@ func (h *AuthHandler) CompleteProfile(c *gin.Context) {
 		return
 	}
 	if err := h.auth.CompleteProfile(u.ID, in.ProfileType, in.Metadata); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	h.audit.LogAction(u.ID, u.ID, "profile.complete", "auth", "profile", u.ID, nil, map[string]any{"profileType": in.ProfileType}, c.ClientIP(), c.Request.UserAgent(), "info")
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// SessionHandler exposes the self-service + admin session-management surface.
+// Every route is gated behind FEATURE_SESSION_HARDENING_ENABLED (default OFF):
+// when the flag is off, handlers return 503 feature-disabled (deny-by-default).
+type SessionHandler struct {
+	sessions services.SessionService
+	audit    services.AuditService
+	cfg      config.Config
+}
+
+func NewSessionHandler(sessions services.SessionService, audit services.AuditService, cfg config.Config) *SessionHandler {
+	return &SessionHandler{sessions: sessions, audit: audit, cfg: cfg}
+}
+
+func (h *SessionHandler) featureGuard(c *gin.Context) bool {
+	if !h.cfg.FeatureSessionHardeningEnabled {
+		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"success": false, "error": "feature_disabled", "feature": "session_hardening"})
+		return false
+	}
+	return true
+}
+
+// ListMySessions handles GET /api/auth/sessions — list the caller's own active sessions.
+func (h *SessionHandler) ListMySessions(c *gin.Context) {
+	if !h.featureGuard(c) {
+		return
+	}
+	u, ok := middleware.GetAuthenticatedUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
+		return
+	}
+	list, err := h.sessions.ListMySessions(u.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not load sessions"})
+		return
+	}
+	out := make([]gin.H, 0, len(list))
+	for _, s := range list {
+		out = append(out, gin.H{
+			"id":              s.ID,
+			"device":          s.DeviceFingerprint,
+			"ip":              s.IPAddress,
+			"userAgent":       s.UserAgent,
+			"rotationCounter": s.RotationCounter,
+			"lastSeenAt":      s.LastSeenAt,
+			"expiresAt":       s.ExpiresAt,
+			"createdAt":       s.CreatedAt,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "sessions": out})
+}
+
+// RevokeMySession handles DELETE /api/auth/sessions/:id — revoke one of the caller's own sessions.
+func (h *SessionHandler) RevokeMySession(c *gin.Context) {
+	if !h.featureGuard(c) {
+		return
+	}
+	u, ok := middleware.GetAuthenticatedUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
+		return
+	}
+	id := strings.TrimSpace(c.Param("id"))
+	if err := h.sessions.RevokeOne(u.ID, u.ID, id, "self_revoke"); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "session revoked"})
+}
+
+// RevokeMyAllSessions handles POST /api/auth/sessions/revoke-all — revoke all of the caller's sessions.
+func (h *SessionHandler) RevokeMyAllSessions(c *gin.Context) {
+	if !h.featureGuard(c) {
+		return
+	}
+	u, ok := middleware.GetAuthenticatedUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
+		return
+	}
+	n, err := h.sessions.RevokeAll(u.ID, u.ID, "self_revoke_all")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not revoke sessions"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "revoked": n})
+}
+
+// AdminForceLogout handles POST /api/admin/users/:id/force-logout — admin revokes all of a user's sessions.
+func (h *SessionHandler) AdminForceLogout(c *gin.Context) {
+	if !h.featureGuard(c) {
+		return
+	}
+	actor, _ := middleware.GetAuthenticatedUser(c)
+	target := strings.TrimSpace(c.Param("id"))
+	if target == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "user id required"})
+		return
+	}
+	n, err := h.sessions.AdminForceLogout(actor.ID, target, "admin_force_logout")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not force logout"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "revoked": n})
+}
+
+// AdminForcePasswordReset handles POST /api/admin/users/:id/force-password-reset — admin forces a reset + revoke.
+func (h *SessionHandler) AdminForcePasswordReset(c *gin.Context) {
+	if !h.featureGuard(c) {
+		return
+	}
+	actor, _ := middleware.GetAuthenticatedUser(c)
+	target := strings.TrimSpace(c.Param("id"))
+	if target == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "user id required"})
+		return
+	}
+	if err := h.sessions.AdminForcePasswordReset(actor.ID, target, "admin_force_reset"); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not force password reset"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "password reset enforced; sessions revoked"})
 }

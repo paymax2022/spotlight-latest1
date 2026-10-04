@@ -15,8 +15,8 @@ export async function GET(request: Request) {
     // Resolve contestant enrollment id for this user + contest
     const supabase = createAdminClient();
     const { data: enrollment } = await supabase
-      .from('competition_enrollments')
-      .select('id, stage_name')
+      .from('contestants')
+      .select('id, name, stage_name')
       .eq('contest_id', contestId)
       .eq('user_id', user.id)
       .maybeSingle();

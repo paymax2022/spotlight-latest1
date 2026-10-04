@@ -47,8 +47,6 @@ function makeSupabase(opts: {
       order: () => chain,
       limit: () => Promise.resolve({ data: opts.tableData[table] ?? [], error: null }),
     };
-    // Some queries (e.g. platformAccounts) have no .order()/.limit() in the
-    // chain before awaiting — support both `await query` directly too by
     // making the chain itself thenable, resolving like `.limit()` would.
     chain.then = (resolve: any) => Promise.resolve({ data: opts.tableData[table] ?? [], error: null }).then(resolve);
     return chain;
@@ -70,7 +68,6 @@ beforeEach(() => {
 
 describe('WAL-013: payments-finance stats', () => {
   it('total balance comes from the RPC aggregate, not a sum of the capped 50-row wallet list', async () => {
-    // The capped list has only 2 rows with a tiny sum; the RPC (the real,
     // unbounded aggregate) reports a much larger true total. If the route
     // regressed to client-side summing, this test would see the small number.
     const cappedWalletRows = [

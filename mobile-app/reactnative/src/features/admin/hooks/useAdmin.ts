@@ -1,4 +1,3 @@
-// ── Paymax · Admin Console — Data hooks ──────────────────────────────────────
 // React Query hooks mirroring useCrypto.ts so admin screens stay declarative and
 // share the same caching / loading / error contracts. Mutations invalidate the
 // relevant query keys (and the dashboard, whose KPIs depend on most of them).
@@ -14,13 +13,9 @@ import type {
 
 const KEY = 'admin';
 
-// ─── Dashboard ──────────────────────────────────────────────────────────────--
-
 export function useDashboard() {
   return useQuery({ queryKey: [KEY, 'dashboard'], queryFn: admin.getDashboard, staleTime: 30_000 });
 }
-
-// ─── Users ──────────────────────────────────────────────────────────────────--
 
 export function useAdminUsers() {
   return useQuery({ queryKey: [KEY, 'users'], queryFn: admin.getUsers, staleTime: 30_000 });
@@ -34,8 +29,6 @@ export function useAdminUser(id?: string) {
     staleTime: 30_000,
   });
 }
-
-// ─── KYC ────────────────────────────────────────────────────────────────────--
 
 export function useKycQueue() {
   return useQuery({ queryKey: [KEY, 'kyc'], queryFn: admin.getKycQueue, staleTime: 15_000 });
@@ -54,8 +47,6 @@ export function useReviewKyc() {
   });
 }
 
-// ─── Asset controls ────────────────────────────────────────────────────────--
-
 export function useAssetControls() {
   return useQuery({ queryKey: [KEY, 'assets'], queryFn: admin.getAssetControls, staleTime: 20_000 });
 }
@@ -72,8 +63,6 @@ export function useUpdateAssetControl() {
   });
 }
 
-// ─── Orders ───────────────────────────────────────────────────────────────────
-
 export function useAdminOrders(filter: OrderFilter = 'all') {
   return useQuery({
     queryKey: [KEY, 'orders', filter],
@@ -81,8 +70,6 @@ export function useAdminOrders(filter: OrderFilter = 'all') {
     staleTime: 15_000,
   });
 }
-
-// ─── Withdrawal review ─────────────────────────────────────────────────────--
 
 export function useWithdrawalQueue() {
   return useQuery({ queryKey: [KEY, 'withdrawals'], queryFn: admin.getWithdrawalQueue, staleTime: 15_000 });
@@ -101,13 +88,9 @@ export function useReviewWithdrawal() {
   });
 }
 
-// ─── Reconciliation ───────────────────────────────────────────────────────────
-
 export function useReconciliation() {
   return useQuery({ queryKey: [KEY, 'reconciliation'], queryFn: admin.getReconciliation, staleTime: 30_000 });
 }
-
-// ─── Providers ─────────────────────────────────────────────────────────────--
 
 export function useProviders() {
   return useQuery({
@@ -117,8 +100,6 @@ export function useProviders() {
     refetchInterval: 30_000,
   });
 }
-
-// ─── Risk limits ──────────────────────────────────────────────────────────────
 
 export function useRiskLimits() {
   return useQuery({ queryKey: [KEY, 'risk-limits'], queryFn: admin.getRiskLimits, staleTime: 30_000 });
@@ -136,8 +117,6 @@ export function useUpdateRiskLimit() {
   });
 }
 
-// ─── Fees ─────────────────────────────────────────────────────────────────────
-
 export function useFees() {
   return useQuery({ queryKey: [KEY, 'fees'], queryFn: admin.getFees, staleTime: 30_000 });
 }
@@ -152,8 +131,6 @@ export function useUpdateFee() {
     },
   });
 }
-
-// ─── Feature flags ─────────────────────────────────────────────────────────--
 
 export function useFeatureFlags() {
   return useQuery({ queryKey: [KEY, 'feature-flags'], queryFn: admin.getFeatureFlags, staleTime: 30_000 });
@@ -170,8 +147,6 @@ export function useSetFeatureFlag() {
     },
   });
 }
-
-// ─── Approvals (maker-checker) ─────────────────────────────────────────────--
 
 export function useApprovals() {
   return useQuery({ queryKey: [KEY, 'approvals'], queryFn: admin.getApprovals, staleTime: 15_000 });
@@ -199,13 +174,9 @@ export function useRejectApproval() {
   });
 }
 
-// ─── Audit log ─────────────────────────────────────────────────────────────--
-
 export function useAudit() {
   return useQuery({ queryKey: [KEY, 'audit'], queryFn: admin.getAudit, staleTime: 15_000 });
 }
-
-// ─── Admin directory ─────────────────────────────────────────────────────────-
 
 export function useAdmins() {
   return useQuery({ queryKey: [KEY, 'admins'], queryFn: admin.getAdmins, staleTime: 30_000 });

@@ -1,8 +1,6 @@
 // The shape of an authored pathway.
-//
 // This is plain data, deliberately separate from the seeder that writes it, so a
 // module can be reviewed and edited as content rather than as code.
-//
 // Every `videoUrl` in this pathway was verified against YouTube's oEmbed endpoint
 // (which resolves only for a live, embeddable video) and attributed to its real
 // channel before being written down. A lesson with no verified video carries an

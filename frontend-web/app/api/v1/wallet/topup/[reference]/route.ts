@@ -4,7 +4,6 @@ import { getTopupStatus } from '@/src/server/wallet/service';
 import { verifyAndSettleTopup } from '@/src/server/wallet/verify';
 import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/responses';
 
-// GET /api/v1/wallet/topup/:reference
 // Returns the status of a wallet top-up intent so the app can wait for the
 // Paystack webhook to credit the wallet before completing a module checkout
 // ("pay with card" path). Scoped to the authenticated owner of the intent.
@@ -23,7 +22,6 @@ export async function GET(
     // development, where api.paystack.co cannot reach localhost) never arrive at
     // all. The customer has paid regardless, and the checkout waiting on this
     // endpoint would otherwise poll until it times out.
-    //
     // So a still-pending intent is resolved against Paystack, which is the
     // authority. verifyAndSettleTopup enforces ownership, credits only on a
     // confirmed success for the exact amount, and shares its settlement — and

@@ -100,7 +100,7 @@ func (r *Repository) ListByUser(ctx context.Context, userID string, limit, offse
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Claim
+	out := []Claim{}
 	for rows.Next() {
 		c, err := scanClaim(rows)
 		if err != nil {
@@ -136,7 +136,7 @@ func (r *Repository) SearchAdmin(ctx context.Context, state, policyID string, li
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Claim
+	out := []Claim{}
 	for rows.Next() {
 		c, err := scanClaim(rows)
 		if err != nil {
@@ -208,8 +208,6 @@ func (r *Repository) SetSettled(ctx context.Context, id, payoutLedgerRef string,
 	return nil
 }
 
-// --- evidence ---
-
 // AddEvidence records an evidence object reference on a claim.
 func (r *Repository) AddEvidence(ctx context.Context, e *Evidence) (*Evidence, error) {
 	row := r.db.QueryRow(ctx, `
@@ -233,7 +231,7 @@ func (r *Repository) ListEvidence(ctx context.Context, claimID string) ([]Eviden
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Evidence
+	out := []Evidence{}
 	for rows.Next() {
 		var e Evidence
 		if err := rows.Scan(&e.ID, &e.ClaimID, &e.FileName, &e.ContentType, &e.StorageRef, &e.CreatedAt); err != nil {
@@ -243,8 +241,6 @@ func (r *Repository) ListEvidence(ctx context.Context, claimID string) ([]Eviden
 	}
 	return out, rows.Err()
 }
-
-// --- payouts ---
 
 // InsertPayout records a claim payout money move. UNIQUE(idempotency_key) makes a
 // retried settlement a safe no-op at the DB layer (ON CONFLICT DO NOTHING).

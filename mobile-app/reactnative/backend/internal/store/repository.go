@@ -5,7 +5,6 @@ import "paymax/crypto-backend/internal/domain"
 // Repository is the persistence seam the HTTP layer and provider adapters depend
 // on. The in-memory Store implements it today; a Postgres-backed implementation
 // (see ../../migrations) is a drop-in replacement — no handler or adapter change.
-//
 // Keeping the contract here (not *Store) means swapping storage engines is a
 // one-line change in cmd/server.
 type Repository interface {

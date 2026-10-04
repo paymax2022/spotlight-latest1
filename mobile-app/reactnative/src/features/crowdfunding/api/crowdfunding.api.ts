@@ -1,4 +1,3 @@
-// ── Crowdfunding — API wrapper ───────────────────────────────────────────────
 // Typed data layer the screens code against. Mirrors voting.api.ts: mock-flagged,
 // flip USE_MOCK to false once the real /crowdfunding endpoints land.
 // IRON RULE: all monetary amounts are integers in minor units (kobo).
@@ -39,8 +38,6 @@ import {
   MOCK_RECENTLY_VIEWED,
 } from './crowdfunding.mock';
 
-// ─── Feature flag ─────────────────────────────────────────────────────────────
-// Mock is the default. Set EXPO_PUBLIC_CF_USE_MOCK=false to hit the live backend
 // (Next.js proxy at /api/v1/crowdfunding/* → Go /api/finance/crowdfunding/*).
 const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CF_USE_MOCK, true);
 
@@ -49,8 +46,6 @@ const LIVE = '/api/v1/crowdfunding';
 
 /** Simulated network latency so loading states render in mock mode. */
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
-
-// ─── Mapping helpers ──────────────────────────────────────────────────────────
 
 function toSummary(c: Campaign): CampaignSummary {
   return {
@@ -146,8 +141,6 @@ function applyQuery(list: Campaign[], q?: CampaignQuery): Campaign[] {
   return sortCampaigns(out, q?.sort);
 }
 
-// ─── Categories ────────────────────────────────────────────────────────────────
-
 export async function getCategories(): Promise<CampaignCategory[]> {
   if (USE_MOCK) {
     await delay(120);
@@ -158,8 +151,6 @@ export async function getCategories(): Promise<CampaignCategory[]> {
   const res = await api.get(`${LIVE}/categories`);
   return (res.data?.data ?? res.data) as CampaignCategory[];
 }
-
-// ─── Discovery / list ────────────────────────────────────────────────────────
 
 export async function getCampaigns(query?: CampaignQuery): Promise<CampaignSummary[]> {
   if (USE_MOCK) {
@@ -241,8 +232,6 @@ export async function toggleSaveCampaign(id: string, saved: boolean): Promise<{ 
   return res.data?.data ?? res.data;
 }
 
-// ─── Contributors (per campaign) ──────────────────────────────────────────────
-
 const SAMPLE_NAMES = [
   'Chidi Okafor', 'Ngozi Adeyemi', 'Tunde Bakare', 'Fatima Sani', 'Emeka Nwosu',
   'Bola Ighodalo', 'Yusuf Lawal', 'Amaka Eze', 'Seyi Ogunleye', 'Halima Bello',
@@ -279,8 +268,6 @@ export async function getCampaignContributors(id: string): Promise<Contributor[]
   const res = await api.get(`/api/v1/crowdfunding/campaigns/${id}/contributors`);
   return (res.data?.data ?? res.data) as Contributor[];
 }
-
-// ─── Contributions ────────────────────────────────────────────────────────────
 
 export async function getContributions(params?: { status?: string }): Promise<Contribution[]> {
   if (USE_MOCK) {
@@ -415,8 +402,6 @@ export async function requestRefund(contributionId: string, reason: string): Pro
   return res.data?.data ?? res.data;
 }
 
-// ─── Creator dashboard (Section F) ────────────────────────────────────────────
-
 export async function getCreatorStats(): Promise<CreatorStats> {
   if (USE_MOCK) { await delay(200); return MOCK_CREATOR_STATS; }
   const res = await api.get('/api/v1/crowdfunding/creator/stats');
@@ -463,7 +448,6 @@ export async function getCampaignAnalytics(id: string): Promise<CampaignAnalytic
   return (res.data?.data ?? res.data) as CampaignAnalytics;
 }
 
-// ─── Owner self-management (Section G2) ───────────────────────────────────────
 // Every call here is owner-scoped and mutates a campaign the caller owns. They
 // all resolve to the campaign the SERVER returned (except delete, which returns
 // nothing) so a screen renders authoritative state instead of a local guess.
@@ -590,8 +574,6 @@ export async function unfeatureCampaign(id: string): Promise<Campaign> {
   const res = await api.post(`${LIVE}/creator/campaigns/${id}/unfeature`);
   return (res.data?.data ?? res.data) as Campaign;
 }
-
-// ─── Campaign creation (Section G) ────────────────────────────────────────────
 
 /**
  * Submit (or save as draft) a campaign assembled by the creation wizard.

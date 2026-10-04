@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { formatNaira } from '@/src/lib/referral/format';
+import { formatNaira } from '@/src/lib/referral';
 import {
   type Business,
   type BusinessEntityType,
@@ -27,7 +27,6 @@ const CAC_FEE_KOBO = 1_500_000;      // CAC registration fee (pass-through)
 const PLATFORM_FEE_KOBO = 200_000;   // Paymax/Spotlight processing charge
 const TOTAL_FEE_KOBO = CAC_FEE_KOBO + PLATFORM_FEE_KOBO; // ₦17,000
 
-// ── presentation helpers ────────────────────────────────────────────────────
 const ENTITY_LABELS: Record<BusinessEntityType, string> = {
   business_name: 'Business Name',
   company: 'Company (Ltd)',
@@ -97,7 +96,6 @@ function labelFor(b: Business): string {
 
 const ACTIVE: BusinessStatus[] = ['registered', 'verified'];
 
-// ── CAC certificate action ──────────────────────────────────────────────────
 // If the business already carries a certificateUrl we render a direct link. If
 // not (but it's registered/verified), we offer a button that fetches it on demand
 // and opens it, surfacing the "not available yet" 404 gracefully.
@@ -154,7 +152,6 @@ const TERMINAL: BusinessStatus[] = ['registered', 'rejected', 'failed', 'verifie
 
 type View = 'list' | 'verify' | 'register';
 
-// ── main component ──────────────────────────────────────────────────────────
 export default function BusinessRegistryClient() {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [loading, setLoading] = useState(true);
@@ -219,7 +216,6 @@ export default function BusinessRegistryClient() {
   );
 }
 
-// ── list / empty state ──────────────────────────────────────────────────────
 function BusinessList({
   businesses,
   loading,
@@ -277,7 +273,6 @@ function BusinessList({
   );
 }
 
-// ── verify existing ─────────────────────────────────────────────────────────
 function VerifyFlow({ onDone }: { onDone: () => void }) {
   const [entityType, setEntityType] = useState<BusinessEntityType>('business_name');
   const [rcOrBnNumber, setRcOrBnNumber] = useState('');
@@ -368,7 +363,6 @@ function VerifyFlow({ onDone }: { onDone: () => void }) {
   );
 }
 
-// ── register wizard ─────────────────────────────────────────────────────────
 type Step = 'name' | 'proprietors' | 'review' | 'status';
 
 const STEP_LABELS: Array<[Step, string]> = [
@@ -382,7 +376,6 @@ function emptyProprietor(): Proprietor {
   return { fullName: '', role: 'proprietor', sharePct: undefined, phone: '', email: '', bvn: '', nin: '' };
 }
 
-// ── multi-select dropdown (checkbox list) ────────────────────────────────────
 function MultiSelectDropdown({
   options,
   selected,
@@ -483,7 +476,6 @@ function RegisterWizard({ onDone }: { onDone: () => void }) {
   const [payMethod, setPayMethod] = useState<'WALLET' | 'PAYSTACK'>('WALLET');
   const [psRef, setPsRef] = useState<string | null>(null);
 
-  // ── step 1: name check → register → reserve ───────────────────────────────
   async function runNameCheck() {
     setBusy(true);
     setError('');
@@ -512,7 +504,6 @@ function RegisterWizard({ onDone }: { onDone: () => void }) {
     setStep('proprietors');
   }
 
-  // ── step 2: proprietors ───────────────────────────────────────────────────
   function updateProprietor(i: number, key: keyof Proprietor, value: string) {
     setProprietors((prev) =>
       prev.map((p, idx) =>
@@ -564,7 +555,6 @@ function RegisterWizard({ onDone }: { onDone: () => void }) {
     }
   }
 
-  // ── step 3: pay fee → submit → status ─────────────────────────────────────
   async function payAndSubmit() {
     setBusy(true);
     setError('');
@@ -952,7 +942,6 @@ function Stepper({ current }: { current: Step }) {
   );
 }
 
-// ── status polling ──────────────────────────────────────────────────────────
 function StatusPoller({
   businessId,
   initial,

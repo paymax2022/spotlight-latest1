@@ -3,18 +3,16 @@ import { View, Text, FlatList, StyleSheet, Platform, KeyboardAvoidingView, Alert
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { Paperclip, MessageSquare } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { StateView, ChatComposer } from '@/features/doctor/components';
 import { usePharmacyMessages, useSendPharmacyMessage } from '@/features/doctor/hooks';
 import type { PharmacyMessage } from '@/types/doctor.batch3';
 
-// ── Section L — Pharmacy clarification chat (L12 / L21) ────────────────────────
 // NEW screen: a lightweight doctor ↔ pharmacist clarification thread. Reuses
-// ChatComposer for input; the bubble is inline because PharmacyMessage uses a
 // different author union than the Phase 1 ChatMessage MessageBubble expects.
 
 export default function PharmacyChatScreen() {

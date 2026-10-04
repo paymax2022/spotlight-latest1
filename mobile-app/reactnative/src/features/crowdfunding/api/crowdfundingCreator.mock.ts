@@ -1,4 +1,3 @@
-// ── Crowdfunding — Creator mock dataset ──────────────────────────────────────
 // "My" campaigns across all lifecycle statuses + dashboard stats, withdrawals,
 // notifications and per-campaign analytics. All money in kobo.
 

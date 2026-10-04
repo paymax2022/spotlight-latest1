@@ -4,10 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 )
+
+const keyError = "error"
 
 // admin_service.go — TELEMEDICINE-004: admin console backend. Additive to
 // service.go; does not change any member-facing method's behavior or SQL.
@@ -33,8 +39,6 @@ func (s *Service) WithAudit(a AuditWriter) *Service {
 	s.audit = a
 	return s
 }
-
-// ─── Dashboard ───────────────────────────────────────────────────────────────
 
 // GetAdminDashboard returns platform-wide KPIs for the admin console.
 func (s *Service) GetAdminDashboard(ctx context.Context) (*AdminDashboard, error) {
@@ -104,8 +108,6 @@ func (s *Service) GetAdminDashboard(ctx context.Context) (*AdminDashboard, error
 	}, nil
 }
 
-// ─── Doctor roster ───────────────────────────────────────────────────────────
-
 // ListAdminDoctors returns the FULL doctor roster (not availability-filtered,
 // unlike ListDoctors), each joined with its most-recent doctor_verifications row.
 func (s *Service) ListAdminDoctors(ctx context.Context, q AdminDoctorListQuery) ([]AdminDoctor, int, error) {
@@ -147,7 +149,7 @@ func (s *Service) ListAdminDoctors(ctx context.Context, q AdminDoctorListQuery) 
 	}
 	defer rows.Close()
 
-	items := make([]AdminDoctor, 0, limit)
+	items := make([]AdminDoctor, 0)
 	for rows.Next() {
 		var it AdminDoctor
 		if err := rows.Scan(&it.ID, &it.UserID, &it.Name, &it.Specialty, &it.ConsultFeeKobo,
@@ -179,8 +181,6 @@ func (s *Service) ListAdminDoctors(ctx context.Context, q AdminDoctorListQuery) 
 
 	return items, total, nil
 }
-
-// ─── Appointments ────────────────────────────────────────────────────────────
 
 // ListAdminAppointments returns the SYSTEM-WIDE appointment list (not scoped to
 // any single caller, unlike ListMyAppointments), optionally filtered by status
@@ -241,7 +241,7 @@ func (s *Service) ListAdminAppointments(ctx context.Context, q AdminAppointmentL
 	}
 	defer rows.Close()
 
-	items := make([]AdminAppointment, 0, limit)
+	items := make([]AdminAppointment, 0)
 	for rows.Next() {
 		var it AdminAppointment
 		if err := rows.Scan(&it.ID, &it.PatientID, &it.DoctorID, &it.DoctorName, &it.ScheduledAt,
@@ -256,8 +256,6 @@ func (s *Service) ListAdminAppointments(ctx context.Context, q AdminAppointmentL
 
 	return items, total, nil
 }
-
-// ─── Verification ────────────────────────────────────────────────────────────
 
 // adminVerifyTransitions mirrors doctor/service_mdcn_review.go's canDoctorVerif —
 // the SAME status machine the doctor module's own MDCN review console enforces.
@@ -377,8 +375,7 @@ func (s *Service) VerifyDoctor(ctx context.Context, reviewerID, doctorUserID str
 
 	// Skip the audit write on an idempotent replay (wasNoop) — no state actually
 	// changed, so a second audit row would misrepresent the trail as two
-	// distinct decisions. Found live by this test: the first version of this
-	// method wrote an audit row unconditionally, including on replay.
+	// distinct decisions.
 	if s.audit != nil && !wasNoop {
 		_ = s.audit.InsertAudit(ctx, reviewerID, "telemedicine.admin.doctor.verified", "doctor_verification", verifID, "",
 			map[string]any{"decision": req.Decision, "reason": req.Reason, "doctor_user_id": doctorUserID})
@@ -391,4 +388,162 @@ func (s *Service) VerifyDoctor(ctx context.Context, reviewerID, doctorUserID str
 		VerificationStatus: &decisionVal,
 		RejectionReason:    reasonPtr,
 	}, nil
+}
+
+// HTTP layer for the TELEMEDICINE-004 admin console. Routes
+// are registered (RBAC-gated) in backend/internal/app/finance_routes.go.
+
+// AdminGetDashboard handles GET /api/v1/telemedicine/admin/dashboard.
+func (h *Handler) AdminGetDashboard(c *gin.Context) {
+	dash, err := h.svc.GetAdminDashboard(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": dash})
+}
+
+// AdminListDoctors handles GET /api/v1/telemedicine/admin/doctors.
+func (h *Handler) AdminListDoctors(c *gin.Context) {
+	var q AdminDoctorListQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	items, total, err := h.svc.ListAdminDoctors(c.Request.Context(), q)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items, "total": total, "limit": q.Limit, "offset": q.Offset})
+}
+
+// AdminListAppointments handles GET /api/v1/telemedicine/admin/appointments.
+func (h *Handler) AdminListAppointments(c *gin.Context) {
+	var q AdminAppointmentListQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	items, total, err := h.svc.ListAdminAppointments(c.Request.Context(), q)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items, "total": total, "limit": q.Limit, "offset": q.Offset})
+}
+
+// AdminVerifyDoctor handles POST /api/v1/telemedicine/admin/doctors/:userId/verify.
+func (h *Handler) AdminVerifyDoctor(c *gin.Context) {
+	doctorUserID := c.Param("userId")
+	reviewerID := ginutil.UserID(c)
+	var req AdminVerifyDoctorRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	item, err := h.svc.VerifyDoctor(c.Request.Context(), reviewerID, doctorUserID, req)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrVerifyReasonRequired):
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		case errors.Is(err, ErrVerifyIllegalTransition):
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": item})
+}
+
+// request/response types for the admin console (TELEMEDICINE-004).
+// These are additive to model.go; nothing here changes the member-facing shapes.
+
+// AdminDashboard aggregates platform-wide KPIs for the telemedicine admin console.
+// Contrast with DoctorDashboard (model.go), which is ONE doctor's own view.
+type AdminDashboard struct {
+	TotalDoctors int `json:"total_doctors"`
+	// DoctorsPendingApproval counts doctor_verifications rows whose CURRENT
+	// (most-recent per user) status is not yet a terminal decision. The schema
+	// (supabase/migrations/20260625000000_doctor_module.sql,
+	// 20260815000600_doctor_mdcn_assisted_verification.sql) allows
+	// 'unsubmitted','pending','needs_info','approved','rejected' — no
+	// 'submitted'/'under_review' variant is ever written by any code path, so
+	// only the values actually used are counted (pending + needs_info).
+	DoctorsPendingApproval int `json:"doctors_pending_approval"`
+	// DoctorsApproved is the mirror count: doctors whose current (most-recent)
+	// verification status is 'approved'. Added so the admin console can show a
+	// real "verified" figure instead of a client-side placeholder.
+	DoctorsApproved      int `json:"doctors_approved"`
+	AppointmentsThisWeek int `json:"appointments_this_week"`
+	// PlatformRevenueKoboWeek is the platform's cut of every appointment
+	// completed in the trailing 7 days: fee_kobo*15/100 (the 15% commission leg
+	// of CompleteAppointment's settlement.Split) + platform_fee_kobo (the
+	// ADR-044 booking fee, a 100%-platform leg). Integer floor arithmetic only —
+	// see CompleteAppointment's comment for why `fee_kobo * 0.85` (float) was a
+	// live bug (TELEMEDICINE-002) that must not be reintroduced here.
+	PlatformRevenueKoboWeek int64 `json:"platform_revenue_kobo_week"`
+}
+
+// AdminDoctor is one row of the admin doctor roster — the FULL roster (unlike
+// ListDoctors, which is availability-filtered for patients), joined with the
+// doctor's real MDCN verification status (most-recent doctor_verifications row
+// for that user_id).
+type AdminDoctor struct {
+	ID             string    `json:"id"`
+	UserID         string    `json:"user_id"`
+	Name           string    `json:"name"`
+	Specialty      string    `json:"specialty"`
+	ConsultFeeKobo int64     `json:"consult_fee_kobo"`
+	IsAvailable    bool      `json:"is_available"`
+	IsOnline       bool      `json:"is_online"`
+	CreatedAt      time.Time `json:"created_at"`
+
+	// Verification fields are nullable: a doctor row can exist with zero
+	// doctor_verifications rows (never submitted) — never fabricated.
+	VerificationStatus *string    `json:"verification_status,omitempty"`
+	VerificationID     *string    `json:"verification_id,omitempty"`
+	MDCNNumber         *string    `json:"mdcn_number,omitempty"`
+	SubmittedAt        *time.Time `json:"submitted_at,omitempty"`
+	ReviewedAt         *time.Time `json:"reviewed_at,omitempty"`
+	RejectionReason    *string    `json:"rejection_reason,omitempty"`
+}
+
+// AdminDoctorListQuery holds validated query params for the admin roster.
+type AdminDoctorListQuery struct {
+	Status string `form:"status"` // filters on verification status when set
+	Limit  int    `form:"limit,default=20"`
+	Offset int    `form:"offset,default=0"`
+}
+
+// AdminAppointment is a system-wide appointment row — every field the admin
+// console needs to triage a booking, never scoped to the requesting caller.
+type AdminAppointment struct {
+	ID              string    `json:"id"`
+	PatientID       string    `json:"patient_id"`
+	DoctorID        string    `json:"doctor_id"`
+	DoctorName      string    `json:"doctor_name,omitempty"`
+	ScheduledAt     time.Time `json:"scheduled_at"`
+	Status          string    `json:"status"`
+	FeeKobo         int64     `json:"fee_kobo"`
+	PlatformFeeKobo int64     `json:"platform_fee_kobo"`
+	TotalKobo       int64     `json:"total_kobo"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// AdminAppointmentListQuery holds validated query params for the system-wide
+// appointment list.
+type AdminAppointmentListQuery struct {
+	Status string `form:"status"`
+	From   string `form:"from"` // RFC3339; filters scheduled_at >= From
+	To     string `form:"to"`   // RFC3339; filters scheduled_at <  To
+	Limit  int    `form:"limit,default=20"`
+	Offset int    `form:"offset,default=0"`
+}
+
+// AdminVerifyDoctorRequest is the body for POST /telemedicine/admin/doctors/:userId/verify.
+type AdminVerifyDoctorRequest struct {
+	Decision string `json:"decision" binding:"required,oneof=approved rejected"`
+	Reason   string `json:"reason"`
 }

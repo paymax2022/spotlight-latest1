@@ -6,7 +6,7 @@
 # bump while this line still said 1.25, and nothing caught it until
 # integration-verify's docker build, which only runs on push:main. When you bump
 # the go directive, bump this line in the SAME commit.
-FROM golang:1.26-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /app
 COPY . .
 
@@ -37,9 +37,15 @@ RUN COMMIT="${BUILD_COMMIT}" \
  # Transport Trip Scheduling worker — built from the SAME image ("build once,
  # deploy many"); compose runs it via `command: ["/app/transport-scheduler"]`
  # behind the `transport-scheduling` profile and FEATURE_TRANSPORT_SCHEDULING_ENABLED.
- && go build -o transport-scheduler ./cmd/transport-scheduler
+ && go build -o transport-scheduler ./cmd/transport-scheduler \
+ # Notification delivery worker — consumes notification:push/email/sms asynq
+ # tasks (wallet events, health reminders, estate notices; E2E-BE-031). Same
+ # build-once image; compose runs it via `command: ["/app/notification-worker"]`
+ # behind the `notifications` profile. Render builds it from the ROOT
+ # Dockerfile; this keeps the compose image at parity.
+ && go build -o notification-worker ./cmd/notification-worker
 
-FROM alpine:3.20
+FROM alpine:3.24
 WORKDIR /app
 # curl is used by the compose healthchecks (ES) and is handy for indexer/cron probes.
 RUN apk add --no-cache curl
@@ -47,6 +53,7 @@ COPY --from=build /app/server /app/server
 COPY --from=build /app/marketplace-indexer /app/marketplace-indexer
 COPY --from=build /app/marketplace-cron /app/marketplace-cron
 COPY --from=build /app/transport-scheduler /app/transport-scheduler
+COPY --from=build /app/notification-worker /app/notification-worker
 # Run as a non-root user (trivy DS-0002). The binaries are world-readable and
 # the service binds 8080, so no privileged port and nothing to chown — the
 # process simply does not need root to execute a static Go binary.

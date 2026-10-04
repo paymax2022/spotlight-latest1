@@ -3,9 +3,6 @@ package mycover
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha512"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,12 +10,14 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"spotlight/backend/go-common/cryptox"
+	"spotlight/backend/go-common/strutil"
+	"spotlight/backend/go-common/timeutil"
+	"spotlight/backend/internal/insurance/gateway"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"spotlight/backend/internal/insurance/gateway"
 )
 
 // Client is the MyCover.ai aggregator adapter. It implements
@@ -26,13 +25,9 @@ import (
 // underwriter (the licensed risk-carrier) on each product, and this adapter
 // surfaces that disclosure into the normalised models. Raw provider JSON NEVER
 // leaks past this file.
-//
 // Keys come from config/env via New(); they are NEVER hard-coded and NEVER
 // logged. The HTTP layer mirrors internal/provider/paystack.
-//
-// ════════════════════════════════════════════════════════════════════════════
 // THE CENTRAL FACT ABOUT THIS PROVIDER
-// ════════════════════════════════════════════════════════════════════════════
 // This adapter targets MyCover **v2** (https://v2.api.mycover.ai/v2), which is
 // the only API MyCover documents today. The v1 model — one bespoke purchase
 // endpoint per product, then per product FAMILY — is a dead end and is gone from
@@ -48,7 +43,6 @@ import (
 //	one endpoint + one publicly-readable schema per product.
 //
 // Consequences this file is built around:
-//
 //   - GetQuote is a REAL provider call. v1 had no reachable quote endpoint and
 //     the premium had to be computed locally from catalog pricing; v2's
 //     compute-price returns the provider's own figure, so we never invent a
@@ -59,9 +53,6 @@ import (
 //     is therefore entirely Paymax's responsibility and is enforced upstream of
 //     this adapter (see the insurance policy service); the header is still sent
 //     in case the provider ever honours it, but nothing depends on that.
-//
-// Raw provider JSON NEVER leaks past this file. Keys come from config/env via
-// New(); they are NEVER hard-coded and NEVER logged.
 type Client struct {
 	apiKey        string // secret key — server-to-server auth; never logged
 	publicKey     string // publishable key — client-init / disclosure; safe to surface
@@ -73,7 +64,6 @@ type Client struct {
 // defaultBaseURL is the MyCover v2 host, serving both test and live keys; the
 // environment is selected by the key prefix (MCASECK_T… is test/staging).
 // Verified live 2026-08-31.
-//
 // Two earlier defaults were wrong: `api.sandbox.mycover.ai` does not resolve in
 // DNS at all, and `api.mycover.ai/v1` is the legacy API MyCover no longer
 // documents (its /claims is 403 for the very key that gets 200 on v2).
@@ -134,7 +124,6 @@ var (
 		gateway.ErrProviderRejected)
 	// ErrNoFormSchema means the catalog row carries no published form schema, so
 	// we cannot tell WHICH of the member's answers are monetary.
-	//
 	// MyCover's form inputs are naira and every client submits kobo, so an
 	// unconverted answer reaches the insurer 100x too large — a ₦200,000 phone
 	// declared as ₦20,000,000. The conversion is only safe because it keys off
@@ -150,13 +139,11 @@ var (
 	// ErrInsufficientProviderFloat means MyCover accepted the whole payload and
 	// then refused at settlement because PAYMAX'S PREFUNDED DISTRIBUTOR WALLET
 	// with MyCover has no money in it.
-	//
 	// ⛔ This is the single most important error in this adapter, and it is NOT a
 	// rare edge case. MyCover does not charge per transaction: the distributor
 	// holds a prefunded balance and every policy purchase debits it. When that
 	// float runs dry EVERY bind fails, all at once — so if members have already
 	// been debited by then, we owe refunds at scale.
-	//
 	// It is deliberately its own type, distinct from a generic bind failure,
 	// because the two demand opposite responses: a generic failure is a per-member
 	// problem, while this one is a treasury problem that must stop the queue and
@@ -218,10 +205,7 @@ func (c *Client) Configured() bool { return c.apiKey != "" }
 // accepted.
 func (c *Client) WebhookConfigured() bool { return c.webhookKey() != "" }
 
-// ════════════════════════════════════════════════════════════════════════════
 // RESPONSE ENVELOPE
-// ════════════════════════════════════════════════════════════════════════════
-//
 // Every MyCover endpoint answers with:
 //
 //	{ "responseCode": 1, "responseText": "...", "data": { ... } }
@@ -315,9 +299,7 @@ func (e *APIError) ValidationMessages() []string {
 	return e.Messages
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // CATALOG — GET /products/get-all-products
-// ════════════════════════════════════════════════════════════════════════════
 
 // CatalogProduct is the normalised view of one MyCover product. Money has
 // ALREADY crossed the naira→kobo boundary here (see money.go) — nothing
@@ -334,7 +316,6 @@ type CatalogProduct struct {
 	Currency          string
 	Country           string
 
-	// --- Pricing, in Paymax units ---
 	IsPercentage bool
 	// BasePriceKobo is the flat premium in kobo when IsPercentage is false.
 	BasePriceKobo int64
@@ -347,13 +328,11 @@ type CatalogProduct struct {
 	// declares a fixed cover amount; 0 otherwise.
 	DefaultSumInsuredKobo int64
 
-	// --- Commission split (whole percents as MyCover states them) ---
 	DistributorCommissionPercent string // Paymax's revenue share
 	MCACommissionPercent         string
 	ProviderCommissionPercent    string
 	CommissionFrom               string // original_premium | final_premium
 
-	// --- Cover terms ---
 	CoverPeriodDays   int
 	IsRenewable       bool
 	IsClaimable       bool
@@ -361,7 +340,6 @@ type CatalogProduct struct {
 	IsCertificateable bool
 	Active            bool
 
-	// --- Display copy (HTML — render sanitised) ---
 	KeyBenefitsHTML  string
 	FullBenefitsHTML string
 	HowItWorksHTML   string
@@ -424,7 +402,6 @@ type rawProduct struct {
 
 // ListProducts pulls one page of the live product catalog. limit is capped by
 // the provider; 100 returns the whole catalog today (68 products).
-//
 // This is NOT part of gateway.UnderwriterGateway — catalogue sync is an
 // aggregator-specific capability, exposed through the narrow CatalogSource
 // interface the catalog package depends on.
@@ -578,7 +555,6 @@ func normaliseProduct(rp rawProduct) (CatalogProduct, error) {
 		DocumentURL:       rp.DocumentURL,
 	}
 
-	// --- MONEY BOUNDARY: naira decimal string → integer kobo / bps ---
 	if basePrice != "" {
 		if rp.IsPercentage {
 			bps, err := RateToBps(basePrice)
@@ -714,7 +690,6 @@ const BuyPath = pathBuy
 const QuotePath = pathComputePrice
 
 // FieldPaymentPlan is the instalment count (1..12 months) some products accept.
-//
 // Under v2 it is just one more schema field: it is forwarded to compute-price
 // like any other answer and the PROVIDER returns the resulting premium (verified
 // live: plan 1 prices at NGN4,000, plan 12 at NGN48,000 for the same product).
@@ -722,19 +697,13 @@ const QuotePath = pathComputePrice
 // wrong — which is why v1's refusal to quote instalment plans is gone.
 const FieldPaymentPlan = "payment_plan"
 
-// ════════════════════════════════════════════════════════════════════════════
-// gateway.UnderwriterGateway
-// ════════════════════════════════════════════════════════════════════════════
-
 // providerBody turns the member's stored answers into the body MyCover expects.
-//
 // It is the OUTBOUND MONEY BOUNDARY for form inputs. Every value the internal
 // contract carries — including every money field — is INTEGER KOBO; MyCover's
 // form fields are NAIRA. Exactly the paths the product's PUBLISHED schema
 // classified as `money` are rescaled, once, here. Everything else is copied
 // verbatim, and the caller's map is never mutated (quote answers are persisted
 // and replayed at bind time).
-//
 // It fails CLOSED when the schema is unknown: without it we cannot tell which
 // answers are money, and forwarding them unscaled is the 100x bug itself.
 func providerBody(p gateway.ProviderProduct, inputs map[string]any) (map[string]any, error) {
@@ -753,13 +722,11 @@ func providerBody(p gateway.ProviderProduct, inputs map[string]any) (map[string]
 
 // GetQuote prices a product by calling MyCover's REAL quote endpoint,
 // POST /products/compute-price with {"product_id": …, "body": {…fields…}}.
-//
 // This is the single biggest correctness win of v2. Under v1 there was no
 // reachable quote endpoint (compute-price was 403), so the premium had to be
 // derived locally from catalog pricing — an amount Paymax computed and then
 // charged. Now the provider returns its own figure and we never invent a price:
 // the number the member is debited is the number the underwriter quoted.
-//
 // The naira→kobo crossing happens once, here, on the way back.
 func (c *Client) GetQuote(ctx context.Context, req gateway.QuoteRequest) (gateway.Quote, error) {
 	p := req.Product
@@ -856,7 +823,6 @@ func pricingModel(isPct bool) string {
 // BindPolicy purchases cover through v2's SINGLE purchase endpoint,
 // POST /products/buy, with a flat body of the product's own fields plus
 // product_id.
-//
 // ⚠️ IDEMPOTENCY IS OURS. MyCover documents no idempotency mechanism on this
 // endpoint, so a retried call would create a SECOND policy and debit our float
 // twice. The Idempotency-Key header is sent in case the provider ever honours
@@ -932,7 +898,6 @@ func (c *Client) GetPolicy(ctx context.Context, providerPolicyRef string) (gatew
 
 // ListPolicies returns the policies MyCover holds for our account. It backs the
 // admin reconciliation view (our policies vs the provider's).
-//
 // Not part of the gateway interface — reconciliation is aggregator-specific.
 func (c *Client) ListPolicies(ctx context.Context, page, limit int) ([]gateway.Policy, int, error) {
 	if page < 1 {
@@ -972,17 +937,14 @@ func (c *Client) CancelPolicy(ctx context.Context, providerPolicyRef, reason str
 }
 
 // SubmitClaim is NOT SUPPORTED as an API call.
-//
 // VERIFIED LIVE: POST /v2/claims returns 404 "Cannot POST /v2/claims". MyCover
 // files claims through a HOSTED FLOW, not a REST endpoint: every
 // purchase.successful / policy.updated webhook carries an `sdk.claim_link`, the
 // member is redirected there, and claim progress returns over webhooks.
-//
 // So the Paymax claims module for this aggregator is "store the link, deep-link
 // the member, ingest webhooks" — never a POST. Returning ErrUnsupported here is
 // the honest answer; inventing a call would 404 while telling the member their
 // claim was filed.
-//
 // (The v1 403 on /claims was a scope limit on the legacy API, not a missing
 // path: v2's GET /claims answers 200 for the same key.)
 func (c *Client) SubmitClaim(ctx context.Context, req gateway.ClaimRequest) (gateway.Claim, error) {
@@ -1041,7 +1003,6 @@ func (c *Client) UploadEvidence(ctx context.Context, up gateway.EvidenceUpload) 
 }
 
 // webhookSignatureHeader is the header MyCover signs its callbacks with.
-//
 // Note "mycoverai", not "mycover": the header does NOT match the aggregator slug
 // used in our webhook URL, which is why the header name has to be declared by
 // the adapter rather than derived from the route.
@@ -1051,7 +1012,6 @@ const webhookSignatureHeader = "x-mycoverai-signature"
 func (c *Client) WebhookSignatureHeader() string { return webhookSignatureHeader }
 
 // webhookKey returns the HMAC key for webhook verification.
-//
 // MyCover issues NO separate webhook secret: the signature is keyed on the
 // distributor's own secret API key. So an empty INSURANCE_MYCOVER_WEBHOOK_SECRET
 // was never a missing credential — it was a misunderstanding — and the API key
@@ -1065,17 +1025,14 @@ func (c *Client) webhookKey() string {
 
 // VerifyWebhook validates the webhook signature and returns the normalised
 // event. SignatureValid is false (err nil) when the signature does not match.
-//
 // Scheme: HMAC-SHA512, hex digest, over the RAW request body, keyed on the
 // MCASECK_* secret API key; delivered in the `x-mycoverai-signature` header.
 // The body must be the bytes as received — re-serialising the JSON reorders or
 // re-spaces it and the digest will not match.
-//
 // ⚠️ FAILS CLOSED. With no key configured, every inbound webhook is rejected.
 // Accepting unsigned provider callbacks would let anyone who can reach the
 // endpoint activate policies and approve claims, so this is deliberately never
 // stubbed to return valid.
-//
 // ⚠️ UNPROVEN AGAINST A REAL DELIVERY. Our account has never received a webhook
 // (it holds zero policies and no callback URL is registered in the MyCover
 // dashboard), so this recipe comes from the documentation and has not been
@@ -1090,16 +1047,13 @@ func (c *Client) VerifyWebhook(ctx context.Context, payload []byte, signature st
 	}
 	if !verifyHMACSHA512(key, payload, signature) {
 		// Log the DIGESTS on a mismatch — never the key, never the raw body.
-		//
 		// The signing recipe is documented but has never been confirmed against a
 		// real delivery (this account has received none). When the first genuine
 		// webhook arrives and is rejected, these two values are the difference
 		// between diagnosing it in one pass and guessing at the algorithm, the
 		// key and the canonicalisation all at once.
-		mac := hmac.New(sha512.New, []byte(key))
-		mac.Write(payload)
 		log.Printf("[mycover] webhook signature mismatch: computed %s, received %s (body %d bytes)",
-			hex.EncodeToString(mac.Sum(nil)), redactDigest(signature), len(payload))
+			cryptox.HMACSHA512Hex(key, payload), redactDigest(signature), len(payload))
 		return gateway.WebhookEvent{Provider: c.Name(), SignatureValid: false}, nil
 	}
 	var w webhookPayload
@@ -1108,23 +1062,21 @@ func (c *Client) VerifyWebhook(ctx context.Context, payload []byte, signature st
 	}
 	return gateway.WebhookEvent{
 		Provider:          c.Name(),
-		EventType:         normaliseEventType(firstNonEmpty(w.Event, w.EventName)),
-		ExternalEventID:   firstNonEmpty(w.ID, w.EventID, w.Reference),
-		ProviderPolicyRef: firstNonEmpty(w.Data.Essential.PolicyID, w.Data.PolicyID, w.Data.PolicyRef, w.Data.ID),
-		ProviderClaimRef:  firstNonEmpty(w.Data.Essential.ClaimID, w.Data.ClaimID, w.Data.ClaimRef),
+		EventType:         normaliseEventType(strutil.FirstNonEmpty(w.Event, w.EventName)),
+		ExternalEventID:   strutil.FirstNonEmpty(w.ID, w.EventID, w.Reference),
+		ProviderPolicyRef: strutil.FirstNonEmpty(w.Data.Essential.PolicyID, w.Data.PolicyID, w.Data.PolicyRef, w.Data.ID),
+		ProviderClaimRef:  strutil.FirstNonEmpty(w.Data.Essential.ClaimID, w.Data.ClaimID, w.Data.ClaimRef),
 		SignatureValid:    true,
 	}, nil
 }
 
 // normaliseEventType translates MyCover's callback vocabulary into the internal
 // contract's.
-//
 // MyCover names events <resource>.<action> ("purchase.successful"), while the
 // webhook service speaks policy.bound / policy.cancelled / policy.lapsed /
 // policy.expired. Nothing translated between them, so a real delivery verified
 // its signature and was then dropped as an "unhandled event type" — the webhook
 // worked and did nothing.
-//
 // ⚠️ Only UNAMBIGUOUS events are translated. webhooks.policyTargetState turns
 // policy.bound into ACTIVE, so mapping a vague "policy.updated" onto it would
 // reactivate a policy the provider had just cancelled. An unrecognised event is
@@ -1169,10 +1121,7 @@ type webhookPayload struct {
 	} `json:"data"`
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // Normalisation of purchase / policy / claim payloads
-// ════════════════════════════════════════════════════════════════════════════
-//
 // MyCover's purchase responses are per-product and the account has no purchased
 // policies yet to sample, so these decoders are KEY-TOLERANT: they accept any of
 // the field names the API uses across its documented shapes rather than pinning
@@ -1183,10 +1132,10 @@ func (c *Client) policyFromData(data json.RawMessage, p gateway.ProviderProduct)
 	m := decodeObject(data)
 	pol := gateway.Policy{
 		ProviderPolicyRef:   pickString(m, "policy_id", "id", "policy_no", "policy_number", "reference", "policy_reference"),
-		ProviderProductCode: firstNonEmpty(pickString(m, "product_route_name", "product_code", "route_name"), p.Code),
+		ProviderProductCode: strutil.FirstNonEmpty(pickString(m, "product_route_name", "product_code", "route_name"), p.Code),
 		Status:              "", // set below, once ExpiresAt is known
 		Currency:            "NGN",
-		Underwriter:         firstNonEmpty(pickString(m, "provider_name", "underwriter", "organization_name"), p.Underwriter),
+		Underwriter:         strutil.FirstNonEmpty(pickString(m, "provider_name", "underwriter", "organization_name"), p.Underwriter),
 		Aggregator:          c.Name(),
 		EffectiveAt:         pickTime(m, "start_date", "effective_date", "effective_at", "commencement_date"),
 		ExpiresAt:           pickTime(m, "end_date", "expiry_date", "expires_at", "expiration_date"),
@@ -1203,12 +1152,10 @@ func (c *Client) policyFromData(data json.RawMessage, p gateway.ProviderProduct)
 }
 
 // policyStatus derives a policy's state.
-//
 // ⚠️ MyCover sends NO status field on a policy. Not status, not policy_status,
 // not state — verified against every real policy on the account. Liveness is the
 // boolean `is_active`, which the catalog path already reads and the policy path
 // did not, so every policy we bound was stored with an EMPTY status.
-//
 // An explicit status still wins where a provider sends one, so this stays
 // correct for Octamile or any future aggregator.
 func policyStatus(m map[string]json.RawMessage, expiresAt time.Time) string {
@@ -1255,7 +1202,7 @@ func (c *Client) claimFromData(data json.RawMessage, policyRef string) gateway.C
 	m := decodeObject(data)
 	return gateway.Claim{
 		ProviderClaimRef:   pickString(m, "claim_id", "id", "claim_no", "claim_number", "reference"),
-		ProviderPolicyRef:  firstNonEmpty(pickString(m, "policy_id", "policy_ref", "policy_no"), policyRef),
+		ProviderPolicyRef:  strutil.FirstNonEmpty(pickString(m, "policy_id", "policy_ref", "policy_no"), policyRef),
 		Status:             normaliseStatus(pickString(m, "status", "claim_status", "state")),
 		ClaimedAmountKobo:  pickMoney(m, "claim_amount", "amount", "claimed_amount"),
 		ApprovedAmountKobo: pickMoney(m, "approved_amount", "settlement_amount", "paid_amount"),
@@ -1327,7 +1274,7 @@ func pickMoney(m map[string]json.RawMessage, keys ...string) int64 {
 func pickTime(m map[string]json.RawMessage, keys ...string) time.Time {
 	for _, k := range keys {
 		if raw, ok := m[k]; ok {
-			if t := parseTime(jsonNumberOrString(raw)); !t.IsZero() {
+			if t, _ := timeutil.ParseTime(jsonNumberOrString(raw)); !t.IsZero() {
 				return t
 			}
 		}
@@ -1356,19 +1303,6 @@ func normaliseStatus(s string) string {
 		return strings.ToLower(strings.TrimSpace(s))
 	}
 }
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// HTTP
-// ════════════════════════════════════════════════════════════════════════════
 
 func (c *Client) postIdem(ctx context.Context, path, idemKey string, body any) (envelope, error) {
 	b, err := json.Marshal(body)
@@ -1478,31 +1412,96 @@ func redactDigest(sig string) string {
 // verifyHMACSHA512 returns true if signature == hex(HMAC-SHA512(key, payload)).
 // Comparison is constant-time. An empty key or signature is always false.
 func verifyHMACSHA512(key string, payload []byte, signature string) bool {
-	if key == "" || signature == "" {
-		return false
-	}
-	mac := hmac.New(sha512.New, []byte(key))
-	mac.Write(payload)
-	expected := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(expected), []byte(strings.TrimSpace(signature)))
+	return key != "" && signature != "" &&
+		cryptox.VerifyHMACSHA512(key, payload, strings.TrimSpace(signature))
 }
 
-// parseTime accepts the date formats MyCover uses across its payloads.
-func parseTime(s string) time.Time {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return time.Time{}
+// utility.go — the dependent/lookup dropdowns a product schema points at.
+// A synced field can carry an `options_url` instead of a literal enum: one
+// MyCover "utility" endpoint per list (Nigerian states, banks, vehicle makes…).
+// `pathUtility` has been declared since the v2 rework but nothing ever called
+// it, so every schema field with an options_url had no way to be filled and the
+// app's remote-options endpoint answered 404 — 219 such fields across 65 of the
+// 69 products.
+// Verified shape (live GET, 2026-08-31, states utility
+// e55de863-7d98-4236-bd61-40328cd7f7fc):
+//	{"responseCode":1,"responseText":"Product utility fetched successfully",
+//	 "data":[{"label":"Abia","value":"Abia"}, …]}
+// So it is the standard v2 envelope with `data` already in {label,value} form.
+// That id ignores `?query=`; others are documented to serve a dependent list
+// from the parent's value, so the parameter is forwarded when given.
+
+// FetchUtilityOptions returns the options served by a schema field's
+// options_url.
+// optionsURL comes from OUR stored, provider-synced schema — never from a
+// client, which only ever names a product and a field. It is still pinned to the
+// configured provider origin before being fetched: this is a server-side GET of
+// a URL that arrived as data, so without that check a bad or tampered sync row
+// would turn into an SSRF against anything the backend can reach.
+func (c *Client) FetchUtilityOptions(ctx context.Context, optionsURL, query string) ([]Option, error) {
+	if c.apiKey == "" {
+		return nil, errors.New("mycover: no API key configured")
 	}
-	for _, layout := range []string{
-		time.RFC3339Nano,
-		time.RFC3339,
-		"2006-01-02T15:04:05.000Z",
-		"2006-01-02 15:04:05",
-		"2006-01-02",
-	} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t
+	target, err := c.utilityTarget(optionsURL, query)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	env, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	var opts []Option
+	if err := json.Unmarshal(env.Data, &opts); err != nil {
+		return nil, fmt.Errorf("mycover: utility options: unexpected shape: %w", err)
+	}
+	// Drop blanks rather than render an empty row the user can select. A value is
+	// what gets submitted, so an option without one is unusable; label falls back
+	// to the value so a list that omits labels still reads.
+	out := make([]Option, 0, len(opts))
+	for _, o := range opts {
+		v := strings.TrimSpace(o.Value)
+		if v == "" {
+			continue
 		}
+		l := strings.TrimSpace(o.Label)
+		if l == "" {
+			l = v
+		}
+		out = append(out, Option{Value: v, Label: l})
 	}
-	return time.Time{}
+	return out, nil
+}
+
+// utilityTarget validates the stored options_url against the configured provider
+// origin and appends the optional dependent query.
+func (c *Client) utilityTarget(optionsURL, query string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(optionsURL))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", errors.New("mycover: utility options: unusable options_url")
+	}
+	if u.Scheme != "https" {
+		return "", errors.New("mycover: utility options: refusing non-https options_url")
+	}
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return "", errors.New("mycover: utility options: bad configured base url")
+	}
+	if !strings.EqualFold(u.Host, base.Host) {
+		// The pin is the whole point — see the doc comment on FetchUtilityOptions.
+		return "", fmt.Errorf("mycover: utility options: options_url host %q is not the provider", u.Host)
+	}
+	if q := strings.TrimSpace(query); q != "" {
+		params := u.Query()
+		params.Set("query", q)
+		u.RawQuery = params.Encode()
+	}
+	return u.String(), nil
 }

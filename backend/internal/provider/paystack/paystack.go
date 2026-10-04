@@ -3,15 +3,13 @@ package paystack
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha512"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 
+	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/internal/provider"
 )
 
@@ -32,8 +30,6 @@ func New(secretKey string) *Client {
 }
 
 func (c *Client) Name() string { return "paystack" }
-
-// --- PaymentProvider ---
 
 func (c *Client) InitializePayment(ctx context.Context, req provider.InitializePaymentRequest) (*provider.InitializePaymentResponse, error) {
 	body := map[string]any{
@@ -71,6 +67,7 @@ func (c *Client) VerifyPayment(ctx context.Context, reference string) (*provider
 			Status    string `json:"status"`
 			Reference string `json:"reference"`
 			Amount    int64  `json:"amount"`
+			Currency  string `json:"currency"`
 			Channel   string `json:"channel"`
 			PaidAt    string `json:"paid_at"`
 		} `json:"data"`
@@ -90,6 +87,7 @@ func (c *Client) VerifyPayment(ctx context.Context, reference string) (*provider
 		Reference:  resp.Data.Reference,
 		Status:     resp.Data.Status,
 		AmountKobo: resp.Data.Amount,
+		Currency:   resp.Data.Currency,
 		Channel:    resp.Data.Channel,
 		PaidAt:     paidAt,
 	}, nil
@@ -170,8 +168,6 @@ func (c *Client) InitiatePayout(ctx context.Context, req provider.PayoutRequest)
 		ProviderRef:  resp.Data.TransferCode, // Paystack routes webhooks by transfer_code
 	}, nil
 }
-
-// --- DisbursementProvider ---
 
 // ListBanks fetches Paystack's supported NGN banks (GET /bank).
 func (c *Client) ListBanks(ctx context.Context) ([]provider.Bank, error) {
@@ -304,13 +300,8 @@ func (c *Client) ParseWebhook(payload []byte) (*provider.WebhookEvent, error) {
 
 // VerifyWebhookSignature validates HMAC-SHA512 signatures from Paystack.
 func (c *Client) VerifyWebhookSignature(payload []byte, signature string) bool {
-	mac := hmac.New(sha512.New, []byte(c.secretKey))
-	mac.Write(payload)
-	expected := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(expected), []byte(signature))
+	return cryptox.VerifyHMACSHA512(c.secretKey, payload, signature)
 }
-
-// --- VirtualAccountProvider ---
 
 func (c *Client) ProvisionVirtualAccount(ctx context.Context, req provider.ProvisionVARequest) (*provider.VirtualAccount, error) {
 	body := map[string]any{
@@ -353,8 +344,6 @@ func (c *Client) GetVirtualAccount(ctx context.Context, userID string) (*provide
 	// account number stored in our virtual_accounts table (called via the service layer).
 	return nil, fmt.Errorf("paystack: GetVirtualAccount not implemented — use VA service repo")
 }
-
-// --- HTTP helpers ---
 
 func (c *Client) post(ctx context.Context, path string, body, dst any) error {
 	b, err := json.Marshal(body)

@@ -1,7 +1,5 @@
 // Admin: define and grade the PARTS of an assignment — the week 1-4 timeline.
-//
 // A part is one week's deliverable inside a larger brief. Creating parts is what
-// turns a single-shot assignment into a staged one; an assignment with no parts
 // keeps its original whole-submission behaviour, so this is purely additive to
 // the existing flow.
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
@@ -119,7 +117,6 @@ export async function PATCH(request: Request) {
     const body = (await request.json()) as Record<string, unknown>;
     const supabase = createAdminClient();
 
-    // ── Grading a part submission ───────────────────────────────────────────
     if (body.partSubmissionId) {
       const id = String(body.partSubmissionId);
       const { data: sub } = await supabase
@@ -132,7 +129,6 @@ export async function PATCH(request: Request) {
       if (body.score === undefined || body.score === null) {
         return errorResponse('score is required', 400);
       }
-      // A part whose max_score is null is progress-only; 100 is the implied
       // ceiling so a typo of 500 is still caught rather than stored.
       const maxScore = Number(
         (sub as { academy_assignment_parts?: { max_score?: number | null } }).academy_assignment_parts?.max_score ?? 100,
@@ -161,7 +157,6 @@ export async function PATCH(request: Request) {
       return successResponse({ success: true, partSubmissionId: id, score });
     }
 
-    // ── Editing the part itself ─────────────────────────────────────────────
     if (!body.id) return errorResponse('id or partSubmissionId is required', 400);
 
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };

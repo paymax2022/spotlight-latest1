@@ -14,21 +14,27 @@ export async function GET(
     const supabase = createAdminClient();
 
     let query = supabase
-      .from('competition_enrollments')
+      .from('contestants')
       .select(`
         id,
+        name,
         stage_name,
-        genre_style,
+        category,
         state,
-        profile_photo_url,
-        status,
-        user_profiles ( full_name, avatar_url )
+        photo_url,
+        status
       `)
-      .eq('competition_id', contestId)
-      .eq('status', 'enrolled');
+      .eq('contest_id', contestId)
+      .in('status', ['approved', 'active']);
 
     if (search) {
-      query = query.or(`stage_name.ilike.%${search}%,genre_style.ilike.%${search}%`);
+      // E2E-SEC-060: strip PostgREST filter-grammar metacharacters before
+      // interpolating into .or() — unescaped commas/parens let a caller
+      // reshape the filter (e.g. append ",other_col.eq.x").
+      const term = search.replace(/[(),."\\]/g, '').slice(0, 80);
+      if (term) {
+        query = query.or(`stage_name.ilike.%${term}%,category.ilike.%${term}%`);
+      }
     }
 
     const { data: enrollments, error } = await query;
@@ -52,17 +58,16 @@ export async function GET(
 
     const result = enrollments
       .map((e: any, idx: number) => {
-        const profile = e.user_profiles ?? {};
         const totals = totalsById.get(e.id) as any;
         const voteCount = totals?.total_confirmed_votes ?? 0;
         const rank = totals?.rank ?? idx + 1;
         return {
           id: e.id,
-          name: profile.full_name ?? e.stage_name ?? 'Contestant',
+          name: e.name ?? e.stage_name ?? 'Contestant',
           stageName: e.stage_name || null,
-          category: e.genre_style || null,
+          category: e.category || null,
           state: e.state || null,
-          photoUrl: e.profile_photo_url || profile.avatar_url || null,
+          photoUrl: e.photo_url || null,
           rank,
           voteCount,
           votePercent: grandTotal > 0 ? Math.round((voteCount / grandTotal) * 1000) / 10 : 0,

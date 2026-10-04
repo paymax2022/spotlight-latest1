@@ -1,14 +1,9 @@
-// ── Doctor module — Batch 4 constants ────────────────────────────────────────
 // Static option lists / label maps for Batch 4 (Sections O · P · Q · R). Pure
 // data only — no money math. Money is always integers in kobo. ADDITIVE to
 // `@/features/doctor/constants` (re-exported from its barrel).
-//
-// REUSE: existing follow-up / referral / HMO constants from `phase2.ts`
 // (FOLLOW_UP_STATUS_LABELS, FOLLOW_UP_KIND_OPTIONS, REFERRAL_STATUS_LABELS,
 // REFERRAL_URGENCY_OPTIONS, REFERRAL_ATTACHMENT_KIND_LABELS, CLAIM_STATUS_LABELS,
 // HMO_PROVIDER_OPTIONS) and `batch2.ts` (RED_FLAG_OPTIONS), and the free-window
-// presets from `profile.ts` (FREE_FOLLOW_UP_WINDOW_OPTIONS). We re-export the
-// reused ones below so Batch 4 screens have a single import site, and add only
 // the missing maps.
 
 import type {
@@ -27,8 +22,6 @@ import type {
   FraudWarningSeverity,
 } from '@/types/doctor.batch4';
 
-// ─── REUSE: re-export the existing Phase 2 / Batch 2 / profile constants ──────
-// (Single import site for Batch 4 screens. Source of truth stays unchanged.)
 export {
   FOLLOW_UP_STATUS_LABELS,
   FOLLOW_UP_KIND_OPTIONS,
@@ -42,9 +35,7 @@ export {
 export { RED_FLAG_OPTIONS } from './batch2';
 export { FREE_FOLLOW_UP_WINDOW_OPTIONS } from './profile';
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Section O — HMO / Insurance
-// ═══════════════════════════════════════════════════════════════════════════
 
 // status → { label, tone } where tone is a UI palette key (success/warning/danger/info).
 export const PREAUTH_STATUS_LABELS: Record<PreAuthStatus, { label: string; tone: string }> = {
@@ -84,9 +75,7 @@ export const PREAUTH_SERVICE_OPTIONS: string[] = [
   'Physiotherapy',
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Section P — Referral & Specialist Collaboration
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const INCOMING_REFERRAL_STATUS_LABELS: Record<IncomingReferralStatus, { label: string; tone: string }> = {
   incoming:  { label: 'Incoming',  tone: 'info'    },
@@ -114,9 +103,7 @@ export const REFERRAL_REJECTION_REASONS: string[] = [
   'Other',
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Section Q — Follow-Up Care
-// ═══════════════════════════════════════════════════════════════════════════
 
 // Self-reported medication adherence options (adherence check sheet).
 export const ADHERENCE_OPTIONS: { value: AdherenceLevel; label: string; tone: string }[] = [
@@ -153,13 +140,10 @@ export const CHRONIC_CONDITION_OPTIONS: string[] = [
 ];
 
 // Free-follow-up window presets (days). REUSE: alias of the profile policy list.
-// Re-exported above as FREE_FOLLOW_UP_WINDOW_OPTIONS; this alias documents intent
 // at Batch 4 call sites.
 export const FOLLOWUP_WINDOW_OPTIONS: number[] = [3, 5, 7, 14, 30];
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Section R — Emergency & Escalation (DEMO — non-actionable)
-// ═══════════════════════════════════════════════════════════════════════════
 
 export const ESCALATION_KIND_LABELS: Record<EscalationKind, string> = {
   hospital:          'Escalate to hospital',

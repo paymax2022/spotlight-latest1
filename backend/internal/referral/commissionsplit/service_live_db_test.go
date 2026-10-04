@@ -1,19 +1,15 @@
 package commissionsplit_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB suite for the referral purchase-commission-split engine: a referrer
 // earns a flat 20% of Spotlight's realized commission on every purchase made
 // by someone they referred, capped per referral CODE (shared across every
 // person that code referred), defaulting silently to Admin (no payout, no
 // record) once retired or when the payer has no human referrer.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset, so `go test ./...` without a DB
 // stays green.
-//
 // Bring-up:
 //   export TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 //   cd backend && go test ./internal/referral/commissionsplit/... -v -count=1
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

@@ -1,13 +1,9 @@
 // Pure-logic unit tests for the telemedicine booking price mapping (ADR-040).
-// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "tests/unit/telemedicine/pricing.spec.ts"
-// (node:test + assert — this app has no vitest; matches the other unit suites.)
-//
 // The bug these guard: the confirm screen used to compute the 5% platform fee
 // itself, so it displayed (and the card rail charged) a total the backend never
 // escrowed. The client now renders only what the server sent. Every test below
 // pins one half of that contract: the server's numbers survive the mapping
 // intact, and the client invents nothing when they are absent.
-//
 // Fixtures are the LITERAL snake_case shapes emitted by
 // backend/internal/telemedicine (fee.go BookingQuote, model.go Appointment), so
 // these fail if the client and the Go handler drift apart again.
@@ -122,7 +118,6 @@ describe('mapAppointmentMoney', () => {
 
 describe('withDemoQuote (mock mode stands in for the server)', () => {
   it('floors the fee to whole kobo, exactly as the Go backend does', () => {
-    // Go: consult * 500 / 10000 with integer division. Math.round here would
     // round UP on a remainder and quote a kobo the backend will not escrow.
     const cases: [number, number][] = [
       [350_000, 17_500],

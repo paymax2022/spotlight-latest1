@@ -13,14 +13,11 @@ import (
 )
 
 // DP-006 live-DB integration test for proof-of-delivery.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (gated same as rx/lab tests).
 // Bring-up:
-//
 //	supabase start   # or any Postgres with migrations including 20260902000000
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	go test ./internal/health/pharmacy/ -run TestDeliveryProof_LiveDB
-//
 // Seeds a pharmacy, patient, and pharmacy order (DISPENSED state), then:
 // 1. Dispatches the order to IN_DELIVERY
 // 2. Completes the order with a valid proof (6-digit OTP)
@@ -63,7 +60,6 @@ func TestDeliveryProof_LiveDB(t *testing.T) {
 		}
 	}
 
-	// Seed users
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		patientID, patientID+"@seed.test")
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,

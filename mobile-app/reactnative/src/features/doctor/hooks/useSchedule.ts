@@ -1,7 +1,5 @@
-// ── Doctor — Batch 1 · Section E · availability & schedule hooks ───────────────
 // Extended schedule settings (blocked dates, vacation, reminders, recurring
 // rules, timezone, emergency toggle) on top of the Phase 1 AvailabilitySchedule.
-// Reads use the DEMO_* exports as placeholderData; mutations auto-generate the
 // Idempotency-Key. `checkOverbooking` is a pure helper (re-exported for the UI).
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -31,7 +29,6 @@ import type {
   CancelAppointmentInput,
 } from '@/types/doctor.batch1';
 
-// Re-export the pure overbooking helper so screens can import it from the hooks
 // barrel alongside the schedule hooks.
 export { checkOverbooking } from '@/api/doctor.batch1.api';
 

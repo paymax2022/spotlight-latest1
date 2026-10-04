@@ -76,8 +76,6 @@ const nowIso = () => new Date().toISOString();
 const uid = (v: string | null | undefined) => (v && v.trim() ? v : null);
 const str = (v: unknown) => (v == null ? '' : String(v));
 
-// ── Row mappers ──────────────────────────────────────────────────────────────
-
 function toSeason(r: any): ShowSeason {
   return {
     id: r.id,
@@ -170,8 +168,6 @@ function fail(what: string, error: { message: string } | null) {
   if (error) throw new Error(`reality-show: ${what}: ${error.message}`);
 }
 
-// ── Seasons ──────────────────────────────────────────────────────────────────
-
 export async function listSeasons(): Promise<ShowSeason[]> {
   if (!live()) return listSeasonsMemory();
   const { data, error } = await db()
@@ -231,8 +227,6 @@ export async function updateSeason(
   fail('update season', error);
   return toSeason(data);
 }
-
-// ── Contestants ──────────────────────────────────────────────────────────────
 
 export async function listContestants(seasonId: string, phaseStatus?: PhaseStatus): Promise<ShowContestant[]> {
   if (!live()) return listContestantsMemory(seasonId, phaseStatus);
@@ -311,8 +305,6 @@ export async function failAudition(contestantId: string): Promise<ShowContestant
   return updateContestant(contestantId, { auditionResult: 'failed', isActive: false });
 }
 
-// ── Weeks ────────────────────────────────────────────────────────────────────
-
 export async function listWeeks(seasonId: string): Promise<EvictionWeek[]> {
   if (!live()) return listWeeksMemory(seasonId);
   const { data, error } = await db()
@@ -379,8 +371,6 @@ export async function closeVoting(weekId: string): Promise<EvictionWeek> {
   return updateWeek(weekId, { status: 'closed' });
 }
 
-// ── Votes ────────────────────────────────────────────────────────────────────
-
 export async function getVotesForWeek(weekId: string): Promise<EvictionVote[]> {
   if (!live()) return getVotesForWeekMemory(weekId);
   const { data, error } = await db()
@@ -436,8 +426,6 @@ export async function retractVote(weekId: string, voterId: string, contestantId:
   return (data ?? []).length > 0;
 }
 
-// ── Eviction finalization ────────────────────────────────────────────────────
-
 export async function finalizeEviction(
   weekId: string,
   evictedBy: string,
@@ -456,8 +444,6 @@ export async function finalizeEviction(
   const toEvict = tallies.slice(0, week.evictionCount);
 
   // Ordered so an interrupted run is safely repeatable: the eviction rows carry
-  // the record and are unique per (week, contestant); contestant flags are
-  // idempotent; the week is marked finalized LAST, so a failure before that
   // point leaves the guard above still allowing a retry.
   const { data: evictionRows, error: evictionError } = await db()
     .from('reality_show_evictions')

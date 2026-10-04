@@ -4,11 +4,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Store, ChevronRight, Sparkles } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
@@ -19,7 +19,6 @@ import { getMyBusinesses, isBusinessActive } from '@/api/business.api';
 import { confirmAsync } from '@/lib/confirm';
 
 // Screen: Capabilities dashboard + context switcher (PRD §6.3, FR-25/FR-26).
-// One identity, many capabilities — Customer is always present; each approved
 // merchant profile and each in-flight application is listed with its status.
 export default function CapabilitiesScreen() {
   const { data, isLoading, isError, refetch, isRefetching } = useCapabilities();

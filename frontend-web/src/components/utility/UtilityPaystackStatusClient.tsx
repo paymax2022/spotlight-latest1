@@ -39,7 +39,6 @@ export default function UtilityPaystackStatusClient({ reference }: { reference: 
       try {
         // Re-check the provider on every poll rather than just re-reading our
         // own row — VTPass (and other adapters) can leave a transaction in
-        // provider_pending indefinitely with no callback of their own; nothing
         // else asks them again on the customer's behalf. requeryUtilityTransaction
         // is a no-op for a transaction that isn't in a requeryable state, so this
         // is safe to call unconditionally rather than special-casing status here.

@@ -1,4 +1,3 @@
-// ── Screen 6 — Listing Detail ────────────────────────────────────────────────
 // The conversion moment. Photo gallery, fair-price chip (server-computed band),
 // PERMANENT seller trust card (never boost-gated), schema-driven attribute table,
 // description, a fixed off-platform safety nudge (Paymax connects, never holds
@@ -11,11 +10,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Heart, Flag, ShieldAlert, Phone, ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useAuthStore } from '@/store/authStore';
@@ -28,9 +27,7 @@ import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function ListingDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  // Dimensions.get('window') read once at module scope froze at 0 on web: it
   // runs before the RN-Web root has synced with the real window size, and
-  // being a plain const, it never updates after. Every gallery/slide size
   // below derived from it, so the whole gallery silently laid out at 0x0 —
   // invisible until a listing actually had photos to render into it.
   // useWindowDimensions() reads live and re-renders on resize.

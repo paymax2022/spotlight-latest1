@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// ── Narrow local dependency ports (mirror connect/monetization) ─────────────
 // Each is the minimal slice of a shared service this package needs. The real
 // implementations (finance wallet/ledger, loyalty, connect safety audit) are wired
 // by the orchestrator in Register's caller; this package never imports them.
@@ -65,7 +64,6 @@ type CommissionRecorder interface {
 		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
 }
 
-// ── Sentinel errors ─────────────────────────────────────────────────────────
 var (
 	ErrMissingIdem        = errors.New("connect: Idempotency-Key required")
 	ErrInvalidAmount      = errors.New("connect: amount must be positive kobo")
@@ -139,11 +137,9 @@ func (s *Service) writeAudit(ctx context.Context, action, actorID, entityType, e
 
 func (s *Service) award(ctx context.Context, userID, trigger, ref string) {
 	if s.loyalty != nil {
-		_ = s.loyalty.AwardFor(ctx, userID, "connect_networking", trigger, ref) // best-effort (PN-8)
+		_ = s.loyalty.AwardFor(ctx, userID, "connect_networking", trigger, ref)
 	}
 }
-
-// ── Company pages ───────────────────────────────────────────────────────────
 
 // ClaimCompanyPage starts the CompanyPageClaim FSM (CLAIM_SUBMITTED).
 func (s *Service) ClaimCompanyPage(ctx context.Context, actorID string, in ClaimCompanyInput) (*CompanyPage, error) {
@@ -213,8 +209,6 @@ func (s *Service) RevokeCapability(ctx context.Context, actorID, companyPageID, 
 		map[string]any{"company_page_id": companyPageID, "user_id": userID})
 	return nil
 }
-
-// ── Jobs ────────────────────────────────────────────────────────────────────
 
 // CreateJob drafts a job for a company page. Recruiter/admin capability is enforced
 // defence-in-depth (in addition to the RBAC scoped middleware, PN-9).
@@ -301,8 +295,6 @@ func (s *Service) ListJobs(ctx context.Context, limit int) ([]Job, error) {
 
 // GetJob returns one posting (JB-02).
 func (s *Service) GetJob(ctx context.Context, id string) (*Job, error) { return s.repo.GetJob(ctx, id) }
-
-// ── Applications ────────────────────────────────────────────────────────────
 
 // Apply creates a submitted application (JB-03). One active application per (job,
 // user) is enforced by the unique constraint (a duplicate bubbles up as an error).
@@ -415,8 +407,6 @@ func (s *Service) hire(ctx context.Context, actorID string, app *JobApplication,
 	return s.repo.GetApplication(ctx, app.ID)
 }
 
-// ── Referral bounties (single-level, PN-2) ──────────────────────────────────
-
 // CreateReferral records a single-level referral bounty for one application (JB-08).
 // There is no way to reference a parent bounty — a referral-of-referral is not
 // representable (PN-2).
@@ -451,7 +441,6 @@ func (s *Service) PayReferralBounty(ctx context.Context, actorID, bountyID strin
 	case BountyPaid:
 		return b, nil // already paid — idempotent no-op
 	case BountyHireConfirmed, BountyPayable:
-		// payable — proceed
 	default:
 		return nil, ErrIllegalTransition
 	}
@@ -479,8 +468,6 @@ func (s *Service) PayReferralBounty(ctx context.Context, actorID, bountyID strin
 	s.award(ctx, b.ReferrerUserID, "referral_bounty_paid", b.ID)
 	return s.getBountyFn(ctx, b.ID)
 }
-
-// ── Followers & open-to-work ────────────────────────────────────────────────
 
 func (s *Service) Follow(ctx context.Context, userID, companyPageID string) error {
 	return s.repo.Follow(ctx, companyPageID, userID)

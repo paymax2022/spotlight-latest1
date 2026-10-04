@@ -28,11 +28,10 @@ import type {
 } from '@/types/arenaAdmin';
 
 // Arena (Naija Driver contest) admin console — service layer.
-// Backend: Go, admin routes mounted at /api/arena/admin (per-route RBAC:
 // arena.admin.*, arena.reviewer.screen, arena.proctor.attest, arena.judge.score,
 // arena.auditor.read). Public GETs live at /api/arena/...
-// Auth: Bearer localStorage 'spotlight_admin_access_token' (matches kyc/transfers).
-//
+// Auth: Bearer attached server-side by /api/admin-proxy from the HttpOnly
+// 'sb-admin-token' cookie — the token never enters JS-readable storage.
 // Backend / feature flag may not be running — default to deterministic fixtures
 // unless explicitly disabled, so every screen renders. Mirrors kycAdminService.
 const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_ARENA_ADMIN_USE_MOCK);
@@ -51,9 +50,7 @@ export function arenaPublicBase(): string {
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return { 'Content-Type': 'application/json' };
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  if (!token) return { 'Content-Type': 'application/json' };
-  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 
 export function formatKobo(kobo: number): string {
@@ -65,7 +62,6 @@ function delay<T>(value: T): Promise<T> {
 }
 
 // Every write below has a real, RBAC-gated live endpoint (verified against
-// backend/internal/app/arena_routes.go, admin.POST(...) for every path used
 // here — behind FeatureArenaEnabled, normal deployment config, not a gap), so
 // fixture mode has nothing to add and refuses loudly instead of reporting a
 // write it did not perform. See docs/audit/ADMIN_SIMULATED_WRITES.md.
@@ -75,8 +71,6 @@ const NOT_IN_FIXTURE_MODE =
 
 const now = Date.now();
 const iso = (minsAgo: number) => new Date(now - minsAgo * 60_000).toISOString();
-
-// ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const FIXTURE_COMPETITIONS: Competition[] = [
   { id: 'cmp_ndc26', slug: 'naija-driver-2026', name: 'Naija Driver Contest 2026', status: 'LIVE', config_version: 3, published_at: iso(20_000), created_at: iso(40_000), updated_at: iso(120) },
@@ -192,8 +186,6 @@ const FIXTURE_SPONSORS: SponsorSlot[] = [
   { id: 'spn_3', sponsor: 'FRSC', placement: 'driver_profile', starts_at: iso(-60), ends_at: iso(-4_320), impressions: null, status: 'scheduled' },
 ];
 
-// ─── Public GETs (context) ───────────────────────────────────────────────────
-
 export async function listCompetitions(): Promise<Competition[]> {
   if (USE_FIXTURES) return delay([...FIXTURE_COMPETITIONS]);
   const res = await fetch(`${arenaPublicBase()}/competitions`, { cache: 'no-store', headers: authHeaders() });
@@ -212,8 +204,6 @@ export async function getCompetition(id: string): Promise<Competition> {
   if (!res.ok) throw new Error(`Arena competition fetch failed: ${res.status}`);
   return res.json();
 }
-
-// ─── A1 — Competition config ─────────────────────────────────────────────────
 
 export async function createCompetition(input: { slug: string; name: string }): Promise<Competition> {
   if (USE_FIXTURES) throw new Error(`Creating a competition ${NOT_IN_FIXTURE_MODE}`);
@@ -259,8 +249,6 @@ export async function publishConfig(
   return res.json();
 }
 
-// ─── A2 — Screening review queue ─────────────────────────────────────────────
-
 export async function listScreening(competitionId: string): Promise<ScreeningItem[]> {
   if (USE_FIXTURES) return delay([...FIXTURE_SCREENING]);
   const res = await fetch(`${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/screening`, { cache: 'no-store', headers: authHeaders() });
@@ -284,8 +272,6 @@ export async function decideScreening(
   if (!res.ok) throw new Error(`Screening decision failed: ${res.status}`);
 }
 
-// ─── A5 — Lifecycle transitions ──────────────────────────────────────────────
-
 export async function listContestants(competitionId: string): Promise<Contestant[]> {
   if (USE_FIXTURES) return delay([...FIXTURE_CONTESTANTS]);
   const res = await fetch(`${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/contestants`, { cache: 'no-store', headers: authHeaders() });
@@ -294,7 +280,6 @@ export async function listContestants(competitionId: string): Promise<Contestant
   return Array.isArray(data) ? data : data.data ?? data.contestants ?? [];
 }
 
-// Guarded transition. Only legal `to` states are offered by the UI; the backend
 // rejects anything not in the LOCKED state machine (NDC-5) and side-effects are
 // atomic with the transition (e.g. →CROWNED issues credential + finalizes award
 // + triggers disbursement in one txn).
@@ -312,8 +297,6 @@ export async function runTransition(
   if (!res.ok) throw new Error(`Transition failed: ${res.status}`);
 }
 
-// ─── A6 — Merit ledger + integrity ───────────────────────────────────────────
-
 export async function listMerit(competitionId: string): Promise<MeritEntry[]> {
   if (USE_FIXTURES) return delay([...FIXTURE_MERIT]);
   const res = await fetch(`${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/merit`, { cache: 'no-store', headers: authHeaders() });
@@ -323,7 +306,6 @@ export async function listMerit(competitionId: string): Promise<MeritEntry[]> {
 }
 
 // Verify signatures + hash chain for a set of entries (per contestant). Client
-// runs a structural check on fixtures; against a live backend the same endpoint
 // returns the authoritative proof (public integrity proof, NDC-6).
 export async function verifyMerit(competitionId: string, contestantId?: string): Promise<MeritVerifyResult> {
   if (USE_FIXTURES) {
@@ -355,8 +337,6 @@ export async function verifyMerit(competitionId: string, contestantId?: string):
   return res.json();
 }
 
-// ─── A7 — Pot & disbursement ─────────────────────────────────────────────────
-
 export async function getPot(competitionId: string): Promise<PotView> {
   if (USE_FIXTURES) {
     return delay(
@@ -385,18 +365,15 @@ export async function finalizeAwards(competitionId: string): Promise<void> {
 
 // Multi-approve disbursement. The backend requires N distinct approvers before
 // executing; every movement is ledgered + audited (NDC-4).
-//
 // Found live via UAT: this call was completely non-functional. The real
 // backend endpoint (arena/handler.PotDisburse) pays the ENTIRE derived pot to
 // ONE `winner_user_id` in a single credit — it has no concept of the
 // multi-beneficiary `splits[]` this page's UI is built around (that concept
 // — "NAIJA_DRIVER_CROWN prize" + "PEOPLES_CHAMPION" + "scholarships" as
-// separate payouts — does not exist in the backend at all; it's a genuine
 // product-scope gap, not something this fix invents a workaround for). It
 // also never sent the `Idempotency-Key` header the backend requires before
 // even reading the body, and never sent `winner_user_id`, so every call 400'd
 // regardless.
-//
 // This fix makes the one case the backend actually supports work correctly —
 // a single split (the whole pot to one beneficiary) — and fails closed with a
 // clear, honest error for more than one split, rather than silently picking
@@ -425,8 +402,6 @@ export async function disbursePot(competitionId: string, splits: PotSplit[], app
   );
   if (!res.ok) throw new Error(`Pot disburse failed: ${res.status}`);
 }
-
-// ─── A9 — Credentials ────────────────────────────────────────────────────────
 
 export async function listCredentials(competitionId: string): Promise<Credential[]> {
   if (USE_FIXTURES) return delay([...FIXTURE_CREDENTIALS]);
@@ -464,23 +439,17 @@ export async function revokeCredential(competitionId: string, credentialId: stri
   if (!res.ok) throw new Error(`Credential revoke failed: ${res.status}`);
 }
 
-// ─── A3 — Proctor console (scaffold, service wired) ──────────────────────────
-
 export async function proctorAttest(competitionId: string, input: ProctorAttestInput): Promise<void> {
   if (USE_FIXTURES) throw new Error(`Recording a proctor attestation ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/proctor/attest`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(input) });
   if (!res.ok) throw new Error(`Proctor attest failed: ${res.status}`);
 }
 
-// ─── A4 — Judge console (scaffold, service wired) ────────────────────────────
-
 export async function judgeScore(competitionId: string, input: JudgeScoreInput): Promise<void> {
   if (USE_FIXTURES) throw new Error(`Submitting a judge score ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/judge/score`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(input) });
   if (!res.ok) throw new Error(`Judge score failed: ${res.status}`);
 }
-
-// ─── A8 — Sponsor / Featured Placement (scaffold) ────────────────────────────
 
 export async function listSponsorSlots(competitionId: string): Promise<SponsorSlot[]> {
   if (USE_FIXTURES) return delay([...FIXTURE_SPONSORS]);
@@ -490,7 +459,6 @@ export async function listSponsorSlots(competitionId: string): Promise<SponsorSl
   return Array.isArray(data) ? data : data.data ?? data.slots ?? [];
 }
 
-// ─── Quiz bank (Naija Driver quiz management) ────────────────────────────────
 // The 90-question bank (3 stages × 30, 120s each). This is the FULL ADMIN view:
 // rows carry answers + explanation (teaching/QA), unlike the contestant view.
 // Default bank imported is the Naija Driver seed bank (naija_driver_quiz_seed.json).

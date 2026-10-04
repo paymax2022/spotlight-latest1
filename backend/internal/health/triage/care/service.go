@@ -2,7 +2,9 @@ package care
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -10,8 +12,6 @@ import (
 	triage "spotlight/backend/internal/health/triage"
 )
 
-// ─── Injected ports (small, nil-safe) ────────────────────────────────────────
-//
 // Every external dependency is a narrow interface so the care loop is decoupled
 // from the concrete finance/maps/notifications/care modules (no tight coupling)
 // and runs in dev with nil-safe stubs.
@@ -46,8 +46,6 @@ type FollowUp interface {
 	Schedule(ctx context.Context, userID, referralID string, at time.Time) error
 }
 
-// ─── Service ─────────────────────────────────────────────────────────────────
-
 // CareService is the care-routing + escalation engine. It owns the CareReferral
 // and Escalation state machines (guarded via the parent `triage` package) and
 // orchestrates the injected ports. All ports are nil-safe.
@@ -67,7 +65,6 @@ func NewCareService(repo Repository, pay Payment, loc EmergencyLocator, notify N
 }
 
 // Refer turns a disposition level into a CareReferral and routes it.
-//
 //   - route = triage.RouteForLevel(level) (emergency | telemed | self_care).
 //     pharmacy/lab are booked through CareBooker as the "telemed"-class paid path —
 //     the route stored on the referral is the engine route; the booker decides the
@@ -128,6 +125,8 @@ func (s *CareService) routeEmergency(ctx context.Context, ref *CareReferral, lev
 	}
 	if _, err := s.Notify(ctx, esc.ID); err == nil {
 		esc.State = triage.EscNotified // reflect to caller
+	} else {
+		log.Printf("[care] emergency escalation %s notify failed (left raised): %v", esc.ID, err)
 	}
 	// SC-8 payload (best-effort nearest ER; coords unknown here so 0,0 — the emergency
 	// screen calls NearestEmergency with the device location for the precise facility).
@@ -292,8 +291,6 @@ func (s *CareService) ListReferrals(ctx context.Context, userID string) ([]CareR
 	return s.repo.ListReferralsByUser(ctx, userID)
 }
 
-// ─── Escalation state machine (SC-5 human-in-loop) ───────────────────────────
-
 // Raise opens a new escalation case in `raised` (SC-5). Always auditable.
 func (s *CareService) Raise(ctx context.Context, sessionID, userID, reason string) (*Escalation, error) {
 	if sessionID == "" || userID == "" {
@@ -314,7 +311,8 @@ func (s *CareService) Raise(ctx context.Context, sessionID, userID, reason strin
 }
 
 // Notify delivers the hand-off (patient + clinician) and advances raised →
-// notified. SC-5: a high-risk case is never a silent flag.
+// notified. SC-5: a high-risk case is never a silent flag — a delivery failure
+// returns the error and leaves the case raised, so a retry is a clean re-call.
 func (s *CareService) Notify(ctx context.Context, escalationID string) (*Escalation, error) {
 	e, err := s.repo.GetEscalation(ctx, escalationID)
 	if err != nil {
@@ -328,10 +326,22 @@ func (s *CareService) Notify(ctx context.Context, escalationID string) (*Escalat
 	}
 	if s.notify != nil {
 		data := map[string]any{"escalation_id": e.ID, "session_id": e.SessionID, "reason": e.Reason}
+		var notifyErrs []error
 		// Patient hand-off.
-		_ = s.notify.Notify(ctx, e.UserID, "triage.escalation.patient", data)
+		if err := s.notify.Notify(ctx, e.UserID, "triage.escalation.patient", data); err != nil {
+			log.Printf("[care] escalation hand-off failed escalation=%s user=%s template=%s err=%v", e.ID, e.UserID, "triage.escalation.patient", err)
+			notifyErrs = append(notifyErrs, err)
+		}
 		// Clinician hand-off (broadcast template — the on-call clinician pool).
-		_ = s.notify.Notify(ctx, "", "triage.escalation.clinician", data)
+		if err := s.notify.Notify(ctx, "", "triage.escalation.clinician", data); err != nil {
+			log.Printf("[care] escalation hand-off failed escalation=%s template=%s err=%v", e.ID, "triage.escalation.clinician", err)
+			notifyErrs = append(notifyErrs, err)
+		}
+		// SC-5: a failed delivery stays `raised` — marking it notified would be
+		// the silent flag this state exists to prevent. Retry = call Notify again.
+		if err := errors.Join(notifyErrs...); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.repo.UpdateEscalationState(ctx, e.ID, triage.EscRaised, triage.EscNotified, nil, nil); err != nil {
 		return nil, err
@@ -394,8 +404,6 @@ func (s *CareService) ListEscalations(ctx context.Context, state string) ([]Esca
 func (s *CareService) NearestEmergency(ctx context.Context, lat, lng float64) (*EmergencyInfo, error) {
 	return s.emergencyInfo(ctx, lat, lng), nil
 }
-
-// ─── internals ───────────────────────────────────────────────────────────────
 
 // transitionReferral validates the edge against the parent SM then performs the
 // guarded compare-and-set in the repo (defence in depth: SM + WHERE state=$from).

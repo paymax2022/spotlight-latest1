@@ -42,7 +42,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     if (!draft) return errorResponse('Application not found', 404);
     if (draft.userId !== user.id) return errorResponse('Forbidden', 403);
 
-    const body = (await request.json()) as { method?: string; email?: string };
+    const body = (await request.json()) as { method?: string; email?: string; inline?: boolean };
     const method = String(body.method || '').toUpperCase();
     if (method !== 'PAYSTACK') {
       return errorResponse(
@@ -50,6 +50,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
         400,
       );
     }
+    // `inline: true` = the page opens PaystackPop.newTransaction itself with the
+    // minted reference — no server-side transaction initialize, no hosted-page
+    // redirect. The intent row is still persisted first, so the webhook/
+    // recover/sweep fulfilment path has its pending record either way.
+    const inline = body.inline === true;
 
     // Never trust a client-supplied amount for a money mutation: the fee is
     // pinned server-side from the authoritative draft (contest fee, locked at
@@ -68,6 +73,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
         success: true,
         transactionId: existing.id,
         reference: existing.paymentReference,
+        amountKobo: existing.amountKobo,
         status: existing.status === 'completed' ? 'completed' : 'initiated',
       }, { status: 200 });
     }
@@ -82,35 +88,39 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
         success: true,
         transactionId: existingForApp.id,
         reference: existingForApp.paymentReference,
+        amountKobo: existingForApp.amountKobo,
         status: 'completed',
         message: 'This application has already been paid for.',
       }, { status: 200 });
     }
 
     const paymentReference = reference();
-    // Capture WHERE this payment was started from. The callback is reached by a
-    // top-level navigation from Paystack and so has no Origin of its own; this
-    // is the only point in the flow where the browser identifies itself. Only an
-    // allow-listed origin is carried, and it is re-validated before use.
-    const returnOrigin = resolveReturnOrigin(request);
-    const callbackPath =
-      `/api/registration/applications/${params.id}/payment/callback` +
-      `?reference=${encodeURIComponent(paymentReference)}` +
-      (returnOrigin ? `&return=${encodeURIComponent(returnOrigin)}` : '');
-    const callbackUrl = new URL(callbackPath, request.url).toString();
+    let authorizationUrl: string | undefined;
+    if (!inline) {
+      // Capture WHERE this payment was started from. The callback is reached by a
+      // top-level navigation from Paystack and so has no Origin of its own; this
+      // is the only point in the flow where the browser identifies itself. Only an
+      // allow-listed origin is carried, and it is re-validated before use.
+      const returnOrigin = resolveReturnOrigin(request);
+      const callbackPath =
+        `/api/registration/applications/${params.id}/payment/callback` +
+        `?reference=${encodeURIComponent(paymentReference)}` +
+        (returnOrigin ? `&return=${encodeURIComponent(returnOrigin)}` : '');
+      const callbackUrl = new URL(callbackPath, request.url).toString();
 
-    const authorizationUrl = await initializePaystackPayment({
-      reference: paymentReference,
-      email: body.email || user.email || '',
-      amount: amountKobo,
-      currency: 'NGN',
-      callbackUrl,
-      metadata: {
-        type: 'registration_payment',
-        application_id: params.id,
-        user_id: user.id,
-      },
-    });
+      authorizationUrl = await initializePaystackPayment({
+        reference: paymentReference,
+        email: body.email || user.email || '',
+        amount: amountKobo,
+        currency: 'NGN',
+        callbackUrl,
+        metadata: {
+          type: 'registration_payment',
+          application_id: params.id,
+          user_id: user.id,
+        },
+      });
+    }
 
     // A row already exists for this (application, method) but is
     // 'initiated'/'failed' — a legitimate retry. Re-issue it in place rather
@@ -123,7 +133,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       success: true,
       transactionId: intent.id,
       reference: paymentReference,
-      authorizationUrl,
+      amountKobo: intent.amountKobo,
+      ...(authorizationUrl ? { authorizationUrl } : {}),
       status: 'initiated',
     }, { status: 201 });
   } catch (error) {

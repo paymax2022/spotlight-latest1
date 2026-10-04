@@ -4,18 +4,18 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, IdCard, KeyRound, QrCode, Ticket, Plus } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import SearchBar from '@/components/SearchBar';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
 import PromoBanner from '@/components/PromoBanner';
 import { RemoteBanner } from '@/features/media/banners';
-import OrganisationCard from '@/features/association/components/OrganisationCard';
-import QuickNav from '@/features/association/components/QuickNav';
-import { useOrganisations } from '@/features/association/hooks/useAssociation';
+import {OrganisationCard} from '@/features/association/components';
+import {QuickNav} from '@/features/association/components';
+import { useOrganisations } from '@/features/association/hooks';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function AssociationDiscovery() {

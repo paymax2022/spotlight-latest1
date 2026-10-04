@@ -1,4 +1,3 @@
-// ── Event Transport — data hooks ─────────────────────────────────────────────
 // React Query hooks for the event-transport mode, mirroring useModes.ts so
 // screens stay declarative and share caching / loading / error contracts. Money
 // mutations attach Idempotency-Keys via newIdempotencyKey.
@@ -9,7 +8,6 @@ import { EVENT_KEY } from '../constants/modes.constants';
 import { newIdempotencyKey, toMobilityError } from '../utils/mobilityFormatters';
 import type { OfferCreateRequest, BookRequest } from '../types/event.types';
 
-// ─── Offers ───────────────────────────────────────────────────────────────────
 export function useEventOffers(eventId?: string) {
   return useQuery({
     queryKey: [EVENT_KEY, 'offers', eventId],
@@ -37,7 +35,6 @@ export function useCreateOffer() {
   });
 }
 
-// ─── Booking (money mutation) ──────────────────────────────────────────────────
 export function useBookOffer() {
   const qc = useQueryClient();
   return useMutation({

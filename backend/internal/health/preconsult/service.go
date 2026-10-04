@@ -5,7 +5,6 @@
 // consent + access logging, and the R2 presigner. It owns the ConsultIntake link
 // row (health_preconsult_intake), submit-time red-flag triage + crisis routing,
 // the doctor summary (assigned-doctor-only + access-logged), and prefill.
-//
 // Iron rules honoured: intake answers are PHI — readable only by the patient + the
 // assigned doctor (object-level); every doctor access is audit-logged (IDs only,
 // never answer bodies); consent is captured on submit; consult transitions are
@@ -17,15 +16,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	healthconsult "spotlight/backend/internal/health/consult"
+	healthintake "spotlight/backend/internal/health/intake"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	healthconsult "spotlight/backend/internal/health/consult"
-	healthintake "spotlight/backend/internal/health/intake"
 )
 
 // ErrUploadsNotConfigured is returned when an attachment presign is requested but
@@ -101,8 +99,6 @@ func (s *Service) WithLLM(g LLMGenerator) *Service { s.llm = g; return s }
 
 const presignTTL = 10 * time.Minute
 
-// ── object-level helpers ──────────────────────────────────────────────────────
-
 // loadAppointment returns (patientID, providerID) for an appointment.
 func (s *Service) loadAppointment(ctx context.Context, appointmentID string) (patientID, providerID string, err error) {
 	const q = `SELECT patient_id::text, provider_id::text FROM health_appointments WHERE id=$1`
@@ -114,8 +110,6 @@ func (s *Service) loadAppointment(ctx context.Context, appointmentID string) (pa
 	}
 	return patientID, providerID, nil
 }
-
-// ── EnsureIntake ──────────────────────────────────────────────────────────────
 
 // EnsureIntake creates-or-gets the link row for an appointment (owner = patient).
 // On first creation it prompts intake: it flips the linked consult
@@ -162,8 +156,6 @@ func (s *Service) EnsureIntake(ctx context.Context, caller, appointmentID string
 	return s.getIntakeByAppointment(ctx, appointmentID)
 }
 
-// ── SaveDraft ─────────────────────────────────────────────────────────────────
-
 // SaveDraft persists draft answers (patient-only, idempotent / auto-save friendly).
 // Drafts are unvalidated scratch answers, so they are NOT written to the validated
 // response store (health_intake_responses) — that row is created only on submit,
@@ -191,8 +183,6 @@ func (s *Service) SaveDraft(ctx context.Context, caller, appointmentID string, a
 	}
 	return s.getIntakeByAppointment(ctx, appointmentID)
 }
-
-// ── Submit ────────────────────────────────────────────────────────────────────
 
 // SubmitResult is returned to the client on submit.
 type SubmitResult struct {
@@ -305,8 +295,6 @@ func (s *Service) Submit(ctx context.Context, caller, appointmentID string, answ
 	return res, nil
 }
 
-// ── GetForPatient ─────────────────────────────────────────────────────────────
-
 // PatientView is the get-or-create payload for the patient wizard (M1–M16): the
 // link row, the pinned schema, prefill, and the active consent text.
 type PatientView struct {
@@ -346,8 +334,6 @@ func (s *Service) loadDraft(ctx context.Context, intakeID string) map[string]any
 	}
 	return m
 }
-
-// ── Prefill ───────────────────────────────────────────────────────────────────
 
 // Prefill merges the patient's profile demographics (don't re-ask) + the most
 // recent prior PRE_CONSULT response's meds/allergies/conditions.
@@ -390,8 +376,6 @@ func (s *Service) Prefill(ctx context.Context, caller, appointmentID string) (ma
 	}
 	return out, nil
 }
-
-// ── GetForDoctor (assigned-doctor-only, access-logged) ────────────────────────
 
 // DoctorSummary is the ordered clinician view (PRD §6): allergies + current meds
 // HIGHLIGHTED first within the admin-configured section order.
@@ -523,7 +507,7 @@ func buildSections(order []string, a map[string]any) []SummarySection {
 		"chronic_conditions":  field("chronic_conditions", "chronic_other"),
 		"pregnancy":           field("pregnancy_status"),
 		"vitals":              field("temp_c", "bp_systolic", "bp_diastolic", "weight_kg", "height_cm", "pulse"),
-		"attachments":         map[string]any{},
+		"attachments":         {},
 	}
 	out := make([]SummarySection, 0, len(order))
 	for _, k := range order {
@@ -531,8 +515,6 @@ func buildSections(order []string, a map[string]any) []SummarySection {
 	}
 	return out
 }
-
-// ── HealthProfile (M17 longitudinal) ──────────────────────────────────────────
 
 // HealthProfile is the patient's persistent record (conditions/meds/allergies)
 // aggregated from prior intakes, used to prefill future intakes.
@@ -572,8 +554,6 @@ func (s *Service) HealthProfileFor(ctx context.Context, patientID string) (*Heal
 	}
 	return hp, nil
 }
-
-// ── helpers ───────────────────────────────────────────────────────────────────
 
 func (s *Service) audited(actor, target, action, resourceID string, oldV, newV map[string]any) {
 	if s.audit == nil {
@@ -619,4 +599,144 @@ func hasRouting(hits json.RawMessage, routing string) bool {
 		}
 	}
 	return false
+}
+
+// the canonical PRE_CONSULT intake form definition.
+// IMPORTANT: the shared intake validator (health/intake) only knows four field
+// types — "text", "number", "bool", "select". The PRD's richer widget types map
+// onto these as follows (the mobile app renders the richer widget; the server
+// validates against the four primitives, which is the EXACT shape Submit/GetSchema
+// expect):
+//
+//	long_text / short_text  → "text"
+//	single_select           → "select" (with Options)
+//	boolean                 → "bool"
+//	number (min/max slider)  → "number"   (range is a client-side hint; the server
+//	                                        accepts any JSON number — see note below)
+//	multi_select            → "text"      (client serializes the selection; the
+//	                                        server validator has no array type, so
+//	                                        these are optional text fields and the
+//	                                        doctor summary splits them)
+//
+// The same field set is seeded verbatim into the migration
+// 20260818000000_preconsult_intake.sql (slug 'pre-consult', version 1) so the DB
+// row and this Go definition never drift. SchemaSlug/SchemaVersion pin the version.
+const (
+	SchemaSlug    = "pre-consult"
+	SchemaVersion = 1
+	SchemaKind    = "PRE_CONSULT"
+)
+
+// PreConsultFields is the authoritative field set (PRD §3 / M4–M12). Attachments
+// are handled OUTSIDE the schema (presign flow), so they are not fields here.
+func PreConsultFields() []healthintake.Field {
+	return []healthintake.Field{
+		// M4 — Reason for visit (chief complaint).
+		{Name: "reason_for_visit", Type: "text", Required: true},
+		{Name: "reason_category", Type: "select", Required: false, Options: []string{
+			"general", "skin", "respiratory", "digestive", "mental_health",
+			"sexual_health", "pain", "injury", "chronic_followup", "other"}},
+		// M5 — Symptom detail.
+		{Name: "symptom_onset", Type: "select", Required: true, Options: []string{
+			"today", "few_days", "about_a_week", "few_weeks", "over_a_month"}},
+		{Name: "symptom_severity", Type: "number", Required: true}, // 1..10 (slider; range hint)
+		{Name: "symptom_better_worse", Type: "text", Required: false},
+		// M6 — Current medications.
+		{Name: "meds_none", Type: "bool", Required: false},
+		{Name: "current_medications", Type: "text", Required: false},
+		// M7 — Allergies (safety-critical).
+		{Name: "allergies_none", Type: "bool", Required: false},
+		{Name: "allergies", Type: "text", Required: false}, // multi_select serialized
+		// M8 — Chronic conditions.
+		{Name: "chronic_conditions", Type: "text", Required: false}, // multi_select serialized
+		{Name: "chronic_other", Type: "text", Required: false},
+		// M9 — Pregnancy / breastfeeding (conditional).
+		{Name: "pregnancy_status", Type: "select", Required: false, Options: []string{
+			"not_applicable", "pregnant", "breastfeeding"}},
+		// M10 — Lifestyle.
+		{Name: "smoking", Type: "select", Required: false, Options: []string{
+			"never", "former", "current"}},
+		{Name: "alcohol", Type: "select", Required: false, Options: []string{
+			"never", "occasional", "weekly", "daily"}},
+		// M11 — Self-reported vitals (all optional).
+		{Name: "temp_c", Type: "number", Required: false},
+		{Name: "bp_systolic", Type: "number", Required: false},
+		{Name: "bp_diastolic", Type: "number", Required: false},
+		{Name: "weight_kg", Type: "number", Required: false},
+		{Name: "height_cm", Type: "number", Required: false},
+		{Name: "pulse", Type: "number", Required: false},
+	}
+}
+
+// OPTIONAL symptom-checker pre-fill (PRD M4). Reuses the integrations/llm
+// client behind a narrow LLMGenerator interface (estate ainotes pattern) with a
+// deterministic mock default so the package runs offline and never blocks intake.
+// Safety: any AI-structured complaint is labelled PATIENT-REPORTED, never assessed
+// or diagnosed (PRD §5.3). The result is a SUGGESTION the patient may accept/edit —
+// it is never required and never auto-submitted.
+
+// LLMGenerator is the slice of the LLM client this package needs. Satisfied by
+// *llm.Client; a nil generator falls back to the deterministic mock.
+type LLMGenerator interface {
+	Enabled() bool
+	Model() string
+	GenerateJSON(ctx context.Context, systemPrompt, userPrompt string) (json.RawMessage, error)
+}
+
+// ComplaintSuggestion is the structured, patient-reported pre-fill for M4. It maps
+// only to schema fields the patient can edit; it asserts no clinical conclusion.
+type ComplaintSuggestion struct {
+	PatientReported bool   `json:"patient_reported"` // always true
+	ReasonForVisit  string `json:"reason_for_visit"`
+	ReasonCategory  string `json:"reason_category,omitempty"`
+	SymptomOnset    string `json:"symptom_onset,omitempty"`
+	Source          string `json:"source"` // "ai" | "mock"
+}
+
+const complaintSystemPrompt = `You restructure a patient's own words into a brief chief complaint for a pre-consultation intake. You do NOT diagnose, assess, or give medical advice. Respond with ONLY valid JSON, no markdown, in exactly this shape:
+{
+  "reason_for_visit": "string, <= 200 chars, the patient's complaint in plain words",
+  "reason_category": "one of: general|skin|respiratory|digestive|mental_health|sexual_health|pain|injury|chronic_followup|other, or empty",
+  "symptom_onset": "one of: today|few_days|about_a_week|few_weeks|over_a_month, or empty"
+}
+Do not invent symptoms the patient did not state.`
+
+// SuggestComplaint structures free text into a patient-reported complaint. With no
+// configured LLM it uses a deterministic keyword mock (never fabricated clinical
+// content). The patient must confirm/edit before it enters the form.
+func (s *Service) SuggestComplaint(ctx context.Context, freeText string) (*ComplaintSuggestion, error) {
+	if s.llm != nil && s.llm.Enabled() {
+		raw, err := s.llm.GenerateJSON(ctx, complaintSystemPrompt, "Patient said:\n"+freeText)
+		if err == nil {
+			var sug ComplaintSuggestion
+			if json.Unmarshal(raw, &sug) == nil && sug.ReasonForVisit != "" {
+				sug.PatientReported = true
+				sug.Source = "ai"
+				return &sug, nil
+			}
+		}
+		// Fall through to the deterministic mock on any AI failure (never block intake).
+	}
+	return mockComplaint(freeText), nil
+}
+
+// mockComplaint is the deterministic, network-free fallback.
+func mockComplaint(freeText string) *ComplaintSuggestion {
+	t := strings.TrimSpace(freeText)
+	if len(t) > 200 {
+		t = t[:200]
+	}
+	cat := ""
+	lower := strings.ToLower(freeText)
+	switch {
+	case strings.Contains(lower, "rash") || strings.Contains(lower, "skin"):
+		cat = "skin"
+	case strings.Contains(lower, "cough") || strings.Contains(lower, "breath"):
+		cat = "respiratory"
+	case strings.Contains(lower, "stomach") || strings.Contains(lower, "vomit") || strings.Contains(lower, "diarr"):
+		cat = "digestive"
+	case strings.Contains(lower, "pain"):
+		cat = "pain"
+	}
+	return &ComplaintSuggestion{PatientReported: true, ReasonForVisit: t, ReasonCategory: cat, Source: "mock"}
 }

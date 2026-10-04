@@ -11,19 +11,14 @@ import (
 )
 
 // AdminTransactionFilter narrows the centralized admin transactions list.
-//
 // This is a READ-ONLY reporting surface over ledger_entries — the only source
 // of truth for money movement across every module (there is no per-module
 // transactions table). It never writes to ledger_entries.
 type AdminTransactionFilter struct {
-	Type        string // CREDIT | DEBIT | REVERSAL_CREDIT | REVERSAL_DEBIT
-	AccountType string // ledger_accounts.type, e.g. user_wallet, commission, provider_clearing
-	UserID      string // ledger_accounts.user_id
-	Search      string // ILIKE against reference OR joined user's full_name/display_name/email
-	// Module narrows rows to ONE resolver's reference convention (see
-	// AdminTransactionModules / moduleReferenceFilter) — e.g. "utility_bill".
-	// Empty means no module filter (every row, resolved or not).
-	Module        string
+	Type          string // CREDIT | DEBIT | REVERSAL_CREDIT | REVERSAL_DEBIT
+	AccountType   string // ledger_accounts.type, e.g. user_wallet, commission, provider_clearing
+	UserID        string // ledger_accounts.user_id
+	Search        string // ILIKE against reference OR joined user's full_name/display_name/email
 	From          time.Time
 	To            time.Time
 	MinAmountKobo int64
@@ -34,14 +29,10 @@ type AdminTransactionFilter struct {
 
 // AdminTransactionRow is one ledger_entries row joined to its owning account
 // and (when the account has one) the human user, for back-office display.
-//
-// SourcePrefix is a BEST-EFFORT guess at which module produced this entry,
-// derived from SPLIT_PART(reference, ':', 1). There is no module/source column
-// on ledger_entries and reference-naming conventions are inconsistent across
-// modules (colon-namespaced like "fx:convert:<uuid>", dash-prefixed like
-// "SPL-INV-...", or opaque UUIDs with no separator at all) — this field is
-// NEVER an authoritative module identifier. Callers must label it
-// "Source (inferred)" and never present it as a real schema field.
+// SourcePrefix is a BEST-EFFORT guess from SPLIT_PART(reference, ':', 1) —
+// ledger_entries has no module column and reference conventions are
+// inconsistent, so it is NEVER an authoritative module identifier; callers
+// must label it "Source (inferred)".
 type AdminTransactionRow struct {
 	ID             string          `json:"id"`
 	Type           string          `json:"type"`
@@ -59,16 +50,6 @@ type AdminTransactionRow struct {
 	UserName       *string         `json:"user_name"`
 	UserEmail      *string         `json:"user_email"`
 	UserPhone      *string         `json:"user_phone"`
-	// ModuleDetail is the REAL per-module detail (service, category, what was
-	// bought, payment method, real status, provider) resolved from this row's
-	// reference by whichever TransactionDetailResolver (see
-	// admin_transaction_resolver.go) recognizes its naming pattern first, or
-	// nil when no wired resolver's pattern matches (most module/reference
-	// combinations — resolvers exist for a growing subset only). Populated on
-	// BOTH the list and the detail view, so the list table can show real
-	// per-module columns instead of only generic ledger fields. A resolver
-	// query failure is logged, not fatal.
-	ModuleDetail *ModuleTransactionDetail `json:"module_detail"`
 }
 
 // AdminTransactionsPage is the paginated result: the page of rows plus the
@@ -79,48 +60,32 @@ type AdminTransactionsPage struct {
 	Total int64                 `json:"total"`
 }
 
-// AdminTransactionDetail is the comprehensive, single-transaction view: the
-// full row (every column, including idempotency_key/metadata/currency the
-// list view also carries) plus every OTHER ledger_entries row sharing the
-// SAME reference string — i.e. the other leg(s) of the same double-entry
-// movement (a balanced post is usually >=2 rows: e.g. a DEBIT off the user's
-// wallet and the matching CREDIT into a standing account, both posted under
-// one reference).
-//
-// CAVEAT, found live while building this: reference is NOT guaranteed unique
-// per transaction across this codebase — some code paths (an admin
-// wallet-funding seed helper, confirmed live) reuse one literal constant
-// string ("admin-appt-seed") across many unrelated fundings, so "matches by
-// reference" can occasionally return OTHER unrelated transactions, not just
-// this one's true other leg. RelatedEntriesTotal is the real count of rows
-// sharing this reference (capped at adminRelatedEntriesLimit for the returned
-// list itself); when it is implausibly large for a normal 2-3-leg post,
-// callers should render a caveat rather than presenting every row as
-// definitely part of this one transaction.
+// AdminTransactionDetail is the single-transaction view: the full row plus
+// every OTHER ledger_entries row sharing the SAME reference (the other leg(s)
+// of the same balanced movement).
+// CAVEAT: reference is NOT guaranteed unique per transaction — e.g. an admin
+// wallet-funding seed helper reuses the literal "admin-appt-seed" across many
+// unrelated fundings, so same-reference matching can return unrelated rows.
+// When RelatedEntriesTotal is implausibly large for a 2-3-leg post, callers
+// should render a caveat rather than trust the grouping.
 type AdminTransactionDetail struct {
 	AdminTransactionRow
 	RelatedEntries      []AdminTransactionRow `json:"related_entries"`
 	RelatedEntriesTotal int64                 `json:"related_entries_total"`
-	// CommissionKobo is the total amount, among RelatedEntries, that landed in
-	// a KNOWN platform-revenue standing account (see revenueAccountTypes) —
-	// this IS a real, derivable figure (not a guess) when the commission leg
-	// is among the returned related entries. It is nil when no such leg is
-	// present in RelatedEntries — including the case where RelatedEntries was
-	// truncated by adminRelatedEntriesLimit (see RelatedEntriesTotal) and the
-	// real commission leg fell outside the returned page; callers must not
-	// read a nil CommissionKobo as "no commission was ever charged."
+	// CommissionKobo is the total, among RelatedEntries, that landed in a known
+	// platform-revenue standing account (see revenueAccountTypes). nil when no
+	// such leg is present — including when the real leg fell outside the
+	// truncated related page — so callers must not read nil as "no commission".
 	CommissionKobo *int64 `json:"commission_kobo"`
-	// ModuleDetail is promoted from the embedded AdminTransactionRow — see its
-	// doc comment. Populated the same way here as on every list row.
+	// ModuleDetail is the real per-module detail resolved from the reference by
+	// the first TransactionDetailResolver whose pattern matches, or nil (most
+	// references have no resolver). A resolver failure is logged, not fatal.
+	ModuleDetail *ModuleTransactionDetail `json:"module_detail"`
 }
 
-// revenueAccountTypes are the standing account types this codebase's
-// commission-adjacent flows post platform revenue into — confirmed by reading
-// backend/internal/finance/ledger/model.go's AccountType constants across
-// every module. There is no single generic "is this a commission account?"
-// flag on ledger_accounts; this list is a best-effort but CONCRETE (not
-// inferred from free text) classification of the accounts that ARE revenue,
-// used only to compute CommissionKobo above.
+// revenueAccountTypes are the standing account types platform revenue is
+// posted into (there is no "is revenue" flag on ledger_accounts). Used only
+// for CommissionKobo above.
 var revenueAccountTypes = map[string]bool{
 	string(AccountCommission):       true,
 	string(AccountPaymaxRevenue):    true,
@@ -139,24 +104,6 @@ const adminRelatedEntriesLimit = 20
 // requested id.
 var ErrTransactionNotFound = fmt.Errorf("ledger: transaction not found")
 
-// resolveModuleDetail tries every wired resolver in order against one
-// reference string, returning the first match (or nil when none match). A
-// resolver's own query failure is logged and treated as "no match" — it must
-// never break the surrounding list/detail response.
-func (s *Service) resolveModuleDetail(ctx context.Context, reference string) *ModuleTransactionDetail {
-	for _, r := range s.resolvers {
-		md, found, rerr := r.Resolve(ctx, reference)
-		if rerr != nil {
-			log.Printf("ledger: admin transaction module-detail resolver error (reference=%s): %v", reference, rerr)
-			continue
-		}
-		if found {
-			return md
-		}
-	}
-	return nil
-}
-
 // AdminGetTransaction fetches the comprehensive detail view for one
 // ledger_entries row by id, including every other row sharing its reference
 // (the other leg(s) of the same balanced movement).
@@ -165,7 +112,19 @@ func (s *Service) AdminGetTransaction(ctx context.Context, id string) (*AdminTra
 	if err != nil {
 		return nil, err
 	}
-	detail.ModuleDetail = s.resolveModuleDetail(ctx, detail.Reference)
+	for _, r := range s.resolvers {
+		md, found, rerr := r.Resolve(ctx, detail.Reference)
+		if rerr != nil {
+			// Non-fatal: a resolver's own query failure must not break the
+			// generic transaction detail response.
+			log.Printf("ledger: admin transaction module-detail resolver error (reference=%s): %v", detail.Reference, rerr)
+			continue
+		}
+		if found {
+			detail.ModuleDetail = md
+			break
+		}
+	}
 	return detail, nil
 }
 
@@ -260,31 +219,11 @@ func (r *Repository) AdminGetTransaction(ctx context.Context, id string) (*Admin
 }
 
 // AdminListTransactions lists ledger_entries joined to ledger_accounts and
-// user_profiles (the exact join path used by transport/admin_modes.go:
-// ledger_entries le JOIN ledger_accounts la ON la.id = le.account_id LEFT JOIN
-// user_profiles up ON up.id = la.user_id). Rows where la.user_id IS NULL are
-// standing/system accounts (commission pots, clearing accounts, etc.) — they
-// are returned, never filtered out; callers display them as
-// "System: <account type>".
-//
-// Total is computed via a COUNT(*) OVER() window function so it always
-// reflects the SAME filter predicate as the page (no separate query to drift).
+// user_profiles. Rows where la.user_id IS NULL are standing/system accounts —
+// returned, never filtered out; display them as "System: <account type>".
+// Total uses COUNT(*) OVER() so it always matches the page's filter predicate.
 func (s *Service) AdminListTransactions(ctx context.Context, f AdminTransactionFilter) (*AdminTransactionsPage, error) {
-	page, err := s.repo.AdminListTransactions(ctx, f)
-	if err != nil {
-		return nil, err
-	}
-	// Resolved per row so the list table can show real per-module columns
-	// (Service purchased / Sub service / Category / Sub category / Payment
-	// method / Payment status) instead of only generic ledger fields — the
-	// same resolvers already used by the single-transaction detail view.
-	// Cheap for a page of this size: each resolver's own pattern check is a
-	// prefix comparison before any query, so only rows actually matching a
-	// wired module's reference convention run real SQL.
-	for i := range page.Rows {
-		page.Rows[i].ModuleDetail = s.resolveModuleDetail(ctx, page.Rows[i].Reference)
-	}
-	return page, nil
+	return s.repo.AdminListTransactions(ctx, f)
 }
 
 // AdminListTransactions is the repository-level implementation: dynamic WHERE
@@ -344,13 +283,6 @@ func (r *Repository) AdminListTransactions(ctx context.Context, f AdminTransacti
 		args = append(args, "%"+f.Search+"%")
 		i++
 	}
-	if f.Module != "" {
-		if clause, moduleArgs := moduleReferenceFilter(f.Module, i); clause != "" {
-			q += " AND " + clause
-			args = append(args, moduleArgs...)
-			i += len(moduleArgs)
-		}
-	}
 
 	q += fmt.Sprintf(" ORDER BY le.created_at DESC LIMIT $%d OFFSET $%d", i, i+1)
 	args = append(args, limit, offset)
@@ -383,92 +315,45 @@ func (r *Repository) AdminListTransactions(ctx context.Context, f AdminTransacti
 	return out, nil
 }
 
-// AdminTransactionsSummaryDay is one day's real transaction volume for a
-// module (or, with an empty module filter, for every ledger_entries row).
-type AdminTransactionsSummaryDay struct {
-	Day        string `json:"day"` // YYYY-MM-DD, UTC
-	Count      int64  `json:"count"`
-	AmountKobo int64  `json:"amount_kobo"`
+// ModuleTransactionDetail is the REAL, per-module view of a ledger_entries
+// row — the concrete "what was this money for" answer that the generic
+// ledger fields (amount, reference, account type) cannot give on their own.
+// It is produced by a TransactionDetailResolver (see below) that knows how
+// to look up ONE module's domain tables from the entry's reference string.
+type ModuleTransactionDetail struct {
+	Module        string  `json:"module"`        // e.g. "marketplace_boost", "insurance_premium", "fx_conversion", "utility_bill"
+	ServiceLabel  string  `json:"service_label"` // human label, e.g. "Marketplace — Listing Boost"
+	Category      *string `json:"category"`
+	ServiceBought string  `json:"service_bought"` // specific description of what was bought
+	PaymentMethod string  `json:"payment_method"` // real value if the module tracks it, else honestly "wallet" (never invent "card" etc. without a real column backing it)
+	Status        string  `json:"status"`         // the REAL per-module status, not the generic ledger Posted/Reversed
+	Provider      *string `json:"provider"`       // aggregator/underwriter/provider name, when applicable
+	Merchant      *string `json:"merchant"`       // a real peer merchant/seller, ONLY when the module genuinely has one
 }
 
-// AdminTransactionsSummary backs the dashboard chart on each module tab.
-type AdminTransactionsSummary struct {
-	Days            []AdminTransactionsSummaryDay `json:"days"`
-	TotalCount      int64                         `json:"total_count"`
-	TotalAmountKobo int64                         `json:"total_amount_kobo"`
+// TransactionDetailResolver knows how to resolve ONE module's real
+// transaction detail from a ledger_entries reference string. Multiple
+// resolvers are tried in order by AdminGetTransaction; each resolver decides
+// for itself (cheaply, before running any query) whether the reference
+// matches its module's naming pattern.
+type TransactionDetailResolver interface {
+	// Resolve returns (detail, true, nil) on a match, (nil, false, nil) when
+	// this resolver's reference pattern doesn't match (not an error — try
+	// the next resolver), or (nil, false, err) on a real query failure.
+	Resolve(ctx context.Context, reference string) (*ModuleTransactionDetail, bool, error)
 }
 
-// AdminGetTransactionsSummary aggregates REAL transaction volume by day for
-// the dashboard chart on the Transactions console.
-//
-// A balanced double-entry post shares one reference across >=2 ledger_entries
-// rows with the SAME amount_kobo on each leg (that is what "balanced" means)
-// — naively summing amount_kobo over every matching row would double- (or
-// triple-)count every transaction's volume. This collapses to one row PER
-// REFERENCE first (MAX(amount_kobo) — every leg shares it, so MAX picks it
-// without needing to know which leg is "the" amount) before aggregating by
-// day, so a day's count and amount both reflect real transactions, not raw
-// ledger rows.
-func (s *Service) AdminGetTransactionsSummary(ctx context.Context, module string, from, to time.Time) (*AdminTransactionsSummary, error) {
-	return s.repo.AdminGetTransactionsSummary(ctx, module, from, to)
-}
-
-func (r *Repository) AdminGetTransactionsSummary(ctx context.Context, module string, from, to time.Time) (*AdminTransactionsSummary, error) {
-	q := `
-		WITH per_txn AS (
-			SELECT le.reference, MIN(le.created_at) AS created_at, MAX(le.amount_kobo) AS amount_kobo
-			FROM ledger_entries le
-			WHERE 1=1`
-	args := []any{}
-	i := 1
-	if !from.IsZero() {
-		q += fmt.Sprintf(" AND le.created_at >= $%d", i)
-		args = append(args, from)
-		i++
-	}
-	if !to.IsZero() {
-		q += fmt.Sprintf(" AND le.created_at <= $%d", i)
-		args = append(args, to)
-		i++
-	}
-	if module != "" {
-		if clause, moduleArgs := moduleReferenceFilter(module, i); clause != "" {
-			q += " AND " + clause
-			args = append(args, moduleArgs...)
-			i += len(moduleArgs)
-		}
-	}
-	q += `
-			GROUP BY le.reference
-		)
-		SELECT DATE_TRUNC('day', created_at)::date AS day, COUNT(*), SUM(amount_kobo)
-		FROM per_txn
-		GROUP BY day
-		ORDER BY day`
-
-	rows, err := r.db.Query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("ledger: admin transactions summary: %w", err)
-	}
-	defer rows.Close()
-
-	out := &AdminTransactionsSummary{Days: []AdminTransactionsSummaryDay{}}
-	for rows.Next() {
-		var day time.Time
-		var count, amount int64
-		if err := rows.Scan(&day, &count, &amount); err != nil {
-			return nil, fmt.Errorf("ledger: admin transactions summary scan: %w", err)
-		}
-		out.Days = append(out.Days, AdminTransactionsSummaryDay{
-			Day:        day.Format("2006-01-02"),
-			Count:      count,
-			AmountKobo: amount,
-		})
-		out.TotalCount += count
-		out.TotalAmountKobo += amount
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("ledger: admin transactions summary rows: %w", err)
-	}
-	return out, nil
+// AdminTransactionModules describes one module tab on the admin Transactions
+// console. Keys match ModuleTransactionDetail.Module, so a resolved module and
+// its tab share one classification. DELIBERATELY the same four modules wired
+// in backend/internal/app/admin_transaction_resolvers.go — a new resolver
+// needs an entry here too.
+var AdminTransactionModules = []struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+}{
+	{"marketplace_boost", "Marketplace"},
+	{"insurance_premium", "Insurance"},
+	{"fx_conversion", "FX"},
+	{"utility_bill", "Utility Bills"},
 }

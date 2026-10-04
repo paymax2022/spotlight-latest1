@@ -1,14 +1,12 @@
 package healthpharmacy_test
 
 // LIVE-DB tests for the pharmacy owner's order inbox.
-//
 // The gap this closes: a pharmacy takes money on-platform (POST /orders holds
 // the payment) and has a complete fulfilment lifecycle server-side —
 // confirm → dispense → dispatch → complete, plus cancel/refund. But there was no
 // way for the owner to LIST their own orders: only GET /orders/:id, which needs
 // an id you already have, and an admin-only list. So funds sat in escrow while
 // the merchant had no way to discover what to dispense.
-//
 // Two properties matter beyond "it returns rows":
 //   - it is scoped to pharmacies the caller OWNS (an inbox that leaked another
 //     pharmacy's orders would expose patient identities and order contents);
@@ -16,7 +14,6 @@ package healthpharmacy_test
 //     who is not the patient, because it is the counter credential the patient
 //     presents to collect. A list that returned it would hand the pharmacy the
 //     very token it is meant to check against.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (

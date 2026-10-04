@@ -2,7 +2,7 @@
 # Stage 1: compile a static binary. Stage 2: minimal non-root runtime.
 
 # ── build ─────────────────────────────────────────────────────────────────────
-FROM golang:1.25-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 
 # go.mod first for layer caching. There are no external deps (stdlib only), so no
@@ -15,7 +15,7 @@ ENV CGO_ENABLED=0 GOOS=linux
 RUN go build -trimpath -ldflags="-s -w" -o /out/fakes .
 
 # ── runtime ───────────────────────────────────────────────────────────────────
-FROM alpine:3.20
+FROM alpine:3.24
 # Non-root user (defense-in-depth; this service never needs privileges).
 RUN addgroup -S fakes && adduser -S -G fakes fakes
 COPY --from=build /out/fakes /usr/local/bin/fakes

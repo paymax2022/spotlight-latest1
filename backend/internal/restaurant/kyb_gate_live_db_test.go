@@ -1,8 +1,6 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for FOOD-010: KYB review was entirely optional.
-//
 // SetAvailability's own doc comment claimed "eligibility/KYC gating is handled
 // upstream by the merchant-onboarding engine" — that gate did not exist
 // anywhere. An owner could call SetAvailability(isOpen=true) regardless of
@@ -13,9 +11,7 @@ package restaurant
 // to a genuinely admin-approved one in the review queue, and the frontend's
 // in_review/rejected filters never matched anything since the backend never
 // emitted those values.
-//
 // Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

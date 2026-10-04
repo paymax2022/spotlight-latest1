@@ -5,7 +5,18 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
+
+const keyUnauthenticated = "unauthenticated"
+
+const keyCode = "code"
+
+const keyInvalidRequest = "invalid_request"
+
+const keyError = "error"
 
 // Handler exposes wallet-to-wallet (P2P) and wallet-to-bank transfer endpoints.
 // Flag gating is applied per-feature: WalletEnabled gates the P2P routes,
@@ -23,10 +34,12 @@ func NewHandler(svc *Service, walletTransfersEnabled, bankTransfersEnabled bool)
 	return &Handler{svc: svc, walletEnabled: walletTransfersEnabled, bankEnabled: bankTransfersEnabled}
 }
 
+const errIdemKeyRequired = "Idempotency-Key required"
+
 func writeError(c *gin.Context, err error) {
 	body := gin.H{
-		"error": err.Error(),
-		"code":  ErrorCode(err),
+		keyError: httperr.Msg(c, HTTPStatusForError(err), err),
+		keyCode:  ErrorCode(err),
 	}
 	// A wrong PIN says how many tries are left, so the customer is warned before
 	// the lockout rather than after it.
@@ -39,8 +52,8 @@ func writeError(c *gin.Context, err error) {
 
 func unavailable(c *gin.Context, feature string) {
 	c.JSON(http.StatusServiceUnavailable, gin.H{
-		"error": feature + " is not enabled",
-		"code":  "feature_disabled",
+		keyError: feature + " is not enabled",
+		keyCode:  "feature_disabled",
 	})
 }
 
@@ -51,9 +64,9 @@ func (h *Handler) ResolvePaymax(c *gin.Context) {
 		unavailable(c, "wallet transfers")
 		return
 	}
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	phone := c.Query("phone")
@@ -71,19 +84,23 @@ func (h *Handler) InitiatePaymax(c *gin.Context) {
 		unavailable(c, "wallet transfers")
 		return
 	}
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req WalletTransferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "invalid_request"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err), keyCode: keyInvalidRequest})
 		return
 	}
 	// Header Idempotency-Key wins over a body field if present.
-	if k := c.GetHeader("Idempotency-Key"); k != "" {
+	if k := ginutil.IdempotencyKey(c); k != "" {
 		req.IdempotencyKey = k
+	}
+	if req.IdempotencyKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: errIdemKeyRequired, keyCode: keyInvalidRequest})
+		return
 	}
 	wt, err := h.svc.InitiateWalletToWallet(c.Request.Context(), userID, req)
 	if err != nil {
@@ -103,18 +120,22 @@ func (h *Handler) InitiateBank(c *gin.Context) {
 		unavailable(c, "bank transfers")
 		return
 	}
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req BankTransferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "invalid_request"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err), keyCode: keyInvalidRequest})
 		return
 	}
-	if k := c.GetHeader("Idempotency-Key"); k != "" {
+	if k := ginutil.IdempotencyKey(c); k != "" {
 		req.IdempotencyKey = k
+	}
+	if req.IdempotencyKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: errIdemKeyRequired, keyCode: keyInvalidRequest})
+		return
 	}
 	bt, err := h.svc.InitiateBankTransfer(c.Request.Context(), userID, req)
 	if err != nil {
@@ -134,18 +155,22 @@ func (h *Handler) InitiateBankToBank(c *gin.Context) {
 		unavailable(c, "bank transfers")
 		return
 	}
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req BankToBankRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "invalid_request"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err), keyCode: keyInvalidRequest})
 		return
 	}
-	if k := c.GetHeader("Idempotency-Key"); k != "" {
+	if k := ginutil.IdempotencyKey(c); k != "" {
 		req.IdempotencyKey = k
+	}
+	if req.IdempotencyKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: errIdemKeyRequired, keyCode: keyInvalidRequest})
+		return
 	}
 	bt, err := h.svc.InitiateBankToBank(c.Request.Context(), userID, req)
 	if err != nil {
@@ -179,13 +204,13 @@ func (h *Handler) ResolveAccount(c *gin.Context) {
 		unavailable(c, "bank transfers")
 		return
 	}
-	if c.GetString("user_id") == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+	if ginutil.UserID(c) == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req ResolveAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "invalid_request"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err), keyCode: keyInvalidRequest})
 		return
 	}
 	res, err := h.svc.ResolveAccount(c.Request.Context(), req)
@@ -202,9 +227,9 @@ func (h *Handler) ListBeneficiaries(c *gin.Context) {
 		unavailable(c, "bank transfers")
 		return
 	}
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	bens, err := h.svc.ListBeneficiaries(c.Request.Context(), userID)
@@ -221,14 +246,14 @@ func (h *Handler) SaveBeneficiary(c *gin.Context) {
 		unavailable(c, "bank transfers")
 		return
 	}
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req SaveBeneficiaryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "invalid_request"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err), keyCode: keyInvalidRequest})
 		return
 	}
 	b, err := h.svc.SaveBeneficiary(c.Request.Context(), userID, req)
@@ -245,9 +270,9 @@ func (h *Handler) DeleteBeneficiary(c *gin.Context) {
 		unavailable(c, "bank transfers")
 		return
 	}
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	if err := h.svc.DeleteBeneficiary(c.Request.Context(), userID, c.Param("id")); err != nil {
@@ -259,9 +284,9 @@ func (h *Handler) DeleteBeneficiary(c *gin.Context) {
 
 // PinStatus handles GET /finance/transfers/pin/status.
 func (h *Handler) PinStatus(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	has, err := h.svc.HasPin(c.Request.Context(), userID)
@@ -274,14 +299,14 @@ func (h *Handler) PinStatus(c *gin.Context) {
 
 // SetPin handles POST /finance/transfers/pin.
 func (h *Handler) SetPin(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req SetPinRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "invalid_request"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err), keyCode: keyInvalidRequest})
 		return
 	}
 	if err := h.svc.SetPin(c.Request.Context(), userID, req.PIN, req.CurrentPIN); err != nil {
@@ -293,14 +318,14 @@ func (h *Handler) SetPin(c *gin.Context) {
 
 // VerifyPin handles POST /finance/transfers/pin/verify.
 func (h *Handler) VerifyPin(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
 	var req VerifyPinRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "invalid_request"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err), keyCode: keyInvalidRequest})
 		return
 	}
 	if err := h.svc.VerifyPin(c.Request.Context(), userID, req.PIN); err != nil {

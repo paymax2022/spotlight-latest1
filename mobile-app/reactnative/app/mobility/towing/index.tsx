@@ -3,13 +3,14 @@ import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Modal
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Camera, Check, AlertTriangle, MapPin, Pencil, X, Truck, ArrowRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
-import AddressEntry, { type ConfirmedAddress } from '@/features/mobility/components/AddressEntry';
+import type { SelectedAddress } from '@/components/AddressAutocompleteInput';
+import AddressField from '@/features/mobility/components/AddressField';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import SelectableCard from '@/features/mobility/components/SelectableCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
@@ -48,12 +49,12 @@ export default function TowingHomeScreen() {
   const pickupPlace: Place = pickup;
   const destPlace: Place | null = isRoadside ? null : dest;
 
-  const onPickupConfirmed = useCallback((addr: ConfirmedAddress) => {
-    setPickup({ address: addr.addressLabel, lat: addr.lat, lng: addr.lng });
+  const onPickupConfirmed = useCallback((addr: SelectedAddress) => {
+    setPickup({ address: addr.label, lat: addr.lat, lng: addr.lng });
     setEditingPickup(false);
   }, []);
-  const onDestConfirmed = useCallback((addr: ConfirmedAddress) => {
-    setDest({ address: addr.addressLabel, lat: addr.lat, lng: addr.lng });
+  const onDestConfirmed = useCallback((addr: SelectedAddress) => {
+    setDest({ address: addr.label, lat: addr.lat, lng: addr.lng });
     setEditingDest(false);
   }, []);
 
@@ -199,7 +200,7 @@ export default function TowingHomeScreen() {
             </Pressable>
           </View>
           <ScrollView contentContainerStyle={styles.modalScroll} keyboardShouldPersistTaps="handled">
-            <AddressEntry surface="checkout" initialCenter={{ lat: pickup.lat, lng: pickup.lng }} initialQuery={pickup.address} onConfirmed={onPickupConfirmed} />
+            <AddressField surface="checkout" initial={pickup.address} near={{ lat: pickup.lat, lng: pickup.lng }} placeholder="Enter your location" onSelect={onPickupConfirmed} currentLocation />
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -213,7 +214,7 @@ export default function TowingHomeScreen() {
             </Pressable>
           </View>
           <ScrollView contentContainerStyle={styles.modalScroll} keyboardShouldPersistTaps="handled">
-            <AddressEntry surface="checkout" initialCenter={{ lat: dest.lat, lng: dest.lng }} initialQuery={dest.address} onConfirmed={onDestConfirmed} />
+            <AddressField surface="checkout" initial={dest.address} near={{ lat: dest.lat, lng: dest.lng }} placeholder="Enter tow destination" onSelect={onDestConfirmed} />
           </ScrollView>
         </SafeAreaView>
       </Modal>

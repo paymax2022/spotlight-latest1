@@ -13,8 +13,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeRequest, withAuth, makeInitiateResult, makeVerifyResult, makeSupabaseMock } from './_fixtures';
 
-// ── Module mocks ──────────────────────────────────────────────────────────────
-
 vi.mock('next/server', () => ({
   NextResponse: {
     json: (body: unknown, init?: ResponseInit) =>
@@ -35,14 +33,10 @@ vi.mock('@/lib/supabase/server', () => ({
   createAdminClient: vi.fn(),
 }));
 
-// ── Import after mocks ────────────────────────────────────────────────────────
-
 import { POST as initiatePost } from '../../../app/api/votes/paid/initiate/route';
 import { POST as verifyPost } from '../../../app/api/votes/paid/verify/route';
 import { initiatePaidVote, verifyAndCreditPaidVote } from '@/src/server/voting/paid-vote.service';
 import { createClient } from '@/lib/supabase/server';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeInitiateBody(overrides: Record<string, unknown> = {}) {
   return {
@@ -62,8 +56,6 @@ function makeVerifyBody(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
-
-// ── Tests: initiate ───────────────────────────────────────────────────────────
 
 describe('POST /api/votes/paid/initiate', () => {
   beforeEach(() => {
@@ -137,8 +129,6 @@ describe('POST /api/votes/paid/initiate', () => {
     expect(body.error).toMatch(/packageId|customVoteQuantity/i);
   });
 });
-
-// ── Tests: verify ─────────────────────────────────────────────────────────────
 
 describe('POST /api/votes/paid/verify', () => {
   beforeEach(() => {

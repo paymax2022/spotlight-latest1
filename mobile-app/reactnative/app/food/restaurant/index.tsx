@@ -5,11 +5,11 @@ import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import StateView from '@/components/StateView';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { useOrders } from '@/features/food/hooks';
 import { useMyStores } from '@/features/restaurantmerchant/hooks';
 import { useRestaurantQueueRealtime } from '@/features/food/useRestaurantQueueRealtime';
@@ -21,7 +21,6 @@ export default function RestaurantQueueScreen() {
   // Live order events over the user-scoped socket. A merchant's critical event
   // is a NEW order, which cannot be subscribed to per-order because the id does
   // not exist client-side yet — see useRestaurantQueueRealtime.
-  //
   // Named socketLive, not `live`: `live` below is the ACTIVE-ORDER list, and the
   // two mean very different things.
   const { live: socketLive } = useRestaurantQueueRealtime(true);

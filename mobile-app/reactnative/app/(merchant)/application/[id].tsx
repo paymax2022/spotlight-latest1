@@ -7,10 +7,10 @@ import {
   CircleDashed, CircleCheck, CircleX,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -39,7 +39,6 @@ const CHECK_COLOR = {
   failed:  Colors.error,
 } as const;
 
-// Screen: Application status (PRD §7.2). Renders every lifecycle state with the
 // right hero, checks, reason/checklist and next action.
 export default function ApplicationStatusScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();

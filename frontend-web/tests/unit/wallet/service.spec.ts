@@ -31,9 +31,7 @@ const USER_ID = 'user-wallet-001';
 const ACCOUNT_ID = 'account-uuid-001';
 const COUNTER_ACCOUNT_ID = 'account-standing-settlement';
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 function existingAccount() {
   return { id: ACCOUNT_ID };
@@ -58,16 +56,13 @@ function setupMock() {
   return { mock, maybySingle, single, insertFn, updateFn, updateEq, listData };
 }
 
-// ---------------------------------------------------------------------------
 // getBalance
-// ---------------------------------------------------------------------------
 
 describe('getBalance', () => {
   beforeEach(() => vi.clearAllMocks());
 
   // getBalance reads spendable funds across BOTH wallet-type ledger accounts
   // ('wallet' + Go money-path 'user_wallet'). Its two list queries terminate in
-  // .in(...), so tests queue promise returns on mock.in:
   //   in#1 → ledger_accounts (account id list), in#2 → wallet_balance rows.
   function queueListQueries(
     mock: { in: ReturnType<typeof vi.fn> },
@@ -84,7 +79,7 @@ describe('getBalance', () => {
     maybySingle
       .mockResolvedValueOnce({ data: existingAccount(), error: null }) // account lookup
       .mockResolvedValueOnce({ data: null, error: null })              // mobile_fintech (migrate)
-      .mockResolvedValueOnce({ data: null, error: null });             // mobile_fintech (balance=0 path)
+      .mockResolvedValueOnce({ data: null, error: null });
     queueListQueries(mock, [existingAccount()], []);
 
     const result = await getBalance(USER_ID);
@@ -125,7 +120,7 @@ describe('getBalance', () => {
     maybySingle
       .mockResolvedValueOnce({ data: null, error: null })             // no existing account
       .mockResolvedValueOnce({ data: null, error: null })             // mobile_fintech (migrate)
-      .mockResolvedValueOnce({ data: null, error: null });            // mobile_fintech (balance=0)
+      .mockResolvedValueOnce({ data: null, error: null });
     queueListQueries(mock, [], []); // new account: list query misses, id backfilled locally
     insertFn.mockResolvedValueOnce({ error: null });
 
@@ -135,9 +130,7 @@ describe('getBalance', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // creditWallet
-// ---------------------------------------------------------------------------
 
 describe('creditWallet', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -210,9 +203,7 @@ describe('creditWallet', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // debitWallet
-// ---------------------------------------------------------------------------
 
 describe('debitWallet', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -399,9 +390,7 @@ describe('reverseWalletDebit', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // listTransactions
-// ---------------------------------------------------------------------------
 
 describe('listTransactions', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -431,9 +420,7 @@ describe('listTransactions', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // createTopupIntent
-// ---------------------------------------------------------------------------
 
 describe('createTopupIntent', () => {
   beforeEach(() => {
@@ -561,7 +548,6 @@ describe('createTopupIntent', () => {
   // WAL-012: Paystack's raw reason ("Invalid Email Address Passed", "Amount too
   // low"...) must never reach the end user (it's exactly the class of internal
   // provider diagnostic WC-007 flagged) — but it's still worth keeping for
-  // ops/debugging, so it's captured server-side via console.error and in the
   // intent row's error_message column (never returned to any client — grepped
   // every route that reads wallet_topup_intents), while the thrown ApiError
   // carries only a clean, generic, user-facing message.
@@ -607,7 +593,6 @@ describe('createTopupIntent', () => {
       }),
     ).rejects.toThrow(/couldn't start this top-up/i);
 
-    // The DB column (internal-only) keeps the specific reason for ops; the
     // thrown error the caller/API response sees does not.
     expect(updateFn).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'failed', error_message: expect.stringContaining('Amount too low') }),

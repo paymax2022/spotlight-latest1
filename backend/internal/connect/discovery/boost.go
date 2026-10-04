@@ -3,10 +3,12 @@ package connectdiscovery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
-)
 
-// ── Money-path seams (REUSED from internal/finance, never re-implemented here) ──
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
 
 // WalletDebiter debits the caller's wallet and credits a standing account — a
 // balanced double-entry, tier-checked fail-closed, keyed by idempotencyKey. This
@@ -34,8 +36,6 @@ type BoostAuditor interface {
 type BoostFlagger interface {
 	FlagBoost(ctx context.Context, userID string, amountKobo int64, ref string) error
 }
-
-// ── Model ──────────────────────────────────────────────────────────────────────
 
 // Boost statuses — MUST match the connect_boosts.status CHECK constraint.
 const (
@@ -85,12 +85,9 @@ type BoostStore interface {
 	Insert(ctx context.Context, b *Boost) (*Boost, error)
 }
 
-// ── Service ────────────────────────────────────────────────────────────────────
-
 // BoostService orchestrates paid discovery boosts. It owns NO balance state —
 // money movement is delegated to the wallet (ledger) via WalletDebiter; the
 // connect_boosts row is a projection recorded after a successful idempotent debit.
-//
 // The price and default duration are backend-owned (connect_config), NEVER taken
 // from the client — the client may only request a duration variant, and even that
 // is validated against config.
@@ -147,7 +144,6 @@ func (s *BoostService) durationMinutes(ctx context.Context, requested int) int {
 }
 
 // Purchase is the boost money path.
-//
 // Ordering (correctness > convenience):
 //  1. require an Idempotency-Key;
 //  2. resolve price + duration SERVER-SIDE (connect_config), never from the client;
@@ -207,6 +203,69 @@ func (s *BoostService) Purchase(ctx context.Context, userID, idemKey string, req
 	})
 	if s.flagger != nil {
 		_ = s.flagger.FlagBoost(ctx, userID, priceKobo, ref)
+	}
+	return b, nil
+}
+
+// boostRepo persists connect_boosts over a pgx pool. The boost insert is
+// append-only and idempotent on the UNIQUE idempotency_key: a replayed charge maps
+// to the pre-existing row rather than creating a duplicate. It NEVER touches a
+// balance column — money lives in the ledger.
+type boostRepo struct {
+	db *pgxpool.Pool
+}
+
+// NewBoostRepo builds a connect_boosts repository.
+func NewBoostRepo(db *pgxpool.Pool) *boostRepo { return &boostRepo{db: db} }
+
+const boostColumns = `id, user_id, status, price_kobo, duration_minutes,
+	started_at, expires_at, ledger_ref, created_at`
+
+// ActiveBoost returns the caller's current active, unexpired boost, or (nil,nil).
+func (r *boostRepo) ActiveBoost(ctx context.Context, userID string, now time.Time) (*Boost, error) {
+	const q = `SELECT ` + boostColumns + `
+		FROM connect_boosts
+		WHERE user_id = $1 AND status = 'active' AND expires_at > $2
+		ORDER BY started_at DESC
+		LIMIT 1`
+	b, err := scanBoost(r.db.QueryRow(ctx, q, userID, now))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("connect: active boost: %w", err)
+	}
+	return b, nil
+}
+
+// Insert records the boost row after a successful ledger debit. ON CONFLICT on the
+// UNIQUE idempotency_key returns the existing row, so a replayed purchase is a safe
+// no-op that yields the SAME boost (one charge → one boost).
+func (r *boostRepo) Insert(ctx context.Context, in *Boost) (*Boost, error) {
+	const ins = `INSERT INTO connect_boosts
+		(user_id, status, price_kobo, duration_minutes, started_at, expires_at, idempotency_key, ledger_ref)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		ON CONFLICT (idempotency_key) DO UPDATE SET user_id = connect_boosts.user_id
+		RETURNING ` + boostColumns
+	// The DO UPDATE is a no-op that lets RETURNING yield the row whether it was just
+	// inserted or already existed (idempotent replay).
+	b, err := scanBoost(r.db.QueryRow(ctx, ins,
+		in.UserID, in.Status, in.PriceKobo, in.DurationMinutes,
+		in.StartedAt, in.ExpiresAt, in.IdempotencyKey, in.LedgerRef))
+	if err != nil {
+		return nil, fmt.Errorf("connect: insert boost: %w", err)
+	}
+	return b, nil
+}
+
+// scanBoost reads a connect_boosts row in boostColumns order.
+func scanBoost(row pgx.Row) (*Boost, error) {
+	b := &Boost{}
+	if err := row.Scan(
+		&b.ID, &b.UserID, &b.Status, &b.PriceKobo, &b.DurationMinutes,
+		&b.StartedAt, &b.ExpiresAt, &b.LedgerRef, &b.CreatedAt,
+	); err != nil {
+		return nil, err
 	}
 	return b, nil
 }

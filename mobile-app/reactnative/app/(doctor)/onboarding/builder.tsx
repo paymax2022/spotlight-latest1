@@ -4,17 +4,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Stethoscope, HeartPulse, PawPrint, ArrowRight } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView } from '@/features/doctor/components';
 import { useMerchantUpgradeStatus } from '@/features/doctor/hooks';
 import type { ProviderType } from '@/types/doctor.onboarding';
 
-// ── Section A · Entries 5 / 6 / 7 — Profile-builder hand-off (REUSE) ──────────
 // A thin intro that reads the persisted provider type and forwards into the
 // EXISTING profile builder — Section B (profile/setup) for doctor & specialist
 // (specialist sets the `specialist` param so the specialty step is mandatory),
@@ -45,7 +44,6 @@ export default function OnboardingBuilderHandoffScreen() {
   const type = status?.selectedType;
 
   const openBuilder = (t: ProviderType) => {
-    // doctor & specialist share the Section B builder (profile/setup); the
     // specialist variant is the specialty step being mandatory inside that
     // existing builder. Veterinarian → Section C / Batch 1 builder.
     if (t === 'veterinarian') {

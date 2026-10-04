@@ -1,19 +1,16 @@
 package handlers
 
 // LIVE-DB test for GET /api/v1/me/tier's spend-allowance fields.
-//
 // The mobile checkout reads this endpoint to decline a spend BEFORE opening the
 // Paystack gateway — without it a Tier 0 customer completes a card charge and only
 // then gets a 403 from the fail-closed escrow gate, leaving money in a wallet they
 // cannot spend and no order (see docs/adr/ADR-030).
-//
 // So the client depends on three things this test pins:
 //  1. walletDisabled and dailyUsedKobo are actually emitted (the client must not have
 //     to decode the (0, -1) / (0, 0) encoding of "unlimited" vs "disabled" itself);
 //  2. the numbers come from the SAME tiers.GetUsage the debit gate is derived from;
 //  3. today's real wallet debits are counted, so the remaining allowance shrinks as
 //     the customer spends elsewhere in the app.
-//
 // Skipped unless TEST_DATABASE_URL is set.
 
 import (

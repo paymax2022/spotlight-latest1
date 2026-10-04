@@ -144,7 +144,6 @@ func (s *Service) AssignJob(ctx context.Context, estateID, adminID string, req A
 		return nil, fmt.Errorf("estate: assign job: %w", err)
 	}
 	_ = s.audit(ctx, estateID, adminID, "VENDOR_JOB_ASSIGN", "vendor_job", id, map[string]any{"vendor_id": req.VendorID})
-	// Notify the vendor's user, if linked.
 	var vuid *string
 	_ = s.db.QueryRow(ctx, `SELECT user_id FROM estate_vendors WHERE id=$1 AND estate_id=$2`, req.VendorID, estateID).Scan(&vuid)
 	if vuid != nil {
@@ -272,7 +271,6 @@ func (s *Service) UploadCompletionEvidence(ctx context.Context, estateID, userID
 }
 
 // RequestPayout pays a completed job to the vendor's wallet (idempotent).
-//
 // Iron rules: Idempotency-Key required (fail-closed); balanced double-entry
 // (DEBIT estate settlement → CREDIT vendor wallet) via the ledger; idempotent on
 // the key (ledger + payout_idempotency_key unique index); audited.

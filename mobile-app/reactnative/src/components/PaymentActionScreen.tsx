@@ -27,11 +27,11 @@ import { alertAsync } from '@/lib/confirm';
 import { showToast } from '@/store/toastStore';
 import { normalizeApiError } from '@/utils/errorMapper';
 import { sanitizeMoneyInput } from '@/utils/money';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { shadow1, shadow2 } from '@/constants/shadows';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1, shadow2 } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 
 type ActionKind = 'fund' | 'transfer' | 'withdraw' | 'cards' | 'fx';
 
@@ -204,7 +204,6 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   const amountKobo = useMemo(() => Math.round(amountValue * 100), [amountValue]);
   const feeKobo = useMemo(() => calculateTransferFee(amountKobo), [amountKobo]);
 
-  // ── Wallet funding mutation ─────────────────────────────────────────────────
   const fundMutation = useMutation({
     mutationFn: async () => {
       if (!amountValue || amountValue < 100) {
@@ -229,7 +228,6 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     },
   });
 
-  // ── Transfer: step 1 — resolve recipient ───────────────────────────────────
   const resolveMutation = useMutation({
     mutationFn: async () => {
       if (!recipient.trim()) throw new Error('Enter a phone number or email address.');
@@ -243,7 +241,6 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     onError: (error) => showTransferError(error, 'Could not look up recipient'),
   });
 
-  // ── Transfer: step 2 — execute transfer ────────────────────────────────────
   const transferMutation = useMutation({
     mutationFn: async () => {
       if (!recipient.trim() || !amountKobo) throw new Error('Invalid transfer details.');
@@ -277,7 +274,6 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     },
   });
 
-  // ── Bank transfer: resolve account name via provider validation API ─────────
   // Runs inline (see auto-resolve effect below) so the user sees the verified
   // account name before continuing — no separate "verify" tap required.
   const resolveAccountMutation = useMutation({
@@ -320,16 +316,14 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     if (resolvedAccount) setResolvedAccount(null);
   };
 
-  // ── Bank transfer: select saved beneficiary ─────────────────────────────────
   const selectBeneficiary = (b: Beneficiary) => {
     setSelectedBeneficiary(b);
     setBankCode(b.bankCode);
-    setAccountNumber(b.accountNumberLast4); // display only; actual number from beneficiary
+    setAccountNumber(b.accountNumberLast4);
     setResolvedAccount({ accountName: b.accountName, bankName: b.bankName });
     setBankStep('confirm');
   };
 
-  // ── Bank transfer: execute ──────────────────────────────────────────────────
   const bankTransferMutation = useMutation({
     mutationFn: async () => {
       if (!amountKobo || amountKobo < 100_000) throw new Error('Minimum bank transfer is ₦1,000.');
@@ -338,7 +332,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
       return initiateBankTransfer({
         bankCode:        bankCode.trim(),
         bankName:        resolvedAccount.bankName,
-        accountNumber:   selectedBeneficiary ? '' : accountNumber.trim(), // server re-resolves for manual; beneficiary stores full number
+        accountNumber:   selectedBeneficiary ? '' : accountNumber.trim(),
         accountName:     resolvedAccount.accountName,
         amountKobo,
         narration:       narration.trim() || undefined,
@@ -630,8 +624,6 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   );
 }
 
-// ── Transfer sub-components ────────────────────────────────────────────────
-
 function TransferConfirmCard({
   recipient,
   amountKobo,
@@ -785,8 +777,6 @@ function CardsPanel() {
     </View>
   );
 }
-
-// ── Bank Transfer sub-components ──────────────────────────────────────────
 
 function BeneficiaryPickerCard({
   beneficiaries,
@@ -1217,7 +1207,6 @@ const styles = StyleSheet.create({
   securityText: { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: 2 },
   actionWrap: { marginBottom: Spacing.lg },
 
-  // ── Transfer confirm card ─────────────────────────────────────────────────
   confirmHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1283,12 +1272,10 @@ const styles = StyleSheet.create({
   },
   warningText: { ...Typography.bodySm, color: Colors.onSurfaceVariant, flex: 1 },
 
-  // ── Transfer success card ─────────────────────────────────────────────────
   successIcon: { alignItems: 'center', paddingVertical: Spacing.lg },
   successTitle: { ...Typography.headlineMd, color: Colors.onSurface, textAlign: 'center' },
   successSub: { ...Typography.bodySm, color: Colors.onSurfaceVariant, textAlign: 'center', marginTop: Spacing.xs, marginBottom: Spacing.md },
 
-  // ── Beneficiary picker ────────────────────────────────────────────────────
   beneficiaryRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1315,7 +1302,6 @@ const styles = StyleSheet.create({
   },
   newAccountText: { ...Typography.labelMd, color: Colors.primary, flex: 1 },
 
-  // ── Inline account resolution feedback ────────────────────────────────────
   resolveRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1332,7 +1318,6 @@ const styles = StyleSheet.create({
   resolveName:      { ...Typography.labelMd, color: Colors.onSurface, flex: 1 },
   resolveErrorText: { ...Typography.bodySm, color: Colors.error, flex: 1 },
 
-  // ── Save beneficiary toggle ───────────────────────────────────────────────
   saveRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -1,7 +1,6 @@
 package referrals_test
 
 // Live-DB coverage for admin-chosen referral codes.
-//
 // The unit tests in internal/finance/referrals cover the code SHAPE. What needs
 // a database is UNIQUENESS, because the rule spans two tables that only the
 // database knows about — and getting it wrong silently redirects one user's

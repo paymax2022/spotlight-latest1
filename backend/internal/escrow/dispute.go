@@ -12,13 +12,11 @@ import (
 // Phase-3 dispute extension. ADDITIVE to the P1 escrow core: it reuses the existing
 // Hold/Release/Refund money legs and the guarded state machine (which already
 // tolerates DISPUTED). A dispute drives HELD → DISPUTED → (RELEASED | REFUNDED):
-//
 //   - RaiseDispute flips an active HELD hold to DISPUTED and records buyer/seller
 //     evidence. No money moves on raise (NL-6: funds stay held).
 //   - Arbitrate resolves a DISPUTED hold with a separation-of-duties guard (the
 //     arbiter may not be the payer or payee) then performs the matching ledger leg
 //     via the existing resolve() path (RELEASED → payee, REFUNDED → payer).
-//
 // Every transition + arbitration decision is audited (NL-12).
 
 // DisputeDecision is the arbiter's ruling.

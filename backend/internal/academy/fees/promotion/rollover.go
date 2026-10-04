@@ -1,6 +1,10 @@
 package feespromotion
 
-import "context"
+import (
+	"context"
+
+	"spotlight/backend/go-common/ptr"
+)
 
 // Rollover executes the side effects of promotion_approved → applied: it reassigns the
 // student's class and status and reassigns the applicable fee schedule for the new
@@ -8,11 +12,9 @@ import "context"
 // double-reassign, because reassignment is expressed as a set-to-target write (SET
 // class_id = to_class) rather than an increment, and the fee-schedule step is a
 // side-effect-free verify against the immutable schedule (SF-1).
-//
 // The rollover moves NO money. Fee schedules are immutable once locked (SF-1), so the
 // "reassignment" is a forward-looking association the invoice service reads at the next
 // issuance cycle, never a destructive rewrite of an existing schedule.
-//
 // Decision semantics on apply:
 //   - promoted / conditional ⇒ class_id = to_class_id, status = StudentPromoted
 //   - repeated               ⇒ class_id = from_class_id (unchanged), status = StudentRepeated
@@ -65,7 +67,7 @@ func (rl *Rollover) Execute(ctx context.Context, actorID string, rec PromotionRe
 
 	// Idempotency: if the student is already in the target class with the target
 	// status, this is a re-apply — skip the write entirely so double-apply is a no-op.
-	if deref(student.ClassID) == deref(targetClass) && student.Status == status {
+	if ptr.ZeroIfNil(student.ClassID) == ptr.ZeroIfNil(targetClass) && student.Status == status {
 		_ = rl.store.WriteAudit(ctx, actorID, "promotion_rollover_noop", "academy_student",
 			rec.StudentID, "", "", map[string]any{"reason": "already_reassigned"})
 		return nil
@@ -84,7 +86,7 @@ func (rl *Rollover) Execute(ctx context.Context, actorID string, rec PromotionRe
 	}
 
 	_ = rl.store.WriteAudit(ctx, actorID, "promotion_rollover_applied", "academy_student",
-		rec.StudentID, deref(student.ClassID), deref(targetClass),
+		rec.StudentID, ptr.ZeroIfNil(student.ClassID), ptr.ZeroIfNil(targetClass),
 		map[string]any{"decision": string(*rec.Decision), "status": string(status)})
 	return nil
 }

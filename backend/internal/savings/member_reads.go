@@ -13,8 +13,6 @@ import (
 // Money paths keep the ledger-derived-balance + escrow invariants (NL-1/2/8) and
 // require an Idempotency-Key at the handler boundary (NL-9).
 
-// ───────────────────────── Vault reads / early withdraw ─────────────────────────
-
 // GetVault returns a single vault with its derived balance. Object-level authZ:
 // only the owner may read it.
 func (s *VaultService) GetVault(ctx context.Context, ownerID, vaultID string) (*Vault, int64, error) {
@@ -81,6 +79,10 @@ func (s *VaultService) EarlyWithdraw(ctx context.Context, ownerID, vaultID strin
 	if penalty > 0 {
 		// Then debit the penalty from the member's wallet into the platform
 		// revenue standing account — value is redistributed, never minted (NL-2).
+		// NOTE (E2E-FIN-041): this debit is deliberately NOT tier-gated. It is a
+		// charge levied while returning the member's OWN funds; gating it with
+		// EnforceWalletDebitLimit would strand a Tier-0 member's vault balance —
+		// they could neither deposit (gated) nor withdraw what they already hold.
 		revAcc, rerr := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
 		if rerr != nil {
 			return 0, 0, rerr
@@ -149,8 +151,6 @@ func (s *VaultService) BuildSummary(ctx context.Context, ownerID string, ajo *Aj
 	sum.TotalSavedKobo = sum.VaultBalanceKobo + sum.TargetBalanceKobo
 	return sum, nil
 }
-
-// ───────────────────────── Circle reads / contribute ─────────────────────────
 
 // CircleView is a circle plus the caller's membership context, for list rows.
 type CircleView struct {
@@ -251,6 +251,11 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 	if cy == nil {
 		return fmt.Errorf("savings: no pending cycle")
 	}
+	// Tier guard (fail-closed, E2E-FIN-041): a prepay debits the member's wallet —
+	// the same EnforceWalletDebitLimit the transfer rail runs.
+	if err := enforceDebitLimit(s.tiers, ctx, userID, c.ContributionKobo); err != nil {
+		return err
+	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return err
@@ -270,8 +275,6 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 		map[string]any{"cycle": cy.CycleNumber, "amount_kobo": c.ContributionKobo})
 	return nil
 }
-
-// ───────────────────────── Target reads ─────────────────────────
 
 // TargetView is a group target plus the caller's context for list rows.
 type TargetView struct {

@@ -1,4 +1,3 @@
-// ── Restaurant merchant — data hooks ─────────────────────────────────────────
 // React Query hooks over the merchant api. Mutations invalidate the store detail
 // so the screen re-renders with server truth after each change.
 

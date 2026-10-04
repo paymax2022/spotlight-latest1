@@ -1,6 +1,4 @@
-// ── Referral Admin service (RA1) ─────────────────────────────────────────────
 // Mock by default (mirrors connectAdminService). Flip with
-// NEXT_PUBLIC_REFERRAL_USE_MOCK=false to hit the live Go backend at
 // /api/referral/admin/*. RBAC: referral.* gates wired on the sidebar by the
 // orchestrator. Money is BIGINT kobo throughout.
 
@@ -28,7 +26,6 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REFERRAL_USE_MOCK
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_REFERRAL_USE_MOCK';
 
-// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/referral/admin')`,
 // which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
 // proxy origin instead), so the regex became a silent no-op and every live call
 // 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
@@ -42,16 +39,12 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
 // Verified against the real Go routes: backend/internal/referral/{campaigns,risk,
 // attribution}/handlers.go + backend/internal/app/referral_{routes,econ_routes,
-// trust_routes}.go. Functions with a real route throw NOT_IN_FIXTURE_MODE;
 // functions with no reachable route throw NO_BACKEND_YET instead, since
 // flipping the mock flag would not reach a working call either way. See
 // docs/audit/ADMIN_SIMULATED_WRITES.md.
@@ -75,7 +68,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-// ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -84,7 +76,6 @@ export function formatNaira(kobo: number): string {
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 const DASHBOARD: ReferralDashboard = {
   k_factor: 0.42,
   k_factor_incl_house: 0.71,
@@ -247,7 +238,6 @@ const REASSIGNMENTS: Reassignment[] = [
   },
 ];
 
-// ─── Read API ─────────────────────────────────────────────────────────────────
 export async function getReferralDashboard(): Promise<ReferralDashboard> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(DASHBOARD)); }
   return getJson<ReferralDashboard>('/dashboard');
@@ -307,10 +297,6 @@ export async function createCampaign(draft: CampaignDraft): Promise<{ id: string
 
 export async function setCampaignStatus(id: string, status: CampaignDetail['status']): Promise<{ ok: true }> {
   if (USE_MOCK) throw new Error(`Setting a campaign status ${NOT_IN_FIXTURE_MODE}`);
-  // backend: campaign lifecycle is split into discrete POST verbs, not a status
-  // PATCH: POST /campaigns/:id/{activate,pause,end} (campaigns.Handler.Admin*).
-  // "throttled" needs a throttle percentage this function's signature doesn't
-  // carry (POST /campaigns/:id/throttle requires {pct}); "draft"/"scheduled"
   // have no admin action at all. Map the three that do.
   const verb = status === 'active' ? 'activate' : status === 'paused' ? 'pause' : status === 'ended' ? 'end' : null;
   if (!verb) throw new Error(`Cannot set campaign status to "${status}" directly — no matching admin action exists.`);
@@ -356,7 +342,6 @@ export async function manualGrant(input: ManualGrantInput): Promise<{ id: string
 
 export async function executeClawback(input: ClawbackInput): Promise<{ ok: true }> {
   if (USE_MOCK) throw new Error(`Executing a clawback ${NOT_IN_FIXTURE_MODE}`);
-  // backend: POST /risk/clawbacks (risk.Handler.ExecuteClawback), NOT
   // /rewards/:id/clawback — the reward id and reason travel in the body as
   // {reward_id, reason_code, idempotency_key}, not a path param + {reason}.
   const idempotencyKey = crypto.randomUUID();

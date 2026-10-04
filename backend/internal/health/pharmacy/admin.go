@@ -9,7 +9,6 @@ import (
 // AdminListOrders is the admin order/delivery oversight read. It is the only path
 // that may read across patients/pharmacies; RBAC health.pharmacy.orders gates the
 // route and the read is parameterised.
-//
 // PHARMACY-001: also filters on fulfilmentMethod (fulfilment_method column) —
 // the admin frontend (healthPharmacyAdminService.ts listOrders) has always sent
 // a fulfilment filter; this backend simply never read it, so the filter
@@ -132,13 +131,19 @@ func (s *Service) AdminDashboard(ctx context.Context) (*AdminDashboard, error) {
 // AdminDispenseAudit is the immutable dispense audit read (HL-12). Each row is the
 // pharmacist action that filled an order's e-Rx (dispense-once).
 func (s *Service) AdminDispenseAudit(ctx context.Context, pharmacyProviderID string) ([]map[string]any, error) {
+	// NULL for "no filter" — the `($1 = '' OR uuid_col = $1)` shape resolved
+	// $1 as text and 500'd on uuid = text.
+	var provPtr *string
+	if pharmacyProviderID != "" {
+		provPtr = &pharmacyProviderID
+	}
 	const q = `
 		SELECT d.id, d.order_id, d.prescription_id, d.pharmacist_id, d.created_at, o.pharmacy_provider_id
 		FROM dispense_records d
 		JOIN pharmacy_orders o ON o.id = d.order_id
-		WHERE ($1 = '' OR o.pharmacy_provider_id = $1)
+		WHERE ($1::uuid IS NULL OR o.pharmacy_provider_id = $1::uuid)
 		ORDER BY d.created_at DESC LIMIT 200`
-	rows, err := s.db.Query(ctx, q, pharmacyProviderID)
+	rows, err := s.db.Query(ctx, q, provPtr)
 	if err != nil {
 		return nil, err
 	}
@@ -173,4 +178,40 @@ func (s *Service) AdminRecallProduct(ctx context.Context, adminID, productID str
 	s.audited(adminID, "", "health.pharmacy.product.recall", productID,
 		map[string]any{"active": true}, map[string]any{"active": false})
 	return nil
+}
+
+// request/response types for the admin console (PHARMACY-001).
+// These are additive to model.go; nothing here changes the member-facing shapes.
+
+// AdminDashboard aggregates platform-wide KPIs for the pharmacy admin console.
+// Contrast with the owner/patient views (model.go), which are scoped to one
+// caller.
+type AdminDashboard struct {
+	TotalOrders int64 `json:"total_orders"`
+	// OrdersByState is a count per OrderState value (model.go), including
+	// states with zero orders — the console renders a complete state
+	// breakdown, not only the states that happen to have rows today.
+	OrdersByState map[string]int64 `json:"orders_by_state"`
+	// PlatformRevenueKoboWeek is Spotlight's realized commission on pharmacy
+	// orders completed in the trailing 7 days.
+	// Direct READ of already-recorded rows, NOT a recomputation: the split is
+	// resolved server-side by the central commission module's rate card, and
+	// pharmacy deliberately never imports that package — recomputing a % here
+	// would hardcode a rate that can drift from the live config. Summing
+	// commission_earnings.spotlight_revenue_kobo (append-only integer-kobo
+	// ledger) for source_module='health.pharmacy' is the only accurate source.
+	// When the commission feature is off no rows are written and this is 0.
+	PlatformRevenueKoboWeek int64 `json:"platform_revenue_kobo_week"`
+	// TotalPharmacies mirrors the exact APPROVED-pharmacy predicate used by
+	// DiscoverPharmacies/GetPharmacy/pharmacyOwner (service.go): domain=
+	// 'PHARMACY', provider_type='pharmacy', status='APPROVED'.
+	TotalPharmacies int64 `json:"total_pharmacies"`
+}
+
+// allOrderStates lists every OrderState the lifecycle (model.go header
+// comment) defines, used to zero-initialize AdminDashboard.OrdersByState so
+// states with no current orders still appear (as 0) rather than being absent.
+var allOrderStates = []OrderState{
+	StateCreated, StateRxPending, StateConfirmed, StateDispensed, StateInDelivery,
+	StateReadyForPickup, StateDelivered, StateCollected, StateClosed, StateCancelled, StateRefunded,
 }

@@ -6,8 +6,6 @@ import (
 	"paymax/crypto-backend/internal/stocks"
 )
 
-// ── Stocks: market data ───────────────────────────────────────────────────────
-
 func (s *Server) listStocks(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.Stocks.Assets())
 }
@@ -45,8 +43,6 @@ func (s *Server) getStockDividends(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getStockCorporateActions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.Stocks.CorporateActions(r.PathValue("symbol")))
 }
-
-// ── Stocks: orders ─────────────────────────────────────────────────────────────
 
 func (s *Server) postStockOrder(w http.ResponseWriter, r *http.Request) {
 	if !s.requireFlag(w, "invest_stocks") {
@@ -87,8 +83,6 @@ func (s *Server) cancelStockOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, o)
 }
-
-// ── Stocks: public offers ──────────────────────────────────────────────────────
 
 func (s *Server) getStockOffers(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.Stocks.PublicOffers())

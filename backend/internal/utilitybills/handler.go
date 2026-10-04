@@ -10,13 +10,22 @@ package utilitybills
 import (
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	ptrx "spotlight/backend/go-common/ptr"
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 )
+
+const keyInvalidRequestBody = "invalid request body"
+
+const keyError = "error"
+
+const keyCode = "code"
 
 // Handler exposes the member- and admin-facing Utility Bills endpoints. Every
 // user-scoped op derives the caller's id from the auth context (set by
@@ -28,25 +37,14 @@ type Handler struct {
 // NewHandler builds the utility bills handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-// idemKey reads the Idempotency-Key header. It does NOT reject a missing value —
-// that is the service's job (see the file comment). Accepts the canonical header
-// and the lowercase spelling some HTTP clients emit.
-func idemKey(c *gin.Context) string {
-	if v := c.GetHeader("Idempotency-Key"); v != "" {
-		return v
-	}
-	return c.GetHeader("idempotency-key")
-}
-
 // writeErr maps domain errors onto HTTP status codes.
-//
 // Ordering matters: the most specific sentinels come first, and the catch-all
 // 500 is last. A money-path error that falls through to 500 is a bug in this
 // mapping, not a valid outcome — every sentinel this package defines is listed.
 func writeErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrIdempotencyKeyRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "idempotency_key_required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err), keyCode: "idempotency_key_required"})
 	case errors.Is(err, ErrInvalidCategory),
 		errors.Is(err, ErrFieldRequired),
 		errors.Is(err, ErrCategoryMismatch),
@@ -65,71 +63,50 @@ func writeErr(c *gin.Context, err error) {
 		errors.Is(err, ErrEmptyImport),
 		errors.Is(err, ErrInvalidDisputeStatus),
 		errors.Is(err, ErrInvalidReportType):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 	case errors.Is(err, ErrHealthCheckUnsupported):
 		// 501: the request was valid and the provider exists — this deployment
 		// simply has no adapter capable of answering it. Not the caller's fault
 		// (400) and not a failure of something that should have worked (500).
-		c.JSON(http.StatusNotImplemented, gin.H{"error": err.Error(), "code": "health_check_unsupported"})
+		c.JSON(http.StatusNotImplemented, gin.H{keyError: httperr.Msg(c, http.StatusNotImplemented, err), keyCode: "health_check_unsupported"})
 	case errors.Is(err, ErrCredentialsKeyMissing):
 		// A deployment misconfiguration: UTILITY_PROVIDER_CREDENTIALS_KEY is unset.
 		// Fails CLOSED — the alternative would be storing a secret in the clear.
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "credentials_key_missing"})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err), keyCode: "credentials_key_missing"})
 	case errors.Is(err, ErrCustomerValidationFailed):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "customer_validation_failed"})
-	case errors.Is(err, ErrNotEligibleForReversal):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err), keyCode: "customer_validation_failed"})
+	case errors.Is(err, ErrNotEligibleForReversal),
+		errors.Is(err, ErrNotDisputable):
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+	case errors.Is(err, ErrCategoryExists):
+		// 409 + stable code for a duplicate category setting (PK collision).
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), keyCode: "category_exists"})
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 	case errors.Is(err, ErrCategoryDailyLimit):
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error(), "code": "category_daily_limit"})
+		c.JSON(http.StatusTooManyRequests, gin.H{keyError: httperr.Msg(c, http.StatusTooManyRequests, err), keyCode: "category_daily_limit"})
 	case errors.Is(err, tiers.ErrDailyLimitExceeded):
 		// The WALLET tier limit, distinct from the category limit above.
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error(), "code": "wallet_daily_limit"})
+		c.JSON(http.StatusTooManyRequests, gin.H{keyError: httperr.Msg(c, http.StatusTooManyRequests, err), keyCode: "wallet_daily_limit"})
 	case errors.Is(err, tiers.ErrWalletDisabled):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "code": "wallet_disabled"})
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err), keyCode: "wallet_disabled"})
 	case errors.Is(err, ledger.ErrInsufficientFunds):
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error(), "code": "insufficient_funds"})
+		c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, err), keyCode: "insufficient_funds"})
 	case errors.Is(err, ErrNoViableRoute),
 		errors.Is(err, ErrCategoryUnavailable),
 		errors.Is(err, ErrProviderUnavailable):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
 	case errors.Is(err, ErrBindInFlight):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "purchase_in_flight"})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), keyCode: "purchase_in_flight"})
 	case errors.Is(err, ErrBindOutcomeUnknown):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "outcome_unknown"})
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), keyCode: "outcome_unknown"})
 	case errors.Is(err, ErrProviderCostNotPositive):
 		// A misconfigured catalogue, not a caller error.
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "pricing_misconfigured"})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err), keyCode: "pricing_misconfigured"})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}
 }
-
-// requireUser resolves the authenticated caller, writing a 401 and returning ""
-// when the auth context is missing.
-func requireUser(c *gin.Context) string {
-	userID := c.GetString("user_id")
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
-		return ""
-	}
-	return userID
-}
-
-func intQuery(c *gin.Context, name string, def int) int {
-	raw := c.Query(name)
-	if raw == "" {
-		return def
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil {
-		return def
-	}
-	return v
-}
-
-// ── Catalogue ────────────────────────────────────────────────────────────────
 
 // ListCategories handles GET /api/finance/utilitybills/categories
 func (h *Handler) ListCategories(c *gin.Context) {
@@ -161,8 +138,6 @@ func (h *Handler) ListProducts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"products": products})
 }
 
-// ── Validate / quote ─────────────────────────────────────────────────────────
-
 type validateBody struct {
 	Category          string            `json:"category"`
 	BillerID          string            `json:"biller_id"`
@@ -173,12 +148,12 @@ type validateBody struct {
 
 // Validate handles POST /api/finance/utilitybills/validate
 func (h *Handler) Validate(c *gin.Context) {
-	if requireUser(c) == "" {
+	if _, ok := ginutil.RequireUser(c); !ok {
 		return
 	}
 	var body validateBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	res, err := h.svc.ValidateCustomer(c.Request.Context(), ValidateInput{
@@ -203,18 +178,17 @@ type quoteBody struct {
 }
 
 // Quote handles POST /api/finance/utilitybills/quote.
-//
 // The response deliberately omits provider_cost_kobo / gross_profit_kobo /
 // gross_margin_bps. Those are Paymax's margin on the transaction; a member-facing
 // quote has no business disclosing what we pay the provider, and the QuoteResult
 // struct tags them `json:"-"` for the same reason.
 func (h *Handler) Quote(c *gin.Context) {
-	if requireUser(c) == "" {
+	if _, ok := ginutil.RequireUser(c); !ok {
 		return
 	}
 	var body quoteBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	quote, err := h.svc.QuotePayment(c.Request.Context(), QuoteInput{
@@ -230,8 +204,6 @@ func (h *Handler) Quote(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"quote": quote})
 }
 
-// ── Pay ──────────────────────────────────────────────────────────────────────
-
 type payBody struct {
 	Category          string         `json:"category"`
 	BillerID          string         `json:"biller_id"`
@@ -243,19 +215,28 @@ type payBody struct {
 }
 
 // Pay handles POST /api/finance/utilitybills/pay.
-//
 // REQUIRES an Idempotency-Key header (rejected by the service). A replay of the
 // same key returns the ORIGINAL transaction with already_processed=true and 200 —
 // never a second debit and never a second provider call.
 func (h *Handler) Pay(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	var body payBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
+	}
+	// AUD-BILL-005: payment_source is NOT client input on this plane — the Go
+	// service has no Paystack verification step (verification lives in the
+	// Next.js intake, which is the only legitimate writer of 'paystack' rows).
+	// Accepting it would let a member buy a vend for free AND then have the
+	// stuck-recovery path "refund" a charge that never existed. metadata's
+	// payment_reference is scrubbed for the same reason — it is the handle the
+	// refund probe uses to detect an already-captured charge.
+	if body.Metadata != nil {
+		delete(body.Metadata, "payment_reference")
 	}
 	res, err := h.svc.PayUtility(c.Request.Context(), userID, PayInput{
 		Category:          body.Category,
@@ -263,9 +244,9 @@ func (h *Handler) Pay(c *gin.Context) {
 		ProductID:         body.ProductID,
 		CustomerReference: body.CustomerReference,
 		AmountKobo:        body.AmountKobo,
-		PaymentSource:     body.PaymentSource,
+		PaymentSource:     paymentSourceWallet,
 		Metadata:          body.Metadata,
-	}, idemKey(c))
+	}, ginutil.IdempotencyKey(c))
 	if err != nil {
 		writeErr(c, err)
 		return
@@ -276,16 +257,14 @@ func (h *Handler) Pay(c *gin.Context) {
 	})
 }
 
-// ── Member reads ─────────────────────────────────────────────────────────────
-
 // ListTransactions handles GET /api/finance/utilitybills/transactions
 func (h *Handler) ListTransactions(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
-	limit := intQuery(c, "limit", 20)
-	offset := intQuery(c, "offset", 0)
+	limit := ptrx.Deref(ginutil.IntParam(c, "limit"), 20)
+	offset := ptrx.Deref(ginutil.IntParam(c, "offset"), 0)
 	txns, err := h.svc.ListUserTransactions(c.Request.Context(), userID, limit, offset)
 	if err != nil {
 		writeErr(c, err)
@@ -296,8 +275,8 @@ func (h *Handler) ListTransactions(c *gin.Context) {
 
 // GetTransaction handles GET /api/finance/utilitybills/transactions/:id
 func (h *Handler) GetTransaction(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	t, err := h.svc.GetUserTransaction(c.Request.Context(), userID, c.Param("id"))
@@ -310,8 +289,8 @@ func (h *Handler) GetTransaction(c *gin.Context) {
 
 // ListTransactionAttempts handles GET /api/finance/utilitybills/transactions/:id/attempts
 func (h *Handler) ListTransactionAttempts(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	// Ownership first: resolving through the user-scoped read means a member
@@ -332,8 +311,8 @@ func (h *Handler) ListTransactionAttempts(c *gin.Context) {
 // the MEMBER-facing "check again" for a pending purchase. Ownership is resolved
 // first; the service method itself is shared with the admin route.
 func (h *Handler) Requery(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	if _, err := h.svc.GetUserTransaction(c.Request.Context(), userID, c.Param("id")); err != nil {
@@ -354,13 +333,13 @@ type disputeBody struct {
 
 // CreateDispute handles POST /api/finance/utilitybills/transactions/:id/dispute
 func (h *Handler) CreateDispute(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	var body disputeBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	dispute, err := h.svc.CreateDispute(c.Request.Context(), userID, c.Param("id"), body.Reason)
@@ -371,12 +350,10 @@ func (h *Handler) CreateDispute(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"dispute": dispute})
 }
 
-// ── Beneficiaries ────────────────────────────────────────────────────────────
-
 // ListBeneficiaries handles GET /api/finance/utilitybills/beneficiaries?category=
 func (h *Handler) ListBeneficiaries(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	list, err := h.svc.ListBeneficiaries(c.Request.Context(), userID, c.Query("category"))
@@ -397,13 +374,13 @@ type beneficiaryBody struct {
 
 // SaveBeneficiary handles POST /api/finance/utilitybills/beneficiaries
 func (h *Handler) SaveBeneficiary(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	var body beneficiaryBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	b, err := h.svc.SaveBeneficiary(c.Request.Context(), userID,
@@ -417,8 +394,8 @@ func (h *Handler) SaveBeneficiary(c *gin.Context) {
 
 // DeleteBeneficiary handles DELETE /api/finance/utilitybills/beneficiaries/:id
 func (h *Handler) DeleteBeneficiary(c *gin.Context) {
-	userID := requireUser(c)
-	if userID == "" {
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	if err := h.svc.DeleteBeneficiary(c.Request.Context(), userID, c.Param("id")); err != nil {
@@ -428,8 +405,6 @@ func (h *Handler) DeleteBeneficiary(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// ── Admin (RBAC-gated at the route: finance.admin.utilitybills) ──────────────
-//
 // Phase 1 mounts ONLY the money-affecting admin actions. The full 24-route admin
 // surface is Phase 4. These exist now so the Next.js admin routes have something
 // to proxy to in Phase 2, rather than running a second, independent writer
@@ -468,12 +443,12 @@ type reverseBody struct {
 func (h *Handler) AdminReverse(c *gin.Context) {
 	var body reverseBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
 	reason := body.Reason
 	if reason == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "reason is required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "reason is required"})
 		return
 	}
 	t, err := h.svc.ReverseTransaction(c.Request.Context(), adminActor(c), c.Param("id"), reason)

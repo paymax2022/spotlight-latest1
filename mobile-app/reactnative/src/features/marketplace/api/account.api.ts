@@ -1,19 +1,13 @@
-// ── Marketplace — Trust & Account API (mock/live dispatch) ───────────────────
-//
 // Data layer for the Account tab (§ Mobile-UX-Flows.md 28–34): media presign,
-// reports, blocks, notification preferences, meetup safe-spots. Every function
 // switches on MKT_USE_MOCK:
 //   • mock → in-file fixtures/in-memory store (offline, camelCase already)
 //   • live → the shared client (mktGet/mktPost/…) which normalizes snake↔camel.
-//
 // This file imports ONLY the foundation client (does NOT modify it, Discover,
 // Sell, or Transact). Account-specific types are declared here because the
 // foundation types.ts (frozen) does not carry them.
 
 import { MKT_USE_MOCK, mktGet, mktPost, mktPatch, mktDelete, arr } from './client';
 import type { Listing } from '../types';
-
-// ─── Account-domain types (camelCase; mirror the Go snake_case wire) ─────────
 
 export type ReportTargetType = 'listing' | 'seller' | 'chat';
 
@@ -95,8 +89,6 @@ export interface MediaPresign {
   method: string;
 }
 
-// ─── Mock in-memory stores (process-lived; reset on reload) ──────────────────
-
 const MOCK_ME = 'me';
 
 let mockBlocks: Block[] = [
@@ -121,8 +113,6 @@ const MOCK_SAFE_SPOTS: SafeSpot[] = [
 
 const delay = (ms = 220) => new Promise<void>((r) => setTimeout(r, ms));
 
-// ─── Media presign ───────────────────────────────────────────────────────────
-
 export async function presignListingMedia(fileName: string, mimeType: string): Promise<MediaPresign> {
   if (MKT_USE_MOCK) {
     await delay();
@@ -143,8 +133,6 @@ export async function presignListingMedia(fileName: string, mimeType: string): P
   }
   return mktPost<MediaPresign>('/media/presign', { fileName, mimeType });
 }
-
-// ─── Saved items / wishlist ──────────────────────────────────────────────────
 
 export async function saveListing(listingId: string): Promise<SavedItem> {
   if (MKT_USE_MOCK) {
@@ -170,8 +158,6 @@ export async function getSavedItems(): Promise<SavedItem[]> {
   return arr(await mktGet<SavedItem[]>('/saved-items'));
 }
 
-// ─── Reports ─────────────────────────────────────────────────────────────────
-
 export async function createReport(input: CreateReportInput): Promise<Report> {
   if (MKT_USE_MOCK) {
     await delay();
@@ -191,8 +177,6 @@ export async function createReport(input: CreateReportInput): Promise<Report> {
   const res = await mktPost<{ report: Report } | Report>('/reports', input);
   return (res as { report?: Report }).report ?? (res as Report);
 }
-
-// ─── Blocks ──────────────────────────────────────────────────────────────────
 
 export async function listBlocks(): Promise<Block[]> {
   if (MKT_USE_MOCK) {
@@ -221,7 +205,6 @@ export async function unblockUser(blockId: string): Promise<{ ok: boolean }> {
   return mktDelete<{ ok: boolean }>(`/blocks/${blockId}`);
 }
 
-// ─── Notification feed (§ Mobile-UX-Flows 33 · NT-001/002/003) ───────────────
 // The in-app inbox of delivered notifications, distinct from notification-prefs
 // (opt-in toggles). Each row can deep-link to the listing/thread/seller it's about.
 
@@ -283,8 +266,6 @@ export async function markAllNotificationsRead(): Promise<{ ok: boolean }> {
   return mktPost<{ ok: boolean }>('/notifications/read-all');
 }
 
-// ─── Followed sellers (LD-005) ───────────────────────────────────────────────
-
 export interface FollowedSeller {
   id: string; // follow record id
   sellerId: string;
@@ -329,8 +310,6 @@ export async function unfollowSeller(sellerId: string): Promise<{ ok: boolean }>
   return mktDelete<{ ok: boolean }>(`/sellers/${sellerId}/follow`);
 }
 
-// ─── Notification preferences ────────────────────────────────────────────────
-
 export async function getNotificationPrefs(): Promise<NotificationPrefs> {
   if (MKT_USE_MOCK) {
     await delay();
@@ -347,8 +326,6 @@ export async function updateNotificationPrefs(patch: NotificationPrefsPatch): Pr
   }
   return mktPatch<NotificationPrefs>('/notification-prefs', patch);
 }
-
-// ─── Meetup safe-spots ───────────────────────────────────────────────────────
 
 export async function getSafeSpots(filter?: { state?: string; lga?: string }): Promise<SafeSpot[]> {
   if (MKT_USE_MOCK) {

@@ -6,9 +6,7 @@
  * reviewers a clear signal to decide whether the change is intentional.
  */
 
-// ---------------------------------------------------------------------------
 // Request factory
-// ---------------------------------------------------------------------------
 
 export function makeRequest(
   url: string,
@@ -38,9 +36,7 @@ export function withAuth(headers: Record<string, string> = {}): Record<string, s
   return { ...headers, authorization: 'Bearer test-token-abc123' };
 }
 
-// ---------------------------------------------------------------------------
 // Common result fixtures — match the shapes returned by service functions
-// ---------------------------------------------------------------------------
 
 export function makeFreeVoteResult(overrides: Record<string, unknown> = {}) {
   return {
@@ -94,9 +90,7 @@ export function makeUser(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// ---------------------------------------------------------------------------
 // Supabase chainable mock factory
-// ---------------------------------------------------------------------------
 
 import { vi } from 'vitest';
 
@@ -116,7 +110,6 @@ export function makeSupabaseMock() {
   const insertFn = vi.fn().mockResolvedValue({ error: null });
   const upsertFn = vi.fn().mockReturnThis();
 
-  // Updates always chain: .update({}).eq('col', val) → Promise<{data,error}>
   // The updateEq fn is the terminal awaitable; updateFn returns it.
   const updateEq = vi.fn().mockResolvedValue({ data: null, error: null });
   const updateFn = vi.fn().mockReturnValue({

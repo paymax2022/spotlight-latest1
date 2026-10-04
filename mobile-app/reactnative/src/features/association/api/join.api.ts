@@ -1,10 +1,9 @@
-// ── Association — Join-variants API wrapper (B) ───────────────────────────────
 // Mock-flagged code validation for invite + access codes.
 
 import { api } from '@/api/client';
-import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
 import { MOCK_ORGANISATIONS } from './association.mock';
-import type { CodeKind, CodeValidation } from '../types/join.types';
+import type { CodeKind, CodeValidation } from '../types';
 
 const delay = (ms = 350) => new Promise((r) => setTimeout(r, ms));
 

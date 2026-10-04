@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, Platform, Pressable } from 'react-n
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LifeBuoy, Search, BookOpen, ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import TextInputField from '@/components/TextInputField';
 import ProfileMenuItem from '@/components/ProfileMenuItem';
 import { TeleHeader } from '@/features/telemedicine/components';
@@ -14,8 +14,6 @@ import { SectionCard, StateView, FaqAccordion } from '@/features/doctor/componen
 import { useFaqs, useHelpArticles, useSupportTickets } from '@/features/doctor/hooks';
 import type { SupportTicket, SupportTicketStatus } from '@/types/doctor';
 
-// ── Section AA — Support & Dispute · Help centre hub (AA.1-2-4) ────────────────
-// EXTENDED: the Phase 1 support form moved to support/tickets/new; this hub now
 // surfaces FAQ search, help articles, contact/ticket/dispute entry points and a
 // ticket list (status / resolved are STATES of the row). Reuses the Phase 1
 // useSupportTickets read; FAQs / help articles are Batch 7 reads.

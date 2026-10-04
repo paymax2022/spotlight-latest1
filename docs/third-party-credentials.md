@@ -43,7 +43,7 @@ Status legend: ✅ adapter live-ready (just add creds) · 🟡 sandbox-verified 
 
 | Service | Env vars | Test | Live | Modules | Status |
 |---|---|---|---|---|---|
-| **Agora** (or LiveKit) | `AGORA_APP_ID`, `AGORA_APP_CERTIFICATE`; connect: `CONNECT_RTC_PROVIDER`, `CONNECT_RTC_APP_ID`, `CONNECT_RTC_APP_SECRET`, `CONNECT_RTC_TOKEN_TTL_SECONDS` | Agora test project | live project | academy live (✅ real issuer), telemedicine, **connect (🔴 hmac stub — swap to real issuer)** | ✅ academy · 🔴 connect |
+| **VideoSDK** | `VIDEOSDK_API_KEY`, `VIDEOSDK_SECRET`; connect-live (separate surface): `CONNECT_RTC_PROVIDER`, `CONNECT_RTC_APP_ID`, `CONNECT_RTC_APP_SECRET`, `CONNECT_RTC_TOKEN_TTL_SECONDS` | VideoSDK project | VideoSDK project | academy live (✅ real issuer), telemedicine, **connect (🔴 hmac stub — swap to real issuer)** | ✅ academy + telemedicine · 🔴 connect |
 
 ## Health / clinical
 
@@ -81,7 +81,7 @@ Status legend: ✅ adapter live-ready (just add creds) · 🟡 sandbox-verified 
 
 ## Minimum set to launch the READ-heavy / already-real modules
 Supabase, Redis, R2, Resend, Termii, Paystack (+Monnify), Maplerad+Eversend (FX/VA),
-Dojah/SmileID/YouVerify (KYC), Anthropic, Agora, Maps (Google), Infermedica, Stays
+Dojah/SmileID/YouVerify (KYC), Anthropic, VideoSDK, Maps (Google), Infermedica, Stays
 supplier. The 🔴 items (virtual cards, crypto custody/price, invest broker, lab LIS)
 require procuring a provider before those specific verticals can go live — the code
 seams exist (or are documented) so enabling them is add-creds + finish-adapter, not

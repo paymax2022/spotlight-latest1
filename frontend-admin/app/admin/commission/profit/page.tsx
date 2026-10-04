@@ -167,7 +167,6 @@ export default function CommissionProfitPage() {
   );
 }
 
-// ── Inline SVG bar chart (no chart lib bundled) ───────────────────────────────
 function RevenueBars({ rows }: { rows: ReportRow[] }) {
   const max = Math.max(1, ...rows.map((r) => r.spotlightRevenueKobo));
   const barW = 100 / rows.length;

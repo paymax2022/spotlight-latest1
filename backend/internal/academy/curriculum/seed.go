@@ -6,12 +6,12 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/ptr"
 )
 
 // Seed installs the baseline VERSIONED curriculum data idempotently. Every insert
 // uses ON CONFLICT DO NOTHING keyed on the table's natural UNIQUE constraint, so
 // Seed is safe to run on every startup and forms a stable contract:
-//
 //   - versions: NERDC-2025 (effective 2025-09-01, active) + LEGACY (active).
 //   - classes (for BOTH versions): P1..P6, JSS1..JSS3, SSS1..SSS3 with phases
 //     LowerPrimary (P1-3), UpperPrimary (P4-6), JSS, SSS and ascending ordinals.
@@ -51,8 +51,6 @@ func Seed(ctx context.Context, pool *pgxpool.Pool) error {
 	return tx.Commit(ctx)
 }
 
-// ── Versions ────────────────────────────────────────────────────────────────
-
 func seedVersions(ctx context.Context, tx pgx.Tx) error {
 	const q = `
 		INSERT INTO public.academy_curriculum_versions (code, name, effective_date, status)
@@ -76,8 +74,6 @@ func seedVersions(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
-// ── Streams ─────────────────────────────────────────────────────────────────
-
 func seedStreams(ctx context.Context, tx pgx.Tx) error {
 	const q = `
 		INSERT INTO public.academy_streams (code, name)
@@ -95,8 +91,6 @@ func seedStreams(ctx context.Context, tx pgx.Tx) error {
 	}
 	return nil
 }
-
-// ── Trade tracks ────────────────────────────────────────────────────────────
 
 func seedTradeTracks(ctx context.Context, tx pgx.Tx) error {
 	const q = `
@@ -118,8 +112,6 @@ func seedTradeTracks(ctx context.Context, tx pgx.Tx) error {
 	}
 	return nil
 }
-
-// ── Classes (for BOTH versions) ─────────────────────────────────────────────
 
 // classSpec is the full set of K-12 classes with phase + ordinal.
 type classSpec struct {
@@ -163,8 +155,6 @@ func seedClasses(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
-// ── Entry-class subject → topic → objective trees (NERDC-2025 only) ──────────
-
 // objectiveSpec is one learning objective with exam tags.
 type objectiveSpec struct {
 	code     string
@@ -190,8 +180,6 @@ type subjectSpec struct {
 	examRelevance []string
 	topics        []topicSpec
 }
-
-func strPtr(s string) *string { return &s }
 
 // entryClassTrees returns the representative content tree per NERDC-2025 entry
 // class. Exam-relevance follows curriculum.md: UpperPrimary→CCE (Common Entrance),
@@ -311,7 +299,7 @@ func entryClassTrees() map[string][]subjectSpec {
 					{code: "CIV-RIGHTS-1", title: "Explain fundamental human rights", examTags: []string{"WASSCE", "NECO"}, ordinal: 1},
 				}},
 			}},
-			{code: "PHY", name: "Physics", kind: "elective", stream: strPtr("Science"), examRelevance: []string{"WASSCE", "NECO", "UTME"}, topics: []topicSpec{
+			{code: "PHY", name: "Physics", kind: "elective", stream: ptr.Of("Science"), examRelevance: []string{"WASSCE", "NECO", "UTME"}, topics: []topicSpec{
 				{code: "PHY-MOTION", title: "Motion", ordinal: 1, objectives: []objectiveSpec{
 					{code: "PHY-MOTION-1", title: "Describe types of motion", examTags: []string{"WASSCE", "NECO", "UTME"}, ordinal: 1},
 					{code: "PHY-MOTION-2", title: "Apply equations of uniformly accelerated motion", examTags: []string{"WASSCE", "NECO", "UTME"}, ordinal: 2},

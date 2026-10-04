@@ -2,13 +2,18 @@ package points
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
-	"time"
-
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"strconv"
+	"strings"
+	"time"
 )
 
 // Auditor mirrors services.AuditService (NL-12); nil-safe.
@@ -221,8 +226,6 @@ func (s *Service) ExpireDue(ctx context.Context, limit int) (int, error) {
 	return n, nil
 }
 
-// --- rule / catalog access ---
-
 func (s *Service) activeRule(ctx context.Context, ruleKey string) (*EarnRule, error) {
 	const q = `
 		SELECT id, rule_key, module, version, points_fixed, points_per_kobo, expiry_days, active, created_at
@@ -330,3 +333,165 @@ var (
 	ErrInsufficientPoints      = fmt.Errorf("points: insufficient points")
 	ErrCashRedemptionForbidden = fmt.Errorf("points: points cannot be redeemed for cash (NL-4)")
 )
+
+// Handler exposes read-only points endpoints to members. Earn is never a public
+// endpoint — points accrue only as a side effect of live module actions wired in
+// the loyalty layer, so a client can never self-award points.
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// Register mounts member points routes. Earn-rule + catalog administration is
+// mounted by the loyalty admin group (RBAC points.*).
+func (h *Handler) Register(member *gin.RouterGroup) {
+	member.GET("/points/balance", h.Balance)
+	member.GET("/points/history", h.History)
+	member.GET("/points/catalog", h.Catalog)
+	member.POST("/points/redeem", h.Redeem)
+}
+
+func (h *Handler) History(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	entries, err := h.svc.History(c.Request.Context(), userID, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "history": entries})
+}
+
+func (h *Handler) Balance(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	bal, err := h.svc.Balance(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "balance_points": bal})
+}
+
+func (h *Handler) Catalog(c *gin.Context) {
+	items, err := h.svc.ListCatalog(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "items": items})
+}
+
+type redeemRequest struct {
+	SKU string `json:"sku" binding:"required"`
+}
+
+func (h *Handler) Redeem(c *gin.Context) {
+	userID := ginutil.UserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	var req redeemRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	red, item, err := h.svc.Redeem(c.Request.Context(), userID, req.SKU)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInsufficientPoints):
+			c.JSON(http.StatusPaymentRequired, gin.H{"error": httperr.Msg(c, http.StatusPaymentRequired, err)})
+		case errors.Is(err, ErrCashRedemptionForbidden):
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "redemption": red, "item": item})
+}
+
+// EntryType is the direction of a points-ledger row. Append-only: balance is the
+// projection of EARN - REDEEM - EXPIRE (never an updated column).
+type EntryType string
+
+const (
+	EntryEarn   EntryType = "EARN"
+	EntryRedeem EntryType = "REDEEM"
+	EntryExpire EntryType = "EXPIRE"
+	EntryAdjust EntryType = "ADJUST" // manual correction (admin, audited)
+)
+
+// Entry is one immutable points movement. Points are NOT money (NL-4): there is no
+// kobo column and no path that converts a points balance to a cash withdrawal.
+type Entry struct {
+	ID             string     `json:"id"`
+	UserID         string     `json:"user_id"`
+	Type           EntryType  `json:"type"`
+	Points         int64      `json:"points"` // always positive; direction from Type
+	RuleKey        string     `json:"rule_key,omitempty"`
+	Module         string     `json:"module,omitempty"` // payments | savings | tickets | referral | ...
+	Reference      string     `json:"reference"`
+	IdempotencyKey string     `json:"idempotency_key"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
+// EarnRule is a versioned, config-driven earn definition (per action/module). A new
+// version supersedes the prior one; historical entries keep the version they earned
+// under, so a rule change never rewrites past awards.
+type EarnRule struct {
+	ID            string    `json:"id"`
+	RuleKey       string    `json:"rule_key"` // e.g. "payments.bill_paid"
+	Module        string    `json:"module"`
+	Version       int       `json:"version"`
+	PointsFixed   int64     `json:"points_fixed"`    // flat award
+	PointsPerKobo float64   `json:"points_per_kobo"` // optional value-scaled award
+	ExpiryDays    int       `json:"expiry_days"`     // 0 => never expires
+	Active        bool      `json:"active"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// CatalogItem is a redeemable reward. Redemption only ever targets airtime, bills,
+// a ticket discount or a perk (NL-4) — never cash. Fulfilment is delegated to the
+// owning module (bill-pay / airtime / ticketing) via the loyalty layer.
+type CatalogItem struct {
+	ID         string         `json:"id"`
+	SKU        string         `json:"sku"`
+	Title      string         `json:"title"`
+	Kind       string         `json:"kind"` // airtime | bill | ticket_discount | perk
+	CostPoints int64          `json:"cost_points"`
+	ValueKobo  int64          `json:"value_kobo"` // notional value for airtime/bill fulfilment (NOT cash-out)
+	Active     bool           `json:"active"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+}
+
+// Redemption records a points spend against a catalog item.
+type Redemption struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	SKU        string    `json:"sku"`
+	CostPoints int64     `json:"cost_points"`
+	Status     string    `json:"status"` // REDEEMED | FULFILLED | FAILED
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// EarnContext carries the data an earn rule scales against (e.g. the kobo amount of
+// the underlying transaction) plus the reference that makes the award idempotent.
+type EarnContext struct {
+	Module     string
+	Reference  string // unique business ref of the earning event
+	AmountKobo int64  // for value-scaled rules
+	Metadata   map[string]any
+}

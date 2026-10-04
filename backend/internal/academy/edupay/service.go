@@ -9,12 +9,12 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/ptr"
 )
 
 // Service is the Spotlight Academy EduPay domain (fees, savings pots, disbursements,
 // scholarships). It owns the GUARDED disbursement state machine
 // (fee_due→funding→collected→disbursed→reconciled) and local entitlement-style state.
-//
 // Money NEVER moves here directly: collection from the payer and payout to the school
 // are delegated to the INJECTED CollectRail / DisburseRail / BNPLRail (paymax-rails.md
 // §1 — adapter, not SDK leak). Pot balances are DERIVED from the append-only
@@ -63,8 +63,6 @@ func requestHash(parts ...string) string {
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
-
-// ── School / fee catalog (reads + admin CRUD) ────────────────────────────────────
 
 func (s *Service) ListSchools(ctx context.Context) ([]School, error) { return s.repo.ListSchools(ctx) }
 
@@ -153,8 +151,6 @@ func (s *Service) CreateFeeSchedule(ctx context.Context, adminID string, req Cre
 		map[string]any{"schoolId": req.SchoolID, "amountMinor": req.AmountMinor})
 	return fs, nil
 }
-
-// ── PayFees (collect from payer → disburse to school) ───────────────────────────
 
 // PayFees pays a fee schedule. Funds flow: COLLECT from the payer (CollectRail, or
 // BNPLRail when source=bnpl) → mark collected → DISBURSE to the school's virtual
@@ -284,8 +280,6 @@ func (s *Service) runDisbursement(ctx context.Context, actorID string, disb *Dis
 	}
 	return s.repo.GetDisbursement(ctx, disb.ID)
 }
-
-// ── Savings pots ────────────────────────────────────────────────────────────────
 
 // CreatePot opens a savings pot toward a goal (optionally tied to a fee schedule).
 func (s *Service) CreatePot(ctx context.Context, userID string, req CreatePotRequest) (*SavingsPot, error) {
@@ -423,8 +417,6 @@ func (s *Service) PayFromPot(ctx context.Context, userID, potID, feeScheduleID, 
 	return s.runDisbursement(ctx, userID, disb, *sch.VirtualAccountRef, "pot", scopePotPay, rh, idemKey, preCollected)
 }
 
-// ── Reconcile (disbursed → reconciled; admin) ───────────────────────────────────
-
 // Reconcile confirms a disbursed payout against the rail and flips the disbursement
 // disbursed→reconciled (golden rule 6: reconcile + audit every disbursement). Idempotent.
 func (s *Service) Reconcile(ctx context.Context, adminID, disbID, idemKey string) (*Disbursement, error) {
@@ -459,7 +451,7 @@ func (s *Service) Reconcile(ctx context.Context, adminID, disbID, idemKey string
 			return err
 		}
 		if err := writeAudit(ctx, tx, adminID, "edupay.reconciled", "academy_disbursement", disbID, string(DisbDisbursed), string(DisbReconciled), idemKey,
-			map[string]any{"amountMinor": disb.AmountMinor, "payoutRef": derefStr(disb.PayoutRef)}); err != nil {
+			map[string]any{"amountMinor": disb.AmountMinor, "payoutRef": ptr.DerefZero(disb.PayoutRef)}); err != nil {
 			return err
 		}
 		return saveIdem(ctx, tx, idemKey, scopeReconcile, adminID, rh, disbID, map[string]any{"disbursementId": disbID, "state": string(DisbReconciled)})
@@ -468,8 +460,6 @@ func (s *Service) Reconcile(ctx context.Context, adminID, disbID, idemKey string
 	}
 	return s.repo.GetDisbursement(ctx, disbID)
 }
-
-// ── Scholarships (admin academy.edupay / sponsor) ───────────────────────────────
 
 func (s *Service) ListScholarships(ctx context.Context) ([]Scholarship, error) {
 	return s.repo.ListScholarships(ctx)
@@ -597,8 +587,6 @@ func (s *Service) awardReplay(ctx context.Context, prior *idemRecord) (*AwardRes
 	return res, nil
 }
 
-// ── Member dashboard ────────────────────────────────────────────────────────────
-
 // GetMyEduPay returns the member's linked schools/accounts, the active fee schedules
 // due for their linked schools, their savings pots (with DERIVED balances) and their
 // disbursement history.
@@ -635,18 +623,9 @@ func (s *Service) GetMyEduPay(ctx context.Context, userID string) (*MyEduPay, er
 	return &MyEduPay{Accounts: accounts, FeesDue: feesDue, Pots: pots, Disbursements: disb}, nil
 }
 
-// ── internal helpers ────────────────────────────────────────────────────────────
-
 // audit writes a non-transactional audit row (best-effort, for non-tx events / rejections).
 func (s *Service) audit(ctx context.Context, actorID, action, entityType, entityID, from, to, idemKey string, detail any) error {
 	return writeAudit(ctx, s.repo.db, actorID, action, entityType, entityID, from, to, idemKey, detail)
 }
 
 func emptyDetail() map[string]any { return map[string]any{} }
-
-func derefStr(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
-}

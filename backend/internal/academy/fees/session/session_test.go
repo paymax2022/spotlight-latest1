@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"spotlight/backend/go-common/ptr"
 )
 
 // PURE tests — no DB. The pgx Repository is replaced by an in-memory fakeStore so the
@@ -83,7 +85,7 @@ func (f *fakeStore) GetClass(_ context.Context, id string) (*Class, error) {
 func (f *fakeStore) ListClasses(_ context.Context, schoolID, sessionID string) ([]Class, error) {
 	out := []Class{}
 	for _, c := range f.classes {
-		if c.SchoolID == schoolID && (sessionID == "" || deref(c.SessionID) == sessionID) {
+		if c.SchoolID == schoolID && (sessionID == "" || ptr.ZeroIfNil(c.SessionID) == sessionID) {
 			out = append(out, *c)
 		}
 	}
@@ -117,8 +119,6 @@ func itoa(n int) string {
 	}
 	return string(buf[i:])
 }
-
-// ── Session status machine (pure) ────────────────────────────────────────────────
 
 func TestSessionTransition_LegalAndIllegal(t *testing.T) {
 	legal := [][2]SessionStatus{
@@ -173,8 +173,6 @@ func TestServiceSetSessionStatus_GuardedAndAudited(t *testing.T) {
 	}
 }
 
-// ── Class: same-school session guard ─────────────────────────────────────────────
-
 func TestServiceCreateClass_SessionMustMatchSchool(t *testing.T) {
 	fs := newFakeStore()
 	svc := NewServiceWithStore(fs)
@@ -190,11 +188,11 @@ func TestServiceCreateClass_SessionMustMatchSchool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create class: %v", err)
 	}
-	if deref(cls.ClassTeacherUserID) != "teacher-9" {
-		t.Fatalf("class teacher must be recorded, got %q", deref(cls.ClassTeacherUserID))
+	if ptr.ZeroIfNil(cls.ClassTeacherUserID) != "teacher-9" {
+		t.Fatalf("class teacher must be recorded, got %q", ptr.ZeroIfNil(cls.ClassTeacherUserID))
 	}
-	if deref(cls.SessionID) != sess.ID {
-		t.Fatalf("class must be bound to the session, got %q", deref(cls.SessionID))
+	if ptr.ZeroIfNil(cls.SessionID) != sess.ID {
+		t.Fatalf("class must be bound to the session, got %q", ptr.ZeroIfNil(cls.SessionID))
 	}
 }
 

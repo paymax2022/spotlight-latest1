@@ -6,7 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/go-common/ptr"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // ErrAIRateLimited is returned when a doctor exceeds the configured per-minute or
@@ -23,13 +29,11 @@ const (
 )
 
 // service_ai.go — Wave 5 (AI-assist) business logic.
-//
 // The three GENERATE endpoints (note-summary, rx-safety, lab-explanation) are
 // advisory and on-demand: they call the server-side LLM and return an AiEnvelope.
 // They persist NOTHING (no new table, no migration). Only ACCEPT writes — and it
 // reuses the existing clinical-note write path (Service.SaveNote → InsertNote),
 // so the accepted SOAP draft lands on the same doctor_clinical_notes row.
-//
 // SAFETY model:
 //   - A CLINICAL SYSTEM PROMPT instructs the model that its output is a DRAFT for a
 //     licensed clinician to review (not a diagnosis/treatment decision), to flag
@@ -118,8 +122,6 @@ func (a *AIService) guardRate(ctx context.Context, userID string) error {
 	return nil
 }
 
-// ── System prompts (clinical guardrails) ─────────────────────────────────────
-
 const aiPromptPreamble = "You are a clinical documentation assistant embedded in a telemedicine app. " +
 	"Your output is a DRAFT for a licensed clinician to review and verify — it is NOT a diagnosis, " +
 	"treatment decision, or medical advice. Be conservative, avoid speculation, and explicitly flag " +
@@ -205,11 +207,11 @@ func (a *AIService) GenerateNoteSummary(ctx context.Context, userID, idemKey str
 	in := parseAiInput(raw)
 	system := aiPromptPreamble + "\nProduce a SOAP-style consultation note summary. Schema:\n" + aiNoteSummarySchema
 	user := fmt.Sprintf("Consultation context to summarise.\nappointmentId: %s\nnotes: %s\nstructuredContext: %s",
-		derefStr(in.AppointmentID), derefStr(in.Notes), string(in.Context))
+		ptr.DerefZero(in.AppointmentID), ptr.DerefZero(in.Notes), string(in.Context))
 
 	rawJSON, err := a.gen.GenerateJSON(ctx, system, user)
 	if err != nil {
-		return errorEnvelope("Failed to generate note summary: " + err.Error()), nil
+		return errorEnvelope("Failed to generate note summary: " + httperr.Sanitize(nil, http.StatusBadGateway, err.Error())), nil
 	}
 	var out AiNoteSummaryOutput
 	if err := json.Unmarshal(rawJSON, &out); err != nil {
@@ -267,11 +269,11 @@ func (a *AIService) CheckPrescriptionSafety(ctx context.Context, userID, idemKey
 		"dosage issues, therapeutic duplication and allergy matches. Set safeToIssue=false if any critical " +
 		"finding exists. Schema:\n" + aiSafetySchema
 	user := fmt.Sprintf("Prescription safety check.\npatientId: %s\npetId: %s\ndrugItems: %s\npatientContext: %s",
-		derefStr(in.PatientID), derefStr(in.PetID), string(in.Items), string(in.Context))
+		ptr.DerefZero(in.PatientID), ptr.DerefZero(in.PetID), string(in.Items), string(in.Context))
 
 	rawJSON, err := a.gen.GenerateJSON(ctx, system, user)
 	if err != nil {
-		return errorEnvelope("Failed to run prescription safety check: " + err.Error()), nil
+		return errorEnvelope("Failed to run prescription safety check: " + httperr.Sanitize(nil, http.StatusBadGateway, err.Error())), nil
 	}
 	var out AiSafetyOutput
 	if err := json.Unmarshal(rawJSON, &out); err != nil {
@@ -279,8 +281,6 @@ func (a *AIService) CheckPrescriptionSafety(ctx context.Context, userID, idemKey
 	}
 	return readyEnvelope(out), nil
 }
-
-// ── 4. AI lab explanation (generate, no persistence) ─────────────────────────
 
 func (a *AIService) ExplainLabResult(ctx context.Context, userID, idemKey string, raw json.RawMessage) (*AiEnvelope, error) {
 	if idemKey == "" {
@@ -309,15 +309,252 @@ func (a *AIService) ExplainLabResult(ctx context.Context, userID, idemKey string
 	system := aiPromptPreamble + "\nProduce a plain-language explanation of the lab result for the clinician " +
 		"to share with the patient. Explain each abnormal flag and suggest follow-ups. Schema:\n" + aiLabSchema
 	user := fmt.Sprintf("Lab result explanation.\nresultId: %s\nresultValues: %s\nextraContext: %s",
-		derefStr(in.ResultID), values, string(in.Context))
+		ptr.DerefZero(in.ResultID), values, string(in.Context))
 
 	rawJSON, err := a.gen.GenerateJSON(ctx, system, user)
 	if err != nil {
-		return errorEnvelope("Failed to explain lab result: " + err.Error()), nil
+		return errorEnvelope("Failed to explain lab result: " + httperr.Sanitize(nil, http.StatusBadGateway, err.Error())), nil
 	}
 	var out AiLabExplanationOutput
 	if err := json.Unmarshal(rawJSON, &out); err != nil {
 		return errorEnvelope("AI returned an unparseable lab explanation."), nil
 	}
 	return readyEnvelope(out), nil
+}
+
+// Wave 5 (AI-assist) request & response shapes.
+// These mirror mobile-app/reactnative/src/types/doctor.phase3.ts EXACTLY (the
+// AiEnvelope<T> wrapper + the three output types). Field json tags match the TS
+// property names 1:1 so the mobile client's AiNoteSummary / AiSafetyReport /
+// AiLabExplanation parse without translation.
+// SAFETY: every AI response is advisory decision-support for a licensed clinician
+// — never a definitive diagnosis or treatment instruction. The disclaimer field is
+// ALWAYS populated (ready OR error). When the LLM is not configured we return an
+// error-status envelope with NO fabricated medical output.
+// NONE of these are money movements. The generate endpoints persist nothing; only
+// the note-summary ACCEPT writes (to the existing doctor_clinical_notes row via the
+// shared SaveNote path).
+
+// AiStatus mirrors the TS union 'idle'|'generating'|'ready'|'error'.
+type AiStatus string
+
+const (
+	AiStatusIdle       AiStatus = "idle"
+	AiStatusGenerating AiStatus = "generating"
+	AiStatusReady      AiStatus = "ready"
+	AiStatusError      AiStatus = keyError
+)
+
+// AiModelLabel is the display label echoed to the client (NOT a secret; the API
+// key never appears here).
+const AiModelLabel = "Spotlight Care AI (Claude)"
+
+// AiDisclaimer is the standard, mandatory safety copy attached to EVERY AI
+// response. It makes explicit that the content is AI-generated decision support
+// that REQUIRES independent verification by the licensed clinician and must never
+// be presented as definitive.
+const AiDisclaimer = "AI-generated draft for decision support only. It is NOT a diagnosis, " +
+	"treatment decision, or medical advice, and may be incomplete or incorrect. " +
+	"A licensed clinician must independently review and verify every detail before acting."
+
+// AiNotConfiguredMessage is returned (in errorMessage) when no LLM key is set. No
+// medical content is fabricated in this path.
+const AiNotConfiguredMessage = "AI assist is not configured on this server. No AI draft was generated."
+
+// AiEnvelope mirrors the TS generic AiEnvelope<T>. `Output` is left as a generic
+// any so a single struct serves all three endpoints; the concrete output type is
+// always one of the *Output structs below.
+// JSON tags MUST match doctor.phase3.ts: status, model, generatedAt, confidence,
+// disclaimer, output, accepted, edited, errorMessage.
+type AiEnvelope struct {
+	Status       AiStatus   `json:"status"`
+	Model        string     `json:"model"`
+	GeneratedAt  *time.Time `json:"generatedAt,omitempty"`
+	Confidence   *int       `json:"confidence,omitempty"`
+	Disclaimer   string     `json:"disclaimer"`
+	Output       any        `json:"output,omitempty"`
+	Accepted     bool       `json:"accepted"`
+	Edited       bool       `json:"edited"`
+	ErrorMessage string     `json:"errorMessage,omitempty"`
+}
+
+// AiNoteSummaryOutput mirrors the TS AiNoteSummaryOutput.
+type AiNoteSummaryOutput struct {
+	Subjective string   `json:"subjective"`
+	Objective  string   `json:"objective"`
+	Assessment string   `json:"assessment"`
+	Plan       string   `json:"plan"`
+	Diagnosis  []string `json:"diagnosis"`
+	KeyPoints  []string `json:"keyPoints"`
+}
+
+// AiSafetyFinding mirrors the TS AiSafetyFinding.
+type AiSafetyFinding struct {
+	ID             string   `json:"id"`
+	Kind           string   `json:"kind"`     // interaction|contraindication|dosage|duplication|allergy
+	Severity       string   `json:"severity"` // low|moderate|high|critical
+	Title          string   `json:"title"`
+	Detail         string   `json:"detail"`
+	Drugs          []string `json:"drugs"`
+	Recommendation string   `json:"recommendation"`
+}
+
+// AiSafetyOutput mirrors the TS AiSafetyOutput.
+type AiSafetyOutput struct {
+	OverallSeverity string            `json:"overallSeverity"`
+	Findings        []AiSafetyFinding `json:"findings"`
+	SafeToIssue     bool              `json:"safeToIssue"`
+	Summary         string            `json:"summary"`
+}
+
+// AiLabFlagExplanation mirrors the TS AiLabFlagExplanation.
+type AiLabFlagExplanation struct {
+	TestName       string   `json:"testName"`
+	Flag           string   `json:"flag"` // normal|low|high
+	Meaning        string   `json:"meaning"`
+	PossibleCauses []string `json:"possibleCauses"`
+}
+
+// AiLabExplanationOutput mirrors the TS AiLabExplanationOutput.
+type AiLabExplanationOutput struct {
+	Headline     string                 `json:"headline"`
+	PlainSummary string                 `json:"plainSummary"`
+	Flags        []AiLabFlagExplanation `json:"flags"`
+	FollowUps    []string               `json:"followUps"`
+}
+
+// ── Accept (persists to the existing clinical note) ──────────────────────────
+
+// AcceptAiNoteSummaryResult mirrors the TS AcceptAiNoteSummaryResult.
+type AcceptAiNoteSummaryResult struct {
+	NoteID   string `json:"noteId"`
+	Accepted bool   `json:"accepted"`
+}
+
+// aiInput carries the typed knobs the AI generate/accept endpoints pull out of the
+// free-form request body. Kept separate from opsPatch / clinicalPatch so nothing
+// shared is touched.
+type aiInput struct {
+	AppointmentID *string              `json:"appointmentId,omitempty"`
+	ResultID      *string              `json:"resultId,omitempty"`
+	PatientID     *string              `json:"patientId,omitempty"`
+	PetID         *string              `json:"petId,omitempty"`
+	Items         json.RawMessage      `json:"items,omitempty"`   // PrescriptionDrugItem[]
+	Notes         *string              `json:"notes,omitempty"`   // optional consult context
+	Context       json.RawMessage      `json:"context,omitempty"` // optional structured context
+	Edited        bool                 `json:"edited,omitempty"`
+	Output        *AiNoteSummaryOutput `json:"output,omitempty"` // accepted (possibly edited) draft
+}
+
+func parseAiInput(raw json.RawMessage) aiInput {
+	var in aiInput
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &in)
+	}
+	return in
+}
+
+// failAI maps AI-specific errors (the per-doctor rate guard → 429) before falling
+// back to the shared handler error mapping.
+func (h *AIHandler) failAI(c *gin.Context, err error) {
+	if errors.Is(err, ErrAIRateLimited) {
+		c.JSON(http.StatusTooManyRequests, gin.H{keyError: "AI assist rate limit exceeded, please retry shortly"})
+		return
+	}
+	h.fail(c, err)
+}
+
+// Wave 5 (AI-assist) Gin handlers.
+// AIHandler EMBEDS *Handler so it reuses the shared helpers (userID, fail,
+// rawBody) without redeclaring them, exactly like the Wave 4 handlers reuse them.
+// It adds an *AIService for the AI-specific business logic.
+// The generate endpoints return HTTP 200 with an AiEnvelope in EITHER the "ready"
+// or keyError state (the UI drives generating→ready→error from the status field) —
+// a disabled LLM or model failure is a 200 error-envelope, NOT an HTTP 5xx, and it
+// carries NO fabricated medical content. A missing Idempotency-Key is a hard 400.
+// The accept endpoint persists to the clinical note and returns 200.
+
+// AIHandler exposes the doctor AI-assist endpoints.
+type AIHandler struct {
+	*Handler
+
+	ai *AIService
+}
+
+// NewAIHandler builds the AI handler. base supplies the shared helpers (and the
+// underlying *Service used by the accept path); aiSvc supplies the LLM-backed logic.
+func NewAIHandler(base *Handler, aiSvc *AIService) *AIHandler {
+	return &AIHandler{Handler: base, ai: aiSvc}
+}
+
+// GenerateNoteSummary handles POST /ai/note-summary — generate a SOAP/visit summary draft.
+func (h *AIHandler) GenerateNoteSummary(c *gin.Context) {
+	uid, ok := h.userID(c)
+	if !ok {
+		return
+	}
+	raw, ok := h.rawBody(c)
+	if !ok {
+		return
+	}
+	res, err := h.ai.GenerateNoteSummary(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
+	if err != nil {
+		h.failAI(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// AcceptNoteSummary handles POST /ai/note-summary/accept — persist the accepted summary onto the clinical note.
+func (h *AIHandler) AcceptNoteSummary(c *gin.Context) {
+	uid, ok := h.userID(c)
+	if !ok {
+		return
+	}
+	raw, ok := h.rawBody(c)
+	if !ok {
+		return
+	}
+	res, err := h.ai.AcceptNoteSummary(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// CheckPrescriptionSafety handles POST /ai/rx-safety — analyse a prescription draft for safety findings.
+func (h *AIHandler) CheckPrescriptionSafety(c *gin.Context) {
+	uid, ok := h.userID(c)
+	if !ok {
+		return
+	}
+	raw, ok := h.rawBody(c)
+	if !ok {
+		return
+	}
+	res, err := h.ai.CheckPrescriptionSafety(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
+	if err != nil {
+		h.failAI(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// ExplainLabResult handles POST /ai/lab-explanation — plain-language explanation of a lab result.
+func (h *AIHandler) ExplainLabResult(c *gin.Context) {
+	uid, ok := h.userID(c)
+	if !ok {
+		return
+	}
+	raw, ok := h.rawBody(c)
+	if !ok {
+		return
+	}
+	res, err := h.ai.ExplainLabResult(c.Request.Context(), uid, ginutil.IdempotencyKey(c), raw)
+	if err != nil {
+		h.failAI(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
 }

@@ -1,8 +1,6 @@
 package tests
 
-// ---------------------------------------------------------------------------
 // Property Management suite — authz + flag-gate integration tests.
-//
 // Mirrors the real route wiring in backend/internal/app/finance_routes.go
 // (L1387-1404): propGroup.Use(mapsAuth()) sets user_id + the AuthUserContextKey
 // authUser; only /rent-passport/lookup/:userId carries an extra
@@ -13,12 +11,10 @@ package tests
 // focus on the property-specific authz/flag behavior documented in
 // docs/qa/modules/property.md §4 (PROPERTY-AUTHZ-005/006/014/015,
 // PROPERTY-SEC-001).
-//
 // Per docs/qa/modules/property.md §6, the lookup endpoint is the top
 // object-level-authorization risk in this package: it returns ANOTHER user's
 // payment history, gated ONLY by a global "property.manage" permission with no
 // per-target ownership check.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -40,8 +36,6 @@ import (
 	"spotlight/backend/internal/testsupport"
 )
 
-// ── Fake RBACService implementations ──────────────────────────────────────
-//
 // Both embed the (large) RBACService interface as a nil value, per the
 // convention in internal/crowdfunding/adminext/routes_authz_test.go: a call to
 // anything other than CheckPermission nil-panics loudly instead of quietly
@@ -96,8 +90,6 @@ var propertyRoutePaths = []struct{ method, path string }{
 	{"GET", "/api/finance/property/rent-passport/lookup/11111111-1111-1111-1111-111111111111"},
 }
 
-// ── PROPERTY-SEC-001: flag off => all 4 routes absent (404), not just denied ──
-//
 // Pure/no-DB: with the flag off, the route group is never registered at all,
 // so gin's own "no matching route" 404 fires before any auth/RBAC/DB code
 // runs — distinguishing "route absent" from "route present but 401/403".
@@ -149,8 +141,6 @@ func TestPropertyRoutes_FlagOn_AllFourRoutesRegistered(t *testing.T) {
 	}
 }
 
-// ── PROPERTY-AUTHZ-015: lookup denied without property.manage, no leak ──────
-//
 // Pure/no-DB: the deny-all RBAC middleware aborts BEFORE the handler runs, so
 // this proves the block happens at the middleware layer regardless of what the
 // DB would have returned — service is backed by a nil pool on purpose; if this
@@ -181,8 +171,6 @@ func TestPropertyLookup_DeniedWithoutPermission_NoPassportLeaked(t *testing.T) {
 		t.Fatalf("403 response body leaks passport-shaped fields: %s", body)
 	}
 }
-
-// ── Live-DB: allowed lookup returns the TARGET's passport, not the caller's ─
 
 func newPropertyAuthzTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -278,8 +266,6 @@ func TestLiveDB_PropertyLookup_AllowedPermission_ReturnsTargetNotCaller(t *testi
 	}
 }
 
-// ── Live-DB: fail-closed SwitchContext over HTTP, no row written ──────────
-//
 // PROPERTY-AUTHZ-006 exercised through the real HTTP surface (context_test.go
 // already proves this at the service layer directly; this proves the handler
 // wiring surfaces it as 403 and that the DB effect — or lack of one — is

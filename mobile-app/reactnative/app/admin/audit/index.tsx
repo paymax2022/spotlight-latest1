@@ -1,11 +1,10 @@
-// ── Paymax · Admin Console — Audit log ───────────────────────────────────────
 // Newest-first action history, searchable by actor or action.
 
 import React, { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import StateView from '@/components/StateView';
 import SearchBar from '@/components/SearchBar';
 import { AdminHeader, ListCard, AuditRow } from '@/features/admin/components';

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/dbutil"
 )
 
 // Store is the data-access contract the service depends on. Defining it as an in-package
@@ -52,6 +53,25 @@ type querier interface {
 
 const hardshipCols = `id, invoice_id, guardian_user_id, reason, requested_at, status, reviewed_by, reviewed_at, review_note`
 
+// The schema CHECK admits 'rejected' while the API enum says 'denied' — the
+// repository translates at the seam (writes denied→'rejected', reads back).
+// Widening the CHECK would need a non-additive DROP, which migrations forbid.
+const dbStatusRejected = "rejected"
+
+func statusForDB(s RequestStatus) string {
+	if s == StatusDenied {
+		return dbStatusRejected
+	}
+	return string(s)
+}
+
+func statusFromDB(s string) RequestStatus {
+	if s == dbStatusRejected {
+		return StatusDenied
+	}
+	return RequestStatus(s)
+}
+
 func scanHardship(row pgx.Row) (*HardshipRequest, error) {
 	var r HardshipRequest
 	var status string
@@ -59,7 +79,7 @@ func scanHardship(row pgx.Row) (*HardshipRequest, error) {
 		&status, &r.ReviewedBy, &r.ReviewedAt, &r.ReviewNote); err != nil {
 		return nil, err
 	}
-	r.Status = RequestStatus(status)
+	r.Status = statusFromDB(status)
 	return &r, nil
 }
 
@@ -88,7 +108,8 @@ func (r *Repository) Get(ctx context.Context, id string) (*HardshipRequest, erro
 // ListPendingBySchool returns the school's pending review queue, resolving the invoice's
 // school via the student spine (academy_invoices → academy_students.school_id).
 func (r *Repository) ListPendingBySchool(ctx context.Context, schoolID string) ([]HardshipRequest, error) {
-	q := `SELECT ` + prefixCols("h") + `
+	q := `SELECT h.id, h.invoice_id, h.guardian_user_id, h.reason, h.requested_at,
+	           h.status, h.reviewed_by, h.reviewed_at, h.review_note
 	           FROM academy_hardship_requests h
 	           JOIN academy_invoices i ON i.id = h.invoice_id
 	           JOIN academy_students s ON s.id = i.student_id
@@ -118,7 +139,7 @@ func (r *Repository) SetReviewed(ctx context.Context, id, reviewerID string, sta
 	const upd = `UPDATE academy_hardship_requests
 	             SET status = $2, reviewed_by = $3, reviewed_at = $4, review_note = $5
 	             WHERE id = $1 AND status = 'pending'`
-	tag, err := r.db.Exec(ctx, upd, id, string(status), nullStr(reviewerID), now, nullStr(note))
+	tag, err := r.db.Exec(ctx, upd, id, statusForDB(status), dbutil.NullStr(reviewerID), now, dbutil.NullStr(note))
 	if err != nil {
 		return nil, err
 	}
@@ -145,31 +166,8 @@ func writeAudit(ctx context.Context, q querier, actorID, action, entityID, from,
 	const ins = `INSERT INTO public.academy_commerce_audit
 	             (actor_id, action, entity_type, entity_id, from_state, to_state, detail)
 	             VALUES ($1,$2,'academy_hardship_request',$3,$4,$5,$6)`
-	_, err := q.Exec(ctx, ins, nullStr(actorID), action, nullUUID(entityID), nullStr(from), nullStr(to), toJSON(detail))
+	_, err := q.Exec(ctx, ins, dbutil.NullStr(actorID), action, dbutil.NullUUID(entityID), dbutil.NullStr(from), dbutil.NullStr(to), toJSON(detail))
 	return err
-}
-
-// prefixCols returns hardshipCols aliased to a table prefix (for the join query).
-func prefixCols(alias string) string {
-	return alias + `.id, ` + alias + `.invoice_id, ` + alias + `.guardian_user_id, ` +
-		alias + `.reason, ` + alias + `.requested_at, ` + alias + `.status, ` +
-		alias + `.reviewed_by, ` + alias + `.reviewed_at, ` + alias + `.review_note`
-}
-
-// ── small helpers (kept package-local, mirroring feesschool/helpers.go) ──────────
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func nullUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 func toJSON(v any) []byte {

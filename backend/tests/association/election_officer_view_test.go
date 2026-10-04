@@ -1,6 +1,5 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression: GetElection unconditionally required the caller to hold
 // a real assoc_memberships row in the election's org, returning ErrForbidden
 // otherwise. This is correct for a voter, but it made the election detail
@@ -12,13 +11,10 @@ package association_test
 // during UAT (a real cf4-admin-style platform super-admin, real HTTP, real
 // backend) before this fix: 403 on the election detail page for an org the
 // admin account does not personally belong to.
-//
 // Gated on TEST_DATABASE_URL alone — see live_db_integration_test.go's
 // bring-up note for this package.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/association/... -run LiveDB_GetElection_PlatformAdminWithoutMembership -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

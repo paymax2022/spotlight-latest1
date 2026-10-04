@@ -6,18 +6,14 @@ import (
 )
 
 // Spotlight Academy — Phase 4 B2B2C institutions (schools).
-//
 // Money is always integer MINOR UNITS (conventions.md). Never floats. The actual
 // value movement for institution billing is delegated to the INJECTED BillingRail
 // (a finance/va account charge) — no vendor type ever leaks into this package
 // (paymax-rails.md §Virtual accounts). Every guarded transition is audited to
 // public.audit_logs (module 'academy.schools').
-//
 // Tables map EXACTLY to 20260815001300_academy_schools_tutor.sql:
 //   academy_institutions, academy_licences, academy_class_groups,
 //   academy_enrollments, academy_institution_billing.
-
-// ── Licence lifecycle state ─────────────────────────────────────────────────────
 
 // LicenceState is the licence lifecycle state (matches academy_licences.state CHECK
 // constraint exactly: active | suspended | expired).
@@ -40,8 +36,6 @@ const (
 	BillingPaid     = "paid"
 	BillingVoid     = "void"
 )
-
-// ── Entities ────────────────────────────────────────────────────────────────────
 
 // Institution mirrors academy_institutions (B2B2C school / institution).
 type Institution struct {
@@ -107,8 +101,6 @@ type Billing struct {
 	CreatedAt     time.Time `json:"createdAt"`
 }
 
-// ── Aggregate overview ──────────────────────────────────────────────────────────
-
 // LicenceSeats summarises seat usage across a licence.
 type LicenceSeats struct {
 	LicenceID string       `json:"licenceId"`
@@ -142,8 +134,6 @@ type AdminOverview struct {
 	Enrollments    map[string]int `json:"enrollments"` // state → count across all institutions
 }
 
-// ── Bulk-enrolment result ───────────────────────────────────────────────────────
-
 // BulkEnrollResult reports the outcome of a seat-capped, idempotent bulk enrolment:
 // how many learners were enrolled (newly seated), how many were replays (already
 // enrolled — no new seat), and whether the seat cap stopped the run early.
@@ -155,8 +145,6 @@ type BulkEnrollResult struct {
 	UsedSeats       int      `json:"usedSeats"`
 	Seats           int      `json:"seats"`
 }
-
-// ── Request DTOs ────────────────────────────────────────────────────────────────
 
 // OnboardInstitutionRequest (admin) registers a B2B2C institution.
 type OnboardInstitutionRequest struct {
@@ -197,13 +185,4 @@ type GenerateBillingRequest struct {
 	InstitutionID string `json:"institutionId" binding:"required"`
 	Period        string `json:"period" binding:"required"`
 	AmountMinor   int64  `json:"amountMinor" binding:"required"`
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────────────
-
-func rawOrEmptyObject(b []byte) json.RawMessage {
-	if len(b) == 0 {
-		return json.RawMessage("{}")
-	}
-	return json.RawMessage(b)
 }

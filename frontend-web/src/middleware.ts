@@ -3,7 +3,9 @@ import { type NextRequest, NextResponse } from 'next/server';
 
 // Routes that require an authenticated Supabase session.
 const PROTECTED_PATTERNS: RegExp[] = [
-  /^\/admin(?:\/|$)/,
+  // E2E-AUTH-012: /admin* is NOT gated — the web app ships no admin pages
+  // (the admin console is frontend-admin on :3001), so gating produced a
+  // 307 → 404 chain for anon and a bare 404 for authed. Plain 404 now.
   /^\/apply(?:\/|$)/,
   /^\/film-academy(?:\/|$)/,
   /^\/open-mic\/[^/]+\/apply(?:\/|$)/,
@@ -16,21 +18,14 @@ const PROTECTED_PATTERNS: RegExp[] = [
 ];
 
 // These paths are always public even if they match a protected pattern above.
-const PUBLIC_EXCEPTIONS: RegExp[] = [
-  /^\/admin\/login(?:\/|$)/,
-];
+const PUBLIC_EXCEPTIONS: RegExp[] = [];
 
 // Login page to redirect to (universal — not service-specific).
 const LOGIN_PATH = '/login';
-const ADMIN_LOGIN_PATH = '/admin/login';
 
 function isProtected(pathname: string): boolean {
   if (PUBLIC_EXCEPTIONS.some((p) => p.test(pathname))) return false;
   return PROTECTED_PATTERNS.some((p) => p.test(pathname));
-}
-
-function loginPathFor(pathname: string): string {
-  return /^\/admin(?:\/|$)/.test(pathname) ? ADMIN_LOGIN_PATH : LOGIN_PATH;
 }
 
 // ── CORS for /api/* ──────────────────────────────────────────────────────────
@@ -120,7 +115,7 @@ export async function middleware(request: NextRequest) {
   if (isProtected(pathname) && !user) {
     const redirectUrl = request.nextUrl.clone();
     const next = `${pathname}${search || ''}`;
-    redirectUrl.pathname = loginPathFor(pathname);
+    redirectUrl.pathname = LOGIN_PATH;
     redirectUrl.search = `?next=${encodeURIComponent(next)}`;
     return NextResponse.redirect(redirectUrl);
   }

@@ -3,11 +3,11 @@ import {
   View, Text, Modal, Pressable, ScrollView, Image, StyleSheet, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { X } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { shadow3 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { shadow3 } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import VoteCounter from './VoteCounter';
 import VotePackageCard from './VotePackageCard';

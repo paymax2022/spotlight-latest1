@@ -1,8 +1,6 @@
 package learn_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the Learn Center module.
-//
 // learn.Service (learn.NewService(pool, audit)) talks to a concrete
 // *pgxpool.Pool for every read and for the one mutation (SubmitQuiz). None of
 // this can run without a migrated Postgres. This file is SKIPPED whenever
@@ -10,7 +8,6 @@ package learn_test
 // backend/tests/association/live_db_integration_test.go), but is fully written
 // end-to-end so it can be un-skipped the moment infra is available — the skip
 // is NOT a stub; every step below drives the real Service against real tables.
-//
 // ── Bring-up note (read before running) ───────────────────────────────────
 //  1. Apply the learn-center migration (seeds learn_* tables/CHECK constraints).
 //     Confirm the core tables landed:
@@ -26,7 +23,6 @@ package learn_test
 //       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  4. Run:
 //       cd backend && go test ./tests/learn/... -run LiveDB -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

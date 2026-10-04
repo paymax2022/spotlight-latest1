@@ -1,4 +1,3 @@
-// ── Doctor — Settings Centre hooks (Batch 7, Section AC) ─────────────────────
 // Query keys under ['doctor', 'settings', …] / ['doctor', 'security', …]. Mutations
 // auto-generate the idempotencyKey. REUSES the Phase 1 useSettings /
 // useUpdateSettings (useAccount.ts) for the profile / notification / availability
@@ -6,8 +5,6 @@
 // change-password / biometric / 2FA / revoke-device / app-preference / logout
 // mutations. Hook names are deliberately distinct from useSettings to avoid a
 // barrel collision.
-//
-// CONSOLIDATED: account deletion is a SINGLE mutation — useRequestAccountDeletion
 // lives in useComplianceCenter (Section AB). The AC delete-account screen imports
 // it from there; it is intentionally NOT re-declared here to keep exactly one.
 
@@ -36,8 +33,6 @@ import type {
   LogoutInput,
 } from '@/types/doctor.batch7';
 
-// ─── Reads ────────────────────────────────────────────────────────────────────
-
 export function useSecuritySettings() {
   return useQuery({
     queryKey:        ['doctor', 'security', 'settings'],
@@ -64,8 +59,6 @@ export function useAppPreferences() {
     staleTime:       60_000,
   });
 }
-
-// ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useChangePassword() {
   const qc = useQueryClient();

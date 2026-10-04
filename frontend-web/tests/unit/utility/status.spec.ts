@@ -4,7 +4,7 @@ import {
   canReverseUtilityTransaction,
   isTerminalUtilityStatus,
   nextStatusFromProvider,
-} from '@/src/server/utility/status';
+} from '@/src/server/utility/helpers';
 
 describe('utility transaction status rules', () => {
   it('maps provider statuses into internal transaction statuses', () => {

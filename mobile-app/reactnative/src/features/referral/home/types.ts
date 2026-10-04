@@ -1,10 +1,8 @@
-// ── Referral Home (Earn dashboard) types ─────────────────────────────────────
 // Self-contained types for the M-HOME-* surfaces (dashboard, my code/link/QR,
 // earnings summary, activity timeline). Money is ALWAYS integer kobo.
 
 import type { EarnStateKey } from '../constants/referral.constants';
 
-// ── Earnings snapshot (M-HOME-01 / M-HOME-03) ────────────────────────────────
 // Totals are kept per reward-ledger state so the summary card can show
 // paid / pending / vesting / clawed-back at a glance (PRD §7).
 export interface EarningsSnapshot {
@@ -19,7 +17,6 @@ export interface EarningsSnapshot {
   currency: string;
 }
 
-// ── Invite / rank summary (M-HOME-01) ────────────────────────────────────────
 export interface DashboardSummary {
   snapshot: EarningsSnapshot;
   /** Total people invited (sent links/codes/contacts). null = no live source yet. */
@@ -35,7 +32,6 @@ export interface DashboardSummary {
   rankTier: string | null;
 }
 
-// ── Personal code & link (M-HOME-02) ─────────────────────────────────────────
 export interface MyCode {
   code: string;
   /** Full shareable link (already includes the code). */
@@ -44,7 +40,6 @@ export interface MyCode {
   shortLink: string | null;
 }
 
-// ── Activity timeline (M-HOME-04) ────────────────────────────────────────────
 export type ActivityKind =
   | 'click'
   | 'signup'

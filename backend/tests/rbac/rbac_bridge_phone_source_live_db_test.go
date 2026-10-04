@@ -1,32 +1,23 @@
 package rbac_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression: rbac_bridge_on_auth_insert() copies platform_users.phone
 // from the SAME source a real signup actually populates.
-//
 // WHY THIS EXISTS (ADR-055, 20270204010000_rbac_bridge_phone_metadata_source.sql)
-// --------------------------------------------------------------------------
 // ADR-053 (20270203000000_rbac_bridge_phone_only_identities.sql) added `phone`
 // to the RBAC bridge's mirror insert, copying `NEW.phone` — GoTrue's own
 // top-level auth.users column. RegisterUser (backend/internal/services/
 // auth_service.go) never sets that column: it sends phone inside the signup/
 // admin-create request's "data"/"user_metadata" payload, which GoTrue stores
 // at raw_user_meta_data->>'phone', and separately PATCHes it onto
-// user_profiles.phone afterward. So ADR-053's copy was a structural no-op for
-// every real user — confirmed on local Supabase before this fix: 0 of 57,703
-// platform_users rows carried a phone.
-//
+// user_profiles.phone afterward — so copying NEW.phone is a structural no-op
+// for real users.
 // This test seeds an auth.users row the way RegisterUser's GoTrue payload
 // actually shapes one (phone inside raw_user_meta_data, top-level phone
-// column left blank) and asserts platform_users.phone comes out populated —
-// pinning the fix, not just the absence of an error.
-//
+// column left blank) and asserts platform_users.phone comes out populated.
 // SKIPPED whenever TEST_DATABASE_URL is unset — same gate as the other live-DB
 // suites (see backend/tests/otp/store_live_db_test.go).
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/rbac/... -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -128,7 +119,6 @@ func TestLiveDB_RBACBridge_MetadataPhoneWinsOverRawColumn(t *testing.T) {
 // The backfill half of the same migration: an existing platform_users row
 // left blank by ADR-053's own (NEW.phone-only) backfill must be filled in
 // once its auth.users metadata is inspected with the corrected COALESCE.
-//
 // This directly exercises the migration's UPDATE statement's premise rather
 // than re-running it (the migration already ran once on this database) — it
 // simulates "a row the old backfill missed" by blanking platform_users.phone

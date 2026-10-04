@@ -1,7 +1,5 @@
-// ── Doctor — Pet Store / Vet-Recommended Products hooks (Batch 5, Section V) ──
 // Query keys under ['doctor', 'vet', …]. Mutations auto-generate the
 // idempotencyKey. REUSES the Phase 3 `usePetProducts` / `usePetRecommendations`
-// / `useRecommendProducts` (useVet.ts) for search + recommend; this file adds
 // product detail, fulfilment/delivery tracking and the share-with-owner action.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -15,8 +13,6 @@ import {
 } from '@/api/doctor.batch5.api';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import type { ShareProductWithOwnerInput } from '@/types/doctor.batch5';
-
-// ─── Reads ────────────────────────────────────────────────────────────────────
 
 export function usePetProductDetail(productId: string) {
   return useQuery({
@@ -45,8 +41,6 @@ export function usePetProductFulfilment(id: string) {
     staleTime: 30_000,
   });
 }
-
-// ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useShareProductWithOwner() {
   const qc = useQueryClient();

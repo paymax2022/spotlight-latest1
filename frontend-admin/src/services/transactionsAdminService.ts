@@ -1,19 +1,14 @@
-// ── Admin — Centralized Transactions console ─────────────────────────────────
-//
 // LIVE ONLY. Talks to the Go backend at GET /api/finance/admin/transactions
 // (RBAC: finance.admin.transactions.view — see backend/internal/app/finance_routes.go
 // and backend/internal/finance/ledger/admin_handler.go).
-//
 // READ-ONLY reporting surface over ledger_entries — the ONLY source of truth
 // for money movement across every module (there is no per-module transactions
 // table). This service never posts, mutates, or reverses anything.
-//
 // `source_inferred` on each row is a BEST-EFFORT guess at which module
 // produced the entry, derived server-side from SPLIT_PART(reference, ':', 1).
 // It is NOT an authoritative field — reference-naming conventions are
 // inconsistent across modules (colon-namespaced, dash-prefixed, or opaque
 // UUIDs with no separator at all). Always render it as "Source (inferred)".
-//
 // Money model (iron rule: integers, never floats): amount_kobo is NGN kobo.
 // formatKobo() is the only money-facing formatter.
 
@@ -44,8 +39,6 @@ export interface AdminTransactionDetail extends AdminTransactionRow {
   // Every OTHER ledger_entries row sharing this transaction's reference — the
   // other leg(s) of the same balanced double-entry movement (a debit always
   // has a matching credit somewhere, often on a different account/user).
-  //
-  // CAVEAT: reference is not guaranteed unique per transaction across this
   // codebase (some code paths reuse one literal constant reference string
   // across many unrelated postings) — related_entries_total is the REAL count
   // sharing this reference; related_entries itself is capped server-side.
@@ -57,7 +50,6 @@ export interface AdminTransactionDetail extends AdminTransactionRow {
   // Sum of related_entries that landed in a KNOWN platform-revenue standing
   // account (commission, paymax_revenue, fx_spread_income, placement_revenue,
   // edtech_fees_vault, trading_fee_income). A REAL derived figure, not a
-  // guess — but null does not mean "zero commission was charged"; it means no
   // such leg was present among related_entries (which itself may be
   // truncated — see related_entries_total).
   commission_kobo: number | null;
@@ -67,7 +59,6 @@ export interface AdminTransactionDetail extends AdminTransactionRow {
   // backend/internal/app/admin_transaction_resolvers.go. Null whenever no
   // wired resolver's reference pattern matches this transaction (most
   // module/reference combinations today — resolvers exist for a growing
-  // subset: marketplace boosts, insurance premiums, FX conversions, utility
   // bills). A null here is not an error — render an honest "no resolver yet"
   // note rather than hiding the absence.
   module_detail: {
@@ -108,8 +99,7 @@ function adminBase(): string {
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return {};
 }
 
 export function formatKobo(kobo: number | null | undefined): string {

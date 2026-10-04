@@ -3,6 +3,7 @@ package crypto
 import (
 	"context"
 	"fmt"
+	"spotlight/backend/go-common/dbutil"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,8 +13,6 @@ import (
 // deposit addresses, and the withdrawal state machine. Holdings are moved ONLY
 // through these transactional methods (asset-unit legs); the cash legs live in the
 // finance ledger and are posted by the service.
-
-// ── Swap ────────────────────────────────────────────────────────────────────
 
 // RecordSwapFill atomically writes the swap order row and moves BOTH holding
 // projections in ONE transaction: from-asset units decrement (CHECK units>=0
@@ -110,8 +109,6 @@ func (r *Repository) SwapOrdersForUser(ctx context.Context, userID string, limit
 	}
 	return out, rows.Err()
 }
-
-// ── Address allow-list ──────────────────────────────────────────────────────
 
 // AddAddress inserts a whitelisted address (idempotent on the active partial
 // unique index). Returns the row; dup=true when it already existed.
@@ -215,8 +212,6 @@ func (r *Repository) DeleteAddress(ctx context.Context, userID, id string) error
 	return nil
 }
 
-// ── Deposit addresses ───────────────────────────────────────────────────────
-
 // GetOrCreateDepositAddress returns the persisted deposit address for (user,asset),
 // generating + persisting one via the supplied deriver on first request. The
 // UNIQUE(user_id,asset_id) constraint keeps it stable across calls.
@@ -260,8 +255,6 @@ func (r *Repository) GetOrCreateDepositAddress(
 	}
 	return &d, nil
 }
-
-// ── Withdrawal state machine ────────────────────────────────────────────────
 
 // CreateWithdrawal atomically inserts the withdrawal row (status=requested) and
 // parks the debited units by decrementing the holding projection (CHECK units>=0
@@ -311,7 +304,6 @@ func (r *Repository) CreateWithdrawal(ctx context.Context, w Withdrawal) (string
 		return "", false, ErrInsufficient
 	}
 
-	// Record the opening transition (requested).
 	const evt = `INSERT INTO crypto_withdrawal_events (withdrawal_id, from_status, to_status, actor_id, detail)
 	             VALUES ($1, NULL, 'requested', $2, 'withdrawal requested; units parked')`
 	if _, err := tx.Exec(ctx, evt, wid, w.UserID); err != nil {
@@ -371,7 +363,7 @@ func (r *Repository) TransitionWithdrawal(
 
 	const evt = `INSERT INTO crypto_withdrawal_events (withdrawal_id, from_status, to_status, actor_id, detail)
 	             VALUES ($1,$2,$3,$4,$5)`
-	if _, err := tx.Exec(ctx, evt, id, from, to, nullStr(actorID), nullStr(detail)); err != nil {
+	if _, err := tx.Exec(ctx, evt, id, from, to, dbutil.NullStr(actorID), dbutil.NullStr(detail)); err != nil {
 		return nil, err
 	}
 

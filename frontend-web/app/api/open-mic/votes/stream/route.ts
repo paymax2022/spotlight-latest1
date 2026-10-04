@@ -1,5 +1,4 @@
 // SSE endpoint — streams live vote counts for all entries in a contest.
-// Client: EventSource('/api/open-mic/votes/stream?contestId=X')
 // Each message: { type: 'snapshot', entries: [{id, voteCount, leaderboardScore}], ts }
 
 import { createAdminClient } from '@/lib/supabase/server';
@@ -48,7 +47,6 @@ export async function GET(request: Request) {
     }
   }
 
-  // Send initial snapshot immediately
   await snapshot();
 
   // Poll every 4 seconds

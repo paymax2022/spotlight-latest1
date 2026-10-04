@@ -1,9 +1,9 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Activity } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface Props {
   actor:   string;               // who accessed
@@ -16,7 +16,6 @@ interface Props {
 
 // New component (W): a record access-log line (actor + action + section + role +
 // time) for the medical-record access log. The patient hub previously inlined
-// this row; extracting it lets the access-log screen and the per-patient index
 // share one token-consistent row instead of duplicating the StyleSheet.
 export default function AccessLogRow({ actor, action, section, role, at, border }: Props) {
   const when = new Date(at).toLocaleString('en-NG', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });

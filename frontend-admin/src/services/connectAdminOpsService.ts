@@ -1,11 +1,7 @@
-// ── Admin — Paymax Connect OPS control-plane service ─────────────────────────
 // OPS half of the Connect console: RBAC, gamification ops, catalog/comms,
 // analytics, geo, support and (read-only) config. Separate file from
 // connectAdminService.ts so the trust/money admin agent owns that one.
-//
 // Mock by default (mirrors connectAdminService). Flip with
-// NEXT_PUBLIC_CONNECT_USE_MOCK=false to hit the live Go backend at
-// /api/connect/admin/*. All money is integer minor units (kobo); XP/coins are
 // NON-CASH gamification points — admin tooling must never convert them to money.
 
 import { apiRoot } from '@/config/env';
@@ -13,7 +9,6 @@ import { resolveUseMock } from '@/config/useMock';
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CONNECT_USE_MOCK);
 
-// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/connect/admin')`,
 // which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
 // proxy origin instead), so the regex became a silent no-op and every live call
 // 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
@@ -23,10 +18,7 @@ function adminBase(): string {
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('spotlight_admin_access_token') || '';
-  return token
-    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  return { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 async function getJson<T>(path: string): Promise<T> {
@@ -38,7 +30,6 @@ async function getJson<T>(path: string): Promise<T> {
 
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 
-// ─── Types ───────────────────────────────────────────────────────────────────
 export interface ConnectRole {
   id: string;
   name: string;
@@ -204,7 +195,6 @@ export interface ConnectConfig {
   limits: ConfigLimit[];
 }
 
-// ─── Mock datasets ────────────────────────────────────────────────────────────
 const ROLES: ConnectRole[] = [
   { id: 'role_super', name: 'Super Admin', slug: 'connect.role.super_admin', description: 'Full Connect control plane', is_system: true, admin_count: 2 },
   { id: 'role_safety', name: 'Safety Lead', slug: 'connect.role.safety_lead', description: 'Cases, moderation, audit', is_system: true, admin_count: 4 },
@@ -370,7 +360,6 @@ const CONFIG: ConnectConfig = {
   ],
 };
 
-// ─── API ──────────────────────────────────────────────────────────────────────
 export async function getConnectRbac(): Promise<ConnectRbac> {
   if (USE_MOCK) { await delay(); return { roles: [...ROLES], permissions: [...PERMISSIONS], admins: [...ADMINS] }; }
   return getJson<ConnectRbac>('/rbac');

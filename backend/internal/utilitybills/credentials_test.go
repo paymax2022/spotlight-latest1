@@ -124,7 +124,7 @@ func TestNodeBase64Decode_URLSafeAlphabet(t *testing.T) {
 
 func TestNodeBase64Decode_TruncatedFinalGroup(t *testing.T) {
 	raw := []byte{0x01, 0x02, 0x03, 0x04}
-	std := base64.StdEncoding.EncodeToString(raw) // "AQIDBA=="
+	std := base64.StdEncoding.EncodeToString(raw)
 	// Strip the padding: Node decodes the 6-char remainder just fine.
 	if got := nodeBase64Decode(strings.TrimRight(std, "=")); string(got) != string(raw) {
 		t.Fatalf("unpadded decode: got %x want %x", got, raw)

@@ -1,4 +1,3 @@
-// ── Business Logistics — mock seed data + deterministic engine ───────────────
 // All money is integer kobo. The "pricing engine" mimics the SERVER: the client
 // only ever reads the values it returns, never recomputes fares.
 
@@ -31,7 +30,6 @@ export function mockDeliveryFare(size: DeliverySize): number {
   return Math.round(base * SIZE_MULT[size]);
 }
 
-// ─── Account ────────────────────────────────────────────────────────────────
 export const logisticsStore: {
   account: BusinessAccount | null;
   deliveries: Delivery[];
@@ -71,7 +69,6 @@ export function makeBusinessAccount(req: AccountCreateRequest): BusinessAccount 
   return account;
 }
 
-// ─── Delivery ─────────────────────────────────────────────────────────────────
 export function makeDelivery(overrides: Partial<Delivery> = {}): Delivery {
   const size: DeliverySize = overrides.size ?? 'small';
   return {
@@ -193,7 +190,6 @@ export function makeBatchFromRequest(req: BatchCreateRequest): BatchDetail {
   };
 }
 
-// ─── Invoices ───────────────────────────────────────────────────────────────
 export function mockInvoices(): BusinessInvoice[] {
   return [
     {
@@ -213,7 +209,6 @@ export function mockInvoices(): BusinessInvoice[] {
   ];
 }
 
-// ─── Analytics (derived from the seed) ────────────────────────────────────────
 export function mockAnalytics(): BusinessAnalytics {
   ensureSeed();
   const all = [...logisticsStore.deliveries, ...logisticsStore.batches.flatMap((b) => b.deliveries)];

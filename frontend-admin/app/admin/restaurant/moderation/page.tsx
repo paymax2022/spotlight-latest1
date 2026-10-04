@@ -47,7 +47,6 @@ export default function ListingModerationPage() {
     setError(null);
     try {
       await decideListing(id, decision, reasons[id] ?? '');
-      // Drop the row locally so the queue visibly shrinks as it is worked; a
       // reload then reconciles with the server.
       setRows((prev) => prev.filter((r) => r.id !== id));
       setReasons((prev) => ({ ...prev, [id]: '' }));

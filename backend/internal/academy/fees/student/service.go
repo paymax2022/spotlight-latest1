@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/go-common/ptr"
 )
 
 // Service owns Student enrollment + Guardian linking for the fees module. It moves no
 // money. Every mutation is audit-logged (module 'academy.fees').
-//
 // GUARDIAN IDENTITY REUSE (REUSE-MAP §1, §5.1 — release discipline): a guardian is always
 // an EXISTING Paymax identity. Before a guardian id is linked, the service validates it via
 // the injected identityChecker (a thin read over the existing auth.users / academy identity
@@ -41,8 +41,6 @@ func NewServiceWithStore(store Store) *Service { return &Service{store: store} }
 func NewServiceWithDeps(store Store, identity identityChecker) *Service {
 	return &Service{store: store, identity: identity}
 }
-
-// ── Student ─────────────────────────────────────────────────────────────────────
 
 // CreateStudent enrolls a student in a school. admission_number is unique per school
 // (pre-checked here, enforced by the DB UNIQUE). guardian_user_ids, if supplied, are
@@ -79,10 +77,10 @@ func (s *Service) CreateStudent(ctx context.Context, actorID, schoolID string, r
 
 	st, err := s.store.Insert(ctx, Student{
 		SchoolID:        schoolID,
-		ClassID:         ptrOrNil(req.ClassID),
-		EduPayAccountID: ptrOrNil(req.EduPayAccountID),
-		AdmissionNumber: ptrOrNil(strings.TrimSpace(req.AdmissionNumber)),
-		StudentUserID:   ptrOrNil(req.StudentUserID),
+		ClassID:         ptr.OrNil(req.ClassID),
+		EduPayAccountID: ptr.OrNil(req.EduPayAccountID),
+		AdmissionNumber: ptr.OrNil(strings.TrimSpace(req.AdmissionNumber)),
+		StudentUserID:   ptr.OrNil(req.StudentUserID),
 		GuardianUserIDs: guardians,
 		MinorFlag:       minor,
 	})
@@ -101,8 +99,6 @@ func (s *Service) GetStudent(ctx context.Context, id string) (*Student, error) {
 func (s *Service) ListStudents(ctx context.Context, schoolID, classID string) ([]Student, error) {
 	return s.store.List(ctx, schoolID, classID)
 }
-
-// ── Guardian linking (reuse existing identities — never create) ──────────────────
 
 // LinkGuardian links an EXISTING guardian identity to a student. Idempotent: linking an
 // already-linked guardian is a no-op (returns the current student, no duplicate id in the
@@ -190,13 +186,10 @@ func (s *Service) validateGuardians(ctx context.Context, ids []string) ([]string
 	return out, nil
 }
 
-// ── Bulk CSV import (parse + validate → preview + approval queue) ─────────────────
-
 // ParseAndValidateImport parses a CSV blob into a PREVIEW. It writes NOTHING to the DB —
 // the returned rows sit "pending until approved" (build-spec approval-queue concept). Each
 // row is validated independently; a bad row is flagged (not aborting the batch) with a
 // stable snake_case Error code so the reviewer sees exactly what to fix.
-//
 // Expected CSV columns (header row, case-insensitive):
 //
 //	admission_number, class_id, student_user_id, guardian_user_ids, minor_flag
@@ -321,7 +314,6 @@ func (s *Service) validateImportRow(ctx context.Context, schoolID string, lineNo
 // This is the approval step of the approval queue: only rows that passed validation are
 // imported, and only when a human explicitly approves the preview. Invalid rows in the
 // preview are skipped (never auto-imported). Returns the created students.
-//
 // Re-validation happens per row at commit time (defence against a schedule/roster change
 // between preview and approval): a row that became invalid (e.g. admission number taken in
 // the interim) is skipped and reported via the returned skipped list.
@@ -344,7 +336,7 @@ func (s *Service) ApproveImport(ctx context.Context, actorID, schoolID string, p
 			AdmissionNumber: row.AdmissionNumber,
 			StudentUserID:   row.StudentUserID,
 			GuardianUserIDs: row.GuardianUserIDs,
-			MinorFlag:       boolPtr(row.MinorFlag),
+			MinorFlag:       ptr.Of(row.MinorFlag),
 		})
 		if cErr != nil {
 			// Became invalid between preview and approval — skip, don't fail the batch.
@@ -360,8 +352,6 @@ func (s *Service) ApproveImport(ctx context.Context, actorID, schoolID string, p
 		map[string]any{"schoolId": schoolID, "createdCount": len(created), "skippedCount": len(skipped)})
 	return created, skipped, nil
 }
-
-// ── slice / csv helpers ─────────────────────────────────────────────────────────
 
 func contains(xs []string, v string) bool {
 	for _, x := range xs {
@@ -387,8 +377,6 @@ func cloneSlice(xs []string) []string {
 	copy(out, xs)
 	return out
 }
-
-func boolPtr(b bool) *bool { return &b }
 
 // splitCSVLine is a minimal RFC-4180-ish splitter: it handles double-quoted fields
 // (with "" escaping) and comma delimiters. Kept dependency-free for a self-contained

@@ -5,7 +5,6 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Catch-all proxy for the Hotel Booking / Stays member API.
 //   /api/v1/stays/<...>  →  Go: /api/finance/stays/<...>
-// Auth + feature-flag guarded; the Go side enforces object-level authZ, the
 // two-step prebook→book saga (money held, not charged, until supplier confirms),
 // NDPA consent and dedup. Ops admin (/api/stays/admin/*), hotelier extranet
 // (/api/stays/extranet/*) and supplier webhooks (/internal/webhooks/*) hit Go

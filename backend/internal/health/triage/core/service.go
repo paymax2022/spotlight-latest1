@@ -2,17 +2,24 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"spotlight/backend/internal/health/triage"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"spotlight/backend/internal/health/triage"
+	"spotlight/backend/go-common/strutil"
+)
+
+const (
+	keyPresent = "present"
+	keyAbsent  = "absent"
 )
 
 // service.go — SessionService orchestrates the AI Symptom Checker session
 // lifecycle. It enforces the SC-safety invariants at the seams:
-//
 //   SC-1  output is framed as POSSIBLE CAUSES + guidance, never a diagnosis.
 //   SC-2/3 the deterministic RED-FLAG layer (via triage.ApplyRedFlag) ALWAYS wins
 //          toward higher urgency; emergencies are rules-based, not probabilistic.
@@ -69,8 +76,6 @@ func NewSessionService(db *pgxpool.Pool, engine triage.EngineProvider, extractor
 	}
 }
 
-// --- profiles ---
-
 // CreateProfile creates a triage profile (self/child/dependant) for the user.
 func (s *SessionService) CreateProfile(ctx context.Context, userID, kind, name, sex string, dob *time.Time, pregnant bool) (*Profile, error) {
 	if userID == "" {
@@ -93,8 +98,6 @@ func (s *SessionService) ListProfiles(ctx context.Context, userID string) ([]Pro
 	return s.repo.listProfiles(ctx, userID)
 }
 
-// --- StartSession (SC-7 consent before interviewing) ---
-
 // StartParams is the StartSession input.
 type StartParams struct {
 	ProfileID    *string        `json:"profile_id"`
@@ -109,8 +112,8 @@ func (s *SessionService) StartSession(ctx context.Context, userID string, p Star
 	if userID == "" {
 		return nil, fmt.Errorf("core: user required")
 	}
-	lang := defStr(p.Language, "en")
-	ch := defStr(p.Channel, "app")
+	lang := strutil.FirstNonEmpty(p.Language, "en")
+	ch := strutil.FirstNonEmpty(p.Channel, "app")
 
 	sess := &Session{
 		UserID:    userID,
@@ -141,8 +144,6 @@ func (s *SessionService) StartSession(ctx context.Context, userID string, p Star
 	}
 	return sess, nil
 }
-
-// --- SubmitIntake (CONSENTED→INTERVIEWING; extract → red-flag → engine) ---
 
 // IntakeParams is the SubmitIntake input.
 type IntakeParams struct {
@@ -187,8 +188,6 @@ func (s *SessionService) SubmitIntake(ctx context.Context, userID, sessionID str
 	return s.runEngineLoop(ctx, userID, sess)
 }
 
-// --- Answer (append evidence, re-run engine; interview loop) ---
-
 // Answer appends one structured answer to the interview and re-runs the engine.
 // It loops the interview (stays INTERVIEWING) until the engine is done, then
 // finalises the disposition.
@@ -203,7 +202,7 @@ func (s *SessionService) Answer(ctx context.Context, userID, sessionID, code, va
 	if code == "" {
 		return nil, fmt.Errorf("core: answer code required")
 	}
-	answer := []triage.Evidence{{Kind: "answer", Code: code, Value: defStr(value, "present"), Source: "user"}}
+	answer := []triage.Evidence{{Kind: "answer", Code: code, Value: strutil.FirstNonEmpty(value, keyPresent), Source: "user"}}
 	if err := s.repo.appendEvidence(ctx, sessionID, answer); err != nil {
 		return nil, err
 	}
@@ -361,8 +360,6 @@ func (s *SessionService) persistReport(ctx context.Context, userID, sessionID st
 	_ = s.repo.writeSessionReport(ctx, sessionID, userID, summary, vaultRef)
 }
 
-// --- GetSession (SC-1 framing + SC-8 disclaimer) ---
-
 // GetSession returns the session + latest assessment framed as POSSIBLE CAUSES
 // (never "diagnosis", SC-1) plus the mandatory disclaimer (SC-8).
 func (s *SessionService) GetSession(ctx context.Context, userID, sessionID string) (*SessionView, error) {
@@ -392,8 +389,6 @@ func (s *SessionService) view(ctx context.Context, userID, sessionID string) (*S
 	}
 	return v, nil
 }
-
-// --- helpers ---
 
 // deidentify derives the DE-IDENTIFIED engine inputs from the session's profile
 // (SC-7): age in years (band), sex, region, pregnancy flag. NO name/DOB/PII leaves
@@ -452,4 +447,142 @@ func (s *SessionService) auditTo(actor, target, action, resourceID string, oldV,
 		return
 	}
 	s.audit.LogAction(actor, target, action, auditModule, "health_triage_session", resourceID, oldV, newV, "", "", "info")
+}
+
+// LLMExtractor implements triage.EvidenceExtractor by asking a
+// server-side LLM to map free text / voice transcript (EN/Pidgin/…) into STRUCTURED
+// evidence the engine consumes.
+// SC-10 (anti-hallucination): the LLM does EVIDENCE EXTRACTION ONLY. It must never
+// produce a diagnosis, a disposition, dosing, or any clinical conclusion. The
+// system prompt constrains it to emit ONLY a JSON array of {kind,code,value}, and
+// this code defensively drops anything that is not a recognised structured fact.
+// On ANY error (LLM disabled, network, malformed JSON, empty) the extractor falls
+// back to triage.MockExtractor (keyword map) so triage degrades safely and never
+// fabricates conclusions.
+
+// llmGenerator is the consumer-side slice of the LLM client we need; *llm.Client
+// satisfies it. Defining it here keeps the package testable and decoupled.
+type llmGenerator interface {
+	Enabled() bool
+	GenerateJSON(ctx context.Context, systemPrompt, userPrompt string) (json.RawMessage, error)
+}
+
+// LLMExtractor maps free text → structured Evidence via a constrained LLM, with a
+// deterministic mock fallback.
+type LLMExtractor struct {
+	gen      llmGenerator
+	fallback triage.EvidenceExtractor
+}
+
+// NewLLMExtractor builds the extractor. A nil/disabled gen makes Extract delegate
+// straight to the mock (mock-first). fallback defaults to triage.MockExtractor.
+func NewLLMExtractor(gen llmGenerator) *LLMExtractor {
+	return &LLMExtractor{gen: gen, fallback: triage.MockExtractor{}}
+}
+
+// extractionSystemPrompt is the hard constraint. It forbids conclusions (SC-10)
+// and pins the output schema. The model is told it is NOT a doctor and must only
+// transcribe symptoms/risk-factors into structured codes.
+const extractionSystemPrompt = `You are a medical SCRIBE for a triage system. You DO NOT diagnose, ` +
+	`advise, prescribe, or assign urgency. Your ONLY job is to convert the user's free-text ` +
+	`symptom description (which may be in English or Nigerian Pidgin/Hausa/Yoruba/Igbo) into a ` +
+	`list of STRUCTURED clinical evidence items.
+
+Rules:
+- Output ONLY a JSON array. No prose, no markdown, no explanation.
+- Each item: {"kind":"symptom"|"risk_factor"|"answer","code":"<snake_case concept id>","value":"present"|"absent"|"unknown"}.
+- Use concept ids like s_fever, s_headache, s_cough, s_chest_pain, s_breathlessness, s_bleeding, s_unconscious, s_convulsion, s_vomiting, s_diarrhea, s_weakness, s_pain.
+- NEVER output a diagnosis, disease name, condition, treatment, medication, dose, or urgency level.
+- If you find nothing structured, output [].
+Return ONLY the JSON array.`
+
+// llmEvidenceItem is the strict shape the model must emit.
+type llmEvidenceItem struct {
+	Kind  string `json:"kind"`
+	Code  string `json:"code"`
+	Value string `json:"value"`
+}
+
+// Extract converts text → []triage.Evidence. It NEVER returns conclusions (SC-10).
+func (x *LLMExtractor) Extract(ctx context.Context, text, language string) ([]triage.Evidence, error) {
+	if x == nil || x.gen == nil || !x.gen.Enabled() || strings.TrimSpace(text) == "" {
+		return x.fallbackExtract(ctx, text, language)
+	}
+
+	userPrompt := fmt.Sprintf("Language: %s\nUser said: %q\nReturn the JSON evidence array.", language, text)
+	raw, err := x.gen.GenerateJSON(ctx, extractionSystemPrompt, userPrompt)
+	if err != nil {
+		// SC-10: never fabricate — degrade to the deterministic keyword extractor.
+		return x.fallbackExtract(ctx, text, language)
+	}
+
+	var items []llmEvidenceItem
+	if err := json.Unmarshal(raw, &items); err != nil || len(items) == 0 {
+		return x.fallbackExtract(ctx, text, language)
+	}
+
+	out := make([]triage.Evidence, 0, len(items))
+	for _, it := range items {
+		// Defensive filter: drop anything that is not a recognised structured fact.
+		// This is the second line of SC-10 defence even if the prompt is subverted.
+		if !validKind(it.Kind) || it.Code == "" || isConclusionCode(it.Code) {
+			continue
+		}
+		out = append(out, triage.Evidence{
+			Kind:   it.Kind,
+			Code:   normalizeCode(it.Code),
+			Value:  normalizeValue(it.Value),
+			Source: "nlu",
+		})
+	}
+	if len(out) == 0 {
+		return x.fallbackExtract(ctx, text, language)
+	}
+	return out, nil
+}
+
+func (x *LLMExtractor) fallbackExtract(ctx context.Context, text, language string) ([]triage.Evidence, error) {
+	if x == nil || x.fallback == nil {
+		return triage.MockExtractor{}.Extract(ctx, text, language)
+	}
+	return x.fallback.Extract(ctx, text, language)
+}
+
+func validKind(k string) bool {
+	switch k {
+	case "symptom", "risk_factor", "answer":
+		return true
+	}
+	return false
+}
+
+// isConclusionCode rejects codes that look like diagnoses/conditions/treatments —
+// the LLM must produce evidence, not conclusions (SC-10). Heuristic but defensive.
+func isConclusionCode(code string) bool {
+	c := strings.ToLower(code)
+	for _, bad := range []string{"dx_", "cond_", "disease", "diagnos", "rx_", "drug_", "treat", "dose", "mg", "prescri"} {
+		if strings.Contains(c, bad) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeCode(code string) string {
+	c := strings.TrimSpace(strings.ToLower(code))
+	c = strings.ReplaceAll(c, " ", "_")
+	return c
+}
+
+func normalizeValue(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case keyPresent, "yes", "true":
+		return keyPresent
+	case keyAbsent, "no", "false":
+		return keyAbsent
+	case "":
+		return keyPresent
+	default:
+		return "unknown"
+	}
 }

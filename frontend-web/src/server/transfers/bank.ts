@@ -25,9 +25,7 @@ import { requireTransactionPin } from '@/src/server/transfers/pin-guard';
 const PAYSTACK_API = 'https://api.paystack.co';
 const MIN_BANK_TRANSFER_KOBO = 100_000; // ₦1,000 minimum
 
-// ---------------------------------------------------------------------------
 // Fee schedule (PRD §18.2)
-// ---------------------------------------------------------------------------
 
 export function calculateBankTransferFee(amountKobo: number): number {
   if (amountKobo <= 500_000)   return 1_000;  // ₦0–₦5,000:  ₦10
@@ -35,9 +33,7 @@ export function calculateBankTransferFee(amountKobo: number): number {
   return 5_000;                                // > ₦50,000: ₦50
 }
 
-// ---------------------------------------------------------------------------
 // Paystack helper
-// ---------------------------------------------------------------------------
 
 async function paystackRequest<T>(
   path: string,
@@ -57,7 +53,7 @@ async function paystackRequest<T>(
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    console.error(`[bank-transfer] Paystack request failed (${path}) [${res.status}]:`, body);
+    console.error('[bank-transfer] Paystack request failed', path, res.status, body);
     throw new ApiError(
       "We couldn't reach our banking partner right now. Please try again in a moment.",
       res.status >= 500 ? 502 : res.status,
@@ -67,9 +63,7 @@ async function paystackRequest<T>(
   return res.json() as Promise<T>;
 }
 
-// ---------------------------------------------------------------------------
 // listBanks
-// ---------------------------------------------------------------------------
 
 export interface BankItem {
   code: string;
@@ -93,9 +87,7 @@ export async function listBanks(): Promise<BankItem[]> {
   }));
 }
 
-// ---------------------------------------------------------------------------
 // resolveBankAccount
-// ---------------------------------------------------------------------------
 
 export interface ResolvedAccount {
   accountName: string;
@@ -126,9 +118,7 @@ export async function resolveBankAccount(
   };
 }
 
-// ---------------------------------------------------------------------------
 // getOrCreateRecipient
-// ---------------------------------------------------------------------------
 
 async function getOrCreateRecipient(input: {
   userId: string;
@@ -139,7 +129,6 @@ async function getOrCreateRecipient(input: {
 }): Promise<{ recipientId: string | null; recipientCode: string }> {
   const supabase = createAdminClient();
 
-  // Check if we already have a stored recipient for this user+bank+account
   const { data: existing } = await supabase
     .from('bank_transfer_recipients')
     .select('id, paystack_recipient_code')
@@ -155,7 +144,6 @@ async function getOrCreateRecipient(input: {
     };
   }
 
-  // Create new Paystack recipient
   const json = await paystackRequest<{
     status: boolean;
     data?: { recipient_code?: string };
@@ -197,9 +185,7 @@ async function getOrCreateRecipient(input: {
   };
 }
 
-// ---------------------------------------------------------------------------
 // initiateWalletToBank
-// ---------------------------------------------------------------------------
 
 export interface WalletToBankInput {
   userId: string;
@@ -244,7 +230,6 @@ export async function initiateWalletToBank(
 
   const supabase = createAdminClient();
 
-  // Idempotency: return existing transfer if key already used
   const { data: existing } = await supabase
     .from('bank_transfers')
     .select('id, reference, amount_kobo, fee_kobo, account_number_last4, bank_name, account_name, status, created_at')
@@ -287,7 +272,6 @@ export async function initiateWalletToBank(
     accountName: input.accountName,
   });
 
-  // Get sender ledger account + enforce tier limit
   const accountId = await getOrCreateAccount(input.userId);
   const { dailyLimitKobo } = await enforceWalletLimit(input.userId, input.amountKobo + feeKobo);
 

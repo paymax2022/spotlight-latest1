@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"spotlight/backend/go-common/timeutil"
 )
 
 // WebhookEmitter delivers signed, normalized Paymax events to a caller endpoint
@@ -59,7 +61,7 @@ func (e *WebhookEmitter) Emit(ctx context.Context, eventType string, data interf
 	if e == nil || e.endpoint == "" || e.secret == "" {
 		return nil
 	}
-	evt := Event{ID: newID("evt"), Type: eventType, Created: time.Now().UTC().Format(time.RFC3339), Data: data}
+	evt := Event{ID: newID("evt"), Type: eventType, Created: timeutil.RFC3339(time.Now()), Data: data}
 	payload, err := json.Marshal(evt)
 	if err != nil {
 		return err
@@ -173,8 +175,6 @@ func (s *Service) emit(ctx context.Context, eventType string, data interface{}) 
 	}
 }
 
-// ─── Inbound collections (deposits into a provisioned virtual account) ───────
-//
 // This is the last link of the Maplerad/Eversend collections rail. Everything
 // ahead of it already existed — live adapters, credential-gated wiring,
 // Service.CreateCollection provisioning the account, the mobile Receive screen,
@@ -204,7 +204,6 @@ func isCollectionEvent(name string) bool {
 
 // applyCollectionEvent matches a deposit to the account it was paid into and
 // credits the owner.
-//
 // Fail-closed in three places, because every one of them is a way to invent
 // money that nobody sent:
 //   - a non-positive amount is refused;

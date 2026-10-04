@@ -103,7 +103,6 @@ export default function PricingPage() {
   );
 }
 
-// ── Boost packages ───────────────────────────────────────────────────────────
 function BoostPackagesCard({ packages, canEdit, busy, onSave }: { packages: MktBoostPackage[]; canEdit: boolean; busy: string | null; onSave: (pkg: MktBoostPackage, reason: string) => void }) {
   const [draft, setDraft] = useState<Record<string, { price: string; duration: string; weight: string; active: boolean; reason: string }>>({});
   const rowOf = (p: MktBoostPackage) => draft[p.tier] ?? { price: String(p.price_kobo / 100), duration: String(p.duration_days), weight: String(p.weight), active: p.is_active, reason: '' };
@@ -140,7 +139,6 @@ function BoostPackagesCard({ packages, canEdit, busy, onSave }: { packages: MktB
   );
 }
 
-// ── Custom-range daily rate (start date+time / end date+time boosts) ─────────
 function DailyRateCard({ rate, canEdit, busy, onSave }: { rate: MktBoostDailyRate; canEdit: boolean; busy: boolean; onSave: (dailyRateKobo: number, reason: string) => void }) {
   const [naira, setNaira] = useState(String(rate.daily_rate_kobo / 100));
   const [reason, setReason] = useState('');
@@ -171,7 +169,6 @@ function DailyRateCard({ rate, canEdit, busy, onSave }: { rate: MktBoostDailyRat
   );
 }
 
-// ── Commission ───────────────────────────────────────────────────────────────
 function CommissionCard({ config, canEdit, busy, onSave }: { config: MktCommissionConfig; canEdit: boolean; busy: boolean; onSave: (bps: number, reason: string) => void }) {
   const [bps, setBps] = useState(String(config.default_bps));
   const [reason, setReason] = useState('');
@@ -194,7 +191,6 @@ function CommissionCard({ config, canEdit, busy, onSave }: { config: MktCommissi
   );
 }
 
-// ── Discount codes ───────────────────────────────────────────────────────────
 function DiscountsCard({ discounts, canEdit, busy, onCreate, onToggle }: {
   discounts: MktDiscountCode[]; canEdit: boolean; busy: string | null;
   onCreate: (inp: { code: string; kind: MktDiscountKind; value: number; applies_to: 'boost' | 'listing_fee'; max_redemptions: number | null; valid_until: string | null; reason_code: string }) => void;
@@ -261,7 +257,6 @@ function DiscountsCard({ discounts, canEdit, busy, onCreate, onToggle }: {
   );
 }
 
-// ── Featured slots ───────────────────────────────────────────────────────────
 function FeaturedSlotsCard({ slots, canEdit, busy, onSave }: { slots: MktFeaturedSlotConfig[]; canEdit: boolean; busy: string | null; onSave: (surface: string, max: number, reason: string) => void }) {
   const [draft, setDraft] = useState<Record<string, { max: string; reason: string }>>({});
   const rowOf = (s: MktFeaturedSlotConfig) => draft[s.surface] ?? { max: String(s.max_slots), reason: '' };

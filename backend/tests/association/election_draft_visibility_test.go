@@ -1,6 +1,5 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB regression: a newly-created DRAFT election was permanently invisible
 // to the admin console that created it. ListElections unconditionally excluded
 // status='DRAFT' — correct for a plain member's self-service call (members
@@ -11,13 +10,10 @@ package association_test
 // list. An officer could create an election, see it confirmed in Postgres,
 // and never be able to reach it again through the admin console: no link,
 // no row, nothing. Live-reproduced via the browser during UAT before this fix.
-//
 // Gated on TEST_DATABASE_URL alone — see live_db_integration_test.go's
 // bring-up note for this package.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/association/... -run LiveDB_ListElections_DraftVisibility -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

@@ -12,16 +12,13 @@ import (
 // deleteOrganisation removes a seeded organisation and everything hanging off
 // it, so a live-DB test does not leave an association behind in the shared
 // local database.
-//
 // Depth-first over the real foreign-key graph, not a fixed number of levels.
 // The first version unwound two levels and still could not delete anything with
 // dues attached, because the chain is four deep:
 //
 //	assoc_organisations -> assoc_memberships -> assoc_dues_invoices
-//	                    -> assoc_payments -> assoc_revenue_splits
 //
 // (one chain, five tables — the split across two lines is wrapping, not a fork)
-//
 // Children come from pg_catalog, so a new association table needs no change
 // here. ledger_entries is never touched: ledger rows are immutable by rule.
 func deleteOrganisation(ctx context.Context, pool *pgxpool.Pool, orgID string) {
@@ -97,7 +94,6 @@ func cascadeDelete(ctx context.Context, pool *pgxpool.Pool, table, keyCol string
 // the pool was shut first and the user delete no-opped against a dead pool.
 // The organisation had no teardown at all. 149 organisations and 19 users had
 // accumulated in the shared local database.
-//
 // These assert on the SPECIFIC rows the helper created, never on table counts.
 // The first version compared global counts before and after and was flaky
 // everywhere it mattered: `go test ./...` runs packages in parallel against one

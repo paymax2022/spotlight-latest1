@@ -1,4 +1,3 @@
-// ── Paymax Mobility — Multi-mode data hooks ──────────────────────────────────
 // React Query hooks for parcel · bus · towing · movers · car-hire, mirroring
 // useMobility.ts so screens stay declarative and share caching / loading /
 // error contracts. Money mutations attach Idempotency-Keys via the api layer.
@@ -27,9 +26,7 @@ import type {
   CarHireBookRequest,
 } from '../types/modes.types';
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // PARCEL
-// ═══════════════════════════════════════════════════════════════════════════════
 export function useParcelEstimate() {
   return useMutation({
     mutationFn: (req: ParcelEstimateRequest) => parcel.estimateParcel(req),
@@ -100,9 +97,7 @@ export function useCourierActions() {
   return { accept, verifyPickup, pickedUp, verifyDropoff };
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // BUS
-// ═══════════════════════════════════════════════════════════════════════════════
 export function useBusRoutes(origin: string, dest: string, enabled: boolean) {
   return useQuery({
     queryKey: [BUS_KEY, 'routes', origin, dest],
@@ -168,9 +163,7 @@ export function useRateBusTrip() {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // TOWING
-// ═══════════════════════════════════════════════════════════════════════════════
 export function useTowingEstimate() {
   return useMutation({
     mutationFn: (req: TowingEstimateRequest) => towing.estimateTowing(req),
@@ -214,9 +207,7 @@ export function useRateTowing() {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // MOVERS
-// ═══════════════════════════════════════════════════════════════════════════════
 export function useRequestQuote() {
   const qc = useQueryClient();
   return useMutation({
@@ -261,9 +252,7 @@ export function useMoverActions() {
   return { acceptBid, confirmCompletion, rate };
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // CAR HIRE
-// ═══════════════════════════════════════════════════════════════════════════════
 export function useCarHireQuote() {
   return useMutation({
     mutationFn: (req: CarHireQuoteRequest) => carhire.quoteCarHire(req),

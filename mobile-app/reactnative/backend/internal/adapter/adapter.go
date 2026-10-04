@@ -30,8 +30,6 @@ type Custody interface {
 	ScreenAddress(address string) domain.AddressScreening
 }
 
-// ── Mock implementations ──────────────────────────────────────────────────────
-
 // MockMarketData is backed by the asset catalogue + deterministic charts. It
 // depends on store.Repository, not the concrete store, so it works against any
 // storage engine.

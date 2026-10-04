@@ -1,7 +1,6 @@
 // Paymax Connect — Unified Profile API (PRD §10.4 PR-*).
 // Mock-first (USE_MOCK). Live path hits `${CONNECT_API_BASE}/profile/...` on the
 // Go backend.
-//
 // SAFETY: date (romantic) and network (professional) profiles are SEPARATE.
 // Their bios/headlines/intents/photos are never merged — every mutation is
 // scoped to a single `mode`. Location precision defaults to 'approximate' (§3).
@@ -25,7 +24,6 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
 
 const PHOTO = (seed: string) => `https://images.unsplash.com/${seed}?auto=format&fit=crop&w=800&q=60`;
 
-// ── Mutable mock store ───────────────────────────────────────────────────────
 // A single in-memory profile so edits/reorders/removes persist across calls
 // within a session (mock-first). The live backend owns the real store.
 const MOCK_PROFILE: UnifiedProfile = {
@@ -78,7 +76,6 @@ function modeRef(mode: ConnectMode): ModeProfile {
   return mode === 'date' ? MOCK_PROFILE.dateProfile : MOCK_PROFILE.networkProfile;
 }
 
-// ── Unified profile (PR-01) ──────────────────────────────────────────────────
 export async function getUnifiedProfile(): Promise<UnifiedProfile> {
   if (USE_MOCK) {
     await delay();
@@ -94,7 +91,6 @@ export async function getUnifiedProfile(): Promise<UnifiedProfile> {
   return unwrap<UnifiedProfile>(res);
 }
 
-// ── Edit one mode's profile (PR-02). Scoped to a single mode. ────────────────
 export async function updateModeProfile(input: EditProfileInput): Promise<ModeProfile> {
   if (USE_MOCK) {
     await delay(360);
@@ -109,7 +105,6 @@ export async function updateModeProfile(input: EditProfileInput): Promise<ModePr
   return unwrap<ModeProfile>(res);
 }
 
-// ── Per-mode visibility wall (PR-01 / privacy). ──────────────────────────────
 export async function setModeVisibility(
   mode: ConnectMode,
   visible: boolean,
@@ -126,7 +121,6 @@ export async function setModeVisibility(
   return unwrap<{ ok: true; mode: ConnectMode; visible: boolean }>(res);
 }
 
-// ── Privacy (PR-04) ──────────────────────────────────────────────────────────
 export async function getPrivacy(): Promise<PrivacySettings> {
   if (USE_MOCK) {
     await delay(200);
@@ -149,7 +143,6 @@ export async function updatePrivacy(p: PrivacySettings): Promise<PrivacySettings
   return unwrap<PrivacySettings>(res);
 }
 
-// ── Photos (PR-03). Photos are per-mode and never shared across modes. ───────
 export async function getPhotos(mode: ConnectMode): Promise<string[]> {
   if (USE_MOCK) {
     await delay(200);
@@ -180,7 +173,6 @@ export async function removePhoto(mode: ConnectMode, uri: string): Promise<strin
   return unwrap<string[]>(res);
 }
 
-// ── Verification badges (PR-05) ──────────────────────────────────────────────
 export async function getBadges(): Promise<VerificationBadge[]> {
   if (USE_MOCK) {
     await delay(200);

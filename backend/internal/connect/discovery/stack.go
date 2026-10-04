@@ -334,7 +334,6 @@ func (s *Service) deletePass(ctx context.Context, fromProfile, toProfile string)
 // had created a mutual match — voids that match too, all inside one transaction so
 // a partially-undone state is impossible. Idempotent-safe: if there is nothing to
 // undo it returns ErrNothingToUndo without side effects.
-//
 // PREMIUM: gating (entitlement / boost tier) is intentionally left to the caller;
 // this method performs the undo unconditionally so it stays reusable.
 func (s *Service) Rewind(ctx context.Context, userID string) (undone string, err error) {
@@ -349,7 +348,6 @@ func (s *Service) Rewind(ctx context.Context, userID string) (undone string, err
 	}
 	defer tx.Rollback(ctx)
 
-	// Newest like for this viewer.
 	var likeTarget string
 	var likeAt time.Time
 	likeFound := true
@@ -364,7 +362,6 @@ func (s *Service) Rewind(ctx context.Context, userID string) (undone string, err
 		}
 	}
 
-	// Newest pass for this viewer.
 	var passTarget string
 	var passAt time.Time
 	passFound := true
@@ -383,7 +380,6 @@ func (s *Service) Rewind(ctx context.Context, userID string) (undone string, err
 		return "", ErrNothingToUndo
 	}
 
-	// Choose the more recent of the two swipes.
 	undoLike := likeFound && (!passFound || !passAt.After(likeAt))
 	if undoLike {
 		// If this like created a mutual match, void the match first.

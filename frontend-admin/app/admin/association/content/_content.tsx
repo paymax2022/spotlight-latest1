@@ -2,14 +2,12 @@
 
 // Shared kit for the five content-authoring pages (announcements, meetings,
 // documents, events, tasks).
-//
 // These five pages differ only in their form fields and their table columns —
 // every one of them otherwise needs the same org scoping, the same
 // load/create/edit/delete lifecycle, the same "this notifies everyone" warning
 // and the same audit disclosure. Writing that five times is how the five drift
 // apart, so it lives here once and each page supplies only what is genuinely
 // its own.
-//
 // Everything is built on the existing primitives: <Page>/<Card>/<Button> from
 // @/components/ui/vuexy and AssociationTabs/OrgPicker/PermissionBanner from
 // ../_ui. Nothing here is a parallel design system.

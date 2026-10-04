@@ -1,6 +1,3 @@
-// ── Marketplace — Discover React Query hooks ─────────────────────────────────
-// Query keys namespaced under ['mkt', …]; mutations invalidate the relevant
-// queries. These cover the Discovery group (screens 1–9); sibling agents add
 // their own hooks for Sell/Transact/Account against the same client.
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { discoveryApi } from './index';
@@ -22,7 +19,6 @@ export const MKT_KEYS = {
   sellerReviews: (id: string) => ['mkt', 'seller', id, 'reviews'] as const,
 };
 
-// ── Home ────────────────────────────────────────────────────────────────────
 export const useCategories = () =>
   useQuery({ queryKey: MKT_KEYS.categories, queryFn: discoveryApi.getCategories, staleTime: 5 * 60_000 });
 
@@ -32,7 +28,6 @@ export const useCategory = (id: string) =>
 export const useHomeRails = (coords?: { lat: number; lng: number }) =>
   useQuery({ queryKey: MKT_KEYS.homeRails(coords), queryFn: () => discoveryApi.getHomeRails(coords) });
 
-// ── Search / Results ──────────────────────────────────────────────────────────
 export const useSearch = (params: SearchParams, enabled = true) =>
   useQuery({
     queryKey: MKT_KEYS.search(params),
@@ -47,11 +42,9 @@ export const useSuggest = (q: string) =>
 export const useTrending = () =>
   useQuery({ queryKey: MKT_KEYS.trending, queryFn: discoveryApi.trendingSearches, staleTime: 5 * 60_000 });
 
-// ── Listing detail ────────────────────────────────────────────────────────────
 export const useListing = (id: string) =>
   useQuery({ queryKey: MKT_KEYS.listing(id), queryFn: () => discoveryApi.getListing(id), enabled: !!id, retry: 1 });
 
-// ── Seller ─────────────────────────────────────────────────────────────────────
 export const useSellerProfile = (id: string) =>
   useQuery({ queryKey: MKT_KEYS.sellerProfile(id), queryFn: () => discoveryApi.getSellerProfile(id), enabled: !!id });
 
@@ -61,7 +54,6 @@ export const useSellerListings = (id: string) =>
 export const useSellerReviews = (id: string) =>
   useQuery({ queryKey: MKT_KEYS.sellerReviews(id), queryFn: () => discoveryApi.getSellerReviews(id), enabled: !!id });
 
-// ── Saved items ────────────────────────────────────────────────────────────────
 export const useSavedItems = () =>
   useQuery({ queryKey: MKT_KEYS.savedItems, queryFn: discoveryApi.getSavedItems });
 
@@ -108,7 +100,6 @@ export function useUnsaveListing() {
   });
 }
 
-// ── Saved searches ───────────────────────────────────────────────────────────
 export const useSavedSearches = () =>
   useQuery({ queryKey: MKT_KEYS.savedSearches, queryFn: discoveryApi.listSavedSearches });
 

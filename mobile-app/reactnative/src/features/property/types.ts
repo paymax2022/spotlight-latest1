@@ -1,7 +1,5 @@
-// ── Property Management — domain types ───────────────────────────────────────
 // The Property Management super-module spans four pillars (Marketplace, Stays,
 // Rent & Tenancy, Estate & Visitor Access). A user may hold roles across several
-// contexts (estates, owned properties, agencies, orgs); the active context scopes
 // what they see. Types here are shared by the mock + live API paths.
 
 export type ContextType = 'estate' | 'property' | 'agency' | 'org';
@@ -39,7 +37,6 @@ export interface SwitchContextInput {
   contextId:   string;
 }
 
-// ── Rent Passport (M-RTN-05) — portable, cross-landlord tenancy reputation ────
 export interface RentPassportPayment {
   id:         string;
   paidAt:     string;  // ISO date
@@ -57,7 +54,6 @@ export interface RentPassport {
   recentPayments: RentPassportPayment[];
 }
 
-// ── Stay gate pass — auto-issued visitor pass for a confirmed stay ────────────
 export interface StayGatePass {
   bookingId:  string;
   guestName:  string;

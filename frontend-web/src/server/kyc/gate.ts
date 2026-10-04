@@ -18,7 +18,6 @@ export async function requireKycTier(userId: string, required: KycTier): Promise
   try {
     tier = await getKycTier(userId);
   } catch {
-    // Fail closed — unknown tier = deny
     throw new ApiError(
       'KYC verification check failed. Access denied.',
       403,

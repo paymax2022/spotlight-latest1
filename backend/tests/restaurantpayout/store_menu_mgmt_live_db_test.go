@@ -1,14 +1,11 @@
 package restaurantpayout_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests for merchant self-serve store & menu management (slice 2):
 // UpdateRestaurant, SetAvailability, DeleteItem, DeleteCategory. All are
 // owner-scoped (assertOwner) — a non-owner must be rejected, and the destructive
 // paths must guard (category-with-items blocked, missing rows → not found).
-//
 // Skips unless TEST_DATABASE_URL is set (same gate as the sibling
 // live-DB tests). Reuses seedUser/seedRestaurant + the live service helpers.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -28,7 +25,6 @@ func TestLiveDB_StoreAndMenuManagement(t *testing.T) {
 	stranger := seedUser(t, ctx, pool)
 	restID := seedRestaurant(t, ctx, pool, owner)
 
-	// ── ListMyRestaurants (owner sees own store; stranger doesn't) ────────────
 	mine, err := svc.ListMyRestaurants(ctx, owner)
 	if err != nil {
 		t.Fatalf("ListMyRestaurants(owner): %v", err)
@@ -53,7 +49,6 @@ func TestLiveDB_StoreAndMenuManagement(t *testing.T) {
 		t.Fatal("stranger's ListMyRestaurants leaked the owner's store")
 	}
 
-	// ── UpdateRestaurant ──────────────────────────────────────────────────────
 	newName, desc := "Blue Yam Kitchen (Updated)", "Now serving jollof"
 	r, err := svc.UpdateRestaurant(ctx, restID, owner, restaurant.UpdateRestaurantRequest{Name: &newName, Description: &desc})
 	if err != nil {
@@ -76,7 +71,6 @@ func TestLiveDB_StoreAndMenuManagement(t *testing.T) {
 		t.Fatal("empty name: want validation error, got nil")
 	}
 
-	// ── SetAvailability (operational open/close) ──────────────────────────────
 	if r, err = svc.SetAvailability(ctx, restID, owner, true); err != nil || !r.IsOpen {
 		t.Fatalf("owner open: err=%v isOpen=%v", err, r != nil && r.IsOpen)
 	}
@@ -87,7 +81,6 @@ func TestLiveDB_StoreAndMenuManagement(t *testing.T) {
 		t.Fatal("stranger SetAvailability: want owner error, got nil")
 	}
 
-	// ── Menu: create then exercise the delete guards ──────────────────────────
 	cat, err := svc.CreateCategory(ctx, restID, owner, "Mains")
 	if err != nil {
 		t.Fatalf("CreateCategory: %v", err)

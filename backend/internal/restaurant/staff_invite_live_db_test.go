@@ -1,13 +1,11 @@
 package restaurant
 
 // LIVE-DB tests for staff invite / accept (foodhub A18).
-//
 // An invite is a credential: whoever holds the token gains standing authority at
 // a real shop — the menu, the order queue, sometimes the earnings. So the token
 // is treated like a password (hashed at rest, returned exactly once), and the
 // grant graph is kept acyclic: only an OWNER may create a MANAGER, or a manager
 // could promote a peer and, through them, themselves.
-//
 // Skips unless TEST_DATABASE_URL is set.
 
 import (

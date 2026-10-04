@@ -3,12 +3,10 @@
 // dependency-free: the anti-overfitting validation verdict enters as a boolean
 // (the caller runs validate.Evaluate), so this package imports nothing and can be
 // exhaustively tested.
-//
 // The ladder is FORWARD-ONLY through gates and one rung at a time; DEMOTION (any
 // step down, or straight to Halted) is always allowed because reducing exposure is
 // always safe. Every gate is fail-closed: missing evidence, an unknown stage, a
 // skipped rung, or a tripped circuit denies promotion.
-//
 // IMPORTANT: reaching Canary or Live is an ELIGIBILITY state only. This package
 // (and this build) execute NOTHING — there is no venue adapter. Real capital moves
 // only once execution is wired separately, behind the §12 ladder AND legal sign-off.

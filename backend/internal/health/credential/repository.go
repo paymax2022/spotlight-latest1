@@ -206,8 +206,6 @@ func (r *Repository) GetApplicationMeta(ctx context.Context, applicationID strin
 	return &m, nil
 }
 
-// ---- helpers ----
-
 func normalizeName(s string) string {
 	toks := strings.Fields(strings.ToLower(strings.TrimSpace(s)))
 	sort.Strings(toks)

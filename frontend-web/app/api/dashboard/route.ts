@@ -18,14 +18,12 @@ export async function GET(request: Request) {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
 
-    // Fetch user profile
     const { data: profile } = await supabase
       .from('user_profiles')
       .select('full_name, phone')
       .eq('id', user.id)
       .maybeSingle();
 
-    // Fetch wallet balance (only if wallet feature is enabled)
     let walletBalance = { available_kobo: 0, currency: 'NGN' };
     if (featureFlags.wallet()) {
       try {
@@ -36,7 +34,6 @@ export async function GET(request: Request) {
       }
     }
 
-    // Fetch recent utility transactions (only if utility payments enabled)
     let recentTransactions: unknown[] = [];
     if (featureFlags.utilityPayments()) {
       try {

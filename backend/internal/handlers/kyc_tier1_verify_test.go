@@ -6,7 +6,6 @@ package handlers
 // must NEVER fall through to a silent unverified write. Written before the fix
 // (see the PR retiring the admin manual-approval bypass) to prove the fail-
 // closed behavior, not just the happy path a mock could fake.
-//
 // The provider-call happy path (a real PASSED check auto-elevating the tier)
 // is NOT re-tested here — that logic lives entirely in kycverify's own
 // orchestrator/statemachine and is already covered by

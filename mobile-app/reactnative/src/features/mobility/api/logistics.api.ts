@@ -1,10 +1,5 @@
-// ── Business Logistics — API wrapper ─────────────────────────────────────────
 // Typed data layer the business-logistics screens code against. Mirrors
-// parcel.api.ts: mock-flagged, BASE = '/api/v1', Idempotency-Key on money
-// mutations. Flip EXPO_PUBLIC_MOBILITY_USE_MOCK=false (or
 // EXPO_PUBLIC_LOGISTICS_USE_MOCK) once the Go endpoints land.
-//
-// IRON RULES: all money is integer kobo; create/batch carry an Idempotency-Key;
 // fares/COD/invoices come from the SERVER — never computed here.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -40,9 +35,7 @@ const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // BUSINESS ACCOUNT
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getMyBusinessAccount(): Promise<BusinessAccount | null> {
   if (USE_MOCK) {
     await delay(300);
@@ -66,10 +59,7 @@ export async function createBusinessAccount(req: AccountCreateRequest): Promise<
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // DELIVERY
-// ═══════════════════════════════════════════════════════════════════════════════
-// ─── Create (money mutation → escrow/accrue → Idempotency-Key) ─────────────────
 export async function createDelivery(req: DeliveryCreateRequest): Promise<Delivery> {
   if (USE_MOCK) {
     await delay(900);
@@ -132,10 +122,7 @@ export async function cancelDelivery(id: string): Promise<Delivery> {
   return unwrap<Delivery>(await api.post(`${BASE}/mobility/business/deliveries/${id}/cancel`, {}));
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // BATCH (bulk dispatch)
-// ═══════════════════════════════════════════════════════════════════════════════
-// ─── Create (money mutation → escrow/accrue → Idempotency-Key) ─────────────────
 export async function createBatch(req: BatchCreateRequest): Promise<BatchDetail> {
   if (USE_MOCK) {
     await delay(1000);
@@ -185,9 +172,7 @@ export async function getBatch(id: string): Promise<BatchDetail> {
   return unwrap<BatchDetail>(await api.get(`${BASE}/mobility/business/batches/${id}`));
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // INVOICES + ANALYTICS
-// ═══════════════════════════════════════════════════════════════════════════════
 export async function getInvoices(): Promise<BusinessInvoice[]> {
   if (USE_MOCK) {
     await delay(380);

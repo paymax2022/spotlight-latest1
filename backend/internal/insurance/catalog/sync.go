@@ -11,16 +11,12 @@ import (
 	"spotlight/backend/internal/provider/mycover"
 )
 
-// ════════════════════════════════════════════════════════════════════════════
 // CATALOG SYNC — live provider catalog → DB
-// ════════════════════════════════════════════════════════════════════════════
-//
 // Pulls the aggregator's live product catalog and upserts it into
 // insurance_products. Everything a member journey needs about a product — its
 // purchase path, its pricing model, its schema, its underwriter and its
 // commission split — lands here as DATA. That is the mechanism that makes
 // adding a product a sync run rather than a deployment.
-//
 // The sync is IDEMPOTENT: re-running it updates the same rows (keyed on the
 // Paymax product code) and never duplicates. It is also CONSERVATIVE about
 // operator intent — see upsert() for exactly which columns a re-sync will and
@@ -37,11 +33,9 @@ type CatalogSource interface {
 // SchemaSource supplies a product's dynamic form schema. The MyCover adapter
 // implements it by fetching GET /public-product-details/{id} — a PUBLIC,
 // machine-readable field table published by the provider itself.
-//
 // Fetching beats maintaining. There is no table of fields in this repo to drift
 // out of date, and a product MyCover adds tomorrow arrives with its own form:
 // that is "adding a product is a data change" in the strong sense.
-//
 // It is optional. Without it a product still lands with its pricing, copy and
 // cover terms — browsable and listable — but with no form, so it cannot be
 // purchased and the member-facing schema endpoint says exactly that.
@@ -92,7 +86,6 @@ func NewSyncer(svc *Service, provider string, src CatalogSource, schemas SchemaS
 // productLineFor maps a provider category onto the Paymax product_line
 // vocabulary the member contract publishes
 // (health|auto|travel|gadget|life|content|package).
-//
 // This is the ONE place a provider taxonomy is translated. An unknown category
 // falls through to "other" rather than being silently dropped from the catalog —
 // an invisible product is worse than an uncategorised one, and admin can see and
@@ -121,13 +114,11 @@ func productLineFor(category string) string {
 }
 
 // paymaxCode derives the Paymax product code.
-//
 // route_name is readable and usually unique, so it makes the better code — but
 // it is NOT an identifier. Verified live: two distinct MyCover products both
 // call themselves "aiico-comprehensive" (Comprehensive Auto and Comprehensive
 // Auto (AAS)). They collided on one catalog row and each sync silently
 // overwrote the other; 69 went in and 68 came out with nothing reported.
-//
 // So when a route_name is ambiguous WITHIN THE BATCH, every product sharing it
 // is suffixed with its provider UUID — the real identity. Suffixing all of them
 // rather than "the second one" keeps codes independent of iteration order, so
@@ -189,19 +180,16 @@ func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, erro
 
 	// Every provider product UUID this run saw. Anything for this provider NOT in
 	// here is no longer offered and gets retired below.
-	//
 	// Keyed on the UUID, not route_name: route_name is not unique (see
 	// paymaxCode), so retiring by it would spare a stale row whose route_name
 	// happens to match a live product.
 	seenIDs := make([]string, 0, 128)
 
 	// Page through until we have everything the provider says exists.
-	//
 	// NOTE the explicit limit: GET /products/all defaults to a page size of 25,
 	// so an unparameterised call quietly returns a THIRD of the catalog and looks
 	// like a complete answer. limit=100 returns all 69 in one page today; the
 	// loop stays for when it does not.
-	//
 	// ⚠️ DO NOT "simplify" this to GET /v2/products?limit=100. That endpoint
 	// returns 68 and silently omits Comprehensive Auto (AAS)
 	// (24140c74-fc6f-42f5-a0d2-24800b22d81b, AIICO, route_name null) — a real,
@@ -254,14 +242,11 @@ func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, erro
 		}
 	}
 
-	// ── RECONCILE ──────────────────────────────────────────────────────────
 	// Retire every row for THIS provider the live catalog did not return.
-	//
 	// An upsert-only sync leaves stale rows alive forever, and a stale row is
 	// indistinguishable from a real one. That is not hypothetical: nine
 	// fictional scaffolding products outlived every sync and became the only
 	// cover members could see, complete with underwriters that do not exist.
-	//
 	// Only runs on a sync that completed WITHOUT a page failing. A partial
 	// listing would look exactly like "the provider dropped these products" and
 	// would dark the catalog on a transient network fault — the reconcile must
@@ -281,7 +266,6 @@ func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, erro
 	// per-product routing model got wrong, and it is invisible: the catalog just
 	// looks slightly smaller than it should. So compare what we landed against
 	// what the provider says exists and say so loudly when they disagree.
-	//
 	// A shortfall does NOT fail the sync — the products that did land are real
 	// and useful — but it is recorded on the run so admin sees "66 of 69" rather
 	// than an unqualified success.
@@ -313,31 +297,21 @@ func (s *Syncer) closeRun(ctx context.Context, res *SyncResult) {
 }
 
 // upsert writes one provider product into the catalog.
-//
 // WHICH COLUMNS A RE-SYNC OVERWRITES — this distinction is the whole design:
 //
 //	PROVIDER-OWNED (always refreshed): name, description, pricing, commission
 //	  split, cover terms, benefits copy, underwriter, category, raw payload.
 //	  These are facts about the product; the provider is authoritative and a
 //	  stale copy is a mispriced quote.
-//
 //	OPERATOR-GOVERNED (respected once ruled on): active.
 //	  `active` is sync-managed by DEFAULT and operator-owned ONCE AN ADMIN HAS
 //	  RULED. An admin flip stamps active_overridden_at; after that a sync leaves
-//	  visibility alone.
-//
-//	  The earlier "never clobber active" rule produced the exact failure it was
-//	  meant to prevent: all 69 real products landed inactive and stayed inactive,
-//	  while nine fictional scaffolding rows were already active — so the member
-//	  catalog served invented cover and none of the real cover. Safe-by-default
-//	  is only safe if something eventually turns the real products on.
-//
+//	  visibility alone. Sync-managing by default is load-bearing: a
+//	  never-clobber rule would leave every newly synced product inactive forever.
 //	  One thing overrides everything, including an admin: a product that is not
 //	  PURCHASABLE is forced inactive. Nobody may offer cover the provider cannot
 //	  issue.
-//
 //	OPERATOR-OWNED (never clobbered): required_kyc_tier, binding_mode.
-//
 //	DISCOVERED (upgraded, never downgraded): provider_buy_path, form_schema.
 //	  A verified path or a discovered schema is never overwritten with a weaker
 //	  candidate — COALESCE/NULLIF keep the better value.
@@ -603,12 +577,10 @@ func percentStringToBps(percent string) int64 {
 
 // retireMissing deactivates every product for this provider that the live
 // catalog did not return.
-//
 // Rows are NEVER deleted. An insurance_policy may reference the product code,
 // and destroying the product a policy points at makes that policy unreadable —
 // a member's record of their own cover. Deactivating stops new sales and keeps
 // the history whole.
-//
 // `purchasable` is cleared too: a product the provider no longer lists cannot be
 // bought, so leaving it sellable would let an admin re-activate a dead product.
 func (s *Syncer) retireMissing(ctx context.Context, seenIDs []string) (int, error) {

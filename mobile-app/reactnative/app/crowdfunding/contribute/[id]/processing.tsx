@@ -3,10 +3,10 @@ import { View, Text, ActivityIndicator, StyleSheet, Animated, Easing } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ShieldCheck } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import { useVerifyContribution } from '@/features/crowdfunding/hooks/useCrowdfunding';
 
 export default function ProcessingScreen() {
@@ -47,7 +47,6 @@ export default function ProcessingScreen() {
           // read here is a failed *read*, not a failed payment. When the charge
           // already came back final, the money has moved — reporting "payment
           // failed" would send someone who has been debited to pay a second
-          // time under a fresh idempotency key. Confirm on what we know and let
           // the receipt reconcile the details.
           if (status === 'SUCCESSFUL') {
             router.replace(`/crowdfunding/contribute/${id}/success?reference=${encodeURIComponent(contributionId ?? '')}`);

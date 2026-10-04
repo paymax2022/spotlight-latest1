@@ -1,4 +1,3 @@
-// ── Insurance — Mock catalog & state (NG micro-insurance, both rails) ────────
 // Realistic illustrative products. Underwriter/aggregator surfaced on every
 // product (PRD §5 disclosure). Money in kobo. NOT a source of truth — the live
 // backend supersedes this once USE_MOCK=false.
@@ -12,7 +11,6 @@ import type {
 const day = 24 * 60 * 60 * 1000;
 const iso = (offsetDays: number) => new Date(Date.now() + offsetDays * day).toISOString();
 
-// ── KYC profile (prefills the schema-driven quote form; PRD §6.1) ────────────
 export const MOCK_KYC: KycProfile = {
   tier: 'TIER_1',
   fullName: 'Adaeze Okonkwo',
@@ -24,11 +22,9 @@ export const MOCK_KYC: KycProfile = {
   ninLinked: false,
 };
 
-// ── Catalog ──────────────────────────────────────────────────────────────────
 // MyCover.ai rail = financial/identity/Spotlight lines.
 // Octamile rail = journey-of-goods-or-people lines.
 export const MOCK_PRODUCTS: InsuranceProduct[] = [
-  // ── MyCover.ai — Health ─────────────────────────────────────────────────────
   {
     code: 'mycover.health.micro.v1',
     displayName: 'MicroHealth Essential',
@@ -67,7 +63,6 @@ export const MOCK_PRODUCTS: InsuranceProduct[] = [
     ],
     active: true,
   },
-  // ── MyCover.ai — Personal Accident ──────────────────────────────────────────
   {
     code: 'mycover.pa.income.v1',
     displayName: 'Personal Accident Shield',
@@ -101,7 +96,6 @@ export const MOCK_PRODUCTS: InsuranceProduct[] = [
     ],
     active: true,
   },
-  // ── MyCover.ai — Device ─────────────────────────────────────────────────────
   {
     code: 'mycover.device.gadget.v1',
     displayName: 'Gadget Guard',
@@ -139,7 +133,6 @@ export const MOCK_PRODUCTS: InsuranceProduct[] = [
     ],
     active: true,
   },
-  // ── MyCover.ai — SME ────────────────────────────────────────────────────────
   {
     code: 'mycover.sme.bundle.v1',
     displayName: 'SME Protect Bundle',
@@ -178,7 +171,6 @@ export const MOCK_PRODUCTS: InsuranceProduct[] = [
     ],
     active: true,
   },
-  // ── Octamile — Motor ────────────────────────────────────────────────────────
   {
     code: 'octamile.motor.comprehensive.v1',
     displayName: 'Comprehensive Motor',
@@ -216,7 +208,6 @@ export const MOCK_PRODUCTS: InsuranceProduct[] = [
     ],
     active: true,
   },
-  // ── Octamile — Third-party Motor (illustrative low-cost) ─────────────────────
   {
     code: 'octamile.motor.thirdparty.v1',
     displayName: 'Third-Party Motor',
@@ -253,7 +244,6 @@ export const MOCK_PRODUCTS: InsuranceProduct[] = [
     ],
     active: true,
   },
-  // ── Octamile — Goods-in-Transit ─────────────────────────────────────────────
   {
     code: 'octamile.git.parcel.v1',
     displayName: 'Parcel Protection (GIT)',
@@ -289,7 +279,6 @@ export const MOCK_PRODUCTS: InsuranceProduct[] = [
   },
 ];
 
-// ── Policy wallet (mock) ──────────────────────────────────────────────────────
 export const MOCK_POLICIES: Policy[] = [
   {
     id: 'pol-001',

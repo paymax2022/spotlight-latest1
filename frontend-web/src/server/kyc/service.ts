@@ -17,7 +17,7 @@
 import { createHmac } from 'crypto';
 import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
-import { getRequiredEnv, getOptionalEnv } from '@/src/lib/config/env';
+import { getRequiredEnv, getOptionalEnv } from '@/src/lib/config';
 import type {
   KycProfile,
   KycStatus,
@@ -27,9 +27,7 @@ import type {
 } from './types';
 import { VALID_TRANSITIONS } from './types';
 
-// ---------------------------------------------------------------------------
 // Internal helpers
-// ---------------------------------------------------------------------------
 
 /** Hash a document number so no PII is stored in the DB. */
 function hashDocument(documentNumber: string, userId: string): string {
@@ -87,9 +85,7 @@ async function appendKycEvent(params: {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Public API
-// ---------------------------------------------------------------------------
 
 /** Fetch the KYC profile for a user. Returns tier=0/status=unverified for new users. */
 export async function getKycProfile(userId: string): Promise<KycProfile> {
@@ -120,7 +116,6 @@ export async function initiateKyc(
 ): Promise<KycProfile> {
   const current = await getKycProfile(userId);
 
-  // Idempotency: already pending → return current state
   if (current.kyc_status === 'pending') return current;
 
   assertValidTransition(current.kyc_status, 'pending');
@@ -238,7 +233,6 @@ export async function failKyc(
 export async function claimTier0(userId: string): Promise<KycProfile> {
   const supabase = createAdminClient();
 
-  // Fetch both KYC state and the required profile fields in one query
   const { data, error: fetchError } = await supabase
     .from('user_profiles')
     .select('kyc_tier, kyc_status, kyc_requested_tier, phone_verified, kyc_submitted_at, kyc_verified_at, document_type, date_of_birth, phone, email')

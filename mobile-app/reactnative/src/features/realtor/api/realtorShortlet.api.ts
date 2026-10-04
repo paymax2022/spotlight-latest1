@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Shortlet booking data layer (V3) ─────────────────────
 // Short-stay offering mode. Mock-flagged. Availability is transaction-safe in
 // spirit: a confirmed booking blocks its nights (enforced server-side in prod).
 

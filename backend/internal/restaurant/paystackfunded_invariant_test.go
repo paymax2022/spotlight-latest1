@@ -11,7 +11,6 @@ package restaurant
 // would happily populate it from raw client input, and nothing else in this
 // package would stop it from being wired through — this test exists so that
 // change fails loudly here instead of shipping silently.
-//
 // Package restaurant (not restaurant_test): PlaceOrderRequest is exported, but
 // keeping this beside the money-path code it protects is deliberate.
 

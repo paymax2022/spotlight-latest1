@@ -5,12 +5,13 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/go-common/strutil"
 )
 
 // admin_taxonomy_handler.go — GET/POST/PATCH /admin/taxonomy/categories(/:id)
 // (MKT-007). CRUD over the pre-existing mkt_categories table (see
 // repository_admin_taxonomy.go for the schema note).
-//
 // ⚠️ Response shape deliberately does NOT use respond() (the package's usual
 // {"data": ...} envelope) for the single-object routes. frontend-admin's
 // marketplaceAdminService.ts createCategory/getCategory/updateCategory/
@@ -108,7 +109,7 @@ func (h *Handler) AdminCreateCategory(c *gin.Context) {
 	}
 	_ = h.svc.writeAudit(c.Request.Context(), AuditEntry{
 		AdminID: uid, Action: "mkt.category.create", TargetType: "category", TargetID: cat.ID,
-		ReasonCode: orStr(body.ReasonCode, "category created"),
+		ReasonCode: strutil.Or(body.ReasonCode, "category created"),
 		AfterState: map[string]any{"name": cat.Name, "slug": cat.Slug, "risk_tier": cat.RiskTier, "commission_bps": cat.CommissionBps, "is_active": cat.IsActive},
 	})
 	c.JSON(http.StatusOK, cat)

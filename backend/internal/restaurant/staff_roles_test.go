@@ -3,7 +3,6 @@ package restaurant
 import "testing"
 
 // Authorization matrix for per-outlet staff roles (foodhub A18).
-//
 // These are exhaustive on purpose. Authorization bugs do not announce themselves
 // — nothing crashes when a cashier can edit the payout account — so every
 // (role, permission) pair is asserted rather than spot-checked.

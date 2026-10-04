@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Search filter store ──────────────────────────────────
 // Lightweight zustand store (matches src/store/authStore.ts usage) so the search
 // results screen and the filter modal share one source of filter truth without
 // threading complex objects through router params.

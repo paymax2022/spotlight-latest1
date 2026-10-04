@@ -115,7 +115,6 @@ func TestIsOpenAt_24h(t *testing.T) {
 			t.Errorf("24h window should be open at %02d:00", h)
 		}
 	}
-	// ...but not the next day.
 	if isOpenAt(hours, at(2026, 7, 28, 12, 0), time.UTC) {
 		t.Error("24h Monday window must not leak into Tuesday")
 	}

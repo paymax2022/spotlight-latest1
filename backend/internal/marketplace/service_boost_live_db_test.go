@@ -1,12 +1,10 @@
 package marketplace
 
-// ---------------------------------------------------------------------------
 // LIVE-DB UAT for the Marketplace Boost money path (docs/qa/modules/marketplace.md
 // §4 P0 cases MKT-INT-001, MKT-INV-001/002/003/004, MKT-SEC-001) plus a new case
 // proving the tier-limit gate added to close the §6 "Tier/KYC gate" FINDING
 // (PurchaseBoost previously called s.ledger.Debit directly with no tier-limit/KYC
 // gate at all).
-//
 // service_boost_test.go already covers the ledger EFFECT (postBoostCharge /
 // postBoostRefund) against an in-memory fake boostLedger — real, but not a
 // live-DB money-path UAT case: it never exercises the real Postgres ledger
@@ -17,12 +15,9 @@ package marketplace
 // ledger.NewService(ledger.NewRepository(pool), nil), wallets funded through
 // the ledger (never a direct balance UPDATE — wallet balances are a ledger
 // projection, never mutated directly, per CLAUDE.md).
-//
 // Run:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./internal/marketplace/... -run TestLiveDB -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -39,8 +34,6 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/testsupport"
 )
-
-// ── pool / service wiring ─────────────────────────────────────────────────
 
 func boostTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -68,8 +61,6 @@ func newBoostTestService(pool *pgxpool.Pool) (*Service, *ledger.Service) {
 	svc := NewService(pool, led, nil).WithTiers(tiers.NewService(pool))
 	return svc, led
 }
-
-// ── fixture helpers ─────────────────────────────────────────────────────────
 
 // seedBoostSeller inserts a throwaway auth.users + user_profiles row at the
 // given KYC tier and registers cleanup. Tier3 ("full KYC") carries an
@@ -151,16 +142,45 @@ func boostWalletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, u
 	return bal
 }
 
-func boostStandingBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, accountType string) int64 {
+// boostCommissionLegKobo returns the kobo ONE boost's deterministic ledger key moved on
+// the standing commission account, read from that posting's own leg: the CREDIT side
+// written by postBoostCharge (":credit"), or the REVERSAL_CREDIT side written by
+// postBoostRefund's PostReversalPair (":rev_credit"). 0 means the leg was never posted.
+// Deliberately NOT a before/after read of the account's BALANCE. commission is a single
+// global standing account also moved by stays, insurance, creators, finance commissions
+// and the admin-txn suites, and `go test ./...` runs packages concurrently against one
+// database (make test / CI) — a balance delta flakes on their postings and misattributes
+// them to this boost. A boost's charge/refund keys are deterministic and its seller and
+// listing are seeded fresh per test, so the key scopes the read to exactly what this test
+// caused, and its absence just as exactly.
+func boostCommissionLegKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, led *ledger.Service, idempotencyKey, entryType string) int64 {
 	t.Helper()
-	var bal int64
-	if err := pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(CASE WHEN e.type IN ('CREDIT','REVERSAL_DEBIT') THEN e.amount_kobo ELSE -e.amount_kobo END),0)
-		FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
-		WHERE a.user_id IS NULL AND a.type=$1`, accountType).Scan(&bal); err != nil {
-		t.Fatalf("standing balance for %s: %v", accountType, err)
+	acc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountCommission)
+	if err != nil {
+		t.Fatalf("commission account: %v", err)
 	}
-	return bal
+	var moved int64
+	if err := pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries
+		  WHERE idempotency_key=$1 AND type=$2 AND account_id=$3`,
+		idempotencyKey, entryType, acc.ID).Scan(&moved); err != nil {
+		t.Fatalf("read commission leg %s: %v", idempotencyKey, err)
+	}
+	return moved
+}
+
+// boostChargeCommissionKobo is the kobo a boost charge credited to the commission
+// (ad-revenue) standing account — the CREDIT leg of the pair postBoostCharge posts.
+func boostChargeCommissionKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, led *ledger.Service, chargeKey string) int64 {
+	t.Helper()
+	return boostCommissionLegKobo(t, ctx, pool, led, chargeKey+":credit", "CREDIT")
+}
+
+// boostRefundCommissionKobo is the kobo a boost's auto-refund drained from the commission
+// standing account — the REVERSAL_CREDIT leg of the pair postBoostRefund posts.
+func boostRefundCommissionKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, led *ledger.Service, refundKey string) int64 {
+	t.Helper()
+	return boostCommissionLegKobo(t, ctx, pool, led, refundKey+":rev_credit", "REVERSAL_CREDIT")
 }
 
 func boostRowCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, listingID string) int {
@@ -187,8 +207,6 @@ func ledgerEntryCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ref
 // trips the tier gate in the six cases that are not the tier-gate case itself.
 const startTierPriceKobo int64 = 50000
 
-// ── MKT-INT-001 ──────────────────────────────────────────────────────────────
-
 // TestLiveDB_PurchaseBoost_DebitsWalletActivatesBoost_BalancedLedger covers
 // MKT-INT-001: boost purchase debits the seller wallet, activates the boost,
 // and posts a balanced ledger debit into AccountCommission.
@@ -203,7 +221,6 @@ func TestLiveDB_PurchaseBoost_DebitsWalletActivatesBoost_BalancedLedger(t *testi
 	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*10)
 
 	sellerBalBefore := boostWalletBalance(t, ctx, pool, seller)
-	commissionBefore := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
 
 	boost, err := svc.PurchaseBoost(ctx, seller, "int001-"+listingID, CreateBoostInput{ListingID: listingID, Tier: "start"})
 	if err != nil {
@@ -221,19 +238,16 @@ func TestLiveDB_PurchaseBoost_DebitsWalletActivatesBoost_BalancedLedger(t *testi
 	}
 
 	sellerBalAfter := boostWalletBalance(t, ctx, pool, seller)
-	commissionAfter := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
 	if sellerBalBefore-sellerBalAfter != startTierPriceKobo {
 		t.Errorf("seller debited %d, want %d", sellerBalBefore-sellerBalAfter, startTierPriceKobo)
 	}
-	if commissionAfter-commissionBefore != startTierPriceKobo {
-		t.Errorf("commission credited %d, want %d (balanced double-entry)", commissionAfter-commissionBefore, startTierPriceKobo)
+	if got := boostChargeCommissionKobo(t, ctx, pool, led, wantRef); got != startTierPriceKobo {
+		t.Errorf("commission credited %d under this charge key, want %d (balanced double-entry)", got, startTierPriceKobo)
 	}
 	if n := boostRowCount(t, ctx, pool, listingID); n != 1 {
 		t.Errorf("mkt_boosts rows for listing = %d, want 1", n)
 	}
 }
-
-// ── MKT-INV-001 ──────────────────────────────────────────────────────────────
 
 // TestLiveDB_PurchaseBoost_ReplaySameIdempotencyKey_SingleCharge covers
 // MKT-INV-001: replaying the same Idempotency-Key returns the cached 201 body
@@ -249,7 +263,6 @@ func TestLiveDB_PurchaseBoost_ReplaySameIdempotencyKey_SingleCharge(t *testing.T
 	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*10)
 
 	key := "inv001-" + listingID
-	commissionBefore := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
 
 	first, err := svc.PurchaseBoost(ctx, seller, key, CreateBoostInput{ListingID: listingID, Tier: "start"})
 	if err != nil {
@@ -270,16 +283,15 @@ func TestLiveDB_PurchaseBoost_ReplaySameIdempotencyKey_SingleCharge(t *testing.T
 		t.Errorf("replay LedgerChargeRef = %q, want %q (same deterministic charge key)", second.LedgerChargeRef, first.LedgerChargeRef)
 	}
 
-	commissionAfter := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
-	if commissionAfter-commissionBefore != startTierPriceKobo {
-		t.Errorf("commission credited %d across both calls, want exactly %d once (no double charge)", commissionAfter-commissionBefore, startTierPriceKobo)
+	commissionAfter := boostChargeCommissionKobo(t, ctx, pool, led,
+		boostChargeKey(seller, listingID, "start"))
+	if commissionAfter != startTierPriceKobo {
+		t.Errorf("commission credited %d under this charge key, want exactly %d once (no double charge)", commissionAfter, startTierPriceKobo)
 	}
 	if n := ledgerEntryCount(t, ctx, pool, first.LedgerChargeRef); n != 2 { // one DEBIT leg + one CREDIT leg = balanced pair, posted once
 		t.Errorf("ledger_entries for charge ref = %d, want exactly 2 (one balanced posting, not two)", n)
 	}
 }
-
-// ── MKT-INV-002 ──────────────────────────────────────────────────────────────
 
 // TestLiveDB_PurchaseBoost_MissingIdempotencyKey covers MKT-INV-002: a missing
 // Idempotency-Key is rejected before any ledger posting.
@@ -293,8 +305,6 @@ func TestLiveDB_PurchaseBoost_MissingIdempotencyKey(t *testing.T) {
 	listingID := seedActiveListing(t, ctx, pool, seller, catID)
 	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*10)
 
-	commissionBefore := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
-
 	_, err := svc.PurchaseBoost(ctx, seller, "", CreateBoostInput{ListingID: listingID, Tier: "start"})
 	if !errors.Is(err, error(ErrIdemMissing)) {
 		var ce *CodedError
@@ -305,13 +315,10 @@ func TestLiveDB_PurchaseBoost_MissingIdempotencyKey(t *testing.T) {
 	if n := boostRowCount(t, ctx, pool, listingID); n != 0 {
 		t.Errorf("mkt_boosts rows = %d, want 0", n)
 	}
-	commissionAfter := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
-	if commissionAfter != commissionBefore {
-		t.Errorf("commission balance moved by %d, want 0 (no ledger posting)", commissionAfter-commissionBefore)
+	if got := boostChargeCommissionKobo(t, ctx, pool, led, boostChargeKey(seller, listingID, "start")); got != 0 {
+		t.Errorf("commission moved by %d, want 0 (no ledger posting)", got)
 	}
 }
-
-// ── MKT-INV-003 ──────────────────────────────────────────────────────────────
 
 // TestLiveDB_RejectBoost_AutoRefundBalancedReversal covers MKT-INV-003: admin
 // reject reverses the exact kobo via a balanced reversal, stamps refund_ref,
@@ -333,7 +340,6 @@ func TestLiveDB_RejectBoost_AutoRefundBalancedReversal(t *testing.T) {
 	}
 
 	sellerBalBefore := boostWalletBalance(t, ctx, pool, seller)
-	commissionBefore := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
 
 	rejected, err := svc.RejectBoost(ctx, admin, boost.ID, "policy_violation")
 	if err != nil {
@@ -350,12 +356,11 @@ func TestLiveDB_RejectBoost_AutoRefundBalancedReversal(t *testing.T) {
 	}
 
 	sellerBalAfter := boostWalletBalance(t, ctx, pool, seller)
-	commissionAfter := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
 	if sellerBalAfter-sellerBalBefore != startTierPriceKobo {
 		t.Errorf("seller credited back %d, want %d", sellerBalAfter-sellerBalBefore, startTierPriceKobo)
 	}
-	if commissionBefore-commissionAfter != startTierPriceKobo {
-		t.Errorf("commission debited back %d, want %d (balanced reversal)", commissionBefore-commissionAfter, startTierPriceKobo)
+	if got := boostRefundCommissionKobo(t, ctx, pool, led, boostRefundKey(boost.ID)); got != startTierPriceKobo {
+		t.Errorf("commission drained %d by the reversal, want %d (balanced reversal)", got, startTierPriceKobo)
 	}
 
 	var auditCount int
@@ -367,14 +372,11 @@ func TestLiveDB_RejectBoost_AutoRefundBalancedReversal(t *testing.T) {
 	}
 }
 
-// ── Coordinator-flagged RejectBoost fixes (UAT follow-up) ───────────────────
-//
 // Three sibling agents independently found RejectBoost's OLD two-UPDATE
 // sequence (status -> rejected_with_reason, committed; THEN post the refund;
 // THEN status -> auto_refunded) was not atomic/resumable. The three tests
 // below reproduce each finding against the FIXED RejectBoost and prove it
 // closed:
-//
 //  1. seller with no ledger_accounts row -> refund fails -> boost must stay
 //     at its ORIGINAL status (never stranded at rejected_with_reason).
 //  2. a boost already stranded at rejected_with_reason with no refund posted
@@ -505,8 +507,6 @@ func TestLiveDB_RejectBoost_ResumesFromStrandedRejectedWithReasonRow(t *testing.
 	}
 }
 
-// ── MKT-FSM-015 ──────────────────────────────────────────────────────────────
-
 // TestLiveDB_RejectBoost_AlreadyAutoRefunded_IsIdempotentNoOp covers the AUTHZ
 // agent's lower-severity finding: re-rejecting an already-auto_refunded boost
 // must return the existing 200 receipt (idempotent no-op) per
@@ -532,7 +532,6 @@ func TestLiveDB_RejectBoost_AlreadyAutoRefunded_IsIdempotentNoOp(t *testing.T) {
 		t.Fatalf("first RejectBoost: %v", err)
 	}
 
-	commissionBefore := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
 	sellerBalBefore := boostWalletBalance(t, ctx, pool, seller)
 
 	second, err := svc.RejectBoost(ctx, admin, boost.ID, "policy_violation")
@@ -549,17 +548,20 @@ func TestLiveDB_RejectBoost_AlreadyAutoRefunded_IsIdempotentNoOp(t *testing.T) {
 		t.Errorf("RefundRef changed across calls: first=%v second=%v", first.RefundRef, second.RefundRef)
 	}
 
-	commissionAfter := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
 	sellerBalAfter := boostWalletBalance(t, ctx, pool, seller)
-	if commissionAfter != commissionBefore {
-		t.Errorf("commission balance moved by %d on the no-op re-reject, want 0 (no second refund)", commissionAfter-commissionBefore)
+	// The refund key is deterministic, so a second refund attempt could only ever have
+	// re-posted under this same key — which the ledger's unique constraint refuses. One
+	// balanced pair under the key is the proof that no second refund was posted.
+	if got := boostRefundCommissionKobo(t, ctx, pool, led, boostRefundKey(boost.ID)); got != startTierPriceKobo {
+		t.Errorf("commission drained %d by the refund, want exactly %d once (no second refund)", got, startTierPriceKobo)
+	}
+	if n := ledgerEntryCount(t, ctx, pool, boostRefundKey(boost.ID)); n != 2 {
+		t.Errorf("ledger_entries for the refund ref = %d, want exactly 2 (one balanced reversal, not two)", n)
 	}
 	if sellerBalAfter != sellerBalBefore {
 		t.Errorf("seller wallet moved by %d on the no-op re-reject, want 0", sellerBalAfter-sellerBalBefore)
 	}
 }
-
-// ── MKT-INV-004 ──────────────────────────────────────────────────────────────
 
 // TestLiveDB_PurchaseBoost_InsufficientBalance_FailsClosed covers MKT-INV-004:
 // insufficient wallet balance fails closed — no boost row, no partial ledger entry.
@@ -575,8 +577,6 @@ func TestLiveDB_PurchaseBoost_InsufficientBalance_FailsClosed(t *testing.T) {
 	// on ledger balance, not on the Tier3 daily limit (which is unlimited).
 	fundBoostWallet(t, ctx, led, seller, 4_000_000)
 
-	commissionBefore := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
-
 	_, err := svc.PurchaseBoost(ctx, seller, "inv004-"+listingID, CreateBoostInput{ListingID: listingID, Tier: "enterprise"})
 	var ce *CodedError
 	if !errors.As(err, &ce) || ce.Code != CodeInsufficientWallet {
@@ -588,13 +588,10 @@ func TestLiveDB_PurchaseBoost_InsufficientBalance_FailsClosed(t *testing.T) {
 	if n := boostRowCount(t, ctx, pool, listingID); n != 0 {
 		t.Errorf("mkt_boosts rows = %d, want 0", n)
 	}
-	commissionAfter := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
-	if commissionAfter != commissionBefore {
-		t.Errorf("commission balance moved by %d, want 0 (no partial ledger entry)", commissionAfter-commissionBefore)
+	if got := boostChargeCommissionKobo(t, ctx, pool, led, boostChargeKey(seller, listingID, "enterprise")); got != 0 {
+		t.Errorf("commission moved by %d, want 0 (no partial ledger entry)", got)
 	}
 }
-
-// ── MKT-SEC-001 ──────────────────────────────────────────────────────────────
 
 // TestLiveDB_PurchaseBoost_ConcurrentDuplicate_SingleCharge covers MKT-SEC-001:
 // two GENUINELY concurrent PurchaseBoost calls (real goroutines + sync.WaitGroup)
@@ -609,8 +606,6 @@ func TestLiveDB_PurchaseBoost_ConcurrentDuplicate_SingleCharge(t *testing.T) {
 	catID := seedBoostCategory(t, ctx, pool)
 	listingID := seedActiveListing(t, ctx, pool, seller, catID)
 	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*10)
-
-	commissionBefore := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
 
 	const n = 2
 	var wg sync.WaitGroup
@@ -638,17 +633,16 @@ func TestLiveDB_PurchaseBoost_ConcurrentDuplicate_SingleCharge(t *testing.T) {
 	}
 
 	// The money-safety invariant: exactly ONE charge posted, regardless of how many
-	// callers "succeeded" at the application layer.
-	commissionAfter := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
-	if commissionAfter-commissionBefore != startTierPriceKobo {
-		t.Fatalf("commission credited %d across both concurrent calls, want exactly %d once", commissionAfter-commissionBefore, startTierPriceKobo)
+	// callers "succeeded" at the application layer. The charge key is deterministic, so
+	// a losing caller's replay collides on the ledger's unique constraint instead of
+	// posting a second credit.
+	if got := boostChargeCommissionKobo(t, ctx, pool, led, boostChargeKey(seller, listingID, "start")); got != startTierPriceKobo {
+		t.Fatalf("commission credited %d under this charge key, want exactly %d once", got, startTierPriceKobo)
 	}
 	if n := boostRowCount(t, ctx, pool, listingID); n < 1 {
 		t.Fatalf("mkt_boosts rows = %d, want at least 1 (the winner's row)", n)
 	}
 }
-
-// ── NEW: tier-limit gate (Task 1 of this UAT pass) ──────────────────────────
 
 // TestLiveDB_PurchaseBoost_TierGateRefusesTier0Seller proves the fail-closed
 // tier-limit gate added to close §6's "Tier/KYC gate (FINDING)" actually
@@ -668,7 +662,6 @@ func TestLiveDB_PurchaseBoost_TierGateRefusesTier0Seller(t *testing.T) {
 	fundBoostWallet(t, ctx, led, seller, startTierPriceKobo*1000)
 
 	sellerBalBefore := boostWalletBalance(t, ctx, pool, seller)
-	commissionBefore := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
 
 	_, err := svc.PurchaseBoost(ctx, seller, "tiergate-"+listingID, CreateBoostInput{ListingID: listingID, Tier: "start"})
 	if err == nil {
@@ -687,12 +680,11 @@ func TestLiveDB_PurchaseBoost_TierGateRefusesTier0Seller(t *testing.T) {
 
 	// No ledger posting at all — the gate runs BEFORE postBoostCharge.
 	sellerBalAfter := boostWalletBalance(t, ctx, pool, seller)
-	commissionAfter := boostStandingBalance(t, ctx, pool, string(ledger.AccountCommission))
 	if sellerBalAfter != sellerBalBefore {
 		t.Errorf("seller wallet moved by %d, want 0 (tier gate must run before any ledger posting)", sellerBalAfter-sellerBalBefore)
 	}
-	if commissionAfter != commissionBefore {
-		t.Errorf("commission balance moved by %d, want 0", commissionAfter-commissionBefore)
+	if got := boostChargeCommissionKobo(t, ctx, pool, led, boostChargeKey(seller, listingID, "start")); got != 0 {
+		t.Errorf("commission moved by %d, want 0", got)
 	}
 	if n := boostRowCount(t, ctx, pool, listingID); n != 0 {
 		t.Errorf("mkt_boosts rows = %d, want 0 (refused before the boost row is ever created)", n)
@@ -728,8 +720,6 @@ func TestLiveDB_PurchaseBoost_NilTierEnforcer_FailsClosed(t *testing.T) {
 	}
 }
 
-// ── CancelBoost: same atomicity/resumability fix as RejectBoost ────────────
-//
 // The coordinator independently spotted that CancelBoost (the seller-initiated
 // counterpart to RejectBoost) had the IDENTICAL non-atomic two-UPDATE pattern:
 // status -> cancelled_by_seller committed standalone, THEN the refund posted,

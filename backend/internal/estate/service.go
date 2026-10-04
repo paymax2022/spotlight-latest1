@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 	platformRedis "spotlight/backend/internal/platform/redis"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // AddressGeocoder resolves a typed address to a pin + Plus Code. Satisfied by
@@ -200,7 +202,6 @@ func (s *Service) CreateElection(ctx context.Context, estateID, creatorID string
 // CastVote casts a vote in an open election using a Redlock-protected atomic check.
 // Enforces one-vote-per-resident via UNIQUE(election_id, voter_id).
 func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID string, req CastVoteRequest) (*Vote, error) {
-	// Verify voter is a resident.
 	if err := s.assertResident(ctx, estateID, voterID); err != nil {
 		return nil, err
 	}
@@ -217,7 +218,6 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 	if !elig.Eligible {
 		return nil, fmt.Errorf("estate: not eligible to vote in this election: %s", strings.Join(elig.Reasons, ", "))
 	}
-	// Verify election is open.
 	var status string
 	var startsAt, endsAt time.Time
 	if err := s.db.QueryRow(ctx, `SELECT status, starts_at, ends_at FROM elections WHERE id=$1 AND estate_id=$2`, electionID, estateID).
@@ -296,8 +296,7 @@ func (s *Service) GetResults(ctx context.Context, estateID, electionID string) (
 	return out, rows.Err()
 }
 
-// ── Block 28: Security gate / guard app ───────────────────────────────────────
-
+// ListGates — Block 28: Security gate / guard app
 // ListGates returns all active gates for an estate.
 func (s *Service) ListGates(ctx context.Context, estateID string) ([]Gate, error) {
 	const q = `SELECT id, estate_id, name, gate_type, active, created_at FROM estate_gates WHERE estate_id=$1 AND active=TRUE ORDER BY name`
@@ -416,7 +415,6 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 
 // CheckOutVisitor records a gate departure.
 func (s *Service) CheckOutVisitor(ctx context.Context, estateID, guardID, codeID, gateID string) error {
-	// Verify code belongs to this estate.
 	var cnt int
 	if err := s.db.QueryRow(ctx,
 		`SELECT COUNT(*) FROM visitor_access_codes WHERE id=$1 AND estate_id=$2`, codeID, estateID,
@@ -440,19 +438,17 @@ func (s *Service) SubmitIncidentReport(ctx context.Context, estateID, guardID st
 		Escalated: req.Escalated, CreatedAt: time.Now(),
 	}
 	const q = `INSERT INTO gate_incident_reports (id, estate_id, guard_id, gate_id, incident_type, description, evidence_url, escalated) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
-	_, err := s.db.Exec(ctx, q, rep.ID, rep.EstateID, rep.GuardID, nilIfEmpty(rep.GateID), rep.IncidentType, rep.Description, nilIfEmpty(rep.EvidenceURL), rep.Escalated)
+	_, err := s.db.Exec(ctx, q, rep.ID, rep.EstateID, rep.GuardID, dbutil.StrPtr(rep.GateID), rep.IncidentType, rep.Description, dbutil.StrPtr(rep.EvidenceURL), rep.Escalated)
 	return rep, err
 }
 
 // HandoverShift closes the current shift and optionally starts the next.
 func (s *Service) HandoverShift(ctx context.Context, estateID, guardID string, req HandoverRequest) (*GuardShift, error) {
-	// Close existing open shift if any.
 	_, _ = s.db.Exec(ctx,
 		`UPDATE guard_shifts SET ended_at=NOW(), handover_notes=$1, relieved_by=$2
 		WHERE estate_id=$3 AND guard_id=$4 AND ended_at IS NULL`,
-		req.HandoverNotes, nilIfEmpty(req.RelievedBy), estateID, guardID,
+		req.HandoverNotes, dbutil.StrPtr(req.RelievedBy), estateID, guardID,
 	)
-	// Open new shift.
 	shift := &GuardShift{
 		ID: uuid.New().String(), GuardID: guardID, GateID: req.GateID,
 		EstateID: estateID, StartedAt: time.Now(), CreatedAt: time.Now(),
@@ -552,16 +548,6 @@ func denyReason(c *AccessCode) string {
 	return "code is not yet valid"
 }
 
-// nilIfEmpty returns nil if s is empty, otherwise returns &s.
-func nilIfEmpty(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-// ── Block 27: Extended visitor access codes ───────────────────────────────────
-
 // generateNumericCode produces a random 6-digit string, retrying on collision.
 func generateNumericCode() string {
 	return fmt.Sprintf("%06d", uuid.New().ID()%1_000_000)
@@ -608,7 +594,6 @@ func (s *Service) CreateAccessCode(ctx context.Context, estateID, userID string,
 			req.CodeType, numeric, qrID, req.ValidFrom, req.ValidUntil, req.Recurrence, req.MaxUses,
 		)
 		if err != nil {
-			// If duplicate numeric code, retry.
 			continue
 		}
 		code = c
@@ -710,7 +695,6 @@ func (s *Service) GetCheckinHistory(ctx context.Context, estateID, userID, codeI
 	if _, err := s.getResidentID(ctx, estateID, userID); err != nil {
 		return nil, err
 	}
-	// Verify the code belongs to this user.
 	var ownerID string
 	if err := s.db.QueryRow(ctx,
 		`SELECT issued_by FROM visitor_access_codes WHERE id=$1 AND estate_id=$2`, codeID, estateID,
@@ -734,8 +718,6 @@ func (s *Service) GetCheckinHistory(ctx context.Context, estateID, userID, codeI
 	}
 	return out, rows.Err()
 }
-
-// ── Block 26: Resident home dashboard ─────────────────────────────────────────
 
 // alertSeverity maps an emergency-alert kind to a dashboard severity bucket.
 // Pure (no DB) so the mapping is unit-testable.
@@ -850,8 +832,6 @@ SELECT
 	return dash, nil
 }
 
-// ── Block 25: Resident profiles ───────────────────────────────────────────────
-
 // getResidentID resolves the estate_residents.id for a given (estateID, userID) pair.
 // Fails closed on banned/deleted membership, mirroring assertRoles — this was
 // previously missing here, which let a banned or deleted member keep reading/
@@ -888,8 +868,8 @@ func (s *Service) UpsertProfile(ctx context.Context, estateID, userID string, re
 		req.OccupancyType = "resident"
 	}
 
-	ecJSON, _ := marshalJSON(req.EmergencyContact)
-	nokJSON, _ := marshalJSON(req.NextOfKin)
+	ecJSON, _ := json.Marshal(req.EmergencyContact)
+	nokJSON, _ := json.Marshal(req.NextOfKin)
 
 	p := &ResidentProfile{}
 	const q = `
@@ -932,7 +912,6 @@ func (s *Service) GetProfile(ctx context.Context, estateID, userID string) (*Res
 	if err := s.db.QueryRow(ctx, q, resID).Scan(&p.ID, &p.ResidentID, &p.Bio, &p.ProfilePhotoURL,
 		&p.Phone, &p.AltPhone, &p.OccupancyType, &p.Visibility, &p.CreatedAt, &p.UpdatedAt,
 	); err != nil {
-		// Return an empty profile if none exists yet.
 		return &ResidentProfile{ResidentID: resID, Visibility: "members", OccupancyType: "resident"}, nil
 	}
 	return p, nil
@@ -1124,13 +1103,6 @@ func (s *Service) GetResidentCard(ctx context.Context, estateID, userID string) 
 	return &card, nil
 }
 
-// marshalJSON serialises a value to JSON bytes for JSONB columns.
-func marshalJSON(v any) ([]byte, error) {
-	return json.Marshal(v)
-}
-
-// ── Block 24: Onboarding & property selection ─────────────────────────────────
-
 // GenerateInviteCode creates a shareable join code (estate admin only).
 func (s *Service) GenerateInviteCode(ctx context.Context, estateID, adminID string, req GenerateInviteCodeRequest) (*InviteCode, error) {
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
@@ -1183,7 +1155,6 @@ func (s *Service) JoinWithInviteCode(ctx context.Context, userID, code string) (
 		return nil, fmt.Errorf("estate: invite code has reached maximum uses")
 	}
 
-	// Increment use count.
 	if _, err := tx.Exec(ctx, `UPDATE estate_invite_codes SET used_count=used_count+1 WHERE id=$1`, ic.ID); err != nil {
 		return nil, fmt.Errorf("estate: update invite code: %w", err)
 	}
@@ -1477,10 +1448,15 @@ func (s *Service) ReviewTenancyRequest(ctx context.Context, requestID, landlordI
 			`SELECT estate_id FROM estate_properties WHERE id=$1`, tr.PropertyID,
 		).Scan(&estateIDForProp)
 		if estateIDForProp != "" {
+			// estate_residents.role CHECK allows only 'resident'/'estate_admin';
+			// an approved tenant is admitted as a 'resident' (the tenant/owner
+			// distinction lives in resident_profiles.occupancy_type). 'tenant'
+			// here violated the CHECK, so the insert always failed and — the error
+			// being discarded — the approved tenant was never admitted.
 			_, _ = s.db.Exec(ctx,
 				`INSERT INTO estate_residents (id, estate_id, user_id, unit, role)
-				 VALUES ($1,$2,$3,'','tenant')
-				 ON CONFLICT (estate_id, user_id) DO UPDATE SET role='tenant'`,
+				 VALUES ($1,$2,$3,'','resident')
+				 ON CONFLICT (estate_id, user_id) DO UPDATE SET role='resident'`,
 				uuid.New().String(), estateIDForProp, tr.TenantID,
 			)
 		}

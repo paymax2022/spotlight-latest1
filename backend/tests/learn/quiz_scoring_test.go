@@ -1,8 +1,6 @@
 package learn_test
 
-// ---------------------------------------------------------------------------
 // Learn Center — quiz-scoring invariants (go-live gate) — DB-FREE subset.
-//
 // learn.Service takes a concrete *pgxpool.Pool (see
 // backend/internal/learn/service.go: NewService(db *pgxpool.Pool, audit Auditor)
 // *Service), so SubmitQuiz/GetQuiz cannot be exercised end-to-end without a live
@@ -12,11 +10,9 @@ package learn_test
 // the production source (cited inline) and asserting the scoring/serialisation
 // invariants against them. Any drift between this file and the cited source is
 // the bug the ledger-auditor/security-reviewer subagents should catch.
-//
 // Live-DB tests that actually call *learn.Service (GetQuiz/SubmitQuiz) against a
 // migrated Postgres live in live_db_integration_test.go (skip-gated on
 // TEST_DATABASE_URL — see that file's bring-up note).
-// ---------------------------------------------------------------------------
 
 import (
 	"testing"
@@ -24,11 +20,8 @@ import (
 	"spotlight/backend/internal/learn"
 )
 
-// ---------------------------------------------------------------------------
 // QuizPassRatio — the exported pass-threshold constant.
 // Source: backend/internal/learn/model.go:100
-//   `const QuizPassRatio = 0.7`
-// ---------------------------------------------------------------------------
 
 // TestQuizPassRatio_IsSevenTenths locks the exported constant so a silent
 // tweak (e.g. someone "helpfully" lowering the bar to make quizzes easier)
@@ -41,23 +34,11 @@ func TestQuizPassRatio_IsSevenTenths(t *testing.T) {
 	}
 }
 
-// scoreQuiz mirrors Service.SubmitQuiz's exact scoring loop and pass formula,
-// transcribed verbatim from backend/internal/learn/service.go:240-254:
-//
-//	total := len(quiz.Questions)
-//	score := 0
-//	for _, qq := range quiz.Questions {
-//	    chosen := answers[qq.ID]
-//	    if chosen == "" { continue }
-//	    for _, o := range qq.Options {
-//	        if o.ID == chosen && o.Correct { score++; break }
-//	    }
-//	}
-//	passed := total > 0 && float64(score)/float64(total) >= QuizPassRatio
-//
-// This helper operates on the SAME learn.QuizQuestion/QuizOption/QuizAnswers
-// exported types SubmitQuiz uses internally, so the transcription cannot drift
-// on shape — only on formula, which is what these tests lock.
+// scoreQuiz mirrors Service.SubmitQuiz's exact scoring loop and pass formula
+// (backend/internal/learn/service.go). It operates on the SAME
+// learn.QuizQuestion/QuizOption/QuizAnswers exported types SubmitQuiz uses
+// internally, so the transcription cannot drift on shape — only on formula,
+// which is what these tests lock.
 func scoreQuiz(questions []learn.QuizQuestion, answers learn.QuizAnswers) (score, total int, passed bool) {
 	total = len(questions)
 	for _, qq := range questions {
@@ -232,7 +213,6 @@ func TestSubmitQuiz_ClientCannotForceCorrectByGuessingIsCorrectShape(t *testing.
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Answer-key scrubbing — the client-facing quiz payload must never leak
 // is_correct. Source: backend/internal/learn/service.go
 //   GetQuiz (L157-167) -> loadQuiz(ctx, quizID, withKey=false) (L172)
@@ -240,7 +220,6 @@ func TestSubmitQuiz_ClientCannotForceCorrectByGuessingIsCorrectShape(t *testing.
 // SubmitQuiz is the ONLY caller that passes withKey=true (L236), and its
 // result type (QuizResult) has no Options/answer-key field at all
 // (model.go:86-90: Score/Total/Passed only).
-// ---------------------------------------------------------------------------
 
 // scrubOptions mirrors options()'s exact scrubbing branch (service.go:207-225):
 // every option's Correct flag is forced false when withKey is false.

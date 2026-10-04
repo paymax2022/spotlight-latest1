@@ -1,31 +1,24 @@
 package fx_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB proof that the two FX surfaces price from ONE table (ADR-032).
-//
 // Before ADR-032 the legacy wallet FX service read its markup from
 // public.fx_markup_rates while the orchestration module priced from a hardcoded
 // SpreadEngine rule table in finance_routes.go. The same corridor could be
 // charged two different markups, and only one of them was operator-changeable.
-//
 // These tests prove, against a real database, that:
 //   - the seeded rate card reproduces the OLD in-code SpreadEngine exactly, so
 //     pointing orchestration at the table repriced nothing (the single
 //     deliberate exception — the 105bps -> 100bps default — is asserted, not
 //     glossed over);
 //   - orchestration and the legacy service resolve the SAME rate for the same
-//     corridor;
 //   - ONE admin write moves BOTH surfaces, on the next quote, with no restart;
 //   - tier specificity (corridor+tier > corridor > tier > DEFAULT) survives the
 //     move into SQL — that ordering is what keeps business customers on their
 //     own rate.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (reuses liveDBPool
 // from convert_live_db_test.go), so `go test ./...` without a DB stays green.
-//
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run SpreadUnification -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

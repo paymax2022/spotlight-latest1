@@ -1,4 +1,3 @@
-// ── Doctor — ratings/reviews & payout report hooks ───────────────────────────
 // Phase 2. Reputation/reviews reads + report-unfair-review mutation, plus the
 // payout report read (extends Phase 1 earnings; reads only).
 
@@ -12,8 +11,6 @@ import {
 } from '@/api/doctor.phase2.api';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import type { ReportReviewInput } from '@/types/doctor.phase2';
-
-// ─── Ratings & reviews ───────────────────────────────────────────────────────
 
 export function useReputation() {
   return useQuery({
@@ -34,8 +31,6 @@ export function useReportReview() {
     },
   });
 }
-
-// ─── Payout report (extends earnings; reads only) ────────────────────────────
 
 export function usePayoutReport(rangeLabel?: string) {
   return useQuery({

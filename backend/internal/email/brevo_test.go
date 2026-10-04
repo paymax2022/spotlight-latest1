@@ -152,8 +152,6 @@ func TestErrorsNeverContainTheCode(t *testing.T) {
 	}
 }
 
-// ── retry ───────────────────────────────────────────────────────────────────
-
 func TestSendWithRetryRetriesTransientFailures(t *testing.T) {
 	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// ── Order state machine ──────────────────────────────────────────────────────
-
 func TestOrderStateMachine_HappyBuyPath(t *testing.T) {
 	path := []OrderStatus{
 		StatusDraft, StatusPendingReview, StatusAwaitingConfirm, StatusCashLocked,
@@ -57,8 +55,6 @@ func TestIsTerminal(t *testing.T) {
 	}
 }
 
-// ── Fee engine ───────────────────────────────────────────────────────────────
-
 func TestFeeFor(t *testing.T) {
 	f := FeeSchedule{CommissionBPS: 150, MinFeeKobo: 10_000} // 1.5%, ₦100 min
 	cases := []struct {
@@ -85,8 +81,6 @@ func TestFeeFor_NeverFloat(t *testing.T) {
 	}
 }
 
-// ── Suitability scoring ──────────────────────────────────────────────────────
-
 func TestScoreToCategory(t *testing.T) {
 	cases := []struct {
 		score int
@@ -112,8 +106,6 @@ func TestCategoryEligibility_RestrictedIsEducationOnly(t *testing.T) {
 	}
 }
 
-// ── PIN verifier (mock) ──────────────────────────────────────────────────────
-
 func TestMockPINVerifier(t *testing.T) {
 	v := MockPINVerifier{}
 	ctx := context.Background()
@@ -126,8 +118,6 @@ func TestMockPINVerifier(t *testing.T) {
 		}
 	}
 }
-
-// ── Mock market data determinism ─────────────────────────────────────────────
 
 func TestMockMarketData_Deterministic(t *testing.T) {
 	m := NewMockMarketData()
@@ -161,8 +151,6 @@ func TestMockMarketData_ForceStatus(t *testing.T) {
 	}
 }
 
-// ── Mock broker fills ────────────────────────────────────────────────────────
-
 func TestMockBroker_MarketBuyFills(t *testing.T) {
 	b := NewMockBroker()
 	q := Quote{Symbol: "X", PriceKobo: 50_000}
@@ -182,8 +170,6 @@ func TestMockBroker_MarketBuyFills(t *testing.T) {
 	}
 }
 
-// ── Price-alert evaluation ───────────────────────────────────────────────────
-
 func TestAlertHit(t *testing.T) {
 	q := Quote{PriceKobo: 5_000_00, DayChangePct: 6.0} // ₦5,000, +6% today
 	cases := []struct {
@@ -191,9 +177,9 @@ func TestAlertHit(t *testing.T) {
 		target int64
 		want   bool
 	}{
-		{"above", 4_900_00, true},  // price >= target
+		{"above", 4_900_00, true},
 		{"above", 5_100_00, false}, // price < target
-		{"below", 5_100_00, true},  // price <= target
+		{"below", 5_100_00, true},
 		{"below", 4_900_00, false}, // price > target
 		{"pct_gain", 500, true},    // +6% >= 5.00%
 		{"pct_gain", 700, false},   // +6% < 7.00%

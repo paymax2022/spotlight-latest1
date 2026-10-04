@@ -1,13 +1,7 @@
-// ── Paymax Invest · AI Investment Education Assistant — API wrapper ───────────
 // Typed data layer the Invest-AI screens code against. Mirrors crypto.api.ts:
-// mock-flagged. Flip EXPO_PUBLIC_AI_USE_MOCK=false once the real Paymax AI
 // endpoints (docs/crypto/api.md → "AI Assistant") land.
-//
 // GUARDRAILS honoured here (docs/crypto/modules.md → AI Investment Education
 // Assistant): the assistant educates only, never gives personalized advice /
-// price predictions / guarantees; advice-seeking prompts are refused and
-// redirected to education; every assistant turn carries a disclaimer. In mock
-// mode the policy is enforced client-side (ai.mock.ts); in production the same
 // policy is enforced server-side and surfaced via the disclaimer flag.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -16,7 +10,6 @@ import { DISCLAIMER, REFUSAL } from '../constants/ai.constants';
 import { answerFor, explainAssetFor, isAdviceSeeking } from './ai.mock';
 import type { AskContext, ChatMessage } from '../types/ai.types';
 
-// ─── Feature flag: flip to false once real endpoints are ready ────────────────
 const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_AI_USE_MOCK, true);
 
 /** Simulated network latency so the typing indicator renders in mock mode. */

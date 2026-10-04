@@ -3,10 +3,10 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Modal, Alert } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { FlaskConical, ChevronRight, AlertTriangle, X, Ban } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import SelectField from '@/components/SelectField';
 import { TeleHeader, DoctorAvatar } from '@/features/telemedicine/components';

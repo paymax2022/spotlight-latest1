@@ -28,7 +28,6 @@ export async function GET(request: Request) {
     const { data, error } = await query;
     if (error) return errorResponse('Failed to load packages', 500);
 
-    // vote_packages stores snake_case; the admin page reads camelCase. Returning
     // rows raw meant pkg.isActive was ALWAYS undefined, so every package rendered
     // greyed-out as inactive no matter what was saved — and pkg.startsAt/endsAt
     // came back undefined, so editing a package silently cleared its dates.

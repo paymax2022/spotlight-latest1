@@ -2,12 +2,13 @@ package association
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+
 	"errors"
 	"fmt"
 	"sort"
+	"spotlight/backend/go-common/cryptox"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,8 +31,6 @@ var (
 	// ErrElectionState — operation not allowed from the election's current state.
 	ErrElectionState = errors.New("association: invalid election state")
 )
-
-// ─── inputs / view models ─────────────────────────────────────────────────────
 
 type CreatePositionInput struct {
 	Title string `json:"title" binding:"required"`
@@ -127,8 +126,6 @@ type ElectionDetail struct {
 	Results           []PositionResult   `json:"results,omitempty"` // only when PUBLISHED
 }
 
-// ─── authz / helpers ──────────────────────────────────────────────────────────
-
 // requireElectionOfficer requires the caller to hold an admin role in the given
 // organisation (election administration is an officer action). Fail-closed.
 func (s *Service) requireElectionOfficer(ctx context.Context, userID, orgID string) error {
@@ -156,12 +153,6 @@ func (s *Service) electionOrg(ctx context.Context, electionID string) (string, e
 	return org, nil
 }
 
-func newReceipt() string {
-	b := make([]byte, 12)
-	_, _ = rand.Read(b)
-	return "VR-" + hex.EncodeToString(b)
-}
-
 func parseTimePtr(iso *string) *time.Time {
 	if iso == nil || *iso == "" {
 		return nil
@@ -172,8 +163,6 @@ func parseTimePtr(iso *string) *time.Time {
 	}
 	return &t
 }
-
-// ─── officer: create / candidates / lifecycle ─────────────────────────────────
 
 // CreateElection creates a DRAFT election with its positions in the resolved
 // org (see resolveOrgID — orgIDOverride is the admin console's org picker;
@@ -310,8 +299,6 @@ func (s *Service) CloseElection(ctx context.Context, userID, electionID string) 
 	return s.setElectionStatus(ctx, userID, electionID, "VOTING", "CLOSED", "ELECTION_CLOSE")
 }
 
-// ─── voter: cast vote (the integrity crux) ────────────────────────────────────
-
 // CastVote records one anonymous vote for a voter in a position. It is fail-closed
 // on eligibility and the voting window, enforces one-member-one-vote via a DB unique
 // constraint (concurrency/retry safe), and keeps the choice unlinkable to the voter.
@@ -357,7 +344,7 @@ func (s *Service) CastVote(ctx context.Context, userID, electionID string, in Ca
 
 	// One-member-one-vote: the unique (election,position,voter) key makes a second
 	// vote impossible under retries/concurrency. ON CONFLICT DO NOTHING → 0 rows.
-	receipt := newReceipt()
+	receipt := "VR-" + cryptox.RandHex(12)
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO assoc_election_ballots_cast (id, election_id, position_id, voter_membership_id, receipt)
 		VALUES ($1,$2,$3,$4,$5)
@@ -392,8 +379,6 @@ func (s *Service) CastVote(ctx context.Context, userID, electionID string, in Ca
 	}
 	return &VoteReceipt{Receipt: receipt, PositionID: in.PositionID, ConfirmedAt: now.UTC().Format(time.RFC3339), AlreadyCast: false}, nil
 }
-
-// ─── tally / results ──────────────────────────────────────────────────────────
 
 // tallyPosition returns the per-candidate counts and the ballots-cast total for a
 // position. The tally is a live COUNT (reproducible) and the ballots-cast total
@@ -562,8 +547,6 @@ func (s *Service) PublishResults(ctx context.Context, userID, electionID string)
 	}
 	return results, nil
 }
-
-// ─── voter-facing reads ───────────────────────────────────────────────────────
 
 // ListElections is voter-facing: any member (not just an officer) may list
 // their own org's elections to vote in them. orgIDOverride is the admin
@@ -766,8 +749,6 @@ func (s *Service) publishedResults(ctx context.Context, electionID string) ([]Po
 	}
 	return out, nil
 }
-
-// ─── winner -> role handover (EL-015 / EC-011) ────────────────────────────────
 
 type PositionHandover struct {
 	PositionID string   `json:"positionId"`

@@ -1,13 +1,11 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for FOOD-004: the generic finance/disputes admin-resolve
 // endpoint (POST /api/finance/admin/disputes/:id/resolve) used to bare-flip the shared
 // disputes.status column for EVERY module_type, including "food" — so resolving a
 // food dispute with resolution=refunded and a refund_kobo amount returned 200 and
 // moved ZERO money, never touching this module's real refund-cap (ADR-031) + rider
 // tip-clawback logic in AdminResolveFoodDispute.
-//
 // This test drives the fix through the SAME entrypoint the frontend actually calls —
 // disputes.Service.Resolve (the generic path), not restaurant.Service directly — with
 // restaurant.Service wired in as its FoodDisputeResolver exactly as
@@ -17,13 +15,10 @@ package restaurant
 //     package's own regression guard against ever going back to a silent no-op);
 //   - with the resolver wired, a plain {resolution:"refunded", refund_kobo} through
 //     the generic Resolve() posts a real, correctly-capped (non-tip basis) ledger
-//     reversal;
 //   - a full-refund case where the rider was already paid the tip triggers the real
 //     tip clawback;
 //   - "dismissed" still resolves with zero money movement.
-//
 // Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -80,15 +75,6 @@ func TestLiveDB_GenericDisputeResolve_FoodDelegatesToRealRefundLogic(t *testing.
 	}
 	testsupport.CleanupUser(t, pool, admin)
 
-	// See dispute_tip_live_db_test.go's disputeRefundDebitKobo doc comment: reads
-	// THIS dispute's own ledger entry by idempotency key rather than a shared
-	// standing-account balance snapshot, which races against unrelated concurrent
-	// postings from other packages' live-DB tests under `go test ./...`.
-	revAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
-	if err != nil {
-		t.Fatalf("revenue account: %v", err)
-	}
-
 	// --- Reproduce the ORIGINAL bug first: no resolver wired ⇒ fails closed, moves
 	// no money. This is what the bare-status-update version used to do WITHOUT even
 	// the courtesy of an error (it returned 200 and moved zero kobo); failing closed
@@ -98,15 +84,14 @@ func TestLiveDB_GenericDisputeResolve_FoodDelegatesToRealRefundLogic(t *testing.
 	if err != nil {
 		t.Fatalf("customer balance before: %v", err)
 	}
-	revBefore := disputeRefundDebitKobo(t, ctx, pool, revAcc.ID, f.disputeID)
 	if err := unwired.Resolve(ctx, f.disputeID, disputes.ResolutionRefunded, "no resolver wired", f.total, admin); err == nil {
 		t.Fatal("resolving a food dispute with no FoodDisputeResolver wired must fail closed, not silently succeed")
 	}
 	if custAfter, _ := led.GetBalance(ctx, f.customer); custAfter != custBefore {
 		t.Fatalf("unwired resolve moved customer balance: %d → %d", custBefore, custAfter)
 	}
-	if rev := disputeRefundDebitKobo(t, ctx, pool, revAcc.ID, f.disputeID); rev != revBefore {
-		t.Fatalf("unwired resolve moved platform revenue: %d → %d", revBefore, rev)
+	if paid := platformRefundLegKobo(t, ctx, pool, led, f.disputeID); paid != 0 {
+		t.Fatalf("unwired resolve paid %d out of platform revenue, want 0", paid)
 	}
 	var status string
 	if err := pool.QueryRow(ctx, `SELECT status FROM disputes WHERE id=$1`, f.disputeID).Scan(&status); err != nil {
@@ -116,7 +101,6 @@ func TestLiveDB_GenericDisputeResolve_FoodDelegatesToRealRefundLogic(t *testing.
 		t.Fatal("the ticket must NOT be marked resolved when the resolver failed closed")
 	}
 
-	// --- Now wire the real resolver (production wiring: WithFoodResolver) and drive
 	// the SAME generic endpoint with a plain, frontend-shaped request: {resolution:
 	// "refunded", refund_kobo}. No full/partial distinction — the console never sends
 	// one. This is a FULL refund of the whole order, so it should trigger the tip
@@ -138,10 +122,9 @@ func TestLiveDB_GenericDisputeResolve_FoodDelegatesToRealRefundLogic(t *testing.
 		t.Fatalf("generic resolve with resolver wired: %v", err)
 	}
 
-	// --- A real, correctly-CAPPED (non-tip basis) platform refund landed. ---
-	revDelta := disputeRefundDebitKobo(t, ctx, pool, revAcc.ID, f.disputeID)
+	revDelta := platformRefundLegKobo(t, ctx, pool, led, f.disputeID)
 	if revDelta != f.basis {
-		t.Fatalf("platform revenue fell by %d, want %d (total %d − tip %d) — the generic path must "+
+		t.Fatalf("platform revenue paid %d, want %d (total %d − tip %d) — the generic path must "+
 			"cap the refund to the non-tip basis exactly like the direct call", revDelta, f.basis, f.total, f.tip)
 	}
 	var storedRefund int64
@@ -153,7 +136,6 @@ func TestLiveDB_GenericDisputeResolve_FoodDelegatesToRealRefundLogic(t *testing.
 		t.Fatalf("persisted refund_kobo = %d, want %d", storedRefund, f.basis)
 	}
 
-	// --- The tip was CLAWED BACK from the rider (already paid at settlement), not
 	// funded by the platform. ---
 	riderAfter, err := led.GetBalance(ctx, f.rider)
 	if err != nil {
@@ -174,7 +156,6 @@ func TestLiveDB_GenericDisputeResolve_FoodDelegatesToRealRefundLogic(t *testing.
 		t.Fatalf("clawback = (%s, %d), want (recovered, %d)", clawStatus, clawTip, f.tip)
 	}
 
-	// --- The customer is made whole: basis from the platform + tip from the rider. ---
 	custAfterReal, err := led.GetBalance(ctx, f.customer)
 	if err != nil {
 		t.Fatalf("customer balance after: %v", err)
@@ -183,7 +164,6 @@ func TestLiveDB_GenericDisputeResolve_FoodDelegatesToRealRefundLogic(t *testing.
 		t.Fatalf("customer credited %d, want the full %d (basis %d + tip %d)", delta, f.total, f.basis, f.tip)
 	}
 
-	// --- The ticket is now genuinely resolved. ---
 	if err := pool.QueryRow(ctx, `SELECT status FROM disputes WHERE id=$1`, f.disputeID).Scan(&status); err != nil {
 		t.Fatalf("read ticket: %v", err)
 	}
@@ -229,15 +209,10 @@ func TestLiveDB_GenericDisputeResolve_DismissedMovesNoMoney(t *testing.T) {
 		t.Fatalf("raise: %v", err)
 	}
 
-	revAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
-	if err != nil {
-		t.Fatalf("revenue account: %v", err)
-	}
 	custBefore, err := led.GetBalance(ctx, customer)
 	if err != nil {
 		t.Fatalf("balance before: %v", err)
 	}
-	revBefore := disputeRefundDebitKobo(t, ctx, pool, revAcc.ID, d.ID)
 
 	wired := disputes.NewService(pool).WithFoodResolver(genericFoodResolverAdapter{svc: restSvc})
 	if err := wired.Resolve(ctx, d.ID, disputes.ResolutionDismissed, "not upheld", 0, admin); err != nil {
@@ -251,8 +226,8 @@ func TestLiveDB_GenericDisputeResolve_DismissedMovesNoMoney(t *testing.T) {
 	if custAfter != custBefore {
 		t.Fatalf("dismissed resolution moved customer balance: %d → %d", custBefore, custAfter)
 	}
-	if rev := disputeRefundDebitKobo(t, ctx, pool, revAcc.ID, d.ID); rev != revBefore {
-		t.Fatalf("dismissed resolution moved platform revenue: %d → %d", revBefore, rev)
+	if paid := platformRefundLegKobo(t, ctx, pool, led, d.ID); paid != 0 {
+		t.Fatalf("dismissed resolution paid %d out of platform revenue, want 0", paid)
 	}
 	var st string
 	if err := pool.QueryRow(ctx, `SELECT status FROM disputes WHERE id=$1`, d.ID).Scan(&st); err != nil {

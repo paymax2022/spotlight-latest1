@@ -74,7 +74,6 @@ export default function OpenMicEntryForm({
         email: prev.email || u.email || '',
       }));
     });
-  // supabase client is stable; this only needs to run once
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

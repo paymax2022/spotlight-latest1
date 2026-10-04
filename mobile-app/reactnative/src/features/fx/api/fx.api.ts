@@ -1,11 +1,6 @@
-// ── FX Exchange — API wrapper ────────────────────────────────────────────────
 // Typed data layer the screens code against (Backend role owns this file).
-// Mirrors crowdfunding.api.ts: mock-flagged. Flip USE_MOCK=false once the real
 // Paymax /v1 endpoints land.
-//
 // IRON RULES honoured here:
-//  • all money is integer minor units;
-//  • every money mutation carries an Idempotency-Key;
 //  • quote → (lock) → execute against a quote_id (price never assumed stable).
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -44,7 +39,6 @@ import {
   MOCK_RATE_ALERTS,
 } from './fx.mock';
 
-// ─── Feature flag: flip to false once real endpoints are ready ─────────────────
 // Mock by default; flip with EXPO_PUBLIC_FX_USE_MOCK=false to hit the Go backend.
 const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_FX_USE_MOCK, true);
 
@@ -83,12 +77,10 @@ const withFxError = async <T>(call: Promise<T>): Promise<T> => {
   }
 };
 
-// ─── Balances (GET /v1/balances) ──────────────────────────────────────────────
-
 export async function getBalances(): Promise<WalletBalance[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_BALANCES]; }
   const r = unwrap<WalletBalance[]>(await api.get('/api/v1/fx/balances'));
-  return Array.isArray(r) ? r : []; // empty FX wallets → null; normalise to []
+  return Array.isArray(r) ? r : [];
 }
 
 /** Add (open) a new currency wallet. */
@@ -103,8 +95,6 @@ export async function addWallet(currency: CurrencyCode): Promise<WalletBalance> 
   }
   return unwrap<WalletBalance>(await api.post('/api/v1/fx/balances', { currency }));
 }
-
-// ─── Rates (GET /v1/rates — display/alerts only) ──────────────────────────────
 
 export async function getRates(): Promise<IndicativeRate[]> {
   if (USE_MOCK) { await delay(180); return [...MOCK_RATES]; }
@@ -137,8 +127,6 @@ export async function getRateHistory(
   return arr(unwrap<RatePoint[]>(await api.get('/api/v1/fx/rates/history', { params: { from, to, range } })));
 }
 
-// ─── Quotes (POST /v1/quotes) ─────────────────────────────────────────────────
-
 export async function createQuote(req: QuoteRequest): Promise<Quote> {
   if (USE_MOCK) { await delay(420); return buildQuote(req); }
   return unwrap<Quote>(await api.post('/api/v1/fx/quotes', req));
@@ -149,8 +137,6 @@ export async function lockQuote(quoteId: string, req: QuoteRequest): Promise<Quo
   if (USE_MOCK) { await delay(260); return buildQuote({ ...req, lock: true }); }
   return unwrap<Quote>(await api.post(`/api/v1/fx/quotes/${quoteId}/lock`, {}));
 }
-
-// ─── Conversions (POST /v1/conversions) ───────────────────────────────────────
 
 export async function executeConversion(
   quote: Quote,
@@ -182,8 +168,6 @@ export async function executeConversion(
     await withFxError(api.post('/api/v1/fx/conversions', { quote_id: quote.id }, { headers: { 'Idempotency-Key': idempotencyKey } })),
   );
 }
-
-// ─── Transfers / payouts (POST /v1/transfers) ─────────────────────────────────
 
 export async function executeTransfer(
   draft: SendDraft,
@@ -251,8 +235,6 @@ export async function getTransfer(reference: string): Promise<Transfer> {
   }
   return unwrap<Transfer>(await api.get(`/api/v1/fx/transfers/${reference}`));
 }
-
-// ─── Beneficiaries (GET/POST /v1/beneficiaries) ───────────────────────────────
 
 export async function getBeneficiaries(): Promise<Beneficiary[]> {
   if (USE_MOCK) {
@@ -328,8 +310,6 @@ export async function deleteBeneficiary(id: string): Promise<void> {
   await api.delete(`/api/v1/fx/beneficiaries/${id}`);
 }
 
-// ─── Collections (POST /v1/collections/virtual-accounts) ──────────────────────
-
 export async function getVirtualAccounts(): Promise<VirtualAccount[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_VIRTUAL_ACCOUNTS]; }
   return arr(unwrap<VirtualAccount[]>(await api.get('/api/v1/fx/collections/virtual-accounts')));
@@ -366,8 +346,6 @@ export async function getCollections(): Promise<CollectionEvent[]> {
   }
   return arr(unwrap<CollectionEvent[]>(await api.get('/api/v1/fx/collections')));
 }
-
-// ─── Transactions (GET /v1/transactions[/{id}]) ───────────────────────────────
 
 // Shared filter used by BOTH branches: the Go handler ignores query params
 // today, so without this the filter chips silently do nothing on live data.
@@ -421,8 +399,6 @@ export async function getTransaction(id: string): Promise<TransactionDetail> {
   }
   return unwrap<TransactionDetail>(await api.get(`/api/v1/fx/transactions/${id}`));
 }
-
-// ─── Rate alerts ────────────────────────────────────────────────────────────────
 
 export async function getRateAlerts(): Promise<RateAlert[]> {
   if (USE_MOCK) {

@@ -11,7 +11,7 @@ import (
 // (scope-of-practice), EC-007 (licence expires mid-open-consult). Pure,
 // deterministic assertions on the point-in-time authorization decision — no DB.
 
-func at(h int) time.Time { return time.Date(2026, 7, 30, h, 0, 0, 0, time.UTC) }
+func at(h int) time.Time       { return time.Date(2026, 7, 30, h, 0, 0, 0, time.UTC) }
 func p(t time.Time) *time.Time { return &t }
 
 // CR-001: only a VERIFIED record authorizes practice; any other status does not.

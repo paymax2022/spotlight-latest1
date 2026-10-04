@@ -12,8 +12,6 @@ import (
 // meetings.go — Block 32 meeting management: scheduling, RSVPs, attendance
 // check-in, minutes (with approval) and documents.
 
-// ── Models ───────────────────────────────────────────────────────────────────
-
 type Meeting struct {
 	ID        string     `json:"id"`
 	EstateID  string     `json:"estate_id"`
@@ -84,8 +82,6 @@ type AddMeetingDocumentRequest struct {
 	SizeBytes int64  `json:"size_bytes"`
 }
 
-// ── Pure validators (unit-testable) ──────────────────────────────────────────
-
 func validRSVPResponse(r string) bool { return r == "yes" || r == "no" || r == "maybe" }
 
 func validCheckinMethod(m string) bool { return m == "qr" || m == "manual" }
@@ -94,8 +90,6 @@ func validCheckinMethod(m string) bool { return m == "qr" || m == "manual" }
 func validMeetingMode(m string) bool {
 	return m == "" || m == "physical" || m == "virtual" || m == "hybrid"
 }
-
-// ── Service ──────────────────────────────────────────────────────────────────
 
 const meetingCols = `id, estate_id, title, COALESCE(agenda,''), mode, COALESCE(location,''), starts_at, ends_at, status, created_by, created_at`
 

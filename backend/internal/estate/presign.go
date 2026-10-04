@@ -1,8 +1,6 @@
 package estate
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"path"
@@ -11,15 +9,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
+
+	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/internal/platform/r2"
 )
 
 // presign.go — backend-owned presigned Cloudflare R2 uploads for the estate module.
-//
 // Closes the cross-cutting acceptance gap in Blocks 25 (profile photo), 28 (guard
 // incident evidence), 35 (repair photos) and 39 (documents): previously every
 // media URL was an untrusted client-supplied string. Now:
-//
 //  1. Client calls POST /api/finance/estate/:id/uploads/presign with
 //     {kind, fileName, contentType}.
 //  2. Backend verifies estate membership, derives a SERVER-CONTROLLED object key
@@ -27,7 +27,6 @@ import (
 //     presigned PUT URL + the key.
 //  3. Client PUTs the binary directly to R2 (never through our API).
 //  4. Client records metadata via the existing endpoints, passing the returned key.
-//
 // The client cannot choose an arbitrary key (no overwriting another resident's or
 // estate's objects), and the Content-Type is bound into the signature (no type
 // smuggling). R2 credentials are server-side only; when R2 is unconfigured the
@@ -77,9 +76,9 @@ type PresignUploadRequest struct {
 
 // PresignUploadResponse is what the client uses to PUT the binary to R2.
 type PresignUploadResponse struct {
-	UploadURL   string `json:"uploadUrl"`   // presigned PUT URL (short-lived)
-	ObjectKey   string `json:"objectKey"`   // server-chosen key to echo back when recording metadata
-	Bucket      string `json:"bucket"`      //
+	UploadURL   string `json:"uploadUrl"` // presigned PUT URL (short-lived)
+	ObjectKey   string `json:"objectKey"` // server-chosen key to echo back when recording metadata
+	Bucket      string `json:"bucket"`
 	ContentType string `json:"contentType"` // the client MUST send this exact header on the PUT
 	ExpiresIn   int    `json:"expiresIn"`   // seconds
 	Method      string `json:"method"`      // always "PUT"
@@ -89,7 +88,7 @@ type PresignUploadResponse struct {
 // within an estate they belong to.
 // POST /api/finance/estate/:id/uploads/presign
 func (h *Handler) PresignUpload(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -102,13 +101,13 @@ func (h *Handler) PresignUpload(c *gin.Context) {
 
 	var req PresignUploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 
 	// Membership check: only an estate member may mint upload URLs for that estate.
 	if err := h.svc.assertResident(c.Request.Context(), estateID, userID); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 		return
 	}
 
@@ -130,7 +129,7 @@ func (h *Handler) PresignUpload(c *gin.Context) {
 
 	// Server-controlled key: client cannot influence the path beyond its own scope.
 	// Random component prevents guessing/overwrite.
-	key := fmt.Sprintf("estate/%s/%s/%s/%s%s", estateID, userID, prefix, estateRandToken(), ext)
+	key := fmt.Sprintf("estate/%s/%s/%s/%s%s", estateID, userID, prefix, cryptox.RandHex(16), ext)
 
 	url, err := h.presigner.PresignPut(key, ct, estatePresignTTL)
 	if err != nil {
@@ -162,7 +161,7 @@ const documentDownloadTTL = 60 * time.Minute
 // through unchanged.
 // GET /api/finance/estate/:id/documents/:did/download-url
 func (h *Handler) DocumentDownloadURL(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return
@@ -174,12 +173,12 @@ func (h *Handler) DocumentDownloadURL(c *gin.Context) {
 	if err != nil {
 		switch {
 		case err == ErrDocumentForbidden:
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 		case err == ErrDocumentNotFound:
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 		default:
 			// roleIn failure (not an estate member) → forbidden.
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
 		}
 		return
 	}
@@ -220,8 +219,4 @@ func (h *Handler) DocumentDownloadURL(c *gin.Context) {
 }
 
 // estateRandToken returns a 16-byte hex token for unguessable object keys.
-func estateRandToken() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
+func estateRandToken() string { return cryptox.RandHex(16) }

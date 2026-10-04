@@ -2,7 +2,6 @@
 // It is a drop-in for the in-memory store — the same interface the handlers and
 // adapters depend on. Buy/sell/swap run in a single DB transaction that moves the
 // wallet, the position, and writes the double-entry ledger + history atomically.
-//
 // NOTE: the Repository contract is currently single-user (the in-memory store
 // was), so this implementation scopes to one user (`demoUser`). Threading the
 // request's authenticated user id (auth.UserID) through the interface is the
@@ -57,8 +56,6 @@ func round2(x float64) float64 { return math.Round(x*100) / 100 }
 
 func iso(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
-// ── Eligibility ───────────────────────────────────────────────────────────────
-
 // Eligibility returns the (single) demo user's compliance facts for the trading
 // gate. Suitability + agreement-acceptance facts come from the eligibility tables
 // (000004_eligibility.up.sql); when those tables/rows are absent the facts stay
@@ -96,8 +93,6 @@ func (s *Store) Eligibility() domain.EligibilityFacts {
 	}
 	return f
 }
-
-// ── Assets ────────────────────────────────────────────────────────────────────
 
 const assetSelect = `SELECT id, symbol, name, decimals, icon_color, risk_rating, status,
   buy_enabled, sell_enabled, deposit_enabled, withdrawal_enabled,
@@ -169,8 +164,6 @@ func (s *Store) Asset(key string) (domain.Asset, bool) {
 	a.SupportedNetworks = s.networks([]string{a.ID})[a.ID]
 	return a, true
 }
-
-// ── Positions / portfolio ─────────────────────────────────────────────────────
 
 func buildPosition(assetID, symbol, name, iconColor, risk string, decimals int, qty, costBasis, price int64, change float64) domain.Position {
 	unit := math.Pow(10, float64(decimals))
@@ -254,8 +247,6 @@ func (s *Store) Portfolio() domain.Portfolio {
 		Positions:         positions,
 	}
 }
-
-// ── Transactions ──────────────────────────────────────────────────────────────
 
 func (s *Store) Transactions(side string) []domain.TxSummary {
 	q := `SELECT id, reference, side, symbol, asset_name, icon_color, status, fiat_amount, fiat_currency, crypto_amount, created_at
@@ -348,8 +339,6 @@ func (s *Store) UpdateTransactionStatus(reference, status string) bool {
 	return tx.Commit(s.ctx) == nil
 }
 
-// ── Watchlist ─────────────────────────────────────────────────────────────────
-
 func (s *Store) Watchlist() []domain.Asset {
 	rows, err := s.pool.Query(s.ctx, assetSelect+` WHERE id IN (SELECT asset_id FROM watchlist_entries WHERE user_id=$1) ORDER BY id`, demoUser)
 	if err != nil {
@@ -378,8 +367,6 @@ func (s *Store) AddWatch(assetID string) {
 func (s *Store) RemoveWatch(assetID string) {
 	_, _ = s.pool.Exec(s.ctx, `DELETE FROM watchlist_entries WHERE user_id=$1 AND asset_id=$2`, demoUser, assetID)
 }
-
-// ── Alerts ────────────────────────────────────────────────────────────────────
 
 func (s *Store) Alerts() []domain.PriceAlert {
 	rows, err := s.pool.Query(s.ctx, `SELECT id, asset_id, symbol, icon_color, condition, target_amount_minor, currency, status, triggered_at, created_at
@@ -427,8 +414,6 @@ func (s *Store) CreateAlert(assetID, condition string, target int64, currency st
 func (s *Store) DeleteAlert(id string) {
 	_, _ = s.pool.Exec(s.ctx, `DELETE FROM price_alerts WHERE id=$1 AND user_id=$2`, id, demoUser)
 }
-
-// ── Addresses ─────────────────────────────────────────────────────────────────
 
 func scanAddress(row pgx.Row) (domain.Address, error) {
 	var a domain.Address
@@ -495,8 +480,6 @@ func (s *Store) AddressByID(id string) (domain.Address, bool) {
 	return a, true
 }
 
-// ── Quotes ────────────────────────────────────────────────────────────────────
-
 func (s *Store) PutQuote(q domain.Quote) {
 	payload, _ := json.Marshal(q)
 	exp, _ := time.Parse(time.RFC3339, q.ExpiresAt)
@@ -550,8 +533,6 @@ func (s *Store) consumeQuote(tx pgx.Tx, id string) {
 	_, _ = tx.Exec(s.ctx, `UPDATE quotes SET consumed=TRUE WHERE id=$1`, id)
 }
 
-// ── Idempotency ───────────────────────────────────────────────────────────────
-
 func (s *Store) Idempotent(key string) (any, bool) {
 	if key == "" {
 		return nil, false
@@ -571,8 +552,6 @@ func (s *Store) SaveIdempotent(key string, v any) {
 	_, _ = s.pool.Exec(s.ctx, `INSERT INTO idempotency_keys (key, user_id, response) VALUES ($1,$2,$3)
 	  ON CONFLICT (key) DO NOTHING`, key, demoUser, resp)
 }
-
-// ── Execution (transactional: wallet + position + ledger + history) ───────────
 
 const insertTxSQL = `INSERT INTO crypto_transactions
   (id, user_id, reference, side, asset_id, symbol, asset_name, icon_color, status,

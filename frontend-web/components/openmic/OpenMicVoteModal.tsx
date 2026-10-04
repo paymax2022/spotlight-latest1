@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { authHeaders } from '@/src/lib/auth/client';
-import { loadPaystackClient } from '@/src/lib/payments/paystack-client';
+import { loadPaystackClient } from '@/src/lib/payments';
 
 interface Props {
   contestId: string;

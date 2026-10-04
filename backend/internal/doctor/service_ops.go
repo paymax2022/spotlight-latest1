@@ -5,23 +5,29 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
-	"strconv"
-	"time"
-
+	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/integrations/rtc"
 	platformWS "spotlight/backend/internal/platform/ws"
+	"strconv"
+	"time"
+)
+
+const (
+	keyFailed = "failed"
 )
 
 // callTokenTTL is how long an issued RTC join token is valid. Tokens are
 // short-lived; clients refresh via POST /calls/:appointmentId/token.
 const callTokenTTL = time.Hour
 
-// deterministicAgoraUID derives a stable, positive 32-bit uid from the doctor's
-// user id. Agora RTC uids are uint32; we hash the (opaque, UUID-string) user id
-// with SHA-256 and take the low 31 bits (>0, fits int32) so the same doctor always
-// joins with the same uid across reconnects/refreshes. The stringified form is
-// what AccessToken2 binds the token to.
-func deterministicAgoraUID(userID string) string {
+// deterministicRTCUID derives a stable, positive 32-bit uid from the doctor's
+// user id. We hash the (opaque, UUID-string) user id with SHA-256 and take the low
+// 31 bits (>0, fits int32) so the same doctor always joins with the same uid across
+// reconnects/refreshes. The stringified form is what the client binds the room
+// participant to.
+// The derivation is unchanged from its original provider — a stored uid must keep
+// resolving to the same participant across an upgrade.
+func deterministicRTCUID(userID string) string {
 	sum := sha256.Sum256([]byte(userID))
 	u := binary.BigEndian.Uint32(sum[:4]) & 0x7fffffff // 31 bits → non-zero, int32-safe
 	if u == 0 {
@@ -34,9 +40,9 @@ func deterministicAgoraUID(userID string) string {
 // appointment (channel = appointmentId). When the Issuer is nil or the provider
 // is not configured it returns an EMPTY token (never a fabricated one) plus
 // rtcConfigured=false so the caller can flag "not configured" to the client.
-// Secrets (App Certificate / VideoSDK secret) never leave the Issuer.
+// Secrets (the VideoSDK secret) never leave the Issuer.
 func (s *Service) issueCallToken(provider, appointmentID, userID string) (token, uid string, expiresAt *time.Time, rtcConfigured bool) {
-	uid = deterministicAgoraUID(userID)
+	uid = deterministicRTCUID(userID)
 	if s.rtc == nil || !s.rtc.Enabled(provider) {
 		return "", uid, nil, false
 	}
@@ -103,7 +109,7 @@ func annotateCallToken(sess *CallSession, token, provider string, expiresAt *tim
 	if sess == nil {
 		return
 	}
-	uid := deterministicAgoraUID(sess.UserID)
+	uid := deterministicRTCUID(sess.UserID)
 	if token != "" {
 		t := token
 		sess.RoomToken = &t
@@ -118,19 +124,16 @@ func annotateCallToken(sess *CallSession, token, provider string, expiresAt *tim
 }
 
 // service_ops.go — Wave 4 (operational) business logic.
-//
 // Mirrors the Wave 2/3 service style: reads delegate to the repository scoped to the
 // authenticated doctor; mutations that target a table with a UNIQUE idempotency_key
 // (doctor_chat_messages, doctor_hmo_claims), or that transition / upsert an existing
 // row, require the Idempotency-Key header (ErrIdempotencyRequired) and rely on the
 // repository's ON CONFLICT replay / status-guarded UPDATE for replay safety.
-//
 // NONE of these touch the money ledger — they are CRUD / state transitions / aggregation.
 // Monetary fields stay int64 kobo (no floats, no stored balances). The free-form
 // `Generic` request bodies are parsed via the shared parseClinicalPatch helper
 // (service_clinical.go) so the few typed knobs (status verbs, slot, amounts, timezone)
 // are pulled out without redefining anything.
-//
 // opsPatch carries the Wave-4-specific knobs not already in clinicalPatch. We keep it
 // separate to avoid touching the shared clinicalPatch struct.
 type opsPatch struct {
@@ -187,7 +190,6 @@ func parseOpsDate(p *string) time.Time {
 	return time.Time{}
 }
 
-// ══ CHAT ════════════════════════════════════════════════════════════════════
 // Realtime WS push is delivered to BOTH the doctor AND the patient.
 // Both connect via the same hub keyed by user ID. The patient user ID is
 // resolved from the thread's patient JSONB column (field: "userId").
@@ -214,8 +216,6 @@ func (s *Service) SendChatMessage(ctx context.Context, userID, threadID, idemKey
 	s.pushChatParticipant(ctx, threadID, userID, "chat.message", msg)
 	return msg, nil
 }
-
-// ══ CALL SESSIONS ═══════════════════════════════════════════════════════════
 
 func (s *Service) GetCallSession(ctx context.Context, userID, appointmentID string) (*CallSession, error) {
 	return s.repo.GetCallSessionForAppointment(ctx, userID, appointmentID)
@@ -278,13 +278,11 @@ func (s *Service) EndCallSession(ctx context.Context, userID, appointmentID, ide
 	}
 	p := parseOpsPatch(raw)
 	status := "ended"
-	if derefStr(p.Status) == "failed" {
-		status = "failed"
+	if ptr.DerefZero(p.Status) == keyFailed {
+		status = keyFailed
 	}
 	return s.repo.EndCallSession(ctx, userID, sess.ID, status, raw)
 }
-
-// ══ SCHEDULE MANAGEMENT (Section E) ═════════════════════════════════════════
 
 func (s *Service) ListBlockedDates(ctx context.Context, userID string) ([]BlockedDate, error) {
 	return s.repo.ListBlockedDates(ctx, userID)
@@ -368,8 +366,6 @@ func (s *Service) SetTimezone(ctx context.Context, userID, idemKey string, raw j
 	return s.repo.SetTimezone(ctx, userID, tz)
 }
 
-// ══ APPOINTMENT QUEUE (Section F) ═══════════════════════════════════════════
-
 func (s *Service) ListConsultQueue(ctx context.Context, userID string) ([]ConsultQueueEntry, error) {
 	return s.repo.ListConsultQueue(ctx, userID)
 }
@@ -413,7 +409,6 @@ func (s *Service) RescheduleAppointment(ctx context.Context, userID, appointment
 	return s.repo.TransitionAppointment(ctx, userID, appointmentID, "upcoming", slot, raw)
 }
 
-// ══ HMO CLAIMS (submit / dispute) ═══════════════════════════════════════════
 // GET list/get already shipped in Wave 3a (ListHMOClaims / GetHMOClaim). Wave 4 adds
 // the missing submit + dispute mutations.
 
@@ -433,7 +428,6 @@ func (s *Service) DisputeHMOClaim(ctx context.Context, userID, claimID, idemKey 
 	return s.repo.DisputeHMOClaim(ctx, userID, claimID, raw)
 }
 
-// ══ MULTI-CLINIC PORTFOLIO ══════════════════════════════════════════════════
 // Quality analytics / ranking / improvement recs already shipped in Wave 2
 // (GetQualityScore / GetRanking / GetImprovements) — NOT duplicated here.
 
@@ -446,7 +440,7 @@ func (s *Service) SetActiveClinic(ctx context.Context, userID, idemKey string, r
 		return nil, ErrIdempotencyRequired
 	}
 	p := parseOpsPatch(raw)
-	clinicID := strOrDefault(p.ClinicID, derefStr(p.ActiveClinic))
+	clinicID := strOrDefault(p.ClinicID, ptr.DerefZero(p.ActiveClinic))
 	if clinicID == "" {
 		// Missing required field → map to the package's generic 400 sentinel
 		// (the handler's fail() renders ErrInvalidAmount as HTTP 400). Avoids a raw
@@ -466,4 +460,161 @@ func (s *Service) UpdateClinicSchedule(ctx context.Context, userID, clinicID, id
 		sched = raw
 	}
 	return s.repo.UpdateClinicSchedule(ctx, userID, clinicID, sched)
+}
+
+// Wave 4 (operational CRUD / aggregation) request & response shapes.
+// Covers the remaining endpoint groups: realtime persistence (chat threads/messages,
+// call sessions), schedule management (blocked dates, vacations, recurring rules,
+// reminders, timezone), the appointment queue (consult queue, appointment requests,
+// accept/reject/reschedule transitions), HMO claim submission/dispute, and the
+// multi-clinic portfolio.
+// As with the other waves, the OpenAPI types most of these as the free-form `Generic`
+// schema, so request bodies are captured as json.RawMessage and merged/stored into the
+// doctor_* JSONB columns; the typed ones (ChatThread/ChatMessage/CallSession) follow
+// contracts/doctor.openapi.yaml exactly. Responses mirror the backing tables in
+// camelCase to match the mobile contracts (doctor.ts / doctor.batch1.ts / doctor.phase3.ts).
+// NONE of these are money movements — they are CRUD / state transitions / aggregation.
+// Monetary columns surface as int64 kobo only (no floats, no stored balances).
+
+// ChatThread mirrors public.doctor_chat_threads (OpenAPI schema ChatThread).
+type ChatThread struct {
+	ID            string          `json:"id"`
+	UserID        string          `json:"userId"`
+	AppointmentID *string         `json:"appointmentId,omitempty"`
+	Patient       json.RawMessage `json:"patient,omitempty"`
+	ConsultType   *string         `json:"consultType,omitempty"`
+	Status        string          `json:"status"`
+	LastMessage   *string         `json:"lastMessage,omitempty"`
+	LastMessageAt *time.Time      `json:"lastMessageAt,omitempty"`
+	UnreadCount   int             `json:"unreadCount"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
+}
+
+// ChatMessage mirrors public.doctor_chat_messages (OpenAPI schema ChatMessage).
+type ChatMessage struct {
+	ID             string    `json:"id"`
+	ThreadID       string    `json:"threadId"`
+	UserID         string    `json:"userId"`
+	Author         string    `json:"author"` // doctor|patient
+	Body           *string   `json:"body,omitempty"`
+	MessageKind    string    `json:"messageKind"`
+	AttachmentURL  *string   `json:"attachmentUrl,omitempty"`
+	AttachmentName *string   `json:"attachmentName,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
+// SendChatMessageRequest mirrors the OpenAPI SendChatMessageRequest body.
+type SendChatMessageRequest struct {
+	Body           string  `json:"body"`
+	AttachmentURL  *string `json:"attachmentUrl,omitempty"`
+	AttachmentName *string `json:"attachmentName,omitempty"`
+}
+
+// CallSession mirrors public.doctor_call_sessions (OpenAPI schema CallSession).
+// RoomToken is the provider (VideoSDK) join token — issuance is an
+// integration TODO, so it is persisted as the stored placeholder for now.
+type CallSession struct {
+	ID            string          `json:"id"`
+	UserID        string          `json:"userId"`
+	AppointmentID *string         `json:"appointmentId,omitempty"`
+	Patient       json.RawMessage `json:"patient,omitempty"`
+	Mode          string          `json:"mode"`   // audio|video
+	Status        string          `json:"status"` // connecting|ringing|live|ended|failed
+	Provider      *string         `json:"provider,omitempty"`
+	RoomToken     *string         `json:"roomToken,omitempty"`
+	StartedAt     *time.Time      `json:"startedAt,omitempty"`
+	EndedAt       *time.Time      `json:"endedAt,omitempty"`
+	DurationSecs  int             `json:"durationSecs"`
+	Detail        json.RawMessage `json:"detail,omitempty"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
+
+	// These are populated on the RESPONSE from the freshly-minted token. RoomToken
+	// (above) carries the short-lived signed token. TokenUID is the deterministic
+	// uid the token is bound to; TokenExpiresAt is when it lapses. RTCConfigured is
+	// false when the provider has no server-side creds — in that case RoomToken is
+	// empty and the client must NOT attempt to join (no fabricated token is ever sent).
+	TokenUID       *string    `json:"tokenUid,omitempty"`
+	TokenExpiresAt *time.Time `json:"tokenExpiresAt,omitempty"`
+	RTCConfigured  bool       `json:"rtcConfigured"`
+}
+
+// BlockedDate mirrors public.doctor_blocked_dates (mobile BlockedDate).
+type BlockedDate struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"userId"`
+	BlockedDate time.Time `json:"date"`
+	Reason      *string   `json:"reason,omitempty"`
+	AllDay      bool      `json:"allDay"`
+	StartTime   *string   `json:"startTime,omitempty"`
+	EndTime     *string   `json:"endTime,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
+// Vacation mirrors public.doctor_vacations (mobile VacationPeriod).
+type Vacation struct {
+	ID        string     `json:"id"`
+	UserID    string     `json:"userId"`
+	StartDate time.Time  `json:"startDate"`
+	EndDate   time.Time  `json:"endDate"`
+	Note      *string    `json:"note,omitempty"`
+	Active    bool       `json:"active"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
+}
+
+// RecurringRule mirrors public.doctor_recurring_rules (mobile RecurringRule).
+type RecurringRule struct {
+	ID        string          `json:"id"`
+	UserID    string          `json:"userId"`
+	Rule      json.RawMessage `json:"rule,omitempty"`
+	Active    bool            `json:"active"`
+	CreatedAt time.Time       `json:"createdAt"`
+	UpdatedAt time.Time       `json:"updatedAt"`
+}
+
+// Reminder mirrors public.doctor_reminders (mobile ReminderSettings projection).
+type Reminder struct {
+	ID           string          `json:"id"`
+	UserID       string          `json:"userId"`
+	ReminderType string          `json:"reminderType"`
+	Settings     json.RawMessage `json:"settings,omitempty"`
+	Enabled      bool            `json:"enabled"`
+	CreatedAt    time.Time       `json:"createdAt"`
+	UpdatedAt    time.Time       `json:"updatedAt"`
+}
+
+// ConsultQueueEntry mirrors public.doctor_consult_queue.
+type ConsultQueueEntry struct {
+	ID            string          `json:"id"`
+	UserID        string          `json:"userId"`
+	AppointmentID *string         `json:"appointmentId,omitempty"`
+	Position      int             `json:"position"`
+	Status        string          `json:"status"`
+	Detail        json.RawMessage `json:"detail,omitempty"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
+}
+
+// AppointmentRequest mirrors public.doctor_appointment_requests (mobile AppointmentRequest).
+type AppointmentRequest struct {
+	ID            string          `json:"id"`
+	UserID        string          `json:"userId"`
+	AppointmentID *string         `json:"appointmentId,omitempty"`
+	Patient       json.RawMessage `json:"patient,omitempty"`
+	ConsultType   *string         `json:"consultType,omitempty"`
+	Status        string          `json:"status"`
+	RequestedSlot *string         `json:"requestedSlot,omitempty"`
+	Detail        json.RawMessage `json:"detail,omitempty"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
+}
+
+// ClinicPortfolio mirrors mobile ClinicPortfolio. There is no dedicated clinics
+// table in the migration — memberships live in doctor_profiles.profile_draft
+// (the profile-builder JSONB) and the selected clinic is active_clinic_id.
+type ClinicPortfolio struct {
+	ActiveClinicID *string         `json:"activeClinicId,omitempty"`
+	Memberships    json.RawMessage `json:"memberships"`
 }

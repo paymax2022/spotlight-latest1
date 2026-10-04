@@ -1,19 +1,15 @@
 package restaurant
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for takeaway packaging on the food-delivery money
 // path: restaurants.packaging_fee_kobo must be charged per pack, escrowed with
 // the order, persisted on it, and settled 100% to the RESTAURANT
 // (settlement.Split.ProviderFeeKobo) — with conservation intact.
-//
 // Regression guard, and the reason this exists: 20261113000000 gave the per-pack
 // price a column, but PlaceOrder had no packaging term at all, so the fee was
 // configuration nothing ever read. Checkout meanwhile displayed a "Takeaway
 // packaging" line and added it to the total it showed — the customer was shown
 // one number and billed another.
-//
 // Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -101,7 +97,6 @@ func TestLiveDB_PackagingChargedAndPaidWholeToRestaurant(t *testing.T) {
 		t.Errorf("customer paid %d, want %d", balBefore-balAfter, wantTotal)
 	}
 
-	// --- Settlement. ---
 	deliverWithRider(t, ctx, f, order.ID)
 
 	wantRider := int64(float64(gross) * splitRiderPct)

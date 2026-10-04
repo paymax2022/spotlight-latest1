@@ -2,10 +2,11 @@ package marketplace
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
 	"time"
 )
-
-// ─── Enums (mirror the SQL ENUMs exactly; §1 schema) ─────────────────────────
 
 // ListingStatus: draft,pending_review,active,paused,expired,sold,removed_policy,removed_user
 type ListingStatus string
@@ -109,8 +110,6 @@ const InspectionWindow = 48 * time.Hour
 
 // EvidenceWindow is the dispute evidence-collection duration (§2.3).
 const EvidenceWindow = 72 * time.Hour
-
-// ─── Domain structs (frozen interface; §1 columns) ───────────────────────────
 
 // Listing mirrors mkt_listings.
 type Listing struct {
@@ -387,8 +386,6 @@ const (
 	OutboxDelete = "delete"
 )
 
-// ─── Input DTOs ──────────────────────────────────────────────────────────────
-
 // CreateOrderInput is the create-escrow-order request body (§3.1).
 type CreateOrderInput struct {
 	ListingID      string  `json:"listing_id"`
@@ -455,3 +452,525 @@ type DecideDisputeInput struct {
 	// remainder (amount − split_buyer). Ignored otherwise.
 	SplitBuyerKobo int64 `json:"split_buyer_kobo,omitempty"`
 }
+
+// model_account.go — domain structs + input DTOs for the Trust & Account gap
+// endpoints (saved-items, reports, blocks, notification-prefs, safe-spots).
+// All wire tags are snake_case (frozen module convention).
+
+// SavedItem is one wishlist entry: the listing plus the price it was saved at, so
+// the mobile "price changed" badge can compare against the current price.
+type SavedItem struct {
+	ID             string    `json:"id"`
+	UserID         string    `json:"user_id"`
+	ListingID      string    `json:"listing_id"`
+	SavedPriceKobo int64     `json:"saved_price_kobo"`
+	CreatedAt      time.Time `json:"created_at"`
+	// Listing is the joined summary (nil on a bare insert; populated by ListSavedItems).
+	Listing *Listing `json:"listing,omitempty"`
+}
+
+// Report mirrors mkt_reports. target_type ∈ {listing, seller, chat}.
+type Report struct {
+	ID          string    `json:"id"`
+	ReporterID  string    `json:"reporter_id"`
+	TargetType  string    `json:"target_type"`
+	TargetID    string    `json:"target_id"`
+	Reason      string    `json:"reason"`
+	EvidenceURL *string   `json:"evidence_url,omitempty"`
+	Note        *string   `json:"note,omitempty"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// CreateReportInput is the POST /reports body.
+type CreateReportInput struct {
+	TargetType  string  `json:"target_type"`
+	TargetID    string  `json:"target_id"`
+	Reason      string  `json:"reason"`
+	EvidenceURL *string `json:"evidence_url,omitempty"`
+	Note        *string `json:"note,omitempty"`
+}
+
+// validReportTargets is the closed set of reportable target types.
+var validReportTargets = map[string]bool{string(AppealTargetListing): true, "seller": true, "chat": true}
+
+// Block mirrors mkt_blocks — a directed block (user_id blocked blocked_user_id).
+type Block struct {
+	ID            string    `json:"id"`
+	UserID        string    `json:"user_id"`
+	BlockedUserID string    `json:"blocked_user_id"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// FollowedSeller is a follow row enriched with the followed seller's display
+// name/avatar (public.user_profiles) and live trust signals — never a stored
+// snapshot, so an unfollow-refollow or a name change is always current.
+type FollowedSeller struct {
+	ID             string    `json:"id"`
+	SellerID       string    `json:"seller_id"`
+	SellerName     string    `json:"seller_name"`
+	AvatarURL      *string   `json:"avatar_url,omitempty"`
+	TrustScore     float64   `json:"trust_score"`
+	ActiveListings int       `json:"active_listings"`
+	FollowedAt     time.Time `json:"followed_at"`
+}
+
+// NotificationPrefs mirrors mkt_notification_prefs (one row per user). Every
+// category defaults to true except promotional (opt-in). §33 per-category toggles.
+type NotificationPrefs struct {
+	UserID      string    `json:"user_id"`
+	NewOffer    bool      `json:"new_offer"`
+	PriceDrop   bool      `json:"price_drop"`
+	OrderStatus bool      `json:"order_status"`
+	BoostExpiry bool      `json:"boost_expiry"`
+	Promotional bool      `json:"promotional"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// defaultNotificationPrefs returns the day-one defaults (all on except promotional).
+func defaultNotificationPrefs(userID string) *NotificationPrefs {
+	return &NotificationPrefs{
+		UserID:      userID,
+		NewOffer:    true,
+		PriceDrop:   true,
+		OrderStatus: true,
+		BoostExpiry: true,
+		Promotional: false,
+	}
+}
+
+// NotificationPrefsPatch is the PATCH /notification-prefs body — every field is a
+// pointer so a partial update only touches the toggles the client sends. The wire
+// keys accept both snake_case (module convention) and the camelCase the mobile
+// client sends pre-normalization; the client normalizer already snake-cases bodies,
+// so snake_case is authoritative here.
+type NotificationPrefsPatch struct {
+	NewOffer    *bool `json:"new_offer,omitempty"`
+	PriceDrop   *bool `json:"price_drop,omitempty"`
+	OrderStatus *bool `json:"order_status,omitempty"`
+	BoostExpiry *bool `json:"boost_expiry,omitempty"`
+	Promotional *bool `json:"promotional,omitempty"`
+}
+
+// SafeSpot is one curated verified-safe meetup location (§27 Meetup Mode). Seeded
+// statically in code (no table) — a small, slowly-changing partner list.
+type SafeSpot struct {
+	ID       string  `json:"id"`
+	Name     string  `json:"name"`
+	Kind     string  `json:"kind"` // police_station | bank_branch | mall | public_landmark
+	Address  string  `json:"address"`
+	State    string  `json:"state"`
+	LGA      string  `json:"lga"`
+	Lat      float64 `json:"lat"`
+	Lng      float64 `json:"lng"`
+	Verified bool    `json:"verified"`
+}
+
+// ListingInsights is the seller-facing performance summary for ONE listing.
+// Every figure is counted from the table that actually records the event, not
+// from a denormalised counter — mkt_listings.save_count is never written by this
+// backend, so trusting it would report 0 saves forever.
+// Views are the exception and are read from mkt_listings.view_count, because
+// there is no per-view event table. See Repository.IncrementListingView.
+type ListingInsights struct {
+	ListingID string `json:"listing_id"`
+
+	Views          int64 `json:"views"`
+	Saves          int64 `json:"saves"`           // mkt_saved_items
+	Enquiries      int64 `json:"enquiries"`       // mkt_threads — buyers who opened a chat
+	Offers         int64 `json:"offers"`          // mkt_offers
+	ContactReveals int64 `json:"contact_reveals"` // mkt_contact_reveals — strongest intent signal
+	Orders         int64 `json:"orders"`          // mkt_orders
+
+	// BestOfferKobo is the highest LIVE offer (nil when none stands). Minor units,
+	// int64 — never a float.
+	BestOfferKobo *int64 `json:"best_offer_kobo,omitempty"`
+
+	// Boost state, so the seller can see whether promotion is running and until when.
+	BoostActive bool       `json:"boost_active"`
+	BoostTier   *string    `json:"boost_tier,omitempty"`
+	BoostEndsAt *time.Time `json:"boost_ends_at,omitempty"`
+	ListedAt    time.Time  `json:"listed_at"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+}
+
+// model_admin_users.go — MKT-007 Users/Trust&Safety + Appeals + Fraud-signals
+// admin surface. Field names/vocab mirror frontend-admin/src/types/
+// marketplaceAdmin.ts (MktUserAdmin, MktAppeal, MktFraudSignal, and the
+// request types) VERBATIM — that file, not the service-layer USE_FIXTURES
+// blocks, is the authoritative contract; the fixtures in
+// marketplaceAdminService.ts are a partial/older subset of these fields.
+
+// UserModerationStatus mirrors mkt_user_moderation.status / MktUserStatus.
+type UserModerationStatus string
+
+const (
+	UserStatusActive    UserModerationStatus = "active"
+	UserStatusSuspended UserModerationStatus = "suspended"
+	UserStatusBanned    UserModerationStatus = "banned"
+)
+
+// UserAction mirrors MktUserAction — the verb the admin proposes; status is the
+// resulting noun (ban -> banned, suspend -> suspended, reinstate -> active).
+type UserAction string
+
+const (
+	UserActionSuspend   UserAction = "suspend"
+	UserActionBan       UserAction = "ban"
+	UserActionReinstate UserAction = "reinstate"
+)
+
+// dualApprovalRequiredFor is the ONE place the severity split lives (PR note:
+// mirrors ADR-005's amount threshold, translated from money to action
+// severity). Only 'ban' can silently and severely cut off a real account's
+// ability to transact — it requires a second, independent admin. 'suspend' and
+// 'reinstate' execute immediately under a single admin, same posture as this
+// module's existing single-admin flag/listing moderation actions.
+func dualApprovalRequiredFor(action UserAction) bool {
+	return action == UserActionBan
+}
+
+// resultingStatus maps a proposed action to the status it produces once applied.
+func resultingStatus(action UserAction) UserModerationStatus {
+	switch action {
+	case UserActionBan:
+		return UserStatusBanned
+	case UserActionSuspend:
+		return UserStatusSuspended
+	default:
+		return UserStatusActive
+	}
+}
+
+// UserAdminView is the GET /admin/users/:id (and one row of GET /admin/users)
+// response shape — matches MktUserAdmin field-for-field.
+type UserAdminView struct {
+	ID                    string     `json:"id"`
+	DisplayName           string     `json:"display_name"`
+	EmailMasked           string     `json:"email_masked"`
+	PhoneMasked           string     `json:"phone_masked"`
+	Status                string     `json:"status"`
+	KYCTier               string     `json:"kyc_tier"`
+	KYCPending            bool       `json:"kyc_pending"`
+	TrustScore            float64    `json:"trust_score"`
+	VerifiedIDBadge       bool       `json:"verified_id_badge"`
+	VerifiedBusinessBadge bool       `json:"verified_business_badge"`
+	ActiveListings        int        `json:"active_listings"`
+	CompletedDeals        int        `json:"completed_deals"`
+	OpenFlags             int        `json:"open_flags"`
+	FraudScore            float64    `json:"fraud_score"`
+	SuspensionReasonCode  *string    `json:"suspension_reason_code,omitempty"`
+	PendingAction         *string    `json:"pending_action,omitempty"`
+	PendingActionBy       *string    `json:"pending_action_by,omitempty"`
+	RequiresDualApproval  bool       `json:"requires_dual_approval"`
+	CreatedAt             time.Time  `json:"created_at"`
+	LastActiveAt          *time.Time `json:"last_active_at,omitempty"`
+}
+
+// SetUserStatusInput is the POST /admin/users/:id/status body (propose/maker) —
+// matches MktUserActionRequest.
+type SetUserStatusInput struct {
+	Action     string `json:"action"` // suspend|ban|reinstate
+	ReasonCode string `json:"reason_code"`
+}
+
+// KycReviewInput matches MktKycReviewRequest.
+type KycReviewInput struct {
+	Decision   string  `json:"decision"` // approve|reject
+	ReasonCode string  `json:"reason_code"`
+	GrantTier  *string `json:"grant_tier,omitempty"`
+}
+
+// BlacklistInput matches MktBlacklistRequest.
+type BlacklistInput struct {
+	Type       string `json:"type"` // device|phone|ip|email
+	Value      string `json:"value"`
+	ReasonCode string `json:"reason_code"`
+}
+
+// UserModerationRow mirrors mkt_user_moderation exactly (repository scan target).
+type UserModerationRow struct {
+	UserID               string
+	MarketID             string
+	Status               string
+	SuspensionReasonCode *string
+	Blacklisted          bool
+	BlacklistReasonCode  *string
+	KYCTier              string
+	KYCPending           bool
+	PendingAction        *string
+	PendingReasonCode    *string
+	ProposedBy           *string
+	ProposedAt           *time.Time
+	RequiresDualApproval bool
+	SecondApproverID     *string
+	SecondApprovedAt     *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+// AppealTargetType mirrors mkt_appeals.target_type / MktAppealTargetType.
+type AppealTargetType string
+
+const (
+	AppealTargetListing AppealTargetType = "listing"
+	AppealTargetBoost   AppealTargetType = "boost"
+	AppealTargetUser    AppealTargetType = "user"
+)
+
+// Appeal mirrors mkt_appeals / MktAppeal field-for-field.
+type Appeal struct {
+	ID                   string     `json:"id"`
+	MarketID             string     `json:"-"` // internal scoping only; not in MktAppeal
+	TargetType           string     `json:"target_type"`
+	TargetID             string     `json:"target_id"`
+	AppellantID          string     `json:"appellant_id"`
+	OriginalAction       string     `json:"original_action"`
+	OriginalReasonCode   string     `json:"original_reason_code"`
+	AppellantNote        string     `json:"appellant_note"`
+	Status               string     `json:"status"`
+	Decision             *string    `json:"decision,omitempty"`
+	DecisionNotes        *string    `json:"decision_notes,omitempty"`
+	DecidedBy            *string    `json:"decided_by,omitempty"`
+	DecidedAt            *time.Time `json:"decided_at,omitempty"`
+	SecondApproverID     *string    `json:"second_approver_id,omitempty"`
+	SecondApprovedAt     *time.Time `json:"-"` // internal; not part of MktAppeal's wire shape
+	RequiresDualApproval bool       `json:"requires_dual_approval"`
+	ExecutedAt           *time.Time `json:"executed_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"-"` // internal; not part of MktAppeal's wire shape
+}
+
+// CreateAppealInput is the member-facing POST /appeals body.
+type CreateAppealInput struct {
+	TargetType         string `json:"target_type"`
+	TargetID           string `json:"target_id"`
+	OriginalAction     string `json:"original_action"`
+	OriginalReasonCode string `json:"original_reason_code"`
+	AppellantNote      string `json:"appellant_note"`
+}
+
+// DecideAppealInput is the POST /admin/appeals/:id/decide body (propose/maker) —
+// matches MktAppealDecideRequest. NOTE the request vocab is 'uphold'/'overturn'
+// (verb) while the STORED/rendered Appeal.Decision is 'upheld'/'overturned'
+// (past participle) — the service maps one to the other; see decisionPastTense.
+type DecideAppealInput struct {
+	Decision   string `json:"decision"` // uphold|overturn
+	ReasonCode string `json:"reason_code"`
+	Notes      string `json:"notes"`
+}
+
+func decisionPastTense(verb string) (string, bool) {
+	switch verb {
+	case "uphold":
+		return "upheld", true
+	case "overturn":
+		return "overturned", true
+	default:
+		return "", false
+	}
+}
+
+// FraudSignal is one derived, read-only risk signal (GET /admin/fraud/signals) —
+// matches MktFraudSignal. Every field is traceable to a real row; see
+// service_admin_fraud.go for the exact queries backing each Kind.
+type FraudSignal struct {
+	ID              string    `json:"id"`
+	Kind            string    `json:"kind"`
+	UserID          string    `json:"user_id"`
+	UserDisplayName string    `json:"user_display_name"`
+	Severity        string    `json:"severity"` // low|medium|high
+	Detail          string    `json:"detail"`
+	RelatedUserIDs  []string  `json:"related_user_ids"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// CodedError is the uniform marketplace error shape. It carries a machine code
+// (§3 taxonomy), a human message, an optional field (for validation errors), and
+// the HTTP status the handler should emit. The wire shape is:
+//
+//	{"error":{"code","message","field","request_id"}}
+//
+// request_id is stamped by the handler from the gin request context, not here.
+type CodedError struct {
+	Status  int    `json:"-"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Field   string `json:"field,omitempty"`
+}
+
+func (e *CodedError) Error() string { return e.Code + ": " + e.Message }
+
+// newErr constructs a CodedError.
+func newErr(status int, code, message string) *CodedError {
+	return &CodedError{Status: status, Code: code, Message: message}
+}
+
+// fieldErr constructs a 400 validation CodedError bound to a field.
+func fieldErr(code, message, field string) *CodedError {
+	return &CodedError{Status: http.StatusBadRequest, Code: code, Message: message, Field: field}
+}
+
+// asCoded unwraps err to a *CodedError, or synthesizes a 500 for anything else.
+// Sentinel ledger/redis errors are mapped to their marketplace-domain code here so
+// the service layer can return raw ledger errors and still produce a clean shape.
+func asCoded(err error) *CodedError {
+	if err == nil {
+		return nil
+	}
+	if ce, ok := errors.AsType[*CodedError](err); ok {
+		return ce
+	}
+	return &CodedError{Status: http.StatusInternalServerError, Code: CodeInternal, Message: err.Error()}
+}
+
+// wrapInternal preserves a coded error, otherwise wraps a raw error as an internal
+// CodedError with context. Used inside the service to keep the taxonomy intact.
+func wrapInternal(ctx string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ce, ok := errors.AsType[*CodedError](err); ok {
+		return ce
+	}
+	return &CodedError{Status: http.StatusInternalServerError, Code: CodeInternal, Message: fmt.Sprintf("%s: %v", ctx, err)}
+}
+
+const (
+	CodeInternal        = "INTERNAL_ERROR"
+	CodeUnauthenticated = "UNAUTHENTICATED"
+	CodeValidation      = "SCHEMA_VALIDATION_FAILED"
+
+	// CodeListingNotFound — Listings
+	CodeListingNotFound          = "LISTING_NOT_FOUND"
+	CodeListingHasHistory        = "LISTING_HAS_HISTORY"
+	CodeListingNotActive         = "LISTING_NOT_ACTIVE"
+	CodeListingNotEscrowElig     = "LISTING_NOT_ESCROW_ELIGIBLE"
+	CodeDescriptionTooShort      = "DESCRIPTION_TOO_SHORT"
+	CodeInsufficientPhotos       = "INSUFFICIENT_PHOTOS"
+	CodePriceOutOfBand           = "PRICE_OUT_OF_BAND"
+	CodeDuplicatePhotoDetected   = "DUPLICATE_PHOTO_DETECTED"
+	CodeListingHasActiveOrder    = "LISTING_HAS_ACTIVE_ORDER"
+	CodeInvalidListingTransition = "INVALID_LISTING_TRANSITION"
+	CodeContactRevealLimit       = "CONTACT_REVEAL_LIMIT"
+	CodeSellerHasNoPhone         = "SELLER_HAS_NO_PHONE"
+
+	// CodeInvalidDeliveryOption — Orders / escrow
+	CodeInvalidDeliveryOption  = "INVALID_DELIVERY_OPTION"
+	CodeBuyerKYCInsufficient   = "BUYER_KYC_TIER_INSUFFICIENT"
+	CodeSelfPurchaseNotAllowed = "SELF_PURCHASE_NOT_ALLOWED"
+	CodeOrderNotFound          = "ORDER_NOT_FOUND"
+	CodeOrderNotInitiated      = "ORDER_NOT_IN_INITIATED_STATE"
+	CodeOrderAlreadyFunded     = "ORDER_ALREADY_FUNDED"
+	CodeOrderExpired           = "ORDER_EXPIRED"
+	CodeInsufficientWallet     = "INSUFFICIENT_WALLET_BALANCE"
+	CodeOrderNotInspection     = "ORDER_NOT_IN_INSPECTION_WINDOW"
+	CodeInspectionDeadlinePast = "INSPECTION_DEADLINE_PASSED"
+	CodeOrderNotAcceptable     = "ORDER_NOT_ACCEPTABLE"
+	CodeOrderNotCancellable    = "ORDER_NOT_CANCELLABLE"
+	CodeOrderNotDisputable     = "ORDER_NOT_DISPUTABLE"
+	CodeInvalidOrderTransition = "INVALID_ORDER_TRANSITION"
+	CodeNotOrderBuyer          = "NOT_ORDER_BUYER"
+	CodeNotOrderSeller         = "NOT_ORDER_SELLER"
+	CodeNotOrderParty          = "NOT_ORDER_PARTY"
+
+	// CodeDisputeNotFound — Disputes
+	CodeDisputeNotFound          = "DISPUTE_NOT_FOUND"
+	CodeDisputeAlreadyOpen       = "DISPUTE_ALREADY_OPEN_FOR_ORDER"
+	CodeInvalidDisputeTransition = "INVALID_DISPUTE_TRANSITION"
+	CodeReasonCodeRequired       = "REASON_CODE_REQUIRED"
+	CodeAwaitingSecondApproval   = "AWAITING_SECOND_APPROVAL"
+	CodeSameApproverNotAllowed   = "SAME_APPROVER_NOT_ALLOWED"
+
+	// CodeBoostNotFound — Boosts
+	CodeBoostNotFound          = "BOOST_NOT_FOUND"
+	CodeInvalidBoostTransition = "INVALID_BOOST_TRANSITION"
+	CodeInvalidBoostTier       = "INVALID_BOOST_TIER"
+	CodeInvalidBoostRange      = "INVALID_BOOST_DATE_RANGE"
+	CodeTierLimitExceeded      = "TIER_LIMIT_EXCEEDED"
+	CodeTierGateUnwired        = "TIER_GATE_UNWIRED"
+
+	// CodeOfferNotFound — Offers / reviews / misc
+	CodeOfferNotFound  = "OFFER_NOT_FOUND"
+	CodeReviewNotFound = "REVIEW_NOT_FOUND"
+	CodeReviewExists   = "REVIEW_ALREADY_EXISTS"
+	CodeNotFound       = "NOT_FOUND"
+
+	// CodeThreadNotFound — Messaging (ADR-023 listings-and-connect "connect" model; non-money metadata)
+	CodeThreadNotFound      = "THREAD_NOT_FOUND"
+	CodeCannotMessageSelf   = "CANNOT_MESSAGE_SELF"
+	CodeMessageBodyRequired = "MESSAGE_BODY_REQUIRED"
+	CodeMessageBodyTooLong  = "MESSAGE_BODY_TOO_LONG"
+	// CodeDealNotMet — Deal reviews (ADR-023: thread-keyed reviews behind the "mark met" signal).
+	CodeDealNotMet = "DEAL_NOT_MARKED_MET"
+
+	// CodeForbidden — Cross-cutting
+	CodeForbidden           = "FORBIDDEN"
+	CodeIdempotencyReplay   = "IDEMPOTENCY_KEY_REPLAY"
+	CodeIdempotencyMissing  = "IDEMPOTENCY_KEY_REQUIRED"
+	CodeConflict            = "CONFLICT"
+	CodeWebhookBadSignature = "WEBHOOK_BAD_SIGNATURE"
+	CodeSearchNotWired      = "SEARCH_NOT_WIRED"
+	CodeNotImplemented      = "NOT_IMPLEMENTED"
+
+	// CodeUploadsNotConfigured — Account / trust gap endpoints (media presign, saved-items, reports, blocks,
+	// notification prefs, meetup safe-spots).
+	CodeUploadsNotConfigured = "UPLOADS_NOT_CONFIGURED"
+	CodeAlreadySaved         = "ALREADY_SAVED"
+	CodeSavedItemNotFound    = "SAVED_ITEM_NOT_FOUND"
+	CodeAlreadyBlocked       = "ALREADY_BLOCKED"
+	CodeBlockNotFound        = "BLOCK_NOT_FOUND"
+	CodeCannotBlockSelf      = "CANNOT_BLOCK_SELF"
+	CodeInvalidReportTarget  = "INVALID_REPORT_TARGET"
+	CodeCannotFollowSelf     = "CANNOT_FOLLOW_SELF"
+)
+
+// Constructor helpers for the most common coded errors.
+var (
+	ErrForbidden            = newErr(http.StatusForbidden, CodeForbidden, "you may not act on this resource")
+	ErrUnauthenticated      = newErr(http.StatusUnauthorized, CodeUnauthenticated, "authentication required")
+	ErrListingNotFound      = newErr(http.StatusNotFound, CodeListingNotFound, "listing not found")
+	ErrOrderNotFound        = newErr(http.StatusNotFound, CodeOrderNotFound, "order not found")
+	ErrDisputeNotFound      = newErr(http.StatusNotFound, CodeDisputeNotFound, "dispute not found")
+	ErrBoostNotFound        = newErr(http.StatusNotFound, CodeBoostNotFound, "boost not found")
+	ErrBoostPackageNotFound = newErr(http.StatusBadRequest, CodeInvalidBoostTier, "unknown boost tier")
+	ErrOfferNotFound        = newErr(http.StatusNotFound, CodeOfferNotFound, "offer not found")
+	ErrThreadNotFound       = newErr(http.StatusNotFound, CodeThreadNotFound, "thread not found")
+	ErrReviewExists         = newErr(http.StatusConflict, CodeReviewExists, "you have already reviewed this deal")
+	ErrCannotMessageSelf    = newErr(422, CodeCannotMessageSelf, "you cannot start a conversation with yourself")
+	ErrCannotFollowSelf     = newErr(422, CodeCannotFollowSelf, "you cannot follow yourself")
+	ErrReasonRequired       = newErr(http.StatusBadRequest, CodeReasonCodeRequired, "reason_code is required")
+	ErrIdemMissing          = newErr(http.StatusBadRequest, CodeIdempotencyMissing, "Idempotency-Key header required")
+	ErrConflict             = newErr(http.StatusConflict, CodeConflict, "conflicting concurrent write")
+	// ErrNotFound is a generic 404 for admin sub-resources (MKT-007 users/appeals)
+	// that don't warrant their own dedicated CodedError constant.
+	ErrNotFound = newErr(http.StatusNotFound, CodeNotFound, "not found")
+	// ErrAppealNotFound — MKT-007 appeals admin.
+	ErrAppealNotFound = newErr(http.StatusNotFound, CodeNotFound, "appeal not found")
+	// ErrNoPendingAction — MKT-007 maker-checker second-sign attempted with
+	// nothing PENDING (already approved/rejected, or never proposed).
+	ErrNoPendingAction = newErr(http.StatusConflict, CodeConflict, "no pending action awaiting approval")
+	// ErrSameApproverNotAllowed — MKT-007 maker-checker: the checker must be a
+	// DIFFERENT admin than the maker who proposed the action (four-eyes). Reuses
+	// the CodeSameApproverNotAllowed taxonomy entry this module already defines
+	// for disputes (§ Disputes error codes above) so the wire shape is identical
+	// across both dual-approval flows in this module.
+	ErrSameApproverNotAllowed = newErr(http.StatusConflict, CodeSameApproverNotAllowed, "the approver must be a different admin than the one who proposed this action")
+	// ErrInvalidUserAction — action value outside {suspend,ban,reinstate}.
+	ErrInvalidUserAction = newErr(http.StatusBadRequest, CodeValidation, "action must be one of suspend, ban, reinstate")
+	// ErrInvalidAppealDecision — decision value outside {uphold,overturn}.
+	ErrInvalidAppealDecision = newErr(http.StatusBadRequest, CodeValidation, "decision must be one of uphold, overturn")
+	// ErrTierGateUnwired is returned by PurchaseBoost when the Service was built
+	// without a TierEnforcer. A nil gate is a deployment misconfiguration, not a
+	// dev-mode bypass: CLAUDE.md's iron rule requires every money mutation to pass
+	// a fail-closed tier-limit check, so "no gate wired" must mean "no boost
+	// purchase" rather than "the limit is unlimited". Mirrors
+	// internal/restaurant's ErrTierGateUnwired. 503: server misconfiguration, not
+	// the caller's fault, and retryable once wired.
+	ErrTierGateUnwired = newErr(http.StatusServiceUnavailable, CodeTierGateUnwired, "boost purchase is temporarily unavailable (tier gate not wired)")
+	// ErrListingNotActiveRace is returned by InsertOrderAtomic when the DB-level
+	// optimistic lock finds the listing is no longer purchasable (status flipped, or
+	// another buyer's order already holds this single-quantity listing). The service
+	// maps it to 422 LISTING_NOT_ACTIVE so the race-loser gets a clean, correct code.
+	ErrListingNotActiveRace = newErr(422, CodeListingNotActive, "listing is not active")
+)

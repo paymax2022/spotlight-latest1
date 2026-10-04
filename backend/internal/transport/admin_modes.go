@@ -8,10 +8,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 )
 
-// ─── Admin: multi-modal lists + status patch + per-mode KPIs ─────────────────
-//
 // Generic, audited list/patch helpers for parcel/towing/mover/car-hire rows.
 // Couriers/operators/providers are surfaced via the existing /admin/transport/drivers
 // queue (they are drivers). Bus admin CRUD lives in bus.go / bus_handler.go.
@@ -300,7 +301,7 @@ func (a *AdminService) ListCarHireBookings(ctx context.Context, status string) (
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, uid, status, hireType, vehicleClass string
 		var customerName, driver, driverName, settlementStatus *string
@@ -480,8 +481,6 @@ func (a *AdminService) ModeKPIs(ctx context.Context) map[string]any {
 	}
 }
 
-// ─── Admin mode handlers ─────────────────────────────────────────────────────
-
 func (h *AdminHandler) AdminParcelsList(c *gin.Context) {
 	ps, err := h.svc.ListParcels(c.Request.Context(), c.Query("status"))
 	if err != nil {
@@ -492,10 +491,10 @@ func (h *AdminHandler) AdminParcelsList(c *gin.Context) {
 }
 
 func (h *AdminHandler) AdminParcelStatus(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.PatchParcelStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {
@@ -515,10 +514,10 @@ func (h *AdminHandler) AdminTowingList(c *gin.Context) {
 }
 
 func (h *AdminHandler) AdminTowingStatus(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.PatchTowingStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {
@@ -547,10 +546,10 @@ func (h *AdminHandler) AdminMoverDetail(c *gin.Context) {
 }
 
 func (h *AdminHandler) AdminMoverStatus(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.PatchMoverStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {
@@ -570,10 +569,10 @@ func (h *AdminHandler) AdminCarHireList(c *gin.Context) {
 }
 
 func (h *AdminHandler) AdminCarHireStatus(c *gin.Context) {
-	adminID := c.GetString("user_id")
+	adminID := ginutil.UserID(c)
 	var req ModeStatusPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.PatchCarHireStatus(c.Request.Context(), adminID, c.Param("id"), req); err != nil {

@@ -31,7 +31,7 @@ func (f *fakeAdapter) Submit(_ context.Context, o Order) (Fill, error) {
 	f.fills[o.ClientOrderID] = fill
 	return fill, nil
 }
-func (f *fakeAdapter) Cancel(context.Context, string) error   { return nil }
+func (f *fakeAdapter) Cancel(context.Context, string) error      { return nil }
 func (f *fakeAdapter) Reconcile(context.Context) ([]Fill, error) { return nil, nil }
 
 func goodOrder() Order {
@@ -100,7 +100,8 @@ func TestTransmit_FailClosed(t *testing.T) {
 // Ordering: the withdrawals check must gate BEFORE any transmit even when the
 // pre-trade guard would pass — a credential that can withdraw never trades.
 func TestTransmit_WithdrawalsGateIsHard(t *testing.T) {
-	f := newFake(); f.wd = false
+	f := newFake()
+	f.wd = false
 	if _, err := Transmit(context.Background(), f, AllowAll{}, goodOrder()); !errors.Is(err, ErrWithdrawalsPossible) {
 		t.Fatalf("withdrawals-possible must hard-block, got %v", err)
 	}
@@ -127,7 +128,8 @@ func TestTransmit_KillSwitch(t *testing.T) {
 		t.Fatalf("first order should pass: %v", err)
 	}
 	f.Kill()
-	o2 := goodOrder(); o2.ClientOrderID = "ord-2"
+	o2 := goodOrder()
+	o2.ClientOrderID = "ord-2"
 	if _, err := Transmit(context.Background(), f, AllowAll{}, o2); !errors.Is(err, ErrKilled) {
 		t.Fatalf("after Kill, transmission must be refused, got %v", err)
 	}

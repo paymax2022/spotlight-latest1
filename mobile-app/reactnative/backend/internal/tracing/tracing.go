@@ -2,7 +2,6 @@
 // carries a trace id / span id pair, the Middleware starts one span per HTTP
 // request, propagates the trace id through context and the X-Trace-Id response
 // header, and logs a one-line summary on finish.
-//
 // Stdlib-only (crypto/rand for ids). It deliberately mirrors the existing
 // requestIDMW pattern in the api package — start, inject into context, set a
 // response header — so it slots into the same middleware chain.
@@ -64,8 +63,6 @@ func randHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-// ── Request context ───────────────────────────────────────────────────────────
-
 type ctxKey struct{}
 
 // WithSpan returns a copy of ctx carrying the span.
@@ -78,8 +75,6 @@ func FromContext(ctx context.Context) (*Span, bool) {
 	s, ok := ctx.Value(ctxKey{}).(*Span)
 	return s, ok
 }
-
-// ── Middleware ────────────────────────────────────────────────────────────────
 
 // Middleware starts a span per request, reusing an incoming X-Trace-Id (or the
 // trace-id field of a W3C traceparent) when present, injects the span into the

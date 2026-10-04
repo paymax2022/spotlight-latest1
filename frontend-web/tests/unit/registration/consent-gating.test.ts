@@ -31,8 +31,6 @@ function makeChain(table: string) {
     maybeSingle: () => Promise.resolve({ data: { id: 'connect-contest-1' }, error: null }),
   };
   if (table === 'registrations') {
-    // .update({...}).eq('id', applicationId) is awaited directly with no
-    // .select()/.single() in the notes-write step; .then lets `await` on the
     // chain itself resolve, same as review-template-wiring.test.ts's mock.
     chain.then = (resolve: any) => resolve({ data: null, error: null });
   }
@@ -151,7 +149,6 @@ describe('SEC-010/RG-003/EC-006: reviewRegistrationApplication promotion-time co
     // support public voting" — that template never renders
     // publicProfile.publicVotingConsent, so form_data never carries it.
     // Requiring it unconditionally here would permanently block every
-    // film-academy approval; gating on derived.supportsVoting avoids that
     // regression while still enforcing the universal rights confirmation.
     registrationsRow = baseRow(
       {
@@ -405,7 +402,6 @@ describe('SEC-010/RG-003/EC-006: submitRegistrationApplication records consent a
     // Stub the step builder so this test is decoupled from open-mic's full
     // required-field list (which would make it brittle against unrelated
     // future form edits) — validateStepData itself stays REAL, exercising the
-    // actual code path submitRegistrationApplication calls; it is only fed a
     // minimal step containing exactly the two consent fields, both already
     // satisfied by draftRow.form_data above, so validation genuinely passes
     // and the insert this test asserts on genuinely fires.

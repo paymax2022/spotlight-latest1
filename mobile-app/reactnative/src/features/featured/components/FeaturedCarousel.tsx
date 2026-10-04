@@ -1,6 +1,6 @@
 import React from 'react';
 import { FlatList, StyleSheet } from 'react-native';
-import { Spacing } from '@/constants/spacing';
+import { Spacing } from '@/constants/tokens';
 import FeaturedCard from './FeaturedCard';
 import type { LandingItem } from '../types';
 

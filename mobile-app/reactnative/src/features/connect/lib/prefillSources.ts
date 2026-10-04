@@ -1,21 +1,13 @@
-// ── Where the platform already knows a user's basics ─────────────────────────
 // `user_profiles` is the canonical home for name / DOB / gender / state, but on
 // this platform it is very often nearly empty: sign-up only captures a name and
 // phone, and the columns that matter to Connect are filled in later, or never.
-//
 // The same details ARE captured elsewhere — a Film Academy application asks for
-// gender, date of birth and state; a contest registration writes them into
 // `registrations.form_data` under `personal.*`. Reading only `user_profiles`
 // therefore leaves an onboarding form blank for a user the platform can already
 // describe.
-//
-// So: take `user_profiles` as authoritative and fill only its GAPS from the
 // other places the user has previously given the same answers. Never the
 // reverse — a value the user has set on their profile always wins.
-//
-// This is read-only. Nothing here copies data between modules on disk; it only
 // decides what to pre-fill a form with, and the user can change any of it.
-//
 // Pure — the Supabase reads live in ./fetchPrefillSources so these stay
 // unit-testable under plain node.
 

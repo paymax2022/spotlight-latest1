@@ -48,7 +48,7 @@ func TestParcelInsuranceSettlement_PlatformOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ComputeLegs: %v", err)
 	}
-	wantProvider := int64(float64(fareKobo) * comm.ProviderPct) // 128000
+	wantProvider := int64(float64(fareKobo) * comm.ProviderPct)               // 128000
 	wantPlatform := int64(float64(fareKobo)*comm.PlatformPct) + insuranceKobo // 32000 + 15000
 	if legs.ProviderKobo != wantProvider {
 		t.Errorf("courier leg = %d, want %d (must be computed off fare only, never insurance)", legs.ProviderKobo, wantProvider)

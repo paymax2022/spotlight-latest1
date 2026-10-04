@@ -1,25 +1,18 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // Committee membership management, and document-vault access.
-//
 // WHY THIS EXISTS
-// ---------------
 // A member could ASK to join a committee and nobody could answer: the request
 // wrote a PENDING row and there was no endpoint to accept or decline it, add
 // anyone directly, remove anyone, or give them a position. The committee member
 // list was therefore a list nobody could change.
-//
 // The document vault had the mirror problem: documents could be listed and
 // acknowledged, but the file behind one could not be fetched — the bucket is
 // not public, so a stored object key is not a URL.
-//
 // The properties pinned here are the access ones, because both features hand
 // out things that are meant to be scoped: committee membership, and a signed URL
 // to an organisation's private documents.
-//
 // Live-DB, same harness as founder_and_scoping_test.go.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

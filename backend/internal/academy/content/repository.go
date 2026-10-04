@@ -25,8 +25,6 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("academy.content: not found")
 
-// ── helpers ────────────────────────────────────────────────────────────────────
-
 func toJSONB(v any) []byte {
 	if v == nil {
 		return []byte("{}")
@@ -74,8 +72,6 @@ func (r *Repository) insertAudit(ctx context.Context, actor, action, resourceTyp
 }
 
 type rowScanner interface{ Scan(dest ...any) error }
-
-// ── Lessons (publish surface) ───────────────────────────────────────────────────
 
 func scanLesson(row rowScanner) (*Lesson, error) {
 	l := &Lesson{}
@@ -126,12 +122,14 @@ func (r *Repository) ListLiveLessonsForObjective(ctx context.Context, objectiveI
 // ListLessons lists lessons admin-wide (all statuses), newest first, optionally
 // filtered by objective_id / status. Mirrors ListLiveLessonsForObjective without
 // the live-only + single-objective constraints (admin CMS surface).
+// Reads academy_edu_lessons — NOT the brownfield academy_lessons (which has no
+// objective_id column).
 func (r *Repository) ListLessons(ctx context.Context, objectiveID, status string, limit, offset int) ([]Lesson, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	var sb strings.Builder
-	sb.WriteString(`SELECT ` + lessonCols + ` FROM public.academy_lessons WHERE 1=1`)
+	sb.WriteString(`SELECT ` + lessonCols + ` FROM public.academy_edu_lessons WHERE 1=1`)
 	args := []any{}
 	if objectiveID != "" {
 		args = append(args, objectiveID)
@@ -202,8 +200,6 @@ func (r *Repository) TransitionLesson(ctx context.Context, actor, id string, to 
 	}
 	return r.GetLesson(ctx, id)
 }
-
-// ── Content bundles (publish surface + manifest) ─────────────────────────────────
 
 const bundleCols = `id, name, version_id, arena_code, size_budget_bytes, lesson_ids, access_card_mapping, status, manifest, created_at`
 
@@ -352,8 +348,6 @@ func (r *Repository) buildManifestTx(ctx context.Context, tx pgx.Tx, bundleID st
 	}, nil
 }
 
-// ── Productions (pipeline board) ─────────────────────────────────────────────────
-
 const productionCols = `id, lesson_id, title, stage, owner_id, sla_due, status, notes, created_at, updated_at`
 
 func scanProduction(row rowScanner) (*Production, error) {
@@ -477,7 +471,7 @@ func (r *Repository) BlockProduction(ctx context.Context, actor, id string) (*Pr
 		return nil, err
 	}
 
-	if !canBlock(from) {
+	if from != ProdActive {
 		_ = insertAuditTx(ctx, tx, actor, "production.block_rejected", "academy_content_production", id,
 			map[string]any{"from": string(from), "to": string(ProdBlocked), "reason": "illegal_transition"}, "warning")
 		_ = tx.Commit(ctx)
@@ -540,8 +534,6 @@ func (r *Repository) ListProductions(ctx context.Context, f ProductionFilter) ([
 	}
 	return out, rows.Err()
 }
-
-// ── Localizations ────────────────────────────────────────────────────────────────
 
 const localizationCols = `id, entity_type, entity_id, lang, payload, status, updated_at`
 

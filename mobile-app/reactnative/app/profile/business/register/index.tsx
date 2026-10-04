@@ -5,8 +5,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-// Aliased: this screen already has a local `goBack` that steps back through
-// the wizard. Without the alias my call sites resolved to THAT function and
 // recursed into it with an argument it does not take.
 import { goBack as leaveScreen } from '@/lib/navigation';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -17,11 +15,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
@@ -41,8 +39,6 @@ import { getErrorMessage } from '@/utils/errorMapper';
 import { formatNaira } from '@/utils/money';
 import { useGatewayCheckout } from '@/features/payments';
 import type { BusinessEntityType, BusinessProfile, BusinessProprietor } from '@/types/business';
-
-// ── Constants ─────────────────────────────────────────────────────────────────
 
 const ENTITY_OPTIONS: { value: BusinessEntityType; label: string }[] = [
   { value: 'business_name',        label: 'Business name' },
@@ -70,7 +66,6 @@ const LINE_OF_BUSINESS = [
   'Mining & Solid Minerals', 'General Merchandise', 'Other',
 ];
 
-// Single-select proprietor roles. Labels are shown; the backend receives the
 // lowercased slug (e.g. "Company Secretary" → "company_secretary").
 const ROLE_OPTIONS = [
   'Proprietor', 'Partner', 'Director', 'Trustee', 'Shareholder', 'Company Secretary', 'Signatory',
@@ -83,8 +78,6 @@ function roleSlug(label: string): string {
 const POLLING_STATUSES = new Set<BusinessProfile['status']>([
   'registration_submitted', 'under_review', 'name_reserved', 'submitted',
 ]);
-
-// ── Validation schemas ──────────────────────────────────────────────────────
 
 const nameSchema = z.object({
   proposedName:   z.string().trim().min(2, 'Enter a proposed business name').max(120, 'Name is too long'),
@@ -162,7 +155,6 @@ export default function RegisterBusinessScreen() {
     }
   }, [resumeQuery.data, business]);
 
-  // ── Forms ───────────────────────────────────────────────────────────────────
   const nameForm = useForm<NameForm>({
     resolver: zodResolver(nameSchema),
     defaultValues: { proposedName: '', lineOfBusiness: [] },
@@ -174,7 +166,6 @@ export default function RegisterBusinessScreen() {
   });
   const fieldArray = useFieldArray({ control: propForm.control, name: 'proprietors' });
 
-  // ── Step 1: name availability check ──────────────────────────────────────────
   // (Register + reserve are deferred to step 2 so the single POST /register call
   //  carries the proprietors — the only endpoint that accepts them.)
   const nameMutation = useMutation({
@@ -192,7 +183,6 @@ export default function RegisterBusinessScreen() {
     },
   });
 
-  // ── Step 2: register draft (with proprietors) → reserve name ─────────────────
   const registerMutation = useMutation({
     mutationFn: async (proprietors: BusinessProprietor[]) => {
       const name = nameData ?? nameForm.getValues();
@@ -218,7 +208,6 @@ export default function RegisterBusinessScreen() {
     },
   });
 
-  // ── Step 3: pay fee → submit ─────────────────────────────────────────────────
   const feeMutation = useMutation({
     mutationFn: async () => {
       if (!business) throw new Error('No business to submit');
@@ -232,7 +221,6 @@ export default function RegisterBusinessScreen() {
     },
   });
 
-  // ── Step 4: poll status ──────────────────────────────────────────────────────
   const statusQuery = useQuery({
     queryKey: ['business', business?.id, 'status'],
     queryFn: () => getStatus(business!.id),
@@ -246,7 +234,6 @@ export default function RegisterBusinessScreen() {
     if (statusQuery.data) setBusiness(statusQuery.data);
   }, [statusQuery.data]);
 
-  // ── Handlers ──────────────────────────────────────────────────────────────────
   const onCheckName = nameForm.handleSubmit((values) => {
     setNameCheck(null);
     nameMutation.mutate(values);
@@ -274,7 +261,6 @@ export default function RegisterBusinessScreen() {
     feeMutation.mutate();
   };
 
-  // ── Paystack (payment-gateway) fee flow ──────────────────────────────────────
   // In-app SDK checkout only — no external-browser redirect. initiateFeePaystack
   // is called up front (not inside the hook's initialize) because `alreadyPaid`
   // needs to short-circuit straight to completion without ever opening the
@@ -320,7 +306,6 @@ export default function RegisterBusinessScreen() {
     setStep((s) => Math.max(0, s - 1));
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   if (resumeId && resumeQuery.isLoading && !business) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -664,7 +649,6 @@ export default function RegisterBusinessScreen() {
   );
 }
 
-// ── Status step ────────────────────────────────────────────────────────────────
 function StatusStep({ business, isPolling, onDone }: { business: BusinessProfile; isPolling: boolean; onDone: () => void }) {
   const chip = statusChip(business.status);
   const tc = toneColors(chip.tone);

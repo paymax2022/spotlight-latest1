@@ -2,17 +2,24 @@ package maps
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/strutil"
 )
 
 // gazetteer.go — the PrivateGazetteer, our private store of VERIFIED internal
 // points checked FIRST in the resolution chain (MAPSERVICE.md §6, MS-2).
-//
 // Properties (MS-4 / NDPA):
 //   - PII-bearing. Any PII payload is encrypted at rest into encrypted_pii via the
 //     injected Encryptor — never persisted in plaintext.
@@ -21,9 +28,8 @@ import (
 //   - Never uploaded to OSM; results are tagged SourceGazetteer (zero external cost),
 //     Confidence 1.0 (these are confirmed points), and Cacheable=true (they are OURS,
 //     not third-party-licensed).
-//
-// All SQL is parameterized. H3/geog patterns mirror geo_repo.go (PostGIS geography,
-// ST_SetSRID/ST_MakePoint, ST_DWithin) and cell.go (string cell keys).
+// All SQL is parameterized. H3/geog patterns mirror geo.go (PostGIS geography,
+// ST_SetSRID/ST_MakePoint, ST_DWithin) and its string cell keys.
 
 // reverseRadiusM is the small radius (metres) within which ReverseLookup accepts a
 // verified point as a match for a coordinate. Kept tight: a gazetteer hit must be
@@ -106,7 +112,7 @@ func (g *Gazetteer) ReverseLookup(ctx context.Context, h3Cell string, lat, lng f
 	if g == nil || g.pool == nil {
 		return GeoResult{}, false, nil
 	}
-	// $1=lat $2=lng $3=radius. ST_MakePoint takes (lng, lat) — mirrors geo_repo.go.
+	// $1=lat $2=lng $3=radius. ST_MakePoint takes (lng, lat) — mirrors .
 	const q = `
 		SELECT id, lat, lng, normalized_addr, plus_code, h3
 		FROM public.map_gazetteer
@@ -151,7 +157,7 @@ func (g *Gazetteer) Upsert(ctx context.Context, e GazetteerEntry) error {
 
 	// $1 h3, $2 lng, $3 lat, $4 normalized_addr, $5 components(jsonb),
 	// $6 plus_code, $7 source, $8 verified_by(uuid|null), $9 verified_at, $10 encrypted_pii.
-	// ST_MakePoint(lng, lat) per PostGIS convention (see geo_repo.go).
+	// ST_MakePoint(lng, lat) — PostGIS is lng-first.
 	const q = `
 		INSERT INTO public.map_gazetteer
 			(h3, geog, lat, lng, normalized_addr, components, plus_code, source, verified_by, verified_at, encrypted_pii)
@@ -175,8 +181,6 @@ func (g *Gazetteer) Upsert(ctx context.Context, e GazetteerEntry) error {
 	)
 	return err
 }
-
-// --- helpers --------------------------------------------------------------
 
 // scanGazetteerPoint scans one verified point into a SourceGazetteer GeoResult.
 // It returns the entry id (for access logging) and ok=false on miss/scan error.
@@ -239,27 +243,230 @@ func gazetteerPII(e GazetteerEntry) []byte {
 
 // nullUUID maps an empty string to a typed SQL NULL so empty accessor/verified-by
 // ids do not fail uuid parsing on insert. Non-empty values pass through verbatim.
-func nullUUID(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
+func nullUUID(s string) any { return dbutil.NullUUID(s) }
 
 // nzSource defaults an empty gazetteer source to a safe sentinel (the column is
 // NOT NULL). Confirmed pins normally arrive with a real source.
-func nzSource(s string) string {
-	if s == "" {
-		return "user_saved"
-	}
-	return s
-}
+func nzSource(s string) string { return strutil.Or(s, "user_saved") }
 
 // nullableTime maps a zero time.Time to SQL NULL so the column default (now())
 // applies; a set VerifiedAt is passed through. Paired with COALESCE($9, now()).
-func nullableTime(t time.Time) any {
-	if t.IsZero() {
-		return nil
-	}
-	return t
+func nullableTime(t time.Time) any { return dbutil.NullTime(t) }
+
+// GeoRepo is the PostGIS-backed "our own records" access used by findNearbyOwn
+// and isInZone. These NEVER call a maps API — proximity and geofencing run on
+// our data with GiST indexes (ST_DWithin / ST_Contains). It is an interface so
+// the service can be unit-tested with an in-memory fake.
+type GeoRepo interface {
+	NearbyOwn(ctx context.Context, entityType string, p Point, radiusM float64, limit int) ([]OwnEntity, error)
+	InZone(ctx context.Context, p Point, zoneID string) (bool, error)
+	UpsertLocation(ctx context.Context, e OwnEntity, entityType, plusCode string) error
 }
+
+// PostGISRepo implements GeoRepo against merchant_locations + service_areas.
+type PostGISRepo struct {
+	pool *pgxpool.Pool
+}
+
+// NewPostGISRepo builds a PostGIS GeoRepo.
+func NewPostGISRepo(pool *pgxpool.Pool) *PostGISRepo { return &PostGISRepo{pool: pool} }
+
+// NearbyOwn returns OUR records of entityType within radiusM of p, nearest first.
+// Uses geography ST_DWithin (true metres) against the GiST index — not a maps API.
+func (r *PostGISRepo) NearbyOwn(ctx context.Context, entityType string, p Point, radiusM float64, limit int) ([]OwnEntity, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	const q = `
+		SELECT entity_id, entity_type,
+		       ST_Y(geog::geometry) AS lat,
+		       ST_X(geog::geometry) AS lng,
+		       COALESCE(plus_code, ''),
+		       ST_Distance(geog, ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography) AS dist_m
+		FROM merchant_locations
+		WHERE entity_type = $3
+		  AND ST_DWithin(geog, ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography, $4)
+		ORDER BY dist_m ASC
+		LIMIT $5`
+	rows, err := r.pool.Query(ctx, q, p.Lat, p.Lng, entityType, radiusM, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []OwnEntity{}
+	for rows.Next() {
+		var e OwnEntity
+		if err := rows.Scan(&e.EntityID, &e.EntityType, &e.Lat, &e.Lng, &e.PlusCode, &e.DistanceM); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// InZone reports whether p falls inside the service_areas polygon zoneID.
+// Uses ST_Contains on the GiST-indexed geography — not a maps API.
+func (r *PostGISRepo) InZone(ctx context.Context, p Point, zoneID string) (bool, error) {
+	const q = `
+		SELECT EXISTS (
+			SELECT 1 FROM service_areas
+			WHERE id = $1
+			  AND ST_Contains(geog::geometry, ST_SetSRID(ST_MakePoint($3, $2), 4326))
+		)`
+	var inside bool
+	if err := r.pool.QueryRow(ctx, q, zoneID, p.Lat, p.Lng).Scan(&inside); err != nil {
+		return false, err
+	}
+	return inside, nil
+}
+
+// UpsertLocation writes/updates one of our records' pin (source of truth) and
+// its Plus Code. Callers pass the confirmed map pin captured at address entry.
+func (r *PostGISRepo) UpsertLocation(ctx context.Context, e OwnEntity, entityType, plusCode string) error {
+	const q = `
+		INSERT INTO merchant_locations (entity_id, entity_type, geog, plus_code, updated_at)
+		VALUES ($1, $2, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography, $5, NOW())
+		ON CONFLICT (entity_id, entity_type)
+		DO UPDATE SET geog = EXCLUDED.geog, plus_code = EXCLUDED.plus_code, updated_at = NOW()`
+	_, err := r.pool.Exec(ctx, q, e.EntityID, entityType, e.Lat, e.Lng, plusCode)
+	return err
+}
+
+// OwnerZoneChecker answers "does this delivery point fall inside any service area
+// owned by this owner?" against the PostGIS service_areas table. It is the concrete
+// implementation behind restaurant.DeliveryZoneChecker (the restaurant package
+// declares the interface with plain scalar types so it need not import maps).
+// Like GeoRepo.InZone this runs entirely on OUR own geofence data (ST_Contains over
+// the GiST-indexed geography) — it NEVER calls a maps API.
+type OwnerZoneChecker struct {
+	pool *pgxpool.Pool
+}
+
+// NewOwnerZoneChecker builds an OwnerZoneChecker over the given pool.
+func NewOwnerZoneChecker(pool *pgxpool.Pool) *OwnerZoneChecker {
+	return &OwnerZoneChecker{pool: pool}
+}
+
+// InAnyOwnerZone reports whether (lat,lng) is inside any of ownerID's service areas,
+// and whether the owner has drawn any zones at all. A single round-trip returns both:
+//   - hasZones == false  → the owner defined no service areas (caller should NOT gate).
+//   - inZone   == true   → the point is inside at least one of the owner's areas.
+//
+// The same ST_Contains + ST_SetSRID(ST_MakePoint(lng,lat),4326) expression as
+// GeoRepo.InZone is used, so behavior matches the existing single-zone check.
+func (c *OwnerZoneChecker) InAnyOwnerZone(ctx context.Context, lat, lng float64, ownerID string) (bool, bool, error) {
+	var err error
+
+	const q = `
+		SELECT
+			count(*) AS total,
+			count(*) FILTER (
+				WHERE ST_Contains(geog::geometry, ST_SetSRID(ST_MakePoint($3, $2), 4326))
+			) AS inside
+		FROM service_areas
+		WHERE owner_id = $1`
+	var total, inside int64
+	if err = c.pool.QueryRow(ctx, q, ownerID, lat, lng).Scan(&total, &inside); err != nil {
+		return false, false, err
+	}
+	return inside > 0, total > 0, nil
+}
+
+// at-rest encryption for PII-bearing gazetteer payloads (MS-4, NDPA).
+// Addresses (and the raw components captured with a confirmed pin) are PII. The
+// PrivateGazetteer stores any such payload ONLY in the encrypted_pii bytea column,
+// never in plaintext. This file defines the Encryptor seam the Gazetteer depends
+// on, an AES-256-GCM implementation, and a Noop impl for DB-free/dev paths.
+// No existing crypto helper was found under internal/platform or internal/finance,
+// so AES-256-GCM is implemented here with a random per-message nonce prefixed to
+// the ciphertext (standard authenticated-encryption layout).
+
+// Encryptor encrypts/decrypts a PII payload at rest. Implementations MUST be safe
+// for concurrent use (the Gazetteer shares one instance across requests).
+type Encryptor interface {
+	Encrypt(plaintext []byte) ([]byte, error)
+	Decrypt(ciphertext []byte) ([]byte, error)
+}
+
+// Crypto errors surfaced by the AES implementation.
+var (
+	// ErrEncryptorKeySize is returned by NewAESEncryptor for a key that is not a
+	// valid AES key length (16/24/32 bytes). We require 32 (AES-256) in prod.
+	ErrEncryptorKeySize = errors.New("maps: AES key must be 16, 24, or 32 bytes (32 = AES-256)")
+	// ErrCiphertextTooShort is returned by Decrypt when the blob cannot hold a nonce.
+	ErrCiphertextTooShort = errors.New("maps: ciphertext too short")
+)
+
+// aesEncryptor is an AES-GCM Encryptor. The nonce is randomly generated per call
+// and prefixed to the returned ciphertext: layout = nonce || gcmSeal(plaintext).
+type aesEncryptor struct {
+	gcm cipher.AEAD
+}
+
+// NewAESEncryptor builds an AES-GCM Encryptor from a raw key. A 32-byte key
+// selects AES-256 (the production default). Returns ErrEncryptorKeySize otherwise.
+func NewAESEncryptor(key []byte) (Encryptor, error) {
+	switch len(key) {
+	case 16, 24, 32:
+	default:
+		return nil, fmt.Errorf("%w (got %d bytes)", ErrEncryptorKeySize, len(key))
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("maps: aes new cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("maps: aes new gcm: %w", err)
+	}
+	return &aesEncryptor{gcm: gcm}, nil
+}
+
+// Encrypt returns nonce||ciphertext. Empty input yields empty output (nothing to
+// store) so callers can pass a nil/empty PII payload without branching.
+func (e *aesEncryptor) Encrypt(plaintext []byte) ([]byte, error) {
+	if len(plaintext) == 0 {
+		return nil, nil
+	}
+	nonce := make([]byte, e.gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("maps: nonce gen: %w", err)
+	}
+	// Seal appends the ciphertext to nonce, so the nonce prefixes the result.
+	return e.gcm.Seal(nonce, nonce, plaintext, nil), nil
+}
+
+// Decrypt reverses Encrypt: it splits the nonce prefix and authenticates+decrypts.
+// Empty input yields empty output (no stored PII).
+func (e *aesEncryptor) Decrypt(ciphertext []byte) ([]byte, error) {
+	if len(ciphertext) == 0 {
+		return nil, nil
+	}
+	ns := e.gcm.NonceSize()
+	if len(ciphertext) < ns {
+		return nil, ErrCiphertextTooShort
+	}
+	nonce, body := ciphertext[:ns], ciphertext[ns:]
+	plaintext, err := e.gcm.Open(nil, nonce, body, nil)
+	if err != nil {
+		return nil, fmt.Errorf("maps: aes open: %w", err)
+	}
+	return plaintext, nil
+}
+
+// NoopEncryptor is a pass-through Encryptor for tests and for environments where
+// no key is configured. It NEVER protects PII — production wiring MUST inject a
+// real AES key. It exists only so the Gazetteer is non-nil-fragile in dev/tests.
+type NoopEncryptor struct{}
+
+// Encrypt returns the input unchanged.
+func (NoopEncryptor) Encrypt(plaintext []byte) ([]byte, error) { return plaintext, nil }
+
+// Decrypt returns the input unchanged.
+func (NoopEncryptor) Decrypt(ciphertext []byte) ([]byte, error) { return ciphertext, nil }
+
+// compile-time interface assertions.
+var (
+	_ Encryptor = (*aesEncryptor)(nil)
+	_ Encryptor = NoopEncryptor{}
+)

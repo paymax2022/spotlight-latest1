@@ -1,4 +1,3 @@
-// ── Crowdfunding — Corporate CSR (Section M) data layer ──────────────────────
 // Mock-backed. Money in kobo. Module entry gated by CSR_ENABLED.
 
 import { mockAllowed } from '@/config/mockPolicy';
@@ -48,8 +47,6 @@ const INVOICES: CsrInvoice[] = [
 const EMPLOYEE_GIVING: EmployeeGivingCampaign = {
   id: 'eg1', title: 'Paymax Staff Giving Drive 2026', goalKobo: 200_000_000, raisedKobo: 134_000_000, participants: 86, endsAt: '2026-08-31T23:59:59Z', companyMatchRatio: '1:1',
 };
-
-// ─── API ──────────────────────────────────────────────────────────────────────
 
 export async function getCsrProfile(): Promise<CsrProfile> {
   if (USE_MOCK) { await delay(180); return { ...PROFILE }; }

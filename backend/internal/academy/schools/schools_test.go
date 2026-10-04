@@ -12,12 +12,9 @@ import (
 //   - the seat-capped, idempotent bulk-enrolment service logic (stops at the cap,
 //     reports how many succeeded; a replayed batch never double-seats),
 //   - the billing-charge-once invariant (rail invoked once; second call is a no-op).
-//
 // The DB-bound store is replaced by an in-memory fake that faithfully models the seat
 // accounting (used_seats ≤ seats, atomic per learner) and the enrolment unique
 // constraint; the rail is a counting fake.
-
-// ── Licence state machine: allowed + illegal transitions ─────────────────────────
 
 func TestCanLicence_AllowedTransitions(t *testing.T) {
 	allowed := [][2]LicenceState{
@@ -48,8 +45,6 @@ func TestCanLicence_IllegalTransitions(t *testing.T) {
 		}
 	}
 }
-
-// ── Fake store (in-memory seat accounting) ───────────────────────────────────────
 
 type fakeStore struct {
 	insts    map[string]*Institution
@@ -229,8 +224,6 @@ func (f *fakeStore) WriteAudit(context.Context, string, string, string, string, 
 	return nil
 }
 
-// ── Counting billing rail ─────────────────────────────────────────────────────────
-
 type fakeBillingRail struct {
 	calls map[string]int // idemKey → invocation count
 }
@@ -241,8 +234,6 @@ func (f *fakeBillingRail) Charge(_ context.Context, _, _, idemKey string, _ int6
 	f.calls[idemKey]++
 	return "bill-ref-" + idemKey, nil
 }
-
-// ── Bulk enrolment: seat cap (stops at limit, reports count) ──────────────────────
 
 func TestBulkEnroll_SeatCapped(t *testing.T) {
 	ctx := context.Background()
@@ -272,8 +263,6 @@ func TestBulkEnroll_SeatCapped(t *testing.T) {
 		t.Errorf("licence used_seats must be capped at 3, got %d", store.licences[inst.ID].UsedSeats)
 	}
 }
-
-// ── Bulk enrolment: idempotency (replay = no double-seat) ─────────────────────────
 
 func TestBulkEnroll_IdempotentReplay(t *testing.T) {
 	ctx := context.Background()
@@ -334,8 +323,6 @@ func TestRemoveEnrollment_FreesSeat(t *testing.T) {
 	}
 }
 
-// ── Licence SM service path (suspend → reactivate → expire) ───────────────────────
-
 func TestLicenceLifecycle_Service(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeStore()
@@ -362,8 +349,6 @@ func TestLicenceLifecycle_Service(t *testing.T) {
 		t.Errorf("reactivate after expire should be illegal, got %v", err)
 	}
 }
-
-// ── Billing: charge once (rail invoked exactly once across replays) ───────────────
 
 func TestChargeBilling_Once(t *testing.T) {
 	ctx := context.Background()

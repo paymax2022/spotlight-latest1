@@ -11,11 +11,11 @@
  */
 import { createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { extractSessionToken } from './route';
+import { extractSessionToken } from '../../../../middleware';
 
 function base64Url(input: Buffer | string): string {
   const buf = typeof input === 'string' ? Buffer.from(input) : input;
-  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
 }
 
 function makeToken(payload: Record<string, unknown>, secret: string | undefined): string {
@@ -109,6 +109,41 @@ describe('admin-proxy forward() — AUTH-010 session gate', () => {
     const [url, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(String(url)).toContain('http://backend.invalid/');
     expect((init.headers as Record<string, string>)['x-admin-api-key']).toBe('the-real-admin-key');
+  });
+
+  // The session cookie IS the Supabase access token, and services no longer
+  // send Authorization from the browser — the token must never live in
+  // JS-readable storage. The proxy attaches it server-side instead.
+  it('attaches the session cookie token as the upstream Bearer', async () => {
+    const token = makeToken(notExpired, REAL_SECRET);
+    const res = await callForward(`sb-admin-token=${token}`);
+    expect(res.status).toBe(200);
+    const [, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect((init.headers as Record<string, string>)['Authorization']).toBe(`Bearer ${token}`);
+  });
+
+  it('prefers the verified cookie token over a client-supplied Authorization header', async () => {
+    const token = makeToken(notExpired, REAL_SECRET);
+    const { GET } = await import('./route');
+    const headers = new Headers();
+    headers.set('cookie', `sb-admin-token=${token}`);
+    headers.set('authorization', 'Bearer caller-supplied-not-trusted');
+    const req = new Request('http://admin.invalid/api/admin-proxy/api/v1/admin/leads', {
+      method: 'GET',
+      headers,
+    });
+    const res = await GET(req, { params: Promise.resolve({ path: ['api', 'v1', 'admin', 'leads'] }) });
+    expect(res.status).toBe(200);
+    const [, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect((init.headers as Record<string, string>)['Authorization']).toBe(`Bearer ${token}`);
+  });
+
+  it('does not echo the token back to the client', async () => {
+    const token = makeToken(notExpired, REAL_SECRET);
+    const res = await callForward(`sb-admin-token=${token}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(await res.text()).not.toContain(token);
   });
 
   it('fails closed with no SUPABASE_JWT_SECRET configured, even for a structurally valid token', async () => {

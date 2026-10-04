@@ -3,14 +3,12 @@ package orchestration
 // handler_stubs.go — placeholder endpoints for FX features the mobile app calls
 // but that are not yet persistence-backed (beneficiaries, rate alerts, rate
 // history, add-wallet, transfer-by-reference, collections list, disputes).
-//
 // WHY: the mobile FX module is governed by a single flag (EXPO_PUBLIC_FX_USE_MOCK).
 // Flipping it to false to test the REAL exchange path (rates→quote→lock→convert)
 // also routes these secondary calls at the backend; without these handlers they
 // would 404 and break the screens. These stubs return contract-shaped responses
 // (see mobile src/features/fx/types/fx.types.ts) so the app renders, WITHOUT
 // pretending to persist anything.
-//
 // NOT money-path: none of these post ledger entries or move value.
 // disputes/alerts/beneficiaries are metadata. When these graduate to real
 // features they must gain persistence and, for any value movement, idempotency +
@@ -27,20 +25,17 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-)
 
-// nowISO returns an RFC3339/UTC timestamp (matches the mobile ISO string fields).
-func nowISO() string { return time.Now().UTC().Format(time.RFC3339) }
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/timeutil"
+)
 
 // stubID builds a prefixed pseudo-unique id, e.g. "ben_1719800000000000000".
 func stubID(prefix string) string { return fmt.Sprintf("%s_%d", prefix, time.Now().UnixNano()) }
 
-// ─── Balances: add wallet (POST /balances) ───────────────────────────────────
 // Provisioning only — opens a zero-balance wallet for a currency. No value moves,
 // so no ledger entry and no Idempotency-Key: re-opening is a no-op, not a reset.
-//
-// This used to echo {available: 0} without writing anything, so an added wallet
-// disappeared on the next GET /balances and there was no way to hold a currency.
+// It writes the row so the wallet persists across GET /balances.
 
 // walletCurrencies is the set a customer may open, mirroring WALLET_CURRENCIES in
 // mobile src/features/fx/constants/fx.constants.ts. Closed by design: without it
@@ -63,7 +58,7 @@ func (h *Handler) AddWallet(c *gin.Context) {
 		return
 	}
 
-	customer := customerID(c)
+	customer := ginutil.UserID(c)
 	if err := h.svc.OpenWallet(c.Request.Context(), customer, cur); err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -80,7 +75,6 @@ func (h *Handler) AddWallet(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"currency": cur, "available": bal, "ledger": bal})
 }
 
-// ─── Rates: history (GET /rates/history?from&to&range) ───────────────────────
 // Deterministic indicative series for the rate-history chart. Display-only.
 
 func (h *Handler) GetRateHistory(c *gin.Context) {
@@ -142,7 +136,6 @@ func indicativeBase(from, to string) float64 {
 	return 100 + float64(h%900) // 100..999, stable per pair
 }
 
-// ─── Transfers: get by reference (GET /transfers/:reference) ─────────────────
 // The mobile polls this after POST /transfers. This is now a REAL lookup: the
 // reference is resolved against the orchestration transaction ledger (the same
 // store CreateTransfer persists to). We return the actual status, amounts, rates,
@@ -154,7 +147,7 @@ func (h *Handler) GetTransferByReference(c *gin.Context) {
 	// Resolve the persisted transaction for THIS customer by reference. Transaction
 	// matches on either id or reference and is object-scoped to the caller (no
 	// cross-customer leakage). A transfer is Type == "transfer".
-	if tx, ok, err := h.svc.Transaction(c.Request.Context(), customerID(c), ref); err == nil && ok && tx.Type == "transfer" {
+	if tx, ok, err := h.svc.Transaction(c.Request.Context(), ginutil.UserID(c), ref); err == nil && ok && tx.Type == "transfer" {
 		history := make([]gin.H, 0)
 		if len(tx.Fees) == 0 {
 			tx.Fees = []Fee{}
@@ -201,15 +194,14 @@ func (h *Handler) GetTransferByReference(c *gin.Context) {
 		},
 		"narration":     nil,
 		"transactionId": "",
-		"createdAt":     nowISO(),
-		"statusHistory": []gin.H{{"status": "processing", "at": nowISO()}},
+		"createdAt":     timeutil.RFC3339(time.Now()),
+		"statusHistory": []gin.H{{"status": "processing", "at": timeutil.RFC3339(time.Now())}},
 	})
 }
 
 // NOTE: beneficiary handlers (List/Create/Validate/Update/Favorite/Delete) are
 // persistence-backed in handler_secondary.go, not stubbed here.
 
-// ─── Collections list (GET /collections and GET /collections/virtual-accounts)
 // Reads only; creation of virtual accounts is the real CreateCollection handler.
 
 // GET /collections — inbound collection events for the caller. Store-backed when
@@ -220,7 +212,7 @@ func (h *Handler) ListCollections(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"data": []any{}})
 		return
 	}
-	events, err := h.coll.ListCollectionEvents(c.Request.Context(), customerID(c))
+	events, err := h.coll.ListCollectionEvents(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -235,7 +227,7 @@ func (h *Handler) ListVirtualAccounts(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"data": []any{}})
 		return
 	}
-	vas, err := h.coll.ListVirtualAccounts(c.Request.Context(), customerID(c))
+	vas, err := h.coll.ListVirtualAccounts(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -243,7 +235,6 @@ func (h *Handler) ListVirtualAccounts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": vas})
 }
 
-// ─── Disputes (POST /transactions/:id/dispute) ───────────────────────────────
 // Records nothing yet; echoes a "submitted" dispute so the support flow renders.
 
 func (h *Handler) DisputeTransaction(c *gin.Context) {
@@ -260,11 +251,10 @@ func (h *Handler) DisputeTransaction(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, gin.H{
 		"id": stubID("dsp"), "transactionId": txID, "reference": req.Reference,
-		"reason": req.Reason, "note": req.Note, "status": "submitted", "createdAt": nowISO(),
+		"reason": req.Reason, "note": req.Note, "status": "submitted", "createdAt": timeutil.RFC3339(time.Now()),
 	})
 }
 
-// ─── Customer verification / KYC (spec A, §16) ───────────────────────────────
 // Contract-shaped placeholders so the mobile FX KYC screens render against the
 // real backend. NOT persistence-backed yet: GetVerification always reports the
 // caller as "unstarted"; Submit/Restart echo the resulting status without storing
@@ -283,7 +273,7 @@ func (h *Handler) GetVerification(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"data": defaultVerification()})
 		return
 	}
-	rec, err := h.verif.Get(c.Request.Context(), customerID(c))
+	rec, err := h.verif.Get(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -310,11 +300,11 @@ func (h *Handler) SubmitCustomer(c *gin.Context) {
 			status = "review"
 		}
 		c.JSON(http.StatusOK, gin.H{"data": gin.H{
-			"status": status, "accountType": acct, "tier": 1, "submittedAt": nowISO(),
+			"status": status, "accountType": acct, "tier": 1, "submittedAt": timeutil.RFC3339(time.Now()),
 		}})
 		return
 	}
-	rec, err := h.verif.Submit(c.Request.Context(), customerID(c), acct, raw)
+	rec, err := h.verif.Submit(c.Request.Context(), ginutil.UserID(c), acct, raw)
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
@@ -329,7 +319,7 @@ func (h *Handler) RestartVerification(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"data": defaultVerification()})
 		return
 	}
-	rec, err := h.verif.Restart(c.Request.Context(), customerID(c))
+	rec, err := h.verif.Restart(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return

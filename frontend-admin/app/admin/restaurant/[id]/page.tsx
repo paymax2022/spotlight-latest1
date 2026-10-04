@@ -22,11 +22,9 @@ import { RESTAURANT_PERMS, useRestaurantPermissions, AccessNotice, naira } from 
 import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 // Admin store detail + menu management.
-//
 // Talks to /api/restaurant/admin/restaurants/* — NOT the owner-facing member
 // routes. Those enforce ownership (Service.assertOwner) with no operator
 // exemption, so an admin gets 403 on every mutation there.
-//
 // All money is integer kobo end to end. The naira <-> kobo conversion happens
 // only at the input boundary (parseNaira / toNairaInput) so no float arithmetic
 // ever touches a price.

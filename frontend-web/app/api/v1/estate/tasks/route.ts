@@ -14,7 +14,6 @@ function mapTask(row: any, names: Record<string, string>) {
   };
 }
 
-// GET /api/v1/estate/tasks
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -28,7 +27,6 @@ export async function GET(request: Request) {
   } catch (error) { return handleApiError(error, 'Failed to list tasks'); }
 }
 
-// POST /api/v1/estate/tasks
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

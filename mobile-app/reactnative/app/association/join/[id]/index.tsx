@@ -3,17 +3,17 @@ import { View, Text, ScrollView, Pressable, StyleSheet, Alert } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { CheckSquare, Square, UserPlus, Upload, ChevronRight } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import SelectField from '@/components/SelectField';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useOrganisation, useSubmitApplication } from '@/features/association/hooks/useAssociation';
-import { formatNaira } from '@/features/association/utils/associationFormatters';
+import { useOrganisation, useSubmitApplication } from '@/features/association/hooks';
+import { formatNaira } from '@/features/association/utils';
 
 export default function JoinOrganisation() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -68,7 +68,6 @@ export default function JoinOrganisation() {
   }
 
   // Requiring a chapter unconditionally made a chapter-less association impossible to
-  // join: the field offered nothing to pick, so `chapter` stayed empty, `valid` stayed
   // false, and Submit never enabled — the error pointed at an empty dropdown.
   const valid = Boolean(category) && (!hasChapters || Boolean(chapter)) && accepted;
 

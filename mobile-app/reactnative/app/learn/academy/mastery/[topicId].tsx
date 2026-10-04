@@ -4,11 +4,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { Target, Lock, Unlock } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
@@ -63,7 +63,6 @@ export default function MasteryCheck() {
     } else setIdx((i) => i + 1);
   };
 
-  // ── Intro ───────────────────────────────────────────────────────────────────
   if (!started) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -80,7 +79,6 @@ export default function MasteryCheck() {
 
   if (!questions) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Preparing your check…" /></SafeAreaView>;
 
-  // ── Result (L13) ────────────────────────────────────────────────────────────
   if (result) {
     const passed = result.scorePct >= PASS_THRESHOLD;
     return (
@@ -109,7 +107,6 @@ export default function MasteryCheck() {
     );
   }
 
-  // ── Question ────────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title={`Mastery · ${idx + 1}/${questions.length}`} />

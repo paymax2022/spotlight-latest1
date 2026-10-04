@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getGuardContext, mapGateEvent } from '@/src/server/visitor/gate.service';
 
-// POST /api/v1/visitor/gate/walkin — record a walk-in or emergency visitor (no access code).
+// Record a walk-in or emergency visitor (no access code).
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

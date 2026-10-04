@@ -1,10 +1,7 @@
 package restaurantpayout_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration tests for the restaurant / rider PAYOUT-RUN money path
 // (backend/internal/restaurant/payout.go: BuildRun + ProcessRun).
-//
-// restaurant.Service (restaurant.NewService(pool, settlementSvc).WithLedger(led))
 // talks to a concrete *pgxpool.Pool for the payout-run aggregation and to the
 // real ledger.Service for the ONE balanced disbursement transfer (DR settlement
 // standing account, CR provider wallet). None of this can run without a migrated
@@ -12,7 +9,6 @@ package restaurantpayout_test
 // unset — the SAME env-var gate as backend/tests/crypto/live_db_integration_test.go
 // and backend/tests/association/live_db_integration_test.go. The skip is NOT a
 // stub; every step drives the real Service against real tables.
-//
 // ── Bring-up note (read before running) ───────────────────────────────────
 //  1. Apply migrations, in particular:
 //       supabase/migrations/20260616270000_restaurant.sql   (restaurants, orders)
@@ -28,11 +24,9 @@ package restaurantpayout_test
 //       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  3. Run:
 //       cd backend && go test ./tests/restaurantpayout/... -run LiveDB -v
-//
 // Every row this file touches is created by the test itself with a fresh
 // uuid.New() id, and each test uses a unique provider + period_key so runs are
 // isolated — no truncation, no shared fixtures, safe to re-run repeatedly.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -155,10 +149,8 @@ func ledgerEntryCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ref
 	return n
 }
 
-// ---------------------------------------------------------------------------
 // BuildRun: aggregate settled settlements into a draft run + lines.
 // ProcessRun: post exactly ONE balanced transfer, flip to paid, replay-safe.
-// ---------------------------------------------------------------------------
 
 // TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe drives
 // the full restaurant payout money path and proves:
@@ -167,7 +159,6 @@ func ledgerEntryCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ref
 //   - ProcessRun (with an Idempotency-Key) flips the run to PAID, posts EXACTLY
 //     ONE balanced ledger transfer (settlement account DEBIT == provider wallet
 //     CREDIT, equal amounts) referenced 'rpayout:'+runID, and stamps
-//     ledger_reference;
 //   - a REPLAY of ProcessRun with the SAME key posts NO second ledger move (the
 //     provider is never double-paid) and the run stays PAID.
 func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *testing.T) {
@@ -192,7 +183,6 @@ func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *t
 
 	period := "2026-W28-" + uuid.New().String()[:8]
 
-	// ── BuildRun ──────────────────────────────────────────────────────────────
 	run, err := svc.BuildRun(ctx, period, restaurant.PayoutProviderRestaurant, owner)
 	if err != nil {
 		t.Fatalf("BuildRun: %v", err)
@@ -226,7 +216,6 @@ func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *t
 		t.Errorf("sum of line amounts = %d, want %d (net)", lineSum, wantNet)
 	}
 
-	// ── ProcessRun ────────────────────────────────────────────────────────────
 	settleAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
 	if err != nil {
 		t.Fatalf("resolve settlement account: %v", err)
@@ -263,7 +252,6 @@ func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *t
 		t.Errorf("settlement account debited %d, want exactly %d (net) — debit must equal credit (balanced)", debited, wantNet)
 	}
 
-	// ── ProcessRun REPLAY (same key) — no double-pay ─────────────────────────
 	replay, err := svc.ProcessRun(ctx, run.ID, key)
 	if err != nil {
 		t.Fatalf("ProcessRun replay: %v", err)
@@ -282,7 +270,6 @@ func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *t
 		t.Errorf("provider wallet balance changed on replay: %d -> %d, want unchanged (no double disbursement)", providerBalAfter, providerBalReplay)
 	}
 
-	// ── Unique-index guard: a settlement is bound to exactly ONE run ─────────
 	// A fresh run for the same provider/settlements over a different period must
 	// NOT re-claim settlements already disbursed by the paid run (unique index
 	// uq_restaurant_payout_lines_settlement). BuildRun therefore finds nothing.

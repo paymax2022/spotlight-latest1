@@ -1,16 +1,8 @@
-// ── QuizRunner — shared one-question-at-a-time runner ────────────────────────
 // Powers BOTH the public Play-Along quiz (S2) and the proctored Theory exam (C6)
 // against the same Naija Driver bank. Modes differ only in reveal + navigation:
-//
-//   mode="playalong"  → answer/lock reveals the correct option + explanation
-//                       (the teaching moment) before "Next"; forward-only; a
 //                       streak counter and instant right/wrong feedback.
-//   mode="exam"       → NO correctness shown; answers autosave; free item
-//                       navigation (jump to any Q) via a bottom navigator;
 //                       a single "Submit" at the end. Answers never revealed and
 //                       never leaked in the render.
-//
-// Timer: a 120s-per-question Countdown (reused visual language of Countdown.tsx,
 // re-implemented as a per-question ticking clock). On expiry the item auto-locks
 // (unanswered = 0). Big touch targets, tabular-nums timer, accessible options.
 
@@ -21,10 +13,10 @@ import { SvgXml } from 'react-native-svg';
 import {
   Timer, CheckCircle2, Circle, XCircle, Flame, Trophy, ShieldAlert, LayoutGrid,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import type { PlayAlongQuestion } from '../types';
 import { PER_QUESTION_SECS, categoryLabel } from '../constants';
@@ -79,7 +71,7 @@ export default function QuizRunner({
   const [index, setIndex] = useState(initialIndex ?? 0);
   const [answers, setAnswers] = useState<Record<string, string>>(initialAnswers ?? {});
   const [secs, setSecs] = useState(perQuestionSecs);
-  const [revealed, setRevealed] = useState(false); // playalong: per-question lock
+  const [revealed, setRevealed] = useState(false);
   const [streak, setStreak] = useState(0);
   const [bestStreak, setBestStreak] = useState(0);
   const [navOpen, setNavOpen] = useState(false);
@@ -92,8 +84,6 @@ export default function QuizRunner({
   // Whether we can score/reveal locally (playalong mock ships the answer key).
   const canReveal = !isExam && !!current?.correctOptionId;
 
-  // ── Per-question countdown ─────────────────────────────────────────────────
-  // Resets on each question. In playalong it stops on reveal; in exam it simply
   // moves to the next item on expiry (unanswered stays unanswered = 0).
   const lockCurrent = useCallback(() => {
     if (isExam) {
@@ -128,7 +118,6 @@ export default function QuizRunner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, current?.id, revealed, isExam]);
 
-  // ── Answer ─────────────────────────────────────────────────────────────────
   const pick = (optionId: string) => {
     if (!current) return;
     if (!isExam && revealed) return; // locked after reveal in playalong
@@ -151,7 +140,6 @@ export default function QuizRunner({
     }
   };
 
-  // ── Navigation ─────────────────────────────────────────────────────────────
   const goTo = (i: number) => {
     if (i < 0 || i >= total) return;
     setRevealed(false);
@@ -185,7 +173,6 @@ export default function QuizRunner({
 
   const lowTime = secs <= 10;
   const catLabel = categoryLabel(current.category);
-  // Illustration: bundled on-device SVG for 'sign:<key>' image_urls, otherwise a
   // normal remote image for http(s) URLs (nothing when neither applies).
   const signXml = resolveSignXml(current.imageUrl);
   const isRemoteImage = !signXml && !!current.imageUrl && /^https?:\/\//.test(current.imageUrl);

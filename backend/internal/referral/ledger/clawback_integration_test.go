@@ -2,7 +2,6 @@ package ledger
 
 // Live-DB integration test for REF-011: ClawBack must actually reverse a real
 // prior payout's wallet credit, not just flip referral_reward_ledger.state.
-//
 // Verifies:
 //   (1) clawback of a 'paid', non-house reward posts a balanced REVERSAL
 //       entry — the beneficiary's wallet balance returns to what it was
@@ -12,11 +11,9 @@ package ledger
 //       posted (nothing was ever credited), balance is untouched.
 //   (3) a REPLAYED clawback (same reward, called twice) is a safe idempotent
 //       no-op — no double-reversal, balance unchanged on the second call.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (see withdraw_integration_test.go
 // for the rationale — this test also moves money and must never point at the
 // production Supabase pooler via DATABASE_URL).
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/referral/ledger/ -run TestClawBack -v
 

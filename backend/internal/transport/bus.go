@@ -7,18 +7,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
-// ─── Bus booking ─────────────────────────────────────────────────────────────
-//
 // Ticket machine: booked → issued(QR) → boarding → boarded → completed
-//                 (rescheduled / cancelled / refunded)
-//
 // Fixed, admin-approved fares. On book the fare is escrowed then immediately
 // settled to the operator (the catalog is trusted, no proof-of-completion gate).
 // QR = uuid. Seats are uniquely allocated per schedule (UNIQUE(schedule_id, seat)).
-
-// ─── Request bodies ──────────────────────────────────────────────────────────
 
 // BusBookRequest is POST /mobility/bus/book.
 type BusBookRequest struct {
@@ -54,8 +50,6 @@ type BusScheduleRequest struct {
 	FareKobo        int64  `json:"fare_kobo" binding:"required,min=0"`
 	Reason          string `json:"reason"`
 }
-
-// ─── Customer search / catalog ───────────────────────────────────────────────
 
 // SearchBusRoutes returns active routes filtered by origin/dest terminals.
 func (s *Service) SearchBusRoutes(ctx context.Context, origin, dest string) ([]map[string]any, error) {
@@ -199,7 +193,7 @@ func (s *Service) BookBusTicket(ctx context.Context, userID string, req BusBookR
 			 fare_kobo, payment_status, boarding_status, status, settlement_id, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'paid','issued','issued',$9,$10)`
 	if _, err := s.db.Exec(ctx, q,
-		ticketID, userID, req.ScheduleID, req.SeatNumber, req.PassengerName, nullStr(req.PassengerPhone),
+		ticketID, userID, req.ScheduleID, req.SeatNumber, req.PassengerName, dbutil.NullStr(req.PassengerPhone),
 		qr, fare, sett.ID, idempotencyKey,
 	); err != nil {
 		// Seat already taken (unique violation) → refund escrow, surface conflict.
@@ -346,8 +340,6 @@ func (s *Service) ValidateBusTicket(ctx context.Context, operatorUserID, qrCode 
 	return map[string]any{"ok": true, "ticketId": ticketID, "boardingStatus": "boarded"}, nil
 }
 
-// ─── Admin: route / schedule CRUD + fare approval + manifest ─────────────────
-
 // AdminCreateBusRoute creates a route (audited).
 func (a *AdminService) CreateBusRoute(ctx context.Context, adminID string, req BusRouteRequest) (map[string]any, error) {
 	id := uuid.New().String()
@@ -359,7 +351,7 @@ func (a *AdminService) CreateBusRoute(ctx context.Context, adminID string, req B
 		INSERT INTO bus_routes (id, operator_id, origin_terminal, dest_terminal, distance_m, est_duration_s, category, status)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,'active')`
 	if _, err := a.svc.db.Exec(ctx, q, id, req.OperatorID, req.OriginTerminal, req.DestTerminal,
-		nullInt(req.DistanceM), nullInt(req.EstDurationS), category); err != nil {
+		dbutil.NullInt(int64(req.DistanceM)), dbutil.NullInt(int64(req.EstDurationS)), category); err != nil {
 		return nil, err
 	}
 	writeAudit(ctx, a.svc.db, adminID, "bus.route.create", "bus_route", id, nil,
@@ -528,12 +520,4 @@ func (a *AdminService) BusManifest(ctx context.Context, scheduleID string) ([]ma
 		})
 	}
 	return out, nil
-}
-
-// nullInt returns nil for a zero int so it stores as SQL NULL.
-func nullInt(n int) any {
-	if n == 0 {
-		return nil
-	}
-	return n
 }

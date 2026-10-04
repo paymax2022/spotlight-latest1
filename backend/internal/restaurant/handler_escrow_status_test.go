@@ -1,7 +1,6 @@
 package restaurant
 
 // Pure unit tests for the money-path HTTP status mapping on the order-escrow paths.
-//
 // These exist to pin the errors.Is chain, not just the switch. PlaceOrder wraps the tier
 // gate's error with fmt.Errorf("...: %w", err) and settlement.Escrow wraps the ledger's
 // the same way, so a future refactor that swaps a single %w for %v would silently turn a

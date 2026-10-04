@@ -63,7 +63,6 @@ export async function initiateUtilityPaystackPayment(input: {
   const paymentReference = reference();
   const intentId = crypto.randomUUID();
   // Capture WHERE this payment was started from, same as the registration
-  // payment flow (src/server/registration/return-origin.ts): the callback is
   // reached by a top-level navigation from Paystack and so has no Origin of
   // its own, so this is the only point that can identify the caller's origin.
   // Re-validated on the way back out before ever being used as a redirect
@@ -218,7 +217,6 @@ export function redirectToApp(transactionId?: string, returnOrigin?: string | nu
   // web, e.g. :8083) or a plain browser tab on a dead navigation even though
   // the charge itself was correctly verified and recorded server-side. Prefer
   // the origin the payment was started from (re-validated — see
-  // return-origin.ts) and land on the resolver screen by reference, which
   // works for success, pending, AND failed alike.
   if (isReturnableOrigin(returnOrigin) && reference) {
     return NextResponse.redirect(buildWebReturnUrl(returnOrigin as string, reference));

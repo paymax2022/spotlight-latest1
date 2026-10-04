@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { isSessionValid, resolveEnforce, SESSION_COOKIE } from '../../../../middleware';
+import { extractSessionToken, isSessionValid, resolveEnforce } from '../../../../middleware';
 
 /**
  * Server-side admin proxy: /api/admin-proxy/<...> -> <ADMIN_API_BASE_URL>/<...>,
@@ -37,33 +37,17 @@ export const dynamic = 'force-dynamic';
 const ADMIN_API_BASE_URL = process.env.ADMIN_API_BASE_URL || 'http://localhost:8080';
 const TIMEOUT_MS = Number(process.env.ADMIN_PROXY_TIMEOUT_MS ?? 20_000);
 
-/**
- * Pulls the admin session token out of a raw Cookie header. A route handler
- * here receives a plain Request (not NextRequest), so the req.cookies helper
- * isn't available — and keeping this as a standalone pure function makes it
- * unit-testable without constructing a Request at all.
- */
-export function extractSessionToken(cookieHeader: string | null): string | undefined {
-  if (!cookieHeader) return undefined;
-  for (const part of cookieHeader.split(';')) {
-    const idx = part.indexOf('=');
-    if (idx === -1) continue;
-    if (part.slice(0, idx).trim() !== SESSION_COOKIE) continue;
-    try {
-      return decodeURIComponent(part.slice(idx + 1).trim());
-    } catch {
-      return part.slice(idx + 1).trim();
-    }
-  }
-  return undefined;
-}
-
 async function forward(request: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
 
+  // The HttpOnly session cookie holds the Supabase access token itself.
+  // Browser code no longer sends Authorization (the token must never sit in
+  // JS-readable storage — CodeQL js/clear-text-storage-of-sensitive-data), so
+  // this route attaches the bearer server-side from the cookie instead.
+  const sessionToken = extractSessionToken(request.headers.get('cookie'));
+
   if (resolveEnforce(process.env.ADMIN_MIDDLEWARE_ENFORCE)) {
-    const token = extractSessionToken(request.headers.get('cookie'));
-    if (!(await isSessionValid(token))) {
+    if (!(await isSessionValid(sessionToken))) {
       return NextResponse.json(
         { success: false, error: 'Not authenticated.' },
         { status: 401 },
@@ -80,7 +64,13 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
 
   // Forward the caller's identity so the backend still does its own authz - the
   // admin key is a gate in front of these routes, never a substitute for it.
-  const auth = request.headers.get('authorization');
+  // The session cookie's verified token wins over any client-supplied
+  // Authorization header: the cookie is the credential this app manages
+  // (mirrored by features/auth/adminAuth on every refresh), while a raw header
+  // could be anything the caller typed.
+  const auth = sessionToken
+    ? `Bearer ${sessionToken}`
+    : request.headers.get('authorization');
   if (auth) headers['Authorization'] = auth;
   const cookie = request.headers.get('cookie');
   if (cookie) headers['Cookie'] = cookie;
@@ -88,13 +78,10 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
   if (contentType) headers['Content-Type'] = contentType;
 
   // Idempotency-Key MUST survive the hop.
-  //
   // This proxy builds its outbound headers from an allowlist, and this one was
   // not on it — so every idempotent admin write was arriving at the backend
   // with no key at all, no matter how carefully the calling service generated
   // one. Handlers that merely *prefer* a key (offline-payment decision,
-  // application decision) silently lost their replay protection; handlers that
-  // *require* one (the association dues-tier create/update, which return
   // ErrIdempotencyRequired) rejected every request with a 400 that looked like
   // a client bug. Nothing in the browser could fix it: the header was dropped
   // here, one hop later.
@@ -102,7 +89,6 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
   if (idem) headers['Idempotency-Key'] = idem;
 
   // AUTH-020: x-stem-role MUST survive the hop.
-  //
   // Same class of bug as Idempotency-Key above: this proxy's outbound headers
   // are an allowlist, and x-stem-role was missing from it. The STEM admin
   // console UI sends it on every /admin/stem*, /admin/schools*, /admin/stem-*

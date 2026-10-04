@@ -13,7 +13,7 @@ export async function GET(request: Request) {
 
     // Find enrollment
     const { data: enrollment } = await supabase
-      .from('competition_enrollments')
+      .from('contestants')
       .select('id')
       .eq('contest_id', contestId)
       .eq('user_id', user.id)

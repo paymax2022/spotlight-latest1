@@ -46,16 +46,13 @@ function setupMock() {
   return { mock, maybySingle, insertFn };
 }
 
-// ---------------------------------------------------------------------------
 // processReferralReward
-// ---------------------------------------------------------------------------
 
 describe('processReferralReward', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('credits the referrer ₦500 (50,000 kobo) with the documented idempotency key shape', async () => {
     const { maybySingle, insertFn } = setupMock();
-    // resolveCodeToReferrer: finance_referral_codes lookup by code
     maybySingle.mockResolvedValueOnce({ data: { user_id: REFERRER_ID }, error: null });
     vi.mocked(creditWallet).mockResolvedValueOnce({ alreadyProcessed: false, amountKobo: 50_000 });
     insertFn.mockResolvedValueOnce({ error: null }); // referral_events insert
@@ -142,15 +139,11 @@ describe('processReferralReward', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // resolveCodeToReferrer
-// ---------------------------------------------------------------------------
 
 describe('resolveCodeToReferrer', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  // REF-008: lookup is now case-INSENSITIVE via `.ilike()` (not an exact-case
-  // `.eq()`), because rows may be stored in whatever case they were generated
   // in before the two generators writing into finance_referral_codes were
   // unified onto one uppercase-only format (REF-004). Only whitespace is
   // trimmed client-side; case folding happens in Postgres via ILIKE.
@@ -178,7 +171,6 @@ describe('resolveCodeToReferrer', () => {
     expect(mock.ilike).toHaveBeenCalledWith('code', 'AbCd3');
   });
 
-  // `%`/`_`/`\` are ILIKE wildcards/escape chars in Postgres; a code containing
   // one must be escaped so the lookup stays an exact match, not a pattern scan
   // that could hit unrelated rows.
   it('escapes ILIKE wildcard characters so lookup behaves as an exact match', async () => {
@@ -199,15 +191,11 @@ describe('resolveCodeToReferrer', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // generateCode (REF-004)
-//
 // Must produce the EXACT same shape as backend/internal/finance/referrals/
 // code.go's GenerateCode(): 5 characters, uppercase, drawn only from
 // 'ABCDEFGHJKMNPQRTUVWXY346789' (A-Z + digits, minus every confusable
-// character: O/0, I/1, L, S/5, Z/2). No "SPOT-" prefix — that was this
 // generator's half of the REF-004 format mismatch.
-// ---------------------------------------------------------------------------
 
 describe('generateCode', () => {
   const ALPHABET = 'ABCDEFGHJKMNPQRTUVWXY346789';
@@ -241,9 +229,7 @@ describe('generateCode', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // attributeSignup
-// ---------------------------------------------------------------------------
 
 describe('attributeSignup', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -284,8 +270,6 @@ describe('attributeSignup', () => {
   });
 
   // The code has a self-referral CHECK, and attribution.ts detects
-  // `resolved === referredUserId` — but reading the function shows this is
-  // NOT a rejection: it sets riskFlag='self_referral' and falls through to
   // the same global-house-account path used for a missing/invalid code.
   it('redirects a self-referral code to the house account with risk_flag=self_referral (not a hard rejection)', async () => {
     const { maybySingle, insertFn } = setupMock();

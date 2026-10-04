@@ -1,6 +1,5 @@
 package app
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for the internal, service-authenticated ledger API
 // (Stage 1.5c). It drives RegisterInternalLedgerAPI's real handlers against a real
 // Postgres + the real finance ledger.Service, proving the money-path invariants
@@ -9,16 +8,13 @@ package app
 //   (2) An idempotent replay (same idempotencyKey) is a single logical movement.
 //   (3) A balanceChecked overdraw is rejected 409 insufficient_funds (fail-closed).
 //   (4) The service-token guard rejects a missing / wrong Bearer token.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset — the SAME gate the
 // other finance/ledger live-DB tests use (see
 // backend/internal/referral/ledger/withdraw_integration_test.go). Point it at a
 // disposable, migrated Postgres — NEVER production. Every row is keyed by a fresh
 // UUID; no truncation, safe to run repeatedly.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./internal/app/... -run InternalLedgerAPI -v
-// ---------------------------------------------------------------------------
 
 import (
 	"bytes"

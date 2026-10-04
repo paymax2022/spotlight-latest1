@@ -1,14 +1,10 @@
 package utilitybills_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB suite for the Phase 4 ADMIN surface: catalogue CRUD, credential
 // rotation, provider health checks, dispute resolution, the manual sweep
 // trigger, and the three reports.
-//
 // Skipped unless TEST_DATABASE_URL is set (livePool, from live_db_test.go).
-//
 // What it proves:
-//
 //  1. Providers and products survive a full create → update → list round trip
 //     with every field intact, including the partial-patch semantics (untouched
 //     columns keep their values, an explicit null clears a nullable one).
@@ -23,12 +19,10 @@ package utilitybills_test
 //  6. Each report returns correct aggregates against seeded fixture data.
 //  7. Every mutation calls the audit sink with the right action / resourceType /
 //     resourceID.
-//
 // Reports aggregate the WHOLE table, and this runs against a shared local
 // database, so report assertions are written as before/after DELTAS or scoped to
 // a uniquely-seeded provider — never as absolute totals, which would fail the
 // moment another test or a developer left a row behind.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -49,8 +43,6 @@ import (
 // testCredentialsKey is a 64-char hex key, the format DeriveCredentialsKey
 // prefers. Test-only, and obviously not a secret.
 const testCredentialsKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-// ── Audit double ─────────────────────────────────────────────────────────────
 
 // fakeAuditor records LogAction calls. The real services.AuditService is
 // Supabase-REST-backed, so a pgx live-DB test cannot observe its writes; the
@@ -95,8 +87,6 @@ func (a *fakeAuditor) actions() []string {
 	return out
 }
 
-// ── Fake provider adapter with a health capability ───────────────────────────
-
 // fakeHealthAdapter implements BillsProvider plus the optional HealthChecker, so
 // the health-check path can be exercised without a network call. (The real
 // vtpass adapter deliberately has NO sandbox short-circuit for HealthCheck — see
@@ -139,8 +129,6 @@ func (bareAdapter) GetBill(context.Context, string) (*providerInterfaces.Bill, e
 	return nil, errors.New("bare: not supported")
 }
 
-// ── Admin fixture ────────────────────────────────────────────────────────────
-
 type adminFixture struct {
 	pool   *pgxpool.Pool
 	svc    *utilitybills.Service
@@ -161,7 +149,6 @@ func newAdminFixture(t *testing.T) *adminFixture {
 
 // newAdminFixtureOver builds the admin service over an EXISTING pool, so a test
 // can drive the money path through newFixture and the admin path through this.
-//
 // No ledger: the catalogue/report surface never touches one. A test that
 // exercises ReverseTransaction — the one admin action that moves money — must
 // use newAdminFixtureWithLedger instead.
@@ -231,8 +218,6 @@ func ptrI64(v int64) *int64 { return &v }
 func ptrInt(v int) *int     { return &v }
 func ptrBool(v bool) *bool  { return &v }
 
-// ── Providers: full create → update → list round trip ────────────────────────
-
 func TestLiveDB_Admin_ProviderCreateUpdateListRoundTrip(t *testing.T) {
 	f := newAdminFixture(t)
 	ctx := context.Background()
@@ -266,7 +251,6 @@ func TestLiveDB_Admin_ProviderCreateUpdateListRoundTrip(t *testing.T) {
 		t.Error("last_health_check_at must be nil before any health check has run")
 	}
 
-	// --- PARTIAL patch: change status and priority, leave everything else ---
 	updated, err := f.svc.UpdateProvider(ctx, f.actor, created.ID, utilitybills.ProviderPatch{
 		Status:   strptr("maintenance"),
 		Priority: ptrInt(42),
@@ -285,7 +269,6 @@ func TestLiveDB_Admin_ProviderCreateUpdateListRoundTrip(t *testing.T) {
 		t.Errorf("supported_categories clobbered by an unrelated patch: %v", updated.SupportedCategories)
 	}
 
-	// --- The admin list must include a NON-active provider ---
 	disabled, err := f.svc.UpdateProvider(ctx, f.actor, created.ID,
 		utilitybills.ProviderPatch{Status: strptr("disabled")})
 	if err != nil {
@@ -298,7 +281,6 @@ func TestLiveDB_Admin_ProviderCreateUpdateListRoundTrip(t *testing.T) {
 		t.Error("a DISABLED provider is missing from the admin list — an admin who cannot see it cannot re-enable it")
 	}
 
-	// --- Audit ---
 	createCall := f.audit.find(t, "utilitybills.provider.create")
 	if createCall.ResourceType != "utility_provider" || createCall.ResourceID != created.ID {
 		t.Errorf("create audit = %+v", createCall)
@@ -361,8 +343,6 @@ func TestLiveDB_Admin_ProviderValidationRejectsBadValues(t *testing.T) {
 	}
 }
 
-// ── Credentials rotation ─────────────────────────────────────────────────────
-
 func TestLiveDB_Admin_CredentialsRotationRoundTrips(t *testing.T) {
 	f := newAdminFixture(t)
 	ctx := context.Background()
@@ -388,7 +368,6 @@ func TestLiveDB_Admin_CredentialsRotationRoundTrips(t *testing.T) {
 		t.Error("credentials_configured = false right after a successful rotation")
 	}
 
-	// --- The stored column must be an ENCRYPTED envelope, not plaintext ---
 	var stored []byte
 	if err := f.pool.QueryRow(ctx,
 		`SELECT credentials FROM public.utility_providers WHERE id=$1`, created.ID).Scan(&stored); err != nil {
@@ -401,7 +380,6 @@ func TestLiveDB_Admin_CredentialsRotationRoundTrips(t *testing.T) {
 		t.Fatalf("stored credentials are not a recognised encrypted envelope: %s", stored)
 	}
 
-	// --- Decrypt round trip ---
 	key, err := utilitybills.DeriveCredentialsKey(testCredentialsKey)
 	if err != nil {
 		t.Fatalf("derive key: %v", err)
@@ -417,7 +395,6 @@ func TestLiveDB_Admin_CredentialsRotationRoundTrips(t *testing.T) {
 		t.Errorf("decrypted api_key = %q", got)
 	}
 
-	// --- The secret must not reach the API response or the audit row ---
 	encoded, err := json.Marshal(updated)
 	if err != nil {
 		t.Fatalf("marshal provider view: %v", err)
@@ -476,8 +453,6 @@ func TestLiveDB_Admin_CredentialsRotationFailsClosedWithoutAKey(t *testing.T) {
 		t.Fatalf("credentials were written despite a missing key: %s", stored)
 	}
 }
-
-// ── Provider health check ────────────────────────────────────────────────────
 
 func TestLiveDB_Admin_HealthCheckPersistsStatusAndTimestamp(t *testing.T) {
 	f := newAdminFixture(t)
@@ -551,8 +526,6 @@ func TestLiveDB_Admin_HealthCheckUnsupportedAdapter(t *testing.T) {
 	}
 }
 
-// ── Products: create → update → list, plus import ────────────────────────────
-
 func (f *adminFixture) seedBiller(t *testing.T, category string) string {
 	t.Helper()
 	var billerID string
@@ -603,7 +576,6 @@ func TestLiveDB_Admin_ProductCreateUpdateListRoundTrip(t *testing.T) {
 		t.Errorf("amount_kobo = %v, want NULL on a variable product", *created.AmountKobo)
 	}
 
-	// --- Partial patch: markup only ---
 	updated, err := f.svc.UpdateProduct(ctx, f.actor, created.ID, utilitybills.ProductPatch{
 		MarkupBps: ptrI64(325),
 	})
@@ -621,7 +593,6 @@ func TestLiveDB_Admin_ProductCreateUpdateListRoundTrip(t *testing.T) {
 		t.Errorf("min_amount_kobo lost by an unrelated patch: %v", updated.MinAmountKobo)
 	}
 
-	// --- Explicit null CLEARS a nullable bound (the three-state patch) ---
 	cleared, err := f.svc.UpdateProduct(ctx, f.actor, created.ID, utilitybills.ProductPatch{
 		ClearMaxAmountKobo: true,
 	})
@@ -635,7 +606,6 @@ func TestLiveDB_Admin_ProductCreateUpdateListRoundTrip(t *testing.T) {
 		t.Error("clearing the max must not touch the min")
 	}
 
-	// --- A disabled product must still be visible to an admin ---
 	if _, err := f.svc.UpdateProduct(ctx, f.actor, created.ID,
 		utilitybills.ProductPatch{Status: strptr("disabled")}); err != nil {
 		t.Fatalf("disable: %v", err)
@@ -658,7 +628,6 @@ func TestLiveDB_Admin_ProductCreateUpdateListRoundTrip(t *testing.T) {
 	if !found {
 		t.Error("a DISABLED product is missing from the admin list")
 	}
-	// ...and must NOT be visible to a member.
 	memberRows, err := f.svc.ListProducts(ctx, "electricity", billerID)
 	if err != nil {
 		t.Fatalf("member ListProducts: %v", err)
@@ -669,7 +638,6 @@ func TestLiveDB_Admin_ProductCreateUpdateListRoundTrip(t *testing.T) {
 		}
 	}
 
-	// --- Audit ---
 	createCall := f.audit.find(t, "utilitybills.product.create")
 	if createCall.ResourceType != "utility_product" || createCall.ResourceID != created.ID {
 		t.Errorf("product create audit = %+v", createCall)
@@ -763,8 +731,6 @@ func TestLiveDB_Admin_ProductImportUpsertsOnCode(t *testing.T) {
 		t.Errorf("import audit count = %v, want 2", importCall.New["count"])
 	}
 }
-
-// ── Billers / mappings / routing rules / categories (representative) ─────────
 
 func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	f := newAdminFixture(t)
@@ -933,8 +899,6 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	}
 }
 
-// ── Dispute resolution ───────────────────────────────────────────────────────
-
 func TestLiveDB_Admin_ResolveDispute(t *testing.T) {
 	f := newFixture(t, 2, 2_000_000, false)
 	admin := newAdminFixtureOver(t, f.pool)
@@ -977,7 +941,6 @@ func TestLiveDB_Admin_ResolveDispute(t *testing.T) {
 		t.Errorf("resolution_note = %v", resolved.ResolutionNote)
 	}
 
-	// --- The TRANSACTION status is deliberately UNCHANGED ---
 	// The TS source (adminResolveUtilityDispute) never writes utility_transactions
 	// — it updates the dispute, adds the event and notifies. Porting that
 	// faithfully means the transaction stays 'disputed'. See ResolveDispute's doc
@@ -992,7 +955,6 @@ func TestLiveDB_Admin_ResolveDispute(t *testing.T) {
 			afterResolve.Status)
 	}
 
-	// --- The member-visible lifecycle event must be written ---
 	var eventCount int
 	var payload []byte
 	if err := f.pool.QueryRow(ctx, `
@@ -1008,7 +970,6 @@ func TestLiveDB_Admin_ResolveDispute(t *testing.T) {
 		t.Errorf("event payload = %s, want it to carry the status", payload)
 	}
 
-	// --- Validation ---
 	if _, err := admin.svc.ResolveDispute(ctx, admin.actor, txn.ID, "closed", "note"); !errors.Is(err, utilitybills.ErrInvalidDisputeStatus) {
 		t.Errorf("status 'closed' error = %v, want ErrInvalidDisputeStatus "+
 			"(the utility_disputes CHECK also allows open/investigating, but only resolved/rejected are RESOLUTIONS)", err)
@@ -1025,8 +986,6 @@ func TestLiveDB_Admin_ResolveDispute(t *testing.T) {
 		t.Errorf("dispute audit newValues.transaction_id = %v, want %s", call.New["transaction_id"], txn.ID)
 	}
 }
-
-// ── Manual sweep trigger ─────────────────────────────────────────────────────
 
 // The admin endpoint must drive the SAME Phase 3 sweep, and add an audit row
 // that the scheduled job deliberately does not write.
@@ -1082,8 +1041,6 @@ func TestLiveDB_Admin_TriggerSweepRunsThePendingSweep(t *testing.T) {
 		t.Errorf("sweep audit actor = %q, want %q", call.Actor, admin.actor)
 	}
 }
-
-// ── Reports ──────────────────────────────────────────────────────────────────
 
 // seedReportTransaction inserts a transaction row directly. The reports are
 // read-only aggregates, so driving the full money path for each row would add
@@ -1151,7 +1108,6 @@ func TestLiveDB_Admin_Reports(t *testing.T) {
 		_, _ = f.pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, userID)
 	})
 
-	// --- Baseline BEFORE seeding: the profitability report is a whole-table sum
 	// on a shared database, so only the DELTA can be asserted. ---
 	baseline, err := f.svc.ProfitabilityReport(ctx)
 	if err != nil {
@@ -1181,7 +1137,6 @@ func TestLiveDB_Admin_Reports(t *testing.T) {
 		t.Errorf("gross_profit_kobo delta = %d, want 60000", got)
 	}
 
-	// --- Provider performance: exact, because the provider is unique to this test ---
 	d100, d300 := 100, 300
 	f.seedAttempt(t, t1, prov.ID, "successful", 1, &d100)
 	f.seedAttempt(t, t2, prov.ID, "successful", 1, &d300)
@@ -1220,7 +1175,6 @@ func TestLiveDB_Admin_Reports(t *testing.T) {
 		t.Errorf("success_rate_bps = %d, want 6667", row.SuccessRateBps)
 	}
 
-	// --- Reconciliation: a listing, newest first. The seeded rows are newest. ---
 	recon, err := f.svc.ReconciliationReport(ctx)
 	if err != nil {
 		t.Fatalf("ReconciliationReport: %v", err)
@@ -1252,8 +1206,6 @@ func TestLiveDB_Admin_Reports(t *testing.T) {
 		t.Errorf("reconciliation is not newest-first: t3 (seeded last) at %d, t1 at %d", idx3, idx1)
 	}
 }
-
-// ── Admin transaction list ───────────────────────────────────────────────────
 
 func TestLiveDB_Admin_ListTransactionsFiltersByStatus(t *testing.T) {
 	f := newAdminFixture(t)
@@ -1305,8 +1257,6 @@ func TestLiveDB_Admin_ListTransactionsFiltersByStatus(t *testing.T) {
 		t.Errorf("unknown status error = %v, want ErrInvalidStatus", err)
 	}
 }
-
-// ── Reverse now carries an audit actor ───────────────────────────────────────
 
 // ReverseTransaction had NO audit logging before Phase 4 — it moves real money
 // and left no who-did-it record at all.

@@ -1,5 +1,3 @@
-// ── Car hire — API wrapper ───────────────────────────────────────────────────
-// Mock-flagged, BASE = '/api/v1'. Book escrows fare+deposit; extend
 // escrows the delta; complete settles the driver split and releases the deposit.
 // Money mutations carry an Idempotency-Key. Fare + deposit come from the SERVER.
 
@@ -87,7 +85,6 @@ export async function getCarHireBookings(): Promise<CarHireBooking[]> {
   return unwrap<CarHireBooking[]>(await api.get(`${BASE}/mobility/car-hire`));
 }
 
-// ─── Extend (money mutation → escrow delta → Idempotency-Key) ──────────────────
 export async function extendCarHire(id: string, req: CarHireExtendRequest): Promise<CarHireBooking> {
   if (USE_MOCK) {
     await delay(700);
@@ -105,7 +102,6 @@ export async function extendCarHire(id: string, req: CarHireExtendRequest): Prom
   );
 }
 
-// ─── Complete (settle driver split, release deposit; Idempotency-Key) ──────────
 export async function completeCarHire(id: string, idempotencyKey: string): Promise<CarHireBooking> {
   if (USE_MOCK) {
     await delay(700);

@@ -32,7 +32,6 @@ export async function verifyAndSettleTopup(
   const intent = await findTopupIntent(reference);
   if (!intent) return { settled: false, alreadySettled: false, checked: false };
 
-  // Ownership is enforced here rather than left to the caller: this function
   // moves money, and the reference is user-supplied.
   if (intent.user_id !== userId) {
     return { settled: false, alreadySettled: false, checked: false };
@@ -44,12 +43,10 @@ export async function verifyAndSettleTopup(
   }
 
   // A 'failed' intent IS re-verified, deliberately.
-  //
   // That status is set by any exception during settlement — a database blip
   // included — as well as by a genuine amount mismatch. Money that exists at the
   // PSP must always keep a path to the customer, and a terminal state set by a
   // possibly-transient error strands it forever.
-  //
   // Re-verifying is safe because nothing is taken on trust the second time: the
   // amount is re-checked against the intent (a real mismatch simply fails again,
   // moving nothing), and the credit is idempotent, so an intent that failed

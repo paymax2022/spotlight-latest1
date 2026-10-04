@@ -7,7 +7,22 @@ import (
 	"github.com/hibiken/asynq"
 )
 
-// Task type constants — all background jobs use these.
+// Task type constants.
+//
+// LIVE — enqueued by notifications.Service.Send and consumed by
+// notifications.Workers (cmd/notification-worker):
+const (
+	TypeNotificationPush  = "notification:push"
+	TypeNotificationEmail = "notification:email"
+	TypeNotificationSMS   = "notification:sms"
+)
+
+// DECLARED-ONLY (E2E-BE-004) — reserved names for roadmap jobs. As of the
+// production-readiness sweep these have no producer and no consumer: nothing
+// enqueues them and no mux handles them, so a task created under one of these
+// types would be parked as unprocessed forever. Wiring one means adding BOTH
+// the enqueue site and a consumer mux registration (cmd/notification-worker
+// or a new worker cmd) in the same change.
 const (
 	TypeWalletCreditNotify    = "wallet:credit:notify"
 	TypeWalletDebitNotify     = "wallet:debit:notify"
@@ -16,9 +31,6 @@ const (
 	TypeBankTransferWebhook   = "bank:transfer:webhook"
 	TypeKYCProvisioned        = "kyc:provisioned"
 	TypeVAProvision           = "va:provision"
-	TypeNotificationPush      = "notification:push"
-	TypeNotificationEmail     = "notification:email"
-	TypeNotificationSMS       = "notification:sms"
 	TypeReconciliationRun     = "reconciliation:run"
 	TypeOutboxSync            = "outbox:es:sync"
 )

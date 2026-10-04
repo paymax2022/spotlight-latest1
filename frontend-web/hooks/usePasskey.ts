@@ -55,7 +55,6 @@ export function usePasskeyRegister() {
       setError(null);
 
       try {
-        // Get registration options from server
         const optionsResponse = await fetch('/api/auth/passkey/register/options', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -71,7 +70,6 @@ export function usePasskeyRegister() {
 
         const options = await optionsResponse.json();
 
-        // Convert buffer fields
         options.challenge = new Uint8Array(
           Buffer.from(options.challenge, 'base64')
         );
@@ -79,7 +77,6 @@ export function usePasskeyRegister() {
           options.user.id = new Uint8Array(Buffer.from(options.user.id, 'base64'));
         }
 
-        // Create credential
         const credential = (await navigator.credentials.create(options)) as
           | PublicKeyCredential
           | null;
@@ -155,7 +152,6 @@ export function usePasskeyAuth() {
       setError(null);
 
       try {
-        // Get authentication options
         const optionsResponse = await fetch('/api/auth/passkey/authenticate/options', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -168,7 +164,6 @@ export function usePasskeyAuth() {
 
         const options = await optionsResponse.json();
 
-        // Convert buffer fields
         options.challenge = new Uint8Array(Buffer.from(options.challenge, 'base64'));
         if (options.allowCredentials) {
           options.allowCredentials = options.allowCredentials.map(

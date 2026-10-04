@@ -28,8 +28,6 @@ var (
 	ErrProvider          = errors.New("academy/live: room provider error")
 )
 
-// ── Live sessions ────────────────────────────────────────────────────────────
-
 // ScheduleSession creates a scheduled session. host is a tutor/staff actor (the
 // admin route is RBAC-gated by academy.live before this is reached).
 func (s *Service) ScheduleSession(ctx context.Context, host string, req ScheduleSessionRequest) (*LiveSession, error) {
@@ -129,8 +127,6 @@ func (s *Service) GetSession(ctx context.Context, id string) (*LiveSession, erro
 	return s.repo.GetSession(ctx, id)
 }
 
-// ── Community ──────────────────────────────────────────────────────────────────
-
 // CreateGroup creates a study group owned by (and auto-joining) the caller.
 func (s *Service) CreateGroup(ctx context.Context, owner string, req CreateGroupRequest) (*StudyGroup, error) {
 	if req.Name == "" {
@@ -192,8 +188,6 @@ func (s *Service) ListDiscussions(ctx context.Context, scope, refID string, limi
 	}
 	return s.repo.ListVisibleDiscussions(ctx, scope, refID, limit)
 }
-
-// ── Moderation (RBAC academy.moderation for the privileged paths) ──────────────
 
 // ReportContent files a pending report. Any user (including minors) may report.
 func (s *Service) ReportContent(ctx context.Context, reporterID string, req ReportContentRequest) (*ModerationReport, error) {

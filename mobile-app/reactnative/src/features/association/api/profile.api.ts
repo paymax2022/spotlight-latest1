@@ -1,11 +1,10 @@
-// ── Association — Member profile API wrapper (C) ──────────────────────────────
 
 import { api } from '@/api/client';
-import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
 import type {
   MyProfile, ProfileEdit, PrivacySettings, ProfileCompletion, ActivityEntry,
-} from '../types/profile.types';
-import { MOCK_MY_PROFILE, MOCK_PRIVACY, MOCK_ACTIVITY } from './profile.mock';
+} from '../types';
+import { MOCK_MY_PROFILE, MOCK_PRIVACY, MOCK_ACTIVITY } from './mocks';
 
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 

@@ -1,11 +1,8 @@
 // Paymax Connect — Jobs types (PRD §6.1 JB-*).
-//
 // Self-contained jobs slice under the networking feature. Reuses USE_MOCK /
 // CONNECT_API_BASE from ../../constants/connect.constants and money helpers.
-//
 // INVARIANTS:
 //  • Money is ALWAYS integers in minor units (kobo) — salaries + referral bounty.
-//  • Application state mirrors the backend FSM (see ApplicationState below); the
 //    server is the source of truth for transitions.
 //  • JB-07 "Open to Work" is a profile-level signal visible to Recruiters only.
 
@@ -19,8 +16,8 @@ export interface JobPosting {
   isRemote: boolean;
   employmentType: EmploymentType;
   seniority: string;             // "Entry", "Mid-level", "Senior", …
-  salaryMinKobo: number;         // kobo; 0 => undisclosed
-  salaryMaxKobo: number;         // kobo; 0 => undisclosed
+  salaryMinKobo: number;
+  salaryMaxKobo: number;
   salaryPeriod: SalaryPeriod;
   description: string;
   responsibilities: string[];
@@ -28,7 +25,7 @@ export interface JobPosting {
   skills: string[];
   postedAt: string;              // ISO
   applicantCount: number;
-  bountyKobo: number;            // referral bounty (JB-08); 0 => none. ALWAYS kobo
+  bountyKobo: number;
   easyApply: boolean;
   recruiterName: string;
   // viewer-relative flags
@@ -47,14 +44,12 @@ export type SalaryPeriod = 'month' | 'year';
 
 export interface JobFilters {
   query: string;
-  location: string;              // '' => any
+  location: string;
   remoteOnly: boolean;
   employmentTypes: EmploymentType[];
   skills: string[];
 }
 
-// ── Application FSM (JB-04) ───────────────────────────────────────────────────
-// Backend-owned lifecycle. `draft` is a locally-saved-but-unsent application;
 // `withdrawn` is a terminal state the applicant can trigger.
 export type ApplicationState =
   | 'draft'

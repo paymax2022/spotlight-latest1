@@ -1,7 +1,6 @@
 'use client';
 
 // AK5 — Fraud / duplicate-identity queue (SCAFFOLD).
-// RBAC: finance.admin.kyc (role: Compliance). IDs flagged as previously
 // registered (e.g. Smile `UserIDsOfPreviousRegistrants`); investigate links.
 // Shell: table + empty state. Backend endpoint TBD (e.g. GET /kyc/duplicate-hits).
 

@@ -15,13 +15,11 @@ const apiSrc = readFileSync(
   'utf8',
 );
 
-// ---------------------------------------------------------------------------
 // Mock is opt-in, not default — MB-001/002/005/006 all depend on this.
 test('voting mock is opt-in only (live by default)', () => {
   assert.match(apiSrc, /mockAllowed\(process\.env\.EXPO_PUBLIC_VOTING_USE_MOCK,\s*false\)/);
 });
 
-// ---------------------------------------------------------------------------
 // MB-001: Contest discovery/list & detail.
 test('getContests hits the real Connect contests endpoint when live', () => {
   const fn = apiSrc.slice(apiSrc.indexOf('export async function getContests'));
@@ -37,7 +35,6 @@ test('getContest falls back to a roster-derived count/vote total rather than fai
   assert.match(fn, /catch \{/, 'roster failure must not fail the whole contest-detail fetch');
 });
 
-// ---------------------------------------------------------------------------
 // MB-005: contestant profile (free + paid options).
 test('getContestants and getContestant read the live roster', () => {
   assert.match(
@@ -50,9 +47,7 @@ test('getContestants and getContestant read the live roster', () => {
   );
 });
 
-// ---------------------------------------------------------------------------
 // MB-006: free vote action + daily-limit state — the most important row.
-//
 // Mobile's free vote does NOT go through the same engine as web's fixed path.
 // Web (`frontend-web/components/voting/VoteModal.tsx`) calls the v2 bridge
 // `/api/v2/votes/free`, whose atomic `claim_free_vote` RPC got the D-001 (TZ)
@@ -61,7 +56,6 @@ test('getContestants and getContestant read the live roster', () => {
 // — confirmed below. That engine's own `Service.FreeVote`
 // (backend/internal/connect/voting/service.go:191-234) still does a plain
 // check-then-act: `CountFreeVotes` (read) then `InsertVote` (write), no row
-// lock, no unique constraint on connect_votes for (contest_id, voter_id,
 // option_ref, date), and the handler does not require an Idempotency-Key
 // (`FreeVote` — "No money" comment at handlers.go:80). That is the same class
 // of race as D-002, just unfixed on this engine. This is a BACKEND Go fix,
@@ -96,10 +90,7 @@ test('getFreeVoteAllocation reads the live per-contest allowance, not a client g
   assert.match(fn, /\$\{CONNECT_VOTING_BASE\}\/contests\/\$\{contestId\}\/free-vote-allowance/);
 });
 
-// ---------------------------------------------------------------------------
 // MB-007: paid vote purchase flow.
-//
-// CONTEST-002 found the v2 initiate route broken; the client must still POST
 // the OLD /api/votes/paid/initiate route for card/Paystack purchases, while
 // verify must use the newly-fixed v2 route (PV-005, closes the double-credit
 // race). A regression here either reopens PV-005 (verify reverts to v1) or
@@ -134,7 +125,6 @@ test('the wallet paid-vote rail is idempotency-keyed', () => {
   assert.match(walletBranch, /'Idempotency-Key':\s*payload\.idempotencyKey/);
 });
 
-// ---------------------------------------------------------------------------
 // MB-008: leaderboard respects hidden state from the LIVE response, not just
 // the contest's boolean flag (EC-008 leak fix must actually be read).
 test('getLeaderboardState surfaces the live hidden/{entries:[]} shape', () => {
@@ -156,7 +146,6 @@ test('leaderboard screen checks the live hidden flag, not only the contest flag'
   );
 });
 
-// ---------------------------------------------------------------------------
 // MB-012: notifications center — read-only against live, derived data.
 test('getVotingNotifications reads the live derived feed', () => {
   const fn = apiSrc.slice(apiSrc.indexOf('export async function getVotingNotifications'));
@@ -175,7 +164,6 @@ test('notifications screen has no mark-as-read mutation (net-new — flagged, no
   );
 });
 
-// ---------------------------------------------------------------------------
 // MB-014: a fetch failure must render as an error, not silently fall into the
 // "no data yet" empty state (fixed in this batch for the list + gallery).
 test('contest list and contestant gallery render a real error state, not just empty', () => {
@@ -186,7 +174,6 @@ test('contest list and contestant gallery render a real error state, not just em
   }
 });
 
-// ---------------------------------------------------------------------------
 // MB-002: registration wizard posts to the real endpoints when live.
 test('registration API is opt-in mock, live endpoints match the documented contract', () => {
   const regSrc = readFileSync(

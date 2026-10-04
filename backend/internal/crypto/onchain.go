@@ -17,14 +17,12 @@ import (
 // (crypto_onchain_balances — see migration 20260919000500_crypto_onchain_balances.sql)
 // that a CUSTODIAN reports into, and reconciliation diffs that stored on-chain total
 // against the ledger-side projection (Repository.AdminHeldUnitsByAsset).
-//
 // Two seams live here:
 //  1. Repository.UpsertOnchainBalance / OnchainUnitsByAsset — the persistence for the
 //     custodian-reported totals (write on feed, read on recon).
 //  2. The custody-webhook stub (POST /api/v1/crypto/internal/onchain-balance) — the
 //     integration seam a real custody provider (Fireblocks / BitGo / Anchorage) would
 //     call to report balances. Guarded by a shared secret, fail-closed when unset.
-//
 // Reconciliation is READ-ONLY: it reports drift, it NEVER moves money. Nothing in
 // this file mutates holdings, the ledger, or withdrawals. On-chain totals are
 // custodian-reported facts, not a member balance source of truth. All amounts are
@@ -50,8 +48,6 @@ type OnchainBalance struct {
 	AsOf         time.Time `json:"as_of"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
-
-// ── Repository: on-chain balance store ───────────────────────────────────────
 
 // UpsertOnchainBalance idempotently records the custodian-reported on-chain total for
 // one asset (one row per asset; PRIMARY KEY asset_id). Repeated reports for the same
@@ -108,8 +104,6 @@ func (r *Repository) OnchainUnitsByAsset(ctx context.Context) (map[string]Onchai
 	return out, rows.Err()
 }
 
-// ── Service: custody feed ingestion ──────────────────────────────────────────
-
 // IngestOnchainBalance validates and stores one custodian-reported on-chain balance.
 // It resolves the asset by SYMBOL (what a custodian speaks) or by asset UUID, records
 // the total via the idempotent upsert, and emits an immutable audit event (the on-chain
@@ -160,8 +154,6 @@ func (s *Service) resolveAssetID(ctx context.Context, ref string) (string, error
 	return "", ErrNotFound
 }
 
-// ── Custody webhook stub (integration seam for a real custody provider) ───────
-
 // custodyWebhookGuard enforces the shared-secret header. FAIL-CLOSED: if the secret
 // env var is unset/empty the endpoint is disabled (503) — an unconfigured custody seam
 // must never accept unauthenticated writes to the on-chain store. Uses a constant-time
@@ -197,7 +189,6 @@ func custodyWebhookGuard() gin.HandlerFunc {
 // against the ledger projection. This is the DOCUMENTED integration seam — swap the
 // guard for the provider's real signature scheme (mirror the HMAC pattern in
 // backend/internal/webhooks/paystack.go) and map the provider's payload to this shape.
-//
 // POST /api/v1/crypto/internal/onchain-balance
 // Header: X-Crypto-Custody-Secret: <shared secret>
 // Body:   {"asset":"BTC","onchain_units":123456789,"source":"fireblocks","as_of":"2026-07-09T00:00:00Z"}
@@ -221,7 +212,7 @@ func (h *Handler) CustodyOnchainBalance(c *gin.Context) {
 	b, err := h.svc.IngestOnchainBalance(c.Request.Context(),
 		req.Asset, req.OnchainUnits, strings.TrimSpace(req.Source), asOf)
 	if err != nil {
-		httpErrExt(c, err)
+		errMap.WriteOK(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "onchain_balance": b})

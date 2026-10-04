@@ -2,10 +2,10 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { CalendarDays, MessageSquare, FlaskConical, Wallet, ShieldCheck, Bell } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 import type { DoctorNotification, DoctorNotificationType } from '@/types/doctor';
 
 interface Props {
@@ -23,7 +23,6 @@ const ICONS: Record<DoctorNotificationType, { Icon: LucideIcon; color: string; b
 };
 
 // New component: a notification list row with a typed icon + read indicator.
-// RecentActivityCard is wallet-transaction shaped; this is a distinct
 // notification row, so it is genuinely new.
 export default function NotificationRow({ notification, onPress }: Props) {
   const cfg = ICONS[notification.type] ?? ICONS.system;

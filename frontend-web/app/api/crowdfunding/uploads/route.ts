@@ -62,7 +62,6 @@ export async function POST(request: Request) {
     // ABSOLUTE, not relative. The mobile app renders this straight into an
     // <Image>, and the submit payload only persists a cover that matches
     // ^https?:// — a relative path would be silently dropped exactly as the
-    // blob: URI was.
     const origin = new URL(request.url).origin;
     const fileKeyParam = Buffer.from(objectKey, 'utf8').toString('base64url');
     const url = `${origin}/api/crowdfunding/uploads/${fileKeyParam}`;

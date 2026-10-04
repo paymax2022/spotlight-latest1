@@ -1,12 +1,9 @@
 import { successResponse, handleApiError } from '@/src/lib/api/responses';
 // ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047): registration/store is
 // the in-memory version nothing real ever writes to — real applications live
-// in Supabase (registration/supabase-store), same fix as the openmic import
-// above. listRegistrationApplications here is async and its filter argument
 // is required (not optional), unlike the memory version.
 import { listRegistrationApplications } from '@/src/server/registration/supabase-store';
 // ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047): the in-memory openmic/store
-// import is never written to by any real flow; every open-mic admin page and API
 // route reads openmic/persistence (Supabase-backed) instead. persistence.ts is
 // async where store.ts was sync — calls below are awaited accordingly.
 import { listContests, listSubmissions, listFraudAlerts, listPaymentEvents } from '@/src/server/openmic/persistence';
@@ -23,14 +20,12 @@ import { createAdminClient } from '@/lib/supabase/server';
 //     entity exists anywhere in the codebase, only field labels in registration
 //     forms that happen to use those words.
 //   upcomingEvents — src/server/admin/events.ts is itself only an in-memory
-//     store seeded with one fake sample event; there is no persistence layer to
 //     read from, so wiring it would just swap one fake number for another.
 //   evictionCandidates — reality-show has real eviction data, but that module
 //     had uncommitted work in progress elsewhere in the tree while this was
 //     written; deferred rather than building against a moving target.
 //   activeSponsors — real per-contest data exists at
-//     services/competition/sponsor.service.ts#listActivePlacements, but it's
-//     scoped per competition with no aggregate query; wiring it needs an
+//     services/competition/index.ts#listActivePlacements, but it's
 //     explicit decision on how to roll N contests' sponsor lists into one count.
 //   freeVotesUsed — voting config tracks a freeVotesPerDay *policy*, not a
 //     free/paid breakdown of votes actually cast; no source to sum.

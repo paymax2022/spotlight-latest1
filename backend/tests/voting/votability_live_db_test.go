@@ -1,11 +1,9 @@
 package voting_test
 
 // Every contest is votable, and the two contest planes stay joined.
-//
 // Guards migrations 20270127000000 (default vote package ladder), 20270128000000
 // (open contests are always votable) and 20270129000000 (connect → legacy
 // mirror).
-//
 // The failure these prevent is silent: a contest opens, a contestant is approved
 // onto the roster, and nobody can vote — either because there is no package to
 // price the purchase from, or because the contest has no legacy row and
@@ -216,7 +214,6 @@ func TestMirror_KeepsTheKoboPriceExact(t *testing.T) {
 
 // contests.slug carries a UNIQUE INDEX. Copying a colliding slug raises 23505
 // inside an AFTER trigger, which aborts creation of the connect contest itself.
-//
 // A collision is only reachable when a legacy row has NO connect twin —
 // otherwise connect's own unique slug index rejects the second contest first.
 // sync_connect_contest() skips names shorter than 2 characters, so a 1-character

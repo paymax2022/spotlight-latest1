@@ -4,20 +4,15 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { errorResponse, successResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Cross-device cart persistence for the mobile food module.
-//
 // GET  /api/v1/food/cart → the caller's saved cart (null when none)
 // POST /api/v1/food/cart → upsert the caller's cart
-//
 // Backed directly by the `food_carts` table (migration
 // 20261112000000_food_cart_persistence.sql), NOT proxied to Go: the cart is a
 // draft, not a money path. Nothing here is trusted at checkout — Go's PlaceOrder
 // re-prices every line from the live menu, so a tampered cart cannot move money.
 // That is also why this route does no price validation.
-//
-// The table's RLS scopes rows to auth.uid(); this handler uses the service-role
 // client and constrains every query by the token-verified user id itself, so the
 // isolation guarantee is preserved without depending on a user-session client.
-//
 // Prior to this file the mobile client's saveCartToServer/loadCartFromServer
 // always failed (no such route anywhere) and swallowed the error, silently
 // degrading to local-storage-only.
@@ -87,7 +82,6 @@ export async function POST(request: Request) {
 }
 
 // Clearing the cart after a successful order. The mobile client's
-// clearPersistedCart() currently only wipes local storage; this gives it a
 // server-side counterpart to call.
 export async function DELETE(request: Request) {
   if (!featureFlags.restaurant()) return errorResponse('Restaurant delivery is not available.', 503);

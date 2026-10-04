@@ -1,4 +1,3 @@
-// ── Spotlight Realtor — Rental application draft store ───────────────────────
 // Holds the in-progress application across the apply → review → submit steps
 // (zustand, matching authStore usage). Cleared after a successful submit.
 

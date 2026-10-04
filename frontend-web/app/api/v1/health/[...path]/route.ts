@@ -5,7 +5,6 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Catch-all proxy for the Health verticals member API (shared platform +
 // pharmacy/lab/vet). /api/v1/health/<...> → Go /api/finance/health/<...>.
-// Auth + feature-flag guarded; Go enforces object-level authZ, NDPA
 // consent/access-logging, guarded state machines, escrow hold→release→refund,
 // and the HL-1..12 invariants. Admin routes (/api/health/<v>/admin/*) hit Go
 // directly. Money mutations forward the Idempotency-Key. X-Device-Id (sent by

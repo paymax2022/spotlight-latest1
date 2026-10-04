@@ -2,7 +2,6 @@ package store
 
 // PgRepository implements Repository against the Postgres schema in
 // migrations/000001_init.up.sql using pgx/v5.
-//
 // Design contract
 //   - Every method scopes reads/writes to p.userID (set via ForUser).
 //   - Execution methods (ExecuteBuy/Sell/Swap) run inside a single serializable
@@ -12,15 +11,9 @@ package store
 //   - Quotes and idempotency keys are stored as JSONB so their shape can evolve
 //     without a schema migration.
 //   - Assets are global (admin catalogue): they are not scoped by userID.
-//
 // Wiring in main.go
 //   Replace store.New() with store.NewPgRepository(pool) and add per-request
 //   scoping via middleware.  Example pattern:
-//
-//     base := store.NewPgRepository(pool)
-//     // In auth middleware, after verifying JWT:
-//     repo := base.ForUser(claims.Sub)
-//     // Pass repo to handlers instead of the global store.
 
 import (
 	"context"
@@ -63,8 +56,6 @@ func (p *PgRepository) ForUser(userID string) *PgRepository {
 
 // Compile-time assertion that PgRepository satisfies the Repository interface.
 var _ Repository = (*PgRepository)(nil)
-
-// ── Eligibility ───────────────────────────────────────────────────────────────
 
 // Eligibility returns the user's compliance facts for the trading gate.
 // KYC tier + crypto flag come from the users row; suitability and agreement
@@ -120,8 +111,6 @@ func (p *PgRepository) Eligibility() domain.EligibilityFacts {
 	}
 	return f
 }
-
-// ── Market data ───────────────────────────────────────────────────────────────
 
 // Assets returns the full admin-whitelisted asset catalogue (global, not per-user).
 func (p *PgRepository) Assets() []domain.Asset {
@@ -234,8 +223,6 @@ func (p *PgRepository) scanAssetRow(row pgx.Row) (domain.Asset, error) {
 	return a, nil
 }
 
-// ── Quotes ───────────────────────────────────────────────────────────────────
-
 // PutQuote persists a trade quote as JSONB. Quotes expire via the expires_at
 // column; the background sweeper (or execution path) checks consumed.
 func (p *PgRepository) PutQuote(q domain.Quote) {
@@ -308,8 +295,6 @@ func (p *PgRepository) markQuoteConsumed(ctx context.Context, tx pgx.Tx, id stri
 	_, _ = tx.Exec(ctx, `UPDATE quotes SET consumed=TRUE WHERE id=$1 AND user_id=$2`, id, p.userID)
 }
 
-// ── Idempotency ──────────────────────────────────────────────────────────────
-
 // Idempotent returns the stored response for a key, if present.
 // Keys are stored as "<userID>:<key>" so the same header value from different
 // users never collides.
@@ -350,8 +335,6 @@ func (p *PgRepository) scopedKey(key string) string {
 	}
 	return p.userID + ":" + key
 }
-
-// ── Portfolio / positions ─────────────────────────────────────────────────────
 
 // Portfolio returns the aggregate portfolio for p.userID. Current prices are
 // read from the assets table (updated by the market-data sync job).
@@ -464,8 +447,6 @@ func (p *PgRepository) investableBalance(ctx context.Context) int64 {
 	return bal
 }
 
-// ── Transaction history ───────────────────────────────────────────────────────
-
 // Transactions returns the user's transaction history, optionally filtered by
 // side ("buy" or "sell"; "" returns all).
 func (p *PgRepository) Transactions(side string) []domain.TxSummary {
@@ -575,8 +556,6 @@ func (p *PgRepository) Transaction(id string) (domain.TxDetail, bool) {
 	return d, true
 }
 
-// ── Watchlist ─────────────────────────────────────────────────────────────────
-
 // Watchlist returns the assets the user has added to their watchlist.
 func (p *PgRepository) Watchlist() []domain.Asset {
 	ctx := context.Background()
@@ -624,8 +603,6 @@ func (p *PgRepository) RemoveWatch(assetID string) {
 		p.userID, assetID,
 	)
 }
-
-// ── Price alerts ──────────────────────────────────────────────────────────────
 
 // Alerts returns all price alerts for the user.
 func (p *PgRepository) Alerts() []domain.PriceAlert {
@@ -706,8 +683,6 @@ func (p *PgRepository) DeleteAlert(id string) {
 		`DELETE FROM price_alerts WHERE id=$1 AND user_id=$2`, id, p.userID,
 	)
 }
-
-// ── Withdrawal address book ───────────────────────────────────────────────────
 
 // Addresses returns the user's whitelisted withdrawal addresses for a symbol.
 // Pass "" for symbol to return all addresses.
@@ -803,8 +778,6 @@ func (p *PgRepository) AddressByID(id string) (domain.Address, bool) {
 	}
 	return a, true
 }
-
-// ── Execution ─────────────────────────────────────────────────────────────────
 
 // ExecuteBuy executes a buy order inside a serializable transaction.
 // Pre-trade checks: asset active + buy-enabled, order within limits, sufficient
@@ -1003,8 +976,6 @@ func (p *PgRepository) ExecuteSwap(q domain.SwapQuote) (domain.SwapResult, *Exec
 	}, nil
 }
 
-// ── Transaction helpers (all require an open pgx.Tx) ─────────────────────────
-
 // assetForTradeTx reads the asset inside a transaction (no FOR UPDATE — assets
 // are admin-managed and only mutated by the admin service, not by user trades).
 func (p *PgRepository) assetForTradeTx(ctx context.Context, tx pgx.Tx, assetID string) (domain.Asset, bool) {
@@ -1173,8 +1144,6 @@ func (p *PgRepository) insertMovementTx(
 	)
 	return err
 }
-
-// ── On-chain movements + status mutation (Repository additions) ───────────────
 
 // UpdateTransactionStatus advances a transaction's status (e.g. from a webhook).
 func (p *PgRepository) UpdateTransactionStatus(reference, status string) bool {

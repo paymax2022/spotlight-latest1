@@ -1,8 +1,6 @@
 package fx_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test for the operator-tunable Paymax FX markup (ADR-030).
-//
 // The markup decides what every customer pays on a conversion, so this proves
 // against a real database that:
 //   - the seeded DEFAULT rate is 1% and resolves for any corridor;
@@ -12,14 +10,11 @@ package fx_test
 //   - a deactivated corridor rate falls back to DEFAULT rather than to zero;
 //   - EVERY change writes an immutable before/after audit row naming the actor;
 //   - the fat-finger ceiling is enforced by the store AND by the table CHECK.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset (reuses liveDBPool
 // from convert_live_db_test.go), so `go test ./...` without a DB stays green.
-//
 // Bring-up: apply migrations incl. 20261204000000_fx_markup_rates.sql, then:
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run MarkupStore -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -122,7 +117,6 @@ func TestMarkupStore_AdminChangeTakesEffectImmediately(t *testing.T) {
 	if fee, err := store.FeeMinor(ctx, src, tgt, 100_000); err != nil || fee != 2_500 {
 		t.Fatalf("post-override fee = %d (err %v), want 2,500", fee, err)
 	}
-	// ...and only for this corridor.
 	if fee, err := store.FeeMinor(ctx, "GBP", "KES", 100_000); err != nil || fee != 1_000 {
 		t.Fatalf("unrelated corridor fee = %d (err %v), want the 1,000 default", fee, err)
 	}

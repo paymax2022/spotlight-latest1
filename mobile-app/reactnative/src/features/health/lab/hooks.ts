@@ -1,4 +1,3 @@
-// ── Paymax Health — Laboratory React Query hooks (Phase 2) ───────────────────
 // Declarative data hooks the lab screens use. React Query v5.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -51,7 +50,6 @@ import type {
 
 const KEY = 'lab';
 
-// ── Catalog ─────────────────────────────────────────────────────────────────
 export function useTests(query?: CatalogQuery) {
   return useQuery({
     queryKey: [KEY, 'tests', query ?? {}],
@@ -86,7 +84,6 @@ export function usePackage(id?: string) {
   });
 }
 
-// ── Labs ────────────────────────────────────────────────────────────────────
 export function useLabs(opts?: { homeCollection?: boolean }) {
   return useQuery({
     queryKey: [KEY, 'labs', opts ?? {}],
@@ -114,7 +111,6 @@ export function usePhlebotomist(orderId?: string) {
   });
 }
 
-// ── Orders ──────────────────────────────────────────────────────────────────
 export function useOrders() {
   return useQuery({ queryKey: [KEY, 'orders'], queryFn: getOrders, staleTime: 15_000 });
 }
@@ -142,7 +138,6 @@ export function useReorder() {
   return useMutation({ mutationFn: (orderId: string) => reorder(orderId) });
 }
 
-// ── Results (HL-7 / HL-8) ────────────────────────────────────────────────────
 export function useResult(id?: string, opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: [KEY, 'result', id],
@@ -164,7 +159,6 @@ export function useShareResult() {
   return useMutation({ mutationFn: (input: ShareResultInput) => shareResult(input) });
 }
 
-// ── Reviews ──────────────────────────────────────────────────────────────────
 export function useReviews(labId?: string) {
   return useQuery({
     queryKey: [KEY, 'reviews', labId],
@@ -181,7 +175,6 @@ export function useSubmitReview() {
   });
 }
 
-// ── Provider (lab) ───────────────────────────────────────────────────────────
 export function useProviderOnboarding() {
   return useQuery({ queryKey: [KEY, 'provider', 'onboarding'], queryFn: getProviderOnboarding });
 }
@@ -242,7 +235,6 @@ export function useProviderReviews() {
   return useQuery({ queryKey: [KEY, 'provider', 'reviews'], queryFn: getProviderReviews });
 }
 
-// ── Phlebotomist ─────────────────────────────────────────────────────────────
 export function useAssignments() {
   return useQuery({ queryKey: [KEY, 'phleb', 'assignments'], queryFn: getAssignments, staleTime: 10_000 });
 }

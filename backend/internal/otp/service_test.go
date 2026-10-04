@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-// ── test doubles ────────────────────────────────────────────────────────────
-
 // memStore mirrors the semantics PostgresStore guarantees, including the atomic
 // Consume. Behaviour that depends on SQL (real concurrency, expiry evaluated by
 // the database clock) is covered by the live-DB suite in tests/otp.
@@ -153,8 +151,6 @@ func newTestService(t *testing.T, mutate func(*Config)) (*Service, *memStore, *f
 	return svc, store, sender, limiter
 }
 
-// ── construction ────────────────────────────────────────────────────────────
-
 // A service that boots without a pepper stores digests a rainbow table reverses,
 // and reports healthy while doing it. Refusing to construct is the whole defence.
 func TestNewServiceRefusesWithoutPepper(t *testing.T) {
@@ -171,8 +167,6 @@ func TestNewServiceRejectsAbsurdLength(t *testing.T) {
 		t.Fatalf("error = %v, want ErrInvalidLength", err)
 	}
 }
-
-// ── the happy path and single use ───────────────────────────────────────────
 
 func TestIssueThenVerifySucceedsAndConsumes(t *testing.T) {
 	ctx := context.Background()
@@ -235,8 +229,6 @@ func TestStoredRecordDoesNotContainThePlaintextCode(t *testing.T) {
 		}
 	}
 }
-
-// ── failure paths ───────────────────────────────────────────────────────────
 
 func TestVerifyWrongCodeCountsAnAttempt(t *testing.T) {
 	ctx := context.Background()
@@ -329,8 +321,6 @@ func TestVerifyUnknownAddressLooksLikeAWrongCode(t *testing.T) {
 		t.Fatalf("error = %v, want ErrInvalidCode", err)
 	}
 }
-
-// ── rate limiting ───────────────────────────────────────────────────────────
 
 func TestIssueInsideCooldownIsRateLimited(t *testing.T) {
 	ctx := context.Background()
@@ -426,8 +416,6 @@ func TestLimiterFailureBlocksIssue(t *testing.T) {
 		t.Error("an email was sent despite the limiter failing")
 	}
 }
-
-// ── delivery failure ────────────────────────────────────────────────────────
 
 // If the mail never left, the user must not be locked out by their own cooldown
 // waiting for it.

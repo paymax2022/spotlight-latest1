@@ -1,6 +1,5 @@
 package realtor
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for PROPMGMT-002: refundable lease deposits paid
 // into realtor_escrow_deposits (funded via realtor_pay_invoice debiting the
 // tenant's wallet into the shared 'settlement' standing account, ADR-040
@@ -10,9 +9,7 @@ package realtor
 // moves real, balanced double-entry ledger money for both outcomes
 // (released_to_tenant, forfeited_to_landlord), enforces the move-out
 // inspection gate, and guards against double-payout on a repeated resolve.
-//
 // Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

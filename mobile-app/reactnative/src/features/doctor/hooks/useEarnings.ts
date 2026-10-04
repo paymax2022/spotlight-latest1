@@ -1,4 +1,3 @@
-// ── Doctor — earnings & payout hooks ─────────────────────────────────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getEarnings, requestPayout, DEMO_EARNINGS } from '@/api/doctor.api';

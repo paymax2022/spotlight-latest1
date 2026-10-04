@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Pencil, Trash2 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
 
 interface Props {
   title:    string;            // primary line, e.g. institution / organisation / clinic name
@@ -17,7 +17,6 @@ interface Props {
 
 // New component: a summary card with edit/remove affordances for the repeatable
 // list entries (education, work experience, affiliations, certificates).
-// DrugItemRow is an inline editor specific to prescriptions; a generic read-row
 // with edit/remove actions is justified and reused across four screens.
 export default function EditableListCard({ title, subtitle, meta, badge, onEdit, onRemove }: Props) {
   return (

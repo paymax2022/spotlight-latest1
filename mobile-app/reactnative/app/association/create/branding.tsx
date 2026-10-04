@@ -3,18 +3,18 @@ import { View, Text, Image, ScrollView, Pressable, StyleSheet, ActivityIndicator
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ImagePlus } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
-import WizardProgress from '@/features/association/components/WizardProgress';
+import {WizardProgress} from '@/features/association/components';
 import { useOrgDraft } from '@/features/association/store/orgDraftStore';
-import { pickDocument } from '@/features/association/utils/docPicker';
-import { GROUP_TYPE_OPTIONS } from '@/features/association/constants/orgWizard.constants';
-import { initials } from '@/features/association/utils/associationFormatters';
-import { logoError, isRemoteLogoUrl, isUploadedLogoKey } from '@/features/association/utils/orgDraftValidation';
+import { pickDocument } from '@/features/association/utils';
+import { GROUP_TYPE_OPTIONS } from '@/features/association/constants';
+import { initials } from '@/features/association/utils';
+import { logoError, isRemoteLogoUrl, isUploadedLogoKey } from '@/features/association/utils';
 import { uploadLogo, LogoUploadsUnavailableError } from '@/features/association/api/logoUpload.api';
 import TextInputField from '@/components/TextInputField';
 
@@ -50,7 +50,6 @@ export default function WizardBranding() {
     setUploadError(null);
     setUploading(true);
     // Clear any previous logo up front: leaving the old one in place while a new
-    // upload runs would let a failed upload publish the image the founder just
     // replaced.
     patch({ logoPreviewUri: f.uri, logoUri: null });
     try {

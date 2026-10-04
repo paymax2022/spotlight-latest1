@@ -5,10 +5,8 @@ import (
 	"testing"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
 // canStep: guarded path-step lifecycle (locked→available→in_progress→done) +
 // the single legal regression done→in_progress (remediation). state-machines.md §1.
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestCanStepAllowed(t *testing.T) {
 	allowed := [][2]PathStepState{
@@ -61,9 +59,7 @@ func TestStepEventTypeFor(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // selectWeakObjectives: weakest-first, mastered/exam_ready excluded.
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestSelectWeakObjectives(t *testing.T) {
 	masteries := []Mastery{
@@ -71,8 +67,8 @@ func TestSelectWeakObjectives(t *testing.T) {
 		{ObjectiveID: "o-examready", State: "exam_ready", Score: 0.9}, // excluded
 		{ObjectiveID: "o-low", State: "in_progress", Score: 0.2},      // weak
 		{ObjectiveID: "o-mid", State: "practiced", Score: 0.5},        // weak
-		{ObjectiveID: "o-new", State: "not_started", Score: 0.0},      // weak (weakest)
-		{ObjectiveID: "o-edge", State: "practiced", Score: 0.7},       // NOT weak (== threshold)
+		{ObjectiveID: "o-new", State: "not_started", Score: 0.0},
+		{ObjectiveID: "o-edge", State: "practiced", Score: 0.7}, // NOT weak (== threshold)
 	}
 	got := selectWeakObjectives(masteries, 0.7)
 	want := []string{"o-new", "o-low", "o-mid"} // ordered weakest score first
@@ -104,9 +100,7 @@ func TestIsWeak(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // pickItems: balanced round-robin across objectives, easier-first within each.
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestPickItemsRoundRobinAndDifficulty(t *testing.T) {
 	items := []QuestionItemRef{
@@ -142,11 +136,9 @@ func TestPickItemsIgnoresUnrequested(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Path-build ordering: the first step is available, the rest locked, in the
 // curriculum order the objectives are supplied in. (Pure ordering check that
 // mirrors CreatePathWithSteps' state assignment.)
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestPathBuildOrdering(t *testing.T) {
 	objectives := []Objective{
@@ -174,9 +166,7 @@ func TestPathBuildOrdering(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // recommendationScore: larger gaps rank higher; in_progress + on-path boosts.
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestRecommendationScoreGapRanking(t *testing.T) {
 	threshold := 0.7

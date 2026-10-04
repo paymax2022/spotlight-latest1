@@ -1,4 +1,3 @@
-// ── Spotlight Academy — Analytics taxonomy (no-op stub) ──────────────────────
 // Per nfr.md, emit at each meaningful transition. Every event carries cohorting
 // context (curriculumVersion, class, subject, offlineOrigin) where available.
 // This is a console/no-op stub for Phase 0/1 — swap the sink for the real

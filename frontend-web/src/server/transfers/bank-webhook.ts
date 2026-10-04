@@ -13,13 +13,18 @@
  *   - Mark bank_transfer as 'failed' / 'reversed'
  *
  * Idempotency: status check on bank_transfers prevents double-processing.
+ * The settle itself lives in ./bank-settle, shared with the verify-on-read
+ * fallback (GET /api/v1/transfers/bank/[id]) — one code path, one idempotency
+ * key shape, so a late webhook after a verify settle is a safe no-op.
  * Signature: verified independently from the main webhook fan-out.
  */
 
 import crypto from 'node:crypto';
 import { createAdminClient } from '@/lib/supabase/server';
-import { buildJournalLegs, getOrCreateStandingAccount } from '@/src/server/wallet/journal';
-import { WALLET_ACCOUNT_TYPE } from '@/src/server/wallet/account-type';
+import {
+  applyBankTransferOutcome,
+  isTerminalBankTransferStatus,
+} from '@/src/server/transfers/bank-settle';
 
 interface BankWebhookResult {
   processed: boolean;
@@ -90,7 +95,7 @@ export async function handleBankTransferWebhook(
     status: string;
     amount_kobo: number;
     fee_kobo: number;
-    sender_entry_id: string;
+    sender_entry_id: string | null;
   } | undefined;
 
   if (!transfer) {
@@ -99,7 +104,7 @@ export async function handleBankTransferWebhook(
   }
 
   // Already in a terminal state — duplicate webhook
-  if (transfer.status === 'successful' || transfer.status === 'failed' || transfer.status === 'reversed') {
+  if (isTerminalBankTransferStatus(transfer.status)) {
     return { processed: false, duplicate: true };
   }
 
@@ -112,77 +117,11 @@ export async function handleBankTransferWebhook(
     return { processed: false, duplicate: false };
   }
 
-  if (isSuccess) {
-    await supabase
-      .from('bank_transfers')
-      .update({ status: 'successful', updated_at: new Date().toISOString() })
-      .eq('id', transfer.id);
-
-    return { processed: true, duplicate: false };
-  }
-
-  // Failed or reversed — refund: insert REVERSAL_DEBIT to restore sender's balance
-  const refundKobo = transfer.amount_kobo + transfer.fee_kobo;
-  const refundRef  = `REFUND_${transfer.id.slice(0, 8).toUpperCase()}`;
-  const refundKey  = `bank-transfer-refund:${transfer.id}:${event.event}`;
-
-  // Find the sender's ledger account
-  const { data: accountRow } = await supabase
-    .from('ledger_accounts')
-    .select('id')
-    .eq('user_id', transfer.user_id)
-    .eq('type', WALLET_ACCOUNT_TYPE)
-    .maybeSingle();
-
-  let reversalEntryId: string | null = null;
-
-  if (accountRow) {
-    // ADR-040: the refund is a BALANCED correction, not a lone credit —
-    // REVERSAL_DEBIT restores the sender's wallet while REVERSAL_CREDIT drains
-    // the same `provider_clearing` pot that reserve_for_bank_transfer filled
-    // (the money never actually reached the provider). Both legs go in one
-    // insert, so a unique violation rolls back the pair rather than leaving a
-    // half-posted correction.
-    const counterAccountId = await getOrCreateStandingAccount('provider_clearing');
-    const metadata = {
-      bank_transfer_id: transfer.id,
-      original_entry_id: transfer.sender_entry_id,
-      reason: event.data.reason ?? 'Transfer failed',
-    };
-
-    const legs = buildJournalLegs({
-      primaryAccountId: (accountRow as { id: string }).id,
-      counterAccountId,
-      primarySide: 'REVERSAL_DEBIT',
-      amountKobo: refundKobo,
-      reference: refundRef,
-      idempotencyKey: refundKey,
-      description: `Refund for failed bank transfer ${transfer.id}`,
-      metadata,
-    });
-
-    const { data: entryRows, error: entryError } = await supabase
-      .from('ledger_entries')
-      .insert(legs)
-      .select('id, idempotency_key');
-
-    if (!entryError && entryRows) {
-      // The wallet leg is the one carrying the un-suffixed key.
-      const walletRow = (entryRows as { id: string; idempotency_key: string }[])
-        .find((r) => r.idempotency_key === refundKey);
-      reversalEntryId = walletRow?.id ?? null;
-    }
-  }
-
-  await supabase
-    .from('bank_transfers')
-    .update({
-      status:            isReversed ? 'reversed' : 'failed',
-      reversal_entry_id: reversalEntryId,
-      failure_reason:    event.data.reason ?? null,
-      updated_at:        new Date().toISOString(),
-    })
-    .eq('id', transfer.id);
+  await applyBankTransferOutcome(
+    transfer,
+    isSuccess ? 'success' : isReversed ? 'reversed' : 'failed',
+    event.data.reason,
+  );
 
   return { processed: true, duplicate: false };
 }

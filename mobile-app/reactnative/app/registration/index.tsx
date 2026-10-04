@@ -4,11 +4,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronRight, Trophy, Banknote, MapPin, ClipboardList } from 'lucide-react-native';
 import { goBack } from '@/lib/navigation';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useContests, useStartDraft } from '@/features/registration/hooks/useRegistration';
@@ -48,14 +48,12 @@ export default function RegistrationHomeScreen() {
   // application, never a generic pick-a-program list — a contest can have
   // batches/editions, but they all belong to the contest the applicant
   // opened, not some unrelated one.
-  //
   // contestId (the real public.contests.id the details screen actually has)
   // is the exact, reliable path: the backend resolves it directly against
   // Postgres (see resolveAnyContest), independent of the registration
   // catalog's 5 hand-tailored templates. contestTitle-only is a legacy
   // fallback for any caller that still doesn't have an id — it keyword-matches
   // against the catalog and, on failure, shows the plain list below (the one
-  // remaining case that can still surface unrelated contests; kept only for
   // backward compatibility since nothing in this app constructs it anymore).
   React.useEffect(() => {
     if (autoStartAttempted.current) return;

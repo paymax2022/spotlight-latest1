@@ -1,9 +1,7 @@
 'use client';
 
-// Centralized, read-only admin "Transactions" console. Lists EVERY ledger_entries
 // row across every module (there is no per-module transactions table — this is
 // the only source of truth for money movement). RBAC: finance.admin.transactions.view.
-//
 // "Source (inferred)" is a best-effort guess parsed server-side from the
 // reference string (SPLIT_PART on ':') — it is NEVER an authoritative module
 // field, since reference-naming conventions are inconsistent across modules.

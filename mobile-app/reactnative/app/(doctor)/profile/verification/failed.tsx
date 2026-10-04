@@ -1,4 +1,3 @@
-// PRIVACY: Assisted Mode B verification. This screen shows the doctor only a
 // coarse outcome (Rejected) plus high-level, doctor-actionable reason categories.
 // It must NEVER render MDCN/register data, reviewer identity, internal reviewer
 // notes, or matched-field detail — the doctor never sees the MDCN portal.
@@ -7,10 +6,10 @@ import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { XCircle, AlertCircle } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, InfoRow } from '@/features/doctor/components';

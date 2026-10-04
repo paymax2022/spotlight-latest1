@@ -2,8 +2,6 @@
 
 // Typed client for the backend MapService proxy. The browser calls ONLY these
 // endpoints — never a maps provider directly — so provider keys stay server-side.
-//
-// Every result carries `provider` + `source`. `source` is the licensing stack;
 // the renderer (MapView) refuses to draw a Google-sourced point on the OpenStack
 // basemap, mirroring the server-side license-coherence guard.
 

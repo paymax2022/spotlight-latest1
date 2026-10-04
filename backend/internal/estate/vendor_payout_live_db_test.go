@@ -1,22 +1,17 @@
 package estate
 
-// ---------------------------------------------------------------------------
 // UAT batch: live-DB coverage for the vendor RequestPayout money path and the
 // vendor job FSM (backend/internal/estate/vendor.go), per docs/qa/modules/estate.md
 // §4/§5 — ESTATE-INT-003, ESTATE-VAL-003, ESTATE-AUTHZ-006, ESTATE-IDEM-002,
 // and the full FSM table ESTATE-FSM-001..008.
-//
 // Package estate (not estate_test) so the tests can reach unexported helpers
 // (jobTransition targets are exercised only through the exported AcceptJob/
 // RejectJob/CheckInAtGate/StartJob/MarkJobComplete/RequestPayout wrappers, which
 // are already exported — no unexported access is actually required, but the
 // file stays in-package to match vendor_test.go's convention).
-//
 // Skipped unless TEST_DATABASE_URL is set. Run locally with:
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres' \
 //	  go test ./backend/internal/estate/... -run TestLiveDB_VendorPayout -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -30,8 +25,6 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/testsupport"
 )
-
-// ── fixtures ─────────────────────────────────────────────────────────────
 
 func vendorPayoutPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -153,8 +146,6 @@ func newVendorPayoutService(pool *pgxpool.Pool) (*Service, LedgerPoster) {
 	return svc, led
 }
 
-// ── ESTATE-INT-003 ──────────────────────────────────────────────────────────
-
 func TestLiveDB_VendorPayout_CompletedJobCreditsVendorWallet(t *testing.T) {
 	pool := vendorPayoutPool(t)
 	ctx := context.Background()
@@ -223,8 +214,6 @@ func TestLiveDB_VendorPayout_CompletedJobCreditsVendorWallet(t *testing.T) {
 	}
 }
 
-// ── ESTATE-VAL-003 ──────────────────────────────────────────────────────────
-
 func TestLiveDB_VendorPayout_RejectedWhenJobNotCompleted(t *testing.T) {
 	pool := vendorPayoutPool(t)
 	ctx := context.Background()
@@ -271,8 +260,6 @@ func TestLiveDB_VendorPayout_RejectedWhenJobNotCompleted(t *testing.T) {
 	}
 }
 
-// ── ESTATE-AUTHZ-006 ────────────────────────────────────────────────────────
-
 func TestLiveDB_VendorPayout_IDOR_CannotPayoutAnotherVendorsJob(t *testing.T) {
 	pool := vendorPayoutPool(t)
 	ctx := context.Background()
@@ -311,8 +298,6 @@ func TestLiveDB_VendorPayout_IDOR_CannotPayoutAnotherVendorsJob(t *testing.T) {
 		t.Fatalf("vendor2 wallet balance changed: before=%d after=%d", vendor2BalBefore, bal)
 	}
 }
-
-// ── ESTATE-IDEM-002 ─────────────────────────────────────────────────────────
 
 func TestLiveDB_VendorPayout_ReplaySameKeyIsIdempotent(t *testing.T) {
 	pool := vendorPayoutPool(t)
@@ -374,8 +359,6 @@ func TestLiveDB_VendorPayout_ReplaySameKeyIsIdempotent(t *testing.T) {
 		t.Fatalf("paid_jobs = %v, want 1", earnings["paid_jobs"])
 	}
 }
-
-// ── FSM: ESTATE-FSM-001..008 ────────────────────────────────────────────────
 
 func TestLiveDB_VendorJobFSM(t *testing.T) {
 	pool := vendorPayoutPool(t)

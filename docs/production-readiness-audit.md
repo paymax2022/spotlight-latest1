@@ -105,7 +105,7 @@ The hotels.com-style in-house build is feature-complete and verified on the live
 > modify) still want a ledger-auditor eyeball before real funds move.
 
 ### P1 — provider integrations (need creds/provider; see credentials doc)
-Virtual cards issuer · crypto price+custody+on-chain · connect RTC (Agora) + KYC ·
+Virtual cards issuer · crypto price+custody+on-chain · connect RTC (VideoSDK) + KYC ·
 invest broker/market-data · insurance live contracts · academy rails · maps key ·
 AI keys · lab LIS ingestion · realtor Supabase↔Go ledger reconciliation.
 

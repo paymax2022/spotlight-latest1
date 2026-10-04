@@ -1,10 +1,8 @@
 package transport
 
-// ---------------------------------------------------------------------------
 // LIVE-DB integration test for trip chat: object-level authz (only the rider
 // and the assigned driver may read/post), role derivation, and a stranger
 // being rejected. Skipped unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -76,7 +74,6 @@ func TestLiveDB_TripChatIsScopedToParticipants(t *testing.T) {
 		t.Errorf("rider message sender_role = %q, want rider", riderMsg.SenderRole)
 	}
 
-	// Driver sends.
 	driverMsg, err := svc.SendMessage(ctx, tripID, driver, SendTripMessageRequest{Body: "On my way, 2 mins"})
 	if err != nil {
 		t.Fatalf("SendMessage (driver): %v", err)

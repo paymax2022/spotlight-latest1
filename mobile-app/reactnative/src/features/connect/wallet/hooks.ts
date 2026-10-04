@@ -26,8 +26,6 @@ export const walletKeys = {
   payoutHistory: () => [...walletKeys.all, 'payout-history'] as const,
 };
 
-// ── Wallet ───────────────────────────────────────────────────────────────────
-
 export function useWalletSummary() {
   return useQuery({ queryKey: walletKeys.summary(), queryFn: walletApi.getWalletSummary });
 }
@@ -60,8 +58,6 @@ export function useFundWallet() {
     },
   });
 }
-
-// ── Gifting ────────────────────────────────────────────────────────────────────
 
 export function useGiftCatalog() {
   return useQuery({ queryKey: walletKeys.giftCatalog(), queryFn: walletApi.getGiftCatalog });
@@ -119,8 +115,6 @@ export function useGiftTransaction(id: string) {
   });
 }
 
-// ── Tier / KYC ─────────────────────────────────────────────────────────────────
-
 export function useKycStatus() {
   return useQuery({ queryKey: walletKeys.kyc(), queryFn: walletApi.getKycStatus });
 }
@@ -156,8 +150,6 @@ export function useSubmitTier3() {
     onSuccess: () => qc.invalidateQueries({ queryKey: walletKeys.kyc() }),
   });
 }
-
-// ── Payouts ──────────────────────────────────────────────────────────────────
 
 export function usePayoutEligibility() {
   return useQuery({ queryKey: walletKeys.payoutEligibility(), queryFn: walletApi.getPayoutEligibility });

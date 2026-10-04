@@ -1,12 +1,9 @@
 package healthpharmacy_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB coverage for PHARMACY-001 (admin console wiring gaps closed this
 // pass): GET /admin/dashboard, the /admin/orders status+fulfilment filter fix,
 // and GET /admin/orders/:id.
-//
 // Skips unless TEST_DATABASE_URL is set.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

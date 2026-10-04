@@ -4,11 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"slices"
+	"spotlight/backend/go-common/ginutil"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	keySuccess = "success"
 )
 
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
@@ -168,7 +176,7 @@ func validate(fields []Field, answers map[string]any) error {
 			}
 		case "select":
 			sv, ok := v.(string)
-			if !ok || !contains(f.Options, sv) {
+			if !ok || !slices.Contains(f.Options, sv) {
 				return fmt.Errorf("intake: field %q must be one of the allowed options", f.Name)
 			}
 		default: // text
@@ -211,11 +219,58 @@ func validKind(k string) bool {
 	return false
 }
 
-func contains(xs []string, v string) bool {
-	for _, x := range xs {
-		if x == v {
-			return true
-		}
+type Handler struct{ svc *Service }
+
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// GetSchema — GET /intake/:schemaId
+func (h *Handler) GetSchema(c *gin.Context) {
+	sc, err := h.svc.GetSchema(c.Request.Context(), c.Param("schemaId"))
+	if err != nil {
+		ginutil.FailOK(c, http.StatusNotFound, err.Error())
+		return
 	}
-	return false
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "schema": sc})
+}
+
+// Submit — POST /intake/:schemaId/responses
+func (h *Handler) Submit(c *gin.Context) {
+	id := ginutil.UserID(c)
+	if id == "" {
+		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		Answers map[string]any `json:"answers"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	r, err := h.svc.Submit(c.Request.Context(), id, c.Param("schemaId"), req.Answers)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{keySuccess: true, "response": r})
+}
+
+// PublishSchema — POST /admin .../intake/schemas  (RBAC: health.admin.intake)
+func (h *Handler) PublishSchema(c *gin.Context) {
+	var req struct {
+		Slug    string  `json:"slug"`
+		Version int     `json:"version"`
+		Kind    string  `json:"kind"`
+		Fields  []Field `json:"fields"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	sc, err := h.svc.PublishSchema(c.Request.Context(), req.Slug, req.Version, req.Kind, req.Fields)
+	if err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{keySuccess: true, "schema": sc})
 }

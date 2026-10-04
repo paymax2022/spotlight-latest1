@@ -6,10 +6,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import {
   MessageCircle, NotebookPen, RefreshCw, AlertTriangle, ShieldAlert, Wrench, X, VideoOff,
 } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 import SelectField from '@/components/SelectField';
 import { StatusBadge, CallStageView, CallControlBar, StateView } from '@/features/doctor/components';
@@ -158,9 +158,9 @@ export default function ConsultCallScreen() {
       )}
       {/* Reconnecting (I16) */}
       {phase === 'reconnecting' && <Banner Icon={RefreshCw} text="Reconnecting…" />}
-      {/* Agora failure → VideoSDK fallback (I18/I19) */}
-      {session.providerFailed && session.provider === 'agora' && (
-        <Banner Icon={AlertTriangle} text="Agora connection failed." onAction={doFallback} actionLabel="Use VideoSDK" loading={switchProvider.isPending} />
+      {/* Provider failure → rejoin on VideoSDK (I18/I19) */}
+      {session.providerFailed && (
+        <Banner Icon={AlertTriangle} text="Video connection failed." onAction={doFallback} actionLabel="Reconnect" loading={switchProvider.isPending} />
       )}
       {/* Participant disconnected (I22/I23) */}
       {!session.patientState.connected && <Banner Icon={AlertTriangle} text={`${session.base.patient.name} disconnected.`} />}

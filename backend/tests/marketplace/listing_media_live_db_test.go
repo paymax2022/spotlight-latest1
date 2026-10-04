@@ -1,14 +1,11 @@
 package marketplace_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB test for LISTING PHOTOS.
-//
 // mkt_listing_media was empty for every listing ever created. CreateListingInput
 // carried MediaIDs and the service parsed them, but nothing wrote a media row —
 // so the mobile ListingCard, which reads `thumbUrl`, fell back to a placeholder
 // on every card in the app. The symptom looked like a rendering bug; the cause
 // was that the write never happened and the read never selected it.
-//
 // What this pins:
 //   • a create with media_ids persists rows, in order;
 //   • a media id that is NOT an object key this seller uploaded is rejected —
@@ -17,7 +14,6 @@ package marketplace_test
 //   • a key under ANOTHER seller's prefix is rejected (it is client-supplied, so
 //     without the check a caller could claim someone else's object);
 //   • reads carry the thumbnail through.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"
@@ -98,7 +94,6 @@ func TestLiveDB_ListingMedia_PersistedAndReadBack(t *testing.T) {
 // photo — nothing on the backend ever populated it, only ever the single
 // first-photo ThumbURL cards use. A listing with real photos still rendered
 // an empty gallery on its own detail page.
-//
 // No presigner is configured in this harness (see liveMktService), so a
 // signed URL is empty by design here — this asserts every ROW reached
 // Listing.Media, in the right order, which is the part that was missing
@@ -156,12 +151,10 @@ func TestLiveDB_ListingMedia_RejectsJunkAndForeignKeys(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // LIVE-DB tests for EDITING photos on an existing listing (add/remove/reorder).
 // The edit screen (app/marketplace/sell/edit/[id].tsx) only ever touched
 // title/description/price/attrs — photos were create-only. These pin the new
 // AddListingMedia/RemoveListingMedia/ReorderListingMedia service methods.
-// ---------------------------------------------------------------------------
 
 func TestLiveDB_ListingMedia_AddAppendsOrderedAndCaps(t *testing.T) {
 	svc, pool := liveMktService(t)

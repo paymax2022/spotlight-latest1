@@ -1,6 +1,5 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // LIVE-DB spec closing the TODO in docs/qa/modules/association.md §3/§7
 // (ASSOCIATION-INT-008): a settled dues payment must record exactly ONE
 // commission_earnings row — the realized 5% platform-fee line of
@@ -10,13 +9,10 @@ package association_test
 // adapter is wired with a NIL ledger specifically to guarantee this (see
 // service.go's recordCommissionSafe doc comment); this test proves that
 // wiring holds live, not just by reading the code.
-//
 // Gated on TEST_DATABASE_URL alone — see live_db_integration_test.go's
 // bring-up note for this package.
-//
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //	cd backend && go test ./tests/association/... -run LiveDB_PayInvoice_RecordsCommissionEarningRowOnly -v
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

@@ -8,8 +8,22 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/kyc"
 )
+
+const keyUnauthenticated = "unauthenticated"
+
+const keyProductNotFound = "product not found"
+
+const keySignInRequired = "sign in required"
+
+const keyProvider = "provider"
+
+const keyNotFound = "not_found"
+
+const keyError = "error"
 
 // Handler exposes catalog routes. Member routes filter by the caller's KYC tier;
 // admin routes manage catalog + routing.
@@ -42,9 +56,8 @@ func (h *Handler) WithAdmin(syncer *Syncer, floats *FloatService, health func() 
 // ListProducts (member): GET /products?line=&context=
 // Filtered by KYC tier + optional product_line context (PRD §12.1).
 func (h *Handler) ListProducts(c *gin.Context) {
-	userID := c.GetString("user_id")
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+	userID, ok := ginutil.RequireUser(c)
+	if !ok {
 		return
 	}
 	tier := 0
@@ -59,7 +72,7 @@ func (h *Handler) ListProducts(c *gin.Context) {
 	}
 	products, err := h.svc.ListForMember(c.Request.Context(), tier, line)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": products})
@@ -69,7 +82,7 @@ func (h *Handler) ListProducts(c *gin.Context) {
 func (h *Handler) AdminList(c *gin.Context) {
 	products, err := h.svc.ListAdmin(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": products})
@@ -77,56 +90,54 @@ func (h *Handler) AdminList(c *gin.Context) {
 
 // AdminSetActive (admin): PATCH /catalog/:code/active {active:bool}
 func (h *Handler) AdminSetActive(c *gin.Context) {
-	code := c.Param("code")
+	code := c.Param(keyCode)
 	var body struct {
 		Active bool `json:"active"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.SetActive(c.Request.Context(), code, body.Active, c.GetString("user_id")); err != nil {
+	if err := h.svc.SetActive(c.Request.Context(), code, body.Active, ginutil.UserID(c)); err != nil {
 		// A refusal here is usually "the provider cannot sell this", which is a
 		// 409, not a server fault.
-		c.JSON(http.StatusConflict, gin.H{"error": gin.H{"code": "not_activatable", "message": err.Error()}})
+		c.JSON(http.StatusConflict, gin.H{keyError: gin.H{keyCode: "not_activatable", keyMessage: httperr.Msg(c, http.StatusConflict, err)}})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"code": code, "active": body.Active}})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{keyCode: code, "active": body.Active}})
 }
 
 // AdminSetRouting (admin): PATCH /routing/:code {provider, provider_product_code}
 // Re-routes a product to a different aggregator — a data edit, not a code change.
 func (h *Handler) AdminSetRouting(c *gin.Context) {
-	code := c.Param("code")
+	code := c.Param(keyCode)
 	var body struct {
 		Provider            string `json:"provider" binding:"required"`
 		ProviderProductCode string `json:"provider_product_code" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
 	if err := h.svc.SetProvider(c.Request.Context(), code, body.Provider, body.ProviderProductCode); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"code": code, "provider": body.Provider}})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{keyCode: code, keyProvider: body.Provider}})
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // Product detail + dynamic form schema (member)
-// ════════════════════════════════════════════════════════════════════════════
 
 // GetProduct (member): GET /products/:code — one product, including its
 // form_schema, so the app can render the purchase form without a second call.
 func (h *Handler) GetProduct(c *gin.Context) {
-	if c.GetString("user_id") == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"code": "unauthenticated", "message": "sign in required"}})
+	if ginutil.UserID(c) == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: gin.H{keyCode: keyUnauthenticated, keyMessage: keySignInRequired}})
 		return
 	}
-	p, err := h.svc.Get(c.Request.Context(), c.Param("code"))
+	p, err := h.svc.Get(c.Request.Context(), c.Param(keyCode))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "not_found", "message": "product not found"}})
+		c.JSON(http.StatusNotFound, gin.H{keyError: gin.H{keyCode: keyNotFound, keyMessage: keyProductNotFound}})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": p})
@@ -134,21 +145,20 @@ func (h *Handler) GetProduct(c *gin.Context) {
 
 // GetProductSchema (member): GET /products/:code/schema — the dynamic form the
 // app renders for this product.
-//
 // MyCover validates a bespoke field set per purchase family, so there is no one
 // hardcoded quote form. When a schema has NOT been discovered yet the response
 // says so explicitly (available:false with a reason) instead of returning an
 // empty field list, which the app would render as a blank form that can never
 // validate — a dead end the member cannot get out of.
 func (h *Handler) GetProductSchema(c *gin.Context) {
-	if c.GetString("user_id") == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"code": "unauthenticated", "message": "sign in required"}})
+	if ginutil.UserID(c) == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: gin.H{keyCode: keyUnauthenticated, keyMessage: keySignInRequired}})
 		return
 	}
-	code := c.Param("code")
+	code := c.Param(keyCode)
 	schema, available, err := h.svc.FormSchema(c.Request.Context(), code)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "not_found", "message": "product not found"}})
+		c.JSON(http.StatusNotFound, gin.H{keyError: gin.H{keyCode: keyNotFound, keyMessage: keyProductNotFound}})
 		return
 	}
 	if schema == nil {
@@ -163,22 +173,20 @@ func (h *Handler) GetProductSchema(c *gin.Context) {
 }
 
 // GetFieldOptions GET /products/:code/options/:field[?query=…]
-//
 // Serves the list behind a schema field's options_url. The client asks by
 // product + field and never sees the provider URL — see Service.FieldOptions.
-//
 // Before this the route did not exist, so every remote-options dropdown in the
 // app 404'd (219 such fields across 65 products) and the picker sat empty with
 // no way for the user to proceed.
 func (h *Handler) GetFieldOptions(c *gin.Context) {
-	if c.GetString("user_id") == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"code": "unauthenticated", "message": "sign in required"}})
+	if ginutil.UserID(c) == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: gin.H{keyCode: keyUnauthenticated, keyMessage: keySignInRequired}})
 		return
 	}
-	code := c.Param("code")
+	code := c.Param(keyCode)
 	field := c.Param("field")
 	if code == "" || field == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "invalid_request", "message": "product code and field are required"}})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: gin.H{keyCode: "invalid_request", keyMessage: "product code and field are required"}})
 		return
 	}
 
@@ -187,23 +195,23 @@ func (h *Handler) GetFieldOptions(c *gin.Context) {
 	case errors.Is(err, ErrNoSuchField):
 		// The form asked for a list this field does not have. A 404 here is about
 		// the FIELD, so say so rather than letting it read as a missing product.
-		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
-			"code": "unknown_field", "message": "this field has no selectable options"}})
+		c.JSON(http.StatusNotFound, gin.H{keyError: gin.H{
+			keyCode: "unknown_field", keyMessage: "this field has no selectable options"}})
 		return
 	case errors.Is(err, ErrOptionsUnavailable):
 		// Provider not configured. 503, not an empty list: an empty picker looks
 		// like "no choices exist" and the user would have no way to tell.
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
-			"code": "options_unavailable", "message": "this list is temporarily unavailable"}})
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: gin.H{
+			keyCode: "options_unavailable", keyMessage: "this list is temporarily unavailable"}})
 		return
 	case err != nil:
 		if strings.Contains(err.Error(), "not found") {
-			c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "not_found", "message": "product not found"}})
+			c.JSON(http.StatusNotFound, gin.H{keyError: gin.H{keyCode: keyNotFound, keyMessage: keyProductNotFound}})
 			return
 		}
 		// A provider fault is upstream, not the caller's fault.
-		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{
-			"code": "provider_error", "message": "could not load this list"}})
+		c.JSON(http.StatusBadGateway, gin.H{keyError: gin.H{
+			keyCode: "provider_error", keyMessage: "could not load this list"}})
 		return
 	}
 
@@ -213,27 +221,25 @@ func (h *Handler) GetFieldOptions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": opts})
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // Catalog sync + provider health (admin)
-// ════════════════════════════════════════════════════════════════════════════
 
 // AdminSync (admin): POST /catalog/sync — pull the live provider catalog into
 // the DB. Idempotent; safe to re-run. New products land INACTIVE so a sync never
 // silently puts an unreviewed product in front of members.
 func (h *Handler) AdminSync(c *gin.Context) {
 	if h.syncer == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
-			"code":    "sync_unavailable",
-			"message": "no provider catalog source is configured (check INSURANCE_MYCOVER_API_KEY)",
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: gin.H{
+			keyCode:    "sync_unavailable",
+			keyMessage: "no provider catalog source is configured (check INSURANCE_MYCOVER_API_KEY)",
 		}})
 		return
 	}
-	res, err := h.syncer.Run(c.Request.Context(), c.GetString("user_id"))
+	res, err := h.syncer.Run(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		// Report the run either way — a failed sync must be visible, not silent.
 		c.JSON(http.StatusBadGateway, gin.H{
-			"error": gin.H{"code": "sync_failed", "message": err.Error()},
-			"data":  res,
+			keyError: gin.H{keyCode: "sync_failed", keyMessage: httperr.Msg(c, http.StatusBadGateway, err)},
+			"data":   res,
 		})
 		return
 	}
@@ -242,7 +248,6 @@ func (h *Handler) AdminSync(c *gin.Context) {
 
 // AdminProviders (admin): GET /providers — adapter health, last sync, live/test
 // mode, and the prefunded-float state.
-//
 // It reports credential PRESENCE and never a value. The float section is the
 // launch gate: MyCover settles binds from a prefunded distributor wallet, so
 // binding_paused there means no policy can be issued no matter how healthy
@@ -284,7 +289,7 @@ func (h *Handler) AdminProviders(c *gin.Context) {
 			&provider, &status, &seen, &upserted, &failed, &startedAt, &finishedAt)
 		if err == nil {
 			out["last_sync"] = gin.H{
-				"provider": provider, "status": status,
+				keyProvider: provider, "status": status,
 				"products_seen": seen, "products_upserted": upserted, "products_failed": failed,
 				"started_at": startedAt, "finished_at": finishedAt,
 			}
@@ -297,35 +302,32 @@ func (h *Handler) AdminProviders(c *gin.Context) {
 
 // AdminResetFloat (admin): POST /providers/:provider/float/reset — re-arm
 // binding after an operator has topped the provider wallet up.
-//
 // note is a HUMAN RECORD of what they funded, not an authority: the real balance
 // lives at the provider and /wallet/balance is 403 for our key, so we cannot
 // read it. Resetting without actually funding simply means the next bind trips
 // the breaker again — which is the safe failure.
 func (h *Handler) AdminResetFloat(c *gin.Context) {
 	if h.floats == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"code": "unavailable", "message": "float breaker not configured"}})
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: gin.H{keyCode: "unavailable", keyMessage: "float breaker not configured"}})
 		return
 	}
 	var body struct {
 		Note string `json:"note"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	provider := c.Param("provider")
-	if err := h.floats.Reset(c.Request.Context(), provider, body.Note, c.GetString("user_id")); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "reset_failed", "message": err.Error()}})
+	provider := c.Param(keyProvider)
+	if err := h.floats.Reset(c.Request.Context(), provider, body.Note, ginutil.UserID(c)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: gin.H{keyCode: "reset_failed", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)}})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"provider": provider, "state": "ok"}})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{keyProvider: provider, "state": "ok"}})
 }
 
 // AdminActivateAllPurchasable (admin): POST /catalog/activate-purchasable
-//
 // Turns on every product the provider CAN sell, skipping any an admin has
 // explicitly ruled on. It exists for a catalog synced before visibility became
 // sync-managed — without it those products stay dark forever and members see an
 // empty (or, worse, a fictional) catalog.
-//
 // It cannot activate an unsellable or provider-missing product.
 func (h *Handler) AdminActivateAllPurchasable(c *gin.Context) {
 	var body struct {
@@ -334,10 +336,10 @@ func (h *Handler) AdminActivateAllPurchasable(c *gin.Context) {
 	_ = c.ShouldBindJSON(&body)
 	n, err := h.svc.ActivateAllPurchasable(c.Request.Context(), body.Provider)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
-			"code": "activate_failed", "message": err.Error(),
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: gin.H{
+			keyCode: "activate_failed", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err),
 		}})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"activated": n, "provider": body.Provider}})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"activated": n, keyProvider: body.Provider}})
 }

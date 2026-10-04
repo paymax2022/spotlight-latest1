@@ -15,7 +15,10 @@ func TestSizeVolTarget(t *testing.T) {
 		t.Fatalf("higher instrument vol must size smaller: hi=%d lo=%d", hi, lo)
 	}
 	// Fail-closed: unknown instrument vol, non-positive equity/target → 0.
-	for _, c := range []struct{ eq int64; tgt, iv Bps }{{equity, 1000, 0}, {0, 1000, 2000}, {equity, 0, 2000}, {-1, 1000, 2000}} {
+	for _, c := range []struct {
+		eq      int64
+		tgt, iv Bps
+	}{{equity, 1000, 0}, {0, 1000, 2000}, {equity, 0, 2000}, {-1, 1000, 2000}} {
 		if got := SizeVolTarget(c.eq, c.tgt, c.iv); got != 0 {
 			t.Fatalf("expected fail-closed 0 for %+v, got %d", c, got)
 		}

@@ -1,4 +1,3 @@
-// ── AI Trading — React Query hooks ───────────────────────────────────────────
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as tradingApi from './api';
 

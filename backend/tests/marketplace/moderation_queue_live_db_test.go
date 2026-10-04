@@ -11,7 +11,6 @@ import (
 )
 
 // The moderation queue must actually return the listings waiting on it.
-//
 // Its SQL numbered the placeholders $2/$3 while passing only (limit, offset), so
 // $1 was bound but never referenced and Postgres could not infer its type. Every
 // call failed with 42P18 and the endpoint 500ed. The damage was not the error

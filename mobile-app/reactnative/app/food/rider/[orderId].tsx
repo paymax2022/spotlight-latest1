@@ -7,11 +7,11 @@ import * as Icons from 'lucide-react-native';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import MobilityMap from '@/features/mobility/components/MobilityMap';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import {
   useOrder,
   useConfirmPickup,

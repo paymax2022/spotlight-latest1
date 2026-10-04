@@ -1,5 +1,4 @@
 // Package gamification is the Spotlight Academy engagement sub-package.
-//
 // SEPARATION OF CONCERNS (golden rule): gamification is ENGAGEMENT ONLY. It moves
 // NO money and credits NO wallet. XP, levels, streaks, badges and leaderboards are
 // non-monetary motivation signals. Anything that carries real value lives in the
@@ -7,7 +6,6 @@
 // touched. The two packages share no service, no balance, and no credit path; a
 // challenge here may *reference* a reward pool by id, but issuing value from that
 // pool is exclusively a `rewards.IssueReward` call.
-//
 // All thresholds / curves are configurable from rows or an injected Config — never
 // hardcoded business numbers. Pure decision logic (levelForXP, streak math, badge
 // criteria) is factored into testable functions with no DB dependency.
@@ -114,8 +112,6 @@ type LeaderboardEntry struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
-// ── Configurable thresholds / curves ────────────────────────────────────────────
-
 // Config holds all tunable gamification numbers. Defaults are applied by
 // DefaultConfig; production wiring may override from a config row / env. No
 // engagement number is hardcoded inside the decision functions.
@@ -139,8 +135,6 @@ func DefaultConfig() Config {
 		FreezeMaxStored: 3,
 	}
 }
-
-// ── Request DTOs (admin CRUD) ───────────────────────────────────────────────────
 
 type UpsertBadgeRequest struct {
 	Code     string         `json:"code" binding:"required"`

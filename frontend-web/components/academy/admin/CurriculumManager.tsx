@@ -1,7 +1,6 @@
 'use client';
 
 // Author the curriculum: programmes → modules → lessons, plus assignments.
-//
 // A learner sees only PUBLISHED modules and lessons, so the publish toggle is on
 // the create form rather than hidden behind a second step — an admin who writes a
 // lesson and cannot find why nobody can see it has been failed by the UI.

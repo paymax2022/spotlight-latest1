@@ -2,16 +2,14 @@ import React from 'react';
 import { Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Smartphone } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, DeviceRow } from '@/features/doctor/components';
 import { useDevices, useRevokeDevice } from '@/features/doctor/hooks';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 
-// ── Section AC — Device management (AC.14) ────────────────────────────────────
-// NEW screen: lists active devices/sessions; the current device cannot be
 // revoked. Reuses DeviceRow with a destructive confirm before revoking.
 
 export default function DeviceManagementScreen() {

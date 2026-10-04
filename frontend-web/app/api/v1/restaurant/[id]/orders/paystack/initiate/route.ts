@@ -5,7 +5,6 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // Paystack-funded (card/bank-transfer) checkout initiate — no wallet, no
 // KYC-tier gate (backend/internal/restaurant/paystackcheckout). Gated on BOTH
-// flags: restaurant() for the module itself, and restaurantPaystackCheckout()
 // for this specific payment rail — the Go route is ALSO gated on its own flag
 // server-side, so this is belt-and-braces, not the only gate.
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {

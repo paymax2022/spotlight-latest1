@@ -10,20 +10,16 @@ import (
 )
 
 // service_clinical_tail.go — business logic for the "clinical tail" endpoint groups.
-//
 // Mirrors the established service style: reads delegate to the repository scoped to
 // the authenticated doctor; mutations on tables with a UNIQUE idempotency_key require
 // the Idempotency-Key header (ErrIdempotencyRequired) and rely on the repository's
 // ON CONFLICT replay. Operations whose backing table has NO idem column (call
 // disputes/feedback, prescription audit) are best-effort appends — they still require
 // the header for API consistency but dedupe is not enforced (documented at the call).
-//
 // NONE of these touch the money ledger. Free-form `Generic` bodies are parsed via the
 // shared parseOpsPatch helper (service_ops.go) so the few typed knobs are pulled out
-// without redefining anything. The reused helpers strOrDefault / derefStr (service.go)
-// and jsonOrEmptyObject (repository.go) are NOT redeclared here.
-
-// ── Projection structs (response-only; unique names) ─────────────────────────
+// without redefining anything. The reused helper strOrDefault and the jsonx
+// raw-payload helpers (repository.go) are NOT redeclared here.
 
 // CallDispute mirrors public.doctor_call_disputes.
 type CallDispute struct {
@@ -97,8 +93,6 @@ type HMOEligibilityProjection struct {
 	CopayKobo     int64   `json:"copayKobo"`
 }
 
-// ══ APPOINTMENT TRANSITIONS ═════════════════════════════════════════════════
-
 func (s *Service) StartAppointment(ctx context.Context, userID, appointmentID string, raw json.RawMessage) (*Appointment, error) {
 	return s.repo.TransitionAppointment(ctx, userID, appointmentID, "in_progress", nil, raw)
 }
@@ -127,8 +121,6 @@ func (s *Service) CancelAppointment(ctx context.Context, userID, appointmentID s
 func (s *Service) MarkNoShow(ctx context.Context, userID, appointmentID string, raw json.RawMessage) (*Appointment, error) {
 	return s.repo.TransitionAppointment(ctx, userID, appointmentID, "no_show", nil, raw)
 }
-
-// ══ CLINICAL NOTES ══════════════════════════════════════════════════════════
 
 // GetClinicalNote returns the latest clinical note for an appointment, or nil (not an
 // error) when none exists so the handler can return a 200 with a null body.
@@ -164,8 +156,6 @@ func (s *Service) FinalizeClinicalNote(ctx context.Context, userID, noteID strin
 func (s *Service) ShareClinicalNote(ctx context.Context, userID, noteID string, raw json.RawMessage) (*ClinicalNote, error) {
 	return s.repo.TransitionNote(ctx, userID, noteID, "shared", raw)
 }
-
-// ══ PRESCRIPTIONS ═══════════════════════════════════════════════════════════
 
 // GetIssuedPrescription returns a prescription only if it has been issued; otherwise
 // ErrNotFound (the handler maps that to 404). Reuses the GetPrescription read shape.
@@ -222,8 +212,6 @@ func (s *Service) RequestRefillConsultation(ctx context.Context, userID, prescri
 	return s.repo.InsertRefillConsultation(ctx, userID, prescriptionID, raw, idemKey)
 }
 
-// ══ CALLS ═══════════════════════════════════════════════════════════════════
-
 // GetCallPreCheck resolves the latest call session for an appointment and returns a
 // readiness projection. When no session exists it returns a default (hasSession=false)
 // rather than failing — NO tokens are ever fabricated.
@@ -277,8 +265,6 @@ func (s *Service) SwitchCallProvider(ctx context.Context, userID, appointmentID 
 	p := parseOpsPatch(raw)
 	return s.repo.SwitchCallProvider(ctx, userID, appointmentID, strOrDefault(p.Provider, rtc.ProviderVideoSDK), raw)
 }
-
-// ══ CHAT ════════════════════════════════════════════════════════════════════
 
 // GetChatPresence returns a derived presence projection (no presence table exists).
 func (s *Service) GetChatPresence(ctx context.Context, userID, threadID string) (*ChatPresenceProjection, error) {
@@ -369,8 +355,6 @@ func (s *Service) AnnotateChatMessage(ctx context.Context, userID, messageID str
 	return s.repo.AnnotateChatMessage(ctx, userID, messageID, raw)
 }
 
-// ══ EMERGENCY ═══════════════════════════════════════════════════════════════
-
 // GetEmergencyCase fetches one emergency case scoped to the doctor.
 func (s *Service) GetEmergencyCase(ctx context.Context, userID, id string) (*EmergencyCase, error) {
 	return s.repo.GetEmergencyCase(ctx, userID, id)
@@ -418,8 +402,6 @@ func (s *Service) EscalateHospital(ctx context.Context, userID, idemKey string, 
 	return s.repo.InsertEmergencyEscalation(ctx, userID, p.PatientID, "hospital", raw, idemKey)
 }
 
-// ══ AI READ-BACK (advisory; nothing is stored) ══════════════════════════════
-
 // notStoredEnvelope builds an AiEnvelope indicating the result must be (re)generated.
 // AI generation persists nothing, so these GET endpoints never call the LLM and never
 // fabricate clinical content — they return the mandatory disclaimer + a not_stored hint.
@@ -443,8 +425,6 @@ func (s *Service) GetStoredRxSafety(ctx context.Context, userID, id string) (*Ai
 func (s *Service) GetStoredLabExplanation(ctx context.Context, userID, resultID string) (*AiEnvelope, error) {
 	return notStoredEnvelope(), nil
 }
-
-// ══ HMO ELIGIBILITY ═════════════════════════════════════════════════════════
 
 // GetHMOEligibility resolves coverage for the appointment's patient. When the
 // appointment, its patient, or the coverage row is missing it returns a 200 projection

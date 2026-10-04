@@ -1,4 +1,3 @@
-// ── Paymax AI Symptom Checker — React Query hooks (v5) ───────────────────────
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {

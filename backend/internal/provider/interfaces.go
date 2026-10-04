@@ -25,7 +25,6 @@ type PaymentProvider interface {
 // funding stays on the internal double-entry ledger (orch_fx_card_txns). Any
 // provider-side settlement of card spend is treasury-level reconciliation and is
 // out of scope for this seam.
-//
 // Provider credentials are server-side only. Card secrets (PAN/CVV) live in the
 // provider's PCI-isolated vault and are fetched on demand via RevealCard.
 type CardIssuer interface {
@@ -72,7 +71,6 @@ type CardSecrets struct {
 // DisbursementProvider abstracts a bank-payout gateway (Paystack, Monnify, …).
 // It is an ADDITIVE capability — kept separate from PaymentProvider so existing
 // adapters need not change. A single concrete client may satisfy both.
-//
 // All amounts are integer kobo. Provider credentials are server-side only.
 type DisbursementProvider interface {
 	// ListBanks returns the provider's supported destination banks.
@@ -105,8 +103,6 @@ type VirtualAccountProvider interface {
 	Name() string
 }
 
-// --- Request / Response types ---
-
 type InitializePaymentRequest struct {
 	Email          string
 	AmountKobo     int64
@@ -127,6 +123,10 @@ type PaymentStatus struct {
 	AmountKobo int64
 	Channel    string
 	PaidAt     *string
+	// Currency is the ISO 4217 code the gateway settled in (e.g. "NGN"). Empty
+	// when a provider adapter doesn't populate it — a caller that checks this
+	// MUST treat empty as "unknown", never as an implicit match.
+	Currency string
 }
 
 // RefundResult is the outcome of reversing a previously-collected charge.
@@ -158,8 +158,6 @@ type PayoutResponse struct {
 	// webhooks back to the originating transfer (additive for disbursement).
 	ProviderRef string
 }
-
-// --- Disbursement (multi-provider bank payout) types ---
 
 // Bank is one destination bank in the provider's supported list.
 type Bank struct {

@@ -3,7 +3,7 @@ import { ApiError, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 
-// POST /api/v1/notifications/push-token — upsert a device push token for the caller.
+// Upsert a device push token for the caller.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

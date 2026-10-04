@@ -15,7 +15,6 @@ function mapAlert(row: any, names: Record<string, string>) {
   };
 }
 
-// POST /api/v1/estate/emergencies/[id]/resolve
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;
   try {

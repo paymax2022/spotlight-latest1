@@ -1,9 +1,7 @@
 // Paymax Connect — Networking CONTENT / FEED types (PRD §6.2 CN-*).
-//
 // Self-contained content slice for the professional feed. Reuses USE_MOCK /
 // CONNECT_API_BASE from ../../constants/connect.constants and the shared axios
 // `api` client. All fields are camelCase to match the backend {data:...} contract.
-//
 // INVARIANTS:
 //  PN-3 Feed ranks by VERIFIED OUTCOMES, not raw engagement. We expose only a
 //       boolean `verifiedOutcome` flag per post — never a raw ranking number.

@@ -9,7 +9,6 @@ import (
 // NO authz logic of its own: every mutation and the actor-authorization check delegate to
 // the injected RBACGateway (the real enterprise RBAC service) so there is exactly ONE
 // authorization source of truth. It moves NO money.
-//
 // A role assignment is a scoped user_roles row (scope_type='school', scope_id=schoolID).
 // Only an actor holding PermAssignRoles AT that school (school-owner / head-teacher, or a
 // platform/super admin who bypasses in the RBAC layer) may assign or revoke — enforced
@@ -61,7 +60,6 @@ func (s *Service) AssignRole(ctx context.Context, schoolID, userID string, role 
 
 // RevokeRole removes a school-scoped staff role from a user. Same fail-closed actor
 // authorization as AssignRole; delegates the delete to the RBAC service.
-//
 // NOTE: services.RBACService.RemoveRoleFromUser keys off (user_id, role_id) and enforces
 // the last-super-admin invariant. Since this surface can only ever grant the four fees
 // staff roles at school scope, a super-admin grant is never created or removed here.

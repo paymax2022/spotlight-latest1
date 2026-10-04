@@ -67,7 +67,6 @@ describe('RG-004: applicant-level duplicate registration prevention', () => {
   });
 
   it('returns null (no duplicate) when the only prior registration is terminal', async () => {
-    // Terminal statuses are excluded by the query itself (`.not('status', 'in', ...)`)
     // — simulate the DB having genuinely filtered it out.
     vi.mocked(createAdminClient).mockReturnValue(mockSupabaseReturning(null) as any);
 

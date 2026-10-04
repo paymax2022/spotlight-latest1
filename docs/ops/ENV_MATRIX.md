@@ -24,6 +24,7 @@
 | `DATABASE_URL` | web + backend | **SECRET** | money-path | pgx pool; use session-pooler URL |
 | `REDIS_URL` | web + backend | SECRET if hosted has auth | money-path | idempotency / Redlock / asynq |
 | `CORS_ALLOW_ORIGINS` | backend | config | all | lock to real origins in prod |
+| `TRUSTED_PROXY_CIDRS` | backend | config | all | comma-separated LB/proxy CIDRs allowed to set `X-Forwarded-For`; default = GCP external HTTPS LB frontend ranges (`130.211.0.0/22,35.191.0.0/16`); `none` distrusts forwarded headers entirely (ClientIP = RemoteAddr). Client IPs feed rate limits, OTP budgets, and consent/audit records (AUD-SEC-001, AUD-BE-004) |
 | `APP_PORT` | backend | config | all | default 8080 |
 | `SENTRY_DSN` | frontend-web | config | observability | enables Sentry in prod |
 
@@ -73,8 +74,6 @@
 
 | Var | Surface | Sensitivity | Module | Notes |
 |---|---|---|---|---|
-| `AGORA_APP_ID` | backend | config | doctor | RTC app id |
-| `AGORA_APP_CERTIFICATE` | backend | **SECRET** | doctor | signs RTC tokens |
 | `VIDEOSDK_API_KEY` | backend | **SECRET** | doctor | RTC provider |
 | `VIDEOSDK_SECRET` | backend | **SECRET** | doctor | RTC provider |
 
@@ -140,8 +139,8 @@ Verticals: `FEATURE_GROUPS_ENABLED`, `FEATURE_ASSOCIATIONS_ENABLED`/`..._ASSOCIA
 
 - `frontend-web/.env.example` does not list `SENTRY_DSN`, `GO_API_BASE_URL`
   duplication aside. Add `SENTRY_DSN` so observability is configurable.
-- `backend/.env.example` does not list `AGORA_APP_ID`, `AGORA_APP_CERTIFICATE`,
-  `VIDEOSDK_*`, `ANTHROPIC_API_KEY`, `CONNECT_VERIFICATION_PEPPER`, `TERMII_*`,
+- `backend/.env.example` does not list `VIDEOSDK_*`, `ANTHROPIC_API_KEY`,
+  `CONNECT_VERIFICATION_PEPPER`, `TERMII_*`,
   `RESEND_API_KEY`, `EXPO_PUSH_TOKEN`, `PAYSTACK_*`, `PAYMAX_WEBHOOK_*` though
   `config.go` reads them. Owners of those modules should add them to the template
   (additive doc change) so the matrix and template agree.

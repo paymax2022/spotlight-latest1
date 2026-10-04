@@ -1,15 +1,12 @@
 // Nested (child_data) schema behaviour.
-//
 // MyCover nests shapes under `child_data`, and publishes `policy_holder` as
 // required:false with several required:true children on 64 of its 68 products.
 // Two rules follow, and both are load-bearing:
-//
 //   1. An optional block nobody has begun is valid as a whole. Validating its
 //      children unconditionally blocks the form on a section the insurer itself
 //      marks optional.
 //   2. Once any child is answered the block is all-or-nothing, because a
 //      half-filled policy holder sends the insurer a partial identity.
-//
 // Shapes here mirror the live gadget product's schema.
 
 import { test } from 'node:test';

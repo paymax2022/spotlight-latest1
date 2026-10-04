@@ -1,5 +1,3 @@
-// ── Doctor — advanced medical records, HMO claims & follow-up hooks ───────────
-// Phase 2. Query keys under ['doctor', …]; mutations auto-generate the
 // idempotencyKey and invalidate the affected keys.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -26,8 +24,6 @@ import type {
   ReviewFollowUpRequestInput,
 } from '@/types/doctor.phase2';
 
-// ─── Advanced medical records ────────────────────────────────────────────────
-
 export function usePatientRecordHub(patientId: string) {
   return useQuery({
     queryKey: ['doctor', 'record-hub', patientId],
@@ -36,8 +32,6 @@ export function usePatientRecordHub(patientId: string) {
     staleTime: 30_000,
   });
 }
-
-// ─── HMO claim tracking ──────────────────────────────────────────────────────
 
 export function useHmoClaims(status?: ClaimStatus) {
   return useQuery({
@@ -79,8 +73,6 @@ export function useDisputeClaim() {
     },
   });
 }
-
-// ─── Patient follow-up plans ─────────────────────────────────────────────────
 
 export function useFollowUps(status?: FollowUpStatus) {
   return useQuery({

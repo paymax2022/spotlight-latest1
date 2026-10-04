@@ -79,7 +79,6 @@ export default function StagesEvictionsSeasonPage() {
     setTimeout(() => setToast(''), 2500);
   }, []);
 
-  // ── Season status/phase ─────────────────────────────────────────────────
   const patchSeason = useCallback(async (patch: Parameters<typeof updateSeason>[1]) => {
     if (!season) return;
     try {
@@ -90,7 +89,6 @@ export default function StagesEvictionsSeasonPage() {
     }
   }, [season, flash]);
 
-  // ── Contestants ──────────────────────────────────────────────────────────
   const [showAddContestant, setShowAddContestant] = useState(false);
   const [savingContestant, setSavingContestant] = useState(false);
   const [contestantForm, setContestantForm] = useState({
@@ -131,7 +129,6 @@ export default function StagesEvictionsSeasonPage() {
     }
   }, [load, flash]);
 
-  // ── Weeks ────────────────────────────────────────────────────────────────
   const [showAddWeek, setShowAddWeek] = useState(false);
   const [savingWeek, setSavingWeek] = useState(false);
   const [weekForm, setWeekForm] = useState({ weekNumber: String(weeks.length + 1), title: '', theme: '', evictionCount: '1' });
@@ -172,7 +169,6 @@ export default function StagesEvictionsSeasonPage() {
     }
   }, [load, flash]);
 
-  // ── Vote panel (expand one week at a time) ──────────────────────────────
   const [openWeekId, setOpenWeekId] = useState<string | null>(null);
   const [weekVotes, setWeekVotes] = useState<WeekVotes | null>(null);
   const [loadingVotes, setLoadingVotes] = useState(false);

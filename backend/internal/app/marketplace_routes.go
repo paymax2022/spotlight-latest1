@@ -26,10 +26,9 @@ import (
 	"spotlight/backend/internal/services"
 )
 
-// searchAdapter bridges Agent A's type-erased marketplace.Searcher seam
-// (Search(ctx, any) (any, error)) to Agent B's concrete *search.Client, which
+// searchAdapter bridges the type-erased marketplace.Searcher seam
+// (Search(ctx, any) (any, error)) to the concrete *search.Client, which
 // speaks Search(ctx, search.SearchRequest) (search.SearchResults, error).
-//
 // The two packages deliberately never share a type at compile time (no import
 // cycle: marketplace never imports search). This adapter — the ONE place that
 // imports both — decodes the provider-agnostic request map the handler builds
@@ -149,13 +148,11 @@ func (a commissionRecorderAdapter) RecordExact(ctx context.Context, category, se
 // It mirrors RegisterPlacement: a member group (auth), an admin group (per-route
 // RBAC guard "marketplace.admin.*"), and a PUBLIC webhook group (HMAC-verified, no
 // Bearer). Base path: /v1/marketplace.
-//
 // The money path REUSES the finance ledger (ledger.AccountEscrow / AccountCommission
 // / AccountProviderClearing) — the marketplace never stores a balance. The ledger
 // service is constructed here from the shared pool + redis (the same primitives the
 // finance orchestrator builds), so this registration is self-contained and callable
 // from router.go with one feature-flag-guarded line.
-//
 // Agent B's *search.Client is injected post-construction via svc.SetSearcher(...) by
 // app-wiring; until then GET /search returns 501 SEARCH_NOT_WIRED (never a compile
 // error — marketplace defines a local Searcher interface and does NOT import search).
@@ -180,9 +177,8 @@ func RegisterMarketplace(
 	svc := marketplace.NewService(pool, ledgerSvc, redis)
 
 	// Fail-closed KYC-tier gate on the boost wallet debit (§6 "Tier/KYC gate"
-	// FINDING in docs/qa/modules/marketplace.md — the boost charge previously
-	// called s.ledger.Debit directly with no tier-limit/KYC gate at all, the
-	// only money path in this codebase missing one). Built self-contained from
+	// FINDING in docs/qa/modules/marketplace.md) — every wallet debit must pass
+	// it, boost included. Built self-contained from
 	// the shared pool here — mirroring ledgerSvc above — rather than threading
 	// app-wiring's single tiersSvc instance out of registerFinanceRoutes,
 	// since RegisterMarketplace is deliberately callable as one
@@ -192,7 +188,6 @@ func RegisterMarketplace(
 	// direct wallet debit, not a checkout/escrow allowance case.
 	svc.WithTiers(tiers.NewService(pool))
 
-	// ── Realtime (SSE) live-push seam for chat. Shared hub built once at the router
 	// level (so other modules — events' check-in feed — can share the same
 	// /api/v1/realtime/stream connection) and passed in here. Fans events across
 	// backend instances via Redis pub/sub (in-process when redis is nil).
@@ -201,16 +196,11 @@ func RegisterMarketplace(
 	// FEATURE_REALTIME_ENABLED.
 	svc.WithRealtime(rtHub)
 
-	// ── Central Commission & Profit recording (§ profit registry) ──
-	// When the commission feature is on, inject a nil-safe recorder so realized
-	// marketplace profit (the boost purchase — the live revenue-capture point after
-	// ADR-023 retired escrow settlement) lands in commission_earnings for the profit
-	// report. The recorder is built WITHOUT a ledger (nil ledgerService) on purpose:
-	// the boost charge already posts the money into ledger.AccountCommission, so a
-	// second ledger post would double-count the commission revenue account. RecordFor
-	// therefore appends the earning ROW only. Recording is best-effort and can never
-	// fail or reverse a boost (see marketplace.recordCommissionSafe). Flag off ⇒ no
-	// recorder is set ⇒ the seam stays nil ⇒ silent no-op.
+	// Commission recording for marketplace profit (the boost purchase — the live
+	// revenue-capture point after ADR-023 retired escrow settlement). Ledger-less
+	// recorder — the boost charge already posts to ledger.AccountCommission, so
+	// RecordFor appends the earning ROW only; best-effort, never fails a boost
+	// (marketplace.recordCommissionSafe). Flag off ⇒ nil-safe no-op.
 	if cfg.FeatureCommissionEnabled {
 		commissionSvc := withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)
 		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commissionSvc})
@@ -224,7 +214,6 @@ func RegisterMarketplace(
 	// without an edit to a non-owned file. Discard it explicitly.
 	_ = referralRewards
 
-	// ── Search wiring (§ integration contract) ──
 	// Inject Agent B's Elasticsearch read-model client via the type-erased
 	// Searcher seam when an ES URL is configured. When ELASTICSEARCH_URL is empty
 	// we leave the searcher nil, so GET /search returns 501 SEARCH_NOT_WIRED
@@ -260,7 +249,6 @@ func RegisterMarketplace(
 	auth := func() gin.HandlerFunc { return middleware.RequireAuthContext(supabase, rbac) }
 	guard := func(permission string) gin.HandlerFunc { return middleware.RequirePermission(rbac, permission) }
 
-	// ── Shared realtime SSE stream (marketplace chat is the first consumer). Mounted
 	// at /api/v1/realtime/stream, authed, gated by FEATURE_REALTIME_ENABLED. The
 	// mobile connects here (via the Next.js streaming proxy) and falls back to polling
 	// when the flag is off or the stream drops.
@@ -279,7 +267,6 @@ func RegisterMarketplace(
 	// escrow orders they have no state to advance; both the routes and their handlers
 	// (webhooks.go / webhook_handler.go) have been deleted.
 
-	// ── Public read (listing detail, search, categories, seller profile) ──
 	// Auth-optional reads: listing detail + search + categories + seller pages are
 	// browsable without a Bearer (KYC tier0_browse). They still enforce OLA where a
 	// write is implied.
@@ -293,7 +280,6 @@ func RegisterMarketplace(
 	base.GET("/boosts/tiers", h.BoostTiers)
 	base.GET("/boosts/quote", h.GetBoostQuote)
 
-	// ── Member group (auth) ──
 	m := base.Group("")
 	m.Use(auth())
 
@@ -343,7 +329,6 @@ func RegisterMarketplace(
 	// FSM code (service_order.go, service_dispute.go, fsm_order.go, fsm_dispute.go,
 	// their handlers and the logistics/payments webhooks) has been deleted
 	// (additive-only; mkt_orders/mkt_disputes tables are retained but unused).
-	//
 	// Reviews: SubmitReview was gated on OrderReleased (an escrow-completed order).
 	// With no orders it has no valid completion signal, so POST /orders/:id/review is
 	// left UNREGISTERED until a non-order "deal completed" signal is introduced
@@ -373,7 +358,6 @@ func RegisterMarketplace(
 	m.POST("/deals/:id/review", h.SubmitDealReview)
 	m.GET("/deals/:id/review", h.GetDealReview)
 
-	// Saved searches
 	m.POST("/saved-searches", h.CreateSavedSearch)
 	m.GET("/saved-searches", h.ListSavedSearches)
 	m.DELETE("/saved-searches/:id", h.DeleteSavedSearch)
@@ -383,7 +367,6 @@ func RegisterMarketplace(
 	m.POST("/verification/id", h.VerifyID)
 	m.POST("/verification/business", h.VerifyBusiness)
 
-	// ── Trust & Account gap endpoints (§28–34; non-money metadata) ──
 	// Listing media presign (Sell agent's photo upload). NOTE: mounted at
 	// /media/presign, NOT /listings/media/presign — Gin's radix router forbids a
 	// static "media" segment alongside the existing /listings/:id param at the same
@@ -417,7 +400,6 @@ func RegisterMarketplace(
 	m.DELETE("/sellers/:id/follow", h.UnfollowSeller)
 	m.GET("/followed-sellers", h.ListFollowedSellers)
 
-	// ── Admin group (auth + per-route RBAC guard) ──
 	a := base.Group("/admin")
 	a.Use(auth())
 	// Slugs are the AUTHORITATIVE set seeded by

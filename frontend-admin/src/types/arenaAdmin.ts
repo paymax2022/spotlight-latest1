@@ -3,7 +3,6 @@
 // /api/arena/admin with per-route RBAC (arena.admin.*, arena.reviewer.screen,
 // arena.proctor.attest, arena.judge.score, arena.auditor.read). Backend RBAC is
 // authoritative — the UI gates are UX-only.
-//
 // LOCKED invariants surfaced by these types (ARENA-PRD §3 / §8):
 //   - Merit is the ONLY rail that may feed the crown (NDC-1). The
 //     crown←Merit binding is non-editable in A1.
@@ -30,7 +29,6 @@ export interface Competition {
   updated_at?: string | null;
 }
 
-// ── Contestant lifecycle (ARENA-PRD §8, LOCKED) ──────────────────────────────
 export type ContestantState =
   | 'APPLIED'
   | 'SCREENED'
@@ -56,7 +54,6 @@ export interface Contestant {
   updated_at?: string | null;
 }
 
-// ── Merit ledger (ARENA-PRD §4, append-only + signed + chained) ──────────────
 export type MeritSourceType = 'THEORY_EXAM' | 'PRACTICAL' | 'FIRST_AID' | 'TELEMATICS';
 
 export type MeritStage =
@@ -95,7 +92,6 @@ export interface MeritVerifyResult {
   verified_at: string;
 }
 
-// ── Screening (A2) ───────────────────────────────────────────────────────────
 export type ScreeningDecision = 'APPROVE' | 'REQUEST_INFO' | 'REJECT';
 
 export interface ScreeningItem {
@@ -111,7 +107,6 @@ export interface ScreeningItem {
   document_refs?: { id: string; kind: string; label?: string }[];
 }
 
-// ── Pot & disbursement (A7, ARENA-PRD §6, NDC-4) ─────────────────────────────
 export type DisbursementStatus =
   | 'NONE'
   | 'PENDING_APPROVAL'
@@ -152,7 +147,6 @@ export interface PotView {
   approvals_required?: number; // multi-approve threshold (default 2)
 }
 
-// ── Credentials (A9, ARENA-PRD §14) ──────────────────────────────────────────
 export type CredentialType = 'NAIJA_DRIVER' | 'CERTIFIED_SAFE_DRIVER';
 export type CredentialStatus = 'ISSUED' | 'REVOKED';
 
@@ -176,7 +170,6 @@ export interface CredentialVerifyLog {
   verified_at: string;
 }
 
-// ── A1 config rails / awards ─────────────────────────────────────────────────
 export type RailKind = 'MERIT' | 'SUPPORT' | 'PLAY_ALONG' | 'SPONSOR';
 
 export type AwardCode =
@@ -210,13 +203,10 @@ export interface CompetitionConfig {
   config_version?: number | null;
 }
 
-// ── Quiz bank (Arena — Naija Driver quiz management) ─────────────────────────
 // Full ADMIN view of the 90-question bank (3 stages × 30, 120s each). Unlike the
 // contestant view, admin rows carry the answers (correctIndex/correctAnswer) and
 // explanation for teaching/QA. camelCase mirrors the backend admin contract:
-//   GET  /competitions/:id/questions?stage=&category=
 //   GET  /competitions/:id/questions/stats
-//   POST /competitions/:id/questions/import
 export type QuizStage = 1 | 2 | 3;
 
 export interface QuizQuestion {
@@ -273,7 +263,6 @@ export const QUIZ_STAGE_LABELS: Record<QuizStage, string> = {
   3: 'Stage 3 · Advanced (Hazard Perception & Emergency)',
 };
 
-// ── Scaffold rails (A3 proctor, A4 judge) — thin request shapes ──────────────
 export interface ProctorAttestInput {
   contestant_id: string;
   batch: string;
@@ -290,7 +279,6 @@ export interface JudgeScoreInput {
   note?: string;
 }
 
-// ── Sponsor / Featured Placement (A8 scaffold) ───────────────────────────────
 export interface SponsorSlot {
   id: string;
   sponsor: string;
@@ -301,7 +289,6 @@ export interface SponsorSlot {
   status: 'scheduled' | 'live' | 'ended' | string;
 }
 
-// ── Labels ───────────────────────────────────────────────────────────────────
 export const RAIL_LABELS: Record<RailKind, string> = {
   MERIT: 'Merit (non-purchasable judging)',
   SUPPORT: 'Support (real-Naira backing → pot)',
@@ -325,7 +312,6 @@ export const MERIT_STAGE_LABELS: Record<MeritStage, string> = {
   FINALE_FIRSTAID: 'Finale · First-Aid',
 };
 
-// Legal transitions per ARENA-PRD §8 (LOCKED). Only these are offered in A5;
 // the backend rejects anything not listed (NDC-5). WITHDRAWN reachable from any
 // non-terminal state (reversible admin path).
 export const LEGAL_TRANSITIONS: Record<ContestantState, ContestantState[]> = {

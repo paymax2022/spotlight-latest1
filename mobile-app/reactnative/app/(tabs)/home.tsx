@@ -15,10 +15,10 @@ import { RemoteBanner } from '@/features/media/banners';
 import RecentActivityCard, { Activity } from '@/components/RecentActivityCard';
 import { FeaturedHomeSection } from '@/features/featured/components';
 import { useMyTickets, useEvents } from '@/features/events/hooks';
-import { Colors } from '@/constants/colors';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
-import { Typography } from '@/constants/typography';
+import { Colors } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
 import { SERVICE_MODULES, FEATURED_SERVICES, QUICK_ACTIONS } from '@/constants/modules';
 import { useModuleVisibility } from '@/features/modules/visibility';
 import {
@@ -26,7 +26,7 @@ import {
   quickActionRegistryKeyFor,
   featuredRegistryKeyFor,
 } from '@/features/modules/serviceModuleKeys';
-import { shadow1 } from '@/constants/shadows';
+import { shadow1 } from '@/constants/tokens';
 import { getDashboard } from '@/api/dashboard.api';
 import { Transaction } from '@/types/transaction';
 
@@ -180,6 +180,8 @@ export default function HomeScreen() {
         <BalanceCard
           balance={balance}
           currency="NGN"
+          balanceUnavailable={data?.wallet.balanceUnavailable}
+          unavailableHint="Couldn’t load your balance — pull down to refresh"
           quickActions={quickActions.map((qa) => ({
             id:      qa.id,
             label:   qa.label,
@@ -207,7 +209,10 @@ export default function HomeScreen() {
         ) : null}
 
         {featured.length > 0 ? (
-          <SectionHeader title="Featured Services" style={{ marginTop: Spacing.lg }} />
+          <>
+            <RemoteBanner slug="home-featured-services" style={styles.featuredBanner} />
+            <SectionHeader title="Featured Services" style={{ marginTop: Spacing.lg }} />
+          </>
         ) : null}
         {featured.map((s) => (
           <FeaturedServiceCard
@@ -282,6 +287,7 @@ const styles = StyleSheet.create({
   scroll:  { flex: 1 },
   content: { paddingBottom: Spacing.xl },
   heroBanner: { marginHorizontal: Spacing.containerMargin, marginTop: Spacing.sm },
+  featuredBanner: { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md, marginTop: Spacing.lg },
   loader:  { paddingVertical: Spacing.xl, alignItems: 'center' },
   errorBox:{ marginHorizontal: Spacing.containerMargin, padding: Spacing.md, backgroundColor: 'rgba(220,38,38,0.06)', borderRadius: Radius.lg, marginBottom: Spacing.md },
   errorText:{ ...Typography.labelSm, color: Colors.error, textAlign: 'center' },

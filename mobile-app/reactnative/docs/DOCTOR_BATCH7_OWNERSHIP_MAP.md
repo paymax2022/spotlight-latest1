@@ -7,7 +7,7 @@ nothing in earlier contracts is edited (only the hooks/constants barrels gain ne
 export lines). Money is always integers in **kobo**.
 
 **Consolidation + reuse principle:** granular variants (the 8 dispute kinds, the 4
-audit scopes, the 26 edge states, statuses) are modelled as **states/data** on top
+audit scopes, the 25 edge states, statuses) are modelled as **states/data** on top
 of a small set of entities, not as separate entities. Batch 7 leans **heavily on
 the Phase 1 support-ticket + settings shapes**, the **Phase 2 compliance dashboard
 / licence / consent / audit / policy** shapes, the **Batch 6 notification-preference**
@@ -129,7 +129,7 @@ and theme share **one `AppPreferences`** + one `useUpdateAppPreferences`.
 
 ---
 
-## Section AD — Empty, Error & Edge-State (26)
+## Section AD — Empty, Error & Edge-State (25)
 
 Almost all of AD is **`StateView` variants on existing screens**, fed by the
 **`EDGE_STATES` descriptor map** / pure **`getEdgeState(kind)`** helper. Only the
@@ -154,19 +154,18 @@ states** — each is a `StateView` variant on its owning list/detail screen.
 | 13 | `patient_unavailable` | empty | StateView variant on call/waiting-room screen |
 | 14 | `patient_cancelled` | empty | StateView variant on call/appointment screen |
 | 15 | `call_connection_failed` | error | StateView variant on call screen |
-| 16 | `agora_unavailable` | error | StateView variant on call screen (provider switch) |
-| 17 | `videosdk_fallback_failed` | error | StateView variant on call screen (both providers failed) |
-| 18 | `prescription_blocked` | error | StateView variant on e-prescription screen |
-| 19 | `drug_interaction_detected` | error | StateView variant on e-prescription screen |
-| 20 | `lab_order_blocked` | error | StateView variant on lab-ordering screen |
-| 21 | `hmo_verification_failed` | error | StateView variant on HMO claim screen |
-| 22 | `account_verification_pending` | empty | StateView variant on `signup/pending.tsx` (gate) — `useAccountStatus` |
-| 23 | `licence_expired` | error | StateView variant on compliance/dashboard gate — `useAccountStatus` |
-| 24 | `access_denied` | error | StateView variant on any RBAC-gated screen |
-| 25 | `maintenance_mode` | error | App-level banner/gate — `useAppStatus` (`mode='maintenance'`) |
-| 26 | `app_update_required` | error | App-level gate — `useAppStatus` (`mode='app_update_required'`) |
+| 16 | `videosdk_unavailable` | error | StateView variant on call screen (provider unavailable) |
+| 17 | `prescription_blocked` | error | StateView variant on e-prescription screen |
+| 18 | `drug_interaction_detected` | error | StateView variant on e-prescription screen |
+| 19 | `lab_order_blocked` | error | StateView variant on lab-ordering screen |
+| 20 | `hmo_verification_failed` | error | StateView variant on HMO claim screen |
+| 21 | `account_verification_pending` | empty | StateView variant on `signup/pending.tsx` (gate) — `useAccountStatus` |
+| 22 | `licence_expired` | error | StateView variant on compliance/dashboard gate — `useAccountStatus` |
+| 23 | `access_denied` | error | StateView variant on any RBAC-gated screen |
+| 24 | `maintenance_mode` | error | App-level banner/gate — `useAppStatus` (`mode='maintenance'`) |
+| 25 | `app_update_required` | error | App-level gate — `useAppStatus` (`mode='app_update_required'`) |
 
-**AD consolidation:** all 26 are **pure descriptors** (`EdgeStateDescriptor` with
+**AD consolidation:** all 25 are **pure descriptors** (`EdgeStateDescriptor` with
 title/message/icon/cta/tone) in **one `EDGE_STATES` map**; the helper
 `getEdgeState(kind)` (api) and the thin `useEdgeState(kind)` wrapper resolve them
 synchronously into `StateView`. Account-state reads reuse the Phase 1

@@ -22,15 +22,15 @@ jobs:
         with:
           fetch-depth: 1  # Shallow clone to save time
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'  # Cache node_modules
           cache-dependency-path: 'frontend-web/package-lock.json'
 
-      - run: cd frontend-web && npm ci --only=prod  # CI install only
+      - run: cd frontend-web && npm ci  # dev deps required: eslint/typescript are devDependencies
 
-      - run: cd frontend-web && npm run lint:fast || true  # Non-blocking
+      - run: cd frontend-web && npm run lint || true  # Non-blocking (lint:fast does not exist; was a masked no-op)
 
   frontend-admin:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
@@ -41,15 +41,15 @@ jobs:
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: 'frontend-admin/package-lock.json'
 
-      - run: cd frontend-admin && npm ci --only=prod
+      - run: cd frontend-admin && npm ci
 
-      - run: cd frontend-admin && npx tsc --noEmit || true  # Type-check only
+      - run: cd frontend-admin && npm run type-check || true  # Type-check only
 
   backend:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
@@ -60,9 +60,9 @@ jobs:
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.23'
+          go-version-file: 'backend/go.mod'  # pin follows go.mod — manual pins have drifted below it before
           cache: true
           cache-dependency-path: 'backend/go.sum'
 
@@ -135,17 +135,66 @@ jobs:
 
   # Migrations guard (lightweight check)
   migrations:
-    if: contains(github.event.head_commit.modified, 'supabase/migrations')
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the guard diffs against the base commit
 
-      - name: Validate migrations are additive-only
+      - name: Detect changed migrations
+        id: diff
         run: |
-          # Check for destructive migration patterns
-          if grep -r "DROP\|ALTER.*TYPE\|RENAME" supabase/migrations/*.sql; then
-            echo "❌ Destructive migrations detected!"
+          set -euo pipefail
+          # head_commit.modified can never trigger this lane: it is absent on
+          # pull_request, and on push it is an array of file paths which can
+          # never equal the bare directory string. Resolve the range like the
+          # secrets-scan lane does.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            BASE="$(git rev-parse --verify --quiet 'HEAD^' || true)"
+          fi
+          : > changed_migrations.txt
+          if [ -n "$BASE" ]; then
+            git diff --name-only --diff-filter=AM "$BASE" HEAD -- 'supabase/migrations/*.sql' > changed_migrations.txt || true
+          fi
+          if [ -s changed_migrations.txt ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate changed migrations are additive-only
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          # Scope to changed files only: hundreds of historical migrations
+          # contain DROP/ALTER/RENAME text (comments, CREATE OR REPLACE), so a
+          # whole-tree grep would fail on files the additive-only policy
+          # never governed.
+          # Semantics mirror _reusable-migration-guard.yml — the canonical
+          # additive-only policy — so this lane can't disagree with it (e.g.
+          # DROP CONSTRAINT IF EXISTS + re-add is the established CHECK-widening
+          # pattern used by ~30 merged migrations; the old bare-DROP grep failed
+          # it while the canonical guard's intent/behaviour allows it).
+          DESTRUCTIVE='\b(drop\s+(table|column|type|schema|database)|alter\s+[a-z0-9_."]+\s+drop|rename\s+(column|to))\b'
+          ALLOW='drop\s+(policy|trigger|index|function|view|materialized\s+view|publication|rule)\s+if\s+exists'
+          FAIL=0
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            HITS=$(sed -E 's/--.*$//' "$f" | grep -iEn "$DESTRUCTIVE" | grep -ivE "$ALLOW" || true)
+            if [ -n "$HITS" ]; then
+              echo "❌ Destructive/narrowing DDL in $f:"
+              echo "$HITS"
+              FAIL=1
+            fi
+          done < changed_migrations.txt
+          if [ "$FAIL" -ne 0 ]; then
+            echo "❌ Destructive migration patterns detected in changed files"
             exit 1
           fi
-          echo "✅ Migrations are additive-only"
+          echo "✅ Changed migrations are additive-only"

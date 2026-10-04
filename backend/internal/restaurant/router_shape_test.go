@@ -1,7 +1,6 @@
 package restaurant_test
 
 // Registration-time guard for the restaurant route tree.
-//
 // gin panics when a static segment conflicts with a wildcard at the same
 // position, and it does so at REGISTRATION — i.e. at boot, not under test. The
 // staff routes add `/staff/accept` (static) beside `/:id/...` (param), which is

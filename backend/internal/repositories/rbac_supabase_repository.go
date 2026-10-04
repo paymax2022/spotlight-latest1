@@ -3,12 +3,44 @@ package repositories
 import (
 	"fmt"
 	"net/http"
-	"strings"
-	"time"
-
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/integrations"
+	"strconv"
+	"strings"
+	"time"
 )
+
+type RBACRepository interface {
+	GetUserStatus(userID string) (string, error)
+	GetUserRoles(userID string) ([]string, error)
+	GetUserScopes(userID string) ([]domain.UserScope, error)
+	GetUserPermissions(userID string, scopeType string, scopeID string) ([]string, error)
+	HasPermission(userID string, permission string, scopeType string, scopeID string) (bool, error)
+	ListRoles() ([]domain.Role, error)
+	CreateRole(role domain.Role) (domain.Role, error)
+	UpdateRole(roleID string, role domain.Role) (domain.Role, error)
+	CloneRole(sourceRoleID string, newName, newSlug string) (domain.Role, error)
+	DeleteRole(roleID string) error
+	GetRole(roleID string) (domain.Role, error)
+	ListPermissions() ([]domain.Permission, error)
+	CreatePermission(permission domain.Permission) (domain.Permission, error)
+	UpdatePermission(permissionID string, permission domain.Permission) (domain.Permission, error)
+	GetPermission(permissionID string) (domain.Permission, error)
+	ListRolePermissionPairs() (map[string]map[string]bool, error)
+	AssignPermissionToRole(roleID string, permissionID string) error
+	RemovePermissionFromRole(roleID string, permissionID string) error
+	DeletePermission(permissionID string) error
+	AssignRoleToUser(userID string, roleID string, scopeType string, scopeID string, assignedBy string) error
+	RemoveRoleFromUser(userID, roleID string) error
+	CountActiveSuperAdmins() (int, error)
+	SuspendUser(userID string) error
+	UnsuspendUser(userID string) error
+	LockUser(userID string) error
+	UnlockUser(userID string) error
+	ListAdminUsers(filter domain.AdminUserFilter) ([]domain.AdminUser, error)
+	GetAdminUser(userID string) (domain.AdminUser, error)
+	UpdateAdminUser(userID string, patch map[string]any) (domain.AdminUser, error)
+}
 
 type RBACSupabaseRepository struct {
 	client *integrations.SupabaseRestClient
@@ -321,10 +353,29 @@ func readMetadataString(m map[string]any, key string) string {
 	return strings.TrimSpace(s)
 }
 
+// postgrestLiteral strips characters that are meaningful in PostgREST's
+// filter DSL (`,` `(` `)` `"` `*`) or SQL LIKE wildcards (`%` `_` `\`) plus
+// control characters, so a caller-supplied term can be safely embedded in
+// `or=(...)` groups and `ilike` patterns (AUD-BE-003).
+func postgrestLiteral(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '%', '_', '*', '\\', '"', '(', ')', ',':
+			return -1
+		}
+		if r < 0x20 {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(s))
+}
+
 // adminUserSelect is the platform_users select shared by ListAdminUsers (a
 // filtered, ordered page) and GetAdminUser (a single row by primary key), so
 // the two never drift on which fields/embeds a domain.AdminUser is built from.
-const adminUserSelect = "id,first_name,last_name,email,phone,user_type,status,profile_completed,created_at,profiles!left(state,country)"
+const adminUserSelect = "id,first_name,last_name,email,phone,user_type,status,profile_completed,created_at,profiles!left(state,country,metadata)"
+
+const adminUserOrder = "created_at.desc"
 
 type adminUserRow struct {
 	ID               string `json:"id"`
@@ -362,14 +413,24 @@ func adminUserFromRow(row adminUserRow) (user domain.AdminUser, state, country, 
 	return
 }
 
+// postgrestLikePattern sanitises a user-supplied search term before it is
+// interpolated into a PostgREST or(...) clause. The pattern is wrapped in
+// double quotes — inside them, reserved filter-DSL characters ( ) , . are
+// literal — so only the quote escapes " and \ must be stripped from input.
+// AUD-BE-003: an unquoted term could break out of the or-group and alter the
+// predicate set entirely.
+func postgrestLikePattern(s string) string {
+	return strings.NewReplacer(`"`, "", `\`, "").Replace(s)
+}
+
 func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) ([]domain.AdminUser, error) {
 	if filter.Limit <= 0 || filter.Limit > 500 {
 		filter.Limit = 100
 	}
+	sel := adminUserSelect
 	q := map[string]string{
-		"select": adminUserSelect,
-		"order":  "created_at.desc",
-		"limit":  fmt.Sprintf("%d", filter.Limit),
+		"order": adminUserOrder,
+		"limit": strconv.Itoa(filter.Limit),
 	}
 	if v := strings.TrimSpace(filter.Status); v != "" {
 		q["status"] = "eq." + v
@@ -378,8 +439,31 @@ func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) (
 		q["user_type"] = "eq." + v
 	}
 	if v := strings.TrimSpace(filter.Search); v != "" {
-		q["or"] = fmt.Sprintf("(email.ilike.*%s*,first_name.ilike.*%s*,last_name.ilike.*%s*)", v, v, v)
+		v = postgrestLikePattern(v)
+		q["or"] = fmt.Sprintf(`(email.ilike."*%s*",first_name.ilike."*%s*",last_name.ilike."*%s*")`, v, v, v)
 	}
+	// Scoped filters must reach PostgREST or `limit` truncates the unfiltered
+	// page before Go ever sees the matches (AUD-BE-003). Filtering parent rows
+	// by an embed requires !inner — a left-join embed filter only trims the
+	// embedded array. With no scoped filter the !left embed is kept so users
+	// without a profile row still list.
+	scoped := false
+	for col, v := range map[string]string{
+		"profiles.state":                 filter.State,
+		"profiles.country":               filter.Country,
+		"profiles.metadata->>program_id": filter.Program,
+		"profiles.metadata->>contest_id": filter.Contest,
+		"profiles.metadata->>school_id":  filter.School,
+	} {
+		if lit := postgrestLiteral(v); lit != "" {
+			q[col] = "ilike." + lit
+			scoped = true
+		}
+	}
+	if scoped {
+		sel = strings.Replace(adminUserSelect, "profiles!left", "profiles!inner", 1)
+	}
+	q["select"] = sel
 
 	var rows []adminUserRow
 	if err := r.client.REST(http.MethodGet, "platform_users", q, nil, &rows); err != nil {
@@ -405,20 +489,18 @@ func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) (
 			continue
 		}
 		out = append(out, user)
+		if len(out) >= filter.Limit {
+			break
+		}
 	}
 	return out, nil
 }
 
 // GetAdminUser fetches exactly one platform_users row by primary key.
-//
-// This used to be implemented as ListAdminUsers(Limit: 1) followed by a
-// linear search for a matching ID — but ListAdminUsers orders by
-// created_at.desc, so a Limit of 1 fetches only the single newest user
-// platform-wide. Every lookup for any other user (i.e. almost every lookup)
-// silently 404'd, which broke the admin console's per-user inspect/update
-// view (AUTH-019). Filter by id=eq.<userID> directly instead — PostgREST
-// applies the filter server-side, so this returns the requested row
-// regardless of creation order.
+// Must filter by id=eq.<userID> server-side (PostgREST applies it before
+// limit) — do NOT implement as ListAdminUsers(Limit: 1) + client-side match:
+// ListAdminUsers orders by created_at.desc, so Limit 1 returns only the
+// single newest user platform-wide (AUTH-019).
 func (r *RBACSupabaseRepository) GetAdminUser(userID string) (domain.AdminUser, error) {
 	id := strings.TrimSpace(userID)
 	if id == "" {

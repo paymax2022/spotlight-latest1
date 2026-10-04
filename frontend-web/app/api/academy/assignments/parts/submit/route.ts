@@ -1,5 +1,4 @@
 // Learner: submit (or resubmit) ONE PART of a multi-part assignment.
-//
 // Deliberately a separate route from ../submit rather than an extra optional
 // field on it. The two have different objects (an assignment vs a part), a
 // different uniqueness key, and a different "already graded" rule — folding them
@@ -7,15 +6,12 @@
 // call, and where a missing partId silently falls back to overwriting the
 // whole-assignment submission. That fallback is exactly how a learner's week 1
 // work would get replaced by their week 2 upload.
-//
 // Every guard here mirrors ../submit, because they protect the same things:
-//   • the part must belong to THIS learner's curriculum (never trust the id);
-//   • the parent assignment must still be open;
 //   • a graded part is final — resubmitting would erase the tutor's score.
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { resolveLearner } from '@/src/server/services/academy/learner';
+import { resolveLearner } from '@/src/server/services/academy';
 
 export async function POST(request: Request) {
   try {

@@ -1,4 +1,3 @@
-// ── Paymax Stays — Mock supply ───────────────────────────────────────────────
 // Realistic NG hotels (Lagos / Abuja, mixed star, NGN + a USD-priced upscale).
 // Money is minor units: kobo for NGN, cents for USD. This module is the ONLY
 // place mock fixtures live; the api layer maps everything to normalised models.
@@ -223,7 +222,6 @@ export const MOCK_PROPERTIES: PropertyCard[] = [
   },
 ];
 
-// ── Room types, keyed by property id (with a default fallback) ────────────────
 function roomsFor(propertyId: string, currency: 'NGN' | 'USD', base: number): RoomType[] {
   const cur = currency;
   return [
@@ -332,7 +330,6 @@ export const MOCK_ROOM_TYPES: Record<string, RoomType[]> = {
   __default: roomsFor('__default', 'NGN', 5_000_000),
 };
 
-// ── Reviews, keyed by property id ─────────────────────────────────────────────
 const SAMPLE_REVIEWS: Review[] = [
   {
     id: 'rv1',
@@ -371,7 +368,6 @@ export const MOCK_REVIEWS: Record<string, Review[]> = {
   __default: SAMPLE_REVIEWS,
 };
 
-// ── Destinations ──────────────────────────────────────────────────────────────
 export const MOCK_DESTINATIONS: DestinationSuggestion[] = [
   { id: 'lagos', name: 'Lagos', region: 'Lagos State, Nigeria', kind: 'city', propertyCount: 1240 },
   { id: 'abuja', name: 'Abuja', region: 'FCT, Nigeria', kind: 'city', propertyCount: 860 },
@@ -382,7 +378,6 @@ export const MOCK_DESTINATIONS: DestinationSuggestion[] = [
   { id: 'maitama', name: 'Maitama', region: 'Abuja, Nigeria', kind: 'area', propertyCount: 95 },
 ];
 
-// ── Deals ─────────────────────────────────────────────────────────────────────
 export const MOCK_DEALS: Deal[] = [
   {
     id: 'deal1',
@@ -407,7 +402,6 @@ export const MOCK_DEALS: Deal[] = [
   },
 ];
 
-// ── Add-ons ───────────────────────────────────────────────────────────────────
 export const MOCK_ADDONS: AddOn[] = [
   {
     key: 'breakfast',
@@ -441,7 +435,6 @@ export const MOCK_ADDONS: AddOn[] = [
   },
 ];
 
-// ── Profile (KYC/profile prefill mock) ───────────────────────────────────────
 export const MOCK_PROFILE: GuestProfile = {
   fullName: 'Ada Okafor',
   email: 'ada.okafor@example.com',

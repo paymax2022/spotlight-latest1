@@ -1,7 +1,7 @@
 {
   "workspace": "mobile-app/reactnative",
   "reviewed": "2026-09-08",
-  "why": "image-size is only fixable by a framework major upgrade — expo@57 + react-native@0.72 — which is a migration, not a patch. It's BUILD-TIME tooling reached through metro/expo (image-size parser DoS), not a runtime path an external caller reaches. Tracked for the framework-upgrade work; the gate fails on anything NOT listed here. postcss/decode-uri-component/@xmldom/xmldom/uuid were previously accepted here too, but are now forced to patched versions via package.json overrides (trivy findings #83-88) and removed from this list — a baselined entry that has disappeared fails the gate on purpose, so don't re-add them without re-verifying the override still resolves.",
+  "why": "image-size is only fixable by a framework major upgrade \u2014 expo@57 + react-native@0.72 \u2014 which is a migration, not a patch. It's BUILD-TIME tooling reached through metro/expo (image-size parser DoS), not a runtime path an external caller reaches. Tracked for the framework-upgrade work; the gate fails on anything NOT listed here. postcss/decode-uri-component/@xmldom/xmldom/uuid were previously accepted here too, but are now forced to patched versions via package.json overrides (trivy findings #83-88) and removed from this list \u2014 a baselined entry that has disappeared fails the gate on purpose, so don't re-add them without re-verifying the override still resolves. node-forge (added 2026-10-02): reached only via @expo/cli and @expo/code-signing-certificates \u2014 build/publish-time tooling, not bundled runtime code. No patched release exists (1.4.0 is latest; package unmaintained) and `npm audit fix --force` would downgrade expo-updates to 0.x, which is not viable. Revisit when Expo ships a node-forge-free releases or a patched transitive dep. braces (added 2026-10-03): reached only via metro/micromatch — glob matching in the bundler at build time, never a runtime path. No patched release exists (<=3.0.3 affected; 3.0.3 is latest) and the npm-suggested fix downgrades expo to 44, which is not viable. Drop from the baseline the day a 3.0.4+ lands.",
   "accepted": [
     {
       "package": "image-size",
@@ -14,6 +14,18 @@
       "ghsa": "GHSA-w3rx-r6r6-pgpr",
       "severity": "high",
       "title": "image-size: ICNS parser allows denial of service through an infinite loop"
+    },
+    {
+      "package": "node-forge",
+      "ghsa": "GHSA-86w9-cpqp-85rv",
+      "severity": "high",
+      "title": "node-forge RSA PKCS#1 v1.5 signature verification accepts extra nested DigestAlgorithm elements"
+    },
+    {
+      "package": "braces",
+      "ghsa": "GHSA-vfj7-8cjw-p6xm",
+      "severity": "high",
+      "title": "braces vulnerable to stack-exhaustion denial of service through deeply nested patterns"
     }
   ]
 }

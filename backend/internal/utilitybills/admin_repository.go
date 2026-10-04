@@ -5,16 +5,13 @@ package utilitybills
 // aggregations. It is a separate file purely for size — everything here obeys
 // repository.go's rules (pgx pool only, column lists taken from the live schema
 // rather than guessed, ErrNotFound on a miss).
-//
 // Two deliberate differences from the member-facing reads in repository.go, both
 // of which are the WHOLE point of an admin surface:
-//
 //   - NO status filter. ListBillers/ListProducts hard-code `status = 'active'`
 //     because a member must never be offered a disabled product. An admin who
 //     cannot see the disabled row cannot re-enable it, so AdminList* returns
 //     every status.
 //   - NO ownership filter on transactions, matching the existing GetTransaction.
-//
 // Columns NOT exposed by this surface, deliberately and flagged in the PR:
 // utility_billers.dynamic_fields, utility_products.metadata,
 // utility_category_settings.default_commission_bps and .config. They are outside
@@ -30,11 +27,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // adminListBounds ports app/api/admin/utility/_utils.ts's adminPagination:
 // limit defaults to 50 and is capped at 200, offset floors at 0.
-//
 // These are NOT the member-facing numbers (20 / 100, in ListUserTransactions) —
 // an admin paging a catalogue and a member scrolling their own history are
 // different workloads, and the TS source already made that distinction.
@@ -51,8 +49,6 @@ func adminListBounds(limit, offset int) (int, int) {
 	return limit, offset
 }
 
-// ── Providers ────────────────────────────────────────────────────────────────
-
 // adminProviderCols is providerCols plus last_health_check_at, which the admin
 // console shows next to health_status ("healthy, as of when?") and which the
 // health-check endpoint writes. credentials is NEVER selected here: this file
@@ -62,7 +58,6 @@ const adminProviderCols = `id, name, code, adapter_code, status, supported_categ
 
 // AdminProviderView is a provider as the admin console sees it: the row, plus
 // the last health-check timestamp, plus credentials_configured.
-//
 // credentials_configured ports sanitizeProvider()'s `Boolean(row.credentials)`
 // — the admin needs to know WHETHER a provider has credentials without ever
 // receiving them. The embedded ProviderRow keeps Credentials/Config tagged
@@ -147,8 +142,8 @@ func (r *Repository) CreateProvider(ctx context.Context, in ProviderInput) (*Adm
 			(name, code, adapter_code, status, supported_categories, priority, health_status, config)
 		VALUES ($1, $2, $3, COALESCE($4,'active'), $5, COALESCE($6,100), COALESCE($7,'unknown'), $8)
 		RETURNING `+adminProviderCols,
-		in.Name, in.Code, in.AdapterCode, nullIfEmpty(in.Status), cats, in.Priority,
-		nullIfEmpty(in.HealthStatus), []byte(config)))
+		in.Name, in.Code, in.AdapterCode, dbutil.NullStr(in.Status), cats, in.Priority,
+		dbutil.NullStr(in.HealthStatus), []byte(config)))
 	if err != nil {
 		return nil, fmt.Errorf("utilitybills: create provider: %w", err)
 	}
@@ -246,8 +241,6 @@ func (r *Repository) ProviderCredentials(ctx context.Context, id string) ([]byte
 	return creds, nil
 }
 
-// ── Billers ──────────────────────────────────────────────────────────────────
-
 // AdminListBillers returns billers of EVERY status (contrast ListBillers, which
 // is member-facing and hard-filters to active).
 func (r *Repository) AdminListBillers(ctx context.Context, limit, offset int) ([]BillerRow, error) {
@@ -289,8 +282,8 @@ func (r *Repository) CreateBiller(ctx context.Context, in BillerInput) (*BillerR
 		VALUES ($1, $2, $3, COALESCE($4,'NG'), COALESCE($5,'active'), COALESCE($6,false),
 		        COALESCE($7,'Customer reference'))
 		RETURNING `+billerCols,
-		in.Category, in.Name, in.Code, nullIfEmpty(in.Country), nullIfEmpty(in.Status),
-		in.RequiresValidation, nullIfEmpty(in.CustomerReferenceLabel)))
+		in.Category, in.Name, in.Code, dbutil.NullStr(in.Country), dbutil.NullStr(in.Status),
+		in.RequiresValidation, dbutil.NullStr(in.CustomerReferenceLabel)))
 	if err != nil {
 		return nil, fmt.Errorf("utilitybills: create biller: %w", err)
 	}
@@ -331,8 +324,6 @@ func (r *Repository) UpdateBiller(ctx context.Context, id string, patch BillerPa
 	return row, nil
 }
 
-// ── Products ─────────────────────────────────────────────────────────────────
-
 // AdminListProducts returns products of EVERY status.
 func (r *Repository) AdminListProducts(ctx context.Context, limit, offset int) ([]ProductRow, error) {
 	limit, offset = adminListBounds(limit, offset)
@@ -354,7 +345,6 @@ func (r *Repository) AdminListProducts(ctx context.Context, limit, offset int) (
 }
 
 // ProductInput is a product create (and one element of an import batch).
-//
 // The three kobo bounds are pointers because the columns are nullable AND their
 // CHECK constraints reject 0 — the difference between "unbounded" and "zero" is
 // load-bearing here, so a plain int64 defaulting to 0 would turn an omitted
@@ -383,9 +373,9 @@ const productInsertSQL = `
 
 func productInsertArgs(in ProductInput) []any {
 	return []any{
-		in.BillerID, in.Category, in.Name, in.Code, nullIfEmpty(in.AmountType),
+		in.BillerID, in.Category, in.Name, in.Code, dbutil.NullStr(in.AmountType),
 		in.AmountKobo, in.MinAmountKobo, in.MaxAmountKobo,
-		in.ConvenienceFeeKobo, in.MarkupBps, in.ProviderDiscountBps, nullIfEmpty(in.Status),
+		in.ConvenienceFeeKobo, in.MarkupBps, in.ProviderDiscountBps, dbutil.NullStr(in.Status),
 	}
 }
 
@@ -400,11 +390,9 @@ func (r *Repository) CreateProduct(ctx context.Context, in ProductInput) (*Produ
 
 // ImportProducts bulk-upserts products keyed on code, porting
 // adminImportUtilityProducts's `upsert(rows, { onConflict: 'code' })`.
-//
 // Run inside ONE transaction, which the Supabase upsert also was: a half-applied
 // catalogue import is the state nobody can reason about — some products at new
 // prices, some at old, and no record of where the boundary fell.
-//
 // A conflicting row is fully REPLACED (every column in the input), matching
 // Supabase's upsert semantics. This is not a merge: an import that omits
 // markup_bps resets that product's markup to 0. That is the TS behaviour and the
@@ -496,8 +484,6 @@ func (r *Repository) UpdateProduct(ctx context.Context, id string, patch Product
 	return p, nil
 }
 
-// ── Provider/product mappings ────────────────────────────────────────────────
-
 // mappingCols is the column list behind MappingRow (the existing type — this
 // table's Go name is MappingRow, not "ProviderProductRow"). provider_biller_code
 // is nullable and COALESCEd to ”, exactly as GetRouteCandidates does it.
@@ -565,8 +551,8 @@ func (r *Repository) CreateMapping(ctx context.Context, in MappingInput) (*Mappi
 			 provider_cost_kobo, provider_discount_bps, status)
 		VALUES ($1, $2, $3, $4, $5, COALESCE($6,0), COALESCE($7,'active'))
 		RETURNING `+mappingCols,
-		in.ProviderID, in.ProductID, in.ProviderProductCode, nullIfEmpty(in.ProviderBillerCode),
-		in.ProviderCostKobo, in.ProviderDiscountBps, nullIfEmpty(in.Status)))
+		in.ProviderID, in.ProductID, in.ProviderProductCode, dbutil.NullStr(in.ProviderBillerCode),
+		in.ProviderCostKobo, in.ProviderDiscountBps, dbutil.NullStr(in.Status)))
 	if err != nil {
 		return nil, fmt.Errorf("utilitybills: create mapping: %w", err)
 	}
@@ -609,8 +595,6 @@ func (r *Repository) UpdateMapping(ctx context.Context, id string, patch Mapping
 	return m, nil
 }
 
-// ── Routing rules ────────────────────────────────────────────────────────────
-//
 // utility_routing_rules had NO Go representation before this phase: Phase 1 read
 // the table only through a correlated subquery inside GetRouteCandidates, which
 // needed nothing but the priority column. The row type below is therefore new,
@@ -697,8 +681,8 @@ func (r *Repository) CreateRoutingRule(ctx context.Context, in RoutingRuleInput)
 			(category, biller_id, product_id, provider_id, priority, min_amount_kobo, max_amount_kobo, status)
 		VALUES ($1, $2, $3, $4, COALESCE($5,100), $6, $7, COALESCE($8,'active'))
 		RETURNING `+routingRuleCols,
-		nullIfEmpty(in.Category), nullIfEmpty(in.BillerID), nullIfEmpty(in.ProductID),
-		in.ProviderID, in.Priority, in.MinAmountKobo, in.MaxAmountKobo, nullIfEmpty(in.Status)))
+		dbutil.NullStr(in.Category), dbutil.NullStr(in.BillerID), dbutil.NullStr(in.ProductID),
+		in.ProviderID, in.Priority, in.MinAmountKobo, in.MaxAmountKobo, dbutil.NullStr(in.Status)))
 	if err != nil {
 		return nil, fmt.Errorf("utilitybills: create routing rule: %w", err)
 	}
@@ -749,8 +733,6 @@ func (r *Repository) UpdateRoutingRule(ctx context.Context, id string, patch Rou
 	return rr, nil
 }
 
-// ── Category settings ────────────────────────────────────────────────────────
-//
 // Keyed on the `category` TEXT primary key, not a uuid — which is why the route
 // is PATCH /categories/:category and adminUpdateUtilityRow special-cases this
 // one table's key column.
@@ -798,16 +780,20 @@ type CategorySettingInput struct {
 	MaxAmountKobo       *int64 `json:"max_amount_kobo"`
 }
 
-// CreateCategorySetting inserts a category setting.
+// CreateCategorySetting inserts a category setting; the category text is the
+// PK, so a duplicate 23505 maps to ErrCategoryExists.
 func (r *Repository) CreateCategorySetting(ctx context.Context, in CategorySettingInput) (*CategorySettingRow, error) {
 	s, err := scanCategorySetting(r.db.QueryRow(ctx, `
 		INSERT INTO public.utility_category_settings
 			(category, enabled, availability_message, daily_limit_kobo, min_amount_kobo, max_amount_kobo)
 		VALUES ($1, COALESCE($2,true), $3, $4, $5, $6)
 		RETURNING `+categorySettingCols,
-		in.Category, in.Enabled, nullIfEmpty(in.AvailabilityMessage),
+		in.Category, in.Enabled, dbutil.NullStr(in.AvailabilityMessage),
 		in.DailyLimitKobo, in.MinAmountKobo, in.MaxAmountKobo))
 	if err != nil {
+		if dbutil.IsUniqueViolation(err) {
+			return nil, fmt.Errorf("%w: %s", ErrCategoryExists, in.Category)
+		}
 		return nil, fmt.Errorf("utilitybills: create category setting: %w", err)
 	}
 	return s, nil
@@ -855,11 +841,8 @@ func (r *Repository) UpdateCategorySetting(ctx context.Context, category string,
 	return s, nil
 }
 
-// ── Transactions (admin) ─────────────────────────────────────────────────────
-
 // AdminListTransactions returns transactions across ALL members, newest first,
 // optionally filtered by status. Ports adminListUtilityTransactions.
-//
 // Pagination uses the ADMIN bounds (50/200), not ListUserTransactions's member
 // bounds (20/100) — see adminListBounds.
 func (r *Repository) AdminListTransactions(ctx context.Context, status string, limit, offset int) ([]TransactionRow, error) {
@@ -889,15 +872,11 @@ func (r *Repository) AdminListTransactions(ctx context.Context, status string, l
 	return out, rows.Err()
 }
 
-// ── Disputes (admin) ─────────────────────────────────────────────────────────
-
 // UpdateDisputeByTransaction resolves the dispute attached to a transaction.
-//
 // Keyed on transaction_id, NOT on a dispute id, because that is what the TS
 // source does (`.update(...).eq('transaction_id', transactionId)`) and what the
 // route exposes (POST /transactions/:id/resolve — the caller never has a dispute
 // id to give).
-//
 // ONE deliberate divergence, flagged: where a transaction has more than one
 // dispute row, the TS update would write EVERY one of them and then throw on
 // `.single()`. This targets the most recent dispute only, so the outcome is
@@ -923,12 +902,9 @@ func (r *Repository) UpdateDisputeByTransaction(ctx context.Context, transaction
 	return &d, nil
 }
 
-// ── Reports ──────────────────────────────────────────────────────────────────
-//
 // All three port adminUtilityReport. The RESULT SHAPES are identical to the TS
 // function's (same field names, same units, same semantics) because those shapes
 // are the contract the admin console and its CSV export already consume.
-//
 // The COMPUTATION is not a line-by-line port: the TS source pulls up to 10,000
 // rows over the network and folds them in JavaScript. These aggregate in SQL.
 // That is the change the task asked for, and it also fixes a real defect — the
@@ -939,7 +915,6 @@ func (r *Repository) UpdateDisputeByTransaction(ctx context.Context, transaction
 // admin console rather than a more accurate answer.
 
 // ProfitabilityReport is adminUtilityReport('profitability')'s summary object.
-//
 // Scope note, ported deliberately: the TS reduce runs over EVERY transaction
 // regardless of status — failed and reversed rows are counted in
 // total_transactions and their kobo columns are summed too. That is almost
@@ -984,7 +959,6 @@ type ProviderPerformanceRow struct {
 }
 
 // ProviderPerformanceReport groups utility_provider_attempts by provider.
-//
 // Two details carried over verbatim from the TS fold, because they change the
 // numbers: a NULL duration_ms counts as 0 in BOTH the average's numerator and
 // its denominator (TS: `row.duration_ms ?? 0`, divided by total attempts, not by
@@ -1063,13 +1037,10 @@ func (r *Repository) ReconciliationReport(ctx context.Context) ([]Reconciliation
 	return out, rows.Err()
 }
 
-// ── Partial-update SQL builder ───────────────────────────────────────────────
-
 // setBuilder assembles the `SET col = $n, ...` half of a partial UPDATE. It is
 // the same mechanic UpdateTransaction writes inline, factored out here because
 // six entities now need it and six hand-rolled copies of placeholder arithmetic
 // is six chances to bind the wrong argument to the wrong column.
-//
 // Column names are always Go string literals from this file — never caller
 // input — so they are not, and cannot become, an injection surface; every VALUE
 // goes through a numbered placeholder.

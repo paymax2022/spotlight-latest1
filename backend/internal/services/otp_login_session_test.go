@@ -19,7 +19,6 @@ import (
 // every bearer token up in SessionService and fails closed on a miss, so a
 // step-up login succeeded at GoTrue and then 401'd "session revoked" on the
 // very next request, including GET /api/auth/me.
-//
 // These tests exercise MintSession end to end against a fake Supabase (GoTrue +
 // PostgREST) server and a real sessionService backed by an in-memory store —
 // the same fakeSessionStore session_service_test.go already uses — so the
@@ -85,9 +84,9 @@ func TestMintSession_StepUpSessionIsUsableAfterward(t *testing.T) {
 	}
 
 	// This is exactly what RequireAuthContextWithSessions runs on every
-	// protected request. Before the fix, MintSession never called
-	// IssueSession, so this looked the token up and found nothing — the same
-	// "session not found" the middleware collapses into 401 "session revoked".
+	// protected request: MintSession must IssueSession the token it returns,
+	// or this lookup finds nothing — the same "session not found" the
+	// middleware collapses into 401 "session revoked".
 	sess, verr := sessions.ValidateAccess(access)
 	if verr != nil {
 		t.Fatalf("ValidateAccess(minted token) = %v, want the session to be found — this is the AUTH-009 regression", verr)

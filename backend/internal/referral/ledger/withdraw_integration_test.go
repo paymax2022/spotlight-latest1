@@ -9,13 +9,11 @@ package ledger
 //   (5) Account-status gate (REF-009) — a suspended/locked platform_users
 //       account is refused at the withdrawal request, even once its reward
 //       has already accrued to 'eligible'.
-//
 // SKIPPED whenever TEST_DATABASE_URL is unset, and it does NOT fall back to
 // DATABASE_URL: the root .env points DATABASE_URL at the PRODUCTION Supabase
 // pooler and this test moves money. Bring-up: point TEST_DATABASE_URL at a
 // disposable, migrated Postgres. It creates only rows keyed by fresh UUIDs and
 // does not truncate tables, so it is safe to run repeatedly.
-//
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/referral/ledger/ -v
 

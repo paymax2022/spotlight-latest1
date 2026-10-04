@@ -7,11 +7,11 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Clock, XCircle, RefreshCw } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import PrimaryButton from '@/components/PrimaryButton';
-import { Colors } from '@/constants/colors';
-import { Radius } from '@/constants/radius';
-import { Spacing } from '@/constants/spacing';
-import { Typography } from '@/constants/typography';
-import { shadow1 } from '@/constants/shadows';
+import { Colors } from '@/constants/tokens';
+import { Radius } from '@/constants/tokens';
+import { Spacing } from '@/constants/tokens';
+import { Typography } from '@/constants/tokens';
+import { shadow1 } from '@/constants/tokens';
 import { getFoodOrderPaystackStatus } from '@/features/food/api';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
@@ -21,7 +21,6 @@ import { HomeMenuButton } from '@/components/HomeMenu';
 // Paystack webhook (or self-healed by this screen's own polling read — see
 // paystackcheckout.Service.CheckStatus, since Paystack cannot webhook
 // localhost in dev). Once confirmed, hand off to the real order tracking
-// screen; on any other terminal status, the charge has already been reversed
 // server-side (see PlaceOrderPaystackFunded's refund-on-failure path) — the
 // customer was not left out of pocket.
 

@@ -17,7 +17,6 @@ const KEYS = {
   earnings:      ['creators', 'me', 'earnings'] as const,
 };
 
-// ── Reads ────────────────────────────────────────────────────────────────────
 export const useCreators = (query = '') =>
   useQuery({ queryKey: KEYS.creators(query), queryFn: () => api.listCreators(query) });
 
@@ -36,7 +35,6 @@ export const useSubscriptions = () =>
 export const useEarnings = () =>
   useQuery({ queryKey: KEYS.earnings, queryFn: api.getEarnings });
 
-// ── Mutations ────────────────────────────────────────────────────────────────
 export function useSendTip() {
   const qc = useQueryClient();
   return useMutation({

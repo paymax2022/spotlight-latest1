@@ -13,8 +13,11 @@ const requiredFiles = [
   'app/services/fx.tsx',
   'app/services/education.tsx',
   'src/components/PaymentActionScreen.tsx',
-  'docs/envato-payment-template-migration-audit.md',
 ];
+// A `docs/envato-payment-template-migration-audit.md` was also required here,
+// but no such file was ever committed and nothing else referenced it. The
+// route-wiring and donor-import guards below are what actually protect these
+// screens, so the doc is not asserted.
 
 const requiredSnippets = [
   ['app/_layout.tsx', '<Stack.Screen name="wallet" />'],
@@ -33,7 +36,6 @@ const requiredSnippets = [
   ['src/api/billing.api.ts', 'payEducation'],
   ['src/types/billing.ts', 'interface EducationProvider'],
   ['src/types/billing.ts', 'interface EducationProduct'],
-  ['tsconfig.json', '"exclude": ["banking", "node_modules"]'],
 ];
 
 const sourceFilesToScan = [
@@ -67,6 +69,15 @@ for (const [file, snippet] of requiredSnippets) {
   if (!read(file).includes(snippet)) {
     failures.push(`Missing expected snippet in ${file}: ${snippet}`);
   }
+}
+
+// The donor template's `banking` tree must stay out of type-checking. Asserted
+// structurally rather than as a literal snippet: the entry has been one item
+// per line since commit 5526a8bc1, which broke a byte-exact match while the
+// exclusion itself stayed correct.
+const tsconfig = JSON.parse(read('tsconfig.json'));
+if (!Array.isArray(tsconfig.exclude) || !tsconfig.exclude.includes('banking')) {
+  failures.push('tsconfig.json must exclude the donor `banking` directory');
 }
 
 for (const file of sourceFilesToScan) {

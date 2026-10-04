@@ -1,21 +1,15 @@
 package association_test
 
-// ---------------------------------------------------------------------------
 // Event invitations.
-//
 // WHY THIS EXISTS
-// ---------------
 // Events could be created and responded to, but nobody could be INVITED to one
 // — the only way a member learned about an event was finding it in the list.
-//
 // An invitation is a REGISTRATION ROW with invited_at set, not a separate
 // table, because assoc_event_registrations already holds the (event, membership)
 // relationship along with the RSVP, ticket and check-in. The tests below pin the
 // consequence that design is for: inviting somebody who has already responded
 // must not disturb their response.
-//
 // Live-DB, same harness as founder_and_scoping_test.go.
-// ---------------------------------------------------------------------------
 
 import (
 	"context"

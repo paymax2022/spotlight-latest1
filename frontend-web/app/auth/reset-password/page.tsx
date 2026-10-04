@@ -126,8 +126,6 @@ export default function ResetPasswordPage() {
   );
 }
 
-// ── Inline styles (no Tailwind dependency — page renders before CSS hydration) ──
-
 const page: React.CSSProperties = {
   minHeight: '100vh',
   display: 'flex',

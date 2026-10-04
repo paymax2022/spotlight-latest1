@@ -28,13 +28,11 @@ func (d *denyAllRBAC) CheckPermission(userID, permission, scopeType, scopeID str
 }
 
 // Every admin route must consult RBAC — no exceptions, no "the group covers it".
-//
 // This is the test that was missing. The whole adminext surface shipped with the
 // group's auth middleware and nothing else, so being SIGNED IN was sufficient:
 // against the running server, a campaign owner's token read GET /admin/withdrawals
 // and set `featured` through PATCH /admin/campaigns/:id/flags, promoting their own
 // campaign onto the public rail and stepping straight over the approval queue.
-//
 // Asserting route-by-route (rather than eyeballing the file) is deliberate: the
 // original bug was not a wrong guard, it was an ABSENT one, and absence is exactly
 // what review misses. A new route added without a guard fails here — with a deny-all
