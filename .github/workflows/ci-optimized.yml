@@ -176,7 +176,24 @@ jobs:
           # contain DROP/ALTER/RENAME text (comments, CREATE OR REPLACE), so a
           # whole-tree grep would fail on files the additive-only policy
           # never governed.
-          if xargs -a changed_migrations.txt grep -lE "DROP|ALTER.*TYPE|RENAME"; then
+          # Semantics mirror _reusable-migration-guard.yml — the canonical
+          # additive-only policy — so this lane can't disagree with it (e.g.
+          # DROP CONSTRAINT IF EXISTS + re-add is the established CHECK-widening
+          # pattern used by ~30 merged migrations; the old bare-DROP grep failed
+          # it while the canonical guard's intent/behaviour allows it).
+          DESTRUCTIVE='\b(drop\s+(table|column|type|schema|database)|alter\s+[a-z0-9_."]+\s+drop|rename\s+(column|to))\b'
+          ALLOW='drop\s+(policy|trigger|index|function|view|materialized\s+view|publication|rule)\s+if\s+exists'
+          FAIL=0
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            HITS=$(sed -E 's/--.*$//' "$f" | grep -iEn "$DESTRUCTIVE" | grep -ivE "$ALLOW" || true)
+            if [ -n "$HITS" ]; then
+              echo "❌ Destructive/narrowing DDL in $f:"
+              echo "$HITS"
+              FAIL=1
+            fi
+          done < changed_migrations.txt
+          if [ "$FAIL" -ne 0 ]; then
             echo "❌ Destructive migration patterns detected in changed files"
             exit 1
           fi
