@@ -563,7 +563,7 @@ func (s *Service) QuotePayment(ctx context.Context, in QuoteInput) (*QuoteResult
 		return nil, err
 	}
 
-	biller, product, routes, pricing, _, _, _, err := s.priceQuote(ctx, category, billerID, productID, in.AmountKobo)
+	biller, product, routes, pricing, _, _, _, err := s.priceQuote(ctx, category, billerID, productID, in.AmountKobo) //nolint:dogsled // tuple unpack; unused positions
 	if err != nil {
 		return nil, err
 	}

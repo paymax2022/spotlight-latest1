@@ -218,20 +218,20 @@ func TestLiveDB_Election_BallotSecrecy_NoVoterChoiceLink(t *testing.T) {
 	// turnout table must have NO candidate/choice reference — so no SQL can join a
 	// voter to their choice (EL-008 / EC-004).
 	var voterColsInVotes int
-	pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns
 		WHERE table_name='assoc_election_votes' AND (column_name LIKE '%voter%' OR column_name LIKE '%member%' OR column_name LIKE '%user%')`).Scan(&voterColsInVotes)
 	if voterColsInVotes != 0 {
 		t.Fatalf("ballot secrecy broken: assoc_election_votes has a voter-linking column (%d)", voterColsInVotes)
 	}
 	var choiceColsInCast int
-	pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns
 		WHERE table_name='assoc_election_ballots_cast' AND (column_name LIKE '%candidate%' OR column_name LIKE '%choice%' OR column_name LIKE '%vote_for%')`).Scan(&choiceColsInCast)
 	if choiceColsInCast != 0 {
 		t.Fatalf("ballot secrecy broken: assoc_election_ballots_cast records the choice (%d)", choiceColsInCast)
 	}
 	// And votes must carry no timestamp that could correlate with a cast time.
 	var tsColsInVotes int
-	pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns
 		WHERE table_name='assoc_election_votes' AND data_type LIKE 'timestamp%'`).Scan(&tsColsInVotes)
 	if tsColsInVotes != 0 {
 		t.Fatalf("ballot secrecy weakened: assoc_election_votes has a timestamp column (%d)", tsColsInVotes)

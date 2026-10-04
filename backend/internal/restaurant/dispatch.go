@@ -201,7 +201,7 @@ func (s *Service) ConfirmHandoff(ctx context.Context, orderID, riderID, code str
 	if err := s.transitionInternal(ctx, orderID, riderID, OrderDelivered); err != nil {
 		return err
 	}
-	customer, _, _, _ := s.orderParties(ctx, orderID)
+	customer, _, _, _ := s.orderParties(ctx, orderID) //nolint:dogsled // tuple unpack; unused positions
 	if customer != "" {
 		s.notify(ctx, Notification{UserID: customer, Event: EventOrderHandoff,
 			Title: "Delivered", Body: "Your order was handed off. Enjoy your meal!",

@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-//go:fix inline
-func ptr(v int64) *int64 { return new(v) }
-
 // Two cases below (333333@250bps and 7@5000bps) land on a non-exact
 // division on purpose, to prove the floor/truncation direction is right —
 // not just "close enough". A third (1@9999bps) proves a numerator smaller
@@ -57,7 +54,7 @@ func TestFloorDivInt64_NegativeNumeratorFloorsTowardNegativeInfinity(t *testing.
 func TestCalculateUtilityPricing_FixedAmountProductPricesCorrectly(t *testing.T) {
 	product := Product{
 		AmountType:          AmountTypeFixed,
-		AmountKobo:          ptr(500_000),
+		AmountKobo:          new(int64(500_000)),
 		MarkupBps:           150,
 		ConvenienceFeeKobo:  5_000,
 		ProviderDiscountBps: 100, // mapping leaves its own at 0, falls back here
@@ -90,15 +87,15 @@ func TestCalculateUtilityPricing_FixedAmountProductPricesCorrectly(t *testing.T)
 func TestCalculateUtilityPricing_VariableAmountWithinBoundsPricesCorrectly(t *testing.T) {
 	product := Product{
 		AmountType:          AmountTypeVariable,
-		MinAmountKobo:       ptr(100_000),
-		MaxAmountKobo:       ptr(1_000_000),
+		MinAmountKobo:       new(int64(100_000)),
+		MaxAmountKobo:       new(int64(1_000_000)),
 		MarkupBps:           250,
 		ConvenienceFeeKobo:  10_000,
 		ProviderDiscountBps: 200,
 	}
 	mapping := ProviderMapping{
 		Status:              MappingStatusActive,
-		ProviderCostKobo:    ptr(300_000), // used verbatim, discount fallback unused
+		ProviderCostKobo:    new(int64(300_000)), // used verbatim, discount fallback unused
 		ProviderDiscountBps: 0,
 	}
 	requested := new(int64(333_333))
@@ -125,20 +122,20 @@ func TestCalculateUtilityPricing_VariableAmountWithinBoundsPricesCorrectly(t *te
 func TestCalculateUtilityPricing_VariableAmountOutsideBoundsErrors(t *testing.T) {
 	product := Product{
 		AmountType:    AmountTypeVariable,
-		MinAmountKobo: ptr(100_000),
-		MaxAmountKobo: ptr(1_000_000),
+		MinAmountKobo: new(int64(100_000)),
+		MaxAmountKobo: new(int64(1_000_000)),
 	}
 	mapping := ProviderMapping{Status: MappingStatusActive, ProviderCostKobo: new(int64(1))}
 
 	t.Run("below minimum", func(t *testing.T) {
-		_, err := CalculateUtilityPricing(product, mapping, ptr(50_000))
+		_, err := CalculateUtilityPricing(product, mapping, new(int64(50_000)))
 		if !errors.Is(err, ErrAmountBelowMinimum) {
 			t.Errorf("err = %v, want ErrAmountBelowMinimum", err)
 		}
 	})
 
 	t.Run("above maximum", func(t *testing.T) {
-		_, err := CalculateUtilityPricing(product, mapping, ptr(2_000_000))
+		_, err := CalculateUtilityPricing(product, mapping, new(int64(2_000_000)))
 		if !errors.Is(err, ErrAmountAboveMaximum) {
 			t.Errorf("err = %v, want ErrAmountAboveMaximum", err)
 		}
@@ -173,19 +170,19 @@ func TestCalculateUtilityPricing_NonPositiveProviderCostErrors(t *testing.T) {
 	}{
 		{
 			name:    "mapping cost explicitly zero, used verbatim (not treated as missing)",
-			product: Product{AmountType: AmountTypeFixed, AmountKobo: ptr(100_000)},
+			product: Product{AmountType: AmountTypeFixed, AmountKobo: new(int64(100_000))},
 			mapping: ProviderMapping{Status: MappingStatusActive, ProviderCostKobo: new(int64(0))},
 		},
 		{
 			name:    "mapping cost explicitly negative",
-			product: Product{AmountType: AmountTypeFixed, AmountKobo: ptr(100_000)},
+			product: Product{AmountType: AmountTypeFixed, AmountKobo: new(int64(100_000))},
 			mapping: ProviderMapping{Status: MappingStatusActive, ProviderCostKobo: new(int64(-100))},
 		},
 		{
 			name: "computed cost via 100% discount lands exactly on zero",
 			product: Product{
 				AmountType:          AmountTypeFixed,
-				AmountKobo:          ptr(100_000),
+				AmountKobo:          new(int64(100_000)),
 				ProviderDiscountBps: 10_000, // 100% discount fallback
 			},
 			mapping: ProviderMapping{Status: MappingStatusActive, ProviderCostKobo: nil, ProviderDiscountBps: 0},
