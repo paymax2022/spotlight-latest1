@@ -60,14 +60,14 @@ func seedMeeting(t *testing.T, ctx context.Context, pool *pgxpool.Pool, estateID
 		id, estateID, status, adminID); err != nil {
 		t.Fatalf("seed meeting: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM estate_meetings WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM estate_meetings WHERE id=$1`, id) })
 	return id
 }
 
 func meetingStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, meetingID string) string {
 	t.Helper()
 	var s string
-	if err := pool.QueryRow(ctx, `SELECT status FROM estate_meetings WHERE id=$1`, meetingID).Scan(&s); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT status FROM estate_meetings WHERE id=$1`, meetingID).Scan(&s); err != nil {
 		t.Fatalf("meeting status: %v", err)
 	}
 	return s
@@ -239,16 +239,16 @@ func seedOpenElection(t *testing.T, ctx context.Context, pool *pgxpool.Pool, est
 		electionID, estateID, adminID); err != nil {
 		t.Fatalf("seed election: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM elections WHERE id=$1`, electionID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM elections WHERE id=$1`, electionID) })
 
 	candidateID = uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO election_candidates (id, election_id, name) VALUES ($1,$2,'Candidate A')`,
 		candidateID, electionID); err != nil {
 		t.Fatalf("seed candidate A: %v", err)
 	}
 	otherCandidateID := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO election_candidates (id, election_id, name) VALUES ($1,$2,'Candidate B')`,
 		otherCandidateID, electionID); err != nil {
 		t.Fatalf("seed candidate B: %v", err)
@@ -259,7 +259,7 @@ func seedOpenElection(t *testing.T, ctx context.Context, pool *pgxpool.Pool, est
 func voteCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, electionID, voterID string) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM election_votes WHERE election_id=$1 AND voter_id=$2`, electionID, voterID).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM election_votes WHERE election_id=$1 AND voter_id=$2`, electionID, voterID).Scan(&n); err != nil {
 		t.Fatalf("vote count: %v", err)
 	}
 	return n

@@ -66,8 +66,8 @@ func TestLiveDB_AdminApproveWithdrawal_FrozenCampaignIsRefused(t *testing.T) {
 		t.Fatalf("seed pending withdrawal: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM cf_withdrawals WHERE id = $1`, withdrawalID)
-		_, _ = pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_withdrawals WHERE id = $1`, withdrawalID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM campaigns WHERE id = $1`, campaignID)
 	})
 
 	// Freeze the campaign AFTER the withdrawal was already filed.
@@ -147,8 +147,8 @@ func TestLiveDB_AdminApproveWithdrawal_UnfrozenCampaignStillWorks(t *testing.T) 
 		t.Fatalf("seed pending withdrawal: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM cf_withdrawals WHERE id = $1`, withdrawalID)
-		_, _ = pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_withdrawals WHERE id = $1`, withdrawalID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM campaigns WHERE id = $1`, campaignID)
 	})
 
 	result, err := adminSvc.ApproveWithdrawal(ctx, withdrawalID, approverID, "cf-uat-unfrozen-approve-"+withdrawalID)

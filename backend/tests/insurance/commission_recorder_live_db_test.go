@@ -58,7 +58,7 @@ func seedPolicyRow(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID
 		t.Fatalf("seed policy: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM public.insurance_policy WHERE id=$1`, policyID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.insurance_policy WHERE id=$1`, policyID)
 	})
 	return policyID
 }

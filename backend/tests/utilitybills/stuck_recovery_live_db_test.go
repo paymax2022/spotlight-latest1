@@ -93,7 +93,7 @@ func (f *fixture) postGoDebit(t *testing.T, key, receipt string) {
 func (f *fixture) terminalize(t *testing.T, txID string) {
 	t.Helper()
 	t.Cleanup(func() {
-		if _, err := f.pool.Exec(context.Background(), `
+		if _, err := f.pool.Exec(context.WithoutCancel(t.Context()), `
 			UPDATE public.utility_transactions SET status = 'failed'
 			WHERE id = $1 AND status IN ('initiated','wallet_debited','provider_pending')`, txID); err != nil {
 			t.Logf("cleanup terminalize %s: %v", txID, err)

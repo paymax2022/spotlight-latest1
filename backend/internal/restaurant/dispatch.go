@@ -110,7 +110,7 @@ func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
 				Body:  "We're still finding a delivery rider — we'll keep trying.",
 				Data:  map[string]any{"order_id": orderID}})
 		}
-		s.broadcastStatus(orderID, OrderStatus("searching_rider"))
+		s.broadcastStatus(orderID, OrderStatus("searching_rider")) //nolint:contextcheck // WS publish outlives the request by design
 		return nil
 	}
 
@@ -135,7 +135,7 @@ func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
 		        dispatch_attempts = dispatch_attempts + 1 WHERE id=$1`, orderID); err != nil {
 		return err
 	}
-	s.broadcastStatus(orderID, OrderStatus("searching_rider"))
+	s.broadcastStatus(orderID, OrderStatus("searching_rider")) //nolint:contextcheck // WS publish outlives the request by design
 	_ = code
 	return nil
 }

@@ -386,7 +386,7 @@ func (s *Service) WithdrawEligible(ctx context.Context, beneficiaryID, idempoten
 	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(hashtext($1))`, lockName+beneficiaryID); err != nil {
 		return nil, fmt.Errorf("referral/ledger: withdraw lock: %w", err)
 	}
-	defer func() {
+	defer func() { //nolint:contextcheck // deliberate: unlock must not die with the request ctx
 		// Unlock on a fresh context; the request ctx may already be done.
 		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext($1))`, lockName+beneficiaryID)
 	}()

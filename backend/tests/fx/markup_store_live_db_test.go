@@ -37,8 +37,8 @@ func isolateCorridor(t *testing.T, ctx context.Context, pool *pgxpool.Pool) stri
 	corridor = fx.NormalizeCorridor(corridor)
 	t.Cleanup(func() {
 		ctx := t.Context()
-		_, _ = pool.Exec(ctx, `DELETE FROM public.fx_markup_rate_audit WHERE corridor=$1`, corridor)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.fx_markup_rates WHERE corridor=$1`, corridor)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.fx_markup_rate_audit WHERE corridor=$1`, corridor)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.fx_markup_rates WHERE corridor=$1`, corridor)
 	})
 	return corridor
 }

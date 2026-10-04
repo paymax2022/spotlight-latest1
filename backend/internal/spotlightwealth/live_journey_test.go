@@ -61,8 +61,8 @@ func TestLiveDB_ChallengeRewardWalletCredit(t *testing.T) {
 		t.Fatalf("seed challenge: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM spotlight_challenge_members WHERE challenge_id=$1`, chID)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM spotlight_challenges WHERE id=$1`, chID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM spotlight_challenge_members WHERE challenge_id=$1`, chID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM spotlight_challenges WHERE id=$1`, chID)
 	})
 
 	if _, err := svc.JoinChallenge(ctx, u, chID); err != nil {

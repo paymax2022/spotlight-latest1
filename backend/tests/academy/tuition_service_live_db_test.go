@@ -109,12 +109,12 @@ func (f *fakePaymentProvider) Name() string { return "fake" }
 // seedVerifiedUser creates (or updates) an auth.users + user_profiles row.
 // user_profiles.id has an FK to auth.users(id), so the auth row must exist first.
 func seedVerifiedUser(ctx context.Context, t *testing.T, pool *pgxpool.Pool, userID string) {
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
 		userID, userID+"@example.com"); err != nil {
 		t.Fatalf("seed auth user: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO public.user_profiles (id) VALUES ($1)
 		ON CONFLICT (id) DO NOTHING
 	`, userID); err != nil {
@@ -125,7 +125,7 @@ func seedVerifiedUser(ctx context.Context, t *testing.T, pool *pgxpool.Pool, use
 // seedBatch creates a test batch with a training fee configured.
 func seedBatch(ctx context.Context, t *testing.T, pool *pgxpool.Pool, feeNaira int64, installments int32, discountPct int32) string {
 	var batchID string
-	err := pool.QueryRow(ctx, `
+	err := pool.QueryRow(context.WithoutCancel(ctx), `
 		INSERT INTO public.academy_batches
 			(batch_name, start_date, training_schedule, duration_weeks,
 			 training_fee_ngn, installments_count, fee_frequency, one_off_discount_pct, fee_start_offset_days)
@@ -142,7 +142,7 @@ func seedBatch(ctx context.Context, t *testing.T, pool *pgxpool.Pool, feeNaira i
 func seedApplication(ctx context.Context, t *testing.T, pool *pgxpool.Pool, userID, batchID string,
 	tuitionTotalNaira int64, paymentPreference string) string {
 	var appID string
-	err := pool.QueryRow(ctx, `
+	err := pool.QueryRow(context.WithoutCancel(ctx), `
 		INSERT INTO public.academy_applications
 			(batch_id, user_id, full_name, email, phone, payment_preference, payment_status, tuition_total_ngn)
 		VALUES ($1, $2, 'Test Applicant', 'test@example.com', '+2340000000000', $3, 'pending', $4)

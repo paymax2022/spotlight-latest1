@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strings"
@@ -22,9 +23,9 @@ type PermissionMatrix struct {
 }
 
 type RBACService interface {
-	GetUserRoles(userID string) ([]string, error)
+	GetUserRoles(ctx context.Context, userID string) ([]string, error)
 	GetUserScopes(userID string) ([]domain.UserScope, error)
-	GetUserPermissions(userID, scopeType, scopeID string) ([]string, error)
+	GetUserPermissions(ctx context.Context, userID, scopeType, scopeID string) ([]string, error)
 	CheckPermission(userID, permission, scopeType, scopeID string) (bool, error)
 	ListRoles() ([]domain.Role, error)
 	CreateRole(role domain.Role) (domain.Role, error)
@@ -40,7 +41,7 @@ type RBACService interface {
 	DeletePermission(permissionID string) error
 	AssignRoleToUser(userID, roleID, scopeType, scopeID, assignedBy string) error
 	RemoveRoleFromUser(actorUserID, userID, roleID string) error
-	GetUserStatus(userID string) (string, error)
+	GetUserStatus(ctx context.Context, userID string) (string, error)
 	SuspendUser(userID string) error
 	UnsuspendUser(userID string) error
 	LockUser(userID string) error
@@ -67,14 +68,14 @@ type BulkOpResult struct {
 type rbacService struct{ repo repositories.RBACRepository }
 
 func NewRBACService(repo repositories.RBACRepository) RBACService { return &rbacService{repo: repo} }
-func (s *rbacService) GetUserRoles(userID string) ([]string, error) {
-	return s.repo.GetUserRoles(userID)
+func (s *rbacService) GetUserRoles(ctx context.Context, userID string) ([]string, error) {
+	return s.repo.GetUserRoles(ctx, userID)
 }
 func (s *rbacService) GetUserScopes(userID string) ([]domain.UserScope, error) {
 	return s.repo.GetUserScopes(userID)
 }
-func (s *rbacService) GetUserPermissions(userID, scopeType, scopeID string) ([]string, error) {
-	return s.repo.GetUserPermissions(userID, scopeType, scopeID)
+func (s *rbacService) GetUserPermissions(ctx context.Context, userID, scopeType, scopeID string) ([]string, error) {
+	return s.repo.GetUserPermissions(ctx, userID, scopeType, scopeID)
 }
 func (s *rbacService) CheckPermission(userID, permission, scopeType, scopeID string) (bool, error) {
 	return s.repo.HasPermission(userID, permission, scopeType, scopeID)
@@ -156,7 +157,7 @@ func (s *rbacService) AssignPermissionToRole(actorUserID, roleID, permissionID s
 	}
 	critical := map[string]struct{}{"votes.override": {}, "payments.refund": {}, "permissions.assign": {}, "roles.delete": {}, "users.roles.assign": {}, "permissions.delete": {}}
 	if _, ok := critical[strings.TrimSpace(perm.Slug)]; ok {
-		roles, _ := s.repo.GetUserRoles(actorUserID)
+		roles, _ := s.repo.GetUserRoles(context.Background(), actorUserID)
 		isSuper := slices.Contains(roles, "super-admin")
 		if !isSuper {
 			return errors.New("critical permissions can only be assigned by super admin")
@@ -196,8 +197,8 @@ func (s *rbacService) RemoveRoleFromUser(actorUserID, userID, roleID string) err
 	}
 	return s.repo.RemoveRoleFromUser(userID, roleID)
 }
-func (s *rbacService) GetUserStatus(userID string) (string, error) {
-	return s.repo.GetUserStatus(userID)
+func (s *rbacService) GetUserStatus(ctx context.Context, userID string) (string, error) {
+	return s.repo.GetUserStatus(ctx, userID)
 }
 func (s *rbacService) SuspendUser(userID string) error   { return s.repo.SuspendUser(userID) }
 func (s *rbacService) UnsuspendUser(userID string) error { return s.repo.UnsuspendUser(userID) }

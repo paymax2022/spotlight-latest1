@@ -34,7 +34,7 @@ func TestLiveDB_InviteIssuesAOneTimeTokenAndStoresOnlyItsHash(t *testing.T) {
 
 	var stored string
 	var status, role string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT COALESCE(invite_token_hash,''), status, role FROM restaurant_staff
 		  WHERE restaurant_id=$1 AND user_id=$2`, f.lekki, invitee).Scan(&stored, &status, &role); err != nil {
 		t.Fatalf("read invite row: %v", err)
@@ -210,7 +210,7 @@ func TestLiveDB_StaffRosterIsScopedAndGuarded(t *testing.T) {
 func seedUser(t *testing.T, ctx context.Context, f staffFixture) string {
 	t.Helper()
 	id := uuid.New().String()
-	if _, err := f.pool.Exec(ctx,
+	if _, err := f.pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}

@@ -25,7 +25,7 @@ func seedListingWithSellerPhone(t *testing.T, ctx context.Context, phone string)
 			t.Fatalf("seed user: %v", err)
 		}
 		t.Cleanup(func() {
-			_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id)
+			_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, id)
 		})
 		return id
 	}
@@ -104,17 +104,19 @@ func TestContactReveal_RateLimitsAcrossListings(t *testing.T) {
 		viewer, viewer+"@seed.test"); err != nil {
 		t.Fatalf("seed viewer: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, viewer) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id=$1`, viewer)
+	})
 
 	// 11 distinct listings, each a different seller with a number: the 11th must
 	// be refused because the hourly budget is 10.
 	for i := range 11 {
 		seller := uuid.NewString()
-		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 			seller, seller+"@seed.test"); err != nil {
 			t.Fatalf("seed seller: %v", err)
 		}
-		if _, err := pool.Exec(ctx,
+		if _, err := pool.Exec(context.WithoutCancel(ctx),
 			`INSERT INTO public.user_profiles (id, email, phone) VALUES ($1,$2,$3)
 			 ON CONFLICT (id) DO UPDATE SET phone=EXCLUDED.phone`,
 			seller, seller+"@seed.test", fmt.Sprintf("0803000%04d", i)); err != nil {

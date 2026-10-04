@@ -90,10 +90,10 @@ func seedIssuedTicket(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cre
 		eventID, ownerID, time.Now().Add(24*time.Hour), time.Now().Add(30*time.Hour)); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM events WHERE id=$1`, eventID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM events WHERE id=$1`, eventID) })
 
 	typeID := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO event_ticket_types (id, event_id, name) VALUES ($1,$2,'General')`, typeID, eventID); err != nil {
 		t.Fatalf("seed ticket type: %v", err)
 	}
@@ -102,7 +102,7 @@ func seedIssuedTicket(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cre
 	// sold starts at 1, not 0: this ticket exists, so a tier whose sold count
 	// didn't reflect that would make any aggregate read (ListMyOrganiserEvents,
 	// SoldOut) silently wrong for every test built on this fixture.
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO event_ticket_tiers (id, event_id, name, price_kobo, capacity, sold) VALUES ($1,$2,'General',500000,100,1)`,
 		tierID, eventID); err != nil {
 		t.Fatalf("seed tier: %v", err)
@@ -114,7 +114,7 @@ func seedIssuedTicket(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cre
 	// this test matches production's real invariant rather than exercising a case
 	// getTicket doesn't handle, which is a separate, pre-existing latent bug.
 	orderID := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO event_orders (id, event_id, buyer_id, tier_id, total_kobo, idempotency_key) VALUES ($1,$2,$3,$4,500000,$5)`,
 		orderID, eventID, ownerID, tierID, "itest-order-"+orderID); err != nil {
 		t.Fatalf("seed order: %v", err)
@@ -134,7 +134,9 @@ func seedIssuedTicket(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cre
 		ticketID, eventID, typeID, tierID, orderID, ownerID, c.ID, "itest-"+ticketID); err != nil {
 		t.Fatalf("seed ticket: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM event_tickets WHERE id=$1`, ticketID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM event_tickets WHERE id=$1`, ticketID)
+	})
 
 	return ticketID
 }

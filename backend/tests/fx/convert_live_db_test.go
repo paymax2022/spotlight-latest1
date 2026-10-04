@@ -86,10 +86,10 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	testsupport.SetKycTier(t, ctx, pool, id, testsupport.KycTierUnlimited)
 	t.Cleanup(func() {
 		ctx := t.Context()
-		_, _ = pool.Exec(ctx, `DELETE FROM public.fx_conversions WHERE user_id=$1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.fx_quotes WHERE user_id=$1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.currency_wallets WHERE user_id=$1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.fx_conversions WHERE user_id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.fx_quotes WHERE user_id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.currency_wallets WHERE user_id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, id)
 	})
 	return id
 }

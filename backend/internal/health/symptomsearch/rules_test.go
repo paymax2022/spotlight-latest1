@@ -45,7 +45,7 @@ func TestParseRule_Malformed(t *testing.T) {
 		"concept:fever AND",               // dangling AND
 		"(concept:fever",                  // unclosed paren
 		"concept:fever)",                  // trailing token
-		"concept:fever OR concept:c",      // double operator
+		"concept:fever AND OR concept:c",  // double operator
 		"fever",                           // bare word is not a predicate
 		"concept:fever and concept:cough", // keywords are case-sensitive UPPERCASE
 		"duration_days ! 3",               // illegal character

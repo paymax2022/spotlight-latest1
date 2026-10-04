@@ -39,7 +39,7 @@ func seedCategoryInMarket(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		t.Fatalf("seed %s category: %v", market, err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.mkt_categories WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_categories WHERE id=$1`, id)
 	})
 	return id
 }
@@ -86,7 +86,7 @@ func TestMarketScope_CreateListingAcceptsSameMarketCategory(t *testing.T) {
 		t.Fatalf("CreateListing rejected a same-market category: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.mkt_listings WHERE id=$1`, l.ID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.mkt_listings WHERE id=$1`, l.ID)
 	})
 	if l.MarketID != "NG" {
 		t.Errorf("listing market = %q, want NG", l.MarketID)
@@ -156,6 +156,6 @@ func TestMarketScope_PriceBandAcceptsSameMarketCategory(t *testing.T) {
 		t.Fatalf("same-market price band rejected: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.mkt_price_bands WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.mkt_price_bands WHERE id=$1`, id)
 	})
 }

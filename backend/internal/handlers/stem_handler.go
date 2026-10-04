@@ -113,7 +113,7 @@ func (h *StemHandler) MyRole(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "missing verified identity"})
 		return
 	}
-	roleSlugs, err := h.rbac.GetUserRoles(adminUserID)
+	roleSlugs, err := h.rbac.GetUserRoles(c.Request.Context(), adminUserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not resolve roles"})
 		return

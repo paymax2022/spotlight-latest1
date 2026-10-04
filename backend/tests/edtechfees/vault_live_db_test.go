@@ -106,8 +106,8 @@ func (a vaultInvoiceAdapter) RecordPayment(ctx context.Context, invoiceID, guard
 func cleanupVault(t *testing.T, pool *pgxpool.Pool, vaultID string) {
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = pool.Exec(ctx, `DELETE FROM public.academy_pot_contributions WHERE pot_id=$1`, vaultID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.academy_savings_pots WHERE id=$1`, vaultID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.academy_pot_contributions WHERE pot_id=$1`, vaultID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.academy_savings_pots WHERE id=$1`, vaultID)
 	})
 }
 

@@ -429,7 +429,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 			revoked = true
 		}
 		if h.sessionHardening && h.sessions != nil {
-			if sess, err := h.sessions.ValidateAccess(token); err == nil && sess != nil {
+			if sess, err := h.sessions.ValidateAccess(c.Request.Context(), token); err == nil && sess != nil {
 				_ = h.sessions.RevokeOne(u.ID, u.ID, sess.ID, "logout")
 			}
 		}

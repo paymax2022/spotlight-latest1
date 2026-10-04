@@ -83,7 +83,7 @@ func (f *fakeBoostLedger) GetOrCreateUserWallet(_ context.Context, userID string
 	return a, nil
 }
 
-func (f *fakeBoostLedger) Debit(_ context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error {
+func (f *fakeBoostLedger) Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error {
 	if f.debitErr != nil {
 		return f.debitErr // fail-closed: sufficiency (or other) error, nothing posted
 	}
@@ -91,7 +91,7 @@ func (f *fakeBoostLedger) Debit(_ context.Context, userID, reference, idempotenc
 		return ledger.ErrDuplicate // idempotent replay: no second posting
 	}
 	f.seen[idempotencyKey] = true
-	wallet, _ := f.GetOrCreateUserWallet(context.Background(), userID)
+	wallet, _ := f.GetOrCreateUserWallet(ctx, userID)
 	f.debits = append(f.debits, recordedDebit{
 		debitAccount:  wallet.ID,
 		creditAccount: creditAccountID,

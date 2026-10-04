@@ -157,9 +157,9 @@ func (f *fakeRepo) ReviewCaseByID(_ context.Context, id string) (*PharmacyReview
 	return nil, nil
 }
 
-func (f *fakeRepo) ReviewCaseByOrder(_ context.Context, orderID string) (*PharmacyReviewCase, error) {
+func (f *fakeRepo) ReviewCaseByOrder(ctx context.Context, orderID string) (*PharmacyReviewCase, error) {
 	if id, ok := f.casesByOrder[orderID]; ok {
-		return f.ReviewCaseByID(context.Background(), id)
+		return f.ReviewCaseByID(ctx, id)
 	}
 	return nil, nil
 }

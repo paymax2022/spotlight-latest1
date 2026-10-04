@@ -149,7 +149,7 @@ func TestLiveDB_SuspendedStaffLoseAccessImmediately(t *testing.T) {
 	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`UPDATE restaurant_staff SET status='SUSPENDED' WHERE restaurant_id=$1 AND user_id=$2`,
 		f.lekki, f.manager); err != nil {
 		t.Fatalf("suspend: %v", err)

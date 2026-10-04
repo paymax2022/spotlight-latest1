@@ -226,7 +226,7 @@ func TestLiveDB_AdminDashboard_ExcludesNonVetAppointments(t *testing.T) {
 		t.Fatalf("seed foreign provider: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM health_providers WHERE id=$1`, foreignProviderID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM health_providers WHERE id=$1`, foreignProviderID)
 	})
 
 	foreignApptID := uuid.New().String()
@@ -238,7 +238,7 @@ func TestLiveDB_AdminDashboard_ExcludesNonVetAppointments(t *testing.T) {
 		t.Fatalf("seed foreign appointment: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM health_appointments WHERE id=$1`, foreignApptID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM health_appointments WHERE id=$1`, foreignApptID)
 	})
 
 	after, err := svc.AdminDashboard(ctx)

@@ -96,7 +96,7 @@ func seedBoostCategory(t *testing.T, ctx context.Context, pool *pgxpool.Pool) st
 		id, "boost-test-"+id); err != nil {
 		t.Fatalf("seed category: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM mkt_categories WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM mkt_categories WHERE id=$1`, id) })
 	return id
 }
 
@@ -109,10 +109,10 @@ func seedActiveListing(t *testing.T, ctx context.Context, pool *pgxpool.Pool, se
 			 condition, status, escrow_eligible, state)
 		VALUES ($1,'NG',$2,$3,'Boost Test Listing Title','A perfectly ordinary listing description with eight whole words',
 		        1000000,'NGN','used','active',true,'Lagos')`
-	if _, err := pool.Exec(ctx, q, id, sellerID, categoryID); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), q, id, sellerID, categoryID); err != nil {
 		t.Fatalf("seed listing: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM mkt_listings WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM mkt_listings WHERE id=$1`, id) })
 	return id
 }
 
@@ -133,7 +133,7 @@ func fundBoostWallet(t *testing.T, ctx context.Context, led *ledger.Service, use
 func boostWalletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID string) int64 {
 	t.Helper()
 	var bal int64
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT COALESCE(SUM(CASE WHEN e.type IN ('CREDIT','REVERSAL_DEBIT') THEN e.amount_kobo ELSE -e.amount_kobo END),0)
 		FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
 		WHERE a.user_id=$1`, userID).Scan(&bal); err != nil {
@@ -160,7 +160,7 @@ func boostCommissionLegKobo(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 		t.Fatalf("commission account: %v", err)
 	}
 	var moved int64
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries
 		  WHERE idempotency_key=$1 AND type=$2 AND account_id=$3`,
 		idempotencyKey, entryType, acc.ID).Scan(&moved); err != nil {
@@ -186,7 +186,7 @@ func boostRefundCommissionKobo(t *testing.T, ctx context.Context, pool *pgxpool.
 func boostRowCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, listingID string) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM mkt_boosts WHERE listing_id=$1`, listingID).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM mkt_boosts WHERE listing_id=$1`, listingID).Scan(&n); err != nil {
 		t.Fatalf("boost row count: %v", err)
 	}
 	return n
@@ -195,7 +195,7 @@ func boostRowCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, listin
 func ledgerEntryCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, reference string) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ledger_entries WHERE reference=$1`, reference).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM ledger_entries WHERE reference=$1`, reference).Scan(&n); err != nil {
 		t.Fatalf("ledger entry count for ref %s: %v", reference, err)
 	}
 	return n
@@ -415,7 +415,9 @@ func TestLiveDB_RejectBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, fakeSeller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed boost: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_boosts WHERE id=$1`, boostID)
+	})
 
 	_, err := svc.RejectBoost(ctx, admin, boostID, "policy_violation")
 	if err == nil {
@@ -428,7 +430,7 @@ func TestLiveDB_RejectBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 	// refund_ref=NULL — the stranded state agent #1 reported live.
 	var status string
 	var refundRef *string
-	if err := pool.QueryRow(ctx, `SELECT status, refund_ref FROM mkt_boosts WHERE id=$1`, boostID).Scan(&status, &refundRef); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT status, refund_ref FROM mkt_boosts WHERE id=$1`, boostID).Scan(&status, &refundRef); err != nil {
 		t.Fatalf("read boost: %v", err)
 	}
 	if status != string(BoostActive) {
@@ -442,7 +444,7 @@ func TestLiveDB_RejectBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 	// production; here, just seeding auth.users), a retry must succeed cleanly
 	// — guardBoostTransition still accepts 'active' as the FROM status because
 	// the failed attempt changed nothing.
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, fakeSeller, fakeSeller+"@seed.test"); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, fakeSeller, fakeSeller+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users for retry: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, fakeSeller)
@@ -480,10 +482,12 @@ func TestLiveDB_RejectBoost_ResumesFromStrandedRejectedWithReasonRow(t *testing.
 	const insBoost = `
 		INSERT INTO mkt_boosts (id, listing_id, seller_id, tier, duration_days, price_kobo, weight, status, rejection_reason_code, ledger_charge_ref, starts_at, ends_at)
 		VALUES ($1,$2,$3,'start',7,$4,1.0,'rejected_with_reason','policy_violation',$5,now(),now()+interval '7 days')`
-	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, seller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), insBoost, boostID, listingID, seller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed stranded boost: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_boosts WHERE id=$1`, boostID)
+	})
 
 	sellerBalBefore := boostWalletBalance(t, ctx, pool, seller)
 
@@ -752,7 +756,9 @@ func TestLiveDB_CancelBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, fakeSeller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed boost: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_boosts WHERE id=$1`, boostID)
+	})
 
 	_, err := svc.CancelBoost(ctx, fakeSeller, boostID)
 	if err == nil {
@@ -762,7 +768,7 @@ func TestLiveDB_CancelBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 
 	var status string
 	var refundRef *string
-	if err := pool.QueryRow(ctx, `SELECT status, refund_ref FROM mkt_boosts WHERE id=$1`, boostID).Scan(&status, &refundRef); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT status, refund_ref FROM mkt_boosts WHERE id=$1`, boostID).Scan(&status, &refundRef); err != nil {
 		t.Fatalf("read boost: %v", err)
 	}
 	if status != string(BoostActive) {
@@ -773,7 +779,7 @@ func TestLiveDB_CancelBoost_SellerMissingLedgerAccount_FailsAtomicallyWithoutStr
 	}
 
 	// RESUMABLE: once the seller has a real identity, a retry must succeed.
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, fakeSeller, fakeSeller+"@seed.test"); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, fakeSeller, fakeSeller+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users for retry: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, fakeSeller)
@@ -813,10 +819,12 @@ func TestLiveDB_CancelBoost_ResumesFromStrandedCancelledBySellerRow(t *testing.T
 	const insBoost = `
 		INSERT INTO mkt_boosts (id, listing_id, seller_id, tier, duration_days, price_kobo, weight, status, rejection_reason_code, ledger_charge_ref, starts_at, ends_at)
 		VALUES ($1,$2,$3,'start',7,$4,1.0,'cancelled_by_seller','seller_cancelled',$5, now() - interval '1 day', now() + interval '6 days')`
-	if _, err := pool.Exec(ctx, insBoost, boostID, listingID, seller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), insBoost, boostID, listingID, seller, startTierPriceKobo, "test:charge:"+boostID); err != nil {
 		t.Fatalf("seed stranded boost: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, boostID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_boosts WHERE id=$1`, boostID)
+	})
 
 	sellerBalBefore := boostWalletBalance(t, ctx, pool, seller)
 

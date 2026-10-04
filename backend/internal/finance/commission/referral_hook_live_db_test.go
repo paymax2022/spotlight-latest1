@@ -67,7 +67,7 @@ func TestReferralHook_FiresOnceOnNewEarning_NeverOnReplay(t *testing.T) {
 	userID := uuid.NewString()
 	idempotencyKey := "test:referral-hook:" + uuid.NewString()
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.commission_earnings WHERE idempotency_key = $1`, idempotencyKey)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.commission_earnings WHERE idempotency_key = $1`, idempotencyKey)
 	})
 
 	earning, err := svc.RecordExact(ctx, "test", "test", "test", 1_000_00, 20_000, "test_module", "ref-"+uuid.NewString(), &userID, idempotencyKey)
@@ -117,13 +117,13 @@ func TestReferralHook_FiresOnRecordEarning(t *testing.T) {
 		t.Fatalf("seed commission_config: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.commission_config WHERE id = $1`, configID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.commission_config WHERE id = $1`, configID)
 	})
 
 	userID := uuid.NewString()
 	idempotencyKey := "test:referral-hook-record-earning:" + uuid.NewString()
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.commission_earnings WHERE idempotency_key = $1`, idempotencyKey)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.commission_earnings WHERE idempotency_key = $1`, idempotencyKey)
 	})
 
 	_, err := svc.RecordEarning(ctx, commission.EarningInput{

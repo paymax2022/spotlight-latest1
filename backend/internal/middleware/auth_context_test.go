@@ -25,7 +25,7 @@ type statusRBAC struct {
 	err    error
 }
 
-func (s statusRBAC) GetUserStatus(string) (string, error) { return s.status, s.err }
+func (s statusRBAC) GetUserStatus(context.Context, string) (string, error) { return s.status, s.err }
 
 func authUserServer(t *testing.T, status int, body string) *httptest.Server {
 	t.Helper()

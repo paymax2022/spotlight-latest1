@@ -82,7 +82,7 @@ func orgWithAdminAndMember(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	// it names what this helper created, and reads as intent rather than relying
 	// on the generic unwind to have covered it.
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_meetings WHERE organisation_id=$1`, orgID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_meetings WHERE organisation_id=$1`, orgID)
 		deleteOrganisation(ctx, pool, orgID)
 	})
 	return orgID, adminID, memberID
@@ -225,7 +225,7 @@ func TestDecideMeeting_OnlyAdminsAndOnlyOnce(t *testing.T) {
 		t.Fatalf("seed outsider: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, outsider)
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, outsider) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, outsider) })
 	if _, err := svc.DecideMeeting(ctx, outsider, id, association.MeetingApprovalDecision{Approve: true}); err == nil {
 		t.Fatal("an outsider must not be able to decide a meeting")
 	}

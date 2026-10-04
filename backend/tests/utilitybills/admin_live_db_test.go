@@ -210,7 +210,7 @@ func (f *adminFixture) cleanupProduct(t *testing.T, productID string) {
 func (f *adminFixture) cleanupBiller(t *testing.T, billerID string) {
 	t.Helper()
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM public.utility_billers WHERE id=$1`, billerID)
+		_, _ = f.pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.utility_billers WHERE id=$1`, billerID)
 	})
 }
 
@@ -440,7 +440,7 @@ func TestLiveDB_Admin_CredentialsRotationFailsClosedWithoutAKey(t *testing.T) {
 		t.Fatalf("seed provider: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.utility_providers WHERE id=$1`, providerID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.utility_providers WHERE id=$1`, providerID)
 	})
 
 	_, err := keyless.RotateProviderCredentials(ctx, "admin", providerID, map[string]any{"api_key": "x"})
@@ -863,7 +863,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	}
 	restore := *original
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `
+		_, _ = f.pool.Exec(context.WithoutCancel(t.Context()), `
 			UPDATE public.utility_category_settings
 			SET enabled=$2, daily_limit_kobo=$3 WHERE category=$1`,
 			restore.Category, restore.Enabled, restore.DailyLimitKobo)
@@ -1066,7 +1066,7 @@ func (f *adminFixture) seedReportTransaction(t *testing.T, userID, billerID, pro
 		t.Fatalf("seed report transaction: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM public.utility_transactions WHERE id=$1`, id)
+		_, _ = f.pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.utility_transactions WHERE id=$1`, id)
 	})
 	return id
 }
@@ -1083,7 +1083,7 @@ func (f *adminFixture) seedAttempt(t *testing.T, transactionID, providerID, stat
 	// Removed by the transaction's own cleanup cascade? No — attempts have a plain
 	// FK, so they are deleted explicitly, BEFORE the transaction row.
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(),
+		_, _ = f.pool.Exec(context.WithoutCancel(t.Context()),
 			`DELETE FROM public.utility_provider_attempts WHERE transaction_id=$1`, transactionID)
 	})
 }
@@ -1110,7 +1110,7 @@ func TestLiveDB_Admin_Reports(t *testing.T) {
 		t.Fatalf("seed user: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, userID)
+		_, _ = f.pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id=$1`, userID)
 	})
 
 	// on a shared database, so only the DELTA can be asserted. ---
@@ -1232,7 +1232,7 @@ func TestLiveDB_Admin_ListTransactionsFiltersByStatus(t *testing.T) {
 		t.Fatalf("seed user: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, userID)
+		_, _ = f.pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id=$1`, userID)
 	})
 
 	reversedID := f.seedReportTransaction(t, userID, billerID, prov.ID, "reversed", 300_000, 290_000, 10_000)

@@ -59,7 +59,7 @@ func TestNF004_CreditPaidVoteTransaction_FailurePartwayLeavesNoSideEffects(t *te
 		t.Fatalf("seed zero-quantity vote_transaction: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.vote_transactions WHERE id=$1`, txID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.vote_transactions WHERE id=$1`, txID)
 	})
 
 	// This call MUST fail: total_votes_to_credit=0 makes the function's own
@@ -145,7 +145,7 @@ func TestNF004_ClaimFreeVote_GoConnect_FailurePartwayLeavesNoSideEffects(t *test
 		t.Fatalf("seed pre-existing connect_votes row: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM connect_votes WHERE id=$1`, preexistingID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM connect_votes WHERE id=$1`, preexistingID)
 	})
 
 	repo := connectvoting.NewRepository(pool)

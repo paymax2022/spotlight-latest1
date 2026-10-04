@@ -68,7 +68,7 @@ func prSeedRestaurant(t *testing.T, ctx context.Context, pool *pgxpool.Pool, own
 		restID, ownerID); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM restaurants WHERE id=$1`, restID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM restaurants WHERE id=$1`, restID) })
 	return restID
 }
 
@@ -80,13 +80,13 @@ func prSeedRestaurantSettlement(t *testing.T, ctx context.Context, pool *pgxpool
 	oid := uuid.New().String()
 	settID := uuid.New().String()
 	totalKobo := providerKobo + feeKobo + 10000
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO settlements (id, reference, module_type, payer_id, total_kobo, provider_kobo, fee_kobo, idempotency_key, status, settled_at)
 		VALUES ($1,$2,'food_delivery',$3,$4,$5,$6,$7,'settled',now())`,
 		settID, "order:"+oid, customerID, totalKobo, providerKobo, feeKobo, "pr-"+settID); err != nil {
 		t.Fatalf("seed settlement: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, total_kobo, status, idempotency_key, delivery_address, settlement_id)
 		VALUES ($1,$2,$3,$4,$4,'delivered',$5,'1 Test St',$6)`,
 		oid, customerID, restID, totalKobo, "prorder-"+oid, settID); err != nil {
@@ -103,13 +103,13 @@ func prSeedRiderSettlement(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	oid := uuid.New().String()
 	settID := uuid.New().String()
 	totalKobo := riderShare + providerKobo + feeKobo
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO settlements (id, reference, module_type, payer_id, total_kobo, provider_kobo, fee_kobo, idempotency_key, status, settled_at)
 		VALUES ($1,$2,'food_delivery',$3,$4,$5,$6,$7,'settled',now())`,
 		settID, "order:"+oid, customerID, totalKobo, providerKobo, feeKobo, "pr-"+settID); err != nil {
 		t.Fatalf("seed settlement: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO orders (id, customer_id, restaurant_id, rider_id, subtotal_kobo, total_kobo, status, idempotency_key, delivery_address, settlement_id)
 		VALUES ($1,$2,$3,$4,$5,$5,'delivered',$6,'1 Test St',$7)`,
 		oid, customerID, restID, riderID, totalKobo, "prorder-"+oid, settID); err != nil {
@@ -123,7 +123,7 @@ func prSeedRiderSettlement(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 func prWalletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID string) int64 {
 	t.Helper()
 	var bal int64
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT COALESCE(SUM(CASE WHEN e.type IN ('CREDIT','REVERSAL_CREDIT') THEN e.amount_kobo ELSE -e.amount_kobo END),0)
 		FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
 		WHERE a.user_id=$1`, userID).Scan(&bal); err != nil {
@@ -153,7 +153,7 @@ func prSettlementDebitKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	var total int64
 	for _, k := range runIdemKeys {
 		var paid int64
-		if err := pool.QueryRow(ctx,
+		if err := pool.QueryRow(context.WithoutCancel(ctx),
 			`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries
 			  WHERE idempotency_key=$1 AND type='DEBIT' AND account_id=$2`,
 			k+":debit", settleAcc.ID).Scan(&paid); err != nil {
@@ -170,7 +170,7 @@ func prSettlementDebitKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 func prPayoutLineCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, settlementID string) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM restaurant_payout_lines WHERE settlement_id=$1`, settlementID).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM restaurant_payout_lines WHERE settlement_id=$1`, settlementID).Scan(&n); err != nil {
 		t.Fatalf("payout line count: %v", err)
 	}
 	return n
@@ -522,7 +522,7 @@ func TestLiveDB_ProcessRunRecoversFromCrashBetweenPostAndFinalise(t *testing.T) 
 
 	// Manually reproduce steps (1) and (2) of ProcessRun, then STOP — simulating
 	// the process dying before step (3)'s finalise UPDATE commits.
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`UPDATE restaurant_payout_runs SET status='processing' WHERE id=$1 AND status='draft'`, run.ID); err != nil {
 		t.Fatalf("simulate claim: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestLiveDB_ProcessRunRecoversFromCrashBetweenPostAndFinalise(t *testing.T) 
 	}
 	// Confirm the crash state: money moved, run bookkeeping did not.
 	var stuckStatus string
-	if err := pool.QueryRow(ctx, `SELECT status FROM restaurant_payout_runs WHERE id=$1`, run.ID).Scan(&stuckStatus); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT status FROM restaurant_payout_runs WHERE id=$1`, run.ID).Scan(&stuckStatus); err != nil {
 		t.Fatalf("read stuck run: %v", err)
 	}
 	if stuckStatus != PayoutStatusProcessing {

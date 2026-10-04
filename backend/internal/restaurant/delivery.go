@@ -645,7 +645,7 @@ func (s *Service) AcceptDelivery(ctx context.Context, orderID, riderID string) e
 		s.notify(ctx, Notification{UserID: owner, Event: EventOrderAccepted, Title: "Rider accepted",
 			Body: "A rider accepted the delivery.", Data: map[string]any{"order_id": orderID}})
 	}
-	s.broadcastStatus(orderID, OrderStatus("rider_accepted"))
+	s.broadcastStatus(orderID, OrderStatus("rider_accepted")) //nolint:contextcheck // WS publish outlives the request by design
 	return nil
 }
 
@@ -665,7 +665,7 @@ func (s *Service) PostLocation(ctx context.Context, orderID, riderID string, lat
 		uuid.New().String(), orderID, riderID, lat, lng); err != nil {
 		return err
 	}
-	s.broadcastLocation(orderID, lat, lng)
+	s.broadcastLocation(orderID, lat, lng) //nolint:contextcheck // WS publish outlives the request by design
 	return nil
 }
 
@@ -826,7 +826,7 @@ func (s *Service) SendMessage(ctx context.Context, orderID, senderID string, req
 			Data:   map[string]any{"order_id": orderID, "sender_role": role},
 		})
 	}
-	s.broadcastMessage(orderID, m)
+	s.broadcastMessage(orderID, m) //nolint:contextcheck // WS publish outlives the request by design
 	return m, nil
 }
 

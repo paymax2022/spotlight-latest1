@@ -31,7 +31,7 @@ func seedProduct(t *testing.T, ctx context.Context, f inboxFixture, pharmacyID, 
 		t.Fatalf("seed product: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM pharmacy_products WHERE id=$1`, id)
+		_, _ = f.pool.Exec(context.WithoutCancel(ctx), `DELETE FROM pharmacy_products WHERE id=$1`, id)
 	})
 	return id
 }

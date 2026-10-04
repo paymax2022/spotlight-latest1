@@ -88,7 +88,7 @@ func seedCampaign(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (campai
 
 	t.Cleanup(func() {
 		mustExec := func(what, sql string, args ...any) {
-			if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			if _, err := pool.Exec(context.WithoutCancel(ctx), sql, args...); err != nil {
 				t.Errorf("cleanup %s: %v (fixture rows may be left in the database)", what, err)
 			}
 		}
@@ -102,7 +102,7 @@ func seedCampaign(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (campai
 
 		// Prove the fixture is actually gone rather than trusting the DELETEs.
 		var left int
-		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM campaigns WHERE id = $1`, campaignID).Scan(&left); err == nil && left != 0 {
+		if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT COUNT(*) FROM campaigns WHERE id = $1`, campaignID).Scan(&left); err == nil && left != 0 {
 			t.Errorf("fixture campaign %s survived cleanup", campaignID)
 		}
 	})

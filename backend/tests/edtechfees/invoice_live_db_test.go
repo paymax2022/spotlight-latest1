@@ -177,7 +177,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	}
 	testsupport.CleanupUser(t, pool, id)
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, id)
 	})
 	return id
 }
@@ -190,7 +190,7 @@ func seedSchool(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 		t.Fatalf("seed academy_schools: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.academy_schools WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.academy_schools WHERE id=$1`, id)
 	})
 	return id
 }
@@ -208,7 +208,7 @@ func seedStudent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, schoolID
 		t.Fatalf("seed academy_students: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.academy_students WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.academy_students WHERE id=$1`, id)
 	})
 	return id
 }
@@ -225,7 +225,7 @@ func seedFeeSchedule(t *testing.T, ctx context.Context, pool *pgxpool.Pool, scho
 		t.Fatalf("seed academy_fee_schedules: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.academy_fee_schedules WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.academy_fee_schedules WHERE id=$1`, id)
 	})
 	return id
 }
@@ -234,8 +234,8 @@ func seedFeeSchedule(t *testing.T, ctx context.Context, pool *pgxpool.Pool, scho
 func cleanupInvoice(t *testing.T, pool *pgxpool.Pool, invoiceID string) {
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = pool.Exec(ctx, `DELETE FROM public.academy_invoice_payments WHERE invoice_id=$1`, invoiceID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.academy_invoices WHERE id=$1`, invoiceID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.academy_invoice_payments WHERE invoice_id=$1`, invoiceID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.academy_invoices WHERE id=$1`, invoiceID)
 	})
 }
 

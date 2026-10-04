@@ -208,7 +208,7 @@ func TestSpreadUnification_MissingDefaultRowIsAnError(t *testing.T) {
 
 	t.Cleanup(func() {
 		ctx := context.Background()
-		if _, err := pool.Exec(ctx, `UPDATE public.fx_markup_rates SET active=true WHERE corridor='DEFAULT'`); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `UPDATE public.fx_markup_rates SET active=true WHERE corridor='DEFAULT'`); err != nil {
 			t.Errorf("FAILED TO RESTORE the DEFAULT markup row — re-enable it before using this database: %v", err)
 		}
 	})

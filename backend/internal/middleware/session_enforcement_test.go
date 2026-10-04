@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -22,7 +23,7 @@ func (f fakeSessionSvc) IssueSession(string, services.IssuedTokens, services.Log
 func (f fakeSessionSvc) RotateRefresh(string, services.IssuedTokens, services.LoginContext) (*domain.Session, error) {
 	return nil, nil
 }
-func (f fakeSessionSvc) ValidateAccess(string) (*domain.Session, error) {
+func (f fakeSessionSvc) ValidateAccess(context.Context, string) (*services.Session, error) {
 	if f.revoked {
 		return nil, errors.New("session revoked or expired")
 	}

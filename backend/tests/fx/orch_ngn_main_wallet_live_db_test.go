@@ -83,10 +83,10 @@ func balanceOf(list []orchestration.Money, currency string) (int64, bool) {
 func cleanupOrch(t *testing.T, pool *pgxpool.Pool, customer string) {
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_conversions WHERE customer_id=$1`, customer)
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_transfers WHERE customer_id=$1`, customer)
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_ledger_entries WHERE customer_id=$1`, customer)
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_balances WHERE customer_id=$1`, customer)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_conversions WHERE customer_id=$1`, customer)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_transfers WHERE customer_id=$1`, customer)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_ledger_entries WHERE customer_id=$1`, customer)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_balances WHERE customer_id=$1`, customer)
 	})
 }
 

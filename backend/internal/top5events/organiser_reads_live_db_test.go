@@ -148,7 +148,9 @@ func TestLiveDB_VendorsForEvent_AnyAuthenticatedUserCanRead(t *testing.T) {
 		eventID, organiser); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, eventID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM events WHERE id=$1`, eventID)
+	})
 
 	if _, err := svc.AddVendor(ctx, organiser, eventID, top5events.Vendor{UserID: vendorUser, Name: "Suya Spot"}); err != nil {
 		t.Fatalf("AddVendor: %v", err)
@@ -173,12 +175,14 @@ func TestLiveDB_WalletEntries_OwnerOnly(t *testing.T) {
 	owner := seedTicketTokenUser(t, ctx, pool)
 	stranger := seedTicketTokenUser(t, ctx, pool)
 	eventID := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO events (id, organizer_id, organiser_id, title, starts_at, ends_at) VALUES ($1,$2,$2,'Wallet Entries Test Event',now()+interval '1 day', now()+interval '2 day')`,
 		eventID, owner); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, eventID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM events WHERE id=$1`, eventID)
+	})
 
 	wallet, err := svc.OpenWallet(ctx, owner, eventID)
 	if err != nil {
@@ -187,7 +191,7 @@ func TestLiveDB_WalletEntries_OwnerOnly(t *testing.T) {
 
 	walletID := wallet.ID
 	entryID := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO event_wallet_ledger (id, wallet_id, type, amount_kobo, reference, idempotency_key) VALUES ($1,$2,'TOPUP',100000,'itest-ref',$3)`,
 		entryID, walletID, "itest-idem-"+entryID); err != nil {
 		t.Fatalf("seed wallet entry: %v", err)

@@ -76,7 +76,7 @@ type SessionService interface {
 	RotateRefresh(oldRefreshToken string, tokens IssuedTokens, lc LoginContext) (*Session, error)
 	// ValidateAccess returns the active session bound to an access token, or an
 	// error if revoked/expired/unknown (fail-closed).
-	ValidateAccess(accessToken string) (*Session, error)
+	ValidateAccess(ctx context.Context, accessToken string) (*Session, error)
 	ListMySessions(userID string) ([]Session, error)
 	RevokeOne(actorUserID, userID, sessionID, reason string) error
 	RevokeAll(actorUserID, userID, reason string) (int, error)
@@ -197,7 +197,7 @@ func (s *sessionService) RotateRefresh(oldRefreshToken string, tokens IssuedToke
 	return sess, nil
 }
 
-func (s *sessionService) ValidateAccess(accessToken string) (*Session, error) {
+func (s *sessionService) ValidateAccess(ctx context.Context, accessToken string) (*Session, error) {
 	if strings.TrimSpace(accessToken) == "" {
 		return nil, errors.New("access token required")
 	}

@@ -56,7 +56,7 @@ func seedLabProvider(t *testing.T, ctx context.Context, pool *pgxpool.Pool, owne
 		t.Fatalf("seed lab provider: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM health_providers WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM health_providers WHERE id=$1`, id)
 	})
 	return id
 }

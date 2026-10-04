@@ -134,8 +134,12 @@ type fakeConsoleRBAC struct {
 	statusErr error
 }
 
-func (f *fakeConsoleRBAC) GetUserRoles(string) ([]string, error) { return f.roles, f.rolesErr }
-func (f *fakeConsoleRBAC) GetUserStatus(string) (string, error)  { return f.status, f.statusErr }
+func (f *fakeConsoleRBAC) GetUserRoles(context.Context, string) ([]string, error) {
+	return f.roles, f.rolesErr
+}
+func (f *fakeConsoleRBAC) GetUserStatus(context.Context, string) (string, error) {
+	return f.status, f.statusErr
+}
 
 // fakeAuthServer stands in for Supabase's GoTrue /auth/v1/user endpoint so a
 // bearer token can resolve to a real userID without a network dependency,

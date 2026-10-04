@@ -69,12 +69,12 @@ func TestVotingSupporters_ContestantOnlyAndAnonymityHonoured(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_votes WHERE contest_id=$1`, contestID)
-		_, _ = pool.Exec(ctx, `DELETE FROM voting_settings WHERE contest_id=$1`, contestID)
-		_, _ = pool.Exec(ctx, `DELETE FROM contestants WHERE id=$1`, contestantID)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_contests WHERE id=$1`, contestID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_votes WHERE contest_id=$1`, contestID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM voting_settings WHERE contest_id=$1`, contestID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM contestants WHERE id=$1`, contestantID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_contests WHERE id=$1`, contestID)
 		for _, u := range []string{owner, voter, stranger} {
-			_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, u)
+			_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, u)
 		}
 	})
 
@@ -163,11 +163,11 @@ func TestVotingMyVotes_ReturnsOnlyTheCallersOwnVotes(t *testing.T) {
 		t.Fatalf("seed votes: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_votes WHERE contest_id=$1`, contestID)
-		_, _ = pool.Exec(ctx, `DELETE FROM contestants WHERE id=$1`, contestantID)
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_contests WHERE id=$1`, contestID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_votes WHERE contest_id=$1`, contestID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM contestants WHERE id=$1`, contestantID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_contests WHERE id=$1`, contestID)
 		for _, u := range []string{mine, theirs} {
-			_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, u)
+			_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, u)
 		}
 	})
 

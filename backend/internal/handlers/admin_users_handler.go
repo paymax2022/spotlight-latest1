@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -62,7 +63,7 @@ func (h *AdminUsersHandler) List(c *gin.Context) {
 		return
 	}
 	actor, _ := middleware.GetAuthenticatedUser(c)
-	filtered := h.applyScopeFilter(actor.ID, rows)
+	filtered := h.applyScopeFilter(c.Request.Context(), actor.ID, rows)
 	c.JSON(http.StatusOK, gin.H{"success": true, "users": filtered})
 }
 
@@ -76,7 +77,7 @@ func (h *AdminUsersHandler) Export(c *gin.Context) {
 		return
 	}
 	actor, _ := middleware.GetAuthenticatedUser(c)
-	filtered := h.applyScopeFilter(actor.ID, rows)
+	filtered := h.applyScopeFilter(c.Request.Context(), actor.ID, rows)
 	payload, err := json.MarshalIndent(filtered, "", "  ")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "export failed"})
@@ -95,7 +96,7 @@ func (h *AdminUsersHandler) Get(c *gin.Context) {
 		return
 	}
 	actor, _ := middleware.GetAuthenticatedUser(c)
-	if !h.canAccessUser(actor.ID, row) {
+	if !h.canAccessUser(c.Request.Context(), actor.ID, row) {
 		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "forbidden by scope"})
 		return
 	}
@@ -110,7 +111,7 @@ func (h *AdminUsersHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "user not found"})
 		return
 	}
-	if !h.canAccessUser(actor.ID, current) {
+	if !h.canAccessUser(c.Request.Context(), actor.ID, current) {
 		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "forbidden by scope"})
 		return
 	}
@@ -144,7 +145,7 @@ func (h *AdminUsersHandler) Sessions(c *gin.Context) {
 		return
 	}
 	actor, _ := middleware.GetAuthenticatedUser(c)
-	if !h.canAccessUser(actor.ID, target) {
+	if !h.canAccessUser(c.Request.Context(), actor.ID, target) {
 		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "forbidden by scope"})
 		return
 	}
@@ -186,7 +187,7 @@ func (h *AdminUsersHandler) BulkAssignRoles(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "user not found"})
 		return
 	}
-	if !h.canAccessUser(actor.ID, target) {
+	if !h.canAccessUser(c.Request.Context(), actor.ID, target) {
 		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "forbidden by scope"})
 		return
 	}
@@ -220,7 +221,7 @@ func (h *AdminUsersHandler) BulkAssignRoleToUsers(c *gin.Context) {
 		if err != nil {
 			continue
 		}
-		if h.canAccessUser(actor.ID, target) {
+		if h.canAccessUser(c.Request.Context(), actor.ID, target) {
 			allowed = append(allowed, strings.TrimSpace(uid))
 		}
 	}
@@ -233,21 +234,21 @@ func (h *AdminUsersHandler) BulkAssignRoleToUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "results": results})
 }
 
-func (h *AdminUsersHandler) applyScopeFilter(actorID string, users []domain.AdminUser) []domain.AdminUser {
+func (h *AdminUsersHandler) applyScopeFilter(ctx context.Context, actorID string, users []domain.AdminUser) []domain.AdminUser {
 	out := make([]domain.AdminUser, 0, len(users))
 	for _, u := range users {
-		if h.canAccessUser(actorID, u) {
+		if h.canAccessUser(ctx, actorID, u) {
 			out = append(out, u)
 		}
 	}
 	return out
 }
 
-func (h *AdminUsersHandler) canAccessUser(actorID string, target domain.AdminUser) bool {
+func (h *AdminUsersHandler) canAccessUser(ctx context.Context, actorID string, target domain.AdminUser) bool {
 	if strings.TrimSpace(actorID) == "" {
 		return false
 	}
-	roles, _ := h.svc.GetUserRoles(actorID)
+	roles, _ := h.svc.GetUserRoles(ctx, actorID)
 	for _, r := range roles {
 		if r == "super-admin" || r == "system-admin" {
 			return true
@@ -258,41 +259,37 @@ func (h *AdminUsersHandler) canAccessUser(actorID string, target domain.AdminUse
 	allowedPrograms := map[string]struct{}{}
 	allowedContests := map[string]struct{}{}
 	allowedSchools := map[string]struct{}{}
+	sets := map[string]map[string]struct{}{
+		"state":   allowedStates,
+		"program": allowedPrograms,
+		"contest": allowedContests, //nolint:goconst // self-describing scope-type key
+		"school":  allowedSchools,
+	}
 	for _, s := range scopes {
-		if s.ScopeType == "state" && strings.TrimSpace(s.ScopeID) != "" {
-			allowedStates[strings.ToLower(strings.TrimSpace(s.ScopeID))] = struct{}{}
+		id := strings.ToLower(strings.TrimSpace(s.ScopeID))
+		if id == "" {
+			continue
 		}
-		if s.ScopeType == "program" && strings.TrimSpace(s.ScopeID) != "" {
-			allowedPrograms[strings.ToLower(strings.TrimSpace(s.ScopeID))] = struct{}{}
-		}
-		if s.ScopeType == "contest" && strings.TrimSpace(s.ScopeID) != "" {
-			allowedContests[strings.ToLower(strings.TrimSpace(s.ScopeID))] = struct{}{}
-		}
-		if s.ScopeType == "school" && strings.TrimSpace(s.ScopeID) != "" {
-			allowedSchools[strings.ToLower(strings.TrimSpace(s.ScopeID))] = struct{}{}
+		if set, ok := sets[s.ScopeType]; ok {
+			set[id] = struct{}{}
 		}
 	}
 	if len(allowedStates) == 0 && len(allowedPrograms) == 0 && len(allowedContests) == 0 && len(allowedSchools) == 0 {
 		return true
 	}
-	if len(allowedStates) > 0 {
-		if _, ok := allowedStates[strings.ToLower(strings.TrimSpace(target.State))]; ok {
-			return true
-		}
-	}
-	if len(allowedPrograms) > 0 {
-		if _, ok := allowedPrograms[strings.ToLower(strings.TrimSpace(target.ProgramID))]; ok {
-			return true
-		}
-	}
-	if len(allowedContests) > 0 {
-		if _, ok := allowedContests[strings.ToLower(strings.TrimSpace(target.ContestID))]; ok {
-			return true
-		}
-	}
-	if len(allowedSchools) > 0 {
-		if _, ok := allowedSchools[strings.ToLower(strings.TrimSpace(target.SchoolID))]; ok {
-			return true
+	for _, check := range []struct {
+		set map[string]struct{}
+		val string
+	}{
+		{allowedStates, target.State},
+		{allowedPrograms, target.ProgramID},
+		{allowedContests, target.ContestID},
+		{allowedSchools, target.SchoolID},
+	} {
+		if len(check.set) > 0 {
+			if _, ok := check.set[strings.ToLower(strings.TrimSpace(check.val))]; ok {
+				return true
+			}
 		}
 	}
 	return false

@@ -988,7 +988,7 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 		Body:   "You have a new food order to confirm.",
 		Data:   map[string]any{"order_id": order.ID, "total_kobo": order.TotalKobo},
 	})
-	s.broadcastStatus(order.ID, OrderPending)
+	s.broadcastStatus(order.ID, OrderPending) //nolint:contextcheck // WS publish outlives the request by design
 	return order, nil
 }
 
@@ -1223,7 +1223,7 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 	case OrderDelivered:
 		s.notify(ctx, Notification{UserID: customer, Event: EventOrderDelivered, Title: "Order delivered", Body: "Enjoy your meal!", Data: map[string]any{"order_id": orderID}})
 	}
-	s.broadcastStatus(orderID, newStatus)
+	s.broadcastStatus(orderID, newStatus) //nolint:contextcheck // WS publish outlives the request by design
 	return nil
 }
 
@@ -1495,7 +1495,7 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 	if rider != "" && rider != actorID {
 		s.notify(ctx, Notification{UserID: rider, Event: EventOrderCancelled, Title: "Order cancelled", Body: "An assigned order was cancelled.", Data: map[string]any{"order_id": orderID}})
 	}
-	s.broadcastStatus(orderID, OrderCancelled)
+	s.broadcastStatus(orderID, OrderCancelled) //nolint:contextcheck // WS publish outlives the request by design
 	return nil
 }
 
@@ -1612,7 +1612,7 @@ func (s *Service) refundAndClose(ctx context.Context, orderID, actorID string, t
 		s.notify(ctx, Notification{UserID: rider, Event: EventOrderCancelled, Title: "Order closed",
 			Body: "An assigned order was closed.", Data: map[string]any{"order_id": orderID}})
 	}
-	s.broadcastStatus(orderID, toStatus)
+	s.broadcastStatus(orderID, toStatus) //nolint:contextcheck // WS publish outlives the request by design
 	return nil
 }
 
@@ -1967,7 +1967,7 @@ func (s *Service) MarkDeliveryFailed(ctx context.Context, orderID, riderID, reas
 		s.notify(ctx, Notification{UserID: customer, Event: EventOrderCancelled, Title: "Delivery problem",
 			Body: "We couldn't complete your delivery — support will reach out.", Data: map[string]any{"order_id": orderID, keyReason: reason}})
 	}
-	s.broadcastStatus(orderID, OrderDeliveryFailed)
+	s.broadcastStatus(orderID, OrderDeliveryFailed) //nolint:contextcheck // WS publish outlives the request by design
 	return nil
 }
 

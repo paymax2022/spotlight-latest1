@@ -30,7 +30,9 @@ func TestLiveDB_AdminListEvents_SeesAllStatesNotJustPublic(t *testing.T) {
 		draftID, organiser); err != nil {
 		t.Fatalf("seed draft event: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, draftID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM events WHERE id=$1`, draftID)
+	})
 
 	got, err := svc.AdminListEvents(ctx, "", "Admin Reads Draft Event")
 	if err != nil {
@@ -57,13 +59,15 @@ func TestLiveDB_AdminListEvents_StatusFilterUppercasesForTheDBEnum(t *testing.T)
 
 	organiser := seedTicketTokenUser(t, ctx, pool)
 	eventID := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO events (id, organizer_id, organiser_id, title, starts_at, ends_at, state)
 		 VALUES ($1,$2,$2,'Admin Reads Suspended Event',now()+interval '1 day', now()+interval '2 day','SUSPENDED')`,
 		eventID, organiser); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, eventID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM events WHERE id=$1`, eventID)
+	})
 
 	got, err := svc.AdminListEvents(ctx, "suspended", "")
 	if err != nil {
@@ -87,21 +91,25 @@ func TestLiveDB_AdminGetEvent_RealAggregatesAndNoFabricatedTimeline(t *testing.T
 
 	organiser := seedTicketTokenUser(t, ctx, pool)
 	eventID := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO events (id, organizer_id, organiser_id, title, venue, starts_at, ends_at, state, fee_bps)
 		 VALUES ($1,$2,$2,'Admin Reads Detail Event','Venue X',now()+interval '1 day', now()+interval '2 day','LIVE',500)`,
 		eventID, organiser); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, eventID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM events WHERE id=$1`, eventID)
+	})
 
 	tierID := uuid.New().String()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO event_ticket_tiers (id, event_id, name, price_kobo, capacity, sold) VALUES ($1,$2,'GA',100000,50,20)`,
 		tierID, eventID); err != nil {
 		t.Fatalf("seed tier: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM event_ticket_tiers WHERE id=$1`, tierID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM event_ticket_tiers WHERE id=$1`, tierID)
+	})
 
 	got, err := svc.AdminGetEvent(ctx, eventID)
 	if err != nil {

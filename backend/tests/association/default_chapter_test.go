@@ -90,7 +90,7 @@ func TestPublishOrganisation_KeepsNamedChaptersAndSkipsBlanks(t *testing.T) {
 	svc := newLiveAssociationService(pool)
 
 	userID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		userID, userID+"@chapter2.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}

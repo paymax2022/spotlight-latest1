@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -25,7 +26,7 @@ func (f *fakeSessionService) IssueSession(string, services.IssuedTokens, service
 func (f *fakeSessionService) RotateRefresh(string, services.IssuedTokens, services.LoginContext) (*domain.Session, error) {
 	return &domain.Session{}, nil
 }
-func (f *fakeSessionService) ValidateAccess(string) (*domain.Session, error) {
+func (f *fakeSessionService) ValidateAccess(context.Context, string) (*services.Session, error) {
 	return &domain.Session{}, nil
 }
 func (f *fakeSessionService) ListMySessions(string) ([]domain.Session, error) { return f.listed, nil }

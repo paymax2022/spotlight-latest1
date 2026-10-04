@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -23,9 +24,9 @@ type parityRBAC struct {
 	bulkRoleResult []services.BulkOpResult
 }
 
-func (p *parityRBAC) GetUserRoles(string) ([]string, error)            { return p.roles, nil }
-func (p *parityRBAC) GetUserScopes(string) ([]domain.UserScope, error) { return nil, nil }
-func (p *parityRBAC) GetUserPermissions(string, string, string) ([]string, error) {
+func (p *parityRBAC) GetUserRoles(context.Context, string) ([]string, error) { return p.roles, nil }
+func (p *parityRBAC) GetUserScopes(string) ([]domain.UserScope, error)       { return nil, nil }
+func (p *parityRBAC) GetUserPermissions(context.Context, string, string, string) ([]string, error) {
 	return nil, nil
 }
 func (p *parityRBAC) CheckPermission(string, string, string, string) (bool, error) {
@@ -55,7 +56,7 @@ func (p *parityRBAC) RemovePermissionFromRole(string, string) error             
 func (p *parityRBAC) DeletePermission(string) error                                 { return nil }
 func (p *parityRBAC) AssignRoleToUser(string, string, string, string, string) error { return nil }
 func (p *parityRBAC) RemoveRoleFromUser(string, string, string) error               { return nil }
-func (p *parityRBAC) GetUserStatus(string) (string, error)                          { return "active", nil }
+func (p *parityRBAC) GetUserStatus(context.Context, string) (string, error)         { return "active", nil }
 func (p *parityRBAC) SuspendUser(string) error                                      { return nil }
 func (p *parityRBAC) UnsuspendUser(string) error                                    { return nil }
 func (p *parityRBAC) LockUser(string) error                                         { return nil }

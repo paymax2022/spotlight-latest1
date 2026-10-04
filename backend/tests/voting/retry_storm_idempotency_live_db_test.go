@@ -69,7 +69,7 @@ func TestNF005_CreditPaidVoteTransaction_TSBridge_RetryStorm(t *testing.T) {
 		t.Fatalf("seed vote_transaction: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.vote_transactions WHERE id=$1`, txID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.vote_transactions WHERE id=$1`, txID)
 	})
 
 	const attempts = 120

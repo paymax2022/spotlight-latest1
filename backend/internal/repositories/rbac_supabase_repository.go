@@ -13,10 +13,10 @@ import (
 )
 
 type RBACRepository interface {
-	GetUserStatus(userID string) (string, error)
-	GetUserRoles(userID string) ([]string, error)
+	GetUserStatus(ctx context.Context, userID string) (string, error)
+	GetUserRoles(ctx context.Context, userID string) ([]string, error)
 	GetUserScopes(userID string) ([]domain.UserScope, error)
-	GetUserPermissions(userID string, scopeType string, scopeID string) ([]string, error)
+	GetUserPermissions(ctx context.Context, userID string, scopeType string, scopeID string) ([]string, error)
 	HasPermission(userID string, permission string, scopeType string, scopeID string) (bool, error)
 	ListRoles() ([]domain.Role, error)
 	CreateRole(role domain.Role) (domain.Role, error)
@@ -52,11 +52,11 @@ func NewRBACSupabaseRepository(client *integrations.SupabaseRestClient) *RBACSup
 	return &RBACSupabaseRepository{client: client}
 }
 
-func (r *RBACSupabaseRepository) GetUserStatus(userID string) (string, error) {
+func (r *RBACSupabaseRepository) GetUserStatus(ctx context.Context, userID string) (string, error) {
 	var rows []struct {
 		Status string `json:"status"`
 	}
-	err := r.client.REST(context.Background(), http.MethodGet, "platform_users", map[string]string{"select": "status", "id": "eq." + userID, "limit": "1"}, nil, &rows) //nolint:goconst // PostgREST query key; literal is self-describing
+	err := r.client.REST(ctx, http.MethodGet, "platform_users", map[string]string{"select": "status", "id": "eq." + userID, "limit": "1"}, nil, &rows) //nolint:goconst // PostgREST query key; literal is self-describing
 	if err != nil || len(rows) == 0 {
 		if err == nil {
 			return "pending", nil
@@ -66,13 +66,13 @@ func (r *RBACSupabaseRepository) GetUserStatus(userID string) (string, error) {
 	return strings.ToLower(strings.TrimSpace(rows[0].Status)), nil
 }
 
-func (r *RBACSupabaseRepository) GetUserRoles(userID string) ([]string, error) {
+func (r *RBACSupabaseRepository) GetUserRoles(ctx context.Context, userID string) ([]string, error) {
 	var roleRows []struct {
 		Roles struct {
 			Slug string `json:"slug"`
 		} `json:"roles"`
 	}
-	err := r.client.REST(context.Background(), http.MethodGet, "user_roles", map[string]string{
+	err := r.client.REST(ctx, http.MethodGet, "user_roles", map[string]string{
 		"select": "roles!inner(slug)", "user_id": "eq." + userID, "is_active": "eq.true",
 	}, nil, &roleRows)
 	if err != nil {
@@ -107,7 +107,7 @@ func (r *RBACSupabaseRepository) GetUserScopes(userID string) ([]domain.UserScop
 	return out, nil
 }
 
-func (r *RBACSupabaseRepository) GetUserPermissions(userID string, scopeType string, scopeID string) ([]string, error) {
+func (r *RBACSupabaseRepository) GetUserPermissions(ctx context.Context, userID string, scopeType string, scopeID string) ([]string, error) {
 	if scopeType == "" {
 		scopeType = "global"
 	}
@@ -115,7 +115,7 @@ func (r *RBACSupabaseRepository) GetUserPermissions(userID string, scopeType str
 	var rows []struct {
 		PermissionSlug string `json:"permission_slug"`
 	}
-	if err := r.client.RPC(context.Background(), "effective_permissions", payload, &rows); err != nil {
+	if err := r.client.RPC(ctx, "effective_permissions", payload, &rows); err != nil {
 		return nil, err
 	}
 	out := make([]string, 0, len(rows))

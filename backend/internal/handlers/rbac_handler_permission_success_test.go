@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,9 +16,11 @@ import (
 
 type rbacHandlerTestService struct{}
 
-func (rbacHandlerTestService) GetUserRoles(string) ([]string, error)            { return nil, nil }
+func (rbacHandlerTestService) GetUserRoles(context.Context, string) ([]string, error) {
+	return nil, nil
+}
 func (rbacHandlerTestService) GetUserScopes(string) ([]domain.UserScope, error) { return nil, nil }
-func (rbacHandlerTestService) GetUserPermissions(string, string, string) ([]string, error) {
+func (rbacHandlerTestService) GetUserPermissions(context.Context, string, string, string) ([]string, error) {
 	return nil, nil
 }
 func (rbacHandlerTestService) CheckPermission(string, string, string, string) (bool, error) {
@@ -51,11 +54,13 @@ func (rbacHandlerTestService) AssignRoleToUser(string, string, string, string, s
 	return nil
 }
 func (rbacHandlerTestService) RemoveRoleFromUser(string, string, string) error { return nil }
-func (rbacHandlerTestService) GetUserStatus(string) (string, error)            { return "active", nil }
-func (rbacHandlerTestService) SuspendUser(string) error                        { return nil }
-func (rbacHandlerTestService) UnsuspendUser(string) error                      { return nil }
-func (rbacHandlerTestService) LockUser(string) error                           { return nil }
-func (rbacHandlerTestService) UnlockUser(string) error                         { return nil }
+func (rbacHandlerTestService) GetUserStatus(context.Context, string) (string, error) {
+	return "active", nil
+}
+func (rbacHandlerTestService) SuspendUser(string) error   { return nil }
+func (rbacHandlerTestService) UnsuspendUser(string) error { return nil }
+func (rbacHandlerTestService) LockUser(string) error      { return nil }
+func (rbacHandlerTestService) UnlockUser(string) error    { return nil }
 func (rbacHandlerTestService) ListAdminUsers(domain.AdminUserFilter) ([]domain.AdminUser, error) {
 	return nil, nil
 }

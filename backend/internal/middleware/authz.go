@@ -60,7 +60,7 @@ func RequireAdminConsoleRole(supabase *integrations.SupabaseRestClient, rbac ser
 			roles = au.Roles
 		} else {
 			var err error
-			roles, err = rbac.GetUserRoles(userID)
+			roles, err = rbac.GetUserRoles(c.Request.Context(), userID)
 			if err != nil {
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 					"error": "could not resolve admin role",
@@ -134,7 +134,7 @@ func resolveVerifiedIdentity(c *gin.Context, supabase *integrations.SupabaseRest
 	// error would let a transient lookup failure through as if the account
 	// were merely pending. Fail closed: a status we could not verify is
 	// refused, same as every other failure path in this function.
-	status, serr := rbac.GetUserStatus(userID)
+	status, serr := rbac.GetUserStatus(c.Request.Context(), userID)
 	if serr != nil {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 			"error": "could not verify account status",
@@ -239,7 +239,7 @@ func RequireStemRoles(rbac services.RBACService, allowedRoles ...string) gin.Han
 			roles = au.Roles
 		} else {
 			var err error
-			roles, err = rbac.GetUserRoles(adminUserID)
+			roles, err = rbac.GetUserRoles(c.Request.Context(), adminUserID)
 			if err != nil {
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 					"success": false,

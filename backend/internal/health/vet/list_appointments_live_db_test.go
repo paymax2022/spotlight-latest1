@@ -53,7 +53,7 @@ func seedVetProvider(t *testing.T, ctx context.Context, pool *pgxpool.Pool, owne
 		t.Fatalf("seed vet provider: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM health_providers WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM health_providers WHERE id=$1`, id)
 	})
 	return id
 }
@@ -67,7 +67,7 @@ func seedVetService(t *testing.T, ctx context.Context, pool *pgxpool.Pool, provi
 		t.Fatalf("seed vet service: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM vet_services WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM vet_services WHERE id=$1`, id)
 	})
 	return id
 }
@@ -80,7 +80,7 @@ func seedVetPet(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerID s
 		t.Fatalf("seed pet: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM pets WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM pets WHERE id=$1`, id)
 	})
 	return id
 }
@@ -99,7 +99,7 @@ func seedVetAppointment(t *testing.T, ctx context.Context, pool *pgxpool.Pool, p
 		t.Fatalf("seed appointment: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM health_appointments WHERE id=$1`, apptID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM health_appointments WHERE id=$1`, apptID)
 	})
 	// service_id mirrors the real Book() path, which always pins a valid,
 	// active vet_services row before inserting the payment leg.

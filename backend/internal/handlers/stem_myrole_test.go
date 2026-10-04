@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,7 +17,7 @@ import (
 // would nil-panic, which MyRole never makes.
 type erroringRBACService struct{ services.RBACService }
 
-func (erroringRBACService) GetUserRoles(string) ([]string, error) {
+func (erroringRBACService) GetUserRoles(context.Context, string) ([]string, error) {
 	return nil, &stemMyRoleTestErr{"lookup failed"}
 }
 

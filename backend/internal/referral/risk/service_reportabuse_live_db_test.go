@@ -68,7 +68,7 @@ func alertsOn(t *testing.T, pool *pgxpool.Pool, subjectID string) int {
 		t.Fatalf("count alerts on %s: %v", subjectID, err)
 	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(),
+		if _, err := pool.Exec(context.WithoutCancel(t.Context()),
 			`DELETE FROM referral_risk_alerts WHERE subject_id = $1 AND rule_code = 'member_report'`,
 			subjectID); err != nil {
 			t.Errorf("cleanup alerts on %s: %v", subjectID, err)

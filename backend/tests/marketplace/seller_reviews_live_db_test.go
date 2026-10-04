@@ -23,8 +23,8 @@ func TestSellerReviews_ReadsLiveDealReviewsNotDeadTable(t *testing.T) {
 	_, listingID := seedActiveListing(t, ctx, pool, seller)
 
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_deal_reviews WHERE thread_id IN (SELECT id FROM public.mkt_threads WHERE listing_id=$1)`, listingID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_threads WHERE listing_id=$1`, listingID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_deal_reviews WHERE thread_id IN (SELECT id FROM public.mkt_threads WHERE listing_id=$1)`, listingID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_threads WHERE listing_id=$1`, listingID)
 	})
 
 	thread, err := svc.StartOrGetThread(ctx, buyer, listingID, "Is this still available?")

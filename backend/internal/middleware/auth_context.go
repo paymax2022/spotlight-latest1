@@ -73,19 +73,19 @@ func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACSe
 		wg.Add(3)
 		go func() {
 			defer wg.Done()
-			status, serr = rbac.GetUserStatus(id)
+			status, serr = rbac.GetUserStatus(c.Request.Context(), id)
 		}()
 		go func() {
 			defer wg.Done()
-			roles, _ = rbac.GetUserRoles(id)
+			roles, _ = rbac.GetUserRoles(c.Request.Context(), id)
 		}()
 		go func() {
 			defer wg.Done()
-			perms, _ = rbac.GetUserPermissions(id, "global", "")
+			perms, _ = rbac.GetUserPermissions(c.Request.Context(), id, "global", "")
 		}()
 		if enforce && sessions != nil {
 			wg.Go(func() {
-				_, sessErr = sessions.ValidateAccess(token)
+				_, sessErr = sessions.ValidateAccess(c.Request.Context(), token)
 			})
 		}
 		wg.Wait()

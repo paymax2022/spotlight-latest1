@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"errors"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,9 +14,11 @@ import (
 
 type mockRBAC struct{ allow bool }
 
-func (m mockRBAC) GetUserRoles(string) ([]string, error)                        { return nil, nil }
-func (m mockRBAC) GetUserScopes(string) ([]domain.UserScope, error)             { return nil, nil }
-func (m mockRBAC) GetUserPermissions(string, string, string) ([]string, error)  { return nil, nil }
+func (m mockRBAC) GetUserRoles(context.Context, string) ([]string, error) { return nil, nil }
+func (m mockRBAC) GetUserScopes(string) ([]domain.UserScope, error)       { return nil, nil }
+func (m mockRBAC) GetUserPermissions(context.Context, string, string, string) ([]string, error) {
+	return nil, nil
+}
 func (m mockRBAC) CheckPermission(string, string, string, string) (bool, error) { return m.allow, nil }
 func (m mockRBAC) ListRoles() ([]domain.Role, error)                            { return nil, nil }
 func (m mockRBAC) CreateRole(domain.Role) (domain.Role, error)                  { return domain.Role{}, nil }
@@ -38,7 +40,7 @@ func (m mockRBAC) RemovePermissionFromRole(string, string) error                
 func (m mockRBAC) DeletePermission(string) error                                     { return nil }
 func (m mockRBAC) AssignRoleToUser(string, string, string, string, string) error     { return nil }
 func (m mockRBAC) RemoveRoleFromUser(string, string, string) error                   { return nil }
-func (m mockRBAC) GetUserStatus(string) (string, error)                              { return "active", nil }
+func (m mockRBAC) GetUserStatus(context.Context, string) (string, error)             { return "active", nil }
 func (m mockRBAC) SuspendUser(string) error                                          { return nil }
 func (m mockRBAC) UnsuspendUser(string) error                                        { return nil }
 func (m mockRBAC) LockUser(string) error                                             { return nil }
@@ -55,48 +57,6 @@ func (m mockRBAC) BulkAssignRolesToUser(string, string, string, string, []string
 	return nil
 }
 func (m mockRBAC) BulkAssignPermissionsToRole(string, string, []string) []services.BulkOpResult {
-	return nil
-}
-
-type errRBAC struct{}
-
-func (e errRBAC) GetUserRoles(string) ([]string, error)                       { return nil, nil }
-func (e errRBAC) GetUserScopes(string) ([]domain.UserScope, error)            { return nil, nil }
-func (e errRBAC) GetUserPermissions(string, string, string) ([]string, error) { return nil, nil }
-func (e errRBAC) CheckPermission(string, string, string, string) (bool, error) {
-	return false, errors.New("x")
-}
-func (e errRBAC) ListRoles() ([]domain.Role, error)                     { return nil, nil }
-func (e errRBAC) CreateRole(domain.Role) (domain.Role, error)           { return domain.Role{}, nil }
-func (e errRBAC) UpdateRole(string, domain.Role) (domain.Role, error)   { return domain.Role{}, nil }
-func (e errRBAC) CloneRole(string, string, string) (domain.Role, error) { return domain.Role{}, nil }
-func (e errRBAC) DeleteRole(string) error                               { return nil }
-func (e errRBAC) ListPermissions() ([]domain.Permission, error)         { return nil, nil }
-func (e errRBAC) GetPermissionMatrix() (services.PermissionMatrix, error) {
-	return services.PermissionMatrix{}, nil
-}
-func (e errRBAC) AssignPermissionToRole(string, string, string) error               { return nil }
-func (e errRBAC) RemovePermissionFromRole(string, string) error                     { return nil }
-func (e errRBAC) DeletePermission(string) error                                     { return nil }
-func (e errRBAC) AssignRoleToUser(string, string, string, string, string) error     { return nil }
-func (e errRBAC) RemoveRoleFromUser(string, string, string) error                   { return nil }
-func (e errRBAC) GetUserStatus(string) (string, error)                              { return "active", nil }
-func (e errRBAC) SuspendUser(string) error                                          { return nil }
-func (e errRBAC) UnsuspendUser(string) error                                        { return nil }
-func (e errRBAC) LockUser(string) error                                             { return nil }
-func (e errRBAC) UnlockUser(string) error                                           { return nil }
-func (e errRBAC) ListAdminUsers(domain.AdminUserFilter) ([]domain.AdminUser, error) { return nil, nil }
-func (e errRBAC) GetAdminUser(string) (domain.AdminUser, error)                     { return domain.AdminUser{}, nil }
-func (e errRBAC) UpdateAdminUser(string, map[string]any) (domain.AdminUser, error) {
-	return domain.AdminUser{}, nil
-}
-func (e errRBAC) BulkAssignRoleToUsers(string, string, string, string, []string) []services.BulkOpResult {
-	return nil
-}
-func (e errRBAC) BulkAssignRolesToUser(string, string, string, string, []string) []services.BulkOpResult {
-	return nil
-}
-func (e errRBAC) BulkAssignPermissionsToRole(string, string, []string) []services.BulkOpResult {
 	return nil
 }
 

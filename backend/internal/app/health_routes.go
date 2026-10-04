@@ -225,7 +225,7 @@ func (g *capabilityGranter) GetUserRoles(userID string) ([]string, error) {
 	if g.rbac == nil {
 		return nil, nil
 	}
-	return g.rbac.GetUserRoles(userID)
+	return g.rbac.GetUserRoles(context.Background(), userID)
 }
 
 func (g *capabilityGranter) AssignRoleToUser(userID, roleID, scopeType, scopeID, assignedBy string) error {

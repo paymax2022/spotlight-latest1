@@ -145,7 +145,7 @@ func (s *authService) RegisterUser(ctx context.Context, in domain.RegisterReques
 		// policy is enforced here from GoTrue's own /settings — read fresh every
 		// attempt (a cache is a window a just-closed door stays open through).
 		// Fails CLOSED: a settings read that fails signals the create would too.
-		disabled, err := s.supabase.SignupDisabled(context.Background())
+		disabled, err := s.supabase.SignupDisabled(ctx)
 		if err != nil {
 			log.Printf("[auth] register: could not read the project signup policy, refusing: %v", err)
 			return nil, ErrSignupDisabled
@@ -509,7 +509,7 @@ func (s *authService) ChangePassword(ctx context.Context, accessToken, currentPa
 	if err := s.supabase.VerifyPasswordGrant(ctx, email, currentPassword); err != nil {
 		return errors.New("current password is incorrect")
 	}
-	if err := s.supabase.AdminSetPassword(context.Background(), userID, newPassword); err != nil {
+	if err := s.supabase.AdminSetPassword(ctx, userID, newPassword); err != nil {
 		return errors.New("password update failed")
 	}
 	// Revoke existing sessions after password change.

@@ -62,7 +62,7 @@ func newKey(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	t.Helper()
 	k := "test:" + uuid.NewString()
 	t.Cleanup(func() {
-		if _, err := pool.Exec(ctx, `DELETE FROM otp_codes WHERE key = $1`, k); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM otp_codes WHERE key = $1`, k); err != nil {
 			t.Errorf("cleanup code %s: %v", k, err)
 		}
 	})
@@ -361,7 +361,7 @@ func TestLiveDB_LimiterCountsAtomicallyAndRollsTheWindow(t *testing.T) {
 
 	key := "test:" + uuid.NewString()
 	t.Cleanup(func() {
-		if _, err := pool.Exec(ctx, `DELETE FROM otp_rate_limits WHERE key = $1`, key); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM otp_rate_limits WHERE key = $1`, key); err != nil {
 			t.Errorf("cleanup limiter row: %v", err)
 		}
 	})

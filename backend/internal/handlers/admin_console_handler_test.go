@@ -73,7 +73,7 @@ func seedAdminUser(t *testing.T, pool *pgxpool.Pool, label string) (id string, e
 	}
 	testsupport.CleanupUser(t, pool, id)
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(),
+		if _, err := pool.Exec(context.WithoutCancel(t.Context()),
 			`DELETE FROM auth.users WHERE id = $1`, id); err != nil {
 			t.Logf("cleanup auth.users %s: %v", id, err)
 		}
@@ -128,7 +128,7 @@ func seedPayout(t *testing.T, pool *pgxpool.Pool, userID string, amountKobo int6
 		t.Fatalf("seed payout: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(), `DELETE FROM payouts WHERE id = $1`, id); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM payouts WHERE id = $1`, id); err != nil {
 			t.Logf("cleanup payout %s: %v", id, err)
 		}
 	})
@@ -158,10 +158,10 @@ func seedAuditLog(t *testing.T, pool *pgxpool.Pool, action string) string {
 	}
 	t.Cleanup(func() {
 		ctx := context.Background()
-		if _, err := pool.Exec(ctx, `DELETE FROM audit_logs WHERE id = $1`, id); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM audit_logs WHERE id = $1`, id); err != nil {
 			t.Logf("cleanup audit_logs %s: %v", id, err)
 		}
-		if _, err := pool.Exec(ctx, `DELETE FROM platform_users WHERE id = $1`, actorID); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM platform_users WHERE id = $1`, actorID); err != nil {
 			t.Logf("cleanup platform_users %s: %v", actorID, err)
 		}
 	})
@@ -198,10 +198,10 @@ func seedCryptoOrder(t *testing.T, pool *pgxpool.Pool, userID, status, side stri
 	}
 	t.Cleanup(func() {
 		ctx := context.Background()
-		if _, err := pool.Exec(ctx, `DELETE FROM crypto_orders WHERE id = $1`, id); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM crypto_orders WHERE id = $1`, id); err != nil {
 			t.Logf("cleanup crypto_orders %s: %v", id, err)
 		}
-		if _, err := pool.Exec(ctx, `DELETE FROM crypto_assets WHERE id = $1`, assetID); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM crypto_assets WHERE id = $1`, assetID); err != nil {
 			t.Logf("cleanup crypto_assets %s: %v", assetID, err)
 		}
 	})
@@ -238,10 +238,10 @@ func seedInvestOrder(t *testing.T, pool *pgxpool.Pool, userID, status, side stri
 	}
 	t.Cleanup(func() {
 		ctx := context.Background()
-		if _, err := pool.Exec(ctx, `DELETE FROM invest_orders WHERE id = $1`, id); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM invest_orders WHERE id = $1`, id); err != nil {
 			t.Logf("cleanup invest_orders %s: %v", id, err)
 		}
-		if _, err := pool.Exec(ctx, `DELETE FROM invest_stock_assets WHERE id = $1`, assetID); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM invest_stock_assets WHERE id = $1`, assetID); err != nil {
 			t.Logf("cleanup invest_stock_assets %s: %v", assetID, err)
 		}
 	})

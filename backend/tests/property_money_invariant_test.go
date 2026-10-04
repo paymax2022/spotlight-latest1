@@ -48,7 +48,7 @@ func seedPropertyMoneyUser(t *testing.T, pool *pgxpool.Pool) string {
 		`INSERT INTO auth.users (id, email, created_at) VALUES ($1,$2,NOW())`, id, id+"@property-money.invalid"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id=$1`, id) })
 	testsupport.CleanupUser(t, pool, id)
 	return id
 }
@@ -65,33 +65,33 @@ func seedRealtorPayment(t *testing.T, pool *pgxpool.Pool, tenant string, amountK
 	ctx := context.Background()
 
 	portfolioID := uuid.NewString()
-	if _, err := pool.Exec(ctx, `INSERT INTO realtor_portfolios (id, owner_id, name) VALUES ($1,$2,'Money Inv Portfolio')`, portfolioID, tenant); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO realtor_portfolios (id, owner_id, name) VALUES ($1,$2,'Money Inv Portfolio')`, portfolioID, tenant); err != nil {
 		t.Fatalf("seed portfolio: %v", err)
 	}
 
 	propID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO realtor_properties (id, portfolio_id, name, property_type, address, area, city, state)
 		 VALUES ($1,$2,'Bldg','apartment','1 St','Area','City','State')`, propID, portfolioID); err != nil {
 		t.Fatalf("seed realtor_properties: %v", err)
 	}
 
 	unitID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO realtor_units (id, property_id, label, property_type) VALUES ($1,$2,'Unit',$3)`,
 		unitID, propID, "apartment"); err != nil {
 		t.Fatalf("seed realtor_units: %v", err)
 	}
 
 	listingID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO realtor_listings (id, unit_id, title, mode) VALUES ($1,$2,'Listing','long_rent')`,
 		listingID, unitID); err != nil {
 		t.Fatalf("seed realtor_listings: %v", err)
 	}
 
 	appID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO realtor_rental_applications (id, listing_id, user_id, full_name, email, phone)
 		 VALUES ($1,$2,$3,'Tenant','tenant@money-inv.invalid','+2340000000000')`,
 		appID, listingID, tenant); err != nil {
@@ -99,7 +99,7 @@ func seedRealtorPayment(t *testing.T, pool *pgxpool.Pool, tenant string, amountK
 	}
 
 	leaseID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO realtor_leases (id, application_id, listing_id, tenant_id, start_date, end_date)
 		 VALUES ($1,$2,$3,$4, CURRENT_DATE - INTERVAL '1 year', CURRENT_DATE + INTERVAL '1 year')`,
 		leaseID, appID, listingID, tenant); err != nil {
@@ -107,14 +107,14 @@ func seedRealtorPayment(t *testing.T, pool *pgxpool.Pool, tenant string, amountK
 	}
 
 	invoiceID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO realtor_invoices (id, lease_id, status, total_kobo, due_date) VALUES ($1,$2,'paid',$3,$4)`,
 		invoiceID, leaseID, amountKobo, dueDate); err != nil {
 		t.Fatalf("seed realtor_invoices: %v", err)
 	}
 
 	payID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO realtor_payments (id, invoice_id, user_id, channel, amount_kobo, status, reference, idempotency_key, paid_at)
 		 VALUES ($1,$2,$3,'WALLET',$4,'paid',$5,$5,$6)`,
 		payID, invoiceID, tenant, amountKobo, "idem-"+payID, paidAt); err != nil {
@@ -138,24 +138,26 @@ func seedEstatePayment(t *testing.T, pool *pgxpool.Pool, payer, estateID string,
 	t.Helper()
 	ctx := context.Background()
 	invoiceID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO estate_dues_invoices (id, estate_id, resident_id, category, amount_kobo, due_date)
 		 VALUES ($1,$2,$3,'rent',$4,$5)`,
 		invoiceID, estateID, payer, amountKobo, dueDate); err != nil {
 		t.Fatalf("seed estate_dues_invoices: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM estate_dues_invoices WHERE id=$1`, invoiceID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estate_dues_invoices WHERE id=$1`, invoiceID)
 	})
 
 	payID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO estate_payments (id, estate_id, invoice_id, payer_id, amount_kobo, method, status, created_at)
 		 VALUES ($1,$2,$3,$4,$5,'wallet','successful',$6)`,
 		payID, estateID, invoiceID, payer, amountKobo, createdAt); err != nil {
 		t.Fatalf("seed estate_payments: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM estate_payments WHERE id=$1`, payID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estate_payments WHERE id=$1`, payID)
+	})
 }
 
 // TestLiveDB_RentPassport_TotalPaidKobo_ExactSumAcrossEstateAndRealtor is
@@ -173,10 +175,12 @@ func TestLiveDB_RentPassport_TotalPaidKobo_ExactSumAcrossEstateAndRealtor(t *tes
 	admin := seedPropertyMoneyUser(t, pool)
 
 	estateID := uuid.NewString()
-	if _, err := pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Money Inv Estate',$2)`, estateID, admin); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Money Inv Estate',$2)`, estateID, admin); err != nil {
 		t.Fatalf("seed estate: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estates WHERE id=$1`, estateID)
+	})
 
 	// Deliberately awkward kobo amounts: 100000003 kobo (₦1,000,000.03) has a
 	// fractional-naira remainder, and 233333337 kobo is not a multiple of any
@@ -227,10 +231,12 @@ func TestLiveDB_RentPassport_RecentPaymentsCapAndOrder(t *testing.T) {
 	admin := seedPropertyMoneyUser(t, pool)
 
 	estateID := uuid.NewString()
-	if _, err := pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Cap Order Estate',$2)`, estateID, admin); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Cap Order Estate',$2)`, estateID, admin); err != nil {
 		t.Fatalf("seed estate: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estates WHERE id=$1`, estateID)
+	})
 
 	const rowCount = 25
 	base := time.Now().Add(-time.Duration(rowCount) * time.Hour)

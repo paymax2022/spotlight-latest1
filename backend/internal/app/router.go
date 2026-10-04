@@ -443,7 +443,7 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	}()
 	var sharedPool *pgxpool.Pool
 	if cfg.DatabaseURL != "" {
-		if p, err := platformDB.New(context.Background(), cfg.DatabaseURL); err != nil {
+		if p, err := platformDB.New(context.Background(), cfg.DatabaseURL); err != nil { //nolint:contextcheck // boot-scope ctx; no request exists yet
 			if deployedTier {
 				log.Fatalf("[router] could not open the database pool (APP_ENV=%q): %v — refusing to start with every DB-backed route disabled", cfg.AppEnv, err)
 			}

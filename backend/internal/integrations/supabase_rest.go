@@ -50,7 +50,7 @@ func (c *SupabaseRestClient) Count(ctx context.Context, table string) (int, erro
 	q.Set("select", "id")
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return 0, err
 	}

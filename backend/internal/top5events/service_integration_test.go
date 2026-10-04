@@ -85,7 +85,7 @@ func seedUser(t *testing.T, pool *pgxpool.Pool) string {
 		t.Skipf("cannot seed auth.users (%v) — skipping", err)
 	}
 	testsupport.CleanupUser(t, pool, id)
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id=$1`, id) })
 	return id
 }
 
@@ -106,7 +106,7 @@ func TestIntegration_EventStateMachine_FullLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM events WHERE id=$1`, ev.ID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM events WHERE id=$1`, ev.ID) })
 
 	if err := svc.Submit(ctx, organiser, ev.ID); err != nil {
 		t.Fatalf("submit: %v", err)
@@ -150,7 +150,7 @@ func TestIntegration_EventStateMachine_NonOrganiserForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM events WHERE id=$1`, ev.ID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM events WHERE id=$1`, ev.ID) })
 
 	if err := svc.Submit(ctx, attacker, ev.ID); err != top5events.ErrForbidden {
 		t.Fatalf("non-organiser submit: got %v, want ErrForbidden", err)
@@ -178,7 +178,7 @@ func TestIntegration_Approve_ServiceLayerHasNoOwnerScopeCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM events WHERE id=$1`, ev.ID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM events WHERE id=$1`, ev.ID) })
 	_ = svc.Submit(ctx, organiser, ev.ID)
 
 	// Any identity reaching this method (i.e. any caller RBAC already let through
@@ -203,7 +203,7 @@ func TestIntegration_GetEvent_DraftIsPubliclyReadable_KnownGap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM events WHERE id=$1`, ev.ID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM events WHERE id=$1`, ev.ID) })
 
 	// GetEvent takes no caller identity at all — this documents the CURRENT
 	// (arguably gap) behavior: a DRAFT event's title/venue/description are visible
@@ -237,7 +237,7 @@ func TestIntegration_Purchase_IdempotentDoubleSubmitNoDoubleIssueNoDoubleDebit(t
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM events WHERE id=$1`, ev.ID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM events WHERE id=$1`, ev.ID) })
 	_ = svc.Submit(ctx, organiser, ev.ID)
 	_ = svc.Approve(ctx, "admin", ev.ID)
 	if err := svc.GoLive(ctx, organiser, ev.ID); err != nil {
@@ -284,7 +284,7 @@ func TestIntegration_Purchase_RejectsWhenEventNotLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM events WHERE id=$1`, ev.ID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM events WHERE id=$1`, ev.ID) })
 
 	tier, err := svc.AddTier(ctx, organiser, ev.ID, top5events.TicketTier{Name: "GA", PriceKobo: 1_000_00, Capacity: 5})
 	if err != nil {
@@ -315,7 +315,7 @@ func TestIntegration_WalletClose_PostsExactlyOneBalancedRefund(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM events WHERE id=$1`, ev.ID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM events WHERE id=$1`, ev.ID) })
 
 	w, err := svc.OpenWallet(ctx, attendee, ev.ID)
 	if err != nil {
@@ -329,7 +329,7 @@ func TestIntegration_WalletClose_PostsExactlyOneBalancedRefund(t *testing.T) {
 	}
 
 	var refundCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM event_wallet_ledger WHERE wallet_id=$1 AND type='REFUND'`, w.ID).Scan(&refundCount); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM event_wallet_ledger WHERE wallet_id=$1 AND type='REFUND'`, w.ID).Scan(&refundCount); err != nil {
 		t.Fatalf("count refunds: %v", err)
 	}
 	if refundCount != 1 {
@@ -340,7 +340,7 @@ func TestIntegration_WalletClose_PostsExactlyOneBalancedRefund(t *testing.T) {
 	if err := svc.CloseWallet(ctx, w.ID); err != nil {
 		t.Fatalf("second close should be a no-op, got: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM event_wallet_ledger WHERE wallet_id=$1 AND type='REFUND'`, w.ID).Scan(&refundCount); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM event_wallet_ledger WHERE wallet_id=$1 AND type='REFUND'`, w.ID).Scan(&refundCount); err != nil {
 		t.Fatalf("count refunds: %v", err)
 	}
 	if refundCount != 1 {
@@ -361,7 +361,7 @@ func TestIntegration_ClosedWallet_RejectsTopUpAndCharge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM events WHERE id=$1`, ev.ID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM events WHERE id=$1`, ev.ID) })
 
 	w, err := svc.OpenWallet(ctx, attendee, ev.ID)
 	if err != nil {
