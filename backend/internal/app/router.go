@@ -68,6 +68,19 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	r.Use(middleware.CORSMiddleware(cfg.CORSAllowOrigins, cfg.AppEnv))
 
 	health := handlers.NewHealthHandler()
+	// Shared Redis client for idempotency fast-paths (arena ledger, etc.). nil when
+	// REDIS_URL is unset or the connection fails — callers fall back to DB-unique
+	// constraints, so Redis is a latency optimization, never a correctness
+	// dependency. Declared this early because the auth limiters (E2E-BE-032)
+	// capture it by closure before their routes mount.
+	var sharedRedis *goredis.Client
+	if cfg.RedisURL != "" {
+		if rc, err := platformRedis.New(cfg.RedisURL); err != nil {
+			log.Printf("[router] WARN: could not connect to Redis: %v — idempotency uses DB-unique fallback", err)
+		} else {
+			sharedRedis = rc
+		}
+	}
 	supabase := integrations.NewSupabaseRestClient(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey)
 	configureLocalJWTVerify(cfg, supabase)
 	adminRepo := repositories.NewAdminSupabaseRepository(supabase)
@@ -132,8 +145,10 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 		// tighter, hourly budget because each attempt spends from the project's
 		// small verification-email quota, so flooding it is a denial of service
 		// against everyone else's sign-up.
-		loginLimiter := middleware.NewAuthRateLimiter(cfg.AuthRateLimitPerMin, time.Minute)
-		resetLimiter := middleware.NewAuthRateLimiter(cfg.AuthResetRateLimitPerHour, time.Hour)
+		loginLimiter := middleware.NewAuthRateLimiter(cfg.AuthRateLimitPerMin, time.Minute).
+			WithRedis(func() *platformRedis.Client { return sharedRedis }, "login")
+		resetLimiter := middleware.NewAuthRateLimiter(cfg.AuthResetRateLimitPerHour, time.Hour).
+			WithRedis(func() *platformRedis.Client { return sharedRedis }, "reset")
 
 		apiAuth.POST("/register", loginLimiter.Middleware(), authHandler.Register)
 		apiAuth.POST("/login", loginLimiter.Middleware(), authHandler.Login)
@@ -467,17 +482,6 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 		}
 	}
 
-	// Shared Redis client for idempotency fast-paths (arena ledger, etc.). nil when
-	// REDIS_URL is unset or the connection fails — callers fall back to DB-unique
-	// constraints, so Redis is a latency optimization, never a correctness dependency.
-	var sharedRedis *goredis.Client
-	if cfg.RedisURL != "" {
-		if rc, err := platformRedis.New(cfg.RedisURL); err != nil {
-			log.Printf("[router] WARN: could not connect to Redis: %v — idempotency uses DB-unique fallback", err)
-		} else {
-			sharedRedis = rc
-		}
-	}
 	// E2E-FR-050: /readyz reports a per-component verdict for Redis too.
 	// Required only when REDIS_REQUIRED=true — Redis is a latency optimization
 	// with DB-unique fallbacks, so by default a Redis outage marks the component

@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	platformRedis "spotlight/backend/internal/platform/redis"
 )
 
 // RequestIDHeader is the correlation header honored on inbound requests and
@@ -226,6 +229,8 @@ type AuthRateLimiter struct {
 	maxKeys   int
 	lastSweep time.Time
 	now       func() time.Time // injectable so the tests do not sleep
+	redisGet  func() *platformRedis.Client
+	redisNS   string
 }
 
 // NewAuthRateLimiter builds a limiter. A non-positive limit or window falls back
@@ -271,9 +276,55 @@ func (l *AuthRateLimiter) evictLocked(n int) {
 	}
 }
 
+// WithRedis makes the limit shared across replicas: a fixed-window counter in
+// Redis instead of the per-instance map, so N replicas can't hand an attacker
+// N× the budget (E2E-BE-032). get is resolved per request (lazy because route
+// registration runs before the shared Redis client is built); a nil result or
+// any Redis error falls back to the in-memory map — protection degrades to
+// per-instance, never disappears. ns namespaces the counter per mount (login
+// vs reset can share a limiter type but not a budget).
+func (l *AuthRateLimiter) WithRedis(get func() *platformRedis.Client, ns string) *AuthRateLimiter {
+	l.redisGet = get
+	l.redisNS = ns
+	return l
+}
+
+// allowRedis records the attempt in the shared counter. The last return value
+// is false on a Redis failure — the caller falls back to the local bucket path.
+func (l *AuthRateLimiter) allowRedis(ctx context.Context, key string) (bool, int, int, bool) {
+	r := l.redisGet()
+	if r == nil {
+		return false, 0, 0, false
+	}
+	now := l.now()
+	bucket := now.Unix() / int64(l.window.Seconds())
+	sum := sha256.Sum256([]byte(key))
+	rkey := fmt.Sprintf("rl:authl:%s:%x:%d", l.redisNS, sum[:8], bucket)
+	n, err := r.Incr(ctx, rkey).Result()
+	if err != nil {
+		return false, 0, 0, false
+	}
+	if n == 1 {
+		_ = r.Expire(ctx, rkey, l.window+time.Minute).Err()
+	}
+	reset := time.Duration((bucket+1)*int64(l.window.Seconds())-now.Unix()) * time.Second
+	return n <= int64(l.limit), max(int(int64(l.limit)-n), 0), int(reset.Seconds()), true
+}
+
 // Allow records an attempt and reports whether it is permitted, plus the seconds
 // until the window resets.
 func (l *AuthRateLimiter) Allow(key string) (bool, int, int) {
+	return l.AllowCtx(context.Background(), key)
+}
+
+// AllowCtx is Allow with the caller's request context so a hung Redis can't
+// outlive the request.
+func (l *AuthRateLimiter) AllowCtx(ctx context.Context, key string) (bool, int, int) {
+	if l.redisGet != nil {
+		if ok, remaining, resetIn, hit := l.allowRedis(ctx, key); hit {
+			return ok, remaining, resetIn
+		}
+	}
 	var remaining int
 	var resetIn int
 
@@ -319,7 +370,7 @@ func (l *AuthRateLimiter) Allow(key string) (bool, int, int) {
 func (l *AuthRateLimiter) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := c.FullPath() + "|" + c.Request.Method + "|" + c.ClientIP()
-		allowed, remaining, resetIn := l.Allow(key)
+		allowed, remaining, resetIn := l.AllowCtx(c.Request.Context(), key)
 
 		c.Header("X-RateLimit-Limit", strconv.Itoa(l.limit))
 		c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
