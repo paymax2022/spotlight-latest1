@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -150,10 +149,7 @@ func (h *GiftingConnectHandler) QuoteGift(c *gin.Context) {
 	withinLimit := usage.RemainingKobo < 0 || product.AmountKobo <= usage.RemainingKobo
 	remainingAfter := usage.RemainingKobo
 	if usage.RemainingKobo >= 0 {
-		remainingAfter = usage.RemainingKobo - product.AmountKobo
-		if remainingAfter < 0 {
-			remainingAfter = 0
-		}
+		remainingAfter = max(usage.RemainingKobo-product.AmountKobo, 0)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
@@ -207,7 +203,7 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 		return
 	}
 
-	reference := fmt.Sprintf("GIFT-%s", generateShortID())
+	reference := "GIFT-" + generateShortID()
 
 	// Resolve the recipient's wallet so the journal has a real credit side.
 	recipientWallet, err := h.ledgerSvc.GetOrCreateUserWallet(c.Request.Context(), body.RecipientID)
@@ -230,7 +226,7 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 	}
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, body.RecipientID, "send_gift", "wallet", "gift",
-			gt.ID, nil, map[string]interface{}{
+			gt.ID, nil, map[string]any{
 				keyProduct:  body.ProductID,
 				"amount":    product.AmountKobo,
 				"reference": reference,

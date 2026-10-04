@@ -117,7 +117,7 @@ func (h *WalletConnectHandler) FundWallet(c *gin.Context) {
 		return
 	}
 
-	reference := fmt.Sprintf("FUND-%s", generateShortID())
+	reference := "FUND-" + generateShortID()
 
 	// Balanced journal: DR provider_clearing -> CR user wallet.
 	if err := h.walletSvc.Credit(c.Request.Context(), userID, reference, idemKey, body.AmountKobo); err != nil {
@@ -138,7 +138,7 @@ func (h *WalletConnectHandler) FundWallet(c *gin.Context) {
 
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "fund_wallet", "wallet", "wallet",
-			userID, nil, map[string]interface{}{
+			userID, nil, map[string]any{
 				"amount":    body.AmountKobo,
 				"reference": reference,
 			}, ginutil.ClientIP(c), c.Request.UserAgent(), "warning")
@@ -172,10 +172,10 @@ func (h *WalletConnectHandler) GetHistory(c *gin.Context) {
 	limit := 50
 	offset := 0
 	if l := c.Query("limit"); l != "" {
-		fmt.Sscanf(l, "%d", &limit)
+		_, _ = fmt.Sscanf(l, "%d", &limit)
 	}
 	if o := c.Query("offset"); o != "" {
-		fmt.Sscanf(o, "%d", &offset)
+		_, _ = fmt.Sscanf(o, "%d", &offset)
 	}
 
 	txns, err := h.walletSvc.ListTransactions(c.Request.Context(), userID, limit, offset)

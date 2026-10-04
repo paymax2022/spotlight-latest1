@@ -36,6 +36,7 @@ package transport_scheduled_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -145,8 +146,8 @@ func TestLiveDB_CreateScheduled_ThenGet_OLA_Enforced(t *testing.T) {
 	req := transport.ScheduledCreateRequest{
 		Mode:              "ride_hail",
 		ScheduledPickupAt: time.Now().Add(6 * time.Hour).Format(time.RFC3339),
-		Pickup:            transport.SchedPlace{Label: "Ikeja", Lat: f64ptr(6.6018), Lng: f64ptr(3.3515)},
-		Dropoff:           transport.SchedPlace{Label: "VI", Lat: f64ptr(6.4281), Lng: f64ptr(3.4219)},
+		Pickup:            transport.SchedPlace{Label: "Ikeja", Lat: new(6.6018), Lng: new(3.3515)},
+		Dropoff:           transport.SchedPlace{Label: "VI", Lat: new(6.4281), Lng: new(3.4219)},
 		ModePayload:       map[string]any{"pricing_mode": "instant"},
 	}
 	booking, err := svc.CreateScheduled(ctx, owner, req, newIdemKey(t, "create"))
@@ -293,8 +294,8 @@ func TestLiveDB_CancelScheduled_BeforeDispatch_NoRefundNeeded(t *testing.T) {
 	req := transport.ScheduledCreateRequest{
 		Mode:              "ride_hail",
 		ScheduledPickupAt: time.Now().Add(4 * time.Hour).Format(time.RFC3339),
-		Pickup:            transport.SchedPlace{Label: "A", Lat: f64ptr(6.5), Lng: f64ptr(3.3)},
-		Dropoff:           transport.SchedPlace{Label: "B", Lat: f64ptr(6.6), Lng: f64ptr(3.4)},
+		Pickup:            transport.SchedPlace{Label: "A", Lat: new(6.5), Lng: new(3.3)},
+		Dropoff:           transport.SchedPlace{Label: "B", Lat: new(6.6), Lng: new(3.4)},
 	}
 	b, err := svc.CreateScheduled(ctx, rider, req, newIdemKey(t, "cancel-create"))
 	if err != nil {
@@ -353,9 +354,9 @@ func TestLiveDB_DispatchScheduled_IdempotentSingleCharge(t *testing.T) {
 	req := transport.ScheduledCreateRequest{
 		Mode:              "ride_hail",
 		ScheduledPickupAt: time.Now().Add(1 * time.Minute).Format(time.RFC3339), // due almost immediately
-		LeadTimeMinutes:   intPtr(0),
-		Pickup:            transport.SchedPlace{Label: "A", Lat: f64ptr(6.5), Lng: f64ptr(3.3)},
-		Dropoff:           transport.SchedPlace{Label: "B", Lat: f64ptr(6.6), Lng: f64ptr(3.4)},
+		LeadTimeMinutes:   new(0),
+		Pickup:            transport.SchedPlace{Label: "A", Lat: new(6.5), Lng: new(3.3)},
+		Dropoff:           transport.SchedPlace{Label: "B", Lat: new(6.6), Lng: new(3.4)},
 		ModePayload:       map[string]any{"pricing_mode": "instant"},
 	}
 	b, err := svc.CreateScheduled(ctx, rider, req, newIdemKey(t, "dispatch-create"))
@@ -420,7 +421,7 @@ func TestLiveDB_DueForDispatch_OnlySelectsWithinLeadWindow(t *testing.T) {
 	farFuture, err := svc.CreateScheduled(ctx, rider, transport.ScheduledCreateRequest{
 		Mode:              "ride_hail",
 		ScheduledPickupAt: time.Now().Add(48 * time.Hour).Format(time.RFC3339),
-		LeadTimeMinutes:   intPtr(30),
+		LeadTimeMinutes:   new(30),
 		Pickup:            transport.SchedPlace{Label: "A"},
 		Dropoff:           transport.SchedPlace{Label: "B"},
 	}, newIdemKey(t, "due-far"))
@@ -431,7 +432,7 @@ func TestLiveDB_DueForDispatch_OnlySelectsWithinLeadWindow(t *testing.T) {
 	dueSoon, err := svc.CreateScheduled(ctx, rider, transport.ScheduledCreateRequest{
 		Mode:              "ride_hail",
 		ScheduledPickupAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
-		LeadTimeMinutes:   intPtr(0),
+		LeadTimeMinutes:   new(0),
 		Pickup:            transport.SchedPlace{Label: "A"},
 		Dropoff:           transport.SchedPlace{Label: "B"},
 	}, newIdemKey(t, "due-soon"))
@@ -553,13 +554,13 @@ func TestLiveDB_SendDueReminders_FiresOnceUnderConcurrentInvocation(t *testing.T
 
 	const workers = 10
 	done := make(chan struct{}, workers)
-	for i := 0; i < workers; i++ {
+	for range workers {
 		go func() {
 			defer func() { done <- struct{}{} }()
 			_, _ = svc.SendDueReminders(ctx)
 		}()
 	}
-	for i := 0; i < workers; i++ {
+	for range workers {
 		<-done
 	}
 
@@ -585,12 +586,16 @@ func TestLiveDB_SendDueReminders_FiresOnceUnderConcurrentInvocation(t *testing.T
 	}
 }
 
-func f64ptr(f float64) *float64 { return &f }
-func intPtr(i int) *int         { return &i }
+//go:fix inline
+func f64ptr(f float64) *float64 { return new(f) }
+
+//go:fix inline
+func intPtr(i int) *int { return new(i) }
 
 // isCodedErrWithCode checks err is a *transport.CodedError with the given code.
 func isCodedErrWithCode(err error, target **transport.CodedError, code string) bool {
-	ce, ok := err.(*transport.CodedError)
+	ce := &transport.CodedError{}
+	ok := errors.As(err, &ce)
 	if !ok {
 		return false
 	}

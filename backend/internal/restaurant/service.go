@@ -260,7 +260,7 @@ func (s *Service) computeDeliveryFee(ctx context.Context, rLat, rLng, dLat, dLng
 // CreateRestaurant registers a new restaurant.
 func (s *Service) CreateRestaurant(ctx context.Context, ownerID string, req CreateRestaurantRequest) (*Restaurant, error) {
 	if !validGeoPointPair(req.GeoLat, req.GeoLng) {
-		return nil, fmt.Errorf("restaurant: invalid coordinates")
+		return nil, errors.New("restaurant: invalid coordinates")
 	}
 	r := &Restaurant{
 		ID:          uuid.New().String(),
@@ -319,7 +319,7 @@ type DeliveryQuote struct {
 func (s *Service) QuoteDelivery(ctx context.Context, restaurantID string, dLat, dLng float64, nightOverride, weatherOverride *bool) (*DeliveryQuote, error) {
 	var rLat, rLng *float64
 	if err := s.db.QueryRow(ctx, `SELECT geo_lat, geo_lng FROM restaurants WHERE id=$1`, restaurantID).Scan(&rLat, &rLng); err != nil {
-		return nil, fmt.Errorf("restaurant: not found")
+		return nil, errors.New("restaurant: not found")
 	}
 	if rLat == nil || rLng == nil {
 		return &DeliveryQuote{DeliveryFeeKobo: DeliveryFeeKobo, FlatFallback: true}, nil
@@ -406,7 +406,7 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		restaurantMap[rid] = true
 	}
 	if len(restaurantMap) == 0 {
-		return nil, fmt.Errorf("restaurant: no valid restaurants in order")
+		return nil, errors.New("restaurant: no valid restaurants in order")
 	}
 
 	// For multi-restaurant orders, use the first one as the "primary" for backward compat
@@ -435,7 +435,7 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		`SELECT is_open, owner_id, geo_lat, geo_lng, COALESCE(service_fee_bp,0), COALESCE(surge_bp,0), COALESCE(packaging_fee_kobo,0) FROM restaurants WHERE id=$1`,
 		primaryRestaurantID).
 		Scan(&isOpen, &ownerID, &rLat, &rLng, &pricingCfg.ServiceFeeBp, &pricingCfg.SurgeBp, &packagingFeePerPackKobo); err != nil {
-		return nil, fmt.Errorf("restaurant: primary restaurant not found")
+		return nil, errors.New("restaurant: primary restaurant not found")
 	}
 
 	// A scheduled order books a FUTURE slot, so it is gated on that slot falling inside
@@ -450,7 +450,7 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	// the kitchen is open when the slot arrives is settled by ActivateScheduledOrders,
 	// which releases it into the live queue or auto-cancels AND REFUNDS it (SG-002).
 	if !isOpen && scheduledFor == nil {
-		return nil, fmt.Errorf("restaurant: primary restaurant is currently closed")
+		return nil, errors.New("restaurant: primary restaurant is currently closed")
 	}
 
 	// Verify secondary restaurants (if multi-restaurant) are also open — same rule.
@@ -581,10 +581,7 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	//   - negative is clamped to 0 (never a discount; also violates orders_tip_kobo_nonneg);
 	//   - it may not exceed the order's own value, which rejects fat-finger/hostile
 	//     amounts up front and keeps `total` far from int64 overflow.
-	tipKobo := req.TipKobo
-	if tipKobo < 0 {
-		tipKobo = 0
-	}
+	tipKobo := max(req.TipKobo, 0)
 	if tipKobo > itemsKobo+deliveryKobo {
 		return nil, fmt.Errorf("restaurant: tip of %d kobo exceeds the order value of %d kobo", tipKobo, itemsKobo+deliveryKobo)
 	}
@@ -870,7 +867,7 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 		s.releasePromoReservationSafe(ctx, promoID, orderID)
 		return nil, fmt.Errorf("restaurant: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	order := &Order{
 		ID:               orderID,
@@ -991,7 +988,7 @@ func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID strin
 		Body:   "You have a new food order to confirm.",
 		Data:   map[string]any{"order_id": order.ID, "total_kobo": order.TotalKobo},
 	})
-	s.broadcastStatus(order.ID, OrderPending)
+	s.broadcastStatus(order.ID, OrderPending) //nolint:contextcheck // WS publish outlives the request by design
 	return order, nil
 }
 
@@ -1080,7 +1077,7 @@ func (s *Service) getOrderByIdempotencyKey(ctx context.Context, idemKey, custome
 		return nil, err
 	}
 	if o == nil {
-		return nil, fmt.Errorf("restaurant: order not found for idempotency key")
+		return nil, errors.New("restaurant: order not found for idempotency key")
 	}
 	return o, nil
 }
@@ -1090,10 +1087,10 @@ func (s *Service) orderParties(ctx context.Context, orderID string) (customer, o
 	var riderPtr *string
 	const q = `SELECT customer_id, restaurant_id, rider_id FROM orders WHERE id=$1`
 	if err = s.db.QueryRow(ctx, q, orderID).Scan(&customer, &restaurantID, &riderPtr); err != nil {
-		return "", "", "", fmt.Errorf("restaurant: order not found")
+		return "", "", "", errors.New("restaurant: order not found")
 	}
 	if err = s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&owner); err != nil {
-		return "", "", "", fmt.Errorf("restaurant: restaurant not found")
+		return "", "", "", errors.New("restaurant: restaurant not found")
 	}
 	if riderPtr != nil {
 		rider = *riderPtr
@@ -1159,7 +1156,7 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 	// found". Mirrors the COALESCE(settlement_id::text,'') pattern in delivery.go.
 	const q = `SELECT id, restaurant_id, status, COALESCE(settlement_id::text,'') FROM orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&order.ID, &order.RestaurantID, &order.Status, &order.SettlementID); err != nil {
-		return fmt.Errorf("restaurant: order not found")
+		return errors.New("restaurant: order not found")
 	}
 
 	if !canTransition(order.Status, newStatus) {
@@ -1198,7 +1195,7 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 				Data: map[string]any{"order_id": orderID}})
 		}
 		var assigned *string
-		s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&assigned)
+		_ = s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&assigned)
 		if assigned == nil {
 			if derr := s.DispatchOrder(ctx, orderID); derr != nil {
 				// A dispatch hiccup must not roll back the ready transition; the
@@ -1226,7 +1223,7 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 	case OrderDelivered:
 		s.notify(ctx, Notification{UserID: customer, Event: EventOrderDelivered, Title: "Order delivered", Body: "Enjoy your meal!", Data: map[string]any{"order_id": orderID}})
 	}
-	s.broadcastStatus(orderID, newStatus)
+	s.broadcastStatus(orderID, newStatus) //nolint:contextcheck // WS publish outlives the request by design
 	return nil
 }
 
@@ -1342,7 +1339,7 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 		}
 	}
 	var ownerID string
-	s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID)
+	_ = s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID)
 	split := settlement.Split{
 		ProviderID:  ownerID,
 		ProviderPct: splitProviderPct,
@@ -1404,7 +1401,7 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 	// A recorder failure is logged and swallowed — it must never fail the settle.
 	var grossKobo int64
 	var customerID string
-	s.db.QueryRow(ctx, `SELECT total_kobo, customer_id FROM orders WHERE id=$1`, orderID).Scan(&grossKobo, &customerID)
+	_ = s.db.QueryRow(ctx, `SELECT total_kobo, customer_id FROM orders WHERE id=$1`, orderID).Scan(&grossKobo, &customerID)
 	grossKobo = grossKobo - split.TipKobo - split.ServiceFeeKobo + split.DiscountKobo
 	s.recordCommissionSafe(ctx, "Lifestyle", "Restaurant", "", grossKobo, orderID, &customerID)
 
@@ -1444,7 +1441,7 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 	if err != nil {
 		return fmt.Errorf("restaurant: begin cancel tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var status, settlementID string
 	// COALESCE the nullable settlement_id so a settlement-less order scans cleanly
@@ -1453,13 +1450,13 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 	if err := tx.QueryRow(ctx,
 		`SELECT status, COALESCE(settlement_id::text,'') FROM orders WHERE id=$1 FOR UPDATE`, orderID).
 		Scan(&status, &settlementID); err != nil {
-		return fmt.Errorf("restaurant: order not found")
+		return errors.New("restaurant: order not found")
 	}
 	if status == string(OrderCancelled) {
 		return tx.Commit(ctx) // already cancelled — idempotent no-op
 	}
 	if status == string(OrderPickedUp) || status == string(OrderDelivered) {
-		return fmt.Errorf("restaurant: cannot cancel an order that is already picked up or delivered")
+		return errors.New("restaurant: cannot cancel an order that is already picked up or delivered")
 	}
 	// Give any promo redemption back: the order is refunded in full, so the code was
 	// never really consumed. Without this a single-use campaign dies the first time
@@ -1498,7 +1495,7 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 	if rider != "" && rider != actorID {
 		s.notify(ctx, Notification{UserID: rider, Event: EventOrderCancelled, Title: "Order cancelled", Body: "An assigned order was cancelled.", Data: map[string]any{"order_id": orderID}})
 	}
-	s.broadcastStatus(orderID, OrderCancelled)
+	s.broadcastStatus(orderID, OrderCancelled) //nolint:contextcheck // WS publish outlives the request by design
 	return nil
 }
 
@@ -1570,13 +1567,13 @@ func (s *Service) refundAndClose(ctx context.Context, orderID, actorID string, t
 	if err != nil {
 		return fmt.Errorf("restaurant: begin refund tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var status, settlementID string
 	if err := tx.QueryRow(ctx,
 		`SELECT status, COALESCE(settlement_id::text,'') FROM orders WHERE id=$1 FOR UPDATE`, orderID).
 		Scan(&status, &settlementID); err != nil {
-		return fmt.Errorf("restaurant: order not found")
+		return errors.New("restaurant: order not found")
 	}
 	if status == string(toStatus) {
 		return tx.Commit(ctx) // already closed in this state — idempotent no-op
@@ -1615,7 +1612,7 @@ func (s *Service) refundAndClose(ctx context.Context, orderID, actorID string, t
 		s.notify(ctx, Notification{UserID: rider, Event: EventOrderCancelled, Title: "Order closed",
 			Body: "An assigned order was closed.", Data: map[string]any{"order_id": orderID}})
 	}
-	s.broadcastStatus(orderID, toStatus)
+	s.broadcastStatus(orderID, toStatus) //nolint:contextcheck // WS publish outlives the request by design
 	return nil
 }
 
@@ -1970,7 +1967,7 @@ func (s *Service) MarkDeliveryFailed(ctx context.Context, orderID, riderID, reas
 		s.notify(ctx, Notification{UserID: customer, Event: EventOrderCancelled, Title: "Delivery problem",
 			Body: "We couldn't complete your delivery — support will reach out.", Data: map[string]any{"order_id": orderID, keyReason: reason}})
 	}
-	s.broadcastStatus(orderID, OrderDeliveryFailed)
+	s.broadcastStatus(orderID, OrderDeliveryFailed) //nolint:contextcheck // WS publish outlives the request by design
 	return nil
 }
 

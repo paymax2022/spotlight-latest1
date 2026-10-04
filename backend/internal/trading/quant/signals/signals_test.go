@@ -135,7 +135,7 @@ func trendUpNoisy(n int) []float64 {
 	p := make([]float64, n)
 	rise := n - 15
 	base := 100 + float64(rise-1)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i < rise {
 			p[i] = 100 + float64(i) // steady climb
 		} else if i%2 == 0 {
@@ -150,7 +150,7 @@ func trendUpNoisy(n int) []float64 {
 // flat range then a clean upside breakout above the prior high on the last bar.
 func breakoutSeries() []float64 {
 	p := make([]float64, 0, 30)
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		if i%2 == 0 {
 			p = append(p, 100)
 		} else {

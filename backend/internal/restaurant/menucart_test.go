@@ -48,7 +48,7 @@ func TestNormalizeDietaryTags(t *testing.T) {
 	}
 	// Count cap.
 	many := make([]string, 0, 20)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		many = append(many, string(rune('a'+i)))
 	}
 	if len(normalizeDietaryTags(many)) > maxDietaryTags {

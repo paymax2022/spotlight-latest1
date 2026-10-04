@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/internal/provider"
@@ -137,7 +138,7 @@ func (r *Registry) InitiatePayoutFailover(
 ) (*PayoutResult, error) {
 	order := failoverOrder(r.Names(), r.defaultName, preferred, r.failover)
 	if len(order) == 0 {
-		return nil, fmt.Errorf("disbursement: no providers configured")
+		return nil, errors.New("disbursement: no providers configured")
 	}
 	var firstTried string
 	var lastErr error
@@ -177,7 +178,7 @@ func (r *Registry) InitiatePayoutFailover(
 		return res, nil
 	}
 	if lastErr == nil {
-		lastErr = fmt.Errorf("disbursement: all providers failed")
+		lastErr = errors.New("disbursement: all providers failed")
 	}
 	return nil, fmt.Errorf("disbursement: failover exhausted: %w", lastErr)
 }
@@ -199,7 +200,7 @@ func (r *Registry) ResolveAccountFailover(ctx context.Context, preferred, bankCo
 		return res, name, nil
 	}
 	if lastErr == nil {
-		lastErr = fmt.Errorf("disbursement: no providers configured")
+		lastErr = errors.New("disbursement: no providers configured")
 	}
 	return nil, "", lastErr
 }
@@ -221,7 +222,7 @@ func (r *Registry) ListBanksFailover(ctx context.Context, preferred string) ([]p
 		return banks, name, nil
 	}
 	if lastErr == nil {
-		lastErr = fmt.Errorf("disbursement: no providers configured")
+		lastErr = errors.New("disbursement: no providers configured")
 	}
 	return nil, "", lastErr
 }

@@ -311,7 +311,7 @@ func seedAuthUser(t *testing.T, pool *db.Pool) string {
 	// teaches the suite to erase the append-only record the whole module exists to
 	// protect. Users with no ledger activity (the onboarding tests) do get removed.
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id = $1`, id)
 	})
 	return id
 }

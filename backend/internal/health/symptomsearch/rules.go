@@ -5,7 +5,7 @@ package symptomsearch
 //	or_expr     := and_expr { "OR" and_expr }
 //	and_expr    := unary { "AND" unary }
 //	primary     := "(" or_expr ")" | predicate
-//	predicate   := "concept:" CODE                 -- CODE := [a-z][a-z0-9_]*
+//	:= "concept:" CODE                 -- CODE := [a-z][a-z0-9_]*
 //	             | "who:" COHORT                   -- COHORT ∈ ValidCohorts
 //	             | "duration_days" OP INT          -- OP ∈ { < , <= , = , >= , > }
 //	             | "term_count" OP INT
@@ -23,6 +23,7 @@ package symptomsearch
 // lexer. Parsing is deterministic and pure — same input, same output.
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -122,7 +123,7 @@ func ParseRule(expr string) (*CompiledRule, error) {
 		return nil, err
 	}
 	if len(toks) == 0 {
-		return nil, fmt.Errorf("symptomsearch: empty rule expression")
+		return nil, errors.New("symptomsearch: empty rule expression")
 	}
 	p := &ruleParser{toks: toks}
 	root, err := p.parseOr()
@@ -257,14 +258,14 @@ func (p *ruleParser) parsePrimary() (ruleNode, error) {
 	tok := p.next()
 	switch {
 	case tok == "":
-		return nil, fmt.Errorf("symptomsearch: unexpected end of rule expression")
+		return nil, errors.New("symptomsearch: unexpected end of rule expression")
 	case tok == "(":
 		inner, err := p.parseOr()
 		if err != nil {
 			return nil, err
 		}
 		if p.next() != ")" {
-			return nil, fmt.Errorf("symptomsearch: missing closing parenthesis")
+			return nil, errors.New("symptomsearch: missing closing parenthesis")
 		}
 		return inner, nil
 	case tok == ")" || tok == "AND" || tok == "OR" || tok == "NOT" || comparators[tok]:

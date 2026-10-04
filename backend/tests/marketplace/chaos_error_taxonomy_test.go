@@ -264,8 +264,8 @@ func TestChaos_TwoBuyersRaceListing_LiveConcurrentCreate(t *testing.T) {
 func TestChaos_EditListingWithActiveOrder_GuardOnlyBlocksPriceChanges(t *testing.T) {
 	t.Skip(adr023ChaosSkip) // the active-ORDER edit guard is dead: no orders exist post-ADR-023 (listings still ship).
 	// Only PriceKobo triggers the active-order guard; Title/Description/Attrs do not.
-	priceOnly := mkt.UpdateListingInput{PriceKobo: int64Ptr(5_000_00)}
-	descOnly := mkt.UpdateListingInput{Description: strPtrLocal("fixed a typo in the description")}
+	priceOnly := mkt.UpdateListingInput{PriceKobo: new(int64(5_000_00))}
+	descOnly := mkt.UpdateListingInput{Description: new("fixed a typo in the description")}
 
 	if priceOnly.PriceKobo == nil {
 		t.Fatal("test setup: price-only patch must carry PriceKobo")
@@ -376,5 +376,8 @@ func TestChaos_KYCOutage_BadgeIsMonotonicSetOnly(t *testing.T) {
 // in chaos_live_db_test.go, against live Postgres. Unlike the escrow tests below,
 // the code it covers still exists, so it was implemented rather than skipped.
 
-func int64Ptr(v int64) *int64      { return &v }
-func strPtrLocal(s string) *string { return &s }
+//go:fix inline
+func int64Ptr(v int64) *int64 { return new(v) }
+
+//go:fix inline
+func strPtrLocal(s string) *string { return new(s) }

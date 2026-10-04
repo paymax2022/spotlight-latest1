@@ -2,6 +2,7 @@ package crowdfunding
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -60,6 +61,7 @@ func reviewTransition(current, decision string) (string, bool) {
 // assessment of every campaign to anyone browsing.
 type AdminCampaignSummary struct {
 	CampaignSummary
+
 	SubmittedAt string `json:"submittedAt"`
 	RiskLevel   string `json:"riskLevel"`
 }
@@ -115,11 +117,11 @@ func (s *Service) AdminDecide(ctx context.Context, campaignID, adminID, decision
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var current string
 	if err := tx.QueryRow(ctx, `SELECT review_status FROM campaigns WHERE id=$1 FOR UPDATE`, campaignID).Scan(&current); err != nil {
-		return fmt.Errorf("crowdfunding: campaign not found")
+		return errors.New("crowdfunding: campaign not found")
 	}
 	next, ok := reviewTransition(current, decision)
 	if !ok {

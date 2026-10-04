@@ -2,11 +2,13 @@ package feesscholarship
 
 import (
 	"context"
+	"errors"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/go-common/strutil"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Service owns the Sponsor-a-Student pledge → fund → apply flow (build-spec E9). Money moves
@@ -195,7 +197,7 @@ func (s *Service) ApplyAward(ctx context.Context, actorID string, req ApplyAward
 			return berr
 		}
 		// pledged/funded → applied (guarded; applied→applied is a no-op-safe self-loop).
-		if _, serr := tx.SetPledgeState(ctx, req.PledgeID, p.State, PledgeApplied, nil); serr != nil && serr != ErrIllegalTransition {
+		if _, serr := tx.SetPledgeState(ctx, req.PledgeID, p.State, PledgeApplied, nil); serr != nil && !errors.Is(serr, ErrIllegalTransition) {
 			return serr
 		}
 		return tx.WriteAudit(ctx, actorID, "award_applied", req.PledgeID, string(p.State), string(PledgeApplied),

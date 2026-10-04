@@ -2,6 +2,7 @@ package gamification
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -170,7 +171,7 @@ func (r *Repository) UserClassID(ctx context.Context, userID string) (classID st
 	const q = `SELECT class_id::text FROM public.academy_profiles
 	           WHERE user_id = $1 AND class_id IS NOT NULL ORDER BY role LIMIT 1`
 	err = r.db.QueryRow(ctx, q, userID).Scan(&classID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil
 	}
 	if err != nil {
@@ -183,7 +184,7 @@ func (r *Repository) UserClassID(ctx context.Context, userID string) (classID st
 func (r *Repository) ClassCode(ctx context.Context, classID string) (string, error) {
 	var code string
 	err := r.db.QueryRow(ctx, `SELECT code FROM public.academy_classes WHERE id = $1`, classID).Scan(&code)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
 	return code, err
@@ -418,4 +419,4 @@ func (r *Repository) RankedEntries(ctx context.Context, leaderboardID, periodKey
 }
 
 // IsNoRows is a small helper so callers don't import pgx just to detect absence.
-func IsNoRows(err error) bool { return err == pgx.ErrNoRows }
+func IsNoRows(err error) bool { return errors.Is(err, pgx.ErrNoRows) }

@@ -97,10 +97,10 @@ func newAdminFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) admi
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE id IN ($1,$2,$3)`, f.confirmedID, f.deliveredID, f.pickupID)
-		pool.Exec(bg, `DELETE FROM pharmacy_products WHERE pharmacy_provider_id = $1`, f.pharmacy)
-		pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE pharmacy_provider_id = $1`, f.pharmacy)
-		pool.Exec(bg, `DELETE FROM health_providers WHERE id = $1`, f.pharmacy)
+		_, _ = pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE id IN ($1,$2,$3)`, f.confirmedID, f.deliveredID, f.pickupID)
+		_, _ = pool.Exec(bg, `DELETE FROM pharmacy_products WHERE pharmacy_provider_id = $1`, f.pharmacy)
+		_, _ = pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE pharmacy_provider_id = $1`, f.pharmacy)
+		_, _ = pool.Exec(bg, `DELETE FROM health_providers WHERE id = $1`, f.pharmacy)
 	})
 	return f
 }

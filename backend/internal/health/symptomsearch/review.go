@@ -4,7 +4,7 @@ package symptomsearch
 // keeps the licence (PRD §6):
 //	SUBMITTED → AUTO_CLEARED (T1) | PHARMACIST_REVIEW (T2/POM)
 //	PHARMACIST_REVIEW → APPROVED | REJECTED | NEEDS_INFO
-//	NEEDS_INFO → PHARMACIST_REVIEW
+//	→ PHARMACIST_REVIEW
 // Every transition is guarded (explicit edge map), idempotent (re-applying the
 // current state is a no-op), optimistic-locked (version CAS in the repo) and
 // audit-logged with the actor. REJECTED signals the pharmacy order flow to run

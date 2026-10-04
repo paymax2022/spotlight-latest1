@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"sync"
 	"testing"
@@ -34,22 +35,20 @@ func (s *stubAuthService) registered() int {
 	return s.registerCalls
 }
 
-func (s *stubAuthService) RegisterUser(domain.RegisterRequest) (*services.RegisterResult, error) {
+func (s *stubAuthService) RegisterUser(context.Context, domain.RegisterRequest) (*services.RegisterResult, error) {
 	s.mu.Lock()
 	s.registerCalls++
 	s.mu.Unlock()
 	return s.result, s.err
 }
-func (s *stubAuthService) LoginUser(domain.LoginRequest) (map[string]any, error) {
+func (s *stubAuthService) LoginUser(context.Context, domain.LoginRequest) (map[string]any, error) {
 	if s.loginErr != nil {
 		return nil, s.loginErr
 	}
 	// A fresh copy per call: the handler deletes the internal hints in place, and
 	// a shared map would make the second test in a run see them already gone.
 	out := map[string]any{}
-	for k, v := range s.loginOut {
-		out[k] = v
-	}
+	maps.Copy(out, s.loginOut)
 	return out, nil
 }
 func (s *stubAuthService) LogoutUser(token string) error {
@@ -59,10 +58,14 @@ func (s *stubAuthService) LogoutUser(token string) error {
 	s.mu.Unlock()
 	return s.logoutErr
 }
-func (s *stubAuthService) RequestPasswordReset(string) error                    { return nil }
-func (s *stubAuthService) ResetPassword(string, string) error                   { return nil }
-func (s *stubAuthService) ChangePassword(string, string, string) error          { return nil }
-func (s *stubAuthService) CompleteProfile(string, string, map[string]any) error { return nil }
+func (s *stubAuthService) RequestPasswordReset(context.Context, string) error { return nil }
+func (s *stubAuthService) ResetPassword(string, string) error                 { return nil }
+func (s *stubAuthService) ChangePassword(context.Context, string, string, string) error {
+	return nil
+}
+func (s *stubAuthService) CompleteProfile(context.Context, string, string, map[string]any) error {
+	return nil
+}
 
 // noopAudit is declared in session_handler_test.go and reused here.
 

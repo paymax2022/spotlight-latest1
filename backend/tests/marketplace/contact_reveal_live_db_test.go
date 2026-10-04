@@ -25,7 +25,7 @@ func seedListingWithSellerPhone(t *testing.T, ctx context.Context, phone string)
 			t.Fatalf("seed user: %v", err)
 		}
 		t.Cleanup(func() {
-			_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id)
+			_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, id)
 		})
 		return id
 	}
@@ -104,17 +104,19 @@ func TestContactReveal_RateLimitsAcrossListings(t *testing.T) {
 		viewer, viewer+"@seed.test"); err != nil {
 		t.Fatalf("seed viewer: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, viewer) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id=$1`, viewer)
+	})
 
 	// 11 distinct listings, each a different seller with a number: the 11th must
 	// be refused because the hourly budget is 10.
-	for i := 0; i < 11; i++ {
+	for i := range 11 {
 		seller := uuid.NewString()
-		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 			seller, seller+"@seed.test"); err != nil {
 			t.Fatalf("seed seller: %v", err)
 		}
-		if _, err := pool.Exec(ctx,
+		if _, err := pool.Exec(context.WithoutCancel(ctx),
 			`INSERT INTO public.user_profiles (id, email, phone) VALUES ($1,$2,$3)
 			 ON CONFLICT (id) DO UPDATE SET phone=EXCLUDED.phone`,
 			seller, seller+"@seed.test", fmt.Sprintf("0803000%04d", i)); err != nil {
@@ -156,7 +158,7 @@ func TestContactReveal_RepeatOfSameListingIsFree(t *testing.T) {
 	ctx := context.Background()
 	svc, _, viewer, id := seedListingWithSellerPhone(t, ctx, "08031234567")
 
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		if _, err := svc.RevealSellerContact(ctx, viewer, id); err != nil {
 			t.Fatalf("repeat reveal %d of the same listing was refused: %v", i+1, err)
 		}
@@ -172,7 +174,7 @@ func TestContactReveal_IsRecordedForAbuseReports(t *testing.T) {
 	svc2, seller, viewer, id := seedListingWithSellerPhone(t, ctx, "08031234567")
 	_ = svc
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if _, err := svc2.RevealSellerContact(ctx, viewer, id); err != nil {
 			t.Fatalf("reveal: %v", err)
 		}

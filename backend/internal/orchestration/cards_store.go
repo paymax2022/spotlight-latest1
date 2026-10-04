@@ -295,7 +295,7 @@ func (s *sqlCardStore) FundCard(ctx context.Context, business, id string, amount
 	if err != nil {
 		return Card{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Wallet lock FIRST, before the card row lock, so card funding orders its
 	// locks the same way conversions and payouts do and no cycle can form.
@@ -442,7 +442,7 @@ func (s *sqlCardStore) TerminateCard(ctx context.Context, business, id string) e
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Same lock ordering as FundCard: wallet first, then the card row.
 	if err = lockCustomerWallet(ctx, tx, business); err != nil {

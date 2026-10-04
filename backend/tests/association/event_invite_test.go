@@ -39,8 +39,8 @@ func TestInviteToEvent_InvitesMembersAndIsAdminOnly(t *testing.T) {
 		t.Fatalf("seed event: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_event_registrations WHERE event_id=$1`, eventID)
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_events WHERE id=$1`, eventID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_event_registrations WHERE event_id=$1`, eventID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_events WHERE id=$1`, eventID)
 	})
 
 	var memberMembership string
@@ -99,8 +99,8 @@ func TestInviteToEvent_DoesNotDisturbAnExistingResponse(t *testing.T) {
 		t.Fatalf("seed event: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_event_registrations WHERE event_id=$1`, eventID)
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_events WHERE id=$1`, eventID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_event_registrations WHERE event_id=$1`, eventID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_events WHERE id=$1`, eventID)
 	})
 
 	var membership string
@@ -164,14 +164,14 @@ func TestInviteToEvent_DropsForeignMemberships(t *testing.T) {
 	_, foreignMembership := seedMember(t, ctx, pool, resB.OrganisationID, "@foreign.test")
 
 	var eventID string
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_events (organisation_id, title, starts_at)
 		VALUES ($1, 'Members only', now() + interval '10 days') RETURNING id::text`, orgA).Scan(&eventID); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_event_registrations WHERE event_id=$1`, eventID)
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_events WHERE id=$1`, eventID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_event_registrations WHERE event_id=$1`, eventID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_events WHERE id=$1`, eventID)
 	})
 
 	n, err := svc.InviteToEvent(ctx, adminA, eventID, []string{foreignMembership})

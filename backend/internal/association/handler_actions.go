@@ -219,7 +219,7 @@ func (h *Handler) BulkImportMembers(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: "multipart file 'file' required"})
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	n, err := h.svc.BulkImportMembers(c.Request.Context(), ginutil.UserID(c), orgID, file)
 	if err != nil {
 		errMap.Write(c, err)

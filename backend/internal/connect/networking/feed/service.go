@@ -55,7 +55,7 @@ func (s *Service) Compose(ctx context.Context, userID, idemKey string, in Compos
 	if authorType == "" {
 		authorType = "user"
 	}
-	authorID := userID
+	var authorID string
 	switch authorType {
 	case "user":
 		authorID = userID

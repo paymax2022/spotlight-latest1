@@ -29,9 +29,10 @@ import (
 	"errors"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/go-common/dbutil"
 )
 
 // ErrNotFound is returned when a requested row does not exist. Handlers map it to 404.
@@ -215,7 +216,7 @@ func (r *Repository) CreateInstallmentPlan(ctx context.Context, appID, batchID s
 		return nil, err
 	}
 	startDate := time.Now()
-	for i := int32(0); i < count; i++ {
+	for i := range count {
 		dueDate := CalculateDueDate(startDate, i, frequency)
 		amount := amountPerInstallment
 		if i == count-1 {

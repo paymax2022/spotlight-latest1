@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -182,7 +183,7 @@ func TestGetQuote_MisclassifiedMoneyFieldRoundTripsToIdentity(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("GetQuote: %v", err)
 	}
-	if got := fmt.Sprint(body["sum_of_dependants"]); got != fmt.Sprint(dependants) {
+	if got := fmt.Sprint(body["sum_of_dependants"]); got != strconv.Itoa(dependants) {
 		t.Fatalf("a misclassified field must round-trip to identity: sent %d, provider saw %s, want %d",
 			clientSubmits, got, dependants)
 	}

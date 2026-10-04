@@ -146,10 +146,7 @@ func parcelFare(distanceM, durationS int, size, speed string, cfg *PricingConfig
 	mins := float64(durationS) / 60.0
 	raw := float64(cfg.BaseFareKobo) + km*float64(cfg.PerKMKobo) + mins*float64(cfg.PerMinKobo)
 	raw *= parcelSizeMultiplier(size) * parcelSpeedMultiplier(speed)
-	fare := int64(math.Round(raw))
-	if fare < cfg.MinFareKobo {
-		fare = cfg.MinFareKobo
-	}
+	fare := max(int64(math.Round(raw)), cfg.MinFareKobo)
 	return fare
 }
 
@@ -307,7 +304,7 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 			return nil, codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
 		var ownerUser string
-		s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *courierID).Scan(&ownerUser)
+		_ = s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *courierID).Scan(&ownerUser)
 		if ownerUser != callerID {
 			return nil, codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
@@ -366,16 +363,16 @@ func (s *Service) CancelParcel(ctx context.Context, id, senderID, reason string)
 		return codedErr(http.StatusForbidden, CodeForbidden, "not your parcel")
 	}
 	if !canTransitionParcel(p.Status, "cancelled") {
-		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot cancel from status %s", p.Status))
+		return codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from status "+p.Status)
 	}
 	if err := s.parcelSetStatus(ctx, id, p.Status, "cancelled"); err != nil {
 		return err
 	}
 	if p.SettlementID != nil {
-		s.settlement.Refund(ctx, *p.SettlementID, "parcel_cancelled:"+reason)
+		_ = s.settlement.Refund(ctx, *p.SettlementID, "parcel_cancelled:"+reason)
 	}
 	if p.CourierID != nil {
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *p.CourierID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *p.CourierID)
 	}
 	// Best-effort: if real cover was bound (AcceptParcel already ran), cancel it
 	// too. Never blocks the parcel cancellation — see cancelParcelInsurance.
@@ -454,7 +451,7 @@ func (s *Service) AcceptParcel(ctx context.Context, id, driverUserID string) (ma
 	if tag.RowsAffected() == 0 {
 		return nil, codedErr(http.StatusConflict, CodeInvalidState, "parcel already taken")
 	}
-	s.db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, courierID)
+	_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, courierID)
 	s.recordModeEvent(ctx, driverUserID, "parcel.courier_assigned", "parcel", id, "created", "courier_assigned",
 		map[string]any{"courier_id": courierID})
 
@@ -513,7 +510,7 @@ func (s *Service) MarkParcelPickedUp(ctx context.Context, id, driverUserID, phot
 		return err
 	}
 	if photoURL != "" {
-		s.db.Exec(ctx, `UPDATE parcels SET photo_url=$1, updated_at=NOW() WHERE id=$2`, photoURL, id)
+		_, _ = s.db.Exec(ctx, `UPDATE parcels SET photo_url=$1, updated_at=NOW() WHERE id=$2`, photoURL, id)
 	}
 	s.recordModeEvent(ctx, driverUserID, "parcel.picked_up", "parcel", id, "pickup_pin_verified", "picked_up",
 		map[string]any{"photo_url": photoURL})
@@ -542,7 +539,7 @@ func (s *Service) VerifyParcelDropoff(ctx context.Context, id, driverUserID, pin
 	if err := s.parcelSetStatus(ctx, id, p.Status, "dropoff_verified"); err != nil {
 		return err
 	}
-	s.db.Exec(ctx, `UPDATE parcels SET proof_url=$1, updated_at=NOW() WHERE id=$2`, proofURL, id)
+	_, _ = s.db.Exec(ctx, `UPDATE parcels SET proof_url=$1, updated_at=NOW() WHERE id=$2`, proofURL, id)
 	s.recordModeEvent(ctx, driverUserID, "parcel.dropoff_verified", "parcel", id, p.Status, "dropoff_verified",
 		map[string]any{"proof_url": proofURL})
 
@@ -567,7 +564,7 @@ func (s *Service) VerifyParcelDropoff(ctx context.Context, id, driverUserID, pin
 		return err
 	}
 	if p.CourierID != nil {
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *p.CourierID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *p.CourierID)
 	}
 	s.recordModeEvent(ctx, driverUserID, "parcel.delivered", "parcel", id, "dropoff_verified", "delivered", nil)
 	return nil

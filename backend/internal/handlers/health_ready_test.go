@@ -1,4 +1,3 @@
-//nolint:testpackage // needs internal probe-cache fields — not reachable from the public API without a live DB
 package handlers
 
 import (

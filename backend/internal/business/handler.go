@@ -2,8 +2,6 @@ package business
 
 import (
 	"errors"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
@@ -15,6 +13,9 @@ import (
 	"spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/cac"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const keyError = "error"

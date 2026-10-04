@@ -3,6 +3,7 @@ package nutrition
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"strings"
@@ -62,7 +63,7 @@ func parseAIEstimate(raw json.RawMessage) (PerServing, error) {
 		return nil, fmt.Errorf("nutrition: AI output not in expected shape: %w", err)
 	}
 	if len(p.PerServing) == 0 {
-		return nil, fmt.Errorf("nutrition: AI output missing per_serving")
+		return nil, errors.New("nutrition: AI output missing per_serving")
 	}
 	out := PerServing{}
 	for _, k := range nutrientOrder {
@@ -83,7 +84,7 @@ func parseAIEstimate(raw json.RawMessage) (PerServing, error) {
 		out[k] = r
 	}
 	if _, ok := out[NutEnergyKcal]; !ok {
-		return nil, fmt.Errorf("nutrition: AI output missing energy_kcal")
+		return nil, errors.New("nutrition: AI output missing energy_kcal")
 	}
 	return out, nil
 }

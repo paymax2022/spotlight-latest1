@@ -228,7 +228,7 @@ func TestIdempotency_ConcurrentSameKeySingleRow(t *testing.T) {
 
 	const attempts = 50
 	successes := 0
-	for i := 0; i < attempts; i++ {
+	for range attempts {
 		if err := l.postJournal(key, clearing, user, 10_000); err == nil {
 			successes++
 		}

@@ -1,14 +1,16 @@
 package middleware
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 // newAdminConsoleTestRouter wires RequireAdminConsoleRole behind a throwaway
@@ -64,7 +66,7 @@ func TestRequireAdminConsoleRole_FailClosed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newAdminConsoleTestRouter(t)
 
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/overview-like", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/admin/overview-like", nil)
 			for k, v := range tc.headers {
 				req.Header.Set(k, v)
 			}
@@ -85,7 +87,7 @@ func TestRequireAdminConsoleRole_FailClosed(t *testing.T) {
 func TestRequireAdminConsoleRole_AuthBackendUnavailableReturns503(t *testing.T) {
 	r := newAdminConsoleTestRouter(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/overview-like", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/admin/overview-like", nil)
 	req.Header.Set("Authorization", "Bearer not-a-real-token")
 	req.Header.Set("X-Admin-Role", "SuperAdmin")
 	w := httptest.NewRecorder()
@@ -109,7 +111,7 @@ func TestRequireAdminConsoleRole_RejectedTokenReturns401(t *testing.T) {
 	r.Use(RequireAdminConsoleRole(supabase, nil))
 	r.GET("/api/v1/admin/overview-like", func(c *gin.Context) { c.Status(http.StatusOK) })
 
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/overview-like", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/admin/overview-like", nil)
 	req.Header.Set("Authorization", "Bearer rejected-token")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -125,14 +127,19 @@ func TestRequireAdminConsoleRole_RejectedTokenReturns401(t *testing.T) {
 // trigger.
 type fakeConsoleRBAC struct {
 	services.RBACService
+
 	roles     []string
 	rolesErr  error
 	status    string
 	statusErr error
 }
 
-func (f *fakeConsoleRBAC) GetUserRoles(string) ([]string, error) { return f.roles, f.rolesErr }
-func (f *fakeConsoleRBAC) GetUserStatus(string) (string, error)  { return f.status, f.statusErr }
+func (f *fakeConsoleRBAC) GetUserRoles(context.Context, string) ([]string, error) {
+	return f.roles, f.rolesErr
+}
+func (f *fakeConsoleRBAC) GetUserStatus(context.Context, string) (string, error) {
+	return f.status, f.statusErr
+}
 
 // fakeAuthServer stands in for Supabase's GoTrue /auth/v1/user endpoint so a
 // bearer token can resolve to a real userID without a network dependency,
@@ -165,7 +172,7 @@ func consoleRouterWithRBAC(t *testing.T, userID string, rbac services.RBACServic
 }
 
 func doAuthedGet(r *gin.Engine) int {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/overview-like", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/admin/overview-like", nil)
 	req.Header.Set("Authorization", "Bearer any-token-the-fake-server-accepts")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

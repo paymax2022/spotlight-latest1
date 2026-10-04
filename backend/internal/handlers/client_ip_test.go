@@ -1,4 +1,4 @@
-package handlers //nolint:testpackage // exercises unexported getIPAddress like sibling handler tests
+package handlers
 
 import (
 	"context"

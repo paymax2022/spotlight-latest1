@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/finance/commission"
@@ -29,6 +27,9 @@ import (
 	referralrisk "spotlight/backend/internal/referral/risk"
 	"spotlight/backend/internal/services"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // RegisterReferral wires the §7A Referral Earning core onto the finance member

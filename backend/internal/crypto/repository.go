@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -47,7 +48,7 @@ func (r *Repository) GetAsset(ctx context.Context, id string) (*Asset, error) {
 	           FROM crypto_assets WHERE id=$1`
 	var a Asset
 	if err := r.db.QueryRow(ctx, q, id).Scan(&a.ID, &a.Symbol, &a.Name, &a.MinorUnitScale, &a.IsActive, &a.CreatedAt, &a.UpdatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -123,7 +124,7 @@ func (r *Repository) GetOrder(ctx context.Context, userID, orderID string) (*Ord
 	var ref *string
 	if err := r.db.QueryRow(ctx, q, orderID, userID).Scan(&o.ID, &o.UserID, &o.AssetID, &o.Symbol,
 		&o.Side, &o.Status, &o.CashKobo, &o.Units, &o.PriceKobo, &ref, &o.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -139,7 +140,7 @@ func (r *Repository) HoldingUnits(ctx context.Context, userID, assetID string) (
 	const q = `SELECT COALESCE(units,0) FROM crypto_holdings WHERE user_id=$1 AND asset_id=$2`
 	var units int64
 	err := r.db.QueryRow(ctx, q, userID, assetID).Scan(&units)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
 	if err != nil {
@@ -158,7 +159,7 @@ func (r *Repository) RecordFill(ctx context.Context, o Order, deltaUnits int64) 
 	if err != nil {
 		return "", false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insOrder = `INSERT INTO crypto_orders
 		(user_id, asset_id, side, status, cash_kobo, units, price_kobo, idempotency_key, reference)
@@ -169,7 +170,7 @@ func (r *Repository) RecordFill(ctx context.Context, o Order, deltaUnits int64) 
 	err = tx.QueryRow(ctx, insOrder,
 		o.UserID, o.AssetID, o.Side, "filled", o.CashKobo, o.Units, o.PriceKobo, o.IdempotencyKey(), o.Reference,
 	).Scan(&orderID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// Duplicate idempotency key → replay; fetch the existing order id.
 		if e := tx.QueryRow(ctx,
 			`SELECT id FROM crypto_orders WHERE idempotency_key=$1`, o.IdempotencyKey()).Scan(&orderID); e != nil {

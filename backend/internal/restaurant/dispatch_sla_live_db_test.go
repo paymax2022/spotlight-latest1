@@ -23,11 +23,11 @@ func dispatchLivePool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping live-DB dispatch test")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	if err := pool.Ping(context.Background()); err != nil {
+	if err := pool.Ping(t.Context()); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
 	return pool
@@ -55,7 +55,7 @@ func seedDriver(t *testing.T, ctx context.Context, pool *pgxpool.Pool, lat, lng 
 func TestLiveDB_DispatchFairnessAndSLA(t *testing.T) {
 	pool := dispatchLivePool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := NewService(pool, nil)
 
 	// Isolate this test's fairness assertions from drivers left online by other runs
@@ -83,7 +83,7 @@ func TestLiveDB_DispatchFairnessAndSLA(t *testing.T) {
 	busy := seedDriver(t, ctx, pool, 6.5, 3.4) // co-located but saturated
 
 	// Saturate `busy` with baseMaxRiderLoad active orders so it is filtered out.
-	for i := 0; i < baseMaxRiderLoad; i++ {
+	for range baseMaxRiderLoad {
 		oid := uuid.New().String()
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO orders (id, customer_id, restaurant_id, rider_id, subtotal_kobo, total_kobo, status, dispatch_status, idempotency_key, delivery_address)

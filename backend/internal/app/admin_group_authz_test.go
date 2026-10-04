@@ -57,8 +57,8 @@ func TestAdminGroupRoutes_RequireVerifiedAdminIdentity(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(tc.method, tc.path, nil)
-			req.Header.Set("x-admin-api-key", testAdminAPIKey) // the confused-deputy key, no bearer token
+			req := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)
+			req.Header.Set("X-Admin-Api-Key", testAdminAPIKey) // the confused-deputy key, no bearer token
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, req)
 
@@ -81,9 +81,9 @@ func TestAdminGroupRoutes_RequireVerifiedAdminIdentity(t *testing.T) {
 func TestAdminGroupStemRoutes_HeaderAloneInsufficient(t *testing.T) {
 	r := NewRouter(config.Config{AdminAPIKey: testAdminAPIKey, AppEnv: "test"})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/stem/overview", nil)
-	req.Header.Set("x-admin-api-key", testAdminAPIKey)
-	req.Header.Set("x-stem-role", "SUPER_ADMIN")
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/admin/stem/overview", nil)
+	req.Header.Set("X-Admin-Api-Key", testAdminAPIKey)
+	req.Header.Set("X-Stem-Role", "SUPER_ADMIN")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

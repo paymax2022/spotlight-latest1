@@ -88,7 +88,7 @@ func (r *Repo) SetFlag(ctx context.Context, key string, enabled bool, actorID st
 	if err != nil {
 		return FeatureFlag{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var actor any
 	if actorID != "" {

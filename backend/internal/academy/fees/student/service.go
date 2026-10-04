@@ -3,11 +3,13 @@ package feesstudent
 import (
 	"bufio"
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/go-common/ptr"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Service owns Student enrollment + Guardian linking for the fees module. It moves no
@@ -270,7 +272,7 @@ func (s *Service) validateImportRow(ctx context.Context, schoolID string, lineNo
 		MinorFlag:       true,
 	}
 	if g := get("guardian_user_ids"); g != "" {
-		for _, part := range strings.Split(g, ";") {
+		for part := range strings.SplitSeq(g, ";") {
 			if p := strings.TrimSpace(part); p != "" {
 				row.GuardianUserIDs = append(row.GuardianUserIDs, p)
 			}
@@ -354,12 +356,7 @@ func (s *Service) ApproveImport(ctx context.Context, actorID, schoolID string, p
 }
 
 func contains(xs []string, v string) bool {
-	for _, x := range xs {
-		if x == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(xs, v)
 }
 
 func remove(xs []string, v string) []string {

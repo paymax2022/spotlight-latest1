@@ -184,6 +184,7 @@ type StockAsset struct {
 // StockWithQuote enriches a StockAsset with live (mock) market data.
 type StockWithQuote struct {
 	StockAsset
+
 	Quote Quote `json:"quote"`
 }
 
@@ -387,10 +388,7 @@ func (f FeeSchedule) FeeFor(notionalKobo int64) int64 {
 	if notionalKobo <= 0 {
 		return 0
 	}
-	fee := notionalKobo * int64(f.CommissionBPS) / 10_000
-	if fee < f.MinFeeKobo {
-		fee = f.MinFeeKobo
-	}
+	fee := max(notionalKobo*int64(f.CommissionBPS)/10_000, f.MinFeeKobo)
 	return fee
 }
 

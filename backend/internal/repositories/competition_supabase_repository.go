@@ -2,7 +2,9 @@ package repositories
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -34,17 +36,17 @@ func (r *CompetitionSupabaseRepository) GetOverview() (domain.CompetitionOvervie
 	}
 
 	var err error
-	if out.TotalContests, err = r.client.Count("contests"); err != nil {
+	if out.TotalContests, err = r.client.Count(context.Background(), "contests"); err != nil {
 		return domain.CompetitionOverview{}, err
 	}
-	if out.RealityTVContests, err = r.client.Count("contests?contest_type=eq.reality_tv_show"); err != nil {
+	if out.RealityTVContests, err = r.client.Count(context.Background(), "contests?contest_type=eq.reality_tv_show"); err != nil {
 		// fallback if filter-in-path not supported by helper
 		out.RealityTVContests = 0
 	}
-	if out.OpenMicContests, err = r.client.Count("contests?contest_type=eq.one_beat_one_verse"); err != nil {
+	if out.OpenMicContests, err = r.client.Count(context.Background(), "contests?contest_type=eq.one_beat_one_verse"); err != nil {
 		out.OpenMicContests = 0
 	}
-	if out.MultiSkillContests, err = r.client.Count("contests?contest_type=eq.multi_skill"); err != nil {
+	if out.MultiSkillContests, err = r.client.Count(context.Background(), "contests?contest_type=eq.multi_skill"); err != nil {
 		out.MultiSkillContests = 0
 	}
 	return out, nil
@@ -71,11 +73,11 @@ func (r *CompetitionSupabaseRepository) ListOpenMic(limit int) ([]domain.OpenMic
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
@@ -83,7 +85,7 @@ func (r *CompetitionSupabaseRepository) ListOpenMic(limit int) ([]domain.OpenMic
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("open mic query failed: %d", resp.StatusCode)
 	}
@@ -128,11 +130,11 @@ func (r *CompetitionSupabaseRepository) ListOpenMic(limit int) ([]domain.OpenMic
 
 func (r *CompetitionSupabaseRepository) CreateOpenMic(input domain.OpenMicCreateInput) (domain.OpenMicCompetition, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.OpenMicCompetition{}, fmt.Errorf("supabase REST is not configured")
+		return domain.OpenMicCompetition{}, errors.New("supabase REST is not configured")
 	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
-		return domain.OpenMicCompetition{}, fmt.Errorf("competition name is required")
+		return domain.OpenMicCompetition{}, errors.New("competition name is required")
 	}
 
 	slug := strings.TrimSpace(input.Slug)
@@ -180,11 +182,11 @@ func (r *CompetitionSupabaseRepository) CreateOpenMic(input domain.OpenMicCreate
 	q.Set("select", "id,slug,name,status,start_date,end_date,is_featured,created_at")
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return domain.OpenMicCompetition{}, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -194,7 +196,7 @@ func (r *CompetitionSupabaseRepository) CreateOpenMic(input domain.OpenMicCreate
 	if err != nil {
 		return domain.OpenMicCompetition{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return domain.OpenMicCompetition{}, fmt.Errorf("open mic create failed: %d", resp.StatusCode)
 	}
@@ -204,7 +206,7 @@ func (r *CompetitionSupabaseRepository) CreateOpenMic(input domain.OpenMicCreate
 		return domain.OpenMicCompetition{}, err
 	}
 	if len(rows) == 0 {
-		return domain.OpenMicCompetition{}, fmt.Errorf("open mic create failed: empty response")
+		return domain.OpenMicCompetition{}, errors.New("open mic create failed: empty response")
 	}
 	return rows[0], nil
 }

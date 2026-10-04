@@ -22,6 +22,7 @@ import (
 // service's metricsReader port resolves.
 type metricsFakeRepo struct {
 	*fakeRepo
+
 	metrics *SafetyMetrics
 	err     error
 }
@@ -50,7 +51,7 @@ func newSearchRouter(h *Handler, uid string, mw ...gin.HandlerFunc) *gin.Engine 
 
 func doJSON(t *testing.T, r *gin.Engine, method, path, body string, header map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range header {
 		req.Header.Set(k, v)
@@ -137,10 +138,10 @@ func TestHTTP_SymptomSearch_RateLimited429(t *testing.T) {
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("request 3: status = %d, want 429", w.Code)
 	}
-	if got := w.Header().Get("X-RateLimit-Limit"); got != "2" {
+	if got := w.Header().Get("X-Ratelimit-Limit"); got != "2" {
 		t.Fatalf("X-RateLimit-Limit = %q, want 2", got)
 	}
-	if got := w.Header().Get("X-RateLimit-Remaining"); got != "0" {
+	if got := w.Header().Get("X-Ratelimit-Remaining"); got != "0" {
 		t.Fatalf("X-RateLimit-Remaining = %q, want 0", got)
 	}
 	var body map[string]any

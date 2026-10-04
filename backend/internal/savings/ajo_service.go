@@ -2,6 +2,7 @@ package savings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -73,10 +74,10 @@ func (s *AjoService) cycleRunner() scheduler.HandlerFunc {
 // CreateCircle creates a FORMING circle with the creator as the first member.
 func (s *AjoService) CreateCircle(ctx context.Context, creatorID, name string, contributionKobo, intervalSecs int64) (*Circle, error) {
 	if creatorID == "" || name == "" {
-		return nil, fmt.Errorf("savings: creator and name required")
+		return nil, errors.New("savings: creator and name required")
 	}
 	if contributionKobo <= 0 || intervalSecs <= 0 {
-		return nil, fmt.Errorf("savings: contribution and interval must be positive")
+		return nil, errors.New("savings: contribution and interval must be positive")
 	}
 	c := &Circle{
 		ID: uuid.New().String(), CreatorUserID: creatorID, Name: name,
@@ -87,7 +88,7 @@ func (s *AjoService) CreateCircle(ctx context.Context, creatorID, name string, c
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const insC = `INSERT INTO ajo_circles (id, creator_user_id, name, contribution_kobo, interval_secs, state)
 	              VALUES ($1,$2,$3,$4,$5,'FORMING')`
 	if _, err := tx.Exec(ctx, insC, c.ID, c.CreatorUserID, c.Name, c.ContributionKobo, c.IntervalSecs); err != nil {
@@ -113,13 +114,13 @@ func (s *AjoService) Join(ctx context.Context, circleID, userID string) (*Circle
 		return nil, err
 	}
 	if c.State != CircleForming {
-		return nil, fmt.Errorf("savings: circle no longer accepting members")
+		return nil, errors.New("savings: circle no longer accepting members")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var nextOrder int
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(rotation_order)+1,0) FROM ajo_members WHERE circle_id=$1`, circleID).Scan(&nextOrder); err != nil {
 		return nil, err
@@ -133,7 +134,7 @@ func (s *AjoService) Join(ctx context.Context, circleID, userID string) (*Circle
 		return nil, fmt.Errorf("savings: join: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return nil, fmt.Errorf("savings: already a member")
+		return nil, errors.New("savings: already a member")
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -160,18 +161,18 @@ func (s *AjoService) Activate(ctx context.Context, actorID, circleID string) err
 		return err
 	}
 	if len(members) < 2 {
-		return fmt.Errorf("savings: circle needs at least 2 members")
+		return errors.New("savings: circle needs at least 2 members")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const upd = `UPDATE ajo_circles SET state='ACTIVE', total_cycles=$2, current_cycle=1, updated_at=now()
 	             WHERE id=$1 AND state='FORMING'`
 	ct, err := tx.Exec(ctx, upd, circleID, len(members))
 	if err != nil || ct.RowsAffected() == 0 {
-		return fmt.Errorf("savings: activate failed")
+		return errors.New("savings: activate failed")
 	}
 	// Seed cycle 1 (recipient = rotation_order 0).
 	first := members[0]
@@ -245,7 +246,7 @@ func (s *AjoService) RunCycle(ctx context.Context, circleID, idemKey string) err
 		// NL-1: peer funds only — Debit fails closed on insufficient balance; the
 		// shortfall is NOT covered by Paymax. A failing member is marked DEFAULTED.
 		derr := s.led.Debit(ctx, m.UserID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo)
-		if derr == ledger.ErrDuplicate {
+		if errors.Is(derr, ledger.ErrDuplicate) {
 			collected += c.ContributionKobo // already debited on a prior attempt
 			continue
 		}
@@ -260,7 +261,7 @@ func (s *AjoService) RunCycle(ctx context.Context, circleID, idemKey string) err
 	// a Paymax-funded guarantee of the full ring amount.
 	payoutKey := fmt.Sprintf("%s:ajo:%s:c%d:payout", idemKey, circleID, cy.CycleNumber)
 	if collected > 0 {
-		if perr := s.led.Credit(ctx, cy.RecipientID, "ajo:payout:"+circleID, payoutKey, escrowAcc.ID, collected); perr != nil && perr != ledger.ErrDuplicate {
+		if perr := s.led.Credit(ctx, cy.RecipientID, "ajo:payout:"+circleID, payoutKey, escrowAcc.ID, collected); perr != nil && !errors.Is(perr, ledger.ErrDuplicate) {
 			return fmt.Errorf("savings: ajo payout: %w", perr)
 		}
 	}
@@ -280,7 +281,7 @@ func (s *AjoService) completeCycleAndRotate(ctx context.Context, c *Circle, cy *
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const payCy = `UPDATE ajo_cycles SET status='PAID', collected_kobo=$2, payout_kobo=$2, paid_at=now()
 	               WHERE id=$1 AND status<>'PAID'`
@@ -329,7 +330,7 @@ func (s *AjoService) MakeGood(ctx context.Context, circleID, userID string, cycl
 		return err
 	}
 	key := fmt.Sprintf("%s:ajo:%s:c%d:makegood:%s", idemKey, circleID, cycleNumber, userID)
-	if derr := s.led.Debit(ctx, userID, "ajo:makegood:"+circleID, key, escrowAcc.ID, c.ContributionKobo); derr != nil && derr != ledger.ErrDuplicate {
+	if derr := s.led.Debit(ctx, userID, "ajo:makegood:"+circleID, key, escrowAcc.ID, c.ContributionKobo); derr != nil && !errors.Is(derr, ledger.ErrDuplicate) {
 		return fmt.Errorf("savings: makegood debit: %w", derr)
 	}
 	// Restore membership DEFAULTED→ACTIVE (guarded).
@@ -353,7 +354,7 @@ func (s *AjoService) getCircle(ctx context.Context, circleID string) (*Circle, e
 	var state string
 	if err := s.db.QueryRow(ctx, q, circleID).Scan(&c.ID, &c.CreatorUserID, &c.Name,
 		&c.ContributionKobo, &c.IntervalSecs, &state, &c.CurrentCycle, &c.TotalCycles, &c.CycleJobID); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -391,7 +392,7 @@ func (s *AjoService) currentPendingCycle(ctx context.Context, circleID string) (
 	var st string
 	if err := s.db.QueryRow(ctx, q, circleID).Scan(&cy.ID, &cy.CircleID, &cy.CycleNumber,
 		&cy.RecipientID, &cy.CollectedKobo, &cy.PayoutKobo, &st, &cy.ScheduledFor, &cy.PaidAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

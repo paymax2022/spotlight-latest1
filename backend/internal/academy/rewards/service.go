@@ -89,8 +89,7 @@ func (e rejection) Reason() string { return e.reason }
 
 // AsRejection extracts the reason code if err is a typed rejection.
 func AsRejection(err error) (string, bool) {
-	var r rejection
-	if errors.As(err, &r) {
+	if r, ok := errors.AsType[rejection](err); ok {
 		return r.reason, true
 	}
 	return "", false

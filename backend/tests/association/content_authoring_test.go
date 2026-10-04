@@ -37,7 +37,7 @@ func seedFounder(t *testing.T, ctx context.Context, label string) (userID, orgID
 	testsupport.SetKycTier(t, ctx, pool, userID, testsupport.KycTierUnlimited)
 	res, err := svc.PublishOrganisation(ctx, userID, newTestDraft(label+" "+uuid.New().String()[:8]))
 	if err != nil {
-		testsupport.DeleteUser(context.Background(), pool, userID)
+		testsupport.DeleteUser(ctx, pool, userID)
 		pool.Close()
 		t.Fatalf("publish: %v", err)
 	}

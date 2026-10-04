@@ -708,7 +708,7 @@ func TestLiveDB_OrderPromoUsageLimitHoldsUnderConcurrency(t *testing.T) {
 	results := make([]error, racers)
 	orders := make([]*Order, racers)
 	start := make(chan struct{})
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -803,7 +803,7 @@ func TestLiveDB_PromoReservationSerializesUnderContention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin holder tx: %v", err)
 	}
-	defer holder.Rollback(ctx)
+	defer func() { _ = holder.Rollback(ctx) }()
 	if _, err := holder.Exec(ctx, `SELECT id FROM restaurant_promos WHERE id=$1 FOR KEY SHARE`, promoID); err != nil {
 		t.Fatalf("hold promo lock: %v", err)
 	}

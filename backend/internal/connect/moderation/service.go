@@ -2,6 +2,7 @@ package connectmoderation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
@@ -101,7 +102,7 @@ func (s *Service) RecordDecision(ctx context.Context, adminID string, req Decisi
 	if err != nil {
 		return nil, fmt.Errorf("connect: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const ins = `INSERT INTO connect_moderation_decisions
 		(target_type, target_id, decision, reason_codes, reviewer_id, case_id)
@@ -137,7 +138,7 @@ func (s *Service) SetConversationState(ctx context.Context, adminID, convID stri
 		return fmt.Errorf("connect: set conversation state: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("connect: conversation not found")
+		return errors.New("connect: conversation not found")
 	}
 	return s.safety.WriteAudit(ctx, connectsafety.AuditInput{
 		ActorID:    adminID,

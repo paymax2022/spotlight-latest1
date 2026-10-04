@@ -139,7 +139,7 @@ func TestListingIDQuery_ReadsClientWireName(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Request = httptest.NewRequest(http.MethodGet, "/offers?"+tc.query, nil)
+			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/offers?"+tc.query, nil)
 			if got := listingIDQuery(c); got != tc.want {
 				t.Errorf("listingIDQuery() = %q, want %q", got, tc.want)
 			}

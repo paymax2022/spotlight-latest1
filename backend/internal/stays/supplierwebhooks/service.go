@@ -80,10 +80,10 @@ type Event struct {
 // external_event_id) returns ErrDuplicate and applies nothing (safe replay).
 func (s *Service) Ingest(ctx context.Context, ev Event) error {
 	if s.db == nil {
-		return fmt.Errorf("supplierwebhooks: nil pool")
+		return errors.New("supplierwebhooks: nil pool")
 	}
 	if ev.Source == "" || ev.ExternalEventID == "" || ev.EventType == "" {
-		return fmt.Errorf("supplierwebhooks: source, external_event_id, event_type required")
+		return errors.New("supplierwebhooks: source, external_event_id, event_type required")
 	}
 	// Idempotent claim — INSERT ... ON CONFLICT DO NOTHING returns 0 rows on replay.
 	ct, err := s.db.Exec(ctx, `
@@ -138,7 +138,7 @@ func (s *Service) applyRate(ctx context.Context, ev Event) error {
 	rp := str(ev.Payload, "rate_plan_id")
 	date := str(ev.Payload, "date")
 	if rp == "" || date == "" {
-		return fmt.Errorf("rate.updated: rate_plan_id + date required")
+		return errors.New("rate.updated: rate_plan_id + date required")
 	}
 	return s.ari.SetRateDay(ctx, ari.RateDay{
 		RatePlanID: rp,
@@ -155,7 +155,7 @@ func (s *Service) applyAvailability(ctx context.Context, ev Event) error {
 	rt := str(ev.Payload, "room_type_id")
 	date := str(ev.Payload, "date")
 	if rt == "" || date == "" {
-		return fmt.Errorf("availability.updated: room_type_id + date required")
+		return errors.New("availability.updated: room_type_id + date required")
 	}
 	return s.ari.SetAvailabilityDay(ctx, ari.AvailabilityDay{
 		RoomTypeID: rt,
@@ -172,7 +172,7 @@ func (s *Service) applyRestriction(ctx context.Context, ev Event) error {
 	from := str(ev.Payload, "date_from")
 	to := str(ev.Payload, "date_to")
 	if rp == "" || from == "" || to == "" {
-		return fmt.Errorf("restriction.updated: rate_plan_id + date_from + date_to required")
+		return errors.New("restriction.updated: rate_plan_id + date_from + date_to required")
 	}
 	e := ari.BulkEdit{DateFrom: from, DateTo: to}
 	if v, ok := ev.Payload["min_los"]; ok {
@@ -202,7 +202,7 @@ func (s *Service) applyStopSell(ctx context.Context, ev Event) error {
 	from := str(ev.Payload, "date_from")
 	to := str(ev.Payload, "date_to")
 	if rt == "" || from == "" || to == "" {
-		return fmt.Errorf("stop_sell.toggled: room_type_id + date_from + date_to required")
+		return errors.New("stop_sell.toggled: room_type_id + date_from + date_to required")
 	}
 	stop := boolVal(ev.Payload, "stop_sell")
 	e := ari.BulkEdit{DateFrom: from, DateTo: to, StopSell: &stop}
@@ -230,7 +230,7 @@ func (s *Service) applyReservation(ctx context.Context, ev Event) error {
 	rid := str(ev.Payload, "reservation_id")
 	state := str(ev.Payload, "state")
 	if rid == "" || state == "" {
-		return fmt.Errorf("reservation.*: reservation_id + state required")
+		return errors.New("reservation.*: reservation_id + state required")
 	}
 	if !allowedInboundStates[state] {
 		return fmt.Errorf("reservation.*: unsupported inbound state %q", state)

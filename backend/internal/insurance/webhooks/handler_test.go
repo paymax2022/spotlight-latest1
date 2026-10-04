@@ -65,7 +65,7 @@ func postWebhook(t *testing.T, h *Handler, provider, body string, headers map[st
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/internal/webhooks/"+provider, strings.NewReader(body))
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/internal/webhooks/"+provider, strings.NewReader(body))
 	for k, v := range headers {
 		c.Request.Header.Set(k, v)
 	}

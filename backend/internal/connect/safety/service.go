@@ -66,7 +66,7 @@ func writeAudit(ctx context.Context, q execer, in AuditInput) error {
 // WriteAudit appends an immutable entry to connect_audit_log (standalone).
 func (s *Service) WriteAudit(ctx context.Context, in AuditInput) error {
 	if in.Action == "" {
-		return fmt.Errorf("connect: audit action is required")
+		return errors.New("connect: audit action is required")
 	}
 	return writeAudit(ctx, s.db, in)
 }
@@ -89,7 +89,7 @@ func (s *Service) OpenCase(ctx context.Context, in OpenCaseInput) (*Case, error)
 	if err != nil {
 		return nil, fmt.Errorf("connect: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	id := uuid.New().String()
 	const insertCase = `INSERT INTO connect_cases
@@ -136,7 +136,7 @@ func (s *Service) UpdateCase(ctx context.Context, id, adminID string, in UpdateC
 	if err != nil {
 		return nil, fmt.Errorf("connect: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const updateCase = `UPDATE connect_cases SET
 		status         = COALESCE(NULLIF($2,''), status),
@@ -438,7 +438,7 @@ func (s *Service) Block(ctx context.Context, blockerID string, req BlockRequest)
 	if err != nil {
 		return nil, fmt.Errorf("connect: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	id := uuid.New().String()
 	const ins = `INSERT INTO connect_blocks (id, blocker_id, blocked_id, reason)

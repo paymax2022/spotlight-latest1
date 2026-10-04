@@ -46,7 +46,7 @@ func TestSetBuilder_SkipsNilFieldsAndNumbersPlaceholders(t *testing.T) {
 	var absent *string // nil ⇒ "leave this column alone"
 
 	b := newSetBuilder()
-	b.set("name", name2ptr(name))
+	b.set("name", new(name))
 	b.set("code", absent)
 	b.setOrNull("amount_kobo", nil, true) // explicit clear
 	b.set("priority", &priority)
@@ -79,7 +79,7 @@ func TestSetBuilder_EmptyDetectsANoOpPatch(t *testing.T) {
 	if !b.empty() {
 		t.Error("a nil field must not count as a change")
 	}
-	b.set("name", name2ptr("x"))
+	b.set("name", new("x"))
 	if b.empty() {
 		t.Error("a set field must count as a change")
 	}
@@ -101,7 +101,8 @@ func TestSetBuilder_ClearTakesPrecedenceOverAValue(t *testing.T) {
 	}
 }
 
-func name2ptr(s string) *string { return &s }
+//go:fix inline
+func name2ptr(s string) *string { return new(s) }
 
 func decodePatch(t *testing.T, body string) patchBody {
 	t.Helper()
@@ -527,7 +528,7 @@ func TestWriteCSV_RendersHeadersAndRows(t *testing.T) {
 	t.Run("rows", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(rec)
-		c.Request = httptest.NewRequest(http.MethodGet, "/?format=csv", nil)
+		c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/?format=csv", nil)
 
 		writeCSV(c, "utility-profitability.csv", []*ProfitabilityReport{{
 			TotalTransactions:         3,
@@ -554,7 +555,7 @@ func TestWriteCSV_RendersHeadersAndRows(t *testing.T) {
 	t.Run("quotes embedded commas", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(rec)
-		c.Request = httptest.NewRequest(http.MethodGet, "/?format=csv", nil)
+		c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/?format=csv", nil)
 
 		ref := "REF,WITH,COMMAS"
 		writeCSV(c, "x.csv", []ReconciliationRow{{ID: "t1", ProviderReference: &ref}})
@@ -567,7 +568,7 @@ func TestWriteCSV_RendersHeadersAndRows(t *testing.T) {
 	t.Run("empty report is an empty body", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(rec)
-		c.Request = httptest.NewRequest(http.MethodGet, "/?format=csv", nil)
+		c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/?format=csv", nil)
 
 		writeCSV(c, "x.csv", []ReconciliationRow{})
 
@@ -584,7 +585,7 @@ func TestWriteCSV_NullColumnsAreEmptyCells(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodGet, "/?format=csv", nil)
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/?format=csv", nil)
 
 	writeCSV(c, "x.csv", []ReconciliationRow{{ID: "t1", Category: "airtime"}}) // pointers left nil
 

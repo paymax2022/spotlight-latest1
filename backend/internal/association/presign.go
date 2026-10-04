@@ -1,6 +1,7 @@
 package association
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"path"
@@ -142,7 +143,7 @@ func (h *Handler) PresignLogoUpload(c *gin.Context) {
 
 	url, err := h.presigner.PresignPut(key, ct, logoPresignTTL)
 	if err != nil {
-		if err == r2.ErrNotConfigured {
+		if errors.Is(err, r2.ErrNotConfigured) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "logo uploads are not configured"})
 			return
 		}
@@ -242,7 +243,7 @@ func (h *Handler) PresignDocumentUpload(c *gin.Context) {
 	key := fmt.Sprintf("association/document/%s/%s%s", orgID, cryptox.RandHex(16), ext)
 	url, err := h.presigner.PresignPut(key, ct, logoPresignTTL)
 	if err != nil {
-		if err == r2.ErrNotConfigured {
+		if errors.Is(err, r2.ErrNotConfigured) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "document uploads are not configured"})
 			return
 		}

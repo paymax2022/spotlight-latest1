@@ -89,6 +89,24 @@ linters:
         linters:
           - goconst
           - testpackage
+      # Test cleanup closures must run on a detached context — t.Context() is
+      # canceled BEFORE t.Cleanup functions execute, so teardown seed/fixture
+      # deletes cannot use the enclosing test's ctx by design. The "should pass
+      # the context parameter" diagnostic is wrong for this whole class.
+      - path: _test\.go
+        text: "should pass the context parameter"
+        linters:
+          - contextcheck
+      # Gin middleware factories return gin.HandlerFunc closures that draw ctx
+      # from c.Request.Context() at request time; the analyzer wants a
+      # context.Context parameter that does not fit the gin idiom. runRedis is
+      # a hub-lifetime goroutine — no request ctx exists for it.
+      - text: "Function `(Middleware|StemRateLimit|RequireAuthContext|RequireAuthContextWithSessions|RequireAdminConsoleRole|RequireVerifiedIdentity|RequireStemRoles|PerUserDeviceRateLimit|NewHub)[^`]*` should pass the context parameter"
+        linters:
+          - contextcheck
+      - text: "Function `[^`]*(requireAuth|resolveVerifiedIdentity|runRedis)[^`]*` should pass the context parameter"
+        linters:
+          - contextcheck
 formatters:
   enable:
     - gofmt

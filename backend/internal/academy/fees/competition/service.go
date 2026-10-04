@@ -2,6 +2,7 @@ package feescompetition
 
 import (
 	"context"
+	"errors"
 
 	feesstatemachine "spotlight/backend/internal/academy/fees/statemachine"
 )
@@ -96,7 +97,7 @@ func (s *Service) Transition(ctx context.Context, id, eventStr string) (*Competi
 	}
 	next, err := feesstatemachine.CompetitionTransition(c.Status, ev)
 	if err != nil {
-		if err == feesstatemachine.ErrAlreadyInState {
+		if errors.Is(err, feesstatemachine.ErrAlreadyInState) {
 			// Idempotent no-op: already there.
 			return c, nil
 		}

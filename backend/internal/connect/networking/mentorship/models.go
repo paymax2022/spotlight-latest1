@@ -165,7 +165,7 @@ type LoyaltyLogEntry struct {
 //
 //	REQUESTED → ACCEPTED | DECLINED
 //	ACCEPTED  → ACTIVE
-//	ACTIVE   ⇄ PAUSED
+//	⇄ PAUSED
 //	ACTIVE/PAUSED → COMPLETED | ENDED_EARLY
 //
 // declined/completed/ended_early are terminal.

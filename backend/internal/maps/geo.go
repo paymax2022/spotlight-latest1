@@ -153,7 +153,7 @@ func (olcCodec) Encode(lat, lng float64) string {
 	lngVal := lng + 180
 
 	var b strings.Builder
-	for i := 0; i < len(pairResolutions); i++ {
+	for i := range pairResolutions {
 		res := pairResolutions[i]
 		latDigit := int(math.Floor(latVal / res))
 		latVal -= float64(latDigit) * res

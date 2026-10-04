@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"spotlight/backend/internal/insurance/gateway"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Product is the normalised catalog row. The catalog is the SINGLE source of
@@ -144,7 +145,7 @@ var ErrNoSuchField = errors.New("catalog: unknown field or field has no remote o
 // passed through as an opaque string; the provider decides whether it matters.
 func (s *Service) FieldOptions(ctx context.Context, productCode, fieldName, query string) ([]FieldOption, error) {
 	if s.db == nil {
-		return nil, fmt.Errorf("catalog: nil pool")
+		return nil, errors.New("catalog: nil pool")
 	}
 	schema, _, err := s.FormSchema(ctx, productCode)
 	if err != nil {
@@ -336,7 +337,7 @@ const selectColumns = `
 
 func (s *Service) list(ctx context.Context, f listFilter) ([]Product, error) {
 	if s.db == nil {
-		return nil, fmt.Errorf("catalog: nil pool")
+		return nil, errors.New("catalog: nil pool")
 	}
 	q := `SELECT ` + selectColumns + `
 		FROM public.insurance_products
@@ -432,7 +433,7 @@ func (s *Service) list(ctx context.Context, f listFilter) ([]Product, error) {
 // caller must say so rather than render an empty form that can never validate.
 func (s *Service) FormSchema(ctx context.Context, productCode string) (map[string]any, bool, error) {
 	if s.db == nil {
-		return nil, false, fmt.Errorf("catalog: nil pool")
+		return nil, false, errors.New("catalog: nil pool")
 	}
 	var raw []byte
 	var source string
@@ -474,7 +475,7 @@ func (s *Service) FormSchema(ctx context.Context, productCode string) (map[strin
 // admin has a legitimate reason to override the provider on that.
 func (s *Service) SetActive(ctx context.Context, productCode string, active bool, byUserID string) error {
 	if s.db == nil {
-		return fmt.Errorf("catalog: nil pool")
+		return errors.New("catalog: nil pool")
 	}
 	var by any
 	if byUserID != "" {
@@ -504,7 +505,7 @@ func (s *Service) SetActive(ctx context.Context, productCode string, active bool
 // It never activates an unsellable or provider-missing product.
 func (s *Service) ActivateAllPurchasable(ctx context.Context, provider string) (int, error) {
 	if s.db == nil {
-		return 0, fmt.Errorf("catalog: nil pool")
+		return 0, errors.New("catalog: nil pool")
 	}
 	ct, err := s.db.Exec(ctx, `
 		UPDATE public.insurance_products
@@ -524,7 +525,7 @@ func (s *Service) ActivateAllPurchasable(ctx context.Context, provider string) (
 // code change). The provider_product_code is updated atomically with it.
 func (s *Service) SetProvider(ctx context.Context, productCode, provider, providerProductCode string) error {
 	if s.db == nil {
-		return fmt.Errorf("catalog: nil pool")
+		return errors.New("catalog: nil pool")
 	}
 	_, err := s.db.Exec(ctx, `
 		UPDATE public.insurance_products

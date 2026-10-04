@@ -125,10 +125,7 @@ func (e *Engine) Price(o gateway.PropertyOffer, loyaltyTier string, promoBps int
 	}
 
 	// Guest-facing gross (Rail A includes markup; Rail B does not include commission).
-	gross := o.NetRateKobo + b.MarkupKobo + o.TaxKobo - b.DiscountKobo
-	if gross < 0 {
-		gross = 0
-	}
+	gross := max(o.NetRateKobo+b.MarkupKobo+o.TaxKobo-b.DiscountKobo, 0)
 
 	// Controlled FX — only when the source currency differs from display. NEVER
 	// silent: a missing converter/rate is an error.

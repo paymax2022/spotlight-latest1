@@ -31,7 +31,7 @@ import (
 func TestLiveDB_SetAvailability_RequiresApprovedKYBToOpen(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
 
@@ -48,13 +48,15 @@ func TestLiveDB_SetAvailability_RequiresApprovedKYBToOpen(t *testing.T) {
 		restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM restaurants WHERE id=$1`, restID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM restaurants WHERE id=$1`, restID)
+	})
 
 	if _, err := svc.SetAvailability(ctx, restID, owner, true); !errors.Is(err, ErrKYBNotApproved) {
 		t.Fatalf("open with no KYB row: want ErrKYBNotApproved, got %v", err)
 	}
 	var isOpen bool
-	if err := pool.QueryRow(ctx, `SELECT is_open FROM restaurants WHERE id=$1`, restID).Scan(&isOpen); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT is_open FROM restaurants WHERE id=$1`, restID).Scan(&isOpen); err != nil {
 		t.Fatalf("reload restaurant: %v", err)
 	}
 	if isOpen {
@@ -62,7 +64,7 @@ func TestLiveDB_SetAvailability_RequiresApprovedKYBToOpen(t *testing.T) {
 	}
 
 	// (b) A KYB row exists but is only 'submitted' (not yet reviewed) — still refused.
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO restaurant_kyb (restaurant_id, status, legal_name, business_type, bank_code, account_number, account_name)
 		 VALUES ($1,'submitted','Gate Kitchen Ltd','sole_proprietor','058','0123456789','Gate Kitchen')`,
 		restID); err != nil {
@@ -79,7 +81,7 @@ func TestLiveDB_SetAvailability_RequiresApprovedKYBToOpen(t *testing.T) {
 	if _, err := svc.SetAvailability(ctx, restID, owner, true); err != nil {
 		t.Fatalf("open after real approval: want success, got %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT is_open FROM restaurants WHERE id=$1`, restID).Scan(&isOpen); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT is_open FROM restaurants WHERE id=$1`, restID).Scan(&isOpen); err != nil {
 		t.Fatalf("reload restaurant: %v", err)
 	}
 	if !isOpen {
@@ -96,31 +98,31 @@ func TestLiveDB_SetAvailability_RequiresApprovedKYBToOpen(t *testing.T) {
 func TestLiveDB_AdminListApplications_StatusReflectsRealKYBState(t *testing.T) {
 	pool := processRunPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
 
 	owner := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
 		t.Fatalf("seed owner: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, owner)
 
 	mk := func(status *string) string {
 		id := uuid.New().String()
-		if _, err := pool.Exec(ctx,
+		if _, err := pool.Exec(context.WithoutCancel(ctx),
 			`INSERT INTO restaurants (id, owner_id, name, address, is_open, kyb_status) VALUES ($1,$2,$3,'1 St',FALSE,$4)`,
 			id, owner, "Gate-"+id, status); err != nil {
 			t.Fatalf("seed restaurant: %v", err)
 		}
-		t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM restaurants WHERE id=$1`, id) })
+		t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM restaurants WHERE id=$1`, id) })
 		return id
 	}
 
 	noRow := mk(nil)
-	underReview := mk(strPtr("under_review"))
-	approved := mk(strPtr("approved"))
-	rejected := mk(strPtr("rejected"))
+	underReview := mk(new("under_review"))
+	approved := mk(new("approved"))
+	rejected := mk(new("rejected"))
 
 	apps, err := svc.AdminListApplications(ctx, "")
 	if err != nil {
@@ -163,4 +165,5 @@ func TestLiveDB_AdminListApplications_StatusReflectsRealKYBState(t *testing.T) {
 	}
 }
 
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func strPtr(s string) *string { return new(s) }

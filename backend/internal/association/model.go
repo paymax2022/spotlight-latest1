@@ -119,6 +119,7 @@ type OrgRestrictions struct {
 
 type Organisation struct {
 	OrganisationSummary
+
 	Description          string               `json:"description"`
 	FoundedYear          *int                 `json:"foundedYear"`
 	RequiresPayment      bool                 `json:"requiresPayment"`
@@ -277,6 +278,7 @@ type MemberProfileSummary struct {
 
 type MemberProfile struct {
 	MemberProfileSummary
+
 	Email             *string `json:"email"`
 	Phone             *string `json:"phone"`
 	Location          *string `json:"location"`
@@ -443,6 +445,7 @@ type ApplicationDocument struct {
 
 type AdminApplication struct {
 	AdminApplicationSummary
+
 	Email               string  `json:"email"`
 	Phone               string  `json:"phone"`
 	Profession          string  `json:"profession"`

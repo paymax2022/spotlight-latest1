@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -205,7 +206,7 @@ func (c *httpProvider) ReserveName(ctx context.Context, proposedName string, app
 		return Reservation{}, err
 	}
 	if data.Ref == "" {
-		return Reservation{}, fmt.Errorf("cac: reserve name: empty reservation reference")
+		return Reservation{}, errors.New("cac: reserve name: empty reservation reference")
 	}
 	exp, _ := timeutil.ParseTime(data.ExpiresAt)
 	if exp.IsZero() {
@@ -252,7 +253,7 @@ func (c *httpProvider) SubmitRegistration(ctx context.Context, req RegistrationR
 		return Submission{}, err
 	}
 	if data.Ref == "" {
-		return Submission{}, fmt.Errorf("cac: submit registration: empty registration reference")
+		return Submission{}, errors.New("cac: submit registration: empty registration reference")
 	}
 	state := strutil.FirstNonBlank(data.State, data.Status, "submitted")
 	return Submission{Ref: data.Ref, Status: normalizeState(state)}, nil
@@ -365,7 +366,7 @@ func (c *httpProvider) do(req *http.Request, dst any) error {
 	if err != nil {
 		return fmt.Errorf("cac: http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("cac: read response: %w", err)
@@ -381,7 +382,7 @@ func (c *httpProvider) do(req *http.Request, dst any) error {
 	if err := json.Unmarshal(b, &env); err != nil {
 		return fmt.Errorf("cac: decode envelope (%d): %w", resp.StatusCode, err)
 	}
-	ok := env.Success || env.StatusCode == 200 || strings.EqualFold(env.Status, "OK")
+	ok := env.Success || env.StatusCode == http.StatusOK || strings.EqualFold(env.Status, "OK")
 	if !ok {
 		msg := strutil.FirstNonBlank(env.Message, env.Status)
 		if msg == "" {

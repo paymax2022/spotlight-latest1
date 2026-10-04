@@ -36,7 +36,7 @@ func dotenv(t *testing.T) map[string]string {
 			}
 			out[strings.TrimSpace(k)] = strings.Trim(strings.TrimSpace(v), `"'`)
 		}
-		f.Close()
+		_ = f.Close()
 		if len(out) > 0 {
 			return out
 		}

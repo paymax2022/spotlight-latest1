@@ -92,7 +92,7 @@ func (a *DirectInventoryAdapter) Name() string { return "direct" }
 // refines it. Until then this returns the rate-plan base sell rate.
 func (a *DirectInventoryAdapter) Search(ctx context.Context, req gateway.SearchRequest) ([]gateway.PropertyOffer, error) {
 	if a.db == nil {
-		return nil, fmt.Errorf("direct: nil pool")
+		return nil, errors.New("direct: nil pool")
 	}
 	// Parameterized query. City filter when provided; otherwise all ACTIVE.
 	const q = `
@@ -150,7 +150,7 @@ func (a *DirectInventoryAdapter) Search(ctx context.Context, req gateway.SearchR
 // supplier_property_ref is this adapter's own external-facing id, not the row id).
 func (a *DirectInventoryAdapter) GetContent(ctx context.Context, supplierPropertyRef string) (gateway.PropertyContent, error) {
 	if a.db == nil {
-		return gateway.PropertyContent{}, fmt.Errorf("direct: nil pool")
+		return gateway.PropertyContent{}, errors.New("direct: nil pool")
 	}
 	const q = `
 		SELECT id, name, COALESCE(description,''), address, city,
@@ -223,7 +223,7 @@ func decodeAmenityList(raw []byte) []string {
 // BookRequest signature change.
 func (a *DirectInventoryAdapter) Prebook(ctx context.Context, req gateway.PrebookRequest) (gateway.PrebookResult, error) {
 	if a.db == nil {
-		return gateway.PrebookResult{}, fmt.Errorf("direct: nil pool")
+		return gateway.PrebookResult{}, errors.New("direct: nil pool")
 	}
 	// Resolve the rate plan (price/policy) AND the owning room_type_id (the
 	// availability-calendar key) in one query.
@@ -284,7 +284,7 @@ func (a *DirectInventoryAdapter) Prebook(ctx context.Context, req gateway.Preboo
 // impossible allotment decrement.
 func (a *DirectInventoryAdapter) Book(ctx context.Context, req gateway.BookRequest) (gateway.Reservation, error) {
 	if a.db == nil {
-		return gateway.Reservation{}, fmt.Errorf("direct: nil pool")
+		return gateway.Reservation{}, errors.New("direct: nil pool")
 	}
 	roomTypeID, checkIn, checkOut, rooms, err := decodeBookToken(req.BookToken)
 	if err != nil {
@@ -328,7 +328,7 @@ func (a *DirectInventoryAdapter) GetReservation(ctx context.Context, supplierRef
 // the possibly-edited current plan). An unresolvable row refunds 0 — fail-closed.
 func (a *DirectInventoryAdapter) Cancel(ctx context.Context, req gateway.CancelRequest) (gateway.Cancellation, error) {
 	if a.db == nil {
-		return gateway.Cancellation{}, fmt.Errorf("direct: nil pool")
+		return gateway.Cancellation{}, errors.New("direct: nil pool")
 	}
 	if err := a.releaseDecrement(ctx, req.SupplierRef); err != nil {
 		return gateway.Cancellation{}, err
@@ -434,10 +434,10 @@ func (a *DirectInventoryAdapter) Modify(ctx context.Context, req gateway.ModifyR
 // sold is owned by the booking saga, never overwritten by an ARI push).
 func (a *DirectInventoryAdapter) SyncARI(ctx context.Context, ev gateway.ARIEvent) error {
 	if a.db == nil {
-		return fmt.Errorf("direct: nil pool")
+		return errors.New("direct: nil pool")
 	}
 	if ev.SupplierCode == "" || ev.ExternalEventID == "" {
-		return fmt.Errorf("direct: ARI event requires supplier_code + external_event_id")
+		return errors.New("direct: ARI event requires supplier_code + external_event_id")
 	}
 
 	// Idempotent claim — INSERT ... ON CONFLICT DO NOTHING is 0 rows on replay.
@@ -476,7 +476,7 @@ func (a *DirectInventoryAdapter) applyARI(ctx context.Context, ev gateway.ARIEve
 		rt := payloadStr(ev.Payload, "room_type_id")
 		date := payloadStr(ev.Payload, "date")
 		if rt == "" || date == "" {
-			return fmt.Errorf("direct: availability.updated requires room_type_id + date")
+			return errors.New("direct: availability.updated requires room_type_id + date")
 		}
 		allot := payloadInt(ev.Payload, "allotment")
 		stop := payloadBool(ev.Payload, "stop_sell")
@@ -516,7 +516,7 @@ func (a *DirectInventoryAdapter) checkAvailability(ctx context.Context, roomType
 	if err != nil {
 		return false, fmt.Errorf("direct: begin availability check: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	for _, n := range nights { // ascending date order → deterministic lock order
 		var allotment, sold int
@@ -549,7 +549,7 @@ func (a *DirectInventoryAdapter) checkAvailability(ctx context.Context, roomType
 func (a *DirectInventoryAdapter) commitDecrement(ctx context.Context, supplierRef, roomTypeID string, checkIn, checkOut time.Time, rooms int) error {
 	nights := nightsBetween(checkIn, checkOut)
 	if len(nights) == 0 {
-		return fmt.Errorf("direct: empty stay range")
+		return errors.New("direct: empty stay range")
 	}
 	if rooms <= 0 {
 		rooms = 1
@@ -559,7 +559,7 @@ func (a *DirectInventoryAdapter) commitDecrement(ctx context.Context, supplierRe
 	if err != nil {
 		return fmt.Errorf("direct: begin decrement tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Idempotency guard: claim the decrement ledger row FIRST. ON CONFLICT DO
 	// NOTHING → 0 rows means this supplier_ref already decremented (a replay); skip
@@ -635,7 +635,7 @@ func (a *DirectInventoryAdapter) releaseDecrement(ctx context.Context, supplierR
 	if err != nil {
 		return fmt.Errorf("direct: begin release tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock the ledger row; only proceed if it exists and is not already released.
 	var roomTypeID string
@@ -688,7 +688,7 @@ func encodeBookToken(roomTypeID string, checkIn, checkOut time.Time, rooms int) 
 func decodeBookToken(token string) (roomTypeID string, checkIn, checkOut time.Time, rooms int, err error) {
 	parts := strings.Split(token, ":")
 	if len(parts) < 7 || parts[0] != bookTokenPrefix || parts[1] != bookTokenVersion {
-		return "", time.Time{}, time.Time{}, 0, fmt.Errorf("direct: malformed book_token")
+		return "", time.Time{}, time.Time{}, 0, errors.New("direct: malformed book_token")
 	}
 	roomTypeID = parts[2]
 	if checkIn, err = time.Parse(dateLayout, parts[3]); err != nil {
@@ -698,7 +698,7 @@ func decodeBookToken(token string) (roomTypeID string, checkIn, checkOut time.Ti
 		return "", time.Time{}, time.Time{}, 0, fmt.Errorf("direct: bad check_out in book_token: %w", err)
 	}
 	if rooms, err = strconv.Atoi(parts[5]); err != nil || rooms <= 0 {
-		return "", time.Time{}, time.Time{}, 0, fmt.Errorf("direct: bad rooms in book_token")
+		return "", time.Time{}, time.Time{}, 0, errors.New("direct: bad rooms in book_token")
 	}
 	return roomTypeID, checkIn, checkOut, rooms, nil
 }

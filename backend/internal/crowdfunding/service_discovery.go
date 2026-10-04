@@ -482,7 +482,7 @@ func (s *Service) SubmitForReview(ctx context.Context, creatorID string, req Sub
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, ins,
 		id, creatorID, req.Title, req.Summary, req.Story, req.Type, req.Category, req.GoalKobo,
@@ -502,7 +502,7 @@ func (s *Service) SubmitForReview(ctx context.Context, creatorID string, req Sub
 		}
 		status, err := submitMilestoneStatus(m.Status, i)
 		if err != nil {
-			return nil, fmt.Errorf("%w: milestone %d: %s", ErrInvalidSubmission, i+1, err)
+			return nil, fmt.Errorf("%w: milestone %d: %w", ErrInvalidSubmission, i+1, err)
 		}
 		var dueAt any
 		if m.DueAt != nil && strings.TrimSpace(*m.DueAt) != "" {

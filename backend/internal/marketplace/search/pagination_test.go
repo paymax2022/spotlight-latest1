@@ -85,10 +85,7 @@ func newFakeES(t *testing.T, dataset []esDoc) *httptest.Server {
 		if s, ok := body["size"].(float64); ok {
 			size = int(s)
 		}
-		end := from + size
-		if end > len(dataset) {
-			end = len(dataset)
-		}
+		end := min(from+size, len(dataset))
 		var hits []map[string]any
 		if from < len(dataset) {
 			for _, d := range dataset[from:end] {

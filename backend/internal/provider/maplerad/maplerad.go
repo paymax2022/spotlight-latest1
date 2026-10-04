@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -186,7 +187,7 @@ func (c *Client) CreateFXQuote(ctx context.Context, req FXQuoteRequest) (*FXQuot
 		return nil, fmt.Errorf("maplerad: create fx quote: %s", resp.Message)
 	}
 	if resp.Data.Reference == "" {
-		return nil, fmt.Errorf("maplerad: create fx quote: provider returned no quote reference")
+		return nil, errors.New("maplerad: create fx quote: provider returned no quote reference")
 	}
 	return &FXQuoteResponse{
 		QuoteID:           resp.Data.Reference,
@@ -225,7 +226,7 @@ func (c *Client) ConvertFX(ctx context.Context, req ConvertFXRequest) (*ConvertF
 		// Fail here rather than let the provider reject an empty reference: an
 		// empty quote id means the caller quoted off the rate board, which issues
 		// none. Book one with CreateFXQuote first.
-		return nil, fmt.Errorf("maplerad: convert fx: quote reference is required")
+		return nil, errors.New("maplerad: convert fx: quote reference is required")
 	}
 	body := map[string]any{"quote_reference": req.QuoteID}
 	var resp struct {
@@ -910,7 +911,7 @@ func (c *Client) do(req *http.Request, dst any) error {
 	if err != nil {
 		return fmt.Errorf("maplerad: http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("maplerad: read response: %w", err)

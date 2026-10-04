@@ -8,9 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -325,13 +326,13 @@ func (s *Service) RegenerateAiNoteSummary(ctx context.Context, adminID, noteID s
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `UPDATE assoc_ai_notes SET status='PROCESSING' WHERE id=$1`, noteID)
 	if err != nil {
 		return fmt.Errorf("association: regenerate ai note: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("association: ai note not found")
+		return errors.New("association: ai note not found")
 	}
 	if err := s.audit(ctx, tx, noteOrg, adminID, "MINUTES_REGENERATE", "ai_note", noteID, nil); err != nil {
 		return err

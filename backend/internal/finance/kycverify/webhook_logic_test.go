@@ -14,7 +14,7 @@ func TestDecideDedupe_OnceThenNoOp(t *testing.T) {
 		t.Fatalf("first delivery must Process, got %+v", first)
 	}
 	processCount := 1
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		d := DecideDedupe(0) // ON CONFLICT DO NOTHING → 0 rows on redelivery
 		if d.Process || !d.AckNoOp {
 			t.Errorf("redelivery %d must be AckNoOp, got %+v", i, d)

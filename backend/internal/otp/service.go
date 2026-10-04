@@ -12,12 +12,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"math/big"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/strutil"
 )
@@ -104,7 +105,7 @@ func NewService(store Store, sender EmailSender, limiter Limiter, cfg Config) (*
 		return nil, ErrNoPepper
 	}
 	if store == nil || sender == nil || limiter == nil {
-		return nil, fmt.Errorf("otp: store, sender and limiter are all required")
+		return nil, errors.New("otp: store, sender and limiter are all required")
 	}
 	cfg = cfg.withDefaults()
 	if cfg.Length < 4 || cfg.Length > 10 {
@@ -252,7 +253,7 @@ func (s *Service) Verify(ctx context.Context, email, purpose, submitted, ip stri
 
 	rec, err := s.store.Get(ctx, k)
 	if err != nil {
-		if err == ErrNotFound {
+		if errors.Is(err, ErrNotFound) {
 			return ErrInvalidCode // never reveal that nothing was issued
 		}
 		return fmt.Errorf("otp: store: %w", err)

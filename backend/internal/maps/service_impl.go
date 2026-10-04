@@ -108,11 +108,11 @@ func NewService(d Deps) *Service {
 	if surface == "" {
 		surface = "default"
 	}
-	var cache GeocodeCache = d.Cache
+	var cache = d.Cache
 	if d.Cache == nil {
 		cache = nopCache{}
 	}
-	var usage CapGuard = d.Usage
+	var usage = d.Usage
 	if d.Usage == nil {
 		usage = nopUsage{}
 	}
@@ -422,7 +422,7 @@ func (s *Service) GetRoute(ctx context.Context, origin, dest Point, opts RouteOp
 // reassigned to the matrixer. (Matches the pre-existing shadowing in this method.)
 func (s *Service) GetDistanceMatrix(ctx context.Context, origins, dests []Point) (Matrix, error) {
 	if len(origins) == 0 || len(dests) == 0 {
-		return Matrix{}, fmt.Errorf("maps: matrix needs origins and destinations")
+		return Matrix{}, errors.New("maps: matrix needs origins and destinations")
 	}
 	// 1. Short-TTL cache (cost control). These metric calls resolve to the
 	// package-level `mx` singleton because the local `mx` matrixer is not declared
@@ -498,7 +498,7 @@ func (s *Service) MatchToRoad(ctx context.Context, gpsTrace []Point) (Polyline, 
 // FindNearbyOwn returns OUR records near a point — PostGIS, never a maps API.
 func (s *Service) FindNearbyOwn(ctx context.Context, entityType string, p Point, radiusM float64, limit int) ([]OwnEntity, error) {
 	if s.repo == nil {
-		return nil, fmt.Errorf("maps: no geo repo configured")
+		return nil, errors.New("maps: no geo repo configured")
 	}
 	return s.repo.NearbyOwn(ctx, entityType, p, radiusM, limit)
 }
@@ -506,7 +506,7 @@ func (s *Service) FindNearbyOwn(ctx context.Context, entityType string, p Point,
 // IsInZone reports whether a point is inside a service-area polygon — PostGIS.
 func (s *Service) IsInZone(ctx context.Context, p Point, zoneID string) (bool, error) {
 	if s.repo == nil {
-		return false, fmt.Errorf("maps: no geo repo configured")
+		return false, errors.New("maps: no geo repo configured")
 	}
 	return s.repo.InZone(ctx, p, zoneID)
 }

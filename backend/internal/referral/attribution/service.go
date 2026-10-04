@@ -132,7 +132,7 @@ func NewService(
 // call returns the existing attribution.
 func (s *Service) ResolveReferrer(ctx context.Context, referredUserID string, opts ResolveOpts) (*Attribution, error) {
 	if referredUserID == "" {
-		return nil, fmt.Errorf("referral/attribution: referred user id required")
+		return nil, errors.New("referral/attribution: referred user id required")
 	}
 
 	// Idempotency: if already attributed, return it untouched.
@@ -312,7 +312,7 @@ func (s *Service) insertAttribution(ctx context.Context, p insertParams) (*Attri
 		dbutil.NullStr(p.RiskFlag),
 		p.GraceExpiresAt,
 	))
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// Already attributed by a concurrent call — return existing.
 		return s.getByReferred(ctx, p.ReferredUserID)
 	}

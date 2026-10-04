@@ -128,14 +128,14 @@ func (s *Service) DriverAccept(ctx context.Context, tripID, driverUserID string)
 	}
 	// Accept at the rider's standing fare (offer if present, else system fare).
 	var fareKobo int64
-	s.db.QueryRow(ctx, `SELECT fare_kobo FROM trips WHERE id=$1`, tripID).Scan(&fareKobo)
+	_ = s.db.QueryRow(ctx, `SELECT fare_kobo FROM trips WHERE id=$1`, tripID).Scan(&fareKobo)
 	accepted = fareKobo
 	cfg, err := s.loadPricingConfig(ctx, "default", t.ServiceType)
 	if err != nil {
 		return nil, err
 	}
 	var tier string
-	s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, driverID).Scan(&tier)
+	_ = s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, driverID).Scan(&tier)
 	if err := s.validateAcceptedFare(ctx, accepted, systemFare, tier, cfg); err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func (s *Service) DriverAccept(ctx context.Context, tripID, driverUserID string)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	// Single-winner: the conditional UPDATE (driver_id IS NULL) is an atomic
 	// compare-and-set. If a concurrent driver already claimed the trip, this
 	// affects 0 rows — we MUST reject here (a 0-row UPDATE returns no error), or
@@ -178,7 +178,7 @@ func (s *Service) DriverAccept(ctx context.Context, tripID, driverUserID string)
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	s.db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, driverID)
+	_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, driverID)
 	return s.TripDetail(ctx, tripID, driverUserID, false)
 }
 
@@ -204,16 +204,16 @@ func (s *Service) DriverCounter(ctx context.Context, tripID, driverUserID string
 		return nil, err
 	}
 	var tier string
-	s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, driverID).Scan(&tier)
+	_ = s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, driverID).Scan(&tier)
 	// Counter must be within range AND keep the driver above the profit floor.
 	if err := s.validateAcceptedFare(ctx, counter, fo.SystemFareKobo, tier, cfg); err != nil {
 		return nil, err
 	}
 	if t.Phase == PhaseRequested {
-		s.db.Exec(ctx, `UPDATE trips SET phase='fare_negotiating', updated_at=NOW() WHERE id=$1 AND phase='requested'`, tripID)
+		_, _ = s.db.Exec(ctx, `UPDATE trips SET phase='fare_negotiating', updated_at=NOW() WHERE id=$1 AND phase='requested'`, tripID)
 		s.recordEvent(ctx, tripID, "fare_negotiating", driverUserID, PhaseRequested, PhaseFareNegotiating, nil)
 	}
-	s.db.Exec(ctx, `UPDATE fare_offers SET driver_counter_kobo=$1, status='driver_countered', updated_at=NOW() WHERE trip_id=$2`, counter, tripID)
+	_, _ = s.db.Exec(ctx, `UPDATE fare_offers SET driver_counter_kobo=$1, status='driver_countered', updated_at=NOW() WHERE trip_id=$2`, counter, tripID)
 	return s.loadFareOffer(ctx, tripID)
 }
 
@@ -251,7 +251,7 @@ func (s *Service) StartTrip(ctx context.Context, tripID, driverUserID string) er
 	if err := s.driverTransition(ctx, tripID, driverUserID, PhasePinVerified, PhaseInProgress, "picked_up", "started"); err != nil {
 		return err
 	}
-	s.db.Exec(ctx, `UPDATE trips SET started_at=NOW() WHERE id=$1`, tripID)
+	_, _ = s.db.Exec(ctx, `UPDATE trips SET started_at=NOW() WHERE id=$1`, tripID)
 	return nil
 }
 
@@ -265,7 +265,7 @@ func (s *Service) CompleteTrip(ctx context.Context, tripID, driverUserID string)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := s.transitionPhase(ctx, tx, tripID, driverUserID, t.Phase, PhaseCompleted, "completed", nil); err != nil {
 		return err
 	}
@@ -294,9 +294,9 @@ func (s *Service) CompleteTrip(ctx context.Context, tripID, driverUserID string)
 		return fmt.Errorf("transport: trip completed but settlement failed (marked pending for reconciliation): %w", err)
 	}
 	if t.DriverID != nil {
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *t.DriverID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *t.DriverID)
 	}
-	s.db.Exec(ctx, `UPDATE mobility_profiles SET completed_trips=completed_trips+1, updated_at=NOW() WHERE user_id=$1`, t.RiderID)
+	_, _ = s.db.Exec(ctx, `UPDATE mobility_profiles SET completed_trips=completed_trips+1, updated_at=NOW() WHERE user_id=$1`, t.RiderID)
 	return nil
 }
 
@@ -313,7 +313,7 @@ func (s *Service) driverTransition(ctx context.Context, tripID, driverUserID str
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := s.transitionPhase(ctx, tx, tripID, driverUserID, from, to, coarse, nil); err != nil {
 		return err
 	}
@@ -330,7 +330,7 @@ func (s *Service) driverOwnedTrip(ctx context.Context, tripID, driverUserID stri
 		return nil, codedErr(http.StatusForbidden, CodeForbidden, "trip has no assigned driver")
 	}
 	var ownerUser string
-	s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *t.DriverID).Scan(&ownerUser)
+	_ = s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *t.DriverID).Scan(&ownerUser)
 	if ownerUser != driverUserID {
 		return nil, codedErr(http.StatusForbidden, CodeForbidden, "not the assigned driver")
 	}
@@ -349,7 +349,7 @@ func (s *Service) Earnings(ctx context.Context, driverUserID string) (map[string
 	comm, _ := s.commissionForTier(ctx, tier)
 	// Gross / net from settled settlements attributable to this driver.
 	var gross int64
-	s.db.QueryRow(ctx, `
+	_ = s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(s.total_kobo),0)
 		FROM settlements s
 		JOIN trips t ON ('trip:'||t.id) = s.reference OR s.reference LIKE ('trip:'||t.id||':%')

@@ -26,7 +26,7 @@ func clientIPEngine(t *testing.T, cidrCSV string) *gin.Engine {
 func clientIP(t *testing.T, r *gin.Engine, remoteAddr, xff string) string {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/ip", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ip", nil)
 	req.RemoteAddr = remoteAddr
 	if xff != "" {
 		req.Header.Set("X-Forwarded-For", xff)

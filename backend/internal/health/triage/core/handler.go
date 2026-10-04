@@ -7,9 +7,10 @@ import (
 	"spotlight/backend/internal/services"
 	"time"
 
+	"spotlight/backend/go-common/ginutil"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/go-common/ginutil"
 )
 
 // parseDOB parses a YYYY-MM-DD date of birth; an empty/invalid value yields nil so

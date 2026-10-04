@@ -293,7 +293,7 @@ func (r *PgxRepo) InsertReviewCase(ctx context.Context, rc *PharmacyReviewCase, 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const q = `
 		INSERT INTO pharmacy_review_cases
 			(id, order_id, pharmacy_provider_id, tier, state, sla_deadline, search_event_id, version)
@@ -315,7 +315,7 @@ func (r *PgxRepo) TransitionReviewCase(ctx context.Context, id string, expectedV
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const q = `
 		UPDATE pharmacy_review_cases
 		SET state = $3,

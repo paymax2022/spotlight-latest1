@@ -8,6 +8,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"math"
 	"os"
 	"testing"
@@ -168,7 +169,7 @@ func TestLiveDB_CashRideNoEscrowAndBalanceGate(t *testing.T) {
 	}
 	if _, err := svc.DriverAccept(ctx, tripID, poorDriver); err == nil {
 		t.Fatal("expected DriverAccept to reject the poor driver")
-	} else if ce, ok := err.(*CodedError); !ok || ce.Code != CodeInsufficientDriverBalance {
+	} else if ce := new(CodedError); !errors.As(err, &ce) || ce.Code != CodeInsufficientDriverBalance {
 		t.Errorf("expected CodeInsufficientDriverBalance, got %v", err)
 	}
 

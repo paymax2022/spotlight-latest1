@@ -307,7 +307,7 @@ func (s *Service) SoftDeleteAccount(ctx context.Context, estateID, userID string
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Scrub the extended profile (no-op if none exists).
 	if _, err := tx.Exec(ctx, `

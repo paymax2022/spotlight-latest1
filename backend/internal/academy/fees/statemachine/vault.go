@@ -8,7 +8,7 @@ import "spotlight/backend/go-common/fsm"
 // its balance (balance is the projected SavedMinor, computed elsewhere — same
 // SF-2 discipline as invoices).
 //	active → target_reached
-//	target_reached → applied_to_invoice   (single ledger transfer event, one-tap)
+//	→ applied_to_invoice   (single ledger transfer event, one-tap)
 //	active → withdrawn                     (early exit, no penalty by default)
 //	target_reached → withdrawn            (exit after hitting target, pre-apply)
 //	active → locked                        (compliance / dispute hold)

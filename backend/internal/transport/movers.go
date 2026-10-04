@@ -137,7 +137,7 @@ func (s *Service) MoverDetail(ctx context.Context, id, callerID string) (map[str
 	isOwner := callerID == uid
 	if !isOwner {
 		var cnt int
-		s.db.QueryRow(ctx, `
+		_ = s.db.QueryRow(ctx, `
 			SELECT COUNT(*) FROM mover_bids b JOIN drivers d ON d.id = b.provider_id
 			WHERE b.job_id=$1 AND d.user_id=$2`, id, callerID).Scan(&cnt)
 		if cnt == 0 {
@@ -230,7 +230,7 @@ func (s *Service) AcceptMoverBid(ctx context.Context, jobID, userID, bidID, idem
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `
 		UPDATE mover_jobs SET provider_id=$1, accepted_bid_id=$2, quote_amount_kobo=$3,
 			status='bid_accepted', escrow_status='funded', settlement_id=$4, updated_at=NOW()
@@ -251,7 +251,7 @@ func (s *Service) AcceptMoverBid(ctx context.Context, jobID, userID, bidID, idem
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	s.db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, providerID)
+	_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, providerID)
 	s.recordModeEvent(ctx, userID, "mover.bid_accepted", "mover_job", jobID, m.Status, "bid_accepted",
 		map[string]any{"bid_id": bidID, "amount_kobo": amount, "provider_id": providerID, "settlement_id": sett.ID})
 	return s.MoverDetail(ctx, jobID, userID)
@@ -280,9 +280,9 @@ func (s *Service) ConfirmMoverCompletion(ctx context.Context, jobID, userID stri
 			return fmt.Errorf("transport: settle mover: %w", err)
 		}
 	}
-	s.db.Exec(ctx, `UPDATE mover_jobs SET escrow_status='released', updated_at=NOW() WHERE id=$1`, jobID)
+	_, _ = s.db.Exec(ctx, `UPDATE mover_jobs SET escrow_status='released', updated_at=NOW() WHERE id=$1`, jobID)
 	if m.ProviderID != nil {
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *m.ProviderID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *m.ProviderID)
 	}
 	s.recordModeEvent(ctx, userID, "mover.completion_confirmed", "mover_job", jobID, "in_progress", "completion_confirmed", nil)
 	return nil
@@ -298,17 +298,17 @@ func (s *Service) CancelMover(ctx context.Context, jobID, userID, reason string)
 		return codedErr(http.StatusForbidden, CodeForbidden, "not your job")
 	}
 	if !canTransitionMover(m.Status, "cancelled") {
-		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot cancel from status %s", m.Status))
+		return codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from status "+m.Status)
 	}
 	if err := s.moverSetStatus(ctx, jobID, m.Status, "cancelled"); err != nil {
 		return err
 	}
 	if m.EscrowStatus == "funded" && m.SettlementID != nil {
-		s.settlement.Refund(ctx, *m.SettlementID, "mover_cancelled:"+reason)
-		s.db.Exec(ctx, `UPDATE mover_jobs SET escrow_status='refunded', updated_at=NOW() WHERE id=$1`, jobID)
+		_ = s.settlement.Refund(ctx, *m.SettlementID, "mover_cancelled:"+reason)
+		_, _ = s.db.Exec(ctx, `UPDATE mover_jobs SET escrow_status='refunded', updated_at=NOW() WHERE id=$1`, jobID)
 	}
 	if m.ProviderID != nil {
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *m.ProviderID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *m.ProviderID)
 	}
 	s.recordModeEvent(ctx, userID, "mover.cancelled", "mover_job", jobID, m.Status, "cancelled", map[string]any{"reason": reason})
 	return nil
@@ -420,7 +420,7 @@ func (s *Service) SubmitMoverBid(ctx context.Context, jobID, driverUserID string
 	}
 	// First bid moves the job to bids_received.
 	if m.Status == "quote_requested" {
-		s.db.Exec(ctx, `UPDATE mover_jobs SET status='bids_received', updated_at=NOW() WHERE id=$1 AND status='quote_requested'`, jobID)
+		_, _ = s.db.Exec(ctx, `UPDATE mover_jobs SET status='bids_received', updated_at=NOW() WHERE id=$1 AND status='quote_requested'`, jobID)
 	}
 	s.recordModeEvent(ctx, driverUserID, "mover.bid_submitted", "mover_job", jobID, m.Status, "bids_received",
 		map[string]any{"bid_id": bidID, "amount_kobo": amount})

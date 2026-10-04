@@ -197,7 +197,7 @@ func TestDispatchIdemKey_DeterministicPerBooking(t *testing.T) {
 // above: N distinct booking ids must produce N distinct keys.
 func TestDispatchIdemKey_NoCollisionAcrossManyBookings(t *testing.T) {
 	seen := map[string]bool{}
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		id := fmt.Sprintf("booking-%d", i)
 		key := dispatchIdemKey(id)
 		if seen[key] {

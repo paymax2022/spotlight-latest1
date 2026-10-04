@@ -340,7 +340,7 @@ func MonteCarloBootstrap(tradePnLKobo []int64, startEquityKobo int64, cfg MCConf
 	rets := make([]float64, 0, cfg.Trials)
 	dds := make([]float64, 0, cfg.Trials)
 
-	for tr := 0; tr < cfg.Trials; tr++ {
+	for range cfg.Trials {
 		equity := startEquityKobo
 		peak := equity
 		var maxDD float64

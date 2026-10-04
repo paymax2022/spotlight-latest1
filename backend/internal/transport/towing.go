@@ -80,10 +80,7 @@ func (s *Service) loadTowing(ctx context.Context, id string, t *towingRow) error
 func towingFare(distanceM int, cfg *PricingConfig) int64 {
 	km := float64(distanceM) / 1000.0
 	raw := float64(cfg.BaseFareKobo) + km*float64(cfg.PerKMKobo)
-	fare := int64(math.Round(raw))
-	if fare < cfg.MinFareKobo {
-		fare = cfg.MinFareKobo
-	}
+	fare := max(int64(math.Round(raw)), cfg.MinFareKobo)
 	return fare
 }
 
@@ -195,7 +192,7 @@ func (s *Service) TowingDetail(ctx context.Context, id, callerID string) (map[st
 			return nil, codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
 		var ownerUser string
-		s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *operatorID).Scan(&ownerUser)
+		_ = s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *operatorID).Scan(&ownerUser)
 		if ownerUser != callerID {
 			return nil, codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
@@ -248,16 +245,16 @@ func (s *Service) CancelTowing(ctx context.Context, id, userID, reason string) e
 		return codedErr(http.StatusForbidden, CodeForbidden, "not your job")
 	}
 	if !canTransitionTowing(t.Status, "cancelled") {
-		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot cancel from status %s", t.Status))
+		return codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from status "+t.Status)
 	}
 	if err := s.towingSetStatus(ctx, id, t.Status, "cancelled"); err != nil {
 		return err
 	}
 	if t.SettlementID != nil {
-		s.settlement.Refund(ctx, *t.SettlementID, "towing_cancelled:"+reason)
+		_ = s.settlement.Refund(ctx, *t.SettlementID, "towing_cancelled:"+reason)
 	}
 	if t.OperatorID != nil {
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *t.OperatorID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *t.OperatorID)
 	}
 	s.recordModeEvent(ctx, userID, "towing.cancelled", "towing_job", id, t.Status, "cancelled", map[string]any{"reason": reason})
 	return nil
@@ -330,7 +327,7 @@ func (s *Service) AcceptTowing(ctx context.Context, id, driverUserID string) (ma
 	if tag.RowsAffected() == 0 {
 		return nil, codedErr(http.StatusConflict, CodeInvalidState, "job already taken")
 	}
-	s.db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, operatorID)
+	_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, operatorID)
 	s.recordModeEvent(ctx, driverUserID, "towing.operator_accepted", "towing_job", id, "requested", "operator_accepted",
 		map[string]any{"operator_id": operatorID})
 	return s.TowingDetail(ctx, id, driverUserID)
@@ -383,7 +380,7 @@ func (s *Service) CompleteTowing(ctx context.Context, id, driverUserID string) e
 		}
 	}
 	if t.OperatorID != nil {
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *t.OperatorID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *t.OperatorID)
 	}
 	s.recordModeEvent(ctx, driverUserID, "towing.completed", "towing_job", id, "in_progress", "completed", nil)
 	return nil

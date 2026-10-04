@@ -140,7 +140,7 @@ func (m *HTTPMarketData) get(ctx context.Context, path string, out any) error {
 	if err != nil {
 		return fmt.Errorf("market-data: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("market-data: status %d: %s", resp.StatusCode, string(b))
@@ -224,7 +224,7 @@ func (b *HTTPBroker) Healthy(ctx context.Context) (bool, string) {
 	if err != nil {
 		return false, err.Error()
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Sprintf("status %d", resp.StatusCode)
 	}
@@ -252,7 +252,7 @@ func (b *HTTPBroker) post(ctx context.Context, path string, payload, out any) er
 	if err != nil {
 		return fmt.Errorf("broker: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		bb, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("broker: status %d: %s", resp.StatusCode, string(bb))

@@ -212,7 +212,7 @@ func (s *Service) DecideFeatureRequest(ctx context.Context, requestID, adminID s
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// 1. Unlocked read for the campaign id ONLY (stable for the row's lifetime).
 	var campaignID string

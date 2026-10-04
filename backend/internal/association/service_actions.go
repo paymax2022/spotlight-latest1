@@ -168,7 +168,7 @@ func (s *Service) RequestJoinCommittee(ctx context.Context, userID, committeeID 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const ins = `
 		INSERT INTO assoc_committee_members (committee_id, membership_id, status)
@@ -228,7 +228,7 @@ func (s *Service) RegisterEvent(ctx context.Context, userID, eventID string) (*E
 			return nil, fmt.Errorf("association: event capacity: %w", err)
 		}
 		if taken >= *capacity {
-			return nil, fmt.Errorf("association: event is full")
+			return nil, errors.New("association: event is full")
 		}
 	}
 
@@ -240,7 +240,7 @@ func (s *Service) RegisterEvent(ctx context.Context, userID, eventID string) (*E
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if !paid || feeKobo <= 0 {
 		if _, err := tx.Exec(ctx, `
@@ -356,7 +356,7 @@ func (s *Service) DecideOfflinePayment(ctx context.Context, adminID, paymentID, 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var invoiceID string
 	var amountKobo int64
@@ -464,7 +464,7 @@ func (s *Service) memberStatusAction(ctx context.Context, adminID, memberID, sta
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `UPDATE assoc_memberships SET status=$2 WHERE id=$1`, memberID, status); err != nil {
 		return fmt.Errorf("association: member status: %w", err)
 	}
@@ -487,7 +487,7 @@ func (s *Service) TransferMember(ctx context.Context, adminID, memberID, chapter
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const q = `
 		UPDATE assoc_memberships
 		SET chapter_id = (
@@ -524,7 +524,7 @@ func (s *Service) AssignRole(ctx context.Context, adminID, memberID, role string
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	const q = `INSERT INTO assoc_member_roles (id, membership_id, role, granted_by) VALUES ($1,$2,$3,$4)
 		           ON CONFLICT (membership_id, role) DO UPDATE SET granted_by=EXCLUDED.granted_by, granted_at=now()`
 	if _, err := tx.Exec(ctx, q, uuid.New().String(), memberID, role, adminID); err != nil {
@@ -573,12 +573,12 @@ func (s *Service) BulkImportMembers(ctx context.Context, adminID, orgID string, 
 	if err != nil {
 		return 0, fmt.Errorf("association: import: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	count := 0
 	for {
 		rec, err := cr.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

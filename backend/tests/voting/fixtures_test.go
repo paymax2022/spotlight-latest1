@@ -133,7 +133,7 @@ func deleteContestTree(ctx context.Context, pool *pgxpool.Pool, contestID string
 		`DELETE FROM public.connect_contests   WHERE id = $1`,
 		`DELETE FROM public.contests           WHERE id = $1`,
 	} {
-		_, _ = pool.Exec(ctx, q, contestID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), q, contestID)
 	}
 }
 
@@ -149,7 +149,7 @@ func newContestant(t *testing.T, ctx context.Context, pool *pgxpool.Pool, connec
 		contest = connectContestID
 	}
 	var id string
-	err := pool.QueryRow(ctx, `
+	err := pool.QueryRow(context.WithoutCancel(ctx), `
 		INSERT INTO public.contestants (name, connect_contest_id, status, is_active)
 		VALUES ($1, $2, 'approved', TRUE)
 		RETURNING id::text`, fixtureTitle, contest).Scan(&id)
@@ -157,7 +157,7 @@ func newContestant(t *testing.T, ctx context.Context, pool *pgxpool.Pool, connec
 		t.Fatalf("seed contestant: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.contestants WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.contestants WHERE id=$1`, id)
 	})
 	return id
 }
@@ -176,7 +176,7 @@ func newContestant(t *testing.T, ctx context.Context, pool *pgxpool.Pool, connec
 func anyVoter(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	t.Helper()
 	var id string
-	err := pool.QueryRow(ctx, `SELECT id::text FROM auth.users ORDER BY created_at LIMIT 1`).Scan(&id)
+	err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT id::text FROM auth.users ORDER BY created_at LIMIT 1`).Scan(&id)
 	if err != nil {
 		t.Fatalf("no auth.users row to attach the fixture to: %v", err)
 	}
@@ -202,7 +202,7 @@ func sweepContests(ctx context.Context, pool *pgxpool.Pool) {
 	// Both planes: the mirror trigger means one fixture becomes two rows, and a
 	// mirrored row whose slug collided was written with slug = NULL — so a
 	// slug-only sweep leaves it behind. Match the fixture title too.
-	rows, err := pool.Query(ctx, `
+	rows, err := pool.Query(context.WithoutCancel(ctx), `
 		SELECT id::text FROM public.connect_contests WHERE slug LIKE $1
 		UNION
 		SELECT id::text FROM public.contests         WHERE slug LIKE $1 OR name = $2`,
@@ -230,6 +230,6 @@ func sweepRegistrations(ctx context.Context, pool *pgxpool.Pool) {
 		`DELETE FROM public.contestants                WHERE registration_id IN (` + regs + `)`,
 		`DELETE FROM public.registrations              WHERE contest_slug = $1`,
 	} {
-		_, _ = pool.Exec(ctx, q, fixtureRegSlug)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), q, fixtureRegSlug)
 	}
 }

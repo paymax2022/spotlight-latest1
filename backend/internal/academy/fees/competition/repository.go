@@ -2,6 +2,7 @@ package feescompetition
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -37,7 +38,7 @@ type Repository struct {
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 // IsNoRows lets callers detect absence without importing pgx.
-func IsNoRows(err error) bool { return err == pgx.ErrNoRows }
+func IsNoRows(err error) bool { return errors.Is(err, pgx.ErrNoRows) }
 
 func (r *Repository) CreateCompetition(ctx context.Context, c *Competition) (*Competition, error) {
 	const q = `

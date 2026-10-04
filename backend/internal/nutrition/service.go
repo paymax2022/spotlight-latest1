@@ -2,6 +2,7 @@ package nutrition
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -352,10 +353,10 @@ func (s *Service) DeclareRecipe(ctx context.Context, menuItemID, userID string, 
 		return nil, err
 	}
 	if in.PortionSizeG <= 0 {
-		return nil, fmt.Errorf("nutrition: portion_size_g must be > 0")
+		return nil, errors.New("nutrition: portion_size_g must be > 0")
 	}
 	if len(in.Ingredients) == 0 {
-		return nil, fmt.Errorf("nutrition: recipe requires at least one ingredient")
+		return nil, errors.New("nutrition: recipe requires at least one ingredient")
 	}
 	rec, err := s.repo.UpsertRecipe(ctx, Recipe{
 		MenuItemID:   menuItemID,
@@ -622,7 +623,7 @@ func (s *Service) AttestAllergens(ctx context.Context, menuItemID, userID string
 		return nil, err
 	}
 	if len(items) == 0 {
-		return nil, fmt.Errorf("nutrition: no allergen declarations provided")
+		return nil, errors.New("nutrition: no allergen declarations provided")
 	}
 	for _, it := range items {
 		allergen := strings.ToLower(strings.TrimSpace(it.Allergen))

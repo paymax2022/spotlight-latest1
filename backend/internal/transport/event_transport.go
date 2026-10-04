@@ -202,26 +202,26 @@ func (s *Service) BookEventTransport(ctx context.Context, userID, offerID string
 	// capacity. The conditional UPDATE + row lock prevents overbooking under races.
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		s.settlement.Refund(ctx, sett.ID, "event_book_tx_failed")
+		_ = s.settlement.Refund(ctx, sett.ID, "event_book_tx_failed")
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var capacity, booked int
 	var lockedStatus string
 	if err := tx.QueryRow(ctx,
 		`SELECT capacity, booked_count, status FROM event_transport_offers WHERE id=$1 FOR UPDATE`, offerID).
 		Scan(&capacity, &booked, &lockedStatus); err != nil {
-		s.settlement.Refund(ctx, sett.ID, "event_offer_missing")
+		_ = s.settlement.Refund(ctx, sett.ID, "event_offer_missing")
 		return nil, codedErr(http.StatusNotFound, CodeNotFound, "offer not found")
 	}
 	// Re-check status under the row lock (it may have flipped since the pre-check).
 	if lockedStatus != "open" {
-		s.settlement.Refund(ctx, sett.ID, "event_not_open")
+		_ = s.settlement.Refund(ctx, sett.ID, "event_not_open")
 		return nil, codedErr(http.StatusConflict, CodeInvalidState, "offer not open for booking")
 	}
 	if booked+req.Seats > capacity {
-		s.settlement.Refund(ctx, sett.ID, "event_overbook")
+		_ = s.settlement.Refund(ctx, sett.ID, "event_overbook")
 		return nil, codedErr(http.StatusConflict, "CAPACITY_EXCEEDED", "not enough seats available")
 	}
 	newBooked := booked + req.Seats
@@ -232,7 +232,7 @@ func (s *Service) BookEventTransport(ctx context.Context, userID, offerID string
 	if _, err := tx.Exec(ctx,
 		`UPDATE event_transport_offers SET booked_count=$1, status=$2, updated_at=NOW() WHERE id=$3`,
 		newBooked, newStatus, offerID); err != nil {
-		s.settlement.Refund(ctx, sett.ID, "event_reserve_failed")
+		_ = s.settlement.Refund(ctx, sett.ID, "event_reserve_failed")
 		return nil, err
 	}
 
@@ -243,11 +243,11 @@ func (s *Service) BookEventTransport(ctx context.Context, userID, offerID string
 		VALUES ($1,$2,$3,$4,$5,$6,$7,'booked',$8,$9)`,
 		bookingID, offerID, userID, dbutil.NullStr(req.TicketRef), req.Seats, total, qr, sett.ID, idempotencyKey,
 	); err != nil {
-		s.settlement.Refund(ctx, sett.ID, "event_booking_insert_failed")
+		_ = s.settlement.Refund(ctx, sett.ID, "event_booking_insert_failed")
 		return nil, fmt.Errorf("transport: insert event booking: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		s.settlement.Refund(ctx, sett.ID, "event_book_commit_failed")
+		_ = s.settlement.Refund(ctx, sett.ID, "event_book_commit_failed")
 		return nil, err
 	}
 
@@ -346,7 +346,7 @@ func (s *Service) CancelEventBooking(ctx context.Context, id, userID, reason str
 		return codedErr(http.StatusConflict, CodeInvalidState, "booking cannot be cancelled")
 	}
 	// Release the reserved seats and re-open the offer if it was full.
-	s.db.Exec(ctx,
+	_, _ = s.db.Exec(ctx,
 		`UPDATE event_transport_offers
 		 SET booked_count=GREATEST(booked_count-$2,0),
 		     status=CASE WHEN status='full' THEN 'open' ELSE status END,
@@ -355,7 +355,7 @@ func (s *Service) CancelEventBooking(ctx context.Context, id, userID, reason str
 		offerID, seats)
 	// Settlement was released to the organizer on book; refund reverses it.
 	if settID != nil {
-		s.settlement.Refund(ctx, *settID, "event_cancelled:"+reason)
+		_ = s.settlement.Refund(ctx, *settID, "event_cancelled:"+reason)
 	}
 	s.recordModeEvent(ctx, userID, "event.cancelled", "event_transport_booking", id, status, "refunded",
 		map[string]any{"reason": reason, "seats": seats})

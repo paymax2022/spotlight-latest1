@@ -50,8 +50,8 @@ func seedUser(t *testing.T, pool *pgxpool.Pool) string {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM user_profiles WHERE id = $1`, userID)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1`, userID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM user_profiles WHERE id = $1`, userID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id = $1`, userID)
 	})
 	return userID
 }
@@ -75,7 +75,7 @@ func seedReferralLink(t *testing.T, pool *pgxpool.Pool, referrerID string, rewar
 		t.Fatalf("seed referral_links: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.referral_links WHERE referrer_id = $1`, referrerID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_links WHERE referrer_id = $1`, referrerID)
 	})
 }
 
@@ -98,14 +98,14 @@ func seedAttribution(t *testing.T, pool *pgxpool.Pool, referredID, referrerID st
 		t.Fatalf("seed referral_attributions: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.referral_attributions WHERE referred_user_id = $1`, referredID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_attributions WHERE referred_user_id = $1`, referredID)
 	})
 }
 
 func cleanupRewards(t *testing.T, pool *pgxpool.Pool, referrerID string) {
 	t.Helper()
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.referral_rewards WHERE referrer_id = $1`, referrerID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.referral_rewards WHERE referrer_id = $1`, referrerID)
 	})
 }
 

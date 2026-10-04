@@ -1,8 +1,6 @@
 package app
 
 import (
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"os"
 	"spotlight/backend/internal/config"
@@ -27,6 +25,9 @@ import (
 	"spotlight/backend/internal/stays/search"
 	staysettlement "spotlight/backend/internal/stays/settlement"
 	"spotlight/backend/internal/stays/supplierwebhooks"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // RegisterStays wires the Stays / Hotel Booking core (Property Suite) onto the

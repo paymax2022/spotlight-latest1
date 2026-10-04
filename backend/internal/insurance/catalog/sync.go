@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -152,7 +153,7 @@ func ambiguousCodes(products []mycover.CatalogProduct) map[string]bool {
 // failing sync is visible instead of looking like an empty catalog.
 func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, error) {
 	if s.svc == nil || s.svc.db == nil {
-		return nil, fmt.Errorf("catalog sync: nil pool")
+		return nil, errors.New("catalog sync: nil pool")
 	}
 	if s.src == nil {
 		return nil, fmt.Errorf("catalog sync: no catalog source configured for %q", s.provider)
@@ -585,13 +586,13 @@ func percentStringToBps(percent string) int64 {
 // bought, so leaving it sellable would let an admin re-activate a dead product.
 func (s *Syncer) retireMissing(ctx context.Context, seenIDs []string) (int, error) {
 	if s.svc == nil || s.svc.db == nil {
-		return 0, fmt.Errorf("catalog reconcile: nil pool")
+		return 0, errors.New("catalog reconcile: nil pool")
 	}
 	if len(seenIDs) == 0 {
 		// Refuse to retire the entire catalog off an empty listing. An empty
 		// result is far more likely to be a broken call than a provider that
 		// genuinely discontinued every product at once.
-		return 0, fmt.Errorf("catalog reconcile: refusing to retire against an empty listing")
+		return 0, errors.New("catalog reconcile: refusing to retire against an empty listing")
 	}
 
 	ct, err := s.svc.db.Exec(ctx, `

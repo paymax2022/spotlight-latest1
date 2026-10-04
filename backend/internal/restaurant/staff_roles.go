@@ -133,7 +133,7 @@ func (s *Service) ResolveStaffRole(ctx context.Context, restaurantID, userID str
 	if err := s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID); err != nil {
 		// Same shape as assertOwner: a bad id is "not found", not "forbidden", so
 		// an operator gets a 404 rather than a misleading permission error.
-		return "", "", fmt.Errorf("restaurant: not found")
+		return "", "", errors.New("restaurant: not found")
 	}
 	if ownerID == userID {
 		return RoleOwner, StaffActive, nil
@@ -163,7 +163,7 @@ func (s *Service) AssertStaffPermission(ctx context.Context, restaurantID, userI
 		return nil
 	}
 	if !Can(role, status, perm) {
-		return fmt.Errorf("restaurant: you do not have permission to do that here")
+		return errors.New("restaurant: you do not have permission to do that here")
 	}
 	return nil
 }
@@ -203,8 +203,7 @@ type StaffInvite struct {
 }
 
 func newInviteToken() (string, string, error) {
-	var plain string
-	plain = cryptox.RandHex(32)
+	var plain string = cryptox.RandHex(32)
 	return plain, hashInviteToken(plain), nil
 }
 

@@ -65,7 +65,7 @@ func TestRegistration_RejectsASecondLiveApplicationForTheSameContest(t *testing.
 	id, err := applyAgain(ctx, pool, user, "draft")
 	if err == nil {
 		t.Cleanup(func() {
-			_, _ = pool.Exec(context.Background(), `DELETE FROM public.registrations WHERE id=$1`, id)
+			_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.registrations WHERE id=$1`, id)
 		})
 		t.Fatal("a second live application was accepted; want a unique violation")
 	}
@@ -94,7 +94,7 @@ func TestRegistration_AllowsANewApplicationOnceTheFirstIsWithdrawn(t *testing.T)
 		t.Fatalf("re-application after a withdrawal was refused: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.registrations WHERE id=$1`, second)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.registrations WHERE id=$1`, second)
 	})
 }
 

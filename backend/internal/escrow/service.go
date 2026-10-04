@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Auditor is the minimal slice of services.AuditService the escrow core needs.
@@ -88,7 +89,7 @@ func (s *Service) Hold(ctx context.Context, payerID, reference, moduleType, idem
 		return nil, fmt.Errorf("escrow: amount must be positive kobo, got %d", amountKobo)
 	}
 	if payerID == "" || idemKey == "" {
-		return nil, fmt.Errorf("escrow: payer and idempotency key required")
+		return nil, errors.New("escrow: payer and idempotency key required")
 	}
 
 	// Replay: if a hold already exists for this key, return it (no double-debit).
@@ -152,7 +153,7 @@ func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeI
 	if err != nil {
 		return fmt.Errorf("escrow: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var h Hold
 	var state string
@@ -161,8 +162,8 @@ func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeI
 	if err := tx.QueryRow(ctx, sel, escrowID).Scan(
 		&h.ID, &h.Reference, &h.PayerID, &h.AmountKobo, &state, &h.IdempotencyKey,
 	); err != nil {
-		if err == pgx.ErrNoRows {
-			return fmt.Errorf("escrow: hold not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("escrow: hold not found")
 		}
 		return fmt.Errorf("escrow: fetch hold: %w", err)
 	}
@@ -178,7 +179,7 @@ func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeI
 	var payeeArg any
 	if to == StateReleased {
 		if payeeID == "" {
-			return fmt.Errorf("escrow: payee required to release")
+			return errors.New("escrow: payee required to release")
 		}
 		payeeArg = payeeID
 	}

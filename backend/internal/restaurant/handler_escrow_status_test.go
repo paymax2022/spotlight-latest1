@@ -8,6 +8,7 @@ package restaurant
 // green, because they match sentinels on the service return rather than on the status.
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"testing"
@@ -53,14 +54,14 @@ func TestEscrowErrStatus(t *testing.T) {
 		{
 			// Not a money-path refusal — the caller keeps its own default.
 			name:   "unrelated validation error is not claimed",
-			err:    fmt.Errorf("restaurant: menu item x not found in restaurant y"),
+			err:    errors.New("restaurant: menu item x not found in restaurant y"),
 			wantOK: false,
 		},
 		{
 			// The fail-closed tier LOOKUP failure (no profile row / DB error) is not a
 			// caller fault and deliberately falls through to the 500 default.
 			name:   "undeterminable tier is not claimed as a 403",
-			err:    fmt.Errorf("restaurant: order escrow tier gate: tiers: enforce limit (fail closed): no rows in result set"),
+			err:    errors.New("restaurant: order escrow tier gate: tiers: enforce limit (fail closed): no rows in result set"),
 			wantOK: false,
 		},
 	}

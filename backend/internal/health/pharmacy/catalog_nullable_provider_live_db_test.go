@@ -31,12 +31,12 @@ func TestLiveDB_ListProducts_ToleratesAProductWithNoPharmacy(t *testing.T) {
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO pharmacy_products (id, pharmacy_provider_id, name, category, nafdac_ref, nafdac_status,
 			rx_required, is_controlled, price_kobo, stock_qty, active)
-		 VALUES ($1::uuid, NULL, $2, 'otc', 'NAF-NULLPROV', 'REGISTERED', false, false, 150000, 5, true)`,
+		 VALUES ($1::uuid, NULL, $2, 'otc', 'NAF-NULLPROV', 'REGISTERED', false, 150000, 5, true)`,
 		id, name); err != nil {
 		t.Fatalf("seed unowned product: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM pharmacy_products WHERE id=$1::uuid`, id)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM pharmacy_products WHERE id=$1::uuid`, id)
 	})
 
 	products, err := svc.ListProducts(ctx, "", "")

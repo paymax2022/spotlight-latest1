@@ -2,6 +2,7 @@ package restaurant
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -43,12 +44,7 @@ var AdminOrderStatuses = []string{
 var adminOrderActive = []string{"pending", "confirmed", "preparing", "ready", "picked_up"}
 
 func isKnownOrderStatus(s string) bool {
-	for _, v := range AdminOrderStatuses {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(AdminOrderStatuses, s)
 }
 
 // AdminOrderParams filters the feed. The zero value returns the newest page of
@@ -250,12 +246,7 @@ func terminalOrderStatusSQL() string {
 // terminalOrderStatus reports a state the order will not move on from, so age
 // stops accruing.
 func terminalOrderStatus(s string) bool {
-	for _, v := range terminalOrderStatuses {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(terminalOrderStatuses, s)
 }
 
 // AdminListOrders returns one page of the platform-wide feed plus aggregates.

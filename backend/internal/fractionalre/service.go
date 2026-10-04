@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"net/http"
 	"spotlight/backend/go-common/ptr"
@@ -18,6 +16,9 @@ import (
 	"spotlight/backend/internal/services"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -201,9 +202,7 @@ func (s *Service) AckRisk(ctx context.Context, userID string, offeringID *string
 
 // reconcileDelta is the pure integer-kobo comparison (unit-testable, no DB).
 func reconcileDelta(raisedKobo, subscribedKobo int64) (int64, bool) {
-	var deltaKobo int64
-
-	deltaKobo = raisedKobo - subscribedKobo
+	var deltaKobo int64 = raisedKobo - subscribedKobo
 	return deltaKobo, deltaKobo != 0
 }
 

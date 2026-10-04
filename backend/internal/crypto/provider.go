@@ -208,7 +208,7 @@ func (q *quidaxProvider) do(ctx context.Context, method, path string, body any) 
 	if err != nil {
 		return 0, nil, fmt.Errorf("quidax: transport: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	return resp.StatusCode, raw, nil
 }
@@ -303,10 +303,7 @@ func formatWholeUnits(units, scale int64) string {
 	}
 	r := new(big.Rat).SetFrac(big.NewInt(units), big.NewInt(scale))
 	// Precision = number of base-10 digits in scale (e.g. 1e8 → 8 dp), capped at 18.
-	dp := max(len(strconv.FormatInt(scale, 10))-1, 0)
-	if dp > 18 {
-		dp = 18
-	}
+	dp := min(max(len(strconv.FormatInt(scale, 10))-1, 0), 18)
 	s := r.FloatString(dp)
 	if strings.Contains(s, ".") { // trim trailing zeros but keep at least one digit
 		s = strings.TrimRight(s, "0")

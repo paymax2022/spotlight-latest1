@@ -9,10 +9,10 @@ import (
 // field of UpdateMemberSettingsRequest must be a pointer, so an omitted field
 // (nil) is preserved via COALESCE rather than being reset to a zero value.
 func TestUpdateMemberSettingsAllPointers(t *testing.T) {
-	rt := reflect.TypeOf(UpdateMemberSettingsRequest{})
-	for i := 0; i < rt.NumField(); i++ {
-		f := rt.Field(i)
-		if f.Type.Kind() != reflect.Ptr {
+	rt := reflect.TypeFor[UpdateMemberSettingsRequest]()
+	for f := range rt.Fields() {
+		f := f
+		if f.Type.Kind() != reflect.Pointer {
 			t.Errorf("field %s must be a pointer for partial update, got %s", f.Name, f.Type.Kind())
 		}
 	}

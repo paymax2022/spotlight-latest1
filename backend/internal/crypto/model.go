@@ -2,7 +2,6 @@ package crypto
 
 import (
 	"errors"
-	"fmt"
 	"math/big"
 	"time"
 )
@@ -108,12 +107,12 @@ func cashForUnits(units, priceKobo, scale int64) int64 {
 
 // Sentinel errors.
 var (
-	ErrNotFound       = fmt.Errorf("crypto: not found")
-	ErrForbidden      = fmt.Errorf("crypto: forbidden")
-	ErrAssetInactive  = fmt.Errorf("crypto: asset is not tradable")
-	ErrInsufficient   = fmt.Errorf("crypto: insufficient holdings")
-	ErrAmountTooSmall = fmt.Errorf("crypto: amount too small for a whole minor unit")
-	ErrBadRequest     = fmt.Errorf("crypto: invalid request")
+	ErrNotFound       = errors.New("crypto: not found")
+	ErrForbidden      = errors.New("crypto: forbidden")
+	ErrAssetInactive  = errors.New("crypto: asset is not tradable")
+	ErrInsufficient   = errors.New("crypto: insufficient holdings")
+	ErrAmountTooSmall = errors.New("crypto: amount too small for a whole minor unit")
+	ErrBadRequest     = errors.New("crypto: invalid request")
 )
 
 // This file defines the admin-oversight view models that back the crypto admin

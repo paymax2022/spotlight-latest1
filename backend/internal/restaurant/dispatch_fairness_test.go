@@ -83,7 +83,7 @@ func TestSelectFairRiders_KnownDistanceBeatsUnknown(t *testing.T) {
 
 func TestSelectFairRiders_TrimsToFanOut(t *testing.T) {
 	var cands []riderCandidate
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		cands = append(cands, riderCandidate{RiderID: string(rune('a' + i)), HasDistance: true, DistanceSq: float64(i)})
 	}
 	if got := selectFairRiders(cands, 5, baseMaxRiderLoad); len(got) != 5 {
@@ -105,8 +105,8 @@ func TestDispatchSLAStatus(t *testing.T) {
 		{"unassigned, 30s → on_time", nil, at(30), SLAOnTime},
 		{"unassigned, 3m → at_risk", nil, at(180), SLAAtRisk},
 		{"unassigned, 6m → breached", nil, at(360), SLABreached},
-		{"assigned in 1m → on_time (frozen at assign)", tPtr(at(60)), at(600), SLAOnTime},
-		{"assigned in 4m → at_risk (frozen at assign)", tPtr(at(240)), at(999), SLAAtRisk},
+		{"assigned in 1m → on_time (frozen at assign)", new(at(60)), at(600), SLAOnTime},
+		{"assigned in 4m → at_risk (frozen at assign)", new(at(240)), at(999), SLAAtRisk},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -141,4 +141,5 @@ func TestDispatchTuning_EscalatesOnStuckRedispatch(t *testing.T) {
 	}
 }
 
-func tPtr(t time.Time) *time.Time { return &t }
+//go:fix inline
+func tPtr(t time.Time) *time.Time { return new(t) }

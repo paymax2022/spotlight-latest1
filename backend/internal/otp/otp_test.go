@@ -1,6 +1,7 @@
 package otp
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -11,7 +12,7 @@ import (
 func TestGeneratePreservesLeadingZeros(t *testing.T) {
 	const runs = 20000
 	sawLeadingZero := false
-	for i := 0; i < runs; i++ {
+	for range runs {
 		code, err := Generate(6)
 		if err != nil {
 			t.Fatalf("generate: %v", err)
@@ -38,7 +39,7 @@ func TestGenerateDigitsAreRoughlyUniform(t *testing.T) {
 	const runs = 20000
 	const length = 6
 	var counts [10]int
-	for i := 0; i < runs; i++ {
+	for range runs {
 		code, err := Generate(length)
 		if err != nil {
 			t.Fatalf("generate: %v", err)
@@ -60,7 +61,7 @@ func TestGenerateDigitsAreRoughlyUniform(t *testing.T) {
 
 func TestGenerateRejectsAbsurdLengths(t *testing.T) {
 	for _, n := range []int{-1, 0, 3, 11, 64} {
-		if _, err := Generate(n); err != ErrInvalidLength {
+		if _, err := Generate(n); !errors.Is(err, ErrInvalidLength) {
 			t.Errorf("Generate(%d) error = %v, want ErrInvalidLength", n, err)
 		}
 	}

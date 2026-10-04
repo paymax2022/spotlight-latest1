@@ -3,6 +3,7 @@ package estate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -79,7 +80,7 @@ func scanVendorJob(row interface{ Scan(...any) error }) (*VendorJob, error) {
 // OnboardVendor registers the caller as a vendor for an estate (status pending).
 func (s *Service) OnboardVendor(ctx context.Context, estateID, userID string, req OnboardVendorRequest) (*VendorProfile, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("estate: unauthenticated")
+		return nil, errors.New("estate: unauthenticated")
 	}
 	cat := req.Category
 	if cat == "" {
@@ -112,7 +113,7 @@ func (s *Service) GetVendorProfile(ctx context.Context, estateID, userID string)
 	if err := s.db.QueryRow(ctx, q, estateID, userID).Scan(
 		&v.ID, &v.EstateID, &v.UserID, &v.Name, &v.BusinessName, &v.Category, &v.Phone,
 		&v.Specialties, &v.BankAccount, &v.Status, &v.Verified, &v.Rating, &v.CreatedAt); err != nil {
-		return nil, fmt.Errorf("estate: vendor profile not found")
+		return nil, errors.New("estate: vendor profile not found")
 	}
 	return v, nil
 }
@@ -120,7 +121,7 @@ func (s *Service) GetVendorProfile(ctx context.Context, estateID, userID string)
 func (s *Service) resolveVendorID(ctx context.Context, estateID, userID string) (string, error) {
 	var id string
 	if err := s.db.QueryRow(ctx, `SELECT id FROM estate_vendors WHERE estate_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1`, estateID, userID).Scan(&id); err != nil {
-		return "", fmt.Errorf("estate: caller is not a vendor in this estate")
+		return "", errors.New("estate: caller is not a vendor in this estate")
 	}
 	return id, nil
 }
@@ -131,7 +132,7 @@ func (s *Service) AssignJob(ctx context.Context, estateID, adminID string, req A
 		return nil, err
 	}
 	if req.AmountKobo < 0 {
-		return nil, fmt.Errorf("estate: amount must be non-negative kobo")
+		return nil, errors.New("estate: amount must be non-negative kobo")
 	}
 	id := uuid.New().String()
 	var repair any
@@ -156,7 +157,7 @@ func (s *Service) getJob(ctx context.Context, estateID, jobID string) (*VendorJo
 	row := s.db.QueryRow(ctx, `SELECT `+vendorJobCols+` FROM vendor_jobs WHERE id=$1 AND estate_id=$2`, jobID, estateID)
 	j, err := scanVendorJob(row)
 	if err != nil {
-		return nil, fmt.Errorf("estate: job not found in this estate")
+		return nil, errors.New("estate: job not found in this estate")
 	}
 	return j, nil
 }
@@ -232,7 +233,7 @@ func (s *Service) MarkJobComplete(ctx context.Context, estateID, userID, jobID s
 // SubmitQuote sets the vendor's quote/agreed amount on a job (own, not yet paid).
 func (s *Service) SubmitQuote(ctx context.Context, estateID, userID, jobID string, amountKobo int64) (*VendorJob, error) {
 	if amountKobo < 0 {
-		return nil, fmt.Errorf("estate: quote must be non-negative kobo")
+		return nil, errors.New("estate: quote must be non-negative kobo")
 	}
 	vendorID, err := s.resolveVendorID(ctx, estateID, userID)
 	if err != nil {
@@ -243,7 +244,7 @@ func (s *Service) SubmitQuote(ctx context.Context, estateID, userID, jobID strin
 		jobID, estateID, vendorID, amountKobo)
 	j, err := scanVendorJob(row)
 	if err != nil {
-		return nil, fmt.Errorf("estate: job not found or already paid")
+		return nil, errors.New("estate: job not found or already paid")
 	}
 	return j, nil
 }
@@ -259,7 +260,7 @@ func (s *Service) setJobURL(ctx context.Context, estateID, userID, jobID, col, u
 		jobID, estateID, vendorID, url)
 	j, err := scanVendorJob(row)
 	if err != nil {
-		return nil, fmt.Errorf("estate: job not found")
+		return nil, errors.New("estate: job not found")
 	}
 	return j, nil
 }
@@ -288,7 +289,7 @@ func (s *Service) RequestPayout(ctx context.Context, estateID, userID, jobID, id
 	var amount int64
 	var status string
 	if err := s.db.QueryRow(ctx, `SELECT amount_kobo, status FROM vendor_jobs WHERE id=$1 AND estate_id=$2 AND vendor_id=$3`, jobID, estateID, vendorID).Scan(&amount, &status); err != nil {
-		return nil, fmt.Errorf("estate: job not found for this vendor")
+		return nil, errors.New("estate: job not found for this vendor")
 	}
 	if status == "paid" {
 		return s.getJob(ctx, estateID, jobID) // idempotent: already paid
@@ -297,21 +298,21 @@ func (s *Service) RequestPayout(ctx context.Context, estateID, userID, jobID, id
 		return nil, fmt.Errorf("estate: job must be completed before payout (is %q)", status)
 	}
 	if amount <= 0 {
-		return nil, fmt.Errorf("estate: job has no payable amount")
+		return nil, errors.New("estate: job has no payable amount")
 	}
 	settle, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
 	if err != nil {
 		return nil, fmt.Errorf("estate: settlement account: %w", err)
 	}
 	ref := "estate_vendor_payout:" + estateID + ":" + jobID
-	if err := s.ledger.Credit(ctx, userID, ref, idempotencyKey, settle.ID, amount); err != nil && err != ledger.ErrDuplicate {
+	if err := s.ledger.Credit(ctx, userID, ref, idempotencyKey, settle.ID, amount); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, fmt.Errorf("estate: vendor payout credit: %w", err)
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	ct, err := tx.Exec(ctx,
 		`UPDATE vendor_jobs SET status='paid', paid_at=NOW(), payout_ref=$1, payout_idempotency_key=$2
 		 WHERE id=$3 AND estate_id=$4 AND status='completed'`,

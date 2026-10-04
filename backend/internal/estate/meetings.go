@@ -3,6 +3,7 @@ package estate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -111,7 +112,7 @@ func (s *Service) CreateMeeting(ctx context.Context, estateID, adminID string, r
 		return nil, fmt.Errorf("estate: invalid meeting mode %q", req.Mode)
 	}
 	if req.EndsAt != nil && !req.EndsAt.After(req.StartsAt) {
-		return nil, fmt.Errorf("estate: ends_at must be after starts_at")
+		return nil, errors.New("estate: ends_at must be after starts_at")
 	}
 	mode := req.Mode
 	if mode == "" {
@@ -172,7 +173,7 @@ func (s *Service) GetMeeting(ctx context.Context, estateID, userID, meetingID st
 	row := s.db.QueryRow(ctx, `SELECT `+meetingCols+` FROM estate_meetings WHERE id=$1 AND estate_id=$2`, meetingID, estateID)
 	m, err := scanMeeting(row)
 	if err != nil {
-		return nil, fmt.Errorf("estate: meeting not found in this estate")
+		return nil, errors.New("estate: meeting not found in this estate")
 	}
 	const aggQ = `
 SELECT
@@ -243,7 +244,7 @@ func (s *Service) CancelMeeting(ctx context.Context, estateID, adminID, meetingI
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("estate: meeting not found or not cancellable")
+		return errors.New("estate: meeting not found or not cancellable")
 	}
 	_ = s.audit(ctx, estateID, adminID, "MEETING_CANCEL", "meeting", meetingID, nil)
 	s.notifyMembers(ctx, estateID, NotifMeetingReminder, "Meeting cancelled", "A scheduled meeting was cancelled.", map[string]any{"meeting_id": meetingID})
@@ -274,7 +275,7 @@ func (s *Service) RescheduleMeeting(ctx context.Context, estateID, adminID, meet
 		return nil, err
 	}
 	if req.EndsAt != nil && !req.EndsAt.After(req.StartsAt) {
-		return nil, fmt.Errorf("estate: ends_at must be after starts_at")
+		return nil, errors.New("estate: ends_at must be after starts_at")
 	}
 	row := s.db.QueryRow(ctx,
 		`UPDATE estate_meetings SET starts_at=$3, ends_at=$4, status='scheduled'
@@ -283,7 +284,7 @@ func (s *Service) RescheduleMeeting(ctx context.Context, estateID, adminID, meet
 		meetingID, estateID, req.StartsAt, req.EndsAt)
 	m, err := scanMeeting(row)
 	if err != nil {
-		return nil, fmt.Errorf("estate: meeting not found or not reschedulable")
+		return nil, errors.New("estate: meeting not found or not reschedulable")
 	}
 	_ = s.audit(ctx, estateID, adminID, "MEETING_RESCHEDULE", "meeting", meetingID, nil)
 	s.notifyMembers(ctx, estateID, NotifMeetingReminder, "Meeting rescheduled: "+m.Title, "A meeting time changed.", map[string]any{"meeting_id": meetingID})
@@ -334,7 +335,7 @@ func (s *Service) GetMinutes(ctx context.Context, estateID, userID, meetingID st
 	if err := s.db.QueryRow(ctx, q, meetingID, estateID).Scan(
 		&mm.ID, &mm.MeetingID, &mm.Content, &mm.Decisions, &mm.ActionItems, &mm.CreatedBy, &mm.ApprovedBy, &mm.ApprovedAt, &mm.CreatedAt,
 	); err != nil {
-		return nil, fmt.Errorf("estate: minutes not found")
+		return nil, errors.New("estate: minutes not found")
 	}
 	return mm, nil
 }
@@ -351,7 +352,7 @@ func (s *Service) ApproveMinutes(ctx context.Context, estateID, adminID, meeting
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("estate: minutes not found for this meeting")
+		return errors.New("estate: minutes not found for this meeting")
 	}
 	_ = s.audit(ctx, estateID, adminID, "MEETING_MINUTES_APPROVE", "meeting", meetingID, nil)
 	return nil
@@ -407,7 +408,7 @@ func (s *Service) assertMeetingInEstate(ctx context.Context, estateID, meetingID
 		return err
 	}
 	if !exists {
-		return fmt.Errorf("estate: meeting not found in this estate")
+		return errors.New("estate: meeting not found in this estate")
 	}
 	return nil
 }

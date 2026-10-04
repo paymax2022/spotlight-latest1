@@ -62,7 +62,7 @@ var validContentKinds = map[string]bool{
 // never LLM-generated — this is an authoring action, not generation).
 func (s *GovernanceService) CreateContentDraft(ctx context.Context, actorID string, in ContentItem) (*ContentItem, error) {
 	if in.Code == "" || in.Body == "" {
-		return nil, fmt.Errorf("triage.gov: code and body required")
+		return nil, errors.New("triage.gov: code and body required")
 	}
 	if !validContentKinds[in.Kind] {
 		return nil, fmt.Errorf("triage.gov: invalid content kind %q", in.Kind)
@@ -198,10 +198,10 @@ func (s *GovernanceService) ListContent(ctx context.Context, state, kind, langua
 // evaluation time (enforced in DBRedFlagEngine + triage.ApplyRedFlag).
 func (s *GovernanceService) CreateRuleDraft(ctx context.Context, actorID string, in RedFlagRule) (*RedFlagRule, error) {
 	if in.Code == "" || in.Name == "" {
-		return nil, fmt.Errorf("triage.gov: code and name required")
+		return nil, errors.New("triage.gov: code and name required")
 	}
 	if in.UrgencyLevel < triage.LevelEmergencyAmbulance || in.UrgencyLevel > triage.LevelSelfCare {
-		return nil, fmt.Errorf("triage.gov: urgency_level must be 1..5")
+		return nil, errors.New("triage.gov: urgency_level must be 1..5")
 	}
 	if in.Severity == "" {
 		in.Severity = "emergency"
@@ -220,7 +220,7 @@ func (s *GovernanceService) CreateRuleDraft(ctx context.Context, actorID string,
 // a new DRAFT at version+1 (live signed-off rules are immutable).
 func (s *GovernanceService) EditRule(ctx context.Context, actorID, id, name string, cond RuleCondition, urgency int, severity string) (*RedFlagRule, error) {
 	if urgency < triage.LevelEmergencyAmbulance || urgency > triage.LevelSelfCare {
-		return nil, fmt.Errorf("triage.gov: urgency_level must be 1..5")
+		return nil, errors.New("triage.gov: urgency_level must be 1..5")
 	}
 	if severity == "" {
 		severity = "emergency"
@@ -347,7 +347,7 @@ func (s *GovernanceService) SeedLanguagePacks(ctx context.Context) error {
 // UpsertLanguagePack creates/updates a language pack.
 func (s *GovernanceService) UpsertLanguagePack(ctx context.Context, actorID string, lp LanguagePack) (*LanguagePack, error) {
 	if lp.Code == "" || lp.Name == "" {
-		return nil, fmt.Errorf("triage.gov: language code and name required")
+		return nil, errors.New("triage.gov: language code and name required")
 	}
 	out, err := s.repo.UpsertLanguagePack(ctx, &lp)
 	if err != nil {

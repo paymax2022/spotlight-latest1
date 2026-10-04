@@ -65,7 +65,7 @@ func TestExpiredBucketsAreEvicted(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	l := newTestLimiter(5, time.Minute, &now)
 
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		l.Allow("ip-" + strconv.Itoa(i))
 	}
 	if l.Size() < 500 {
@@ -91,7 +91,7 @@ func TestMiddlewareReturns429WithRetryAfter(t *testing.T) {
 
 	call := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/auth/login", nil)
 		req.RemoteAddr = "203.0.113.9:1234"
 		r.ServeHTTP(w, req)
 		return w
@@ -125,7 +125,7 @@ func TestClientSuppliedHeadersCannotResetTheBudget(t *testing.T) {
 
 	send := func(role string) int {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/auth/login", nil)
 		req.RemoteAddr = "203.0.113.10:9999"
 		if role != "" {
 			req.Header.Set("x-stem-role", role)
@@ -183,9 +183,8 @@ func TestConcurrentAllowIsRaceFree(t *testing.T) {
 	l := newTestLimiter(100, time.Minute, &now)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 200; i++ {
-		wg.Add(1)
-		go func() { defer wg.Done(); l.Allow("shared") }()
+	for range 200 {
+		wg.Go(func() { ; l.Allow("shared") })
 	}
 	wg.Wait()
 

@@ -57,11 +57,11 @@ func createUnconfirmedUser(t *testing.T, url, key, email string) string {
 		"email":    email,
 		"password": uuid.NewString(),
 	})
-	req, err := http.NewRequest(http.MethodPost, url+"/auth/v1/admin/users", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, url+"/auth/v1/admin/users", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("build create request: %v", err)
 	}
-	req.Header.Set("apikey", key)
+	req.Header.Set("Apikey", key)
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -69,7 +69,7 @@ func createUnconfirmedUser(t *testing.T, url, key, email string) string {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 	if resp.StatusCode >= 400 {
 		t.Fatalf("create user: %d: %s", resp.StatusCode, string(raw))
@@ -82,19 +82,19 @@ func createUnconfirmedUser(t *testing.T, url, key, email string) string {
 	}
 
 	t.Cleanup(func() {
-		del, err := http.NewRequest(http.MethodDelete, url+"/auth/v1/admin/users/"+created.ID, nil)
+		del, err := http.NewRequestWithContext(t.Context(), http.MethodDelete, url+"/auth/v1/admin/users/"+created.ID, nil)
 		if err != nil {
 			t.Errorf("cleanup: build delete: %v", err)
 			return
 		}
-		del.Header.Set("apikey", key)
+		del.Header.Set("Apikey", key)
 		del.Header.Set("Authorization", "Bearer "+key)
 		r, err := http.DefaultClient.Do(del)
 		if err != nil {
 			t.Errorf("cleanup: delete user %s: %v", created.ID, err)
 			return
 		}
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 		if r.StatusCode >= 400 {
 			t.Errorf("cleanup: delete user %s returned %d — a fixture account is left behind", created.ID, r.StatusCode)
 		}

@@ -207,7 +207,6 @@ func (r *Repository) InsertAttempt(ctx context.Context, a AttemptRecord) (Attemp
 		respJSON, a.Score, a.Total, a.Passed, dbutil.NullInt(a.ResponseTimeMs), a.IdempotencyKey).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Duplicate idempotency_key — load the stored attempt.
-		dup = true
 		stored, gerr := r.getByIdemKey(ctx, a.IdempotencyKey)
 		if gerr != nil {
 			return AttemptRecord{}, true, gerr

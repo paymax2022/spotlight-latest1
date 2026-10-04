@@ -211,10 +211,7 @@ func TestAjoPayoutConservation(t *testing.T) {
 	const contrib = 5_000_00 // ₦5,000
 	for _, active := range []int{1, 3, 12, 50} {
 		for _, defaulters := range []int{0, 1, active} {
-			payers := active - defaulters
-			if payers < 0 {
-				payers = 0
-			}
+			payers := max(active-defaulters, 0)
 			collected := ajoCollected(contrib, payers)
 			// The payout the recipient receives equals exactly what peers funded.
 			payout := collected

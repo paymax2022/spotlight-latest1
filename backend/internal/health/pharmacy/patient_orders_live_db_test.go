@@ -91,10 +91,10 @@ func newPatientOrdersFixture(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		// IN ($1,$2), not = ANY($1) with a []string: these id columns are uuid, and
 		// `uuid = ANY(text[])` has no operator — the delete errors, the error is
 		// ignored here, and the fixture survives.
-		pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE id IN ($1,$2)`, f.orderID, f.otherOrderID)
-		pool.Exec(bg, `DELETE FROM pharmacy_products WHERE pharmacy_provider_id = $1`, f.pharmacy)
-		pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE pharmacy_provider_id = $1`, f.pharmacy)
-		pool.Exec(bg, `DELETE FROM health_providers WHERE id = $1`, f.pharmacy)
+		_, _ = pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE id IN ($1,$2)`, f.orderID, f.otherOrderID)
+		_, _ = pool.Exec(bg, `DELETE FROM pharmacy_products WHERE pharmacy_provider_id = $1`, f.pharmacy)
+		_, _ = pool.Exec(bg, `DELETE FROM pharmacy_orders WHERE pharmacy_provider_id = $1`, f.pharmacy)
+		_, _ = pool.Exec(bg, `DELETE FROM health_providers WHERE id = $1`, f.pharmacy)
 	})
 	return f
 }

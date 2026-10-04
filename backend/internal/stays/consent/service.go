@@ -2,6 +2,7 @@ package consent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -39,7 +40,7 @@ type Record struct {
 }
 
 // ErrConsentRequired is returned when the NDPA gate is not satisfied.
-var ErrConsentRequired = fmt.Errorf("consent: NDPA consent required before supplier data-share")
+var ErrConsentRequired = errors.New("consent: NDPA consent required before supplier data-share")
 
 // Service manages NDPA consent records. Parameterized queries throughout.
 type Service struct {
@@ -53,7 +54,7 @@ func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
 // same (user, scope, version) is a no-op.
 func (s *Service) Grant(ctx context.Context, userID, scope string) (*Record, error) {
 	if s.db == nil {
-		return nil, fmt.Errorf("consent: nil pool")
+		return nil, errors.New("consent: nil pool")
 	}
 	if scope == "" {
 		scope = DefaultScope
@@ -78,7 +79,7 @@ func (s *Service) Grant(ctx context.Context, userID, scope string) (*Record, err
 // data-share.
 func (s *Service) HasCurrent(ctx context.Context, userID, scope string) (bool, error) {
 	if s.db == nil {
-		return false, fmt.Errorf("consent: nil pool")
+		return false, errors.New("consent: nil pool")
 	}
 	if scope == "" {
 		scope = DefaultScope

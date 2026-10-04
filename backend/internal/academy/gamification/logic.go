@@ -85,10 +85,7 @@ func applyStreak(prevStreak, prevFreezes int, lastActive string, today time.Time
 
 // grantFreeze adds a freeze token up to the configured cap (pure).
 func grantFreeze(prevFreezes int, cfg Config) int {
-	n := prevFreezes + 1
-	if n > cfg.FreezeMaxStored {
-		n = cfg.FreezeMaxStored
-	}
+	n := min(prevFreezes+1, cfg.FreezeMaxStored)
 	return n
 }
 

@@ -38,7 +38,7 @@ func liveDB(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping insurance commission-recorder live-DB test")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -58,7 +58,7 @@ func seedPolicyRow(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID
 		t.Fatalf("seed policy: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM public.insurance_policy WHERE id=$1`, policyID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.insurance_policy WHERE id=$1`, policyID)
 	})
 	return policyID
 }
@@ -69,7 +69,7 @@ func seedPolicyRow(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID
 // admin workbench can actually find and act on — the exact gap this pass found.
 func TestCommissionRecorder_BindWritesReadableWorkbenchRow(t *testing.T) {
 	pool := liveDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	userID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, userID, userID+"@seed.test"); err != nil {

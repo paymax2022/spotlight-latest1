@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 
+	"spotlight/backend/go-common/dbutil"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/go-common/dbutil"
 )
 
 // Repository is the pgx data-access layer for the academy rewards module.

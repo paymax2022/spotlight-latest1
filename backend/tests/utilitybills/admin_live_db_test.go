@@ -210,13 +210,18 @@ func (f *adminFixture) cleanupProduct(t *testing.T, productID string) {
 func (f *adminFixture) cleanupBiller(t *testing.T, billerID string) {
 	t.Helper()
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM public.utility_billers WHERE id=$1`, billerID)
+		_, _ = f.pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.utility_billers WHERE id=$1`, billerID)
 	})
 }
 
-func ptrI64(v int64) *int64 { return &v }
-func ptrInt(v int) *int     { return &v }
-func ptrBool(v bool) *bool  { return &v }
+//go:fix inline
+func ptrI64(v int64) *int64 { return new(v) }
+
+//go:fix inline
+func ptrInt(v int) *int { return new(v) }
+
+//go:fix inline
+func ptrBool(v bool) *bool { return new(v) }
 
 func TestLiveDB_Admin_ProviderCreateUpdateListRoundTrip(t *testing.T) {
 	f := newAdminFixture(t)
@@ -229,7 +234,7 @@ func TestLiveDB_Admin_ProviderCreateUpdateListRoundTrip(t *testing.T) {
 		AdapterCode:         "vtpass",
 		Status:              "active",
 		SupportedCategories: []string{"electricity", "airtime"},
-		Priority:            ptrInt(15),
+		Priority:            new(15),
 		HealthStatus:        "unknown",
 	})
 	if err != nil {
@@ -252,8 +257,8 @@ func TestLiveDB_Admin_ProviderCreateUpdateListRoundTrip(t *testing.T) {
 	}
 
 	updated, err := f.svc.UpdateProvider(ctx, f.actor, created.ID, utilitybills.ProviderPatch{
-		Status:   strptr("maintenance"),
-		Priority: ptrInt(42),
+		Status:   new("maintenance"),
+		Priority: new(42),
 	})
 	if err != nil {
 		t.Fatalf("UpdateProvider: %v", err)
@@ -270,7 +275,7 @@ func TestLiveDB_Admin_ProviderCreateUpdateListRoundTrip(t *testing.T) {
 	}
 
 	disabled, err := f.svc.UpdateProvider(ctx, f.actor, created.ID,
-		utilitybills.ProviderPatch{Status: strptr("disabled")})
+		utilitybills.ProviderPatch{Status: new("disabled")})
 	if err != nil {
 		t.Fatalf("disable: %v", err)
 	}
@@ -435,7 +440,7 @@ func TestLiveDB_Admin_CredentialsRotationFailsClosedWithoutAKey(t *testing.T) {
 		t.Fatalf("seed provider: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.utility_providers WHERE id=$1`, providerID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.utility_providers WHERE id=$1`, providerID)
 	})
 
 	_, err := keyless.RotateProviderCredentials(ctx, "admin", providerID, map[string]any{"api_key": "x"})
@@ -551,11 +556,11 @@ func TestLiveDB_Admin_ProductCreateUpdateListRoundTrip(t *testing.T) {
 		Name:                "Admin Prepaid",
 		Code:                code,
 		AmountType:          "variable",
-		MinAmountKobo:       ptrI64(100_000),
-		MaxAmountKobo:       ptrI64(10_000_000),
-		ConvenienceFeeKobo:  ptrI64(10_000),
-		MarkupBps:           ptrI64(150),
-		ProviderDiscountBps: ptrI64(200),
+		MinAmountKobo:       new(int64(100_000)),
+		MaxAmountKobo:       new(int64(10_000_000)),
+		ConvenienceFeeKobo:  new(int64(10_000)),
+		MarkupBps:           new(int64(150)),
+		ProviderDiscountBps: new(int64(200)),
 		Status:              "active",
 	})
 	if err != nil {
@@ -577,7 +582,7 @@ func TestLiveDB_Admin_ProductCreateUpdateListRoundTrip(t *testing.T) {
 	}
 
 	updated, err := f.svc.UpdateProduct(ctx, f.actor, created.ID, utilitybills.ProductPatch{
-		MarkupBps: ptrI64(325),
+		MarkupBps: new(int64(325)),
 	})
 	if err != nil {
 		t.Fatalf("UpdateProduct: %v", err)
@@ -607,7 +612,7 @@ func TestLiveDB_Admin_ProductCreateUpdateListRoundTrip(t *testing.T) {
 	}
 
 	if _, err := f.svc.UpdateProduct(ctx, f.actor, created.ID,
-		utilitybills.ProductPatch{Status: strptr("disabled")}); err != nil {
+		utilitybills.ProductPatch{Status: new("disabled")}); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	found := false
@@ -658,9 +663,9 @@ func TestLiveDB_Admin_ProductImportUpsertsOnCode(t *testing.T) {
 
 	base := []utilitybills.ProductInput{
 		{BillerID: billerID, Category: "airtime", Name: "Import A", Code: codeA,
-			AmountType: "fixed", AmountKobo: ptrI64(100_000), MarkupBps: ptrI64(100)},
+			AmountType: "fixed", AmountKobo: new(int64(100_000)), MarkupBps: new(int64(100))},
 		{BillerID: billerID, Category: "airtime", Name: "Import B", Code: codeB,
-			AmountType: "fixed", AmountKobo: ptrI64(200_000), MarkupBps: ptrI64(200)},
+			AmountType: "fixed", AmountKobo: new(int64(200_000)), MarkupBps: new(int64(200))},
 	}
 	imported, err := f.svc.ImportProducts(ctx, f.actor, base)
 	if err != nil {
@@ -675,8 +680,8 @@ func TestLiveDB_Admin_ProductImportUpsertsOnCode(t *testing.T) {
 
 	// Re-import the SAME codes with new prices: an upsert, not a duplicate.
 	base[0].Name = "Import A v2"
-	base[0].AmountKobo = ptrI64(150_000)
-	base[0].MarkupBps = ptrI64(500)
+	base[0].AmountKobo = new(int64(150_000))
+	base[0].MarkupBps = new(int64(500))
 	reimported, err := f.svc.ImportProducts(ctx, f.actor, base)
 	if err != nil {
 		t.Fatalf("re-import: %v", err)
@@ -711,7 +716,7 @@ func TestLiveDB_Admin_ProductImportUpsertsOnCode(t *testing.T) {
 	badCode := "import-bad-" + uuid.New().String()[:8]
 	_, err = f.svc.ImportProducts(ctx, f.actor, []utilitybills.ProductInput{
 		{BillerID: billerID, Category: "airtime", Name: "Good", Code: badCode,
-			AmountType: "fixed", AmountKobo: ptrI64(100_000)},
+			AmountType: "fixed", AmountKobo: new(int64(100_000))},
 		{BillerID: billerID, Category: "water", Name: "Bad", Code: "x-" + badCode},
 	})
 	if err == nil {
@@ -740,7 +745,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	// Biller.
 	biller, err := f.svc.CreateBiller(ctx, f.actor, utilitybills.BillerInput{
 		Category: "cable_tv", Name: "Admin Cable", Code: "admin-cable-" + suffix,
-		RequiresValidation: ptrBool(true), CustomerReferenceLabel: "Smartcard number",
+		RequiresValidation: new(true), CustomerReferenceLabel: "Smartcard number",
 	})
 	if err != nil {
 		t.Fatalf("CreateBiller: %v", err)
@@ -753,7 +758,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 		t.Errorf("biller fields not persisted: %+v", biller)
 	}
 	if _, err := f.svc.UpdateBiller(ctx, f.actor, biller.ID,
-		utilitybills.BillerPatch{Status: strptr("disabled")}); err != nil {
+		utilitybills.BillerPatch{Status: new("disabled")}); err != nil {
 		t.Fatalf("UpdateBiller: %v", err)
 	}
 	f.audit.find(t, "utilitybills.biller.create")
@@ -770,7 +775,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 
 	product, err := f.svc.CreateProduct(ctx, f.actor, utilitybills.ProductInput{
 		BillerID: biller.ID, Category: "cable_tv", Name: "Admin Bouquet",
-		Code: "admin-bouquet-" + suffix, AmountType: "fixed", AmountKobo: ptrI64(500_000),
+		Code: "admin-bouquet-" + suffix, AmountType: "fixed", AmountKobo: new(int64(500_000)),
 	})
 	if err != nil {
 		t.Fatalf("CreateProduct: %v", err)
@@ -781,7 +786,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	mapping, err := f.svc.CreateMapping(ctx, f.actor, utilitybills.MappingInput{
 		ProviderID: prov.ID, ProductID: product.ID,
 		ProviderProductCode: "dstv-padi", ProviderBillerCode: "dstv",
-		ProviderCostKobo: ptrI64(480_000), ProviderDiscountBps: ptrI64(250),
+		ProviderCostKobo: new(int64(480_000)), ProviderDiscountBps: new(int64(250)),
 	})
 	if err != nil {
 		t.Fatalf("CreateMapping: %v", err)
@@ -808,7 +813,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	// Routing rule — the table with no prior Go representation at all.
 	rule, err := f.svc.CreateRoutingRule(ctx, f.actor, utilitybills.RoutingRuleInput{
 		Category: "cable_tv", ProductID: product.ID, ProviderID: prov.ID,
-		Priority: ptrInt(5), MinAmountKobo: ptrI64(100_000),
+		Priority: new(5), MinAmountKobo: new(int64(100_000)),
 	})
 	if err != nil {
 		t.Fatalf("CreateRoutingRule: %v", err)
@@ -824,7 +829,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	}
 	// Widening the rule by dropping its category scope.
 	widened, err := f.svc.UpdateRoutingRule(ctx, f.actor, rule.ID,
-		utilitybills.RoutingRulePatch{ClearCategory: true, Priority: ptrInt(9)})
+		utilitybills.RoutingRulePatch{ClearCategory: true, Priority: new(9)})
 	if err != nil {
 		t.Fatalf("UpdateRoutingRule: %v", err)
 	}
@@ -858,14 +863,14 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	}
 	restore := *original
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `
+		_, _ = f.pool.Exec(context.WithoutCancel(t.Context()), `
 			UPDATE public.utility_category_settings
 			SET enabled=$2, daily_limit_kobo=$3 WHERE category=$1`,
 			restore.Category, restore.Enabled, restore.DailyLimitKobo)
 	})
 
 	patched, err := f.svc.UpdateCategorySetting(ctx, f.actor, "cable_tv",
-		utilitybills.CategorySettingPatch{Enabled: ptrBool(false), DailyLimitKobo: ptrI64(7_777_777)})
+		utilitybills.CategorySettingPatch{Enabled: new(false), DailyLimitKobo: new(int64(7_777_777))})
 	if err != nil {
 		t.Fatalf("UpdateCategorySetting: %v", err)
 	}
@@ -1061,7 +1066,7 @@ func (f *adminFixture) seedReportTransaction(t *testing.T, userID, billerID, pro
 		t.Fatalf("seed report transaction: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM public.utility_transactions WHERE id=$1`, id)
+		_, _ = f.pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.utility_transactions WHERE id=$1`, id)
 	})
 	return id
 }
@@ -1078,7 +1083,7 @@ func (f *adminFixture) seedAttempt(t *testing.T, transactionID, providerID, stat
 	// Removed by the transaction's own cleanup cascade? No — attempts have a plain
 	// FK, so they are deleted explicitly, BEFORE the transaction row.
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(),
+		_, _ = f.pool.Exec(context.WithoutCancel(t.Context()),
 			`DELETE FROM public.utility_provider_attempts WHERE transaction_id=$1`, transactionID)
 	})
 }
@@ -1105,7 +1110,7 @@ func TestLiveDB_Admin_Reports(t *testing.T) {
 		t.Fatalf("seed user: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, userID)
+		_, _ = f.pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id=$1`, userID)
 	})
 
 	// on a shared database, so only the DELTA can be asserted. ---
@@ -1227,7 +1232,7 @@ func TestLiveDB_Admin_ListTransactionsFiltersByStatus(t *testing.T) {
 		t.Fatalf("seed user: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, userID)
+		_, _ = f.pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id=$1`, userID)
 	})
 
 	reversedID := f.seedReportTransaction(t, userID, billerID, prov.ID, "reversed", 300_000, 290_000, 10_000)
@@ -1303,4 +1308,5 @@ func TestLiveDB_Admin_ReverseIsAudited(t *testing.T) {
 	}
 }
 
-func strptr(s string) *string { return &s }
+//go:fix inline
+func strptr(s string) *string { return new(s) }

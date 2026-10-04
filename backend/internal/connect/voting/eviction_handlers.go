@@ -255,7 +255,7 @@ func (s *Service) TriggerEvictions(ctx context.Context, contestID string, req Ev
 	}
 
 	if s.audit != nil {
-		s.audit.WriteAudit(ctx, "evict_contestants", actorID, "contest", contestID, map[string]any{
+		_ = s.audit.WriteAudit(ctx, "evict_contestants", actorID, "contest", contestID, map[string]any{
 			"stage_number":        req.StageNumber,
 			"eviction_percentage": req.EvictionPercentage,
 			"grace_period_hours":  req.GracePeriodHours,
@@ -275,7 +275,7 @@ func (s *Service) SaveContestant(ctx context.Context, evictionID, actorID, saveT
 	}
 
 	if s.audit != nil {
-		s.audit.WriteAudit(ctx, "save_contestant", actorID, "eviction", evictionID, map[string]any{
+		_ = s.audit.WriteAudit(ctx, "save_contestant", actorID, "eviction", evictionID, map[string]any{
 			"save_type": saveType,
 			"reason":    reason,
 		})
@@ -292,7 +292,7 @@ func (s *Service) ExtendGracePeriod(ctx context.Context, evictionID string, addi
 	}
 
 	if s.audit != nil {
-		s.audit.WriteAudit(ctx, "extend_grace_period", actorID, "eviction", evictionID, map[string]any{
+		_ = s.audit.WriteAudit(ctx, "extend_grace_period", actorID, "eviction", evictionID, map[string]any{
 			"additional_hours": additionalHours,
 		})
 	}
@@ -308,7 +308,7 @@ func (s *Service) FinalizeEvictions(ctx context.Context, contestID string, stage
 	}
 
 	if s.audit != nil {
-		s.audit.WriteAudit(ctx, "finalize_evictions", "system", "contest", contestID, map[string]any{
+		_ = s.audit.WriteAudit(ctx, "finalize_evictions", "system", "contest", contestID, map[string]any{
 			"stage_number": stageNumber,
 		})
 	}
@@ -375,7 +375,7 @@ func (s *Service) AdminVote(ctx context.Context, contestID, contestantID, actorI
 	}
 
 	if s.audit != nil {
-		s.audit.WriteAudit(ctx, "admin_vote", actorID, "contest", contestID, map[string]any{
+		_ = s.audit.WriteAudit(ctx, "admin_vote", actorID, "contest", contestID, map[string]any{
 			"contestant_id": contestantID,
 			"vote_quantity": voteQuantity,
 		})

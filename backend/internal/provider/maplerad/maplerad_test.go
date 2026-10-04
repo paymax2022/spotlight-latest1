@@ -73,7 +73,7 @@ func TestCreateCustomer_MapsResponse(t *testing.T) {
 		if r.URL.Path != "/customers" || r.Method != http.MethodPost {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		w.Write([]byte(`{"status":true,"data":{"id":"cus_123","first_name":"Ada","last_name":"Bello","email":"a@b.co","status":"active"}}`))
+		_, _ = w.Write([]byte(`{"status":true,"data":{"id":"cus_123","first_name":"Ada","last_name":"Bello","email":"a@b.co","status":"active"}}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -90,7 +90,7 @@ func TestCreateCustomer_MapsResponse(t *testing.T) {
 
 func TestCreateCustomer_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":false,"message":"bvn invalid"}`))
+		_, _ = w.Write([]byte(`{"status":false,"message":"bvn invalid"}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -104,7 +104,7 @@ func TestGetCustomer_MapsResponse(t *testing.T) {
 		if !strings.HasPrefix(r.URL.Path, "/customers/") {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
-		w.Write([]byte(`{"status":true,"data":{"id":"cus_9","email":"x@y.co","status":"active"}}`))
+		_, _ = w.Write([]byte(`{"status":true,"data":{"id":"cus_9","email":"x@y.co","status":"active"}}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -125,7 +125,7 @@ func TestGetCustomer_MockWhenOffline(t *testing.T) {
 func TestProvisionVirtualAccount_PassThroughNaming(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Caveat: API may return a random name and bank_name "maplerad".
-		w.Write([]byte(`{"status":true,"data":{"account_number":"9012345678","account_name":"RANDOM NAME","bank_name":"maplerad"}}`))
+		_, _ = w.Write([]byte(`{"status":true,"data":{"account_number":"9012345678","account_name":"RANDOM NAME","bank_name":"maplerad"}}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -144,7 +144,7 @@ func TestProvisionVirtualAccount_PassThroughNaming(t *testing.T) {
 
 func TestGetVirtualAccount_MapsResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":true,"data":{"account_number":"9088776655","account_name":"SOME NAME","bank_name":"maplerad","bank_code":"999"}}`))
+		_, _ = w.Write([]byte(`{"status":true,"data":{"account_number":"9088776655","account_name":"SOME NAME","bank_name":"maplerad","bank_code":"999"}}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -170,7 +170,7 @@ func TestProvisionWallet_ReturnsID(t *testing.T) {
 		if r.URL.Path != "/wallets" || r.Method != http.MethodPost {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		w.Write([]byte(`{"status":true,"data":{"id":"wal_1"}}`))
+		_, _ = w.Write([]byte(`{"status":true,"data":{"id":"wal_1"}}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -182,7 +182,7 @@ func TestProvisionWallet_ReturnsID(t *testing.T) {
 
 func TestProvisionWallet_ErrorSurfaces(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":false,"message":"nope"}`))
+		_, _ = w.Write([]byte(`{"status":false,"message":"nope"}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -193,7 +193,7 @@ func TestProvisionWallet_ErrorSurfaces(t *testing.T) {
 
 func TestGetProviderBalance_KoboInt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":true,"data":{"id":"wal_1","currency":"NGN","balance":250000}}`))
+		_, _ = w.Write([]byte(`{"status":true,"data":{"id":"wal_1","currency":"NGN","balance":250000}}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -216,7 +216,7 @@ func TestInitiatePayout_PendingAndProviderRef(t *testing.T) {
 		if r.URL.Path != "/transfers" {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
-		w.Write([]byte(`{"status":true,"data":{"id":"trf_1","status":"pending","reference":"ref-1"}}`))
+		_, _ = w.Write([]byte(`{"status":true,"data":{"id":"trf_1","status":"pending","reference":"ref-1"}}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -234,7 +234,7 @@ func TestInitiatePayout_PendingAndProviderRef(t *testing.T) {
 
 func TestInitiatePayout_ErrorSurfaces(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":false,"message":"insufficient"}`))
+		_, _ = w.Write([]byte(`{"status":false,"message":"insufficient"}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -245,7 +245,7 @@ func TestInitiatePayout_ErrorSurfaces(t *testing.T) {
 
 func TestGetTransferStatus_Normalizes(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":true,"data":{"status":"success"}}`))
+		_, _ = w.Write([]byte(`{"status":true,"data":{"status":"success"}}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -268,7 +268,7 @@ func TestResolveAccount_MapsResponse(t *testing.T) {
 		if !strings.HasPrefix(r.URL.Path, "/counterparties/resolve") {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
-		w.Write([]byte(`{"status":true,"data":{"account_number":"0123456789","account_name":"ADA BELLO"}}`))
+		_, _ = w.Write([]byte(`{"status":true,"data":{"account_number":"0123456789","account_name":"ADA BELLO"}}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -291,7 +291,7 @@ func TestListBanks_MapsResponse(t *testing.T) {
 		if !strings.HasPrefix(r.URL.Path, "/institutions") {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
-		w.Write([]byte(`{"status":true,"data":[{"code":"058","name":"GTBank","slug":"gtbank"}]}`))
+		_, _ = w.Write([]byte(`{"status":true,"data":[{"code":"058","name":"GTBank","slug":"gtbank"}]}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -314,7 +314,7 @@ func TestCreateTransferRecipient_ReturnsCode(t *testing.T) {
 		if r.URL.Path != "/counterparties" {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
-		w.Write([]byte(`{"status":true,"data":{"id":"cp_77"}}`))
+		_, _ = w.Write([]byte(`{"status":true,"data":{"id":"cp_77"}}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -329,7 +329,7 @@ func TestPurchaseBill_PendingOnAccept(t *testing.T) {
 		if r.URL.Path != "/bills" || r.Method != http.MethodPost {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		w.Write([]byte(`{"status":true,"data":{"id":"bill_1","reference":"br-1","type":"airtime","status":"pending","amount":50000}}`))
+		_, _ = w.Write([]byte(`{"status":true,"data":{"id":"bill_1","reference":"br-1","type":"airtime","status":"pending","amount":50000}}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)
@@ -347,7 +347,7 @@ func TestPurchaseBill_PendingOnAccept(t *testing.T) {
 
 func TestPurchaseBill_ErrorSurfaces(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":false,"message":"no biller"}`))
+		_, _ = w.Write([]byte(`{"status":false,"message":"no biller"}`))
 	}))
 	defer srv.Close()
 	c := newTestClient(srv)

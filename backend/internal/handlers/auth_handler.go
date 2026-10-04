@@ -194,7 +194,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		}
 	}
 
-	res, err := h.auth.RegisterUser(in)
+	res, err := h.auth.RegisterUser(c.Request.Context(), in)
 	if err != nil {
 		h.audit.LogAction("", "", "register.failed", "auth", "user", "", nil, map[string]any{"email": in.Email}, c.ClientIP(), c.Request.UserAgent(), "medium")
 
@@ -274,7 +274,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid payload"})
 		return
 	}
-	out, err := h.auth.LoginUser(in)
+	out, err := h.auth.LoginUser(c.Request.Context(), in)
 	if err != nil {
 		// LoginUser wraps its errors with the identity it resolved before
 		// failing — a phone identifier becomes the account email, and the
@@ -429,7 +429,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 			revoked = true
 		}
 		if h.sessionHardening && h.sessions != nil {
-			if sess, err := h.sessions.ValidateAccess(token); err == nil && sess != nil {
+			if sess, err := h.sessions.ValidateAccess(c.Request.Context(), token); err == nil && sess != nil {
 				_ = h.sessions.RevokeOne(u.ID, u.ID, sess.ID, "logout")
 			}
 		}
@@ -444,7 +444,7 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 		Email string `json:"email" binding:"required,email"`
 	}
 	if err := c.ShouldBindJSON(&in); err == nil {
-		if err := h.auth.RequestPasswordReset(in.Email); err != nil {
+		if err := h.auth.RequestPasswordReset(c.Request.Context(), in.Email); err != nil {
 			// Log the address NEVER — only that the upstream failed. The response
 			// below is byte-identical either way, because varying it would reveal
 			// which addresses have accounts.
@@ -552,7 +552,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "missing bearer token"})
 		return
 	}
-	if err := h.auth.ChangePassword(authz[7:], in.CurrentPassword, in.NewPassword); err != nil {
+	if err := h.auth.ChangePassword(c.Request.Context(), authz[7:], in.CurrentPassword, in.NewPassword); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
@@ -574,7 +574,7 @@ func (h *AuthHandler) CompleteProfile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid payload"})
 		return
 	}
-	if err := h.auth.CompleteProfile(u.ID, in.ProfileType, in.Metadata); err != nil {
+	if err := h.auth.CompleteProfile(c.Request.Context(), u.ID, in.ProfileType, in.Metadata); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}

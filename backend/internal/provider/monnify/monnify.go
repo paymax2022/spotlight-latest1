@@ -187,7 +187,7 @@ func (c *Client) GetTransferStatus(ctx context.Context, providerRef string) (*pr
 		} `json:"responseBody"`
 		ResponseMessage string `json:"responseMessage"`
 	}
-	path := fmt.Sprintf("/api/v2/disbursements/single/summary?reference=%s", providerRef)
+	path := "/api/v2/disbursements/single/summary?reference=" + providerRef
 	if err := c.get(ctx, path, &resp); err != nil {
 		return nil, err
 	}
@@ -276,7 +276,7 @@ func parseRecipientCode(code string) (bankCode, accountNumber string) {
 	const prefix = "monnify:"
 	if len(code) > len(prefix) && code[:len(prefix)] == prefix {
 		rest := code[len(prefix):]
-		for i := 0; i < len(rest); i++ {
+		for i := range len(rest) {
 			if rest[i] == ':' {
 				return rest[:i], rest[i+1:]
 			}
@@ -321,7 +321,7 @@ func (c *Client) do(req *http.Request, dst any) error {
 	if err != nil {
 		return fmt.Errorf("monnify: http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("monnify: read response: %w", err)

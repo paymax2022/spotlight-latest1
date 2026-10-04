@@ -103,7 +103,7 @@ func (s *Service) GetChallenge(ctx context.Context, userID, id string) (*Challen
 	row := s.db.QueryRow(ctx, q, userID, id)
 	c, err := scanChallengeRow(row)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -156,7 +156,7 @@ func (s *Service) CompleteChallenge(ctx context.Context, userID, id, idemKey str
 	                ON m.challenge_id=c.id AND m.user_id=$2
 	              WHERE c.id=$1 AND c.published`
 	if err := s.db.QueryRow(ctx, load, id, userID).Scan(&rewardKobo, &currency, &memberState); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("spotlight: load challenge: %w", err)
@@ -184,7 +184,7 @@ func (s *Service) CompleteChallenge(ctx context.Context, userID, id, idemKey str
 		// Credit member wallet from revenue (redistributed, never minted).
 		if err := s.led.Credit(ctx, userID, "spotlight:reward:"+id, idemKey+":wallet", revAcc.ID, rewardKobo); err != nil {
 			// A duplicate here means the credit already posted — treat as success.
-			if err != ledger.ErrDuplicate {
+			if !errors.Is(err, ledger.ErrDuplicate) {
 				return nil, fmt.Errorf("spotlight: reward credit: %w", err)
 			}
 		}
@@ -292,7 +292,7 @@ func (s *Service) GetCampaign(ctx context.Context, id string) (*Campaign, error)
 	if err := s.db.QueryRow(ctx, `SELECT id, title, description, icon_color, cta
 	                              FROM spotlight_campaigns WHERE id=$1 AND published`, id).
 		Scan(&c.ID, &c.Title, &c.Description, &c.IconColor, &c.CTA); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("spotlight: get campaign: %w", err)

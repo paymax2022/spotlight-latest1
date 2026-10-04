@@ -174,14 +174,14 @@ func NewContributionService(pool *pgxpool.Pool) *ContributionService {
 //
 // Returns the new candidate id.
 func (s *ContributionService) Propose(ctx context.Context, c ContributionCandidate) (string, error) {
-	if c.PIIStripped == false {
-		return "", fmt.Errorf("maps: contribution refused — PII not stripped (PIIStripped=false); run StripPII first")
+	if !c.PIIStripped {
+		return "", errors.New("maps: contribution refused — PII not stripped (PIIStripped=false); run StripPII first")
 	}
 	if strings.TrimSpace(c.Geometry) == "" {
-		return "", fmt.Errorf("maps: contribution refused — empty geometry")
+		return "", errors.New("maps: contribution refused — empty geometry")
 	}
 	if strings.TrimSpace(c.Type) == "" {
-		return "", fmt.Errorf("maps: contribution refused — missing type")
+		return "", errors.New("maps: contribution refused — missing type")
 	}
 
 	// Re-scrub the geometry's properties server-side regardless of the flag.
@@ -278,7 +278,7 @@ func (s *ContributionService) Review(ctx context.Context, id, reviewerID, action
 		return ContributionCandidate{}, fmt.Errorf("maps: illegal transition pending->%s", to)
 	}
 	if strings.TrimSpace(reviewerID) == "" {
-		return ContributionCandidate{}, fmt.Errorf("maps: reviewer_id required")
+		return ContributionCandidate{}, errors.New("maps: reviewer_id required")
 	}
 
 	// Guard the transition in SQL: only flip rows that are still 'pending'.
@@ -291,7 +291,7 @@ func (s *ContributionService) Review(ctx context.Context, id, reviewerID, action
 	row := s.pool.QueryRow(ctx, q, id, to, reviewerID, notes)
 	c, err := scanCandidate(row)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ContributionCandidate{}, fmt.Errorf("maps: candidate %s not in 'pending' state (already decided or missing)", id)
 		}
 		return ContributionCandidate{}, fmt.Errorf("maps: review candidate: %w", err)
@@ -303,10 +303,10 @@ func (s *ContributionService) Review(ctx context.Context, id, reviewerID, action
 // OSM changeset id. Only an 'approved' row may be marked uploaded.
 func (s *ContributionService) MarkUploaded(ctx context.Context, id, changesetID string) error {
 	if !canContribTransition("approved", "uploaded") { // defensive; always true
-		return fmt.Errorf("maps: illegal transition approved->uploaded")
+		return errors.New("maps: illegal transition approved->uploaded")
 	}
 	if strings.TrimSpace(changesetID) == "" {
-		return fmt.Errorf("maps: changeset_id required to mark uploaded")
+		return errors.New("maps: changeset_id required to mark uploaded")
 	}
 	const q = `
 		UPDATE map_contribution_candidate

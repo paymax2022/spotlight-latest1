@@ -230,10 +230,7 @@ func elapsedDaysUTC(start, now time.Time, durationDays int) int {
 	if now.Before(start) {
 		return 0
 	}
-	d := int(now.UTC().Sub(start.UTC()).Hours() / 24)
-	if d < 0 {
-		d = 0
-	}
+	d := max(int(now.UTC().Sub(start.UTC()).Hours()/24), 0)
 	if d > durationDays {
 		d = durationDays
 	}

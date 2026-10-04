@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -140,7 +141,7 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (SearchResults, 
 	if err != nil {
 		return SearchResults{}, &ErrSearchUnavailable{Op: "request", Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -203,7 +204,7 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (SearchResults, 
 		// emit the bare limit constant, so every page after the first pointed
 		// back at "offset=limit" and the query builder never even read cursor
 		// input, making all paging past page 1 repeat page 1 forever.
-		nextCursor = fmt.Sprintf("%d", offset+limit)
+		nextCursor = strconv.Itoa(offset + limit)
 	}
 
 	return SearchResults{
@@ -281,7 +282,7 @@ func (c *Client) EnsureTemplate(ctx context.Context) error {
 	if err != nil {
 		return &ErrSearchUnavailable{Op: "put index template", Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
 		return &ErrSearchUnavailable{Op: "put index template", Err: fmt.Errorf("status %d: %s", resp.StatusCode, string(respBody))}

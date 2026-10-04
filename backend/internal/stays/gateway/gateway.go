@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -60,7 +61,7 @@ type SupplyGateway interface {
 
 // ErrUnsupported is returned by an adapter for a capability the rail does not
 // serve (e.g. SyncARI on a bedbank rail).
-var ErrUnsupported = fmt.Errorf("stays gateway: capability not supported by this rail")
+var ErrUnsupported = errors.New("stays gateway: capability not supported by this rail")
 
 // RailResolver maps a SourceRail + supplier code to the adapter Name() that serves
 // it. The supplier-config table (stays admin) implements this; keeping it an
@@ -101,7 +102,7 @@ func NewRouter(resolver RailResolver, adapters ...SupplyGateway) *Router {
 
 // ErrNoAdapter is returned when no adapter is configured/registered for a
 // rail+supplier (or the supplier is unknown/inactive).
-var ErrNoAdapter = fmt.Errorf("stays gateway: no adapter for rail/supplier")
+var ErrNoAdapter = errors.New("stays gateway: no adapter for rail/supplier")
 
 // Resolve returns the SupplyGateway for a (rail, supplierCode). The rail+supplier
 // → adapter mapping lives entirely in the supplier-config data; this performs no

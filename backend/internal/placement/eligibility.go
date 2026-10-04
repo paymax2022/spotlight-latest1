@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"time"
 )
@@ -122,13 +123,7 @@ func validateCreative(zone *Zone, creative map[string]any, banned []string) erro
 		if cta == "" {
 			return fmt.Errorf("%w: cta required (allowed: %s)", ErrIneligible, strings.Join(allowed, ", "))
 		}
-		ok := false
-		for _, a := range allowed {
-			if a == cta {
-				ok = true
-				break
-			}
-		}
+		ok := slices.Contains(allowed, cta)
 		if !ok {
 			return fmt.Errorf("%w: cta %q not allowed for zone %s", ErrIneligible, cta, zone.Code)
 		}

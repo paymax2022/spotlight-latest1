@@ -30,7 +30,7 @@ func CleanupUser(t *testing.T, pool *pgxpool.Pool, userID string) {
 	if pool == nil || userID == "" {
 		return
 	}
-	t.Cleanup(func() { DeleteUser(context.Background(), pool, userID) })
+	t.Cleanup(func() { DeleteUser(context.WithoutCancel(t.Context()), pool, userID) })
 }
 
 // CleanupUserCtx is CleanupUser with the caller's context threaded into

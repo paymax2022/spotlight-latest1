@@ -37,9 +37,9 @@ import (
 // convention as tests/property_authz_test.go's denyAllRBAC.
 type top5AdminRBAC struct{ services.RBACService }
 
-func (top5AdminRBAC) GetUserStatus(string) (string, error)  { return "active", nil }
-func (top5AdminRBAC) GetUserRoles(string) ([]string, error) { return nil, nil }
-func (top5AdminRBAC) GetUserPermissions(string, string, string) ([]string, error) {
+func (top5AdminRBAC) GetUserStatus(context.Context, string) (string, error)  { return "active", nil }
+func (top5AdminRBAC) GetUserRoles(context.Context, string) ([]string, error) { return nil, nil }
+func (top5AdminRBAC) GetUserPermissions(context.Context, string, string, string) ([]string, error) {
 	return nil, nil
 }
 

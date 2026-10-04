@@ -121,7 +121,7 @@ func (r *Repository) GetListingStatus(ctx context.Context, id string) (string, s
 	err := r.db.QueryRow(ctx,
 		`SELECT status, verification FROM realtor_listings WHERE id=$1`, id).
 		Scan(&status, &verification)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", ErrNotFound
 	}
 	if err != nil {
@@ -408,7 +408,7 @@ func (r *Repository) ResolveEscrow(ctx context.Context, id, decision, note, admi
 		JOIN realtor_portfolios pf ON pf.id = p.portfolio_id
 		WHERE e.id = $1`, id).
 		Scan(&leaseID, &amountKobo, &status, &tenantID, &ownerID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -427,10 +427,10 @@ func (r *Repository) ResolveEscrow(ctx context.Context, id, decision, note, admi
 	if decision == "released_to_tenant" || decision == "forfeited_to_landlord" {
 		var submittedAt *time.Time
 		moveErr := r.db.QueryRow(ctx, `SELECT submitted_at FROM realtor_move_outs WHERE lease_id = $1`, leaseID).Scan(&submittedAt)
-		if moveErr != nil && moveErr != pgx.ErrNoRows {
+		if moveErr != nil && !errors.Is(moveErr, pgx.ErrNoRows) {
 			return nil, moveErr
 		}
-		if moveErr == pgx.ErrNoRows || submittedAt == nil {
+		if errors.Is(moveErr, pgx.ErrNoRows) || submittedAt == nil {
 			return nil, ErrMoveOutRequired
 		}
 	}

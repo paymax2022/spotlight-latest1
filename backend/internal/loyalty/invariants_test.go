@@ -22,7 +22,7 @@ import "testing"
 // never auto-downgraded: tierForTx refuses any candidate whose rank < the current
 // tier) and what gates rewards (Redeem refuses when rank(member) < rank(MinTier)).
 func TestRank_Ordering(t *testing.T) {
-	if !(rank(Tier1) < rank(Tier2) && rank(Tier2) < rank(Tier3)) {
+	if rank(Tier1) >= rank(Tier2) || rank(Tier2) >= rank(Tier3) {
 		t.Errorf("tiers must be strictly ascending: TIER1=%d TIER2=%d TIER3=%d",
 			rank(Tier1), rank(Tier2), rank(Tier3))
 	}
@@ -73,7 +73,7 @@ func TestRank_MinTierGating(t *testing.T) {
 
 func TestRank_BlackTierIsHighest(t *testing.T) {
 	// BLACK must outrank every real tier.
-	if !(rank(TierBlack) > rank(Tier3)) {
+	if rank(TierBlack) <= rank(Tier3) {
 		t.Errorf("BLACK must be the highest tier: rank(BLACK)=%d, rank(TIER3)=%d",
 			rank(TierBlack), rank(Tier3))
 	}
@@ -84,7 +84,7 @@ func TestRank_BlackTierIsHighest(t *testing.T) {
 		}
 	}
 	// A Black member clears a Black gate.
-	if !(rank(TierBlack) >= rank(TierBlack)) {
+	if rank(TierBlack) < rank(TierBlack) {
 		t.Error("a BLACK member must be eligible for a MinTier=BLACK gate")
 	}
 }

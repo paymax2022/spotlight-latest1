@@ -175,7 +175,7 @@ func (s *Service) ScanQR(ctx context.Context, scannerID, eventID, qr string) (st
 		return "", fmt.Errorf("connect: event not found: %w", err)
 	}
 	if organizer != scannerID {
-		return "", fmt.Errorf("connect: only the organiser may scan tickets")
+		return "", errors.New("connect: only the organiser may scan tickets")
 	}
 	var ticketID, ownerID, status string
 	if err := s.db.QueryRow(ctx,
@@ -190,7 +190,7 @@ func (s *Service) ScanQR(ctx context.Context, scannerID, eventID, qr string) (st
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
 		`UPDATE event_tickets SET status='used', scanned_at=now() WHERE id=$1 AND status='issued'`,
 		ticketID); err != nil {

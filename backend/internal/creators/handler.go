@@ -1,6 +1,7 @@
 package creators
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -207,8 +208,8 @@ func (h *Handler) Purchase(c *gin.Context) {
 	ent, err := h.svc.PurchaseContent(c.Request.Context(), uid, c.Param("contentId"), key)
 	if err != nil {
 		status := http.StatusBadRequest
-		switch err {
-		case ErrAgeRestricted, ErrContentNotAvailable:
+		switch {
+		case errors.Is(err, ErrAgeRestricted), errors.Is(err, ErrContentNotAvailable):
 			status = http.StatusForbidden
 		}
 		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
@@ -225,7 +226,7 @@ func (h *Handler) View(c *gin.Context) {
 	cnt, err := h.svc.ViewContent(c.Request.Context(), uid, c.Param("contentId"))
 	if err != nil {
 		status := http.StatusForbidden
-		if err == ErrContentNotAvailable {
+		if errors.Is(err, ErrContentNotAvailable) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
@@ -317,7 +318,7 @@ func (h *Handler) RequestPayout(c *gin.Context) {
 	p, err := h.svc.RequestPayout(c.Request.Context(), uid, req.AmountKobo)
 	if err != nil {
 		status := http.StatusBadRequest
-		if err == ErrPayoutKYC {
+		if errors.Is(err, ErrPayoutKYC) {
 			status = http.StatusForbidden
 		}
 		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})

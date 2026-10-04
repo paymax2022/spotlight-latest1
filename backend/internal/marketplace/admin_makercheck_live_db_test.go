@@ -47,8 +47,8 @@ func seedMakercheckPlatformUser(t *testing.T, ctx context.Context, pool *pgxpool
 		t.Fatalf("seed platform_users: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM mkt_user_moderation WHERE user_id=$1`, id)
-		pool.Exec(context.Background(), `DELETE FROM platform_users WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM mkt_user_moderation WHERE user_id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM platform_users WHERE id=$1`, id)
 	})
 	return id
 }
@@ -120,7 +120,9 @@ func TestLiveDB_MakerChecker_AppealOverturn_DifferentAdminApproves(t *testing.T)
 	if err != nil {
 		t.Fatalf("file appeal: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_appeals WHERE id=$1`, a.ID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_appeals WHERE id=$1`, a.ID)
+	})
 
 	decided, err := svc.DecideAppealAdmin(ctx, makerID, "test-role", a.ID, DecideAppealInput{Decision: "overturn", ReasonCode: "TEST_OVERTURN"})
 	if err != nil {
@@ -171,7 +173,9 @@ func TestLiveDB_MakerChecker_AppealUphold_ExecutesImmediately(t *testing.T) {
 	if err != nil {
 		t.Fatalf("file appeal: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_appeals WHERE id=$1`, a.ID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_appeals WHERE id=$1`, a.ID)
+	})
 
 	decided, err := svc.DecideAppealAdmin(ctx, makerID, "test-role", a.ID, DecideAppealInput{Decision: "uphold", ReasonCode: "TEST_UPHOLD"})
 	if err != nil {

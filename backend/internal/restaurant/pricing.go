@@ -29,13 +29,13 @@ type PricingConfig struct {
 // inflate surge.
 func (s *Service) SetPricingConfig(ctx context.Context, restaurantID string, cfg PricingConfig) error {
 	if cfg.ServiceFeeBp < 0 || cfg.ServiceFeeBp > 10000 {
-		return fmt.Errorf("restaurant: service_fee_bp must be in [0,10000]")
+		return errors.New("restaurant: service_fee_bp must be in [0,10000]")
 	}
 	if cfg.SurgeBp < 0 || cfg.SurgeBp > 50000 {
-		return fmt.Errorf("restaurant: surge_bp must be in [0,50000]")
+		return errors.New("restaurant: surge_bp must be in [0,50000]")
 	}
 	if cfg.AcceptSlaMinutes < 0 || cfg.AcceptSlaMinutes > 1440 {
-		return fmt.Errorf("restaurant: accept_sla_minutes must be in [0,1440]")
+		return errors.New("restaurant: accept_sla_minutes must be in [0,1440]")
 	}
 	tag, err := s.db.Exec(ctx, `UPDATE restaurants SET service_fee_bp=$1, surge_bp=$2, accept_sla_minutes=$3, updated_at=now() WHERE id=$4`,
 		cfg.ServiceFeeBp, cfg.SurgeBp, cfg.AcceptSlaMinutes, restaurantID)
@@ -43,7 +43,7 @@ func (s *Service) SetPricingConfig(ctx context.Context, restaurantID string, cfg
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("restaurant: not found")
+		return errors.New("restaurant: not found")
 	}
 	return nil
 }
@@ -192,10 +192,7 @@ func PackagingKobo(requestedPacks, totalPortions int, feePerPackKobo int64) (int
 		return 0, 0
 	}
 
-	packs = max(requestedPacks, 1)
-	if packs > totalPortions {
-		packs = totalPortions
-	}
+	packs = min(max(requestedPacks, 1), totalPortions)
 
 	if feePerPackKobo <= 0 {
 		return packs, 0

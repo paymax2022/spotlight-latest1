@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"time"
 
@@ -294,10 +295,7 @@ func (s *Service) Submit(ctx context.Context, userID, attemptID string, response
 	}
 
 	now := s.now().UTC()
-	late := false
-	if att.ServerDeadline != nil && now.After(*att.ServerDeadline) {
-		late = true // accept but mark late — integrity signal, not punitive
-	}
+	late := att.ServerDeadline != nil && now.After(*att.ServerDeadline)
 
 	if integrity == nil {
 		integrity = map[string]any{}
@@ -440,9 +438,8 @@ func (s *Service) GetAttemptResult(ctx context.Context, userID, attemptID string
 		return nil, ErrNotFound // not yet submitted → no result projection
 	}
 	res := map[string]any{}
-	for k, v := range att.Score { // subjects, overall, grade, late
-		res[k] = v
-	}
+	// subjects, overall, grade, late
+	maps.Copy(res, att.Score)
 	if att.Readiness != nil {
 		res["readiness"] = *att.Readiness
 	}

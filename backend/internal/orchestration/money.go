@@ -13,10 +13,11 @@ package orchestration
 import (
 	"context"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"math/big"
 	"strings"
 	"sync"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Money is the canonical money object: an integer amount in minor units

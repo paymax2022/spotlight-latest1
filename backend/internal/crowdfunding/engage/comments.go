@@ -15,6 +15,7 @@ package engage
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -172,8 +173,8 @@ func (s *Service) ListComments(ctx context.Context, campaignID, viewerID string)
 	// newest-first for the top level, but a reply thread reads in the order it
 	// was written.
 	repliesOf := map[string][]CommentReply{}
-	for i := len(all) - 1; i >= 0; i-- {
-		x := all[i]
+	for _, x := range slices.Backward(all) {
+
 		if x.parentID == "" {
 			continue
 		}

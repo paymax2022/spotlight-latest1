@@ -256,7 +256,7 @@ func (s *Service) SetCampaignFlags(ctx context.Context, campaignID, adminID stri
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock the row so the status we gate on is the status we write against — a
 	// concurrent review decision cannot slip an ACTIVE→REJECTED between the two.

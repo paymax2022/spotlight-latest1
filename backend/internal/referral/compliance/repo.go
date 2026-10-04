@@ -2,6 +2,7 @@ package compliance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -48,7 +49,7 @@ func (r *Repository) PublishDisclosure(ctx context.Context, in DisclosureInput, 
 	if err != nil {
 		return nil, fmt.Errorf("compliance: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE referral_disclosures SET active = false WHERE slug = $1 AND jurisdiction = $2 AND active = true`,
@@ -102,7 +103,7 @@ func (r *Repository) ActiveDisclosure(ctx context.Context, slug string) (*Disclo
 	const q = `SELECT ` + discCols + ` FROM referral_disclosures
 		WHERE slug = $1 AND active = true ORDER BY version DESC LIMIT 1`
 	d, err := scanDisclosure(r.db.QueryRow(ctx, q, slug))
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -241,7 +242,7 @@ func (r *Repository) SetAMLStatus(ctx context.Context, id, status, reportedRef s
 		return fmt.Errorf("compliance: set aml status: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("compliance: aml flag not found")
+		return errors.New("compliance: aml flag not found")
 	}
 	return nil
 }
@@ -257,7 +258,7 @@ func (r *Repository) GetPolicy(ctx context.Context) (*Policy, error) {
 	)
 	err := r.db.QueryRow(ctx, q).Scan(
 		&p.MaxPyramidDepth, &p.TierCapKobo, &p.RequireActivity, &p.AllowedJurisdictions, &updBy, &p.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return &Policy{MaxPyramidDepth: 2, RequireActivity: true, AllowedJurisdictions: []string{"NG"}}, nil
 	}
 	if err != nil {

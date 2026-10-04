@@ -87,13 +87,13 @@ func NewService(db *pgxpool.Pool, sched *scheduler.Service, audit Auditor) *Serv
 // reminder on the shared scheduler.
 func (s *Service) Request(ctx context.Context, patientID, providerID, subjectType, visitType string, start, end time.Time) (*Appointment, error) {
 	if patientID == "" || providerID == "" {
-		return nil, fmt.Errorf("scheduling: patient and provider required")
+		return nil, errors.New("scheduling: patient and provider required")
 	}
 	if !validVisit(visitType) {
-		return nil, fmt.Errorf("scheduling: invalid visit_type")
+		return nil, errors.New("scheduling: invalid visit_type")
 	}
 	if !end.After(start) {
-		return nil, fmt.Errorf("scheduling: slot_end must be after slot_start")
+		return nil, errors.New("scheduling: slot_end must be after slot_start")
 	}
 	if subjectType == "" {
 		subjectType = "PATIENT"
@@ -118,7 +118,7 @@ func (s *Service) Request(ctx context.Context, patientID, providerID, subjectTyp
 	if err != nil {
 		return nil, fmt.Errorf("scheduling: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	lockKey := providerID + "|" + start.UTC().Format(time.RFC3339Nano)
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, lockKey); err != nil {
@@ -177,7 +177,7 @@ func (s *Service) Transition(ctx context.Context, actorID, apptID string, to Sta
 	if err != nil {
 		return nil, fmt.Errorf("scheduling: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	a, providerOwner, err := lockAppointment(ctx, tx, apptID)
 	if err != nil {
@@ -185,7 +185,7 @@ func (s *Service) Transition(ctx context.Context, actorID, apptID string, to Sta
 	}
 	// authZ: either the patient or the provider's owner may drive transitions.
 	if actorID != a.PatientID && actorID != providerOwner {
-		return nil, fmt.Errorf("scheduling: forbidden")
+		return nil, errors.New("scheduling: forbidden")
 	}
 	if a.State == to {
 		return a, nil
@@ -208,7 +208,7 @@ func (s *Service) Transition(ctx context.Context, actorID, apptID string, to Sta
 // Reschedule sets a new slot and routes through RESCHEDULED→CONFIRMED.
 func (s *Service) Reschedule(ctx context.Context, actorID, apptID string, start, end time.Time) (*Appointment, error) {
 	if !end.After(start) {
-		return nil, fmt.Errorf("scheduling: slot_end must be after slot_start")
+		return nil, errors.New("scheduling: slot_end must be after slot_start")
 	}
 	if _, err := s.Transition(ctx, actorID, apptID, StateRescheduled); err != nil {
 		return nil, err
@@ -249,8 +249,8 @@ func lockAppointment(ctx context.Context, tx pgx.Tx, id string) (*Appointment, s
 	           LEFT JOIN health_providers p ON p.id = ap.provider_id
 	           WHERE ap.id=$1 FOR UPDATE OF ap`
 	if err := tx.QueryRow(ctx, q, id).Scan(&a.ID, &a.ProviderID, &a.PatientID, &a.SubjectType, &a.VisitType, &state, &a.SlotStart, &a.SlotEnd, &providerOwner); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, "", fmt.Errorf("scheduling: appointment not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", errors.New("scheduling: appointment not found")
 		}
 		return nil, "", err
 	}

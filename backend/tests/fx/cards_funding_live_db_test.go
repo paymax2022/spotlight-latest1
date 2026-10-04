@@ -93,10 +93,10 @@ func TestCardFunding_LiveDB(t *testing.T) {
 		t.Fatalf("seed wallet: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_ledger_entries WHERE customer_id=$1`, cust)
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_fx_card_txns WHERE business_id=$1`, cust)
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_fx_cards WHERE business_id=$1`, cust)
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_balances WHERE customer_id=$1`, cust)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_ledger_entries WHERE customer_id=$1`, cust)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_fx_card_txns WHERE business_id=$1`, cust)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_fx_cards WHERE business_id=$1`, cust)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_balances WHERE customer_id=$1`, cust)
 	})
 
 	store := orchestration.NewCardStore(pool, nil) // nil issuer → no provider calls

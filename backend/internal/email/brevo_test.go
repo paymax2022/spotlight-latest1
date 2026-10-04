@@ -32,8 +32,8 @@ func TestSendOTPSendsTheDocumentedPayload(t *testing.T) {
 	var apiKey, contentType string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		apiKey = r.Header.Get("api-key")
-		contentType = r.Header.Get("content-type")
+		apiKey = r.Header.Get("Api-Key")
+		contentType = r.Header.Get("Content-Type")
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &got)
 		w.WriteHeader(http.StatusCreated)
@@ -153,9 +153,9 @@ func TestErrorsNeverContainTheCode(t *testing.T) {
 }
 
 func TestSendWithRetryRetriesTransientFailures(t *testing.T) {
-	var calls int32
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if atomic.AddInt32(&calls, 1) < 3 {
+		if calls.Add(1) < 3 {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
@@ -166,7 +166,7 @@ func TestSendWithRetryRetriesTransientFailures(t *testing.T) {
 	if err := SendWithRetry(context.Background(), newClient(srv.URL), "a@b.com", "A", "111111", time.Minute); err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	if n := atomic.LoadInt32(&calls); n != 3 {
+	if n := calls.Load(); n != 3 {
 		t.Errorf("attempts = %d, want 3", n)
 	}
 }
@@ -174,9 +174,9 @@ func TestSendWithRetryRetriesTransientFailures(t *testing.T) {
 // Retrying a revoked key cannot succeed and, on a throttled account, makes the
 // underlying condition worse.
 func TestSendWithRetryDoesNotRetryPermanentFailures(t *testing.T) {
-	var calls int32
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer srv.Close()
@@ -185,15 +185,15 @@ func TestSendWithRetryDoesNotRetryPermanentFailures(t *testing.T) {
 	if !errors.Is(err, ErrPermanent) {
 		t.Fatalf("error = %v, want ErrPermanent", err)
 	}
-	if n := atomic.LoadInt32(&calls); n != 1 {
+	if n := calls.Load(); n != 1 {
 		t.Errorf("attempts = %d, want 1 — a permanent failure was retried", n)
 	}
 }
 
 func TestSendWithRetryGivesUpAfterThreeAttempts(t *testing.T) {
-	var calls int32
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		w.WriteHeader(http.StatusBadGateway)
 	}))
 	defer srv.Close()
@@ -202,7 +202,7 @@ func TestSendWithRetryGivesUpAfterThreeAttempts(t *testing.T) {
 	if !errors.Is(err, ErrTransient) {
 		t.Fatalf("error = %v, want ErrTransient", err)
 	}
-	if n := atomic.LoadInt32(&calls); n != 3 {
+	if n := calls.Load(); n != 3 {
 		t.Errorf("attempts = %d, want 3", n)
 	}
 }
@@ -210,9 +210,9 @@ func TestSendWithRetryGivesUpAfterThreeAttempts(t *testing.T) {
 // The caller is a user waiting on an HTTP response: retries must not outlive the
 // request.
 func TestSendWithRetryStopsWhenTheContextIsCancelled(t *testing.T) {
-	var calls int32
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		w.WriteHeader(http.StatusBadGateway)
 	}))
 	defer srv.Close()
@@ -228,7 +228,7 @@ func TestSendWithRetryStopsWhenTheContextIsCancelled(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Errorf("retries ran for %s past a 120ms deadline", elapsed)
 	}
-	if n := atomic.LoadInt32(&calls); n > 2 {
+	if n := calls.Load(); n > 2 {
 		t.Errorf("attempts = %d — the deadline did not bound the retries", n)
 	}
 }

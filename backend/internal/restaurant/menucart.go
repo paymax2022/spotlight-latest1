@@ -38,7 +38,7 @@ const (
 // no larger than maxItemPriceKobo.
 func validateItemPriceKobo(kobo int64) error {
 	if kobo < 0 {
-		return fmt.Errorf("restaurant: price_kobo must be >= 0")
+		return errors.New("restaurant: price_kobo must be >= 0")
 	}
 	if kobo > maxItemPriceKobo {
 		return fmt.Errorf("restaurant: price_kobo must be <= %d (₦1,000,000)", maxItemPriceKobo)

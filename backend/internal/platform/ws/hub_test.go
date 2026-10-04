@@ -36,7 +36,7 @@ func TestSendToUser_UnknownUser_DoesNotPanic(t *testing.T) {
 // (a different port in dev, a different subdomain in staging/prod) never is.
 func TestServeHTTP_RejectsDisallowedOrigin(t *testing.T) {
 	h := ws.New(func(origin string) bool { return origin == "http://localhost:3000" })
-	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ws", nil)
 	req.Header.Set("Origin", "http://evil.example.com")
 	rec := httptest.NewRecorder()
 
@@ -59,7 +59,7 @@ func TestServeHTTP_RejectsDisallowedOrigin(t *testing.T) {
 func TestServeHTTP_NoOriginHeader_SkipsOriginCheck(t *testing.T) {
 	checked := false
 	h := ws.New(func(origin string) bool { checked = true; return false })
-	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ws", nil)
 	rec := httptest.NewRecorder()
 
 	_ = h.ServeHTTP(rec, req, "user-1")

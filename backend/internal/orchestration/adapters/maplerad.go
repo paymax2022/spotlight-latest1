@@ -6,11 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/google/uuid"
 	orch "spotlight/backend/internal/orchestration"
 	"spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/maplerad"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // MapleradFX favours NGN, USD (FEDWIRE/ACH), Francophone mobile money (XAF),
@@ -84,7 +85,7 @@ func (m *MapleradFX) ExecuteTransfer(ctx context.Context, q *orch.Quote, dest or
 }
 
 func (m *MapleradFX) CreateCollection(ctx context.Context, currency, accountType, customerID string) (*orch.CollectionResult, error) {
-	details := map[string]interface{}{
+	details := map[string]any{
 		"account_name":   "Paymax / Customer",
 		"account_number": fmt.Sprintf("99%08d", uuid.New().ID()%100000000),
 		"bank_name":      "Providus Bank",

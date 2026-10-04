@@ -10,6 +10,7 @@ package adapters
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -204,7 +205,7 @@ func (a *PracticalJudgeAdapter) SubmitScore(ctx context.Context, in arena.ScoreS
 		return arena.SignedMeritEntry{}, fmt.Errorf("practical adapter: unsupported stage %q", in.Stage)
 	}
 	if len(judgeScores(in.Raw)) == 0 {
-		return arena.SignedMeritEntry{}, fmt.Errorf("practical adapter: no judge scores")
+		return arena.SignedMeritEntry{}, errors.New("practical adapter: no judge scores")
 	}
 	rawScore, normalized := NormalizePractical(in.Raw)
 	p := arena.ScorePayload{

@@ -291,7 +291,7 @@ func TestSubmit_HappyPath(t *testing.T) {
 }
 
 func TestSubmit_RequiresConsent(t *testing.T) {
-	svc, _, _, _, _ := newHarness(t)
+	svc, _, _, _, _ := newHarness(t) //nolint:dogsled // tuple: only svc needed
 	in := validSubmit()
 	in.Consent = false
 	if _, err := svc.Submit(context.Background(), vetOwner, in); err == nil {
@@ -300,7 +300,7 @@ func TestSubmit_RequiresConsent(t *testing.T) {
 }
 
 func TestSubmit_OwnerOnly(t *testing.T) {
-	svc, _, _, _, _ := newHarness(t)
+	svc, _, _, _, _ := newHarness(t) //nolint:dogsled // tuple: only svc needed
 	if _, err := svc.Submit(context.Background(), "other-vet", validSubmit()); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("expected ErrForbidden for non-owner, got %v", err)
 	}
@@ -321,7 +321,7 @@ func TestSubmit_IdentityFlagSurfaced(t *testing.T) {
 }
 
 func TestDecide_NoSelfApproval(t *testing.T) {
-	svc, store, _, _, _ := newHarness(t)
+	svc, store, _, _, _ := newHarness(t) //nolint:dogsled // tuple unpack
 	rec := mustSubmit(t, svc, store)
 	exp := time.Now().Add(365 * 24 * time.Hour)
 	// reviewer == owner → forbidden (a vet can NEVER self-approve)
@@ -357,7 +357,7 @@ func TestDecide_ApproveGrantsCapabilityAndExpiry(t *testing.T) {
 }
 
 func TestDecide_ApproveRequiresExpiry(t *testing.T) {
-	svc, store, _, _, _ := newHarness(t)
+	svc, store, _, _, _ := newHarness(t) //nolint:dogsled // tuple unpack
 	rec := mustSubmit(t, svc, store)
 	if _, err := svc.Decide(context.Background(), reviewer, rec.ID, "approve", nil, "x"); err == nil {
 		t.Fatal("expected error: licence_expiry required to approve")
@@ -382,7 +382,7 @@ func TestDecide_Idempotent(t *testing.T) {
 }
 
 func TestDecide_IllegalTransition(t *testing.T) {
-	svc, store, _, _, _ := newHarness(t)
+	svc, store, _, _, _ := newHarness(t) //nolint:dogsled // tuple unpack
 	rec := mustSubmit(t, svc, store)
 	exp := time.Now().Add(24 * time.Hour)
 	if _, err := svc.Decide(context.Background(), reviewer, rec.ID, "approve", &exp, "ok"); err != nil {

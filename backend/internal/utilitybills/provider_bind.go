@@ -84,10 +84,10 @@ func NewBindRegistry(db *pgxpool.Pool) *BindRegistry { return &BindRegistry{db: 
 // real money. A refused purchase is recoverable; a duplicate one is not.
 func (r *BindRegistry) Claim(ctx context.Context, key, providerName, billerCode, productCode, transactionID string) (BindClaim, error) {
 	if r == nil || r.db == nil {
-		return BindClaim{}, fmt.Errorf("utilitybills: bind registry unavailable — refusing to purchase without idempotency protection")
+		return BindClaim{}, errors.New("utilitybills: bind registry unavailable — refusing to purchase without idempotency protection")
 	}
 	if key == "" {
-		return BindClaim{}, fmt.Errorf("utilitybills: Idempotency-Key required for a provider purchase")
+		return BindClaim{}, errors.New("utilitybills: Idempotency-Key required for a provider purchase")
 	}
 
 	// Nullable columns: an empty string is stored as NULL rather than '' so the
@@ -213,7 +213,7 @@ func (r *BindRegistry) Unknown(ctx context.Context, key, reason string) {
 // who holds a bill we never recorded.
 func (r *BindRegistry) UnresolvedCount(ctx context.Context) (int, error) {
 	if r == nil || r.db == nil {
-		return 0, fmt.Errorf("utilitybills: bind registry unavailable")
+		return 0, errors.New("utilitybills: bind registry unavailable")
 	}
 	var n int
 	err := r.db.QueryRow(ctx, `

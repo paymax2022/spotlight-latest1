@@ -87,7 +87,7 @@ func (s *Service) CreateReferral(ctx context.Context, providerOwnerID, consultID
 		return nil, err
 	}
 	if providerOwnerID != providerOwner {
-		return nil, fmt.Errorf("consult: only the provider may issue a referral")
+		return nil, errors.New("consult: only the provider may issue a referral")
 	}
 	r := &Referral{
 		ID:               uuid.New().String(),
@@ -119,7 +119,7 @@ func (s *Service) Referrals(ctx context.Context, requesterID, consultID string, 
 		return nil, err
 	}
 	if !authorizeConsultAccess(requesterID, c.PatientID, providerOwner, isAdmin) {
-		return nil, fmt.Errorf("consult: forbidden")
+		return nil, errors.New("consult: forbidden")
 	}
 	const q = `SELECT id, consult_id, patient_id, referred_by, referral_type, specialty, target_provider_id, reason, created_at
 	           FROM health_consult_referrals WHERE consult_id=$1 ORDER BY created_at ASC`

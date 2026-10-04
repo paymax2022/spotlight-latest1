@@ -79,7 +79,7 @@ func TestSubmitQuiz_PassFailBoundary_Exact70Percent(t *testing.T) {
 	// Build a 10-question quiz; answer exactly 7 correctly, 3 incorrectly.
 	var questions []learn.QuizQuestion
 	answers := learn.QuizAnswers{}
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		id := "q" + string(rune('0'+i))
 		q := mkQuestion(id)
 		questions = append(questions, q)
@@ -126,7 +126,7 @@ func TestSubmitQuiz_PassFailBoundary_ThreeQuestions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var questions []learn.QuizQuestion
 			answers := learn.QuizAnswers{}
-			for i := 0; i < 3; i++ {
+			for i := range 3 {
 				id := "q" + string(rune('0'+i))
 				q := mkQuestion(id)
 				questions = append(questions, q)

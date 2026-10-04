@@ -7,6 +7,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 )
@@ -91,7 +92,8 @@ func TestValidateFareInRange(t *testing.T) {
 				t.Fatalf("unexpected error for offer %d: %v", tc.offer, err)
 			}
 			if tc.wantErr {
-				ce, ok := err.(*CodedError)
+				ce := &CodedError{}
+				ok := errors.As(err, &ce)
 				if !ok {
 					t.Fatalf("expected *CodedError, got %T", err)
 				}
@@ -119,7 +121,8 @@ func TestEnforceDriverProfitFloor(t *testing.T) {
 	if err == nil {
 		t.Fatal("fare below driver-profit floor must be rejected")
 	}
-	ce, ok := err.(*CodedError)
+	ce := &CodedError{}
+	ok := errors.As(err, &ce)
 	if !ok || ce.Status != http.StatusUnprocessableEntity || ce.Code != CodeProfitFloor {
 		t.Fatalf("want 422 FARE_BELOW_FLOOR, got %+v", err)
 	}

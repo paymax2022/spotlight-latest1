@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // outboxBatchSize bounds how many mkt_listings_outbox rows RunOnce drains per
@@ -53,7 +55,7 @@ func NewIndexer(pool *pgxpool.Pool, esURL string) *Indexer {
 // it never blocks or drops the rest of the batch.
 func (i *Indexer) RunOnce(ctx context.Context) (int, error) {
 	if i.pool == nil {
-		return 0, fmt.Errorf("search: indexer has no database pool")
+		return 0, errors.New("search: indexer has no database pool")
 	}
 
 	rows, err := i.pool.Query(ctx, `
@@ -128,7 +130,7 @@ func (i *Indexer) applyUpsert(ctx context.Context, r outboxRow) error {
 	if err != nil {
 		return &ErrSearchUnavailable{Op: "upsert document", Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		return &ErrSearchUnavailable{Op: "upsert document", Err: fmt.Errorf("status %d for listing %s", resp.StatusCode, r.ListingID)}
 	}
@@ -154,7 +156,7 @@ func (i *Indexer) applyDelete(ctx context.Context, r outboxRow) error {
 	if err != nil {
 		return &ErrSearchUnavailable{Op: "delete document", Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotFound {
 		return &ErrSearchUnavailable{Op: "delete document", Err: fmt.Errorf("status %d for listing %s", resp.StatusCode, r.ListingID)}
 	}

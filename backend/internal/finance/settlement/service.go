@@ -38,7 +38,7 @@ func (s *Service) Escrow(ctx context.Context, payerID, reference, idempotencyKey
 	}
 	// ErrDuplicate means the debit already ran on an earlier attempt — proceed
 	// to (re)ensure the tracking row rather than erroring the retry.
-	if err := s.ledger.Debit(ctx, payerID, "escrow:"+reference, idempotencyKey+":escrow", escrowAcc.ID, totalKobo); err != nil && err != ledger.ErrDuplicate {
+	if err := s.ledger.Debit(ctx, payerID, "escrow:"+reference, idempotencyKey+":escrow", escrowAcc.ID, totalKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, fmt.Errorf("settlement: escrow debit: %w", err)
 	}
 	now := time.Now()
@@ -97,7 +97,7 @@ func (s *Service) EscrowExternal(ctx context.Context, payerID, reference, idempo
 		CreditAccountID: escrowAcc.ID,
 		Description:     "Paystack-funded order escrow (external payment, no wallet debit)",
 	})
-	if err != nil && err != ledger.ErrDuplicate {
+	if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, fmt.Errorf("settlement: external escrow post: %w", err)
 	}
 	now := time.Now()
@@ -139,7 +139,7 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 	if err != nil {
 		return fmt.Errorf("settlement: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := tx.QueryRow(ctx, q, settlementID).Scan(
 		&sett.ID, &sett.Reference, &sett.PayerID, &sett.TotalKobo, &sett.Status,
@@ -317,7 +317,7 @@ func postPairTx(ctx context.Context, tx pgx.Tx, debitAccountID, creditAccountID 
 // on an externally-funded settlement (or the reverse) is refused. Crediting a
 // wallet with EscrowExternal funds would hand a Tier-0 customer spendable
 // balance funded by an external charge — the hazard EscrowExternal avoids.
-var ErrWrongRefundMethod = fmt.Errorf("settlement: wrong refund method for this settlement's funding source")
+var ErrWrongRefundMethod = errors.New("settlement: wrong refund method for this settlement's funding source")
 
 // Refund releases a WALLET-funded escrow back to the payer's wallet. Refuses
 // (ErrWrongRefundMethod) on an externally-funded (EscrowExternal) settlement
@@ -395,7 +395,7 @@ func (s *Service) RefundExternal(ctx context.Context, settlementID, reason strin
 		CreditAccountID: clearingAcc.ID,
 		Description:     "External refund reversal (Paystack-funded escrow): " + reason,
 	})
-	if err != nil && err != ledger.ErrDuplicate {
+	if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return fmt.Errorf("settlement: post external refund: %w", err)
 	}
 	const update = `UPDATE settlements SET status='refunded' WHERE id=$1`

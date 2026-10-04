@@ -3,6 +3,7 @@ package mycover
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -150,7 +151,7 @@ type rawValidation struct {
 // credential where none is required is the right default.
 func (c *Client) ProductSchemaFor(ctx context.Context, productID string) (*ProductSchema, error) {
 	if productID == "" {
-		return nil, fmt.Errorf("mycover: empty product id")
+		return nil, errors.New("mycover: empty product id")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		c.baseURL+pathPublicProductDetails+url.PathEscape(productID), nil)
@@ -163,7 +164,7 @@ func (c *Client) ProductSchemaFor(ctx context.Context, productID string) (*Produ
 	if err != nil {
 		return nil, fmt.Errorf("mycover: product details: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("mycover: product details for %s: http %d", productID, resp.StatusCode)
 	}

@@ -420,11 +420,11 @@ func (r *Repository) GetCombinations(ctx context.Context, arenaID, course string
 	args := []any{}
 	if arenaID != "" {
 		args = append(args, arenaID)
-		sb.WriteString(fmt.Sprintf(" AND arena_id = $%d", len(args)))
+		fmt.Fprintf(&sb, " AND arena_id = $%d", len(args))
 	}
 	if course != "" {
 		args = append(args, course)
-		sb.WriteString(fmt.Sprintf(" AND course = $%d", len(args)))
+		fmt.Fprintf(&sb, " AND course = $%d", len(args))
 	}
 	sb.WriteString(" ORDER BY course")
 	rows, err := r.db.Query(ctx, sb.String(), args...)
@@ -574,7 +574,7 @@ func (r *Repository) InsertResponses(ctx context.Context, attemptID string, inpu
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const q = `
 		INSERT INTO public.academy_responses

@@ -186,7 +186,7 @@ func (r *Repository) TransitionItemStatus(ctx context.Context, actor, id string,
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from ItemStatus
 	err = tx.QueryRow(ctx, `SELECT status FROM public.academy_question_items WHERE id = $1 FOR UPDATE`, id).Scan(&from)
@@ -228,7 +228,7 @@ func (r *Repository) ListItems(ctx context.Context, f ItemFilter) ([]QuestionIte
 	args := []any{}
 	add := func(clause string, v any) {
 		args = append(args, v)
-		sb.WriteString(fmt.Sprintf(" AND %s $%d", clause, len(args)))
+		fmt.Fprintf(&sb, " AND %s $%d", clause, len(args))
 	}
 	if f.SubjectID != "" {
 		add("subject_id =", f.SubjectID)
@@ -241,7 +241,7 @@ func (r *Repository) ListItems(ctx context.Context, f ItemFilter) ([]QuestionIte
 	}
 	if f.Tag != "" {
 		args = append(args, f.Tag)
-		sb.WriteString(fmt.Sprintf(" AND $%d = ANY(tags)", len(args)))
+		fmt.Fprintf(&sb, " AND $%d = ANY(tags)", len(args))
 	}
 	sb.WriteString(" ORDER BY created_at DESC")
 	limit := f.Limit
@@ -249,10 +249,10 @@ func (r *Repository) ListItems(ctx context.Context, f ItemFilter) ([]QuestionIte
 		limit = 50
 	}
 	args = append(args, limit)
-	sb.WriteString(fmt.Sprintf(" LIMIT $%d", len(args)))
+	fmt.Fprintf(&sb, " LIMIT $%d", len(args))
 	if f.Offset > 0 {
 		args = append(args, f.Offset)
-		sb.WriteString(fmt.Sprintf(" OFFSET $%d", len(args)))
+		fmt.Fprintf(&sb, " OFFSET $%d", len(args))
 	}
 
 	rows, err := r.db.Query(ctx, sb.String(), args...)
@@ -368,7 +368,7 @@ func (r *Repository) ApplyProgression(ctx context.Context, userID, objectiveID s
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Seed the record if absent (default not_started), then lock + read.
 	const seed = `

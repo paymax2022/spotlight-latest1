@@ -44,7 +44,7 @@ func TestEstateUploadAllowlistsRestrictive(t *testing.T) {
 // that differs across calls (prevents object-key guessing / overwrite).
 func TestEstateRandTokenUnguessable(t *testing.T) {
 	seen := map[string]bool{}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		tok := estateRandToken()
 		if len(tok) != 32 {
 			t.Fatalf("token len = %d, want 32 hex chars", len(tok))
@@ -63,7 +63,7 @@ func TestPresignUploadFailsClosedWhenUnconfigured(t *testing.T) {
 	h := NewHandler(nil) // no presigner, no service needed: the guard runs first
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost,
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost,
 		"/api/finance/estate/e1/uploads/presign",
 		strings.NewReader(`{"kind":"document","fileName":"a.pdf","contentType":"application/pdf"}`))
 	c.Request.Header.Set("Content-Type", "application/json")

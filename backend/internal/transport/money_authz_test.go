@@ -114,7 +114,8 @@ func TestEnforceTierLimit_DeniesWhenOverLimit(t *testing.T) {
 	if err == nil {
 		t.Fatal("over-limit debit MUST be denied (fail closed)")
 	}
-	ce, ok := err.(*CodedError)
+	ce := &CodedError{}
+	ok := errors.As(err, &ce)
 	if !ok {
 		t.Fatalf("expected *CodedError, got %T", err)
 	}
@@ -140,7 +141,8 @@ func TestEnforceTierLimit_NilGateFailsClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("a nil tier gate MUST fail closed")
 	}
-	ce, ok := err.(*CodedError)
+	ce := &CodedError{}
+	ok := errors.As(err, &ce)
 	if !ok || ce.Status != http.StatusForbidden {
 		t.Fatalf("want 403 FORBIDDEN on nil gate, got %+v", err)
 	}

@@ -138,7 +138,7 @@ func (s *Service) RequestVerification(ctx context.Context, userID, evidenceRef s
 		return fmt.Errorf("connect: request creator verification: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("connect: create a creator profile or verification already in progress")
+		return errors.New("connect: create a creator profile or verification already in progress")
 	}
 	_ = s.audit.WriteAudit(ctx, "connect.creator.verification.request", userID,
 		"connect_creator_profile", userID, map[string]any{"status": "pending"})
@@ -159,7 +159,7 @@ func (s *Service) ReviewVerification(ctx context.Context, adminID, creatorUserID
 		return fmt.Errorf("connect: review creator verification: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("connect: no pending creator verification for user")
+		return errors.New("connect: no pending creator verification for user")
 	}
 	_ = s.audit.WriteAudit(ctx, "connect.creator.verification.review", adminID,
 		"connect_creator_profile", creatorUserID, map[string]any{"status": string(status), "reason": reason})

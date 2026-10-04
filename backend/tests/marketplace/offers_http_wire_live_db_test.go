@@ -66,7 +66,7 @@ func TestLiveDB_OffersHTTP_ClientWireShape(t *testing.T) {
 	buyerAPI := offersRouter(svc, buyer)
 	body := fmt.Sprintf(`{"listing_id":%q,"offer_price_kobo":250000,"message":"is this still available"}`, listingID)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/offers", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/offers", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	buyerAPI.ServeHTTP(rec, req)
 
@@ -95,7 +95,7 @@ func TestLiveDB_OffersHTTP_ClientWireShape(t *testing.T) {
 
 	sellerAPI := offersRouter(svc, seller)
 	rec = httptest.NewRecorder()
-	sellerAPI.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/offers?listing_id="+listingID, nil))
+	sellerAPI.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/offers?listing_id="+listingID, nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /offers?listing_id = %d, want 200\nbody: %s", rec.Code, rec.Body.String())
 	}
@@ -114,7 +114,7 @@ func TestLiveDB_OffersHTTP_ClientWireShape(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	sellerAPI.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/offers", nil))
+	sellerAPI.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/offers", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("GET /offers with no param = %d, want 400", rec.Code)
 	}
@@ -123,7 +123,7 @@ func TestLiveDB_OffersHTTP_ClientWireShape(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/offers/"+offerID+"/counter",
+	req = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/offers/"+offerID+"/counter",
 		strings.NewReader(`{"offer_price_kobo":300000}`))
 	req.Header.Set("Content-Type", "application/json")
 	sellerAPI.ServeHTTP(rec, req)

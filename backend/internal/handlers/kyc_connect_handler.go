@@ -125,7 +125,7 @@ func (h *KYCConnectHandler) GetLimits(c *gin.Context) {
 	}
 
 	data := []gin.H{}
-	for t := 0; t <= 3; t++ {
+	for t := range 4 {
 		cfg := tiers.GetConfig(tiers.Tier(t))
 		data = append(data, gin.H{
 			"tier":              t,
@@ -168,7 +168,7 @@ func (h *KYCConnectHandler) submitTier(c *gin.Context, targetTier int, req kyc.I
 
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "submit_kyc", "kyc", "user_profile",
-			userID, nil, map[string]interface{}{
+			userID, nil, map[string]any{
 				"targetTier": targetTier,
 				"status":     string(profile.Status),
 			}, ginutil.ClientIP(c), c.Request.UserAgent(), "info")
@@ -269,7 +269,7 @@ func (h *KYCConnectHandler) SubmitTier1(c *gin.Context) {
 
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "submit_kyc", "kyc", "user_profile",
-			userID, nil, map[string]interface{}{
+			userID, nil, map[string]any{
 				"targetTier":  1,
 				"status":      string(profile.Status),
 				"checkStatus": string(check.Status),

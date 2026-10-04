@@ -2,9 +2,6 @@ package app
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
-	goredis "github.com/redis/go-redis/v9"
 	"log"
 	"os"
 	"spotlight/backend/internal/config"
@@ -19,6 +16,10 @@ import (
 	"spotlight/backend/internal/services"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // NewRouter builds the engine. Kept for callers/tests that have no lifecycle
@@ -442,7 +443,7 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	}()
 	var sharedPool *pgxpool.Pool
 	if cfg.DatabaseURL != "" {
-		if p, err := platformDB.New(context.Background(), cfg.DatabaseURL); err != nil {
+		if p, err := platformDB.New(context.Background(), cfg.DatabaseURL); err != nil { //nolint:contextcheck // boot-scope ctx; no request exists yet
 			if deployedTier {
 				log.Fatalf("[router] could not open the database pool (APP_ENV=%q): %v — refusing to start with every DB-backed route disabled", cfg.AppEnv, err)
 			}

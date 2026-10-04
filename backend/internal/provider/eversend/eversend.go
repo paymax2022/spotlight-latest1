@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,13 +53,13 @@ func (c *Client) ensureToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("clientId", c.clientID)
-	req.Header.Set("clientSecret", c.clientSecret)
+	req.Header.Set("Clientid", c.clientID)
+	req.Header.Set("Clientsecret", c.clientSecret)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
 		return "", fmt.Errorf("eversend: auth token %d: %s", resp.StatusCode, string(body))
@@ -67,7 +68,7 @@ func (c *Client) ensureToken(ctx context.Context) (string, error) {
 		Token string `json:"token"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil || out.Token == "" {
-		return "", fmt.Errorf("eversend: auth token: invalid response")
+		return "", errors.New("eversend: auth token: invalid response")
 	}
 	c.token = out.Token
 	c.tokenExp = time.Now().Add(50 * time.Minute)
@@ -88,7 +89,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	}
 
 	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range maxRetries {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
@@ -112,7 +113,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 			continue
 		}
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode >= 500 {
 			lastErr = fmt.Errorf("eversend: %s %s -> %d: %s", method, path, resp.StatusCode, string(body))
 			continue // server error — retry

@@ -251,7 +251,7 @@ func (s *Service) ListRefunds(ctx context.Context, status string) ([]RefundReque
 // A note is REQUIRED to reject. Writes an audit row on every decision.
 func (s *Service) DecideRefund(ctx context.Context, id, adminID string, approve bool, note string) error {
 	if !approve && strings.TrimSpace(note) == "" {
-		return fmt.Errorf("adminext: a note is required to reject a refund")
+		return errors.New("adminext: a note is required to reject a refund")
 	}
 	var live bool
 	if err := s.db.QueryRow(ctx,
@@ -327,11 +327,11 @@ func (s *Service) decideLegacyRefund(ctx context.Context, id, adminID string, ap
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var current, reference string
 	if err := tx.QueryRow(ctx, `SELECT status, reference FROM cf_refunds WHERE id=$1 FOR UPDATE`, id).Scan(&current, &reference); err != nil {
-		return fmt.Errorf("adminext: refund not found")
+		return errors.New("adminext: refund not found")
 	}
 	if current != "REQUESTED" {
 		return fmt.Errorf("adminext: cannot decide a refund in %s state", current)
@@ -415,7 +415,7 @@ func (s *Service) ListDisputes(ctx context.Context, status string) ([]Dispute, e
 // Writes an audit row.
 func (s *Service) ResolveDispute(ctx context.Context, id, adminID, resolution, note string) error {
 	if strings.TrimSpace(note) == "" {
-		return fmt.Errorf("adminext: a note is required to resolve a dispute")
+		return errors.New("adminext: a note is required to resolve a dispute")
 	}
 	if !validResolution(resolution) {
 		return fmt.Errorf("adminext: invalid dispute resolution %q", resolution)
@@ -424,11 +424,11 @@ func (s *Service) ResolveDispute(ctx context.Context, id, adminID, resolution, n
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var current, reference string
 	if err := tx.QueryRow(ctx, `SELECT status, reference FROM cf_disputes WHERE id=$1 FOR UPDATE`, id).Scan(&current, &reference); err != nil {
-		return fmt.Errorf("adminext: dispute not found")
+		return errors.New("adminext: dispute not found")
 	}
 	if current == "RESOLVED" || current == "CLOSED" {
 		return fmt.Errorf("adminext: cannot resolve a dispute in %s state", current)
@@ -514,17 +514,17 @@ func riskFromAvailable(amount, available int64) string {
 // A note is REQUIRED to reject. Writes an audit row. No money moves here.
 func (s *Service) DecideWithdrawal(ctx context.Context, id, adminID string, approve bool, note string) error {
 	if !approve && strings.TrimSpace(note) == "" {
-		return fmt.Errorf("adminext: a note is required to reject a withdrawal")
+		return errors.New("adminext: a note is required to reject a withdrawal")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var current, reference string
 	if err := tx.QueryRow(ctx, `SELECT status, reference FROM cf_withdrawals WHERE id=$1 FOR UPDATE`, id).Scan(&current, &reference); err != nil {
-		return fmt.Errorf("adminext: withdrawal not found")
+		return errors.New("adminext: withdrawal not found")
 	}
 	if current != "PENDING" {
 		return fmt.Errorf("adminext: cannot decide a withdrawal in %s state", current)
@@ -582,13 +582,13 @@ func (s *Service) ListFraudAlerts(ctx context.Context) ([]FraudAlert, error) {
 // A note is REQUIRED to freeze. Writes an audit row.
 func (s *Service) SetCampaignFreeze(ctx context.Context, campaignID, adminID string, freeze bool, note string) error {
 	if freeze && strings.TrimSpace(note) == "" {
-		return fmt.Errorf("adminext: a note is required to freeze a campaign")
+		return errors.New("adminext: a note is required to freeze a campaign")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	alertStatus := "INVESTIGATING"
 	if freeze {
@@ -648,7 +648,7 @@ func (s *Service) ListKyc(ctx context.Context, status string) ([]KycCase, error)
 		return []KycCase{}, nil
 	}
 	if s.kyc == nil {
-		return nil, fmt.Errorf("adminext: kyc service not wired")
+		return nil, errors.New("adminext: kyc service not wired")
 	}
 	profiles, err := s.kyc.ListPending(ctx, 200, 0)
 	if err != nil {
@@ -704,14 +704,14 @@ func (s *Service) ListKyc(ctx context.Context, status string) ([]KycCase, error)
 // admin audit row. A note is REQUIRED to reject.
 func (s *Service) DecideKyc(ctx context.Context, id, adminID string, approve bool, note string) error {
 	if !approve && strings.TrimSpace(note) == "" {
-		return fmt.Errorf("adminext: a note is required to reject a KYC case")
+		return errors.New("adminext: a note is required to reject a KYC case")
 	}
 	if s.kyc == nil {
-		return fmt.Errorf("adminext: kyc service not wired")
+		return errors.New("adminext: kyc service not wired")
 	}
 	profile, err := s.kyc.GetProfile(ctx, id)
 	if err != nil {
-		return fmt.Errorf("adminext: kyc case not found")
+		return errors.New("adminext: kyc case not found")
 	}
 	if profile.Status != financekyc.StatusPending {
 		return fmt.Errorf("adminext: cannot decide a KYC case in %s state", profile.Status)
@@ -803,14 +803,14 @@ func (s *Service) FulfilDataRequest(ctx context.Context, id, adminID string) err
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var current, userName string
 	if err := tx.QueryRow(ctx, `SELECT status, user_name FROM cf_data_requests WHERE id=$1 FOR UPDATE`, id).Scan(&current, &userName); err != nil {
-		return fmt.Errorf("adminext: data request not found")
+		return errors.New("adminext: data request not found")
 	}
 	if current == "COMPLETED" {
-		return fmt.Errorf("adminext: data request already completed")
+		return errors.New("adminext: data request already completed")
 	}
 	if _, err := tx.Exec(ctx, `UPDATE cf_data_requests SET status='COMPLETED' WHERE id=$1`, id); err != nil {
 		return err
@@ -1020,12 +1020,12 @@ func (s *Service) SetUserStatus(ctx context.Context, id, adminID, status, note s
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var name string
 	if err := tx.QueryRow(ctx,
 		`SELECT COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), email) FROM public.platform_users WHERE id=$1`, id).Scan(&name); err != nil {
-		return fmt.Errorf("adminext: user not found")
+		return errors.New("adminext: user not found")
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO cf_user_moderation (user_id, status, note, updated_by, updated_at)

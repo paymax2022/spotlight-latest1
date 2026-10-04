@@ -54,8 +54,8 @@ func TestLiveDB_ListDoctors_ToleratesNullBioAndAbout(t *testing.T) {
 		`INSERT INTO doctors (id, user_id, name, specialty, bio, about, consult_fee_kobo,
 			is_available, is_online, is_hmo_verified, experience_years, rating,
 			review_count, patients_count, success_rate, education)
-		 VALUES ($1::uuid, $2::uuid, $3, 'general', NULL, NULL, 500000,
-			TRUE, FALSE, FALSE, 5, 4.5, 0, 0, 90, '[]'::jsonb)`, id, user, name); err != nil {
+		 VALUES ($1::uuid, $2::uuid, $3, 'general', NULL, 500000,
+			TRUE, FALSE, 5, 4.5, 0, 90, '[]'::jsonb)`, id, user, name); err != nil {
 		t.Fatalf("seed doctor: %v", err)
 	}
 	t.Cleanup(func() {

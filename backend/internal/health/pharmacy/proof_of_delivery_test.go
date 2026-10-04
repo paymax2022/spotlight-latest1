@@ -150,7 +150,7 @@ func TestDeliveryProof_Complete(t *testing.T) {
 		ProofData:     "654321",
 		CapturedBy:    "driver_user_id",
 		CapturedAt:    time.Now(),
-		RecipientName: stringPtr("John Doe"),
+		RecipientName: new("John Doe"),
 		Note:          "Delivered to main gate",
 	}
 
@@ -164,4 +164,6 @@ func TestDeliveryProof_Complete(t *testing.T) {
 }
 
 // Helper
-func stringPtr(s string) *string { return &s }
+//
+//go:fix inline
+func stringPtr(s string) *string { return new(s) }

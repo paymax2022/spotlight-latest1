@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"regexp"
@@ -82,21 +83,21 @@ func NewRouter(resolver ProductResolver, adapters ...UnderwriterGateway) *Router
 
 // ErrNoProvider is returned when no aggregator is configured for a product, or
 // the product is unknown/inactive.
-var ErrNoProvider = fmt.Errorf("insurance gateway: no provider for product")
+var ErrNoProvider = errors.New("insurance gateway: no provider for product")
 
 // ErrProviderFloatExhausted signals an aggregator refused a bind because
 // PAYMAX'S PREFUNDED FLOAT with it is empty — a treasury outage that fails
 // every bind at once and must pause the queue, not one member's problem.
 // Float-settling aggregators (MyCover) wrap this sentinel so feature code
 // branches on the condition without a per-provider import.
-var ErrProviderFloatExhausted = fmt.Errorf("insurance gateway: provider prefunded float exhausted")
+var ErrProviderFloatExhausted = errors.New("insurance gateway: provider prefunded float exhausted")
 
 // ErrProviderRejected marks a DEFINITE negative: the provider answered and
 // refused, so nothing was created upstream and failover/retry is safe. No
 // aggregator reports this as a distinct code — every adapter must wrap this
 // sentinel around errors it KNOWS were replies. Anything else is an unknown
 // outcome and is never auto-retried.
-var ErrProviderRejected = fmt.Errorf("insurance gateway: provider rejected the request")
+var ErrProviderRejected = errors.New("insurance gateway: provider rejected the request")
 
 // ValidationRejection is a provider refusal caused by the APPLICANT'S ANSWERS
 // (missing NIN, malformed email, under the insurer's floor) rather than an

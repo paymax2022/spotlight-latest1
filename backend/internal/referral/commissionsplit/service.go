@@ -26,6 +26,7 @@ package commissionsplit
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	"github.com/jackc/pgx/v5"
@@ -97,7 +98,7 @@ func (s *Service) trySplit(ctx context.Context, e commission.Earning) error {
 		`SELECT referrer_id, is_house FROM public.referral_attributions WHERE referred_user_id = $1`,
 		*e.UserID,
 	).Scan(&referrerID, &isHouse)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
@@ -146,7 +147,7 @@ func (s *Service) trySplit(ctx context.Context, e commission.Earning) error {
 		RETURNING id`,
 		*referrerID,
 	).Scan(&linkID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// Code retired (at/over cap), or this referrer somehow has no code row —
 		// either way, defaults to admin: no payout, no reward row is written for
 		// this earning (there is nothing to record — it was never rewarded).
@@ -173,7 +174,7 @@ func (s *Service) trySplit(ctx context.Context, e commission.Earning) error {
 		RETURNING id`,
 		*referrerID, *e.UserID, sourceTxnID, e.SourceModule, e.SpotlightRevenueKobo, rewardKobo,
 	).Scan(&rewardID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
@@ -195,7 +196,7 @@ func (s *Service) trySplit(ctx context.Context, e commission.Earning) error {
 		return err
 	}
 	creditErr := s.ledger.Credit(ctx, *referrerID, sourceTxnID, "referral:commission-split:"+rewardID, rewardAcct.ID, rewardKobo)
-	if creditErr != nil && creditErr != ledger.ErrDuplicate {
+	if creditErr != nil && !errors.Is(creditErr, ledger.ErrDuplicate) {
 		return creditErr
 	}
 	if _, err := s.pool.Exec(ctx,

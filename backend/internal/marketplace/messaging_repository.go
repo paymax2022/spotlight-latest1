@@ -3,9 +3,10 @@ package marketplace
 import (
 	"context"
 	"errors"
-	"github.com/jackc/pgx/v5"
 	"spotlight/backend/go-common/dbutil"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // messaging_repository.go is the pgx data layer for the ADR-023 listings-and-connect
@@ -226,7 +227,7 @@ func (r *Repository) SendMessage(ctx context.Context, userID, threadID, body str
 	if err != nil {
 		return nil, wrapInternal("send message: begin", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	ct, err := tx.Exec(ctx, `
 		UPDATE public.mkt_threads SET last_message_at = now()

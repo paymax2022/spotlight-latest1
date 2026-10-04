@@ -174,7 +174,7 @@ type RxLister interface {
 // MyPrescriptions returns the caller's own prescriptions, most recent first.
 func (s *Service) MyPrescriptions(ctx context.Context, patientID string) ([]PrescriptionSummary, error) {
 	if s.rxLister == nil {
-		return nil, fmt.Errorf("pharmacy: rx lister not configured")
+		return nil, errors.New("pharmacy: rx lister not configured")
 	}
 	return s.rxLister.ListForPatient(ctx, patientID)
 }
@@ -270,7 +270,7 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 // HL-2: only the verified pharmacy owner may list products for that pharmacy.
 func (s *Service) UpsertProduct(ctx context.Context, ownerID string, p Product) (*Product, error) {
 	if ownerID == "" {
-		return nil, fmt.Errorf("pharmacy: unauthenticated")
+		return nil, errors.New("pharmacy: unauthenticated")
 	}
 	if s.prov != nil {
 		ok, err := s.prov.VerifiedPharmacyOwner(ctx, ownerID, p.PharmacyProviderID)
@@ -278,22 +278,22 @@ func (s *Service) UpsertProduct(ctx context.Context, ownerID string, p Product) 
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("pharmacy: not a verified pharmacy owner (HL-2)")
+			return nil, errors.New("pharmacy: not a verified pharmacy owner (HL-2)")
 		}
 	}
 	if strings.TrimSpace(p.Name) == "" {
-		return nil, fmt.Errorf("pharmacy: product name required")
+		return nil, errors.New("pharmacy: product name required")
 	}
 	if p.PriceKobo <= 0 {
-		return nil, fmt.Errorf("pharmacy: price must be positive kobo")
+		return nil, errors.New("pharmacy: price must be positive kobo")
 	}
 	if p.IsControlled {
-		return nil, fmt.Errorf("pharmacy: controlled substances are excluded at MVP (HL-4)")
+		return nil, errors.New("pharmacy: controlled substances are excluded at MVP (HL-4)")
 	}
 	// HL-5: NAFDAC write-time rejection. A blank reference or a non-registered
 	// status never enters the catalog — this is rejection at write, not hiding.
 	if strings.TrimSpace(p.NAFDACRef) == "" {
-		return nil, fmt.Errorf("pharmacy: NAFDAC registration reference required (HL-5)")
+		return nil, errors.New("pharmacy: NAFDAC registration reference required (HL-5)")
 	}
 	status := strings.ToUpper(strings.TrimSpace(p.NAFDACStatus))
 	if status == "" {
@@ -412,7 +412,7 @@ func (s *Service) GetProduct(ctx context.Context, id string) (*Product, error) {
 // POST /prescriptions/:id/verify while REUSING healthrx (no re-implementation).
 func (s *Service) VerifyPrescription(ctx context.Context, pharmacistID, rxID string, begin, approve bool, reason string) error {
 	if s.verifier == nil {
-		return fmt.Errorf("pharmacy: rx verifier not configured")
+		return errors.New("pharmacy: rx verifier not configured")
 	}
 	if begin {
 		if err := s.verifier.BeginVerify(ctx, pharmacistID, rxID); err != nil {
@@ -464,23 +464,23 @@ const maxOrderLineQty = 10_000
 // UNIQUE idempotency_key).
 func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOrderInput) (*Order, error) {
 	if patientID == "" {
-		return nil, fmt.Errorf("pharmacy: unauthenticated")
+		return nil, errors.New("pharmacy: unauthenticated")
 	}
 	if in.IdempotencyKey == "" {
-		return nil, fmt.Errorf("pharmacy: idempotency key required (HL-9)")
+		return nil, errors.New("pharmacy: idempotency key required (HL-9)")
 	}
 	if len(in.Lines) == 0 {
-		return nil, fmt.Errorf("pharmacy: at least one order line required")
+		return nil, errors.New("pharmacy: at least one order line required")
 	}
 	if in.FulfilmentMethod != FulfilDelivery && in.FulfilmentMethod != FulfilPickup {
-		return nil, fmt.Errorf("pharmacy: fulfilment_method must be DELIVERY or PICKUP")
+		return nil, errors.New("pharmacy: fulfilment_method must be DELIVERY or PICKUP")
 	}
 	// A DELIVERY order with no resolvable dropoff can never be dispatched (see
 	// patientDropoff in health_pharmacy_routes.go) — fail closed here, before any
 	// money moves, rather than let it get stuck HELD after DISPENSE.
 	if in.FulfilmentMethod == FulfilDelivery {
 		if in.DeliveryLat == nil || in.DeliveryLng == nil || in.DeliveryAddress == "" {
-			return nil, fmt.Errorf("pharmacy: a delivery order requires delivery_address, delivery_lat, and delivery_lng")
+			return nil, errors.New("pharmacy: a delivery order requires delivery_address, delivery_lat, and delivery_lng")
 		}
 	}
 	// Replay: return the existing order for this idempotency key (no double-hold).
@@ -494,7 +494,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("pharmacy: supplier is not an approved pharmacy (HL-2)")
+			return nil, errors.New("pharmacy: supplier is not an approved pharmacy (HL-2)")
 		}
 	}
 
@@ -529,7 +529,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	// the returned error so it surfaces rather than being silently dropped.
 	failAfterHold := func(err error) (*Order, error) {
 		if rerr := s.escrow.Refund(ctx, escrowID); rerr != nil {
-			return nil, fmt.Errorf("%w (refund also failed: %v)", err, rerr)
+			return nil, fmt.Errorf("%w (refund also failed: %w)", err, rerr)
 		}
 		return nil, err
 	}
@@ -538,7 +538,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	if err != nil {
 		return failAfterHold(fmt.Errorf("pharmacy: begin: %w", err))
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var deliveryAddr *string
 	if in.FulfilmentMethod == FulfilDelivery {
@@ -718,7 +718,7 @@ func (s *Service) Confirm(ctx context.Context, actorID, orderID string) (*Order,
 	}
 	if o.State == StateRxPending {
 		if o.PrescriptionID == nil {
-			return nil, fmt.Errorf("pharmacy: Rx-pending order has no prescription (HL-3)")
+			return nil, errors.New("pharmacy: Rx-pending order has no prescription (HL-3)")
 		}
 		if s.rx != nil {
 			if err := s.rx.EnsureVerified(ctx, actorID, *o.PrescriptionID, o.PatientID, o.PharmacyProviderID); err != nil {
@@ -746,7 +746,7 @@ func (s *Service) Dispense(ctx context.Context, pharmacistID, orderID string) (*
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("pharmacy: only the verified pharmacy may dispense (HL-2)")
+			return nil, errors.New("pharmacy: only the verified pharmacy may dispense (HL-2)")
 		}
 	}
 	// DP-002/DP-003: the dispensed Rx-required lines must match the verified
@@ -803,7 +803,7 @@ func (s *Service) Dispatch(ctx context.Context, pharmacistID, orderID string) (*
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("pharmacy: only the verified pharmacy may dispatch (HL-2)")
+			return nil, errors.New("pharmacy: only the verified pharmacy may dispatch (HL-2)")
 		}
 	}
 	if o.State != StateDispensed {
@@ -858,7 +858,7 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 	case StateReadyForPickup:
 		// pickup requires the one-time code presented at counter.
 		if o.PickupCode == nil || pickupCode == "" || *o.PickupCode != pickupCode {
-			return nil, fmt.Errorf("pharmacy: pickup code mismatch")
+			return nil, errors.New("pharmacy: pickup code mismatch")
 		}
 		to = StateCollected
 	default:
@@ -870,7 +870,7 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 	// ProofRecorder is wired, store the proof (actorID assumed to be the driver).
 	if o.State == StateInDelivery {
 		if o.DeliveryRef == nil || *o.DeliveryRef == "" {
-			return nil, fmt.Errorf("pharmacy: missing delivery reference (not dispatched)")
+			return nil, errors.New("pharmacy: missing delivery reference (not dispatched)")
 		}
 		// For MVP, proof is passed via pickupCode (reuse that field as proof OTP).
 		// In a real flow, the driver app captures OTP/photo/signature and passes a structured proof.
@@ -900,7 +900,7 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 					return nil, fmt.Errorf("pharmacy: proof verification error (DP-006): %w", verr)
 				}
 				if !verified {
-					return nil, fmt.Errorf("pharmacy: proof verification failed — invalid or mismatched (DP-006)")
+					return nil, errors.New("pharmacy: proof verification failed — invalid or mismatched (DP-006)")
 				}
 				// Mark the proof as verified.
 				now := time.Now()
@@ -920,7 +920,7 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("pharmacy: pharmacy not payout-eligible — KYC tier required (HL-10)")
+			return nil, errors.New("pharmacy: pharmacy not payout-eligible — KYC tier required (HL-10)")
 		}
 	}
 
@@ -962,7 +962,7 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 		return nil, err
 	}
 	if o.PatientID != patientID {
-		return nil, fmt.Errorf("pharmacy: forbidden")
+		return nil, errors.New("pharmacy: forbidden")
 	}
 	if !isPreDispense(o.State) {
 		return nil, fmt.Errorf("pharmacy: order can only be cancelled before dispense, is %s", o.State)
@@ -996,7 +996,7 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 	}
 	owner, _ := s.pharmacyOwner(ctx, o.PharmacyProviderID)
 	if !isAdmin && requesterID != o.PatientID && requesterID != owner {
-		return nil, fmt.Errorf("pharmacy: forbidden")
+		return nil, errors.New("pharmacy: forbidden")
 	}
 	lines, _ := s.loadLines(ctx, orderID)
 	o.Lines = lines
@@ -1115,8 +1115,8 @@ func (s *Service) loadProfile(ctx context.Context, providerID string, requireDis
 	var v PharmacyProfile
 	if err := s.db.QueryRow(ctx, q, providerID).Scan(&v.ProviderID, &v.DisplayName, &v.Address,
 		&v.SupportsPickup, &v.SupportsDelivery, &v.DeliveryFeeKobo, &v.AvgRating, &v.RatingCount); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("pharmacy: not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("pharmacy: not found")
 		}
 		return nil, err
 	}
@@ -1134,7 +1134,7 @@ func (s *Service) GetPharmacyProfile(ctx context.Context, providerID string) (*P
 // pharmacy_reviews via the DB trigger, never client-set.
 func (s *Service) UpsertPharmacyProfile(ctx context.Context, ownerID, providerID string, in UpsertPharmacyProfileInput) (*PharmacyProfile, error) {
 	if ownerID == "" {
-		return nil, fmt.Errorf("pharmacy: unauthenticated")
+		return nil, errors.New("pharmacy: unauthenticated")
 	}
 	if s.prov != nil {
 		ok, err := s.prov.VerifiedPharmacyOwner(ctx, ownerID, providerID)
@@ -1142,11 +1142,11 @@ func (s *Service) UpsertPharmacyProfile(ctx context.Context, ownerID, providerID
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("pharmacy: not a verified pharmacy owner (HL-2)")
+			return nil, errors.New("pharmacy: not a verified pharmacy owner (HL-2)")
 		}
 	}
 	if in.DeliveryFeeKobo < 0 {
-		return nil, fmt.Errorf("pharmacy: delivery fee must be zero or positive kobo")
+		return nil, errors.New("pharmacy: delivery fee must be zero or positive kobo")
 	}
 	const q = `
 		INSERT INTO pharmacy_provider_profiles (pharmacy_provider_id, address, supports_pickup, supports_delivery, delivery_fee_kobo)
@@ -1169,17 +1169,17 @@ func (s *Service) UpsertPharmacyProfile(ctx context.Context, ownerID, providerID
 // silently double-counted into the rating aggregate.
 func (s *Service) SubmitReview(ctx context.Context, patientID, orderID string, rating int, body string) (*PharmacyReview, error) {
 	if patientID == "" {
-		return nil, fmt.Errorf("pharmacy: unauthenticated")
+		return nil, errors.New("pharmacy: unauthenticated")
 	}
 	if !validRating(rating) {
-		return nil, fmt.Errorf("pharmacy: rating must be between 1 and 5")
+		return nil, errors.New("pharmacy: rating must be between 1 and 5")
 	}
 	o, err := s.load(ctx, orderID)
 	if err != nil {
 		return nil, err
 	}
 	if o.PatientID != patientID {
-		return nil, fmt.Errorf("pharmacy: forbidden")
+		return nil, errors.New("pharmacy: forbidden")
 	}
 	if !isReviewable(o.State) {
 		return nil, fmt.Errorf("pharmacy: order must be completed before it can be reviewed, is %s", o.State)
@@ -1206,7 +1206,7 @@ func (s *Service) SubmitReview(ctx context.Context, patientID, orderID string, r
 		return nil, fmt.Errorf("pharmacy: submit review: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return nil, fmt.Errorf("pharmacy: order has already been reviewed")
+		return nil, errors.New("pharmacy: order has already been reviewed")
 	}
 	s.audited(patientID, "", "health.pharmacy.review.submit", r.ID, nil,
 		map[string]any{"order_id": orderID, "pharmacy_provider_id": o.PharmacyProviderID, "rating": rating})
@@ -1240,7 +1240,7 @@ func (s *Service) transition(ctx context.Context, actorID, orderID string, to Or
 	if err != nil {
 		return nil, fmt.Errorf("pharmacy: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	o, err := lockOrder(ctx, tx, orderID)
 	if err != nil {
@@ -1278,8 +1278,8 @@ func lockOrder(ctx context.Context, tx pgx.Tx, orderID string) (*Order, error) {
 	           FROM pharmacy_orders WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.PharmacyProviderID, &o.PrescriptionID,
 		&state, &method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.PickupCode, &o.IdempotencyKey, &o.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("pharmacy: order not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("pharmacy: order not found")
 		}
 		return nil, err
 	}
@@ -1298,8 +1298,8 @@ func (s *Service) load(ctx context.Context, orderID string) (*Order, error) {
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.PharmacyProviderID, &o.PrescriptionID,
 		&state, &method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.PickupCode, &o.IdempotencyKey, &o.CreatedAt,
 		&o.DeliveryAddress, &o.DeliveryLat, &o.DeliveryLng); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("pharmacy: order not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("pharmacy: order not found")
 		}
 		return nil, err
 	}
@@ -1346,7 +1346,7 @@ func (s *Service) loadLines(ctx context.Context, orderID string) ([]OrderLine, e
 func (s *Service) pharmacyOwner(ctx context.Context, providerID string) (string, error) {
 	var owner string
 	if err := s.db.QueryRow(ctx, `SELECT owner_user_id FROM health_providers WHERE id=$1`, providerID).Scan(&owner); err != nil {
-		return "", fmt.Errorf("pharmacy: provider not found")
+		return "", errors.New("pharmacy: provider not found")
 	}
 	return owner, nil
 }

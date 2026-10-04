@@ -2,6 +2,7 @@ package savings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"spotlight/backend/internal/finance/ledger"
@@ -45,7 +46,7 @@ func (s *VaultService) GetVault(ctx context.Context, ownerID, vaultID string) (*
 // which let any member break a LOCK vault penalty-free by sending 0.
 func (s *VaultService) EarlyWithdraw(ctx context.Context, ownerID, vaultID string, amountKobo int64, idemKey string) (int64, int64, error) {
 	if amountKobo <= 0 {
-		return 0, 0, fmt.Errorf("savings: withdraw must be positive")
+		return 0, 0, errors.New("savings: withdraw must be positive")
 	}
 	v, err := s.getVault(ctx, vaultID)
 	if err != nil {
@@ -155,6 +156,7 @@ func (s *VaultService) BuildSummary(ctx context.Context, ownerID string, ajo *Aj
 // CircleView is a circle plus the caller's membership context, for list rows.
 type CircleView struct {
 	Circle
+
 	MemberCount int    `json:"member_count"`
 	MyState     string `json:"my_state"`
 }
@@ -235,7 +237,7 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 		return err
 	}
 	if c.State != CircleActive {
-		return fmt.Errorf("savings: circle not active")
+		return errors.New("savings: circle not active")
 	}
 	isMem, err := s.IsMember(ctx, circleID, userID)
 	if err != nil {
@@ -249,7 +251,7 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 		return err
 	}
 	if cy == nil {
-		return fmt.Errorf("savings: no pending cycle")
+		return errors.New("savings: no pending cycle")
 	}
 	// Tier guard (fail-closed, E2E-FIN-041): a prepay debits the member's wallet —
 	// the same EnforceWalletDebitLimit the transfer rail runs.
@@ -261,7 +263,7 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 		return err
 	}
 	legKey := fmt.Sprintf("%s:ajo:%s:c%d:prepay:%s", idemKey, circleID, cy.CycleNumber, userID)
-	if derr := s.led.Debit(ctx, userID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo); derr != nil && derr != ledger.ErrDuplicate {
+	if derr := s.led.Debit(ctx, userID, "ajo:contrib:"+circleID, legKey, escrowAcc.ID, c.ContributionKobo); derr != nil && !errors.Is(derr, ledger.ErrDuplicate) {
 		return fmt.Errorf("savings: circle contribute: %w", derr)
 	}
 	// Credit the collected pot for the current cycle so the scheduled payout picks
@@ -279,6 +281,7 @@ func (s *AjoService) Contribute(ctx context.Context, circleID, userID string, id
 // TargetView is a group target plus the caller's context for list rows.
 type TargetView struct {
 	GroupTarget
+
 	BalanceKobo int64 `json:"balance_kobo"`
 	MemberCount int   `json:"member_count"`
 }

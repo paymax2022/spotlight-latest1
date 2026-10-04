@@ -1,6 +1,7 @@
 package top5events
 
 import (
+	"errors"
 	"net/http"
 	"slices"
 	"strconv"
@@ -549,7 +550,7 @@ func (h *Handler) SettleVendor(c *gin.Context) {
 	net, err := h.svc.SettleVendor(c.Request.Context(), c.Param("id"), c.Param("vendorId"), key)
 	if err != nil {
 		status := http.StatusBadRequest
-		if err == ErrKYCRequired {
+		if errors.Is(err, ErrKYCRequired) {
 			status = http.StatusForbidden
 		}
 		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
@@ -563,14 +564,14 @@ func (h *Handler) SettleVendor(c *gin.Context) {
 func respond(c *gin.Context, data any, err error) {
 	if err != nil {
 		status := http.StatusBadRequest
-		switch err {
-		case ErrForbidden:
+		switch {
+		case errors.Is(err, ErrForbidden):
 			status = http.StatusForbidden
-		case ErrNotFound:
+		case errors.Is(err, ErrNotFound):
 			status = http.StatusNotFound
-		case ErrSoldOut, ErrInsufficientFloat:
+		case errors.Is(err, ErrSoldOut), errors.Is(err, ErrInsufficientFloat):
 			status = http.StatusConflict
-		case ErrKYCRequired:
+		case errors.Is(err, ErrKYCRequired):
 			status = http.StatusForbidden
 		}
 		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})
@@ -582,10 +583,10 @@ func respond(c *gin.Context, data any, err error) {
 func respondOK(c *gin.Context, err error) {
 	if err != nil {
 		status := http.StatusBadRequest
-		switch err {
-		case ErrForbidden:
+		switch {
+		case errors.Is(err, ErrForbidden):
 			status = http.StatusForbidden
-		case ErrNotFound:
+		case errors.Is(err, ErrNotFound):
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": httperr.Msg(c, status, err)})

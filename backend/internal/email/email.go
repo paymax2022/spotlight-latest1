@@ -152,10 +152,7 @@ type brevoErrorResponse struct {
 // log line, an error string or a span here — an error returned from this method
 // is safe to log verbatim.
 func (c *BrevoClient) SendOTP(ctx context.Context, to, name, code string, ttl time.Duration) error {
-	minutes := int(ttl.Minutes())
-	if minutes < 1 {
-		minutes = 1
-	}
+	minutes := max(int(ttl.Minutes()), 1)
 	payload := brevoRequest{
 		Sender:     brevoAddress{Name: c.senderName, Email: c.senderEmail},
 		To:         []brevoAddress{{Email: to, Name: name}},
@@ -178,9 +175,9 @@ func (c *BrevoClient) SendOTP(ctx context.Context, to, name, code string, ttl ti
 	if err != nil {
 		return fmt.Errorf("brevo: build request: %w", err)
 	}
-	req.Header.Set("api-key", c.apiKey)
-	req.Header.Set("content-type", "application/json")
-	req.Header.Set("accept", "application/json")
+	req.Header.Set("Api-Key", c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -190,11 +187,11 @@ func (c *BrevoClient) SendOTP(ctx context.Context, to, name, code string, ttl ti
 		// A context that the CALLER cancelled is not a delivery failure and must
 		// not be retried — surface it as itself.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return fmt.Errorf("brevo: %v: %w", err, ctxErr)
+			return fmt.Errorf("brevo: %w: %w", err, ctxErr)
 		}
-		return fmt.Errorf("brevo: transport: %v: %w", err, ErrTransient)
+		return fmt.Errorf("brevo: transport: %w: %w", err, ErrTransient)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK {
 		// Drain so the connection returns to the idle pool instead of being closed.

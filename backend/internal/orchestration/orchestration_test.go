@@ -132,7 +132,7 @@ func (s stubProvider) ExecuteTransfer(_ context.Context, q *Quote, _ Destination
 	return &ExecuteResult{ProviderRef: s.name + "_ref", ExecutedRate: q.AllInRate, Destination: q.Destination, Status: "processing"}, nil
 }
 func (s stubProvider) CreateCollection(_ context.Context, cur, typ, _ string) (*CollectionResult, error) {
-	return &CollectionResult{ProviderRef: "col", Details: map[string]interface{}{"currency": cur, "type": typ}}, nil
+	return &CollectionResult{ProviderRef: "col", Details: map[string]any{"currency": cur, "type": typ}}, nil
 }
 func (s stubProvider) VerifyWebhookSignature([]byte, string) bool { return true }
 

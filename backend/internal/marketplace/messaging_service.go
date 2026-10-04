@@ -2,11 +2,12 @@ package marketplace
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"spotlight/backend/go-common/strutil"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // messaging_service.go implements the ADR-023 listings-and-connect "connect" model:

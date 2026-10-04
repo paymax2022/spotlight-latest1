@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"testing"
 
 	"spotlight/backend/internal/arena"
@@ -89,7 +90,7 @@ func TestFirewall_VerifyBeforeAppend(t *testing.T) {
 	rp := p
 	rp.AdapterID = rogue.ID()
 	rentry := arena.SignScore(rogue, rp, nil)
-	if err := ms.Append(context.Background(), "actor", rentry); err != ErrUnauthorizedSig {
+	if err := ms.Append(context.Background(), "actor", rentry); !errors.Is(err, ErrUnauthorizedSig) {
 		t.Fatalf("rogue signer must be rejected with ErrUnauthorizedSig, got %v", err)
 	}
 	if len(repo.inserted) != 1 {
@@ -108,7 +109,7 @@ func TestFirewall_Replay(t *testing.T) {
 	if err := ms.Append(context.Background(), "actor", entry); err != nil {
 		t.Fatal(err)
 	}
-	if err := ms.Append(context.Background(), "actor", entry); err != ErrReplay {
+	if err := ms.Append(context.Background(), "actor", entry); !errors.Is(err, ErrReplay) {
 		t.Fatalf("replay must be rejected with ErrReplay, got %v", err)
 	}
 }
@@ -185,7 +186,7 @@ func TestSupport_Idempotent(t *testing.T) {
 	led := newFakeLedger()
 	repo := &fakeSupportRepo{}
 	svc := NewSupportService(repo, led, fakeTier{3}, fakeCfg{Config{RequiredKYCTier: 1}}, &fakeAudit{}).WithDebitLimiter(allowAllDebitLimit{})
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if err := svc.Contribute(context.Background(), "u1", "same-idem", "c1", "k1", 1000); err != nil {
 			t.Fatal(err)
 		}
@@ -256,7 +257,7 @@ func TestSupport_ReplayReturnsSuccessNotRawLedgerError(t *testing.T) {
 // TestSupport_KYCGate proves the NDC-3 identity gate fails closed below tier.
 func TestSupport_KYCGate(t *testing.T) {
 	svc := NewSupportService(&fakeSupportRepo{}, newFakeLedger(), fakeTier{0}, fakeCfg{Config{RequiredKYCTier: 2}}, &fakeAudit{})
-	if err := svc.Contribute(context.Background(), "u1", "idem", "c1", "k1", 1000); err != ErrKYCTierTooLow {
+	if err := svc.Contribute(context.Background(), "u1", "idem", "c1", "k1", 1000); !errors.Is(err, ErrKYCTierTooLow) {
 		t.Fatalf("below-tier support must be ErrKYCTierTooLow, got %v", err)
 	}
 }

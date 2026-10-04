@@ -108,7 +108,7 @@ func seedFundedContribution(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 	}
 	t.Cleanup(func() {
 		mustExec := func(what, sql string, args ...any) {
-			if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			if _, err := pool.Exec(context.WithoutCancel(ctx), sql, args...); err != nil {
 				t.Errorf("cleanup %s: %v (fixture rows may be left in the database)", what, err)
 			}
 		}

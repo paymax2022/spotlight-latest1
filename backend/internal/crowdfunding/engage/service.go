@@ -138,7 +138,7 @@ func (s *Service) CreateTicket(ctx context.Context, userID string, in CreateTick
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	ticketID := uuid.New().String()
 	reference := newTicketReference()
@@ -171,7 +171,7 @@ func (s *Service) ReplyTicket(ctx context.Context, ticketID, body string) (*Supp
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	now := time.Now()
 	const insMsg = `
@@ -578,7 +578,7 @@ func (s *Service) BroadcastToContributors(ctx context.Context, campaignID, autho
 	br := s.db.SendBatch(ctx, batch)
 	for range recipients {
 		if _, err := br.Exec(); err != nil {
-			br.Close()
+			_ = br.Close()
 			return nil, err
 		}
 	}

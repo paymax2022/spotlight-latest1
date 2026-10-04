@@ -26,6 +26,7 @@ package otp_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
 	"testing"
@@ -61,7 +62,7 @@ func newKey(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	t.Helper()
 	k := "test:" + uuid.NewString()
 	t.Cleanup(func() {
-		if _, err := pool.Exec(ctx, `DELETE FROM otp_codes WHERE key = $1`, k); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM otp_codes WHERE key = $1`, k); err != nil {
 			t.Errorf("cleanup code %s: %v", k, err)
 		}
 	})
@@ -82,7 +83,7 @@ func put(t *testing.T, ctx context.Context, s *otp.PostgresStore, key, code stri
 	if err := s.Put(ctx, key, rec, ttl); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	for i := 0; i < attempts; i++ {
+	for range attempts {
 		if _, err := s.IncrementAttempts(ctx, key); err != nil {
 			t.Fatalf("seed attempt: %v", err)
 		}
@@ -103,7 +104,7 @@ func TestLiveDB_ConsumeIsSingleUseUnderConcurrency(t *testing.T) {
 	results := make([]bool, racers)
 	start := make(chan struct{})
 
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -181,7 +182,7 @@ func TestLiveDB_ConsumeNeverSucceedsOnARowAnotherWriterTook(t *testing.T) {
 	const racers = 8
 	var wg sync.WaitGroup
 	results := make([]bool, racers)
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -229,7 +230,7 @@ func TestLiveDB_IncrementAttemptsLosesNoUpdates(t *testing.T) {
 	seen := make([]int, racers)
 	start := make(chan struct{})
 
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -348,7 +349,7 @@ func TestLiveDB_DeleteExpiredSweeps(t *testing.T) {
 	if _, err := store.DeleteExpired(ctx, 500); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
-	if _, err := store.Get(ctx, key); err != otp.ErrNotFound {
+	if _, err := store.Get(ctx, key); !errors.Is(err, otp.ErrNotFound) {
 		t.Errorf("expired row survived the sweep (err=%v)", err)
 	}
 }
@@ -360,7 +361,7 @@ func TestLiveDB_LimiterCountsAtomicallyAndRollsTheWindow(t *testing.T) {
 
 	key := "test:" + uuid.NewString()
 	t.Cleanup(func() {
-		if _, err := pool.Exec(ctx, `DELETE FROM otp_rate_limits WHERE key = $1`, key); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM otp_rate_limits WHERE key = $1`, key); err != nil {
 			t.Errorf("cleanup limiter row: %v", err)
 		}
 	})
@@ -371,7 +372,7 @@ func TestLiveDB_LimiterCountsAtomicallyAndRollsTheWindow(t *testing.T) {
 	allowed := make([]bool, racers)
 	start := make(chan struct{})
 
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

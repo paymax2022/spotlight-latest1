@@ -148,7 +148,7 @@ func (s *MarkupStore) SetRate(ctx context.Context, corridor, tier string, bps in
 	}
 	corridor = NormalizeCorridor(corridor)
 	if corridor == "" {
-		return nil, fmt.Errorf("fx: corridor is required")
+		return nil, errors.New("fx: corridor is required")
 	}
 	tier = strings.ToLower(strings.TrimSpace(tier))
 
@@ -156,7 +156,7 @@ func (s *MarkupStore) SetRate(ctx context.Context, corridor, tier string, bps in
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var beforeBPS *int
 	var beforeActive *bool

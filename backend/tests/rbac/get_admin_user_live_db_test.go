@@ -87,7 +87,7 @@ func seedPlatformUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cre
 		t.Fatalf("seed platform_users row: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(ctx, `DELETE FROM platform_users WHERE id = $1`, id); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM platform_users WHERE id = $1`, id); err != nil {
 			t.Errorf("cleanup platform_users row %s: %v", id, err)
 		}
 	})

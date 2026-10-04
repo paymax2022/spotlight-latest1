@@ -26,6 +26,7 @@ package learn_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -150,7 +151,7 @@ func TestLiveDB_GetQuiz_AnswerKeyNeverSerialized(t *testing.T) {
 
 	pathID := seedPath(t, ctx, pool)
 	lessonID := seedLesson(t, ctx, pool, pathID)
-	_, _, correctOptID, _ := seedQuizWithOneQuestion(t, ctx, pool, lessonID)
+	_, _, correctOptID, _ := seedQuizWithOneQuestion(t, ctx, pool, lessonID) //nolint:dogsled // tuple: only correctOptID needed
 
 	quiz, err := svc.GetQuiz(ctx, lessonID)
 	if err != nil {
@@ -241,7 +242,7 @@ func TestLiveDB_SubmitQuiz_RequiresAuthenticatedUser(t *testing.T) {
 	quizID, questionID, correctOptID, _ := seedQuizWithOneQuestion(t, ctx, pool, lessonID)
 
 	_, err := svc.SubmitQuiz(ctx, "", quizID, learn.QuizAnswers{questionID: correctOptID})
-	if err != learn.ErrForbidden {
+	if !errors.Is(err, learn.ErrForbidden) {
 		t.Fatalf("SubmitQuiz with empty userID: err = %v, want ErrForbidden", err)
 	}
 

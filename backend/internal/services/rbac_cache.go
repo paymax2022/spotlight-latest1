@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -54,14 +55,14 @@ func fresh[T any](e rbacTimed[T], ttl time.Duration) bool {
 	return !e.fetchedAt.IsZero() && time.Since(e.fetchedAt) <= ttl
 }
 
-func (c *cachedRBAC) GetUserStatus(userID string) (string, error) {
+func (c *cachedRBAC) GetUserStatus(ctx context.Context, userID string) (string, error) {
 	c.mu.Lock()
 	if e, ok := c.status[userID]; ok && fresh(e, c.ttl) {
 		c.mu.Unlock()
 		return e.val, nil
 	}
 	c.mu.Unlock()
-	v, err := c.inner.GetUserStatus(userID)
+	v, err := c.inner.GetUserStatus(ctx, userID)
 	if err != nil {
 		return "", err // never cache errors — an upstream outage must not pin
 	}
@@ -74,14 +75,14 @@ func (c *cachedRBAC) GetUserStatus(userID string) (string, error) {
 	return v, nil
 }
 
-func (c *cachedRBAC) GetUserRoles(userID string) ([]string, error) {
+func (c *cachedRBAC) GetUserRoles(ctx context.Context, userID string) ([]string, error) {
 	c.mu.Lock()
 	if e, ok := c.roles[userID]; ok && fresh(e, c.ttl) {
 		c.mu.Unlock()
 		return e.val, nil
 	}
 	c.mu.Unlock()
-	v, err := c.inner.GetUserRoles(userID)
+	v, err := c.inner.GetUserRoles(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +95,7 @@ func (c *cachedRBAC) GetUserRoles(userID string) ([]string, error) {
 	return v, nil
 }
 
-func (c *cachedRBAC) GetUserPermissions(userID, scopeType, scopeID string) ([]string, error) {
+func (c *cachedRBAC) GetUserPermissions(ctx context.Context, userID, scopeType, scopeID string) ([]string, error) {
 	key := userID + "|" + scopeType + "|" + scopeID
 	c.mu.Lock()
 	if e, ok := c.perms[key]; ok && fresh(e, c.ttl) {
@@ -102,7 +103,7 @@ func (c *cachedRBAC) GetUserPermissions(userID, scopeType, scopeID string) ([]st
 		return e.val, nil
 	}
 	c.mu.Unlock()
-	v, err := c.inner.GetUserPermissions(userID, scopeType, scopeID)
+	v, err := c.inner.GetUserPermissions(ctx, userID, scopeType, scopeID)
 	if err != nil {
 		return nil, err
 	}

@@ -56,6 +56,7 @@ type SupportTicketSummary struct {
 
 type SupportTicket struct {
 	SupportTicketSummary
+
 	Messages []TicketMessage `json:"messages"`
 }
 
@@ -93,6 +94,7 @@ type ChatMessage struct {
 
 type ChatThread struct {
 	ChatThreadSummary
+
 	Description *string       `json:"description"`
 	Messages    []ChatMessage `json:"messages"`
 }
@@ -108,6 +110,7 @@ type AiNoteSummary struct {
 
 type AiNote struct {
 	AiNoteSummary
+
 	Summary           string           `json:"summary"`
 	Minutes           string           `json:"minutes"`
 	Decisions         []map[string]any `json:"decisions"`

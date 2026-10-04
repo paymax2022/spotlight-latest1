@@ -55,7 +55,7 @@ func (s *Service) DeleteAccount(ctx context.Context, userID, actorID string) (*R
 	if err != nil {
 		return nil, fmt.Errorf("connect: begin delete tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	res := &Result{UserID: userID}
 

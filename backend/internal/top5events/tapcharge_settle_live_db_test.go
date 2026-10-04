@@ -60,7 +60,7 @@ func seedTapChargeSettleFixture(t *testing.T, ctx context.Context) tapChargeSett
 	if err != nil {
 		t.Fatalf("create event: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM events WHERE id=$1`, ev.ID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM events WHERE id=$1`, ev.ID) })
 	if err := svc.Submit(ctx, organiser, ev.ID); err != nil {
 		t.Fatalf("submit: %v", err)
 	}

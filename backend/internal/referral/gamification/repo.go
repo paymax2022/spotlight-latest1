@@ -2,6 +2,7 @@ package gamification
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -109,7 +110,7 @@ func (r *Repository) GetProgress(ctx context.Context, missionID, userID string) 
 	var p MissionProgress
 	err := r.db.QueryRow(ctx, q, missionID, userID).Scan(
 		&p.ID, &p.MissionID, &p.UserID, &p.Progress, &p.Status, &p.ClaimedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return &MissionProgress{MissionID: missionID, UserID: userID, Progress: 0, Status: ProgressInProgress}, nil
 	}
 	if err != nil {
@@ -152,7 +153,7 @@ func (r *Repository) MarkClaimed(ctx context.Context, missionID, userID, idemKey
 		RETURNING id`
 	var id string
 	err := r.db.QueryRow(ctx, q, missionID, userID, idemKey).Scan(&id)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil // not completed / already claimed
 	}
 	if err != nil {
@@ -336,7 +337,7 @@ func (r *Repository) GetStreak(ctx context.Context, userID string) (Streak, erro
 		last *time.Time
 	)
 	err := r.db.QueryRow(ctx, q, userID).Scan(&st.Current, &st.Longest, &last, &st.Unit)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return Streak{Found: false}, nil
 	}
 	if err != nil {

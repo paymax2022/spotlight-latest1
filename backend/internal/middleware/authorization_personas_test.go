@@ -1,13 +1,15 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 // authorization_personas_test.go drives the RBAC middleware through the scenario
@@ -43,12 +45,14 @@ func (s *scopedRBAC) CheckPermission(userID, permission, scopeType, scopeID stri
 	return s.grants[scopeKey{userID, permission, scopeType, scopeID}], nil
 }
 
-func (s *scopedRBAC) GetUserRoles(string) ([]string, error)                       { return nil, nil }
-func (s *scopedRBAC) GetUserScopes(string) ([]domain.UserScope, error)            { return nil, nil }
-func (s *scopedRBAC) GetUserPermissions(string, string, string) ([]string, error) { return nil, nil }
-func (s *scopedRBAC) ListRoles() ([]domain.Role, error)                           { return nil, nil }
-func (s *scopedRBAC) CreateRole(domain.Role) (domain.Role, error)                 { return domain.Role{}, nil }
-func (s *scopedRBAC) UpdateRole(string, domain.Role) (domain.Role, error)         { return domain.Role{}, nil }
+func (s *scopedRBAC) GetUserRoles(context.Context, string) ([]string, error) { return nil, nil }
+func (s *scopedRBAC) GetUserScopes(string) ([]domain.UserScope, error)       { return nil, nil }
+func (s *scopedRBAC) GetUserPermissions(context.Context, string, string, string) ([]string, error) {
+	return nil, nil
+}
+func (s *scopedRBAC) ListRoles() ([]domain.Role, error)                   { return nil, nil }
+func (s *scopedRBAC) CreateRole(domain.Role) (domain.Role, error)         { return domain.Role{}, nil }
+func (s *scopedRBAC) UpdateRole(string, domain.Role) (domain.Role, error) { return domain.Role{}, nil }
 func (s *scopedRBAC) CloneRole(string, string, string) (domain.Role, error) {
 	return domain.Role{}, nil
 }
@@ -68,7 +72,7 @@ func (s *scopedRBAC) RemovePermissionFromRole(string, string) error             
 func (s *scopedRBAC) DeletePermission(string) error                                 { return nil }
 func (s *scopedRBAC) AssignRoleToUser(string, string, string, string, string) error { return nil }
 func (s *scopedRBAC) RemoveRoleFromUser(string, string, string) error               { return nil }
-func (s *scopedRBAC) GetUserStatus(string) (string, error)                          { return "active", nil }
+func (s *scopedRBAC) GetUserStatus(context.Context, string) (string, error)         { return "active", nil }
 func (s *scopedRBAC) SuspendUser(string) error                                      { return nil }
 func (s *scopedRBAC) UnsuspendUser(string) error                                    { return nil }
 func (s *scopedRBAC) LockUser(string) error                                         { return nil }
@@ -108,7 +112,7 @@ func scopedRouter(rbac services.RBACService, userID, perm, scopeType string) *gi
 
 func doGet(r *gin.Engine, path string) int {
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil))
 	return w.Code
 }
 

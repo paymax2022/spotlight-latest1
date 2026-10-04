@@ -8,6 +8,7 @@ package extranet
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -74,15 +75,16 @@ func newMediaFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) medi
 
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM public.stays_property_photo WHERE property_id = $1`, property)
-		pool.Exec(bg, `DELETE FROM public.stays_hotelier_profile WHERE property_id = $1`, property)
-		pool.Exec(bg, `DELETE FROM public.stays_property WHERE id = $1`, property)
-		pool.Exec(bg, `DELETE FROM auth.users WHERE id = $1`, owner)
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_property_photo WHERE property_id = $1`, property)
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_hotelier_profile WHERE property_id = $1`, property)
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_property WHERE id = $1`, property)
+		_, _ = pool.Exec(bg, `DELETE FROM auth.users WHERE id = $1`, owner)
 	})
 	return mediaFixture{svc: svc, pool: pool, owner: owner, property: property}
 }
 
-func ptr[T any](v T) *T { return &v }
+//go:fix inline
+func ptr[T any](v T) *T { return new(v) }
 
 func TestLiveDB_UpdateDetailsAppliesLocationAmenitiesAndPolicies(t *testing.T) {
 	pool := mediaPool(t)
@@ -91,14 +93,14 @@ func TestLiveDB_UpdateDetailsAppliesLocationAmenitiesAndPolicies(t *testing.T) {
 	f := newMediaFixture(t, ctx, pool)
 
 	err := f.svc.UpdateDetails(ctx, f.owner, f.property, PropertyDetailsPatch{
-		Lat: ptr(6.4531), Lng: ptr(3.3958),
-		Amenities:          ptr([]string{" WiFi ", "Pool", "wifi"}), // trims + case-insensitive dedupes
-		HouseRules:         ptr("No smoking indoors."),
-		CancellationPolicy: ptr("STRICT"),
-		CheckInFrom:        ptr("15:00"),
-		CheckOutUntil:      ptr("11:00"),
-		ContactPhone:       ptr("+2348012345678"),
-		ContactEmail:       ptr("front-desk@stfmedia.test"),
+		Lat: new(6.4531), Lng: new(3.3958),
+		Amenities:          new([]string{" WiFi ", "Pool", "wifi"}), // trims + case-insensitive dedupes
+		HouseRules:         new("No smoking indoors."),
+		CancellationPolicy: new("STRICT"),
+		CheckInFrom:        new("15:00"),
+		CheckOutUntil:      new("11:00"),
+		ContactPhone:       new("+2348012345678"),
+		ContactEmail:       new("front-desk@stfmedia.test"),
 	})
 	if err != nil {
 		t.Fatalf("UpdateDetails: %v", err)
@@ -128,7 +130,7 @@ func TestLiveDB_UpdateDetailsAppliesLocationAmenitiesAndPolicies(t *testing.T) {
 	}
 
 	// A field NOT sent in a second patch must be left untouched.
-	if err := f.svc.UpdateDetails(ctx, f.owner, f.property, PropertyDetailsPatch{HouseRules: ptr("Quiet hours after 10pm.")}); err != nil {
+	if err := f.svc.UpdateDetails(ctx, f.owner, f.property, PropertyDetailsPatch{HouseRules: new("Quiet hours after 10pm.")}); err != nil {
 		t.Fatalf("UpdateDetails (partial): %v", err)
 	}
 	prop2, err := f.svc.GetProperty(ctx, f.owner, f.property)
@@ -153,10 +155,10 @@ func TestLiveDB_UpdateDetailsRejectsInvalidInput(t *testing.T) {
 		name  string
 		patch PropertyDetailsPatch
 	}{
-		{"lat without lng", PropertyDetailsPatch{Lat: ptr(6.45)}},
-		{"lat out of range", PropertyDetailsPatch{Lat: ptr(200.0), Lng: ptr(3.0)}},
-		{"bad cancellation policy", PropertyDetailsPatch{CancellationPolicy: ptr("WHATEVER")}},
-		{"bad check-in format", PropertyDetailsPatch{CheckInFrom: ptr("3pm")}},
+		{"lat without lng", PropertyDetailsPatch{Lat: new(6.45)}},
+		{"lat out of range", PropertyDetailsPatch{Lat: new(200.0), Lng: new(3.0)}},
+		{"bad cancellation policy", PropertyDetailsPatch{CancellationPolicy: new("WHATEVER")}},
+		{"bad check-in format", PropertyDetailsPatch{CheckInFrom: new("3pm")}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -174,7 +176,7 @@ func TestLiveDB_UpdateDetailsRequiresAnActiveGrant(t *testing.T) {
 	f := newMediaFixture(t, ctx, pool)
 
 	stranger := uuid.New().String()
-	if err := f.svc.UpdateDetails(ctx, stranger, f.property, PropertyDetailsPatch{HouseRules: ptr("x")}); err != ErrForbidden {
+	if err := f.svc.UpdateDetails(ctx, stranger, f.property, PropertyDetailsPatch{HouseRules: new("x")}); !errors.Is(err, ErrForbidden) {
 		t.Errorf("UpdateDetails by a non-staff caller = %v, want ErrForbidden", err)
 	}
 }
@@ -272,7 +274,7 @@ func TestLiveDB_PhotoUploadRequiresAnActiveGrant(t *testing.T) {
 	f := newMediaFixture(t, ctx, pool)
 
 	stranger := uuid.New().String()
-	if _, _, err := f.svc.PresignPhotoUpload(ctx, stranger, f.property, "image/jpeg"); err != ErrForbidden {
+	if _, _, err := f.svc.PresignPhotoUpload(ctx, stranger, f.property, "image/jpeg"); !errors.Is(err, ErrForbidden) {
 		t.Errorf("PresignPhotoUpload by a non-staff caller = %v, want ErrForbidden", err)
 	}
 }
@@ -284,7 +286,7 @@ func TestLiveDB_PhotoUploadFailsClosedWithoutAPresigner(t *testing.T) {
 	f := newMediaFixture(t, ctx, pool)
 	f.svc.WithPhotoPresigner(fakePresigner{configured: false})
 
-	if _, _, err := f.svc.PresignPhotoUpload(ctx, f.owner, f.property, "image/jpeg"); err != ErrUploadsNotConfigured {
+	if _, _, err := f.svc.PresignPhotoUpload(ctx, f.owner, f.property, "image/jpeg"); !errors.Is(err, ErrUploadsNotConfigured) {
 		t.Errorf("PresignPhotoUpload with no configured presigner = %v, want ErrUploadsNotConfigured", err)
 	}
 }
@@ -315,10 +317,10 @@ func TestLiveDB_VerificationChecklistReflectsRealPhotosAndPolicies(t *testing.T)
 		t.Error("policies should not read approved before house_rules is ever set")
 	}
 
-	if err := f.svc.UpdateDetails(ctx, f.owner, f.property, PropertyDetailsPatch{HouseRules: ptr("Be quiet after 10pm.")}); err != nil {
+	if err := f.svc.UpdateDetails(ctx, f.owner, f.property, PropertyDetailsPatch{HouseRules: new("Be quiet after 10pm.")}); err != nil {
 		t.Fatalf("UpdateDetails: %v", err)
 	}
-	for i := 0; i < minPhotosForGoLive; i++ {
+	for i := range minPhotosForGoLive {
 		_, key, _ := f.svc.PresignPhotoUpload(ctx, f.owner, f.property, "image/jpeg")
 		if _, err := f.svc.ConfirmPhotoUpload(ctx, f.owner, f.property, key, "", ""); err != nil {
 			t.Fatalf("ConfirmPhotoUpload #%d: %v", i, err)

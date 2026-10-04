@@ -69,7 +69,7 @@ func (s *sqlStore) SeedBalance(ctx context.Context, customer, currency string, a
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := lockCustomerWallet(ctx, tx, customer); err != nil {
 		return err
 	}
@@ -128,7 +128,7 @@ func (s *sqlStore) ApplyConversion(ctx context.Context, c *Conversion, sourceTot
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// One advisory lock, taken FIRST and before any row lock, so concurrent FX
 	// conversions and wallet transfers for this customer serialise instead of
@@ -184,7 +184,7 @@ func (s *sqlStore) ApplyTransfer(ctx context.Context, t *Transfer, sourceTotalMi
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err = lockCustomerWallet(ctx, tx, t.CustomerID); err != nil {
 		return err
@@ -332,7 +332,7 @@ func (s *sqlStore) ApplyCollection(ctx context.Context, c *CollectionCredit) (bo
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err = lockCustomerWallet(ctx, tx, c.CustomerID); err != nil {
 		return false, err

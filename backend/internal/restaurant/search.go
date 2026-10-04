@@ -2,7 +2,7 @@ package restaurant
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -135,10 +135,7 @@ func buildSearchQuery(p SearchParams, now time.Time, loc *time.Location) (string
 	if limit <= 0 || limit > maxSearchLimit {
 		limit = defaultSearchLimit
 	}
-	offset := p.Offset
-	if offset < 0 {
-		offset = 0
-	}
+	offset := max(p.Offset, 0)
 	b.WriteString(" LIMIT " + ph(limit) + " OFFSET " + ph(offset))
 	return b.String(), args
 }
@@ -184,7 +181,7 @@ func (s *Service) UpdateRestaurantProfile(ctx context.Context, restaurantID, use
 	}
 	if req.PrepTimeMinutes != nil {
 		if *req.PrepTimeMinutes < 0 || *req.PrepTimeMinutes > 240 {
-			return fmt.Errorf("restaurant: prep_time_minutes must be in [0,240]")
+			return errors.New("restaurant: prep_time_minutes must be in [0,240]")
 		}
 		if _, err := s.db.Exec(ctx, `UPDATE restaurants SET prep_time_minutes=$1, updated_at=NOW() WHERE id=$2`, *req.PrepTimeMinutes, restaurantID); err != nil {
 			return err
@@ -192,7 +189,7 @@ func (s *Service) UpdateRestaurantProfile(ctx context.Context, restaurantID, use
 	}
 	if req.MinOrderKobo != nil {
 		if *req.MinOrderKobo < 0 {
-			return fmt.Errorf("restaurant: min_order_kobo must be >= 0")
+			return errors.New("restaurant: min_order_kobo must be >= 0")
 		}
 		if _, err := s.db.Exec(ctx, `UPDATE restaurants SET min_order_kobo=$1, updated_at=NOW() WHERE id=$2`, *req.MinOrderKobo, restaurantID); err != nil {
 			return err

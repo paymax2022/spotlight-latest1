@@ -95,7 +95,7 @@ func TestGiftingAdminLedger_ListsRealRowsEnforcesRBACAndFilters(t *testing.T) {
 		t.Fatalf("grant connect-moderator to admin caller: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM user_roles WHERE user_id=$1 AND role_id=$2`, adminCaller, moderatorRoleID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM user_roles WHERE user_id=$1 AND role_id=$2`, adminCaller, moderatorRoleID)
 	})
 
 	// Sanity check: the migration this test exercises must actually be
@@ -128,8 +128,8 @@ func TestGiftingAdminLedger_ListsRealRowsEnforcesRBACAndFilters(t *testing.T) {
 		t.Fatalf("seed reversed gift: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM connect_gifts WHERE id IN ($1,$2)`, sentID, reversedID)
-		_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id IN ($1,$2)`, sender, recipient)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM connect_gifts WHERE id IN ($1,$2)`, sentID, reversedID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id IN ($1,$2)`, sender, recipient)
 	})
 
 	// user_has_permission RPC) + connectgifting.RegisterAdmin ---
@@ -156,7 +156,7 @@ func TestGiftingAdminLedger_ListsRealRowsEnforcesRBACAndFilters(t *testing.T) {
 
 	doReq := func(t *testing.T, caller, query string) (*httptest.ResponseRecorder, []giftingAdminRow) {
 		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, "/api/connect/admin/gifts"+query, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/connect/admin/gifts"+query, nil)
 		req.Header.Set("X-Test-User", caller)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -271,7 +271,7 @@ func seedGiftingAdminPlatformUser(t *testing.T, ctx context.Context, pool *pgxpo
 		t.Fatalf("seed platform_users row: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM platform_users WHERE id = $1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM platform_users WHERE id = $1`, id)
 	})
 	return id
 }

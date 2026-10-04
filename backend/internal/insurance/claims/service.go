@@ -114,7 +114,7 @@ type FNOLInput struct {
 // the underlying (ACTIVE, bound) policy.
 func (s *Service) SubmitFNOL(ctx context.Context, userID string, in FNOLInput, idempotencyKey string) (*Claim, error) {
 	if idempotencyKey == "" {
-		return nil, fmt.Errorf("claims: Idempotency-Key required for FNOL")
+		return nil, errors.New("claims: Idempotency-Key required for FNOL")
 	}
 
 	// Idempotency: a retried FNOL returns the existing claim.

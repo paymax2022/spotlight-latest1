@@ -102,7 +102,7 @@ func verifyPIN(stored, candidate string) bool {
 }
 
 func splitHash(s string) (salt, digest string, ok bool) {
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		if s[i] == ':' {
 			return s[:i], s[i+1:], i > 0 && i < len(s)-1
 		}

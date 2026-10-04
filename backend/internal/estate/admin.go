@@ -3,6 +3,7 @@ package estate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -133,7 +134,7 @@ func (s *Service) BanResident(ctx context.Context, estateID, adminID, targetUser
 		return err
 	}
 	if targetUserID == adminID {
-		return fmt.Errorf("estate: cannot ban yourself")
+		return errors.New("estate: cannot ban yourself")
 	}
 	ct, err := s.db.Exec(ctx,
 		`UPDATE estate_residents SET banned_at=NOW(), ban_reason=$3 WHERE estate_id=$1 AND user_id=$2 AND deleted_at IS NULL`,
@@ -142,7 +143,7 @@ func (s *Service) BanResident(ctx context.Context, estateID, adminID, targetUser
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("estate: resident not found in this estate")
+		return errors.New("estate: resident not found in this estate")
 	}
 	_ = s.audit(ctx, estateID, adminID, "RESIDENT_BAN", "resident", targetUserID, map[string]any{"reason": reason})
 	s.notify(ctx, estateID, targetUserID, NotifAdminApprovalRequired, "Account banned",
@@ -162,7 +163,7 @@ func (s *Service) RestoreResident(ctx context.Context, estateID, adminID, target
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("estate: resident not found in this estate")
+		return errors.New("estate: resident not found in this estate")
 	}
 	_ = s.audit(ctx, estateID, adminID, "RESIDENT_RESTORE", "resident", targetUserID, nil)
 	s.notify(ctx, estateID, targetUserID, NotifAdminApprovalRequired, "Access restored",
@@ -205,7 +206,7 @@ func (s *Service) GetEstateConfig(ctx context.Context, estateID, adminID string)
 	cfg := &EstateConfig{EstateID: estateID, Rules: json.RawMessage("{}"), SubscriptionPlan: json.RawMessage("{}")}
 	const q = `SELECT rules, subscription_plan, updated_at FROM estate_config WHERE estate_id=$1`
 	err := s.db.QueryRow(ctx, q, estateID).Scan(&cfg.Rules, &cfg.SubscriptionPlan, &cfg.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return cfg, nil
 	}
 	if err != nil {

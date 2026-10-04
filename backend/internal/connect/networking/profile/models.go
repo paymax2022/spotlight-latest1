@@ -27,7 +27,7 @@ const (
 // recommendation without the subject's explicit accept — is rejected.
 //
 //	DRAFTED → SENT
-//	SENT    → ACCEPTED_VISIBLE
+//	→ ACCEPTED_VISIBLE
 //	SENT    → DECLINED_HIDDEN
 func validTransition(from, to RecoState) bool {
 	switch from {
@@ -178,10 +178,7 @@ func ComputeStrength(s StrengthSignals) int {
 	if s.PassedAssessment {
 		score += wAssessment
 	}
-	recoCredit := s.AcceptedRecommendations * wPerReco
-	if recoCredit > maxRecoCredit {
-		recoCredit = maxRecoCredit
-	}
+	recoCredit := min(s.AcceptedRecommendations*wPerReco, maxRecoCredit)
 	if recoCredit < 0 {
 		recoCredit = 0
 	}

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -578,7 +579,7 @@ func formatRange(nutrient string, r Range, status Status) string {
 // trimNum renders a float without a trailing ".0" (e.g. 540, 6.5).
 func trimNum(v float64) string {
 	if v == math.Trunc(v) {
-		return fmt.Sprintf("%d", int64(math.Round(v)))
+		return strconv.FormatInt(int64(math.Round(v)), 10)
 	}
 	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.1f", v), "0"), ".")
 }
@@ -804,7 +805,7 @@ func normalize(s string) string {
 // tokens splits a normalized string into a set of word tokens.
 func tokens(s string) map[string]bool {
 	out := map[string]bool{}
-	for _, t := range strings.Fields(s) {
+	for t := range strings.FieldsSeq(s) {
 		out[t] = true
 	}
 	return out

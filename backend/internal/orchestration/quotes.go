@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	goredis "github.com/redis/go-redis/v9"
 	"strings"
 	"sync"
 	"time"
+
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // Rate-integrity errors (spec §2 RT-002/RT-006, §17 EC-002/EC-011). Returned by

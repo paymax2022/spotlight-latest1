@@ -146,7 +146,7 @@ func (s *Service) ResolveCodeToReferrer(ctx context.Context, code string) (strin
 // Idempotent: UNIQUE(referrer_id, referred_id) prevents double-reward.
 func (s *Service) ProcessReward(ctx context.Context, referrerID, referredID string) error {
 	if referrerID == referredID {
-		return fmt.Errorf("referrals: self-referral blocked")
+		return errors.New("referrals: self-referral blocked")
 	}
 
 	idempotencyKey := fmt.Sprintf("referral:reward:%s:%s", referrerID, referredID)
@@ -163,7 +163,7 @@ func (s *Service) ProcessReward(ctx context.Context, referrerID, referredID stri
 		return err
 	}
 	if err := s.ledger.Credit(ctx, referrerID, "referral:reward:"+referredID, idempotencyKey, rewardAcc.ID, RewardAmountKobo); err != nil {
-		if err == ledger.ErrDuplicate {
+		if errors.Is(err, ledger.ErrDuplicate) {
 			return nil
 		}
 		return fmt.Errorf("referrals: credit reward: %w", err)

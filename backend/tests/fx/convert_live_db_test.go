@@ -58,11 +58,11 @@ func liveDBPool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping live-DB FX convert integration test; see bring-up note in convert_live_db_test.go")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	if err := pool.Ping(context.Background()); err != nil {
+	if err := pool.Ping(t.Context()); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
 	return pool
@@ -85,11 +85,11 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	testsupport.CleanupUser(t, pool, id)
 	testsupport.SetKycTier(t, ctx, pool, id, testsupport.KycTierUnlimited)
 	t.Cleanup(func() {
-		ctx := context.Background()
-		_, _ = pool.Exec(ctx, `DELETE FROM public.fx_conversions WHERE user_id=$1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.fx_quotes WHERE user_id=$1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.currency_wallets WHERE user_id=$1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, id)
+		ctx := t.Context()
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.fx_conversions WHERE user_id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.fx_quotes WHERE user_id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.currency_wallets WHERE user_id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, id)
 	})
 	return id
 }
@@ -177,7 +177,7 @@ func mapleradTestServer(t *testing.T) *httptest.Server {
 func TestLiveDB_FXConvert_BothLegsPosted_MirrorCredited_ReplayNoDoubleCredit(t *testing.T) {
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
-	ctx := context.Background()
+	ctx := t.Context()
 	led := newLiveLedger(pool)
 
 	srv := mapleradTestServer(t)

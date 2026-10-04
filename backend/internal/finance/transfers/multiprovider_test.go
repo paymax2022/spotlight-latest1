@@ -3,8 +3,9 @@ package transfers_test
 import (
 	"testing"
 
-	"golang.org/x/crypto/bcrypt"
 	"spotlight/backend/internal/finance/transfers"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Per-leg idempotency key derivation.

@@ -344,7 +344,7 @@ func (r *Repository) DecideApproval(ctx context.Context, actor, id string, to Ap
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from ApprovalState
 	err = tx.QueryRow(ctx, `SELECT state FROM public.academy_purchase_approvals WHERE id = $1 FOR UPDATE`, id).Scan(&from)

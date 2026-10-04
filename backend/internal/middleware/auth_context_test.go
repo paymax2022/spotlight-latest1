@@ -1,13 +1,15 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/integrations"
+
+	"github.com/gin-gonic/gin"
 )
 
 // AUTH-005: RequireAuthContext's base bearer-token-verification path had only
@@ -18,11 +20,12 @@ import (
 // the no-op mockRBAC already used elsewhere in this package.
 type statusRBAC struct {
 	mockRBAC
+
 	status string
 	err    error
 }
 
-func (s statusRBAC) GetUserStatus(string) (string, error) { return s.status, s.err }
+func (s statusRBAC) GetUserStatus(context.Context, string) (string, error) { return s.status, s.err }
 
 func authUserServer(t *testing.T, status int, body string) *httptest.Server {
 	t.Helper()
@@ -38,7 +41,7 @@ func authUserServer(t *testing.T, status int, body string) *httptest.Server {
 
 func doRequest(r *gin.Engine, authHeader string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", nil)
 	if authHeader != "" {
 		req.Header.Set("Authorization", authHeader)
 	}

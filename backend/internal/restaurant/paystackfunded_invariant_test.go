@@ -24,7 +24,7 @@ import (
 func TestPlaceOrderRequest_HasNoClientSettableExternalSwitch(t *testing.T) {
 	forbidden := []string{"external", "verified", "skiptier", "notier", "bypasstier", "paystackfunded"}
 
-	typ := reflect.TypeOf(PlaceOrderRequest{})
+	typ := reflect.TypeFor[PlaceOrderRequest]()
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)
 		jsonTag := f.Tag.Get("json")
