@@ -16,32 +16,14 @@ import (
 	"spotlight/backend/internal/platform/r2"
 )
 
-// presign.go — backend-owned presigned Cloudflare R2 uploads for association logos.
-// WHY THIS EXISTS
-// The create-organisation wizard has always offered "tap to upload a logo", and
-// the picker handed back a device-local file:// URI which was then stored
-// verbatim in assoc_organisations.logo_url. The logo rendered on the founder's
-// own phone and nowhere else — not for other members, not in the admin console.
-// Making the logo a required field turned that from a cosmetic gap into a trap,
-// because every founder who used the picker got a broken logo.
-// The flow now mirrors estate's (see internal/estate/presign.go):
-//  1. Client calls POST /api/finance/associations/uploads/logo/presign with
-//     {fileName, contentType}.
-//  2. Backend derives a SERVER-CONTROLLED object key
-//     (association/logo/<userID>/<rand><ext>) and returns a short-lived
-//     presigned PUT URL plus that key.
-//  3. Client PUTs the image straight to R2 — never through this API.
-//  4. Client sends the KEY back as the draft's logoUri, and it is stored in
-//     logo_url in place of a URL.
-// SCOPED TO THE USER, NOT AN ORGANISATION — deliberately. Estate presigns
-// against /:id because the estate already exists and membership can be checked.
-// A logo is chosen while the organisation is still a draft on the founder's
-// phone, so there is no id to scope to and no membership to verify. The key is
-// namespaced by the caller's own user id instead: a caller can only ever write
-// inside their own prefix, and the random component makes keys unguessable, so
-// the worst an authenticated caller can do is upload images into their own
-// namespace.
-// R2 credentials stay server-side. When R2 is unconfigured the endpoint fails
+// presign.go — backend-owned presigned R2 uploads for association logos.
+// Previously the picker stored a device-local file:// URI in logo_url — visible
+// on the founder's phone and nowhere else; making logo required turned that
+// cosmetic gap into a broken-logo trap. The flow mirrors estate's presign.go:
+// presign → client PUTs straight to R2 → the KEY is stored in logo_url.
+// SCOPED TO THE USER, not an org — a logo is chosen while the org is still a
+// draft, so there is no membership to verify; the caller can only write inside
+// their own unguessable prefix. When R2 is unconfigured the endpoint fails
 // closed with 503 rather than fabricating a URL that would 404 later.
 
 // logoPresignTTL bounds how long an issued upload URL is valid.

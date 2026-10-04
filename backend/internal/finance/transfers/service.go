@@ -47,14 +47,10 @@ type Auditor interface {
 func (s *Service) SetAuditor(a Auditor) { s.auditSink = a }
 
 // CommissionRecorder is the nil-safe seam into the central Commission & Profit
-// module. app-wiring injects a thin adapter over the finance commission service;
-// when the commission feature is off (or no recorder is wired) the field is nil and
-// recording is a silent no-op. Modeled as a LOCAL interface so transfers never
-// imports the commission package at compile time (mirrors transport/service.go).
-// This records realized profit ONLY; it never moves money. The transfer's own money
-// movements (the fee credit into paymax_revenue) are unchanged, and the injected
-// recorder is deliberately constructed WITHOUT a ledger so RecordFor never re-posts
-// to the ledger (no double count) — it appends the immutable earning row only.
+// module (local interface so transfers never imports commission; mirrors
+// transport/service.go). It records realized profit ONLY and never moves
+// money — the injected recorder is built WITHOUT a ledger so RecordFor appends
+// the immutable earning row only (no double count).
 type CommissionRecorder interface {
 	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
 		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
@@ -66,15 +62,11 @@ type CommissionRecorder interface {
 // post-construction). Nil is accepted and disables recording.
 func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
 
-// recordCommissionSafe records realized Spotlight profit for a completed transfer.
-// It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
-// no-op, and any error is logged and swallowed so a profit-registry failure can
-// never fail or reverse a money movement. The transfer id doubles as the source ref
-// and idempotency key so retries / reconciliation never double-count. The module's
-// ACTUAL fee is a small fixed-kobo tier (see WalletTransferFee / BankTransferFee),
-// NOT a % of principal, so we record the EXACT feeKobo via RecordExact (grossKobo =
-// the transfer principal is passed for context only). Callers gate this on the real
-// fee being charged (fee > 0); a free transfer records nothing.
+// recordCommissionSafe records realized profit for a completed transfer.
+// Best-effort: nil-safe and errors are swallowed so it can never fail/reverse
+// a money movement; the transfer id doubles as source ref + idempotency key.
+// The real earning is the fixed-kobo fee, NOT a % of principal, so RecordExact
+// is used; callers gate on fee > 0 (a free transfer records nothing).
 func (s *Service) recordCommissionSafe(ctx context.Context, service string, grossKobo, feeKobo int64,
 	sourceRef string, userID *string) {
 	if s.commission == nil || feeKobo <= 0 {
@@ -188,8 +180,8 @@ func (p walletPreflight) run(ctx context.Context, senderID string, req WalletTra
 		return nil, nil, err
 	}
 
-	// Idempotency replay: same key already processed → hand back the prior
-	// result, no second debit/credit and no later gate that could refuse it.
+	// Replay first: a completed key returns the prior transfer, never reaching
+	// the gates below (which could now refuse it — see run's doc).
 	prior, err := p.findReplay(ctx, req.IdempotencyKey)
 	if err != nil {
 		return nil, nil, err
@@ -198,7 +190,6 @@ func (p walletPreflight) run(ctx context.Context, senderID string, req WalletTra
 		return prior, nil, nil
 	}
 
-	// Resolve recipient (ErrRecipientNotFound → 404, ErrAmbiguousRecipient → 409).
 	recipient, err := p.resolve(ctx, req.RecipientPhone)
 	if err != nil {
 		return nil, nil, err
@@ -207,8 +198,7 @@ func (p walletPreflight) run(ctx context.Context, senderID string, req WalletTra
 		return nil, nil, ErrSelfTransfer // → 422
 	}
 
-	// Tier guard (fail-closed): Tier 0 → ErrWalletDisabled (403),
-	// over daily cap → ErrDailyLimitExceeded (403).
+	// Tier guard (fail-closed): Tier 0 / over daily cap → 403.
 	if err := p.enforceTier(ctx, senderID, req.AmountKobo); err != nil {
 		return nil, nil, err
 	}
@@ -317,18 +307,13 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("transfers: commit: %w", err)
 	}
-	// Record realized Spotlight profit into the central Commission & Profit registry.
-	// ONLY when a fee was actually charged (small wallet transfers ≤ ₦5,000 are free
-	// ⇒ fee == 0 ⇒ nothing earned ⇒ record nothing, per the money-path rule). gross =
-	// the transfer principal; source ref + idempotency key = the transfer id. Best-
-	// effort + idempotent — a recorder failure can never fail/reverse the transfer.
+	// fee == 0 (transfers ≤ ₦5,000) ⇒ nothing earned ⇒ record nothing.
 	if fee > 0 {
 		s.recordCommissionSafe(ctx, "Money Transfer", wt.AmountKobo, wt.FeeKobo, wt.ID, &wt.SenderID)
 	}
-	// Action-level audit event (E2E-X-029): actor = sender, target = recipient,
-	// entity = the transfer row. Best-effort — an audit failure can never fail
-	// or reverse the committed transfer. Replays return early above, so a
-	// duplicate Idempotency-Key cannot double-emit.
+	// Action-level audit event (E2E-X-029): actor = sender, target = recipient.
+	// Best-effort; replays returned early above so a duplicate key cannot
+	// double-emit.
 	s.auditEvent(ctx, senderID, wt.RecipientID, "wallet.transfer.send", wt.ID, map[string]any{
 		"amount_kobo": wt.AmountKobo,
 		"fee_kobo":    wt.FeeKobo,
@@ -376,9 +361,9 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 	total := req.AmountKobo + fee
 	reference := "bt-" + time.Now().Format("20060102150405") + "-" + uuid.New().String()[:8]
 
-	// Resolve account name + a usable recipient code BEFORE reserving funds: the
-	// bank_transfers row requires bank_name/account_name/account_number_last4/
-	// paystack_recipient_code NOT NULL. This is read-only (no money moves yet).
+	// Resolve BEFORE reserving funds: bank_transfers requires bank_name/
+	// account_name/account_number_last4/paystack_recipient_code NOT NULL.
+	// Read-only — no money moves yet.
 	accName, _, _ := s.registry.ResolveAccountFailover(ctx, req.Provider, req.BankCode, req.AccountNumber)
 	accountName := "UNRESOLVED"
 	if accName != nil && accName.AccountName != "" {
@@ -479,7 +464,6 @@ func (s *Service) initiatePayoutLeg(ctx context.Context, bt *BankTransfer, saveB
 			accName = res.AccountName
 		}
 	}
-	// Cached recipient codes per provider for this destination.
 	cached := s.cachedRecipients(ctx, bt.UserID, bt.BankCode, bt.AccountNumber)
 
 	result, err := s.registry.InitiatePayoutFailover(ctx, preferred,
@@ -491,7 +475,6 @@ func (s *Service) initiatePayoutLeg(ctx context.Context, bt *BankTransfer, saveB
 		return
 	}
 
-	// Persist provider routing + advance status.
 	const up = `
 		UPDATE bank_transfers
 		SET status='provider_initiated', provider=$2, provider_recipient_code=$3,
@@ -513,7 +496,6 @@ func (s *Service) initiatePayoutLeg(ctx context.Context, bt *BankTransfer, saveB
 		bt.AccountName = accName
 	}
 
-	// Cache the recipient code for reuse + save beneficiary when requested.
 	if accName != "" {
 		s.cacheRecipient(ctx, bt.UserID, result.Provider, bt.BankCode, bt.AccountNumber, accName, result.RecipientCode)
 	}
@@ -849,11 +831,8 @@ func (s *Service) settleTransfer(ctx context.Context, bt *BankTransfer, next Ban
 	}
 	bt.Status = next
 	s.audit(ctx, bt.UserID, "transfer.bank.settle."+string(next), bt.ID, bt.Reference)
-	// Record realized Spotlight profit ONLY on a SUCCESSFUL settlement where a fee was
-	// actually charged (bank transfers always carry a fixed-kobo fee; failed/reversed
-	// settlements refund the fee, so recording is gated to the success + fee>0 branch).
-	// gross = the transfer principal; source ref + idempotency key = the transfer id.
-	// Best-effort + idempotent — never fails or reverses the settlement.
+	// Profit only on a SUCCESSFUL settlement with a charged fee — failed/reversed
+	// settlements refund the fee.
 	if next == BankTransferSuccessful && bt.FeeKobo > 0 {
 		s.recordCommissionSafe(ctx, "Money Transfer", bt.AmountKobo, bt.FeeKobo, bt.ID, &bt.UserID)
 	}
@@ -1133,7 +1112,7 @@ type VerifyPinRequest struct {
 	PIN string `json:"pin" binding:"required"`
 }
 
-// WalletTransferFee — Fee schedule (kobo).
+// WalletTransferFee returns the wallet→wallet fee in kobo (banded schedule).
 func WalletTransferFee(amountKobo int64) int64 {
 	switch {
 	case amountKobo <= 500_000:
@@ -1145,6 +1124,7 @@ func WalletTransferFee(amountKobo int64) int64 {
 	}
 }
 
+// BankTransferFee returns the wallet→bank fee in kobo (banded schedule).
 func BankTransferFee(amountKobo int64) int64 {
 	switch {
 	case amountKobo <= 500_000:

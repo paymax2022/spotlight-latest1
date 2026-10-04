@@ -41,16 +41,10 @@ type UnderwriterGateway interface {
 	VerifyWebhook(ctx context.Context, payload []byte, signature string) (WebhookEvent, error)
 
 	// WebhookSignatureHeader returns the HTTP header this provider delivers its
-	// signature in, e.g. "x-mycoverai-signature".
-	// The adapter declares it because only the adapter knows it. The alternative
-	// — the ingestion handler guessing a header from the URL slug — silently
-	// fails: MyCover's slug is "mycover" but its header says "mycoverai", so a
-	// guessed "X-mycover-Signature" never matches, the signature arrives empty,
-	// and every genuine delivery is rejected before the HMAC even runs. That is
-	// a 401 with no bad actor anywhere in it, and nothing in the logs pointing at
-	// a header name.
-	// An empty return means "no provider-specific header"; the handler then falls
-	// back to the generic ones.
+	// signature in (e.g. "x-mycoverai-signature"). Only the adapter knows it —
+	// guessing from the URL slug fails silently (MyCover's slug is "mycover" but
+	// its header says "mycoverai", so every genuine delivery would be rejected
+	// before the HMAC runs). Empty = fall back to the generic headers.
 	WebhookSignatureHeader() string
 }
 
@@ -90,38 +84,24 @@ func NewRouter(resolver ProductResolver, adapters ...UnderwriterGateway) *Router
 // the product is unknown/inactive.
 var ErrNoProvider = fmt.Errorf("insurance gateway: no provider for product")
 
-// ErrProviderFloatExhausted is the provider-agnostic signal that an aggregator
-// refused a bind because PAYMAX'S PREFUNDED BALANCE WITH THAT AGGREGATOR is
-// empty — not because anything about the member or the product was wrong.
-// Aggregators that settle from a distributor float (MyCover does; it does not
-// charge per transaction) wrap this sentinel around their own error, so feature
-// code branches on the CONDITION without importing a provider package. Keeping
-// it here is what stops the money path from growing a per-provider import.
-// It is called out separately from a generic bind failure because the two need
-// opposite responses: a generic failure is one member's problem, while this is a
-// treasury outage that fails every bind at once and must pause the queue before
-// more members are debited.
+// ErrProviderFloatExhausted signals an aggregator refused a bind because
+// PAYMAX'S PREFUNDED FLOAT with it is empty — a treasury outage that fails
+// every bind at once and must pause the queue, not one member's problem.
+// Float-settling aggregators (MyCover) wrap this sentinel so feature code
+// branches on the condition without a per-provider import.
 var ErrProviderFloatExhausted = fmt.Errorf("insurance gateway: provider prefunded float exhausted")
 
-// ErrProviderRejected marks a DEFINITE negative: the provider (or our own
-// pre-flight check) answered and refused, so nothing was created on their side.
-// This exists to separate "the provider said no" from "we never found out". It
-// is the difference between a retry that is safe and a retry that might buy a
-// second policy with real money, and no aggregator reports it as a distinct
-// code — so every adapter must wrap this sentinel around the errors it KNOWS
-// were replies. Anything not wrapping it is treated as an unknown outcome and
-// is never auto-retried, which is the safe default for silence.
+// ErrProviderRejected marks a DEFINITE negative: the provider answered and
+// refused, so nothing was created upstream and failover/retry is safe. No
+// aggregator reports this as a distinct code — every adapter must wrap this
+// sentinel around errors it KNOWS were replies. Anything else is an unknown
+// outcome and is never auto-retried.
 var ErrProviderRejected = fmt.Errorf("insurance gateway: provider rejected the request")
 
 // ValidationRejection is a provider refusal caused by the APPLICANT'S ANSWERS
-// rather than by us or by an outage — a missing NIN, a malformed email, a value
-// under the insurer's floor.
-// It exists so feature code can tell "your form is wrong" apart from "the
-// provider is down" WITHOUT importing a specific adapter. Both unwrap to
-// ErrProviderRejected, but only this one is the member's to fix, and only this
-// one should be shown to them as form errors. Answering a rejected application
-// with a 500 tells the client nothing is actionable: the person sees a generic
-// failure, retypes everything, and hits the same wall.
+// (missing NIN, malformed email, under the insurer's floor) rather than an
+// outage — the only refusal shown to the member as form errors. Both it and a
+// plain refusal unwrap to ErrProviderRejected.
 type ValidationRejection interface {
 	error
 	// Validation reports that this refusal is about the submitted values.
@@ -298,18 +278,12 @@ type WebhookEvent struct {
 	RawRef string
 }
 
-// ProviderProduct — PER-PRODUCT ROUTING DESCRIPTOR
-// Some aggregators (MyCover) expose NO generic bind endpoint. Each product has
-// its own purchase path (`POST /products/{prefix}/buy-{slug}`), its own pricing
-// model (flat naira amount vs a percentage RATE of the sum insured) and its own
-// required-field schema. The slug is NOT derivable from the product's route_name
-// — `bastion-flexicare-mini` maps to `/products/bastion/buy-flexicare-mini` for
-// one product and 404s for another — so it MUST be discovered and stored, never
-// computed.
-// ProviderProduct is that stored descriptor, resolved from the DB catalog and
-// handed to the adapter on every call. It is what keeps "add a product" a DATA
-// change (one catalog row, written by the catalog sync) rather than a code
-// change: no adapter method branches on a product identity.
+// ProviderProduct is the per-product routing descriptor resolved from the DB
+// catalog and handed to the adapter on every call. Some aggregators (MyCover)
+// expose NO generic bind endpoint — each product has its own buy path, pricing
+// model, and field schema, and the slug is NOT derivable from route_name
+// (one product's guess 404s for another), so it is stored, never computed.
+// This is what keeps "add a product" a DATA change.
 type ProviderProduct struct {
 	// Code is the provider-side product code (MyCover `route_name`).
 	Code string
@@ -362,27 +336,19 @@ type ProviderProduct struct {
 	NotPurchasable bool
 }
 
-// THE MONEY UNIT SEAM — the contract between the form schema and the adapter
-// A product's form schema classifies each input. One of those labels, `money`,
-// is LOAD-BEARING: it is the only thing that says a value is denominated, and
-// therefore the only thing that says a scale must be applied when the value
-// crosses into a provider that speaks a different unit.
-// MyCover's form inputs are denominated in NAIRA. Paymax's iron rule is INTEGER
-// KOBO, and every client submits kobo — without a single conversion point every
-// declared value reaches the insurer 100x too large.
-// The rule, stated here so both sides read it from the same place:
-//	A money input crosses EVERY internal boundary in kobo (MoneyInputWireUnit).
-//	The PROVIDER ADAPTER converts to the provider's unit exactly once, for
-//	exactly the field paths this file derives from the SAME schema the client
-//	rendered.
-// Deriving the field set from the published schema is what makes a name-based
-// `money` heuristic safe. A misclassified field is multiplied by 100 by the
-// client and divided by 100 by the adapter, and round-trips to identity. A
-// design where either side decided independently which fields are money would
-// not have that property, and a wrong guess would become a money bug.
-
-// FieldTypeMoney is the schema field-type label that marks an input as a
-// monetary amount. It is not presentational: see the note above.
+// FieldTypeMoney is the schema label marking an input as a monetary amount.
+// THE MONEY UNIT SEAM — the contract between the form schema and the adapter.
+// A `money` schema label is load-bearing: it is the only thing saying a value
+// is denominated and needs rescaling at the provider boundary. MyCover inputs
+// are NAIRA; Paymax's iron rule is INTEGER KOBO — without a single conversion
+// point every value reaches the insurer 100x too large. The rule:
+//   - a money input crosses EVERY internal boundary in kobo (MoneyInputWireUnit);
+//   - the PROVIDER ADAPTER converts exactly once, for exactly the paths derived
+//     from the SAME schema the client rendered.
+//
+// Deriving the field set from the published schema is what makes a misclassified
+// field round-trip to identity (client ×100, adapter ÷100) instead of becoming
+// a money bug.
 const FieldTypeMoney = "money"
 
 // MoneyUnitKobo is the value of a money field's `unit` in the published schema.

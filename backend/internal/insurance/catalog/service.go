@@ -533,23 +533,14 @@ func (s *Service) SetProvider(ctx context.Context, productCode, provider, provid
 	return err
 }
 
-// PROVIDER FLOAT BREAKER
-// MyCover settles binds against a PREFUNDED DISTRIBUTOR WALLET, not a
-// per-transaction charge. Every purchase debits a float Paymax holds with them,
-// and when that float empties EVERY bind fails at once.
-// The bind saga debits the member's premium BEFORE calling the provider (and
-// auto-reverses on failure). That is correct for an isolated failure. It is the
-// wrong shape for a cliff: with an empty float, every member in the queue would
-// be debited and reversed in turn. One reversal is a working saga; a thousand is
-// an incident, and every one of them is a member who saw money leave their
-// wallet.
-// So the FIRST bind that hits an empty float trips this breaker, and every
-// subsequent bind is refused BEFORE any money moves. An operator tops up the
-// MyCover wallet and resets it.
-// What this is NOT: a balance, an account, or anything ledger-like. No money is
-// represented here and nothing is posted against it. We cannot read the real
-// balance at all — /wallet/balance is 403 for our key — so this records only
-// what we OBSERVED the provider do, never a figure we invented.
+// PROVIDER FLOAT BREAKER.
+// MyCover settles binds against a PREFUNDED DISTRIBUTOR WALLET; when it empties
+// EVERY bind fails at once. The bind saga debits then auto-reverses — correct
+// for an isolated failure, an incident for a cliff (every queued member watches
+// money leave for cover never issued). The FIRST empty-float refusal trips the
+// breaker; later binds are refused BEFORE money moves until an operator tops up.
+// NOT a balance: we cannot read the real float (/wallet/balance is 403), so this
+// records only what we OBSERVED the provider do.
 
 // ErrProviderFloatExhausted is returned by Guard when binds are currently
 // refused because the provider's prefunded wallet was observed to be empty.

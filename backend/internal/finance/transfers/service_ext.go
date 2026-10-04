@@ -9,14 +9,10 @@ import (
 	"spotlight/backend/internal/provider"
 )
 
-// audit writes an audit trail entry for a money-path action. The ledger
-// entries are the authoritative financial record (every leg carries reference +
-// idempotency key); this adds an action-level breadcrumb. Best-effort + non-fatal
-// (a logging failure must never abort the money path).
-//
-// When a durable sink is wired (SetAuditor — the shared services.AuditService
-// over the Supabase audit_logs table), every audit() call also persists a row
-// (E2E-X-029); the stdout line stays for log-tail debugging.
+// audit writes an action-level audit breadcrumb (the ledger entries are the
+// authoritative financial record). Best-effort and non-fatal — a logging
+// failure must never abort the money path. With a durable sink wired
+// (SetAuditor) every call also persists a row (E2E-X-029).
 func (s *Service) audit(ctx context.Context, userID, action, entityID, detail string) {
 	log.Printf("[audit][transfers] action=%s user=%s entity=%s detail=%s", action, userID, entityID, detail)
 	metadata := map[string]any{}
@@ -45,12 +41,9 @@ func (s *Service) emitAudit(actorID, targetID, action, entityID string, metadata
 	s.auditSink.LogAction(actorID, targetID, action, "transfers", "transfer", entityID, nil, metadata, "", "", severity)
 }
 
-// maskAccountNumber returns the trailing 4 digits of a bank account number,
-// matching the account_number_last4 convention already used for the persisted
-// bank_transfers row (see the last4 truncation in service.go's ExecuteBankTransfer
-// paths). Callers must NEVER pass a full account number into audit()'s detail
-// field — the audit log is stdout/server logs, not the ledger, and has no
-// redaction of its own.
+// maskAccountNumber returns the trailing 4 digits (the account_number_last4
+// convention). NEVER pass a full account number into audit detail — the log
+// has no redaction of its own.
 func maskAccountNumber(acct string) string {
 	if len(acct) <= 4 {
 		return acct
@@ -91,13 +84,10 @@ func (s *Service) cachedRecipients(ctx context.Context, userID, bankCode, accoun
 	return out
 }
 
-// cacheRecipient upserts a recipient code for reuse (does NOT mark a beneficiary
-// favorite; that is a separate explicit save). Keyed by the migration's
-// (user_id, provider, bank_code, account_number) unique index.
-// cacheRecipient stores the provider recipient code in provider_recipient_code.
-// The legacy paystack_recipient_code column (now nullable, but still UNIQUE) is
-// left NULL to avoid a cross-provider unique collision — provider_recipient_code
-// is the generalized field this module reads.
+// cacheRecipient upserts a recipient code for reuse (does NOT mark a
+// beneficiary favorite). The legacy paystack_recipient_code column stays NULL —
+// it is still UNIQUE and would collide across providers;
+// provider_recipient_code is the generalized field this module reads.
 func (s *Service) cacheRecipient(ctx context.Context, userID, prov, bankCode, accountNumber, accountName, recipientCode string) {
 	const q = `
 		INSERT INTO bank_transfer_recipients
@@ -246,10 +236,9 @@ func (s *Service) SetPin(ctx context.Context, userID, newPIN, currentPIN string)
 		return err
 	}
 	if has {
-		// Refuse BEFORE Verify. Verify scores a wrong PIN against the lockout
-		// counter, so passing an empty current PIN through would let a caller
-		// that simply omitted the field burn the user's 5 attempts and lock
-		// them out of transfers. A missing field is a bad request, not a guess.
+		// Refuse BEFORE Verify — an empty current PIN would score a failed
+		// attempt against the 5-strike lockout. A missing field is a bad
+		// request, not a guess.
 		if currentPIN == "" {
 			return ErrPinCurrentRequired
 		}

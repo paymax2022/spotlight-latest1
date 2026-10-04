@@ -11,28 +11,18 @@ import (
 )
 
 // OUTBOUND PURCHASE IDEMPOTENCY
-// Adapted from backend/internal/insurance/policy/outbound_idempotency.go, whose
-// Claim/Succeeded/Failed/Unknown/UnresolvedCount shape solves exactly this
-// problem. The columns differ (VTpass routes across multiple providers and keys
-// on a biller/product code, not a policy id), which is why this is a separate
-// table rather than a widened insurance one — see the migration plan's decision
-// #3.
-// VTpass's own idempotency is WEAK in a way that matters here: request_id is
-// derived from an Africa/Lagos YYYYMMDDHHmm prefix plus the key's last 20
-// alphanumerics (see provider/vtpass/vtpass.go's vtpassRequestID), so the SAME
-// idempotency key retried in the NEXT minute produces a DIFFERENT request_id and
-// VTpass happily sells the customer a second unit of electricity. The guarantee
-// therefore has to live on our side.
-// The mechanism is the primary key on utility_provider_bind: claiming a key is an
-// INSERT ... ON CONFLICT DO NOTHING, so a replayed or concurrent attempt cannot
-// claim it and therefore cannot reach VTpass at all. No locks, no windows.
-// The hard case is a TRANSPORT failure (timeout, reset connection, context
-// deadline). VTpass keeps processing after our socket gives up, so the error
-// genuinely does not say whether a purchase happened. That outcome is recorded as
-// `unknown` and is NEVER auto-retried: retrying might buy a second bundle, and
-// giving up might strand a member who has been debited. Phase 3's scheduled
-// requery job resolves these against VTpass; until then the key stays locked and
-// UnresolvedCount surfaces the backlog.
+// Adapted from insurance/policy/outbound_idempotency.go's
+// Claim/Succeeded/Failed/Unknown/UnresolvedCount shape (separate table because
+// VTpass keys on biller/product codes across providers, not a policy id).
+// VTpass's own idempotency is WEAK: request_id derives from an Africa/Lagos
+// YYYYMMDDHHmm prefix + the key's tail, so the SAME key retried in the next
+// minute gets a different request_id and sells a second unit. The guarantee has
+// to live on our side: claiming a key is INSERT ... ON CONFLICT DO NOTHING on
+// utility_provider_bind's PK — a replay/concurrent attempt cannot reach VTpass.
+// A TRANSPORT failure records `unknown` and is NEVER auto-retried (retrying may
+// buy a second bundle; giving up may strand a debited member) — the requery job
+// resolves these; until then the key stays locked and UnresolvedCount shows the
+// backlog.
 
 // Bind states. Kept as constants rather than bare strings so the CHECK
 // constraint in the migration and this file can never drift apart silently.

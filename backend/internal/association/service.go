@@ -101,14 +101,11 @@ func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKo
 	return s.tiers.EnforceWalletDebitLimit(ctx, userID, amountKobo)
 }
 
-// CommissionRecorder is the nil-safe seam into the central Commission & Profit
-// module. app-wiring injects a thin adapter over the finance commission service;
-// when the commission feature is off (or no recorder is wired) the field is nil and
-// recording is a silent no-op. Modeled as a LOCAL interface so association never
-// imports the commission package at compile time (mirrors transport/service.go). It
-// records realized profit ONLY; it never moves money. The injected recorder is built
-// WITHOUT a ledger so RecordFor never re-posts (the dues split above already routes
-// the platform fee) — it appends the immutable earning row used by profit reports.
+// CommissionRecorder is the nil-safe seam into the central commission module —
+// a LOCAL interface so association never imports the commission package. It
+// records realized profit ONLY and never moves money: the injected recorder is
+// built WITHOUT a ledger so it only appends the immutable earning row (the
+// dues split already routes the platform fee).
 type CommissionRecorder interface {
 	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
 		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
@@ -120,14 +117,11 @@ type CommissionRecorder interface {
 // post-construction). Nil is accepted and disables recording.
 func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
 
-// recordCommissionSafe records realized Spotlight profit for a settled dues payment.
-// It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
-// no-op, and any error is logged and swallowed so a profit-registry failure can never
-// fail or reverse the member's dues payment. The invoice id doubles as source ref +
-// idempotency key so retries and reconciliation sweeps never double-count. The
-// module's ACTUAL platform cut is the 5% Platform-fee line of the RevenueSplit, NOT a
-// flat 10% of the dues, so we record the EXACT platformKobo via RecordExact (grossKobo
-// = the full dues amount is passed for context/throughput).
+// recordCommissionSafe records realized Spotlight profit for a settled dues
+// payment. Best-effort — a nil recorder is a no-op and any error is swallowed;
+// it must never fail or reverse a dues payment. The invoice id doubles as
+// source ref + idempotency key. The recorded figure is the EXACT 5%
+// platform-fee line of the RevenueSplit (RecordExact), not a flat % of dues.
 func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo, platformKobo int64,
 	sourceRef string, userID *string) {
 	if s.commission == nil || platformKobo <= 0 {
@@ -275,14 +269,8 @@ func (s *Service) PayInvoice(ctx context.Context, userID, invoiceID string, req 
 		return nil, fmt.Errorf("association: commit: %w", err)
 	}
 
-	// Record realized Spotlight profit into the central Commission & Profit registry.
-	// This is the dues-settlement point: the RevenueSplit above realizes the platform
-	// fee (5% of the dues amount). We record that EXACT platform share (not the whole
-	// dues, not a flat 10%) as the profit; gross = the full dues amount is passed for
-	// throughput context. Best-effort + idempotent: the invoice id doubles as source
-	// ref + idempotency key, so retries / the early PAID return never double-count. A
-	// recorder failure is logged and swallowed — it must NEVER fail or reverse the dues
-	// payment above.
+	// Record the realized platform fee into the central profit registry —
+	// best-effort and idempotent via the invoice id (see recordCommissionSafe).
 	s.recordCommissionSafe(ctx, "Community", "Group Membership", "", amount, platformShareKobo(amount), invoiceID, &userID)
 
 	return &PayInvoiceResult{ReceiptID: "rcpt_" + invoiceID, Status: "SUCCESS"}, nil
@@ -780,14 +768,10 @@ func (s *Service) GetAdminAccess(ctx context.Context, userID string) (*AdminAcce
 }
 
 // isPlatformSuperAdmin mirrors user_has_permission()'s hard-coded bypass
-// (20260527100000_enterprise_auth_rbac.sql): any user holding the platform
-// public.roles 'super-admin' role passes ANY permission check regardless of
-// association-specific role rows. Without this, the platform admin console
-// (which authenticates via platform RBAC, not assoc_member_roles) has no way
-// to reach association admin data at all — every association operator is
-// scoped to organisations they personally joined as a member, which is the
-// right model for association self-governance but wrong for the ops console
-// this function backs.
+// (20260527100000_enterprise_auth_rbac.sql): a platform 'super-admin' passes
+// ANY permission check regardless of assoc_member_roles. Without it the
+// platform admin console — which authenticates via platform RBAC, not
+// association membership — could not reach association admin data at all.
 func (s *Service) isPlatformSuperAdmin(ctx context.Context, userID string) bool {
 	var ok bool
 	if err := s.db.QueryRow(ctx, `
@@ -1183,17 +1167,10 @@ func (s *Service) GetMeetings(ctx context.Context, userID string) ([]MeetingSumm
 }
 
 // GetTasks returns the caller's tasks, or — for scope "org" — every task in
-// their organisation.
-// The "org" scope is what makes tracking possible at all: every other scope is
-// filtered to tasks ASSIGNED to the caller, so nobody could see whether the
-// organisation's work was actually getting done. It is admin-only, because a
-// list of who has been given what and who is late is a management view, not a
-// member one.
-// `overdue` is DERIVED, never read from the status column. assoc_tasks has an
-// OVERDUE status value but nothing ever writes it, so a task past its due date
-// still reads ASSIGNED — trusting the column would report every late task as on
-// track. A task with no due date is never overdue, and a completed one stops
-// being overdue the moment it is done rather than staying flagged forever.
+// their organisation (admin-only management view).
+// `overdue` is DERIVED, never read from the status column: assoc_tasks has an
+// OVERDUE value nothing writes, so the column would report every late task as
+// on track. No due date → never overdue; a completed task stops being overdue.
 func (s *Service) GetTasks(ctx context.Context, userID, scope string) ([]TaskSummary, error) {
 	q := `
 		SELECT t.id, t.title, t.status, t.priority, t.due_date::text,
@@ -1361,16 +1338,11 @@ func (s *Service) GetEvents(ctx context.Context, userID string) ([]EventSummary,
 	return out, rows.Err()
 }
 
-// resolveOrgID authorizes and resolves the organisation an admin console call
-// is scoped to. An explicit orgID (the frontend's org picker — see
-// ListAdminOrganisations) wins, after verifying the caller may act on it:
-// a platform super-admin may pick any org, and a real per-org officer may
-// only pick an org they hold a role in (requireCapInOrg, org-scoped, closes
-// the cross-org IDOR the same way every other admin mutation already does).
-// An empty orgID falls back to the caller's own primary admin-org
-// membership — unchanged behavior for a real association officer using the
-// mobile in-app admin surface, which has no org picker in front of it and
-// only ever manages the one org they belong to.
+// resolveOrgID authorizes and resolves the org an admin call is scoped to.
+// An explicit orgID (the admin console's org picker) wins after requireCapInOrg
+// verifies the caller may act on it — closing the cross-org IDOR. An empty
+// orgID falls back to the caller's own primary admin-org membership (the
+// mobile in-app admin surface has no picker).
 func (s *Service) resolveOrgID(ctx context.Context, adminID, orgID string) (string, error) {
 	if orgID != "" {
 		if err := s.requireCapInOrg(ctx, adminID, orgID, func(AdminCapabilities) bool { return true }); err != nil {

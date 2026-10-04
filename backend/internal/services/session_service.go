@@ -460,21 +460,12 @@ func (v *supabaseEmailVerifier) ConfirmEmail(ctx context.Context, email string) 
 	return true, nil
 }
 
-// authUserByEmail resolves a GoTrue user id from a lowercased address.
-// SQL rather than GoTrue's admin list endpoint: PostgREST cannot reach the auth
-// schema, and the admin list filter has changed shape across GoTrue versions. It
-// is defined once and shared, because two copies of "how we find a user" drift,
-// and the way they drift is that one of them stops lowercasing and silently
-// reports "no account" for every address a client sent in mixed case.
-// Reads public.platform_users, not auth.users: this pool runs as
-// service_role, and Supabase never grants service_role access to the auth
-// schema (SELECT ... FROM auth.users fails with "permission denied for table
-// users"). platform_users.id mirrors auth.users.id 1:1
-// (20260527100000_enterprise_auth_rbac.sql +
-// 20260904000000_rbac_identity_bridge.sql), so the id returned here is
-// exactly the GoTrue id the callers pass to the Supabase Admin API.
-// email_verified_at is platform_users' own confirmation timestamp, kept in
-// sync with GoTrue's email_confirmed_at by the same signup/verify flow.
+// authUserByEmail resolves a GoTrue user id from a lowercased address via SQL —
+// this pool runs as service_role, which cannot read auth.users, and
+// platform_users.id mirrors auth.users.id 1:1 (rbac_identity_bridge migration).
+// One shared copy exists because a second "how we find a user" implementation
+// is how the lowercasing drifts and mixed-case addresses silently report "no
+// account". email_verified_at is platform_users' own confirmation timestamp.
 // Returns ("", false, nil) when there is no such user.
 func authUserByEmail(ctx context.Context, db *pgxpool.Pool, email string) (string, bool, error) {
 	var confirmed bool
