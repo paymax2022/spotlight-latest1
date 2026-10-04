@@ -6,7 +6,7 @@ import { getResidentContext, resolveNames } from '@/src/server/estate/resident';
 
 const COLS = 'id, estate_id, title, body, kind, created_by, created_at';
 
-// GET /api/v1/estate/announcements — with per-user read state.
+// With per-user read state.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -28,7 +28,7 @@ export async function GET(request: Request) {
   } catch (error) { return handleApiError(error, 'Failed to list announcements'); }
 }
 
-// POST /api/v1/estate/announcements — estate admin posts a notice.
+// Estate admin posts a notice.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

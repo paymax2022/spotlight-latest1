@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { mapGateEvent } from '@/src/server/visitor/gate.service';
 import { ACCESS_CODE_COLUMNS } from '@/src/server/visitor/visitor.service';
 
-// POST /api/v1/visitor/codes/{id}/arrival — record a visitor arrival.
+// Record a visitor arrival.
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireRequestUser(request);
@@ -23,7 +23,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (codeErr) throw codeErr;
     if (!code) throw new ApiError('Access code not found', 404);
 
-    // Insert gate event.
     const { data: evt, error: evtErr } = await supabase
       .from('visitor_gate_events')
       .insert({
@@ -39,7 +38,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       .single();
     if (evtErr) throw evtErr;
 
-    // Notify the issuer.
     await supabase.from('visitor_notifications').insert({
       estate_id: (code as any).estate_id,
       user_id: (code as any).issued_by,

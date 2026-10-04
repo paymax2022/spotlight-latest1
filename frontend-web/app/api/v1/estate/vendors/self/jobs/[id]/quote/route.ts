@@ -14,7 +14,7 @@ function mapJob(row: any, vendorName?: string) {
   };
 }
 
-// POST /api/v1/estate/vendors/self/jobs/{id}/quote — the caller (a vendor)
+// The caller (a vendor)
 // submits a quote for one of their jobs (Block 42). Resident-scoped: estate +
 // vendor resolved server-side. Body: { amount_kobo } (kobo). Records the quote
 // and sets the job amount.

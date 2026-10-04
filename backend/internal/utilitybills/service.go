@@ -83,14 +83,10 @@ const (
 	eventKeyStatus     = "status"
 )
 
-// Auditor is the admin-action audit sink. It mirrors services.AuditService's
-// LogAction method EXACTLY, but is declared locally and satisfied structurally
-// rather than imported: internal/services pulls in enough of the app that
-// depending on it from a domain package creates an import cycle. Same
-// convention, and the same reason, as p2pmarket.Auditor.
-// Deliberately fire-and-forget (no error return): an audit sink that could fail
-// a money mutation would be a worse outcome than a missing audit row, and the
-// real implementation already swallows its own transport errors.
+// Auditor mirrors services.AuditService.LogAction structurally — importing
+// internal/services from a domain package would create an import cycle (same
+// convention as p2pmarket.Auditor). Deliberately fire-and-forget: an audit sink
+// that could fail a money mutation is worse than a missing audit row.
 type Auditor interface {
 	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string,
 		oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
@@ -655,9 +651,8 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 		return nil, fmt.Errorf("%w: payment_source must be 'wallet' or 'paystack'", ErrFieldRequired)
 	}
 
-	// (1) Idempotency pre-check. The unique constraint at (3) is the layer that
-	// actually holds under concurrency; this one avoids the work and the wasted
-	// provider capacity in the common sequential-retry case.
+	// (1) Idempotency pre-check; the unique constraint at (3) is the layer that
+	// actually holds under concurrency.
 	if existing, eerr := s.repo.GetTransactionByIdempotencyKey(ctx, idempotencyKey); eerr != nil {
 		return nil, eerr
 	} else if existing != nil {
@@ -741,8 +736,8 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 		return nil, err
 	}
 	if duplicate {
-		// Somebody else won the race with the same key. Their transaction is the
-		// answer; ours never existed and no money moved on this path.
+		// Another writer won the same-key race; theirs is the answer and no
+		// money moved on this path.
 		return &PayResult{AlreadyProcessed: true, Transaction: inserted}, nil
 	}
 	transaction := inserted
@@ -777,9 +772,8 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 		} else if errors.Is(uerr, ErrStatusGuard) {
 			s.event(ctx, transactionID, "writer_outraced",
 				"A settlement claim landed between the wallet debit and fulfilment — the writer yields.", nil)
-			// CRITICAL not WARN: this writer DID post the debit — if the claim
-			// winner's probe ran before the debit committed it saw debitPosted=false
-			// and compensated nothing. The event alone is silent about money.
+			// CRITICAL not WARN: this writer DID post the debit; if the claim
+			// winner's probe ran before it committed, nothing was compensated.
 			log.Printf("[utilitybills] CRITICAL %s was claimed for settlement mid-debit — the debit posted and the writer yielded; verify the claim winner compensated it", transactionID)
 			current, rerr := s.repo.GetTransaction(ctx, transactionID)
 			if rerr != nil {
@@ -865,13 +859,11 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 		"provider_id": fulfilled.Provider.ID,
 	})
 
-	// Auto-reverse ONLY on a definite failure of a WALLET-sourced payment, and
-	// only when THIS writer still owns the settle — a lost settle means the
-	// claim winner is already compensating (or deliberately holding) the money.
-	// The payment_source gate is a faithful port of today's behaviour INCLUDING a
-	// known gap: a Paystack-sourced failure is not auto-refunded here (the money is
-	// at Paystack, not in the ledger, so a ledger reversal would invent funds).
-	// Deliberately left as-is rather than quietly changed inside a migration.
+	// Auto-reverse ONLY on definite failure of a WALLET-sourced payment while
+	// this writer still owns the settle — a lost settle means the claim winner
+	// owns compensation. Known gap (faithful port): a Paystack-sourced failure
+	// is not auto-refunded — the money is at Paystack, not in the ledger, so a
+	// reversal would invent funds.
 	if outcome.Outcome == ProviderOutcomeFailed && paymentSource == paymentSourceWallet && settleWon {
 		if t := s.autoReverse(ctx, transaction, idempotencyKey, clearing.ID); t != nil {
 			transaction = t
@@ -1889,16 +1881,10 @@ func (s *Service) event(ctx context.Context, transactionID, eventType, message s
 }
 
 // log records one admin mutation in the platform audit trail, best-effort.
-// NIL-SAFE by design: Deps.Auditor is optional, and every caller below fires
-// this unconditionally rather than guarding at the call site, so the one guard
-// lives here. Note the guard covers a nil INTERFACE only — a non-nil interface
-// holding a nil pointer would still panic, which is why RegisterUtilityBills
-// passes the concrete sink only when it is actually built.
-// The event() helper above and this one are deliberately different trails and
-// both are written where both apply: event() is the per-transaction lifecycle
-// log a MEMBER's support case is reconstructed from, this is the who-did-what
-// record of an ADMIN's actions. Collapsing them would lose one audience or the
-// other.
+// NIL-SAFE: Deps.Auditor is optional and every caller fires unconditionally.
+// Deliberately a different trail from event(): event() is the per-transaction
+// lifecycle a support case is reconstructed from; this is the who-did-what
+// record of an admin's actions.
 func (s *Service) log(actorUserID, action, resourceType, resourceID string, oldValues, newValues map[string]any) {
 	if s.audit == nil {
 		return

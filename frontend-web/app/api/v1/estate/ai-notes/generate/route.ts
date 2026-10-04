@@ -8,7 +8,7 @@ import { mapNote } from '../route';
 
 const COLS = 'id, estate_id, meeting_id, title, summary, action_items, source, created_by, created_at';
 
-// POST /api/v1/estate/ai-notes/generate — admin generates a summary from a
+// Admin generates a summary from a
 // meeting's recorded minutes using the deterministic extractive summariser.
 export async function POST(request: Request) {
   try {

@@ -13,7 +13,7 @@ function mapVendor(row: any) {
   };
 }
 
-// POST /api/v1/estate/vendors/self/onboard — a resident self-registers as a
+// A resident self-registers as a
 // vendor in their own estate (Block 42). Resident-scoped: the estate is resolved
 // server-side; the vendor row is linked to the caller (estate_vendors.user_id).
 // Body: { business_name, category?, phone?, specialties? }.

@@ -198,15 +198,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	if err != nil {
 		h.audit.LogAction("", "", "register.failed", "auth", "user", "", nil, map[string]any{"email": in.Email}, c.ClientIP(), c.Request.UserAgent(), "medium")
 
-		// Signups being closed is a PROJECT-WIDE policy, not a fact about this
-		// address, so saying so leaks nothing and telling the user their "details"
-		// are wrong would send them round a loop they cannot win. Every other
-		// failure stays deliberately generic and UNCONDITIONAL — identical wording
-		// no matter the real cause — because confirming "already registered" would
-		// let anyone test which addresses have accounts. The message below points at
-		// the two real next steps (sign in / reset password) without confirming
-		// either one applies, so a genuinely-taken email isn't a dead end while a
-		// weak password or an upstream failure gets the exact same response.
+		// Signups-closed is a project-wide policy, not a fact about this
+		// address, so saying so leaks nothing. Every other failure stays generic
+		// and unconditional — confirming "already registered" would let anyone
+		// test which addresses have accounts — while pointing at the real next
+		// steps (sign in / reset password) without confirming either applies.
 		if errors.Is(err, services.ErrSignupDisabled) {
 			c.JSON(http.StatusForbidden, gin.H{
 				"success": false,
@@ -338,15 +334,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	// no email (E2E-AUTH-007).
 	h.audit.LogLogin(loginUserID, resolvedEmail, "success", "", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
 
-	// Second factor. The password was correct, so GoTrue has already minted a
-	// session in `out` — it is DISCARDED here rather than parked anywhere, and a
-	// fresh one is minted by the verify step once the code is redeemed. Holding
-	// it would mean writing an access and a refresh token to storage to wait for
-	// an email, which is a worse trade than one extra GoTrue round trip.
-	// Fails CLOSED: if the code cannot be sent, no session is returned. That is
-	// the opposite of Register, where the account already exists and refusing
-	// would strand the user — here refusing is the whole point of the factor.
-	// ⚠️ It also means an email outage is a total login outage. See the runbook.
+	// Second factor. The password was correct, so GoTrue already minted a
+	// session in `out` — it is DISCARDED and a fresh one is minted on code
+	// redemption (parking it would mean persisting live tokens while waiting
+	// on an email). Fails CLOSED: if the code cannot be sent, no session is
+	// returned — an email outage is a total login outage. See the runbook.
 	if h.mfaActive() {
 		if resolvedEmail == "" {
 			// Nothing to send to. Refusing beats returning a session that the

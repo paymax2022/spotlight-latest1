@@ -24,7 +24,6 @@ var defaultSlotTimes = []string{
 // otherwise a deterministic default calendar is synthesised so the booking UI is
 // always populated. Booked slots are reported with available=false.
 func (s *Service) GetAvailability(ctx context.Context, doctorID string) ([]Slot, error) {
-	// Verify doctor exists.
 	var exists bool
 	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM doctors WHERE id=$1)`, doctorID).Scan(&exists); err != nil {
 		return nil, err

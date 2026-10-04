@@ -194,21 +194,14 @@ func RequireServiceToken(expected string) gin.HandlerFunc {
 	}
 }
 
-// AuthRateLimit throttles the unauthenticated auth endpoints per client IP.
-// Login, register and password-reset had NO throttle of any kind: StemRateLimit
-// exists but is applied only to the stem routes, so the sole limit on credential
-// stuffing was whatever Supabase applied downstream. Account lockout
-// (failed_login_attempts / locked_until in authService) defends a single account
-// being guessed at; it does nothing about one client sweeping many accounts, or
-// about hammering password-reset to spend the project's small email quota.
-// It is a separate limiter rather than the shared stemRateStore because the key
-// here must exclude everything the caller controls (route + method + client IP
-// only) and the store is bounded — the two properties an internet-facing
-// credential endpoint cannot do without.
-//
-// The window is fixed rather than sliding, which permits a burst across a window
-// boundary. That is accepted: the goal is to make bulk guessing expensive, and a
-// 2x burst at the seam does not change that.
+// AuthRateLimit throttles the unauthenticated auth endpoints (login, register,
+// password-reset) per client IP — the layer account lockout cannot cover: one
+// client sweeping many accounts, or burning the email quota via resets. It is a
+// separate limiter from the shared stemRateStore because the key must exclude
+// everything the caller controls (route + method + client IP only) and the
+// store is bounded.
+// The window is fixed rather than sliding, so a 2x burst across a boundary is
+// possible — accepted: the goal is to make bulk guessing expensive.
 type authRateBucket struct {
 	count       int
 	windowStart time.Time

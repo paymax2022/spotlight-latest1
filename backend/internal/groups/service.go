@@ -76,7 +76,6 @@ func (s *Service) Create(ctx context.Context, creatorID string, req CreateGroupR
 	if _, err := tx.Exec(ctx, insert, g.ID, g.Name, g.Description, g.CreatedBy, g.AvatarURL, g.IsPublic); err != nil {
 		return nil, fmt.Errorf("groups: insert: %w", err)
 	}
-	// Add creator as owner.
 	const insertMember = `INSERT INTO group_members (group_id, user_id, role) VALUES ($1,$2,'owner')`
 	if _, err := tx.Exec(ctx, insertMember, g.ID, creatorID); err != nil {
 		return nil, fmt.Errorf("groups: insert owner: %w", err)
@@ -139,7 +138,6 @@ func (s *Service) List(ctx context.Context, userID string, limit, offset int) ([
 
 // Invite adds a user to a group (only owner/admin can invite).
 func (s *Service) Invite(ctx context.Context, groupID, inviterID, inviteeID string) error {
-	// Verify inviter is owner or admin.
 	if err := s.assertRole(ctx, groupID, inviterID, RoleOwner, RoleAdmin); err != nil {
 		return err
 	}
@@ -153,25 +151,20 @@ func (s *Service) Invite(ctx context.Context, groupID, inviterID, inviteeID stri
 
 // PayDues debits a member's wallet and credits the group wallet.
 func (s *Service) PayDues(ctx context.Context, groupID, memberID string, req PayDuesRequest) (*SubscriptionPayment, error) {
-	// Fetch plan.
 	var plan SubscriptionPlan
 	const qPlan = `SELECT id, group_id, amount_kobo FROM subscription_plans WHERE id=$1 AND group_id=$2`
 	if err := s.db.QueryRow(ctx, qPlan, req.PlanID, groupID).Scan(&plan.ID, &plan.GroupID, &plan.AmountKobo); err != nil {
 		return nil, fmt.Errorf("groups: plan not found: %w", err)
 	}
 
-	// Get group wallet ledger account.
 	var groupWalletID string
 	const qWallet = `SELECT id FROM ledger_accounts WHERE group_id=$1 AND type='group_wallet' LIMIT 1`
 	if err := s.db.QueryRow(ctx, qWallet, groupID).Scan(&groupWalletID); err != nil {
 		return nil, fmt.Errorf("groups: group wallet not found: %w", err)
 	}
 
-	// Fail-closed tier / daily-limit gate, matching restaurant/transport: dues are
-	// a wallet debit like any other and owe CLAUDE.md's iron rule #4 a tier check
-	// before the money moves. A nil gate is refused rather than treated as
-	// unlimited (ErrTierGateUnwired) — a deployment with no gate must not accept
-	// dues payments at all.
+	// Fail-closed tier / daily-limit gate (iron rule #4): a nil gate refuses all
+	// dues rather than silently debiting unlimited (ErrTierGateUnwired).
 	if s.tiers == nil {
 		return nil, ErrTierGateUnwired
 	}

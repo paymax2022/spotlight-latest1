@@ -89,9 +89,7 @@ func seedUser(t *testing.T, pool *pgxpool.Pool) string {
 	return id
 }
 
-// ---------------------------------------------------------------------------
 // 1. Event state machine (DB-backed, object-level authZ via s.db row lock)
-// ---------------------------------------------------------------------------
 
 func TestIntegration_EventStateMachine_FullLifecycle(t *testing.T) {
 	ctx := context.Background()
@@ -191,10 +189,8 @@ func TestIntegration_Approve_ServiceLayerHasNoOwnerScopeCheck(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // 2. GetEvent visibility gap — documents that DRAFT/SUBMITTED events are
 //    currently publicly readable (no organiser-only guard exists in GetEvent).
-// ---------------------------------------------------------------------------
 
 func TestIntegration_GetEvent_DraftIsPubliclyReadable_KnownGap(t *testing.T) {
 	ctx := context.Background()
@@ -224,9 +220,7 @@ func TestIntegration_GetEvent_DraftIsPubliclyReadable_KnownGap(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // 3. Purchase idempotency (DB-backed, requires standing escrow account)
-// ---------------------------------------------------------------------------
 
 func TestIntegration_Purchase_IdempotentDoubleSubmitNoDoubleIssueNoDoubleDebit(t *testing.T) {
 	ctx := context.Background()
@@ -301,16 +295,12 @@ func TestIntegration_Purchase_RejectsWhenEventNotLive(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // 4. Ticket scan authZ — FIXED (was: ScanTicket performed no check that the
 //    caller had any relationship to the ticket/event). See scan_authz_live_db_test.go
 //    (no integration build tag, so it actually runs under `go test ./...` with
 //    TEST_DATABASE_URL set) for the real organiser/steward/forbidden coverage.
-// ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
 // 5. EventWallet lifecycle + ledger balance invariant (DB-backed)
-// ---------------------------------------------------------------------------
 
 func TestIntegration_WalletClose_PostsExactlyOneBalancedRefund(t *testing.T) {
 	ctx := context.Background()

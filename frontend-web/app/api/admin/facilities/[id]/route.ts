@@ -21,7 +21,6 @@ function mapBooking(row: any) {
   };
 }
 
-// GET /api/admin/facilities/[id] — Get a specific facility
 // E2E-SEC-054: gated on requireRequestUser only before; requires
 // programs:manage now. params is a Promise on this Next version — awaiting it
 // also fixes the synchronous-read 500 the route previously threw.
@@ -45,7 +44,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   }
 }
 
-// PATCH /api/admin/facilities/[id] — Update a facility
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {

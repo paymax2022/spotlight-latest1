@@ -3,7 +3,6 @@ import { handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 
-// POST /api/v1/visitor/notifications/read-all — mark all notifications as read.
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

@@ -105,17 +105,14 @@ type Notification struct {
 // BusinessStore persists the FX business-admin console tables. An interface so
 // handlers stay testable and so a nil store degrades to honest defaults.
 type BusinessStore interface {
-	// Team
 	ListTeam(ctx context.Context, business string) ([]TeamMember, error)
 	UpdateMemberRole(ctx context.Context, business, id, role string) (TeamMember, bool, error)
 
-	// Approvals + thresholds
 	ListApprovals(ctx context.Context, business string) ([]Approval, error)
 	DecideApproval(ctx context.Context, business, id, decision, actor string) (Approval, bool, error)
 	ListThresholds(ctx context.Context, business string) ([]ApprovalThreshold, error)
 	UpdateThreshold(ctx context.Context, business, id string, amount int64, approvers int) (ApprovalThreshold, bool, error)
 
-	// Activity / audit
 	ListActivity(ctx context.Context, business string) ([]ActivityEvent, error)
 	LogActivity(ctx context.Context, business, actor, action string, target *string, kind string) error
 
@@ -124,7 +121,6 @@ type BusinessStore interface {
 	CreateAPIKey(ctx context.Context, business, label, mode, prefix, hash, secret string) (APIKey, error)
 	RotateAPIKey(ctx context.Context, business, id, prefix, hash, secret string) (APIKey, bool, error)
 
-	// Webhooks
 	ListWebhooks(ctx context.Context, business string) ([]Webhook, error)
 	CreateWebhook(ctx context.Context, business, url string, events []string) (Webhook, error)
 	UpdateWebhook(ctx context.Context, business, id string, enabled *bool, url *string, events []string) (Webhook, bool, error)
@@ -134,7 +130,6 @@ type BusinessStore interface {
 	GetSettings(ctx context.Context, business string) (FxSettings, error)
 	UpdateSettings(ctx context.Context, business string, patch FxSettingsPatch) (FxSettings, error)
 
-	// Notifications
 	ListNotifications(ctx context.Context, business string) ([]Notification, error)
 	MarkNotificationRead(ctx context.Context, business, id string) error
 	MarkAllNotificationsRead(ctx context.Context, business string) error

@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { MEETING_COLUMNS, getResidentContext, mapMeeting } from '@/src/server/meetings/meetings.service';
 
-// GET /api/v1/estate/meetings — meetings for the caller's estate.
+// Meetings for the caller's estate.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   }
 }
 
-// POST /api/v1/estate/meetings — schedule a meeting (auto-RSVPs the creator 'yes').
+// Schedule a meeting (auto-RSVPs the creator 'yes').
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);

@@ -492,17 +492,12 @@ func (s *Service) Reconcile(ctx context.Context, toleranceKobo int64) (Reconcile
 	if err != nil {
 		return ReconcileResult{}, err
 	}
-	// The active integrity guard is UNIT-projection consistency: the summed
-	// per-user units MUST equal what the immutable order + fee journals imply
-	// (Σ order deltas − Σ fee burns). A torn write — units changed without a
-	// journal row, or vice-versa — shows up here.
-	// The cash side: in this paper foundation the fund holds only cash, so AUM ≡
-	// the ledger clearing balance and the AUM-vs-clearing check is tautologically
-	// satisfied (we pass clearingBal for both). The journal member-cash total
-	// (jt.ExpectedClearingKobo) is NOT used as the cash oracle because it excludes
-	// trading P&L (clearing − memberCash = net realized P&L). When real position
-	// valuation lands, aumKobo becomes cash + Σ position mark-to-market and this
-	// check becomes a genuine cross-check; until then unit-consistency is the guard.
+	// The active integrity guard is UNIT-projection consistency: summed per-user
+	// units MUST equal what the immutable order + fee journals imply — a torn
+	// write shows up here. The fund holds only cash, so AUM ≡ the clearing
+	// balance and the AUM check is tautological (clearingBal passed twice);
+	// jt.ExpectedClearingKobo is not the cash oracle because it excludes trading
+	// P&L. When position valuation lands this becomes a genuine cross-check.
 	_ = jt.ExpectedClearingKobo // reserved for the position-valuation phase
 	return Reconcile(sumUnits, jt.ExpectedUnits, clearingBal, clearingBal, toleranceKobo), nil
 }

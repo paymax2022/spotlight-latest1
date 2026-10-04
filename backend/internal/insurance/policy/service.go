@@ -55,19 +55,13 @@ type Service struct {
 }
 
 // CommissionRecorder records the domain-level commission entry for a bound
-// policy, alongside the ledger posting. Defined here (not imported from
-// reconciliation) so policy does not depend on reconciliation; the app wiring
-// layer (insurance_routes.go) adapts reconciliation's repository to this.
-// WHY THIS EXISTS: the bind saga posts the REAL commission money (DR
-// provider_clearing -> CR AccountCommission) directly via the ledger, but
-// nothing ever wrote a row to insurance_commission_entry — the table the
-// admin commission workbench (GET /commission, POST /commission/:id/confirm,
-// POST /commission/:id/reverse) actually reads. Every one of those endpoints
-// called reconciliation.Repository.GetCommissionByPolicy, which 404'd for
-// EVERY real policy ever bound, so confirm/reverse were permanently dead and
-// the commission list showed a false zero while real commission ledger money
-// had moved. RecordCommission closes that gap; UpsertCommission is idempotent
-// on idempotency_key, so a bind replay never double-records.
+// policy, alongside the ledger posting. Declared locally so policy does not
+// depend on reconciliation (app wiring adapts its repository to this).
+// WHY: the bind saga posts the real commission money via the ledger, but
+// insurance_commission_entry — the table the admin commission workbench reads —
+// got no row, so confirm/reverse 404'd for every real policy and the list
+// showed a false zero. UpsertCommission is idempotent on idempotency_key, so a
+// bind replay never double-records.
 type CommissionRecorder interface {
 	RecordCommission(ctx context.Context, policyID, provider string, amountKobo int64, ledgerRef, idempotencyKey string) error
 }
@@ -639,12 +633,9 @@ func providerAnswered(err error) bool {
 		return false
 	}
 	// Adapters wrap ErrProviderRejected around every error they KNOW was a reply
-	// — a validation 4xx, an empty float, an unsupported operation — and around
-	// their own pre-flight refusals, which never reached the provider at all.
-	// Either way nothing was created, so a retry is safe.
-	// Everything else (timeout, reset connection, context deadline) falls
-	// through to false and is treated as an UNKNOWN outcome. Silence is never
-	// read as success or as failure.
+	// (and their own pre-flight refusals, which never reached the provider) —
+	// either way nothing was created, so a retry is safe. Everything else falls
+	// through to false = UNKNOWN outcome; silence is never read as success.
 	if errors.Is(err, gateway.ErrProviderRejected) {
 		return true
 	}

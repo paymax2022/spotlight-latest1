@@ -276,15 +276,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// fail a transfer.
 	xferSvc.SetAuditor(auditSink)
 
-	// When the commission feature is on, inject a nil-safe recorder so realized
-	// transfer profit lands in commission_earnings for the profit report. The recorder
-	// is built WITHOUT a ledger (nil) on purpose: the transfer's own fee credit already
-	// posts into ledger.AccountPaymaxRevenue, so a second ledger post would double-
-	// count — RecordFor appends the earning ROW only. Recording is gated in-service on a
-	// real fee being charged (fee > 0), so free small wallet transfers earn nothing.
-	// RATE NOTE: the module's actual fee is a small fixed-kobo tier (₦10/₦25/₦50), while
-	// the central Finance/Money Transfer config RECORDS 10% of the transfer principal —
-	// so the recorded figure materially OVER-states the real fee (see docs/commission).
+	// Commission recording for realized transfer profit (nil-safe, flag-gated).
+	// The recorder is built WITHOUT a ledger: the transfer's fee credit already
+	// posts to ledger.AccountPaymaxRevenue — RecordFor appends the earning ROW
+	// only (no double-count). Recording is gated on a real fee (fee > 0).
+	// RATE NOTE: the module's actual fee is a small fixed-kobo tier (₦10/₦25/₦50),
+	// while the central Finance/Money Transfer config RECORDS 10% of the transfer
+	// principal — the recorded figure materially OVER-states the real fee
+	// (see docs/commission).
 	if cfg.FeatureCommissionEnabled {
 		xferSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 		log.Println("[transfers] commission recording wired → Finance/Money Transfer (earning-row only; no ledger re-post)")
@@ -307,12 +306,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		fxMarkupStore := fx.NewMarkupStore(pool)
 		fxSvc.SetMarkup(fxMarkupStore)
 		fxMarkupHandler = fx.NewMarkupHandler(fxMarkupStore)
-		// Central Commission & Profit recording (§ profit registry). Nil-safe, gated on
-		// the flag, built WITHOUT a ledger (no double-post — the conversion's own legs
-		// already move money). Records under Finance/Currency Exchange. RATE NOTE: this
-		// module computes no isolated Spotlight margin (provider-supplied rate + provider
-		// passthrough fee), so the central 10% of the source principal is an attributed
-		// figure that likely OVER-states the true margin (see docs/commission).
+		// Commission recording under Finance/Currency Exchange (nil-safe, flag-gated,
+		// ledger-less — the conversion's own legs already move money). RATE NOTE:
+		// this module computes no isolated Spotlight margin (provider rate +
+		// passthrough fee), so the central 10% of principal is an attributed figure
+		// that likely OVER-states the true margin (see docs/commission).
 		if cfg.FeatureCommissionEnabled {
 			fxSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 			log.Println("[fx] commission recording wired → Finance/Currency Exchange (earning-row only; no ledger re-post)")
@@ -450,10 +448,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if pool != nil {
 			referralMember := finance.Group("/referral")
 			referralAdmin := r.Group("/api/referral/admin")
-			// RequireAuthContext must run FIRST — it is what sets user_id.
-			// requireUserID alone only checks for a value nothing ever wrote, so
-			// every referral admin route 401'd even with a valid token (the same
-			// bug the finance group carried; see the note above line 284).
+			// RequireAuthContext must run FIRST — it sets the user_id
+			// requireUserID fail-closes on (same trap as the finance group).
 			referralAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 			referralAdmin.Use(requireUserID())
 			RegisterReferral(referralMember, referralAdmin, pool, rbac)      // attribution/house/ledger/config (§7A)
@@ -489,24 +485,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	var insuranceSvcs *InsuranceServices
 	if cfg.FeatureInsuranceEnabled && pool != nil {
 		// Pass the bare finance group: RegisterInsurance/RegisterInsuranceClaims
-		// each add the "/insurance" segment themselves (mg := member.Group("/insurance")),
-		// so finance.Group("/insurance") here double-mounted every member route at
-		// /api/finance/insurance/insurance/* instead of /api/finance/insurance/*
-		// (the client contract) — same class of bug documented for savings above.
+		// add the "/insurance" segment themselves (same trap as savings below).
 		insuranceAdmin := r.Group("/api/insurance/admin")
-		// RequireAuthContext MUST come before requireUserID: requireUserID only
-		// reads the user_id that RequireAuthContext populates, so without it every
-		// admin route 401s even with a valid token. Same bug as referral (line ~414)
-		// and the finance group before it — see the note above line 284.
+		// RequireAuthContext must run FIRST — it sets the user_id requireUserID
+		// fail-closes on (same trap as the finance group).
 		insuranceAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 		insuranceAdmin.Use(requireUserID())
-		// Pass the ROOT group, for the same reason the member group is passed bare:
-		// webhooks.Register adds "/internal/webhooks" itself (g := webhooks.Group(
-		// "/internal/webhooks")), so naming the segment here too mounted every
-		// provider callback at /internal/webhooks/internal/webhooks/* — the
-		// documented path 404'd and only the doubled one answered. A provider
-		// cannot discover that, so every real MyCover delivery would have been
-		// lost, and silently: the provider sees a 404 and we see nothing at all.
+		// Pass the ROOT group: webhooks.Register adds "/internal/webhooks" itself
+		// (same double-mount trap as above — a doubled path silently 404s every
+		// real provider delivery).
 		insuranceWebhooks := r.Group("") // provider-signed, no user auth
 		// Backend-owned presigned R2 uploads for application-form identity/evidence
 		// creds → the upload endpoint fails closed with 503 (never a fabricated URL).
@@ -529,10 +516,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeatureStaysEnabled && pool != nil {
 		staysMember := finance.Group("/stays")
 		staysAdmin := r.Group("/api/stays/admin")
-		// staysAdmin/staysExtranet are mounted on the ROOT engine, not on `finance`
-		// (which already carries RequireAuthContext), so without it explicitly here
-		// requireUserID() checks a user_id that nothing ever set — every call 401s
-		// "authentication required" even with a valid Bearer token.
+		// staysAdmin/staysExtranet mount on the ROOT engine (not `finance`), so
+		// RequireAuthContext is needed here — it sets the user_id requireUserID
+		// fail-closes on.
 		staysAdmin.Use(middleware.RequireAuthContext(supabase, rbac), requireUserID())
 		staysExtranet := r.Group("/api/stays/extranet")
 		staysExtranet.Use(middleware.RequireAuthContext(supabase, rbac), requireUserID())
@@ -551,20 +537,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeaturePlacementEnabled && pool != nil {
 		placementMember := finance // member.Group("/placement") is created inside RegisterPlacement
 		placementAdmin := r.Group("/api/placement/admin")
-		// RequireAuthContext validates the bearer token and mirrors user_id into the
-		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
-		// line every route in the group 401s even with a valid token — and on mobile a
-		// 401 signs the user out, so the screen appears to log them out on open.
+		// RequireAuthContext populates the user_id that requireUserID fail-closes
+		// on — omitting it 401s every route even with a valid token.
 		placementAdmin.Use(mapsAuth())
 		placementAdmin.Use(requireUserID())
 		// BARE /api/finance, not /api/finance/placement: RegisterPlacement adds the
-		// "/placement" segment itself (placement_routes.go, `public.Group`), so
-		// passing it here mounted the public routes at
-		// /api/finance/placement/placement/landing. The frontend proxy calls
-		// /api/finance/placement/landing, so every request 404'd — invisibly,
-		// because the module is flag-gated off by default and the routes were
-		// never registered to be noticed. Same double-mount the savings comment
-		// below warns about.
+		// "/placement" segment itself — same double-mount trap as savings below.
 		placementPublic := r.Group("/api/finance") // unauthenticated landing/events
 		RegisterPlacement(placementMember, placementAdmin, placementPublic, pool, rbac, ledgerSvc, walletSvc, tiersSvc)
 	}
@@ -574,10 +552,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// credential/points shared primitives. NL-1..12 invariants enforced in-module.
 	if cfg.FeatureSavingsEnabled && pool != nil {
 		// Pass the bare finance group: savings.Handler.Register adds the "/savings"
-		// segment itself, so routes land at /api/finance/savings/* (the client
-		// contract). Passing finance.Group("/savings") here double-mounted them at
-		// /api/finance/savings/savings/*. RegisterSocialPay below gets the same
-		// treatment (E2E-FIN-043) — see the note there.
+		// segment itself — passing finance.Group("/savings") double-mounts the
+		// routes at /api/finance/savings/savings/*. Same for RegisterSocialPay
+		// (E2E-FIN-043).
 		RegisterSavings(finance, adminGroupTop5(r, "/api/savings/admin", mapsAuth()), cfg, pool, rbac)
 	}
 	// AI-trading fund (Module-KYC + fund wallet). Mounted at the paths the module
@@ -609,10 +586,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		RegisterSocialPay(finance, adminGroupTop5(r, "/api/social/admin", mapsAuth()), pool, rbac)
 	}
 	if cfg.FeatureEventsEnabled && pool != nil {
-		// adminGroupTop5 applies authMW BEFORE requireUserID: RequireAuthContext
-		// populates ginutil.UserID(c) (and the RBAC context GetAuthenticatedUser
-		// needs); without it every route under /api/events/admin — including
-		// approve/suspend/settle — 401s for every caller, including super-admin.
+		// adminGroupTop5 applies authMW BEFORE requireUserID — RequireAuthContext
+		// populates ginutil.UserID(c); without it every admin route 401s.
 		RegisterEvents(finance.Group("/events"), adminGroupTop5(r, "/api/events/admin", mapsAuth()), cfg, pool, rbac, rtHub)
 	}
 	if cfg.FeatureLoyaltyEnabled && pool != nil {
@@ -849,10 +824,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			WithVerification(orchestration.NewVerificationStore(pool))
 
 		og := r.Group("/api/v1/fx")
-		// RequireAuthContext validates the bearer token and mirrors user_id into the
-		// gin context; requireUserID then fail-closes if it's missing. Without the
-		// mirror, requireUserID would 401 every call even with a valid token (same
-		// bug the base finance group documents above).
+		// RequireAuthContext populates the user_id that requireUserID fail-closes
+		// on — omitting it 401s every route even with a valid token.
 		og.Use(mapsAuth())
 		og.Use(requireUserID())
 		og.POST("/quotes", orchHandler.CreateQuote)
@@ -1108,23 +1081,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		} else {
 			log.Println("[association] WARNING: ASSOC_CARD_SIGNING_SECRET unset — using the public dev card key (development only)")
 		}
-		// Central Commission & Profit recording (§ profit registry). When the
-		// commission feature is on, inject a nil-safe recorder so realized profit on a
-		// settled dues payment (the RevenueSplit's 5% platform fee) lands in
-		// commission_earnings for the profit report. The recorder is built WITHOUT a
-		// ledger (nil) on purpose: the dues split already routes the platform fee, so a
-		// second ledger post would double-count — RecordFor appends the earning ROW
-		// only. Flag off ⇒ no recorder ⇒ silent no-op.
+		// Commission recording for realized dues profit (the RevenueSplit 5%
+		// platform fee). Ledger-less recorder — the dues split already posts the
+		// fee, so RecordFor appends the earning ROW only. Flag off ⇒ nil-safe no-op.
 		if cfg.FeatureCommissionEnabled {
 			assocSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 			log.Println("[association] commission recording wired → Community/Group Membership (earning-row only; no ledger re-post)")
 		}
-		// Backend-owned presigned R2 uploads for organisation logos. The
-		// presigner is attached to BOTH sides: the handler mints upload URLs, and
-		// the service signs stored object keys back into viewable URLs on read
-		// (the bucket is not public, so a key alone renders nothing). Unconfigured
-		// creds → the upload endpoint fails closed with 503 and reads pass stored
-		// values through unchanged. Bucket default mirrors CLAUDE.md.
+		// Backend-owned presigned R2 uploads for organisation logos. The presigner
+		// is attached to BOTH sides: the handler mints upload URLs and the service
+		// signs stored keys back into viewable URLs on read (bucket not public).
+		// Unconfigured creds → presign fails closed with 503.
 		assocPresigner := r2.New(r2.Config{
 			AccountEndpoint: cfg.R2AccountEndpoint,
 			Bucket:          cfg.R2Bucket,
@@ -1211,9 +1178,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				}))
 			}
 		}
-		// Backend-owned presigned R2 uploads (profile photo / vehicle doc / incident
-		// evidence / repair photos / documents). Unconfigured creds → the presign
-		// endpoint fails closed with 503. Bucket default mirrors CLAUDE.md.
+		// Backend-owned presigned R2 uploads (profile photo / vehicle doc /
+		// incident evidence / repair photos / documents); unconfigured creds →
+		// the presign endpoint fails closed with 503.
 		estatePresigner := r2.New(r2.Config{
 			AccountEndpoint: cfg.R2AccountEndpoint,
 			Bucket:          cfg.R2Bucket,
@@ -1490,17 +1457,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		settlementSvcCF := settlement.NewService(pool, ledgerSvc)
 		cfSvc := crowdfunding.NewService(pool, ledgerSvc, settlementSvcCF)
 
-		// When the commission feature is on, inject a nil-safe recorder so realized
-		// crowdfunding profit (recorded at the campaign Release/disbursement point, right
-		// after the 90/10 escrow split posts the 10% platform cut to the ledger) lands in
-		// commission_earnings for the profit report. The recorder is built WITHOUT a
-		// ledger (nil ledgerService) on purpose: crowdfunding's own split already posts
-		// the platform cut into the ledger, so a second ledger post would double-count the
-		// commission revenue account. RecordFor therefore appends the earning ROW only.
-		// Recording is best-effort and can never fail or reverse a release (see
-		// crowdfunding.recordCommissionSafe). Flag off ⇒ no recorder is set ⇒ the seam
-		// stays nil ⇒ silent no-op. Reuses the shared commissionRecorderAdapter
-		// (marketplace_routes.go).
+		// Commission recording for crowdfunding profit at the campaign Release
+		// point (after the 90/10 escrow split posts the 10% platform cut).
+		// Ledger-less recorder — RecordFor appends the earning ROW only;
+		// best-effort, never fails a release (see recordCommissionSafe).
+		// Flag off ⇒ nil-safe no-op.
 		if cfg.FeatureCommissionEnabled {
 			cfSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 			log.Println("[crowdfunding] commission recording wired → Community/Crowdfunding (earning-row only; no ledger re-post)")
@@ -1526,11 +1487,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		cfcsr.Register(cfGroup, pool)
 
 		// Admin review group (matches the admin web client's /api/crowdfunding/admin base).
-		// RequireAuthContext validates the bearer token and SETS user_id; requireUserID
-		// then fail-closes if it is missing. Without the first, user_id is never set
-		// and every route here answered 401 even with a valid token — so the admin
-		// review console could never load a real campaign and fell back to fixtures.
-		// This is the identical omission already fixed for the finance group above.
+		// RequireAuthContext populates the user_id that requireUserID fail-closes
+		// on — omitting it 401s every route even with a valid token.
 		// Authorization, not just authentication. Reading the queue and DECIDING on a
 		// campaign are separate permissions, mirroring escrow.admin.view /
 		// escrow.admin.resolve: an ops reviewer who may triage submissions should not
@@ -1581,15 +1539,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			restaurantSvc = restaurantSvc.WithDisbursementProvider(paystackDisb)
 		}
 
-		// When the commission feature is on, inject a nil-safe recorder so realized
-		// food-delivery profit (recorded at the delivered order's settlement point in
-		// settleOrder) lands in commission_earnings for the profit report. The recorder
-		// is built WITHOUT a ledger (nil ledgerService) on purpose: restaurant's own
-		// escrow split already posts the platform cut into the ledger, so a second
-		// ledger post would double-count the commission revenue account. RecordFor
-		// therefore appends the earning ROW only. Recording is best-effort and can never
-		// fail or reverse an order (see restaurant.recordCommissionSafe). Flag off ⇒ no
-		// recorder is set ⇒ the seam stays nil ⇒ silent no-op.
+		// Commission recording for food-delivery profit at settleOrder. Ledger-less
+		// recorder — the escrow split already posts the platform cut, so RecordFor
+		// appends the earning ROW only; best-effort, never fails an order (see
+		// restaurant.recordCommissionSafe). Flag off ⇒ nil-safe no-op.
 		if cfg.FeatureCommissionEnabled {
 			restaurantSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 			log.Println("[restaurant] commission recording wired → Lifestyle/Restaurant (earning-row only; no ledger re-post)")
@@ -1921,10 +1874,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// the shared LLM client (claude-sonnet-4-6); empty key → deterministic mock.
 	if cfg.FeatureNutritionEnabled && pool != nil {
 		nutritionAdmin := r.Group("/api/nutrition/admin")
-		// RequireAuthContext validates the bearer token and mirrors user_id into the
-		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
-		// line every route in the group 401s even with a valid token — and on mobile a
-		// 401 signs the user out, so the screen appears to log them out on open.
+		// RequireAuthContext populates the user_id that requireUserID fail-closes
+		// on — omitting it 401s every route even with a valid token.
 		nutritionAdmin.Use(mapsAuth())
 		nutritionAdmin.Use(requireUserID())
 		registerNutritionRoutes(finance, nutritionAdmin, pool, rbac, cfg.AnthropicAPIKey)
@@ -1959,10 +1910,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Mobile-facing /api/v1/telemedicine/... (matches mobile API client)
 		v1Tele := r.Group("/api/v1/telemedicine")
-		// RequireAuthContext validates the bearer token and mirrors user_id into the
-		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
-		// line every route in the group 401s even with a valid token — and on mobile a
-		// 401 signs the user out, so the screen appears to log them out on open.
+		// RequireAuthContext populates the user_id that requireUserID fail-closes
+		// on — omitting it 401s every route even with a valid token.
 		v1Tele.Use(mapsAuth())
 		v1Tele.Use(requireUserID())
 		v1Tele.GET("/specialties", telemedHandler.ListSpecialties)
@@ -2009,10 +1958,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		pharmacySvc := pharmacy.NewService(pool)
 		pharmacyHandler := pharmacy.NewHandler(pharmacySvc)
 		v1Pharm := r.Group("/api/v1/pharmacy")
-		// RequireAuthContext validates the bearer token and mirrors user_id into the
-		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
-		// line every route in the group 401s even with a valid token — and on mobile a
-		// 401 signs the user out, so the screen appears to log them out on open.
+		// RequireAuthContext populates the user_id that requireUserID fail-closes
+		// on — omitting it 401s every route even with a valid token.
 		v1Pharm.Use(mapsAuth())
 		v1Pharm.Use(requireUserID())
 		v1Pharm.GET("/products", pharmacyHandler.ListProducts)
@@ -2084,17 +2031,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			})
 			log.Println("[transport] parcel insurance wired to the real MyCover-backed policy saga")
 		}
-		// When the commission feature is on, inject a nil-safe recorder so realized
-		// transport profit lands in commission_earnings for the profit report. Each
-		// mode's settlement point records its sheet service (all category 'Lifestyle'):
-		// ride-hailing → 'Taxi - Ride Hailing', parcel delivery → 'Delivery - Rider',
-		// bus booking → 'Bus Booking', car hire → 'Car Hire'. The recorder is built
-		// WITHOUT a ledger (nil) on purpose: transport's own settlement split already
-		// posts the platform cut to the ledger, so a second ledger post would double
-		// count — RecordFor therefore appends the earning ROW only. Recording is
-		// best-effort + idempotent (trip/booking id as key) and can never fail or
-		// reverse a fare split (see transport.recordCommissionSafe). Flag off ⇒ no
-		// recorder is set ⇒ the seam stays nil ⇒ silent no-op ⇒ transport unchanged.
+		// Commission recording for realized transport profit. Each mode's settlement
+		// point records its sheet service (all category 'Lifestyle'): ride-hailing →
+		// 'Taxi - Ride Hailing', parcel → 'Delivery - Rider', bus → 'Bus Booking',
+		// car hire → 'Car Hire'. Ledger-less recorder — the settlement split already
+		// posts the cut, so RecordFor appends the earning ROW only; best-effort +
+		// idempotent (trip/booking id key), never fails a split (see
+		// transport.recordCommissionSafe). Flag off ⇒ nil-safe no-op.
 		if cfg.FeatureCommissionEnabled {
 			transportCommission := withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)
 			transportSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: transportCommission})
@@ -2104,9 +2047,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		transportAdmin := transport.NewAdminHandler(transport.NewAdminService(transportSvc))
 
 		// Backend-owned presigned R2 uploads for driver documents (licence,
-		// insurance, roadworthiness, etc.). Unconfigured creds → the presign
-		// endpoint fails closed with 503 (never a fabricated URL). Mirrors the
-		// estate/doctor presigner wiring; bucket default mirrors CLAUDE.md.
+		// insurance, roadworthiness); unconfigured creds → the presign endpoint
+		// fails closed with 503 (never a fabricated URL).
 		transportPresigner := r2.New(r2.Config{
 			AccountEndpoint: cfg.R2AccountEndpoint,
 			Bucket:          cfg.R2Bucket,
@@ -2460,10 +2402,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		dpGroup.POST("", disputesHandler.Open)
 		dpGroup.GET("", disputesHandler.List)
 		adminFinanceDisputes := r.Group("/api/finance/admin/disputes")
-		// RequireAuthContext validates the bearer token and mirrors user_id into the
-		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
-		// line every route in the group 401s even with a valid token — and on mobile a
-		// 401 signs the user out, so the screen appears to log them out on open.
+		// RequireAuthContext populates the user_id that requireUserID fail-closes
+		// on — omitting it 401s every route even with a valid token.
 		adminFinanceDisputes.Use(mapsAuth())
 		adminFinanceDisputes.Use(requireUserID())
 		// FOOD-008 (P0, found executing FC-002): this route had NO permission check
@@ -2530,10 +2470,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// admin console's KYC screens use the separate, RBAC-gated
 	// /api/finance/admin/kyc group registered above (finance.admin.kyc).
 	adminFinance := r.Group("/api/finance/admin")
-	// RequireAuthContext validates the bearer token and mirrors user_id into the
-	// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
-	// line every route in the group 401s even with a valid token — and on mobile a
-	// 401 signs the user out, so the screen appears to log them out on open.
+	// RequireAuthContext populates the user_id that requireUserID fail-closes
+	// on — omitting it 401s every route even with a valid token.
 	adminFinance.Use(mapsAuth())
 	adminFinance.Use(requireUserID())
 	// GET /kyc/pending, POST /kyc/users/:id/{approve,reject} were removed here —
@@ -2634,9 +2572,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if cfg.FeatureCommissionEnabled {
 			doctorSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 		}
-		// Backend-owned presigned R2 uploads (profile photo / documents / licence /
-		// chat attachments / dispute evidence). Unconfigured creds → the presign
-		// endpoint fails closed with 503. Bucket default mirrors CLAUDE.md.
+		// Backend-owned presigned R2 uploads (photo / documents / licence / chat
+		// attachments / dispute evidence); unconfigured creds → presign 503s.
 		doctorPresigner := r2.New(r2.Config{
 			AccountEndpoint: cfg.R2AccountEndpoint,
 			Bucket:          cfg.R2Bucket,

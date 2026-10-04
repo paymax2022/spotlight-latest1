@@ -34,13 +34,10 @@ const (
 
 const quoteTTL = 5 * time.Minute
 
-// walletDebitLimiter is the minimal seam the FX money path depends on for the
-// fail-closed KYC-tier / daily-debit gate. *tiers.Service satisfies it in
-// production; unit tests inject a fake via WithTiers. Modeled as a local
-// interface — mirrors social's walletDebitLimiter. A conversion's source leg is
-// a wallet DEBIT (cash leaves the NGN wallet), so the STRICT gate is used: it
-// is not a checkout purchase, so the Tier-0 checkout allowance (ADR-043) does
-// NOT apply here.
+// walletDebitLimiter is the minimal seam for the fail-closed KYC-tier /
+// daily-debit gate (mirrors social's walletDebitLimiter). A conversion's source
+// leg is a wallet DEBIT, so the STRICT gate applies — the Tier-0 checkout
+// allowance (ADR-043) does NOT.
 type walletDebitLimiter interface {
 	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
 }
@@ -81,12 +78,10 @@ func (s *Service) WithTiers(t walletDebitLimiter) *Service {
 	return s
 }
 
-// enforceDebitLimit is the fail-closed guard applied before the Convert source
-// debit (E2E-FIN-046): the same EnforceWalletDebitLimit the canonical transfer
-// rail (finance/transfers) runs. Tier 0 → ErrWalletDisabled, over daily cap →
-// ErrDailyLimitExceeded, gate/db errors refuse, and a missing gate refuses via
-// ErrTierGateUnwired. The error is propagated UNWRAPPED so the handler maps the
-// tier sentinels to 403 via errors.Is.
+// enforceDebitLimit is the fail-closed guard before the Convert source debit
+// (E2E-FIN-046) — the same EnforceWalletDebitLimit the transfer rail runs; a
+// missing gate refuses via ErrTierGateUnwired. The error propagates UNWRAPPED
+// so the handler maps tier sentinels to 403 via errors.Is.
 func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKobo int64) error {
 	if s.tiers == nil {
 		return ErrTierGateUnwired
@@ -104,14 +99,9 @@ func (s *Service) SetMarkup(m MarkupResolver) {
 }
 
 // CommissionRecorder is the nil-safe seam into the central Commission & Profit
-// module. app-wiring injects a thin adapter over the finance commission service;
-// when the commission feature is off (or no recorder is wired) the field is nil and
-// recording is a silent no-op. Modeled as a LOCAL interface so fx never imports the
-// commission package at compile time (mirrors transport/service.go).
-// This records realized profit ONLY; it never moves money. The conversion's own
-// ledger legs are unchanged, and the injected recorder is deliberately constructed
-// WITHOUT a ledger so RecordFor never re-posts to the ledger — it appends the
-// immutable earning row only.
+// module (local interface so fx never imports commission; mirrors transport).
+// It records realized profit ONLY and never moves money — the injected recorder
+// is built WITHOUT a ledger so it appends the immutable earning row only.
 type CommissionRecorder interface {
 	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
 		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
@@ -123,14 +113,10 @@ type CommissionRecorder interface {
 // post-construction). Nil is accepted and disables recording.
 func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
 
-// recordCommissionSafe records realized Spotlight profit for a completed FX
-// conversion. Best-effort + MUST NEVER affect the caller: a nil recorder is a no-op,
-// and any error is logged and swallowed so a profit-registry failure can never fail
-// or reverse the conversion. The module's ACTUAL earning is the provider spread /
-// FeeKobo, NOT a % of the source principal, so we record the EXACT feeKobo via
-// RecordExact (grossKobo = the source/principal amount is passed for context only).
-// The conversion id doubles as source ref + idempotency key so replays never
-// double-count.
+// recordCommissionSafe records realized profit for a completed conversion.
+// Best-effort: nil-safe and errors are swallowed so it can never fail/reverse
+// the conversion. The actual earning is the FeeKobo, NOT a % of principal, so
+// RecordExact is used; the conversion id is source ref + idempotency key.
 func (s *Service) recordCommissionSafe(ctx context.Context, grossKobo, feeKobo int64, sourceRef string, userID *string) {
 	if s.commission == nil || feeKobo <= 0 {
 		return
@@ -164,10 +150,9 @@ func (s *Service) GetOrCreateCurrencyWallet(ctx context.Context, userID, currenc
 
 // GetQuote obtains an FX rate from Maplerad, stores it, and reserves it in Redis.
 func (s *Service) GetQuote(ctx context.Context, userID string, req QuoteRequest) (*FXQuote, error) {
-	// CreateFXQuote (not the /fx/rates board): this quote is persisted and
-	// exchanged later by Convert, which needs a provider reference — the board
-	// issues none. Maplerad's reference is single-use and expires, so a Convert
-	// after our own quoteTTL fails closed with "could not find quote".
+	// CreateFXQuote (not the /fx/rates board): Convert needs the provider
+	// reference the board never issues. Maplerad's reference is single-use and
+	// expires, so a Convert after quoteTTL fails closed.
 	providerResp, err := s.provider.CreateFXQuote(ctx, maplerad.FXQuoteRequest{
 		SourceCurrency: req.SourceCurrency,
 		TargetCurrency: req.TargetCurrency,
@@ -177,12 +162,11 @@ func (s *Service) GetQuote(ctx context.Context, userID string, req QuoteRequest)
 		return nil, fmt.Errorf("fx: get quote: %w", err)
 	}
 
-	// Maplerad returns no fee — its margin is priced into the rate — so the fee
-	// the customer pays is OUR markup, computed on the source principal. Quoted
-	// here and persisted, so Convert debits exactly what was disclosed even if the
-	// admin changes the markup between quote and execution.
-	// Fail closed: if the rate cannot be resolved we do not quote. Falling back to
-	// some other rate would charge a fee nobody configured.
+	// Maplerad prices its margin into the rate (no fee field), so the customer
+	// fee is OUR markup on the source principal. It is persisted on the quote so
+	// Convert debits the disclosed amount even if the markup changes meanwhile.
+	// Fail closed: an unresolvable rate refuses rather than charging a fee
+	// nobody configured.
 	feeKobo, err := s.markup.FeeMinor(ctx, req.SourceCurrency, req.TargetCurrency, req.AmountKobo)
 	if err != nil {
 		return nil, fmt.Errorf("fx: resolve markup: %w", err)
@@ -214,7 +198,6 @@ func (s *Service) GetQuote(ctx context.Context, userID string, req QuoteRequest)
 		return nil, fmt.Errorf("fx: store quote: %w", err)
 	}
 
-	// Reserve in Redis so it can be looked up quickly at convert time.
 	if s.redis != nil {
 		_ = s.redis.SetEx(ctx, "fx:quote:"+q.ID, q.ID, quoteTTL).Err()
 	}
@@ -222,29 +205,21 @@ func (s *Service) GetQuote(ctx context.Context, userID string, req QuoteRequest)
 }
 
 // Convert executes the FX conversion for a valid, unexpired quote.
-// Money-path invariants (see docs/qa/money-paths.md RISK-FX-1/2/3):
-//   - RISK-FX-2: the WHOLE conversion is idempotent on the single req.IdempotencyKey.
-//     A replay returns the existing conversion. The two ledger legs carry per-leg
-//     suffixed keys (":debit" / ":credit") so a replay is a per-leg no-op, and the
-//     fx_conversions row is guarded by its UNIQUE(idempotency_key) constraint via
-//     INSERT ... ON CONFLICT DO NOTHING RETURNING — so two concurrent identical
-//     Converts can never both win the insert and double-credit the target wallet.
-//   - RISK-FX-1: BOTH legs hit the finance ledger as balanced double-entries. The
-//     source (NGN) leg is a user-wallet Debit; the target-currency leg is a balanced
-//     PostJournal (DR settlement standing account → CR fx-spread standing account)
-//     recording the foreign-currency movement. currency_wallets is NEVER a bare
-//     UPDATE: it is only ever mutated as a MIRROR of the target-leg ledger post,
-//     inside the SAME tx that persists the conversion row, so the fast projection
-//     can never drift from a committed conversion.
-//   - RISK-FX-3: provider-failure reverses the full debit (fail-closed); and the
-//     currency_wallets mirror + conversion-row insert commit together in ONE pgx tx
-//     gated by the unique idempotency key, so a crash can never leave a credited
-//     wallet with no conversion record (or vice-versa).
+// Money-path invariants (docs/qa/money-paths.md):
+//   - RISK-FX-2: the whole conversion is idempotent on req.IdempotencyKey —
+//     replays return the existing row; ledger legs carry ":debit"/":credit"
+//     suffixed keys; UNIQUE(idempotency_key) + ON CONFLICT means concurrent
+//     identical Converts can never double-credit the target wallet.
+//   - RISK-FX-1: both legs post balanced double-entries (source = user-wallet
+//     Debit; target = DR settlement → CR fx-spread). currency_wallets is NEVER
+//     a bare UPDATE — only a mirror of the target leg in the same tx as the
+//     conversion row, so the projection cannot drift.
+//   - RISK-FX-3: provider failure reverses the full debit (fail-closed); the
+//     mirror + conversion row commit in ONE tx so a crash cannot leave a
+//     credited wallet with no conversion record (or vice-versa).
 func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest) (*FXConversion, error) {
-	// Fast idempotency short-circuit: if this key already produced a conversion,
-	// return it (a genuine replay). The durable guard is the UNIQUE(idempotency_key)
-	// constraint enforced by the ON CONFLICT insert below — this SELECT is only an
-	// optimization and is NOT relied on for correctness (no TOCTOU dependency).
+	// Fast replay short-circuit — an optimisation only; the durable guard is the
+	// UNIQUE(idempotency_key) ON CONFLICT insert below (no TOCTOU dependency).
 	var existingID string
 	const checkDup = `SELECT id FROM fx_conversions WHERE idempotency_key=$1 LIMIT 1`
 	_ = s.db.QueryRow(ctx, checkDup, req.IdempotencyKey).Scan(&existingID)
@@ -263,11 +238,8 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 	totalDebitKobo := q.SourceAmountKobo + q.FeeKobo
 	reference := "fx:" + uuid.New().String()
 
-	// Tier gate (fail-closed, E2E-FIN-046): the source leg debits the wallet by
-	// source+fee, so the same EnforceWalletDebitLimit the transfer rail applies
-	// runs on the TOTAL debit BEFORE money moves — a refused attempt posts zero
-	// ledger legs. Replays already returned the existing conversion above, so a
-	// completed key never reaches this gate.
+	// Tier gate on the TOTAL debit (source+fee) BEFORE money moves — a refusal
+	// posts zero ledger legs (E2E-FIN-046). Replays short-circuit above.
 	if err := s.enforceDebitLimit(ctx, userID, totalDebitKobo); err != nil {
 		return nil, err
 	}
@@ -281,24 +253,19 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 		return nil, fmt.Errorf("fx: debit source wallet: %w", err)
 	}
 
-	// Only the provider quote reference is sent — currencies and amount are fixed
-	// by the quote, and Maplerad's exchange endpoint has no client-reference field
-	// (our `reference` guards the ledger legs above, not the provider call).
+	// Maplerad's exchange endpoint has no client-reference field; our reference
+	// guards the ledger legs, not the provider call.
 	convResp, err := s.provider.ConvertFX(ctx, maplerad.ConvertFXRequest{
 		QuoteID: q.ProviderQuoteID,
 	})
 	if err != nil {
-		// Conversion failed after debit — post reversal (fail-closed) and return.
-		// Nothing was credited or recorded, so the user is left net-zero.
+		// Provider failed after the debit — reverse it (fail-closed, net-zero).
 		_ = s.postReversal(ctx, userID, reference, req.IdempotencyKey, totalDebitKobo, fxSpreadAcc.ID)
 		return nil, fmt.Errorf("fx: provider convert: %w", err)
 	}
 
-	// bare stored-balance write. Post a balanced double-entry recording the foreign
-	// leg: DR settlement standing account → CR fx-spread standing account, keyed
-	// ":credit" so a replay is a no-op. This gives the target side a ledger
-	// counterpart (double-entry restored); currency_wallets is then updated ONLY as
-	// a mirror of this post, inside the conversion tx below.
+	// Target leg: DR settlement → CR fx-spread, keyed ":credit" (RISK-FX-1);
+	// currency_wallets is only a mirror of this post inside the conversion tx.
 	settlementAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
 	if err != nil {
 		return nil, err
@@ -330,13 +297,9 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 		CreatedAt:         time.Now(),
 	}
 
-	// Persist the conversion row AND mirror the currency_wallets projection in ONE
-	// pgx tx, gated by UNIQUE(idempotency_key). If the INSERT loses the race (a
-	// concurrent identical Convert already committed), ON CONFLICT DO NOTHING returns
-	// no row: we skip the wallet mirror and return the already-persisted conversion —
-	// so the target wallet can never be double-credited. Crash-safety (RISK-FX-3):
-	// the mirror and the record commit atomically, so we never credit the wallet
-	// without a durable conversion row.
+	// Conversion row + wallet mirror commit in ONE tx gated by
+	// UNIQUE(idempotency_key) (RISK-FX-3). A lost race skips the mirror and
+	// returns the persisted conversion — never a double credit.
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("fx: begin conversion tx: %w", err)
@@ -357,9 +320,7 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 		conv.Reference, conv.IdempotencyKey,
 	).Scan(&insertedID)
 	if err == pgx.ErrNoRows {
-		// A concurrent identical Convert won the race and already credited the wallet.
-		// Do NOT mirror the credit again; roll back this (empty) tx and return the
-		// existing conversion. This is the idempotent replay path.
+		// Lost the race — idempotent replay: skip the mirror, return existing.
 		_ = tx.Rollback(ctx)
 		return s.getConversionByKey(ctx, req.IdempotencyKey)
 	}
@@ -367,9 +328,6 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 		return nil, fmt.Errorf("fx: store conversion: %w", err)
 	}
 
-	// Mirror the target-leg credit into the fast currency_wallets projection, in the
-	// SAME tx as the conversion insert. currency_wallets is thus only ever moved as a
-	// mirror of a committed ledger post + conversion record — never a bare UPDATE.
 	if err := s.mirrorCurrencyWalletTx(ctx, tx, userID, q.TargetCurrency, convResp.TargetAmountMinor); err != nil {
 		return nil, fmt.Errorf("fx: mirror target wallet: %w", err)
 	}
@@ -377,11 +335,8 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("fx: commit conversion tx: %w", err)
 	}
-	// Record realized Spotlight profit into the central Commission & Profit registry
-	// at the ONLY successful-conversion point (NOT the idempotent replay short-circuits
-	// above, which return before here, so replays never double-count). gross = the
-	// source/principal amount; source ref + idempotency key = the conversion id.
-	// Best-effort + nil-safe — a recorder failure can never fail/reverse the conversion.
+	// Only reached on a genuinely new conversion — replays return earlier, so
+	// profit is never double-counted.
 	s.recordCommissionSafe(ctx, conv.SourceAmountKobo, conv.FeeKobo, conv.ID, &conv.UserID)
 	return conv, nil
 }
@@ -433,17 +388,11 @@ func (s *Service) getConversion(ctx context.Context, id string) (*FXConversion, 
 	)
 }
 
-// mirrorCurrencyWalletTx updates the fast currency_wallets projection as a MIRROR of
-// the already-posted target-leg ledger entry, inside the caller's transaction. It is
-// NEVER called on its own — only from Convert, in the same tx that inserts the
-// fx_conversions row (guarded by UNIQUE(idempotency_key)). This preserves the iron
-// rule that balances are ledger-derived: the currency_wallets row moves only when a
-// balanced ledger post AND a durable conversion record commit together, so it can
-// never be a bare stored-balance write with no ledger counterpart (RISK-FX-1), and
-// can never be double-applied (RISK-FX-2/3 — the conflicting insert short-circuits
-// before we ever reach here).
-// Upsert semantics mirror GetOrCreateCurrencyWallet so a first conversion into a
-// currency the user has never held still lands correctly.
+// mirrorCurrencyWalletTx updates the currency_wallets projection as a MIRROR of
+// the posted target-leg entry, inside the caller's tx with the fx_conversions
+// insert (UNIQUE idempotency key). It is never called on its own: the row moves
+// only when a ledger post + conversion record commit together (RISK-FX-1/2/3).
+// Upsert semantics mirror GetOrCreateCurrencyWallet.
 func (s *Service) mirrorCurrencyWalletTx(ctx context.Context, tx pgx.Tx, userID, currency string, amountMinor int64) error {
 	const upsert = `
 		INSERT INTO currency_wallets (user_id, currency, balance_minor)
@@ -577,7 +526,6 @@ func (h *Handler) Convert(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	// Header Idempotency-Key wins over a body field if present.
 	if k := ginutil.IdempotencyKey(c); k != "" {
 		req.IdempotencyKey = k
 	}
@@ -717,22 +665,13 @@ func (h *MarkupHandler) ListAudit(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{keyData: entries})
 }
 
-// Paymax FX markup.
-// Maplerad's FX endpoints return NO fee: the provider prices its own margin into
-// the rate (see maplerad.ConvertFXResponse) — there is no `fee` field on the
-// wire, so provider-side `fee_kobo` is structurally 0.
-// Paymax revenue on this path is therefore an EXPLICIT markup of our own. It is
-// operator-tunable at runtime: the live rate lives in public.fx_markup_rates and
-// is changed through PUT /api/finance/admin/fx/markup (ADR-030).
-// UNITS. Operators think in PERCENT ("1%"); money code stores integer BASIS
-// POINTS (1% = 100 bps), matching commission_config.commission_bps and every
-// other rate in the schema. Conversion between the two is exact rational
-// arithmetic — a percent is never held as a float, because a float percent makes
-// the charged fee non-reproducible.
-// The markup is charged ON TOP of the principal: Convert debits
-// SourceAmountKobo + FeeKobo and the ledger credits the whole amount to the
-// fx_spread_income standing account, so the double-entry stays balanced with no
-// other change.
+// Paymax FX markup. Maplerad prices its margin into the rate (no `fee` field on
+// the wire), so Paymax revenue here is an EXPLICIT markup, operator-tunable via
+// public.fx_markup_rates / PUT /api/finance/admin/fx/markup (ADR-030).
+// Operators work in PERCENT; the store keeps integer BASIS POINTS and
+// conversion is exact rational arithmetic — a float percent would make the
+// charged fee non-reproducible. The markup is charged ON TOP of the principal:
+// Convert debits SourceAmountKobo + FeeKobo, keeping the journal balanced.
 
 // DefaultCorridor is the rate row applied to any corridor without its own
 // override. Mirrors the seeded 'DEFAULT' row in fx_markup_rates.

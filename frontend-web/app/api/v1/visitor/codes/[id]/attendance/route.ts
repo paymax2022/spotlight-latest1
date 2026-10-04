@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { mapGateEvent } from '@/src/server/visitor/gate.service';
 
-// GET /api/v1/visitor/codes/{id}/attendance — gate events for this code.
+// Gate events for this code.
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     await requireRequestUser(request);

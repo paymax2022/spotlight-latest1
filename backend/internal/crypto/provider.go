@@ -68,20 +68,14 @@ func (m *MockPriceProvider) PriceKobo(_ context.Context, symbol string) (int64, 
 	return band * 100, true
 }
 
-// WithdrawalProvider is the pluggable on-chain broadcast seam. It mirrors the
-// PaymentProvider (Paystack adapter) pattern used elsewhere in the codebase: the
-// crypto service depends only on this interface, and a concrete adapter (mock,
-// manual-desk, or a real custody API such as Fireblocks/BitGo) is injected via
-// Register. There is NO real on-chain broadcast in this build — the mock adapter
-// returns a deterministic provider reference + tx hash so the withdrawal STATE
-// MACHINE and LEDGER are real and exercisable end-to-end. Swap the adapter to go
-// live; the service, state machine, ledger postings and audit trail are unchanged.
-// Provider seam contract:
-//   - Broadcast is the only outbound side effect. It is called exactly once per
-//     withdrawal on the requested→pending→broadcast transition, and it must be
-//     effectively idempotent on providerIdemKey (a duplicate returns the same ref).
-//   - A provider MUST NOT mutate ledger or holdings — the service owns money moves.
-//   - ConfirmationTarget lets a reconciliation worker decide when broadcast→confirmed.
+// WithdrawalProvider is the pluggable on-chain broadcast seam. There is NO real
+// broadcast in this build — the mock adapter returns a deterministic ref so the
+// withdrawal state machine and ledger are exercisable end-to-end; swap the
+// adapter to go live. Contract:
+//   - Broadcast is the only outbound side effect, called once per withdrawal on
+//     the requested→pending→broadcast transition; idempotent on providerIdemKey.
+//   - A provider MUST NOT mutate ledger or holdings — the service owns money.
+//   - ConfirmationTarget lets a reconciliation worker decide broadcast→confirmed.
 type WithdrawalProvider interface {
 	// Broadcast submits a withdrawal to the network/custodian. It returns a stable
 	// provider reference and (optionally) a tx hash. providerIdemKey is the withdrawal
@@ -158,23 +152,16 @@ func deriveDepositAddress(userID, symbol, network string) (string, string) {
 	return address, memo
 }
 
-// quidaxProvider is the real HTTP adapter that implements BOTH the PriceProvider
-// (NGN ticker feed) and the WithdrawalProvider (on-chain withdrawal broadcast) seams,
-// replacing the deterministic mocks when configured. It is provider-specific to
-// Quidax (https://quidax.com) but selected generically via config.
-// SAFETY — the withdrawal path is FAIL-CLOSED:
-//   - a 2xx response with a withdrawal id → Accepted, returns the provider ref/tx hash;
-//   - ANY other outcome (non-2xx, malformed body, transport/timeout error) → returns a
-//     Go error. Per the WithdrawalProvider contract, the service keeps the withdrawal in
-//     a non-terminal (approved/pending) state on error and does NOT return the parked
-//     units — so an ambiguous provider failure can never both send funds AND refund the
-//     holder (no double-spend), and the adapter never fabricates a success.
-//
-// Custody model: a single platform Quidax account holds custody; per-user balances live
-// in the finance ledger. Withdrawals are sent from the platform account ("me") to the
-// user's whitelisted destination address. Quidax exposes no idempotency-key header, so
-// the withdrawal's stable idem key is carried in transaction_note for provider-side
-// tracing; the service already guards idempotency on the approved→broadcast transition.
+// quidaxProvider is the real HTTP adapter implementing BOTH PriceProvider and
+// WithdrawalProvider, replacing the deterministic mocks when configured.
+// The withdrawal path is FAIL-CLOSED: a 2xx with a withdrawal id → Accepted;
+// ANY other outcome → error, which keeps the withdrawal non-terminal and does
+// NOT return the parked units — an ambiguous failure can never both send funds
+// and refund the holder (no double-spend).
+// Custody model: one platform Quidax account holds custody; per-user balances
+// live in the finance ledger. Quidax has no idempotency-key header, so the
+// withdrawal's stable key travels in transaction_note; the service guards
+// idempotency on the approved→broadcast transition.
 type quidaxProvider struct {
 	http    *http.Client
 	baseURL string

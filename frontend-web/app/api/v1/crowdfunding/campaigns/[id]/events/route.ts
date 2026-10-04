@@ -3,7 +3,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
-// POST /api/v1/crowdfunding/campaigns/[id]/events — record a VIEW or SHARE.
+// Record a VIEW or SHARE.
 // Feeds the real Views / Shares / Conversion / traffic-source figures on the
 // creator performance screen (see the 20261228000000 migration for why those
 // were previously fabricated).

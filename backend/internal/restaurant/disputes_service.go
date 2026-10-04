@@ -91,7 +91,6 @@ func (s *Service) RaiseFoodDispute(ctx context.Context, orderID, actorID, dtype,
 		id, actorID, orderID, dtype, description); err != nil {
 		return nil, fmt.Errorf("restaurant: open dispute: %w", err)
 	}
-	// Notify the restaurant owner a dispute was opened.
 	if owner != "" && owner != actorID {
 		s.notify(ctx, Notification{UserID: owner, Event: EventOrderCancelled, Title: "Order disputed",
 			Body: "A customer opened a dispute on an order.", Data: map[string]any{"order_id": orderID, "dispute_id": id}})

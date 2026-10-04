@@ -236,7 +236,7 @@ func (s *Service) ListEvents(ctx context.Context, callerID string, filter EventL
 		offset = 0
 	}
 
-	// Build a safe, parameterised WHERE clause.
+	// WHERE clause is parameterised — filter values are never interpolated.
 	args := []any{}
 	where := "WHERE 1=1"
 
@@ -392,7 +392,6 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	}
 	defer tx.Rollback(ctx)
 
-	// Lock the tier row and check capacity.
 	var price int64
 	var capacity, sold int
 	var active bool
@@ -409,7 +408,6 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 		return nil, ErrSoldOut
 	}
 
-	// Apply promo (versioned, max-uses guarded).
 	payable := price
 	if promo != "" {
 		var pid string
@@ -963,7 +961,7 @@ func (s *Service) TapCharge(ctx context.Context, callerID, vendorID, walletID st
 		return s.chargeByID(ctx, existing)
 	}
 
-	// Lock the wallet's balance projection and check funds.
+	// Balance projection is locked under the row guard (FOR UPDATE).
 	var state string
 	if err := tx.QueryRow(ctx, `SELECT state FROM event_wallets WHERE id=$1 FOR UPDATE`, walletID).Scan(&state); err != nil {
 		if err == pgx.ErrNoRows {

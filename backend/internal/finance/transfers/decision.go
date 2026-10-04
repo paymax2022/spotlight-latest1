@@ -43,30 +43,17 @@ var (
 	// ErrPinLocked — too many failed PIN attempts (403).
 	ErrPinLocked = errors.New("transfers: transaction PIN locked — try again later")
 
-	// ErrPinCurrentRequired is returned when a PIN already exists and the caller
-	// asked to set a new one WITHOUT supplying the current PIN.
-	// It exists so this case never reaches pinStore.Verify. An absent current PIN
-	// is a malformed request, not a wrong guess: verifying "" fails, and the
-	// failure counts toward the 5-attempt lockout. A client that forgets the
-	// field can therefore lock a user out of transfers entirely — which is
-	// exactly what a mobile PIN screen did, five taps at a time, while never
-	// asking for the PIN it was being scored against.
+	// ErrPinCurrentRequired fires when a PIN exists and the caller omitted the
+	// current PIN. It must never reach pinStore.Verify: verifying "" fails and
+	// burns one of the 5 lockout attempts — a client forgetting the field could
+	// otherwise lock the user out entirely.
 	ErrPinCurrentRequired = errors.New("transfers: current transaction PIN is required to change it")
 	// ErrProviderUnavailable — no disbursement provider configured / all failed (502).
 	ErrProviderUnavailable = errors.New("transfers: no disbursement provider available")
 )
 
-// HTTPStatusForError maps a money-path error to its acceptance-gate HTTP status.
-// Unwraps wrapped errors so callers may decorate with %w freely.
-// Mapping (locked by the go-live gates):
-//
-//	self-transfer            → 422
-//	insufficient funds       → 402
-//	tier 0 wallet disabled   → 403
-//	daily limit exceeded     → 403
-//	recipient / account 404  → 404
-//	missing key / bad amount → 400
-//	anything else            → 500 (fail closed)
+// errMap maps a money-path error to its acceptance-gate HTTP status (locked by
+// the go-live gates). Unknown errors fall through to 500 — fail closed.
 var errMap = httperr.New(http.StatusInternalServerError, // 500 — fail closed
 	httperr.R(http.StatusUnprocessableEntity, ErrSelfTransfer),                                            // 422
 	httperr.R(http.StatusPaymentRequired, ledger.ErrInsufficientFunds),                                    // 402
@@ -194,12 +181,10 @@ type RecipientCandidate struct {
 }
 
 // NormalizeRecipientPhone reduces a phone number to its 10-digit national
-// significant number, so every spelling of one number resolves to one account.
-// Deliberately delegates to services.NormalizePhone — the same function the
-// phone SIGN-IN path uses. A second copy would drift, and the two paths
-// disagreeing about which account owns a number is exactly the class of bug
-// that pays the wrong person. Returns "" for anything that cannot be a Nigerian
-// mobile; callers MUST treat that as "no match" and never as a looser probe.
+// significant number. It delegates to services.NormalizePhone — the same
+// function the sign-in path uses, so the two paths can never disagree about
+// who owns a number. Returns "" for a non-Nigerian-mobile shape; callers MUST
+// treat that as "no match".
 func NormalizeRecipientPhone(raw string) string {
 	return services.NormalizePhone(strings.TrimSpace(raw))
 }

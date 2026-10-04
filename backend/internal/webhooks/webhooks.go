@@ -146,11 +146,10 @@ type transferData struct {
 }
 
 // FeesChargeConfirmer is the confirm-and-record entry point for EdTech fee
-// payments. On a charge.success whose reference carries the fees prefix
-// ("feespay:") the webhook routes here instead of the wallet/VA path. The
-// concrete impl is *academy/fees/payment.Service.OnChargeSuccess, wired at the
-// composition root and injected via SetFeesConfirmer. When nil (fees module off)
-// the fees branch is a no-op. This is the ONLY fees webhook seam — no new receiver.
+// payments: charge.success references carrying the "feespay:" prefix route
+// here instead of the wallet/VA path. Impl is
+// *academy/fees/payment.Service.OnChargeSuccess, injected via SetFeesConfirmer;
+// nil ⇒ fees module off and the branch is a no-op. The ONLY fees webhook seam.
 type FeesChargeConfirmer interface {
 	OnChargeSuccess(ctx context.Context, reference, gatewayRef string) (any, error)
 }
@@ -160,14 +159,10 @@ type FeesChargeConfirmer interface {
 const FeesReferencePrefix = "feespay:"
 
 // RestaurantOrderConfirmer is the confirm-and-place entry point for
-// Paystack-funded food orders. On a charge.success whose reference carries
-// the restaurant-checkout prefix ("foodorder:") the webhook routes here
-// instead of the wallet/VA path. The concrete impl is
-// *restaurant/paystackcheckout.Service.OnChargeSuccess, wired at the
-// composition root and injected via SetRestaurantOrderConfirmer. When nil
-// (the module or FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED is off) the
-// branch is a no-op. This is the ONLY seam for this confirmation — no new
-// receiver.
+// Paystack-funded food orders ("foodorder:" prefix). Impl is
+// *restaurant/paystackcheckout.Service.OnChargeSuccess, injected via
+// SetRestaurantOrderConfirmer; same nil ⇒ no-op seam contract as
+// FeesChargeConfirmer.
 type RestaurantOrderConfirmer interface {
 	OnChargeSuccess(ctx context.Context, reference, gatewayRef string) (any, error)
 }
@@ -177,13 +172,9 @@ type RestaurantOrderConfirmer interface {
 const RestaurantOrderReferencePrefix = "foodorder:"
 
 // RideOrderConfirmer is the confirm-and-book entry point for Paystack-funded
-// ride-hailing checkouts. On a charge.success whose reference carries the
-// ride-checkout prefix ("rideorder:") the webhook routes here instead of the
-// wallet/VA path. The concrete impl is
-// *transport/paystackcheckout.Service.OnChargeSuccess, wired at the
-// composition root and injected via SetRideOrderConfirmer. When nil (the
-// module or FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED is off) the branch is
-// a no-op. Same shape as RestaurantOrderConfirmer.
+// ride-hailing checkouts ("rideorder:" prefix). Impl is
+// *transport/paystackcheckout.Service.OnChargeSuccess; same seam contract as
+// FeesChargeConfirmer.
 type RideOrderConfirmer interface {
 	OnChargeSuccess(ctx context.Context, reference, gatewayRef string) (any, error)
 }
@@ -193,12 +184,9 @@ type RideOrderConfirmer interface {
 const RideOrderReferencePrefix = "rideorder:"
 
 // DuesOrderConfirmer is the confirm-and-pay entry point for Paystack-funded
-// estate dues checkouts. On a charge.success whose reference carries the
-// dues-checkout prefix ("duespay:") the webhook routes here instead of the
-// wallet/VA path. The concrete impl is
-// *estate/paystackcheckout.Service.OnChargeSuccess, wired at the composition
-// root and injected via SetDuesOrderConfirmer. Same shape as
-// RestaurantOrderConfirmer / RideOrderConfirmer.
+// estate dues checkouts ("duespay:" prefix). Impl is
+// *estate/paystackcheckout.Service.OnChargeSuccess; same seam contract as
+// FeesChargeConfirmer.
 type DuesOrderConfirmer interface {
 	OnChargeSuccess(ctx context.Context, reference, gatewayRef string) (any, error)
 }
@@ -224,31 +212,24 @@ func NewPaystackHandler(payment provider.PaymentProvider, vaSvc *va.Service, xfe
 	return &PaystackHandler{payment: payment, vaSvc: vaSvc, xferSvc: xferSvc, walletSvc: walletSvc}
 }
 
-// SetFeesConfirmer injects the EdTech-fees confirm-and-record service. Called from
-// the composition root only when FEATURE_ACADEMY_FEES_ENABLED and the fees payment
-// service is assembled. Idempotent + safe to leave unset.
+// SetFeesConfirmer injects the EdTech-fees confirmer; called from the
+// composition root only when FEATURE_ACADEMY_FEES_ENABLED is on.
 func (h *PaystackHandler) SetFeesConfirmer(c FeesChargeConfirmer) { h.feesConfirmer = c }
 
-// SetRestaurantOrderConfirmer injects the restaurant Paystack-checkout
-// confirm-and-place service. Called from the composition root only when
-// FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED is on. Idempotent + safe to
-// leave unset.
+// SetRestaurantOrderConfirmer injects the restaurant checkout confirmer; called
+// only when FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED is on.
 func (h *PaystackHandler) SetRestaurantOrderConfirmer(c RestaurantOrderConfirmer) {
 	h.restaurantConfirmer = c
 }
 
-// SetRideOrderConfirmer injects the transport Paystack-checkout
-// confirm-and-book service. Called from the composition root only when
-// FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED is on. Idempotent + safe to
-// leave unset.
+// SetRideOrderConfirmer injects the transport checkout confirmer; called only
+// when FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED is on.
 func (h *PaystackHandler) SetRideOrderConfirmer(c RideOrderConfirmer) {
 	h.rideConfirmer = c
 }
 
-// SetDuesOrderConfirmer injects the estate dues Paystack-checkout
-// confirm-and-pay service. Called from the composition root only when
-// FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED is on. Idempotent + safe to
-// leave unset.
+// SetDuesOrderConfirmer injects the estate dues checkout confirmer; called only
+// when FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED is on.
 func (h *PaystackHandler) SetDuesOrderConfirmer(c DuesOrderConfirmer) {
 	h.duesConfirmer = c
 }
@@ -301,11 +282,8 @@ func (h *PaystackHandler) handleChargeSuccess(ctx context.Context, data json.Raw
 		return fmt.Errorf("paystack webhook: unmarshal charge: %w", err)
 	}
 
-	// EdTech fees payment — reference carries the "feespay:" prefix. Route to the
-	// fees confirm-and-record path (verify → guardian wallet → school settlement
-	// ledger move → invoice payment record, all idempotent). No new receiver; this
-	// is a minimal branch on the existing charge.success pipeline. When the fees
-	// module is off (feesConfirmer nil) this is a benign no-op.
+	// EdTech fees payment ("feespay:" prefix) → confirm-and-record path
+	// (verify → guardian wallet → school settlement → invoice record).
 	if strings.HasPrefix(d.Reference, FeesReferencePrefix) {
 		if h.feesConfirmer == nil {
 			return nil
@@ -314,12 +292,8 @@ func (h *PaystackHandler) handleChargeSuccess(ctx context.Context, data json.Raw
 		return err
 	}
 
-	// Restaurant food-order Paystack checkout — reference carries the
-	// "foodorder:" prefix. Route to the confirm-and-place path (verify →
-	// amount cross-check → PlaceOrderPaystackFunded → refund-on-failure, all
-	// idempotent — see paystackcheckout.Service.OnChargeSuccess). No new
-	// receiver; a minimal branch on the existing charge.success pipeline, same
-	// shape as the fees branch above. Off (nil confirmer) is a benign no-op.
+	// Restaurant food-order checkout ("foodorder:" prefix) → confirm-and-place
+	// path (verify → cross-check → PlaceOrderPaystackFunded → refund-on-failure).
 	if strings.HasPrefix(d.Reference, RestaurantOrderReferencePrefix) {
 		if h.restaurantConfirmer == nil {
 			return nil
@@ -328,8 +302,7 @@ func (h *PaystackHandler) handleChargeSuccess(ctx context.Context, data json.Raw
 		return err
 	}
 
-	// Transport (ride-hailing) Paystack checkout — reference carries the
-	// "rideorder:" prefix. Same shape as the restaurant branch above.
+	// Transport ride checkout ("rideorder:" prefix) → same shape as restaurant.
 	if strings.HasPrefix(d.Reference, RideOrderReferencePrefix) {
 		if h.rideConfirmer == nil {
 			return nil
@@ -338,8 +311,7 @@ func (h *PaystackHandler) handleChargeSuccess(ctx context.Context, data json.Raw
 		return err
 	}
 
-	// Estate dues Paystack checkout — reference carries the "duespay:" prefix.
-	// Same shape as the restaurant/transport branches above.
+	// Estate dues checkout ("duespay:" prefix) → same shape as restaurant.
 	if strings.HasPrefix(d.Reference, DuesOrderReferencePrefix) {
 		if h.duesConfirmer == nil {
 			return nil

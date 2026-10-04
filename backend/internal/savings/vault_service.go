@@ -145,18 +145,13 @@ func (s *VaultService) penaltyFor(v *Vault, amountKobo int64) int64 {
 	return amountKobo * s.earlyBreakPenaltyBps / 10000
 }
 
-// CommissionRecorder is the nil-safe seam into the central Commission & Profit
-// module. app-wiring injects a thin adapter over the finance commission service;
-// when the commission feature is off (or no recorder is wired) the field is nil and
-// recording is a silent no-op. Modeled as a LOCAL interface so savings never imports
-// the commission package at compile time (mirrors transport/service.go).
-// This records realized profit ONLY; it never moves money. The savings module's own
-// money movements (the early-break penalty debit into paymax_revenue) are unchanged,
-// and the injected recorder is deliberately constructed WITHOUT a ledger so RecordFor
-// never re-posts to the ledger — it appends the immutable earning row only. It is
-// wired on VaultService ONLY: the ONLY Spotlight-earned fee in savings is the
-// early-withdrawal penalty (deposits, normal withdrawals, target/Ajo flows are all
-// fee-free — NL-2, no yield — so those services record nothing).
+// CommissionRecorder is the nil-safe seam into the central commission module —
+// a LOCAL interface so savings never imports it. It records realized profit
+// ONLY and never moves money; the injected recorder is built WITHOUT a ledger
+// so it appends the immutable earning row and never re-posts. Wired on
+// VaultService only: the ONLY Spotlight-earned fee in savings is the
+// early-withdrawal penalty (NL-2 — deposits, withdrawals, target/Ajo are
+// fee-free and record nothing).
 type CommissionRecorder interface {
 	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
 		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
@@ -168,14 +163,11 @@ type CommissionRecorder interface {
 // post-construction). Nil is accepted and disables recording.
 func (s *VaultService) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
 
-// recordCommissionSafe records realized Spotlight profit for a completed early-
-// withdrawal that incurred a penalty. Best-effort + MUST NEVER affect the caller: a
-// nil recorder is a no-op, and any error is logged and swallowed so a profit-registry
-// failure can never fail or reverse the withdrawal. The module's ACTUAL earning is the
-// exact penalty already computed and debited into paymax_revenue, NOT a % of the
-// principal, so we record the EXACT penaltyKobo via RecordExact (grossKobo = the
-// withdrawal principal is passed for context). source ref + idempotency key = the
-// per-penalty idempotency token so replays never double-count.
+// recordCommissionSafe records realized profit for a completed early-withdrawal
+// penalty. Best-effort — must never fail or reverse the withdrawal. Records the
+// EXACT penaltyKobo already debited into paymax_revenue via RecordExact (gross =
+// withdrawal principal for context); the per-penalty idempotency token doubles
+// as source ref + key so replays never double-count.
 func (s *VaultService) recordCommissionSafe(ctx context.Context, grossKobo, penaltyKobo int64, sourceRef string, userID *string) {
 	if s.commission == nil || penaltyKobo <= 0 {
 		return

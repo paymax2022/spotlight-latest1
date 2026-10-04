@@ -208,11 +208,7 @@ func (h *Handler) Commissions(c *gin.Context) {
 // member stays group (the orchestrator passes the same group it built in
 // RegisterStays, so the final paths are /api/finance/stays/agent/*). It is
 // nil-safe: a nil service (e.g. nil pool at wiring time) skips registration.
-//
-//	POST /agent/quote        — search + priced hold for a walk-in customer
-//	POST /agent/book         — book the held quote (Idempotency-Key REQUIRED)
-//	GET  /agent/bookings     — reservations this agent booked
-//	GET  /agent/commissions  — agent commission totals (booked+settled)
+// POST /agent/book requires an Idempotency-Key.
 func RegisterStaysAgent(rg *gin.RouterGroup, svc *Service) {
 	if svc == nil {
 		log.Println("[stays.agent] nil service — skipping agent routes")

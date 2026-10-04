@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext } from '@/src/server/visitor/visitor.service';
 
-// GET /api/v1/visitor/restriction — current restriction state for the resident.
+// Current restriction state for the resident.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

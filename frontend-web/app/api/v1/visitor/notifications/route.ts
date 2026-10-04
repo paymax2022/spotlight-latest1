@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { mapNotification } from '@/src/server/visitor/gate.service';
 
-// GET /api/v1/visitor/notifications — notifications for the caller, newest first.
+// Notifications for the caller, newest first.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);

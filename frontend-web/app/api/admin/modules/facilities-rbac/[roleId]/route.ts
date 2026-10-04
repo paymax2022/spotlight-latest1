@@ -12,7 +12,6 @@ const FACILITIES_PERMISSIONS = [
   'estate.admin.facilities.bookings.cancel',
 ];
 
-// PATCH /api/admin/modules/facilities-rbac/[roleId] — Update facilities permissions for a role
 // E2E-SEC-054: was gated on requireRequestUser only — this handler deletes and
 // inserts role_permissions rows via the service-role client, i.e. it was a raw
 // RBAC-permission forge endpoint for ANY authenticated user (it only 500'd on

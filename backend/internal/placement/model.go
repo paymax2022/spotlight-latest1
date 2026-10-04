@@ -19,8 +19,6 @@ import (
 	"spotlight/backend/go-common/fsm"
 )
 
-// State machine
-
 // State is the guarded campaign lifecycle state. Transitions are enforced by
 // canTransition; any edge not listed is rejected (fail-closed).
 type State string
@@ -75,8 +73,6 @@ func canTransition(from, to State) bool { return transitions.Can(from, to) }
 
 // IsTerminal reports whether a state has no outbound transitions.
 func (s State) IsTerminal() bool { return transitions.IsTerminal(s) }
-
-// Domain types
 
 // LayoutType matches placement_zone.layout_type.
 type LayoutType string

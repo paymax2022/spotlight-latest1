@@ -4,7 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext, isWithinWindow, mapElection } from '@/src/server/elections/elections.service';
 
-// GET /api/v1/elections/active — the election whose window is open now, or null.
+// The election whose window is open now, or null.
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
