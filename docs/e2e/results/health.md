@@ -21,7 +21,7 @@ Fixture honesty: `psql` is used ONLY for fixture setup (email-confirm, `kyc_tier
 | Doctor emergency dispatch trio | 3 | **flag-gated** `FEATURE_DOCTOR_EMERGENCY_DISPATCH_ENABLED` (404 verified) | separately flagged inside doctor |
 | Pre-consult intake member group | ~10 | **flag-gated** `FEATURE_HEALTH_INTAKE_ENABLED` (404 verified) | base intake schema/response routes are always mounted |
 | Pharmacy symptom search | 2 | **flag-gated** `FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED` (404 verified) | |
-| Scheduler jobs `health.appointment.reminder`, `health.vet.vaccination.reminder`, `health.vcn.licence_sweep` | — | **stubbed-known** | log-only handlers registered in `health_routes.go`; vaccination schedule creation itself is journeyed |
+| Scheduler jobs `health.appointment.reminder`, `health.vet.vaccination.reminder`, `health.vcn.licence_sweep` | — | **unit/live** | licence sweep: real handler (`credential.JobLicenceSweep`); reminders: real delivery handlers in `app/health_reminder_jobs.go` (consume terminal/gone entities, deliver via notifications queue, retry on enqueue failure) — 5 live-DB tests in `health_reminder_jobs_live_test.go` |
 
 Flags verified ON in the running container: `FEATURE_HEALTH_ENABLED`, `FEATURE_HEALTH_PHARMACY_ENABLED`, `FEATURE_HEALTH_LAB_ENABLED`, `FEATURE_HEALTH_VET_ENABLED`, `FEATURE_AICARE_ENABLED` (support sessions live), telemedicine consult surface. Flag-off probes assert **404 (route absent)**, never a misleading 401/5xx — `hlt-006-edge.spec.ts`.
 
@@ -58,7 +58,7 @@ Flags verified ON in the running container: `FEATURE_HEALTH_ENABLED`, `FEATURE_H
   - `FEATURE_DOCTOR_ENABLED` — all ~341 doctor paths (`/api/v1/doctor/*`, `/api/health/doctor/*`).
   - `FEATURE_DOCTOR_EMERGENCY_DISPATCH_ENABLED` — emergency dispatch trio (`/emergency/contacts/:patientId/notify`, `/emergency/escalate/ambulance`, `/emergency/escalate/hospital`); emergency-case CRUD rides the doctor flag.
 - **internal/webhook:** `POST /internal/webhooks/triage/whatsapp` (flag-gated AND internal — signature-verified webhook, not a member journey). Internal scheduler job types are not HTTP routes.
-- **stubbed-known:** scheduler handlers `health.appointment.reminder`, `health.vet.vaccination.reminder`, `health.vcn.licence_sweep` are registered log-only stubs (`health_routes.go`); vaccination due-dates ARE created in HLT-004 so a job row exists to consume.
+- **scheduler jobs (not HTTP routes):** `health.vcn.licence_sweep` has a real handler; `health.appointment.reminder` + `health.vet.vaccination.reminder` now deliver through `app/health_reminder_jobs.go` — fire-time entity re-read, terminal/gone entities consumed quietly, enqueue failure retries. Vaccination due-dates ARE created in HLT-004.
 - **needs-seed (flag-on environments):** doctor journeys need MDCN-credentialed doctor + consult fixtures; triage needs published governance content/rules; nutrition needs a dish library — all additionally flag-off here, so no E2E attempt was made.
 - **SEC-056 carve-out (by design, NOT reported as a leak):** admin-only provider-health endpoints (`/api/health/admin/*`, per-vertical admin groups) intentionally expose raw operational detail (queue internals, custody chains, audit rows) behind RequireAuthContext + granular `health.*` RBAC. Reviewer-only fields like `matched_fields` are admin-shaped; the member-facing `verification/status` returns only a sanitised stage (verified: NDPA minimisation in `credential/service.go`).
 
@@ -89,7 +89,7 @@ Owner KYB (type `lab`) + separate `lab_scientist` + `phlebotomist` capability us
 Spec: `tests/e2e/health/hlt-003-lab.spec.ts`.
 
 ### HLT-004 — vet + VCN — PASS w/ finding (2 tests)
-`POST /providers/applications` (VET/vet) → **doc'd verification submit → 400 (E2E-HLT-003)** → doc-less submit → 201 `{stage}` → `GET /verification/status` → admin queue (`items[].record.provider_application_id`) → `GET …/verification/:recordId` → approve without `licence_expiry` → refused → approve `2030-12-31` → VERIFIED → application APPROVED + `provider_id` minted → `POST /vet/services` (TELE) → pet create/list → `POST /pets/:id/vaccinations` (scheduler stub picks it up — stubbed-known) → `/vet/vets` + `POST /vet/sos` (disclaimer) → `POST /appointments` → HELD + balanced legs, replay → same id → vet `/accept` → `/confirm` → `POST /consults/:apptId/start` → shared `GET /consults/:id/lobby` (owner 200, stranger 403) → `/complete` (SOAP) → COMPLETED → release legs balanced → admin dashboard/appointments/vcn-audit/erx-audit 200. Cancel→refund balanced via plain provider approval.
+`POST /providers/applications` (VET/vet) → **doc'd verification submit → 400 (E2E-HLT-003)** → doc-less submit → 201 `{stage}` → `GET /verification/status` → admin queue (`items[].record.provider_application_id`) → `GET …/verification/:recordId` → approve without `licence_expiry` → refused → approve `2030-12-31` → VERIFIED → application APPROVED + `provider_id` minted → `POST /vet/services` (TELE) → pet create/list → `POST /pets/:id/vaccinations` (durable reminder job enqueued — real handler in `app/health_reminder_jobs.go`) → `/vet/vets` + `POST /vet/sos` (disclaimer) → `POST /appointments` → HELD + balanced legs, replay → same id → vet `/accept` → `/confirm` → `POST /consults/:apptId/start` → shared `GET /consults/:id/lobby` (owner 200, stranger 403) → `/complete` (SOAP) → COMPLETED → release legs balanced → admin dashboard/appointments/vcn-audit/erx-audit 200. Cancel→refund balanced via plain provider approval.
 Spec: `tests/e2e/health/hlt-004-vet.spec.ts`.
 
 ### HLT-005 — AI care — PASS (2 tests)
@@ -106,7 +106,7 @@ Spec: `tests/e2e/health/hlt-006-edge.spec.ts`.
 - **Unit/integration (Go, all passing):** every package under `internal/health/` (clinicalsafety, consent, consult, controlled, credential, insurance, lab, labref, makercheck, pharmacy, phisafe, preconsult, records, rx, scheduling, symptomsearch, triage core/care/governance, vet) + `internal/nutrition` + `internal/aicare` + `internal/doctor`. `internal/health/intake` and `internal/health/providers` have no Go test files — covered E2E-side instead.
 - **flag-gated (not covered, unmounted):** triage (~29), pre-consult intake group (~10), symptom-search (2), nutrition (~16), doctor (~341), doctor emergency dispatch (3).
 - **internal/webhook:** `/internal/webhooks/triage/whatsapp`.
-- **stubbed-known:** 3 scheduler job types.
+- **scheduler jobs:** 3 job types, all with real handlers (licence sweep + 2 reminder deliveries via `app/health_reminder_jobs.go`, live-DB tested).
 - **needs-seed:** doctor/triage/nutrition journeys beyond flag gating (MDCN credentialing, governance content, dish library).
 
 ## Reproduce
