@@ -156,13 +156,7 @@ func (h *Handler) Validate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
-	res, err := h.svc.ValidateCustomer(c.Request.Context(), ValidateInput{
-		Category:          body.Category,
-		BillerID:          body.BillerID,
-		ProductID:         body.ProductID,
-		CustomerReference: body.CustomerReference,
-		Metadata:          body.Metadata,
-	})
+	res, err := h.svc.ValidateCustomer(c.Request.Context(), ValidateInput(body))
 	if err != nil {
 		writeErr(c, err)
 		return
@@ -191,12 +185,7 @@ func (h *Handler) Quote(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidRequestBody})
 		return
 	}
-	quote, err := h.svc.QuotePayment(c.Request.Context(), QuoteInput{
-		Category:   body.Category,
-		BillerID:   body.BillerID,
-		ProductID:  body.ProductID,
-		AmountKobo: body.AmountKobo,
-	})
+	quote, err := h.svc.QuotePayment(c.Request.Context(), QuoteInput(body))
 	if err != nil {
 		writeErr(c, err)
 		return

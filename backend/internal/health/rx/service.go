@@ -2,7 +2,9 @@ package healthrx
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/go-common/ginutil"
@@ -119,7 +121,7 @@ func (s *Service) Issue(ctx context.Context, prescriberID, patientID string, con
 //     when none is wired, the screen runs against an empty context (no findings).
 func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID string, consultID *string, items []Item, pc *clinicalsafety.PatientContext, overrideReason string) (*Prescription, error) {
 	if prescriberID == "" || patientID == "" {
-		return nil, fmt.Errorf("rx: prescriber and patient required")
+		return nil, errors.New("rx: prescriber and patient required")
 	}
 	// Scope-of-practice gate (CR-004): only a verified, unexpired prescriber may
 	// issue. Fail-closed when an authorizer is wired; no-op otherwise.
@@ -127,17 +129,17 @@ func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID stri
 		return nil, err
 	}
 	if len(items) == 0 {
-		return nil, fmt.Errorf("rx: at least one item required")
+		return nil, errors.New("rx: at least one item required")
 	}
 	for _, it := range items {
 		if it.IsControlled {
-			return nil, fmt.Errorf("rx: controlled substances are excluded at MVP (HL-4)")
+			return nil, errors.New("rx: controlled substances are excluded at MVP (HL-4)")
 		}
 		if strings.TrimSpace(it.DrugName) == "" {
-			return nil, fmt.Errorf("rx: item drug_name required")
+			return nil, errors.New("rx: item drug_name required")
 		}
 		if it.Quantity <= 0 {
-			return nil, fmt.Errorf("rx: item quantity must be positive")
+			return nil, errors.New("rx: item quantity must be positive")
 		}
 	}
 
@@ -160,7 +162,7 @@ func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID stri
 	if err != nil {
 		return nil, fmt.Errorf("rx: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	p := &Prescription{
 		ID:           uuid.New().String(),
@@ -186,9 +188,7 @@ func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID stri
 	}
 	p.Items = items
 	meta := map[string]any{"items": len(items), "state": string(StateIssued)}
-	for k, v := range safetyAudit(safetyRes, overrideReason) {
-		meta[k] = v
-	}
+	maps.Copy(meta, safetyAudit(safetyRes, overrideReason))
 	s.audited(prescriberID, patientID, "health.rx.issue", p.ID, nil, meta)
 	return p, nil
 }
@@ -197,7 +197,7 @@ func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID stri
 func (s *Service) SendToPharmacy(ctx context.Context, actorID, rxID, pharmacyProviderID string) (*Prescription, error) {
 	return s.transition(ctx, actorID, rxID, StateSent, func(tx pgx.Tx, p *prescriptionRow) error {
 		if pharmacyProviderID == "" {
-			return fmt.Errorf("rx: pharmacy provider required")
+			return errors.New("rx: pharmacy provider required")
 		}
 		_, err := tx.Exec(ctx, `UPDATE health_prescriptions SET pharmacy_provider_id=$2 WHERE id=$1`, rxID, pharmacyProviderID)
 		return err
@@ -235,7 +235,7 @@ func (s *Service) Dispense(ctx context.Context, pharmacistID, rxID string) (*Pre
 	return s.transition(ctx, pharmacistID, rxID, StateDispensed, func(tx pgx.Tx, p *prescriptionRow) error {
 		// HL-3 POM gating: a POM line may only be dispensed after pharmacist verify.
 		if p.hasPOM && p.VerifiedBy == nil {
-			return fmt.Errorf("rx: POM items require pharmacist verification before dispense (HL-3)")
+			return errors.New("rx: POM items require pharmacist verification before dispense (HL-3)")
 		}
 		_, err := tx.Exec(ctx, `UPDATE health_prescriptions SET dispensed_at=now() WHERE id=$1`, rxID)
 		return err
@@ -255,7 +255,7 @@ func (s *Service) Get(ctx context.Context, requesterID, rxID string) (*Prescript
 	// object-level authZ: patient, prescriber, or assigned pharmacist may read.
 	if requesterID != p.PatientID && requesterID != p.PrescriberID &&
 		(p.VerifiedBy == nil || *p.VerifiedBy != requesterID) {
-		return nil, fmt.Errorf("rx: forbidden")
+		return nil, errors.New("rx: forbidden")
 	}
 	items, _ := s.loadItems(ctx, rxID)
 	p.Items = items
@@ -307,6 +307,7 @@ func (s *Service) ListForPatient(ctx context.Context, patientID string) ([]Presc
 // internal carrier carrying the POM flag fetched during the locked read.
 type prescriptionRow struct {
 	Prescription
+
 	hasPOM bool
 }
 
@@ -315,7 +316,7 @@ func (s *Service) transition(ctx context.Context, actorID, rxID string, to State
 	if err != nil {
 		return nil, fmt.Errorf("rx: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	p, err := lockPrescription(ctx, tx, rxID)
 	if err != nil {
@@ -352,8 +353,8 @@ func lockPrescription(ctx context.Context, tx pgx.Tx, rxID string) (*prescriptio
 	                  EXISTS (SELECT 1 FROM health_prescription_items i WHERE i.prescription_id=health_prescriptions.id AND i.is_pom)
 	           FROM health_prescriptions WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, q, rxID).Scan(&p.ID, &p.PrescriberID, &p.PatientID, &p.PharmacyProviderID, &p.VerifiedBy, &state, &p.hasPOM); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("rx: not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("rx: not found")
 		}
 		return nil, err
 	}
@@ -370,8 +371,8 @@ func (s *Service) load(ctx context.Context, rxID string) (*Prescription, error) 
 	if err := s.db.QueryRow(ctx, q, rxID).Scan(&p.ID, &p.ConsultID, &p.PrescriberID, &p.PatientID,
 		&p.PharmacyProviderID, &p.VerifiedBy, &state, &p.DispensedAt, &p.RejectReason, &p.CreatedAt,
 		&p.RefillsAuthorized, &p.RefillsUsed); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("rx: not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("rx: not found")
 		}
 		return nil, err
 	}

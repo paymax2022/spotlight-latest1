@@ -48,7 +48,7 @@ func claimWave(b *reminderBooking, which string, window time.Duration, now time.
 	if !active {
 		return false
 	}
-	if !(b.scheduledPickupAt.After(now) && !b.scheduledPickupAt.After(now.Add(window))) {
+	if !b.scheduledPickupAt.After(now) || b.scheduledPickupAt.After(now.Add(window)) {
 		return false
 	}
 	switch which {
@@ -83,7 +83,7 @@ func TestReminders_24hWaveFiresExactlyOnce(t *testing.T) {
 		scheduledPickupAt: now.Add(20 * time.Hour), // inside (now, now+24h]
 	}
 	fired := 0
-	for tick := 0; tick < 10; tick++ {
+	for range 10 {
 		if claimWave(b, "24h", 24*time.Hour, now) {
 			fired++
 		}
@@ -105,7 +105,7 @@ func TestReminders_1hWaveFiresExactlyOnce(t *testing.T) {
 		scheduledPickupAt: now.Add(45 * time.Minute), // inside (now, now+1h]
 	}
 	fired := 0
-	for tick := 0; tick < 10; tick++ {
+	for range 10 {
 		if claimWave(b, "1h", 1*time.Hour, now) {
 			fired++
 		}
@@ -136,7 +136,7 @@ func TestReminders_ConcurrentInvocationClaimsExactlyOnce(t *testing.T) {
 	}
 	var claims int
 	const workers = 20
-	for i := 0; i < workers; i++ {
+	for range workers {
 		if claimWave(b, "1h", 1*time.Hour, now) {
 			claims++
 		}

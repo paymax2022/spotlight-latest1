@@ -1,6 +1,7 @@
 package feescompetition
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -33,20 +34,20 @@ func NewHandler(svc *Service, serializer *Serializer) *Handler {
 
 // httpStatusFor maps typed domain errors to HTTP codes + stable snake_case codes.
 func httpStatusFor(err error) (int, string) {
-	switch err {
-	case feesstatemachine.ErrIllegalTransition:
+	switch {
+	case errors.Is(err, feesstatemachine.ErrIllegalTransition):
 		return http.StatusConflict, "illegal_transition"
-	case feesstatemachine.ErrTerminal:
+	case errors.Is(err, feesstatemachine.ErrTerminal):
 		return http.StatusConflict, "terminal_state"
-	case ErrScoringLocked:
+	case errors.Is(err, ErrScoringLocked):
 		return http.StatusConflict, "scoring_locked"
-	case ErrRegistrationClosed:
+	case errors.Is(err, ErrRegistrationClosed):
 		return http.StatusConflict, "registration_closed"
-	case ErrScopeInvalid:
+	case errors.Is(err, ErrScopeInvalid):
 		return http.StatusBadRequest, "scope_invalid"
-	case ErrUnknownEvent:
+	case errors.Is(err, ErrUnknownEvent):
 		return http.StatusBadRequest, "unknown_event"
-	case ErrConsentRequired:
+	case errors.Is(err, ErrConsentRequired):
 		return http.StatusForbidden, "consent_required"
 	default:
 		return http.StatusInternalServerError, "internal_error"

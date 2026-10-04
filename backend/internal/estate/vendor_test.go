@@ -2,6 +2,7 @@ package estate
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -10,7 +11,7 @@ import (
 func TestRequestPayoutRequiresIdempotencyKey(t *testing.T) {
 	svc := NewService(nil, nil) // guard runs before any db/ledger access
 	_, err := svc.RequestPayout(context.Background(), "estate-1", "vendor-user", "job-1", "")
-	if err != ErrIdempotencyRequired {
+	if !errors.Is(err, ErrIdempotencyRequired) {
 		t.Fatalf("expected ErrIdempotencyRequired, got %v", err)
 	}
 }
@@ -20,7 +21,7 @@ func TestRequestPayoutRequiresIdempotencyKey(t *testing.T) {
 func TestRequestPayoutRequiresLedger(t *testing.T) {
 	svc := NewService(nil, nil) // no ledger
 	_, err := svc.RequestPayout(context.Background(), "estate-1", "vendor-user", "job-1", "key-123")
-	if err != ErrLedgerUnavailable {
+	if !errors.Is(err, ErrLedgerUnavailable) {
 		t.Fatalf("expected ErrLedgerUnavailable, got %v", err)
 	}
 }

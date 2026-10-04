@@ -127,7 +127,7 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 // Create creates a new campaign in draft state.
 func (s *Service) Create(ctx context.Context, creatorID string, req CreateCampaignRequest) (*Campaign, error) {
 	if req.Deadline.Before(time.Now()) {
-		return nil, fmt.Errorf("crowdfunding: deadline must be in the future")
+		return nil, errors.New("crowdfunding: deadline must be in the future")
 	}
 	c := &Campaign{
 		ID:          uuid.New().String(),
@@ -155,7 +155,7 @@ func (s *Service) Publish(ctx context.Context, campaignID, creatorID string) err
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("crowdfunding: campaign not found or already active")
+		return errors.New("crowdfunding: campaign not found or already active")
 	}
 	return nil
 }
@@ -336,10 +336,10 @@ type ReleaseResult struct {
 func (s *Service) Release(ctx context.Context, campaignID, creatorID string) (*ReleaseResult, error) {
 	var status string
 	if err := s.db.QueryRow(ctx, `SELECT status FROM campaigns WHERE id=$1 AND creator_id=$2`, campaignID, creatorID).Scan(&status); err != nil {
-		return nil, fmt.Errorf("crowdfunding: campaign not found")
+		return nil, errors.New("crowdfunding: campaign not found")
 	}
 	if status != "funded" {
-		return nil, fmt.Errorf("crowdfunding: campaign must be in 'funded' state to release funds")
+		return nil, errors.New("crowdfunding: campaign must be in 'funded' state to release funds")
 	}
 
 	rows, err := s.db.Query(ctx, `SELECT id, settlement_id, contributor_id, amount_kobo FROM contributions WHERE campaign_id=$1 AND status='escrowed'`, campaignID)
@@ -411,10 +411,10 @@ type RefundResult struct {
 func (s *Service) RefundAll(ctx context.Context, campaignID, creatorID string) (*RefundResult, error) {
 	var status string
 	if err := s.db.QueryRow(ctx, `SELECT status FROM campaigns WHERE id=$1 AND creator_id=$2`, campaignID, creatorID).Scan(&status); err != nil {
-		return nil, fmt.Errorf("crowdfunding: campaign not found")
+		return nil, errors.New("crowdfunding: campaign not found")
 	}
 	if status == "funded" {
-		return nil, fmt.Errorf("crowdfunding: cannot refund a funded campaign")
+		return nil, errors.New("crowdfunding: cannot refund a funded campaign")
 	}
 
 	rows, err := s.db.Query(ctx, `SELECT id, amount_kobo FROM contributions WHERE campaign_id=$1 AND status IN ('escrowed','released')`, campaignID)
@@ -466,13 +466,13 @@ func (s *Service) RefundAll(ctx context.Context, campaignID, creatorID string) (
 
 func (s *Service) checkAndMarkFunded(ctx context.Context, campaignID string) {
 	var goalKobo, raisedKobo int64
-	s.db.QueryRow(ctx, `
+	_ = s.db.QueryRow(ctx, `
 		SELECT c.goal_kobo,
 		       COALESCE(SUM(co.amount_kobo) FILTER (WHERE co.status IN ('escrowed','released')), 0)
 		FROM campaigns c LEFT JOIN contributions co ON co.campaign_id=c.id
 		WHERE c.id=$1 GROUP BY c.id`, campaignID).Scan(&goalKobo, &raisedKobo)
 	if raisedKobo >= goalKobo {
-		s.db.Exec(ctx, `UPDATE campaigns SET status='funded' WHERE id=$1 AND status='active'`, campaignID)
+		_, _ = s.db.Exec(ctx, `UPDATE campaigns SET status='funded' WHERE id=$1 AND status='active'`, campaignID)
 	}
 }
 

@@ -140,8 +140,8 @@ func unitMismatch(analyte, unit, refRange string) bool {
 
 // unitInDescriptor extracts a unit token from a range descriptor, if present.
 func unitInDescriptor(desc string) string {
-	fields := strings.Fields(strings.ToLower(desc))
-	for _, f := range fields {
+	fields := strings.FieldsSeq(strings.ToLower(desc))
+	for f := range fields {
 		if u := normUnit(f); u != "" && !isRangeToken(f) {
 			return u
 		}

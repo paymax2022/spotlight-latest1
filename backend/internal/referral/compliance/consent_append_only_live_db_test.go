@@ -155,7 +155,7 @@ func TestLiveDB_Consent_OrdersBySeqNotCreatedAt(t *testing.T) {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO referral_consents (user_id, consent_type, granted, version, source)
 			 VALUES ($1, $2, $3, 1, 'tie-test')`, userID, consentType, granted); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
 			t.Fatalf("insert (granted=%v): %v", granted, err)
 		}
 	}

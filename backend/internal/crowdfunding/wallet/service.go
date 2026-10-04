@@ -422,7 +422,7 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const ins = `
 		INSERT INTO cf_withdrawals

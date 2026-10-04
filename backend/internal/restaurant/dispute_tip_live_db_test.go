@@ -633,7 +633,7 @@ func TestLiveDB_DisputeRefundCapHoldsUnderConcurrency(t *testing.T) {
 			aDone <- err
 			return
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }()
 		if err := insertRefund(tx); err != nil {
 			close(aInserted)
 			aDone <- err
@@ -653,7 +653,7 @@ func TestLiveDB_DisputeRefundCapHoldsUnderConcurrency(t *testing.T) {
 			bDone <- err
 			return
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }()
 		close(bAboutToInsert)
 		if err := insertRefund(tx); err != nil {
 			bDone <- err

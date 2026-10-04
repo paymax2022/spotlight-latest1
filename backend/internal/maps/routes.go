@@ -3,6 +3,7 @@ package maps
 import (
 	"context"
 	"log"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -214,9 +215,7 @@ func NewServiceFromDeps(d RouteDeps) (*Service, error) {
 		if err != nil {
 			return nil, err
 		}
-		for k, v := range d.DailyBudgets {
-			v2cfg.Budgets[k] = v
-		}
+		maps.Copy(v2cfg.Budgets, d.DailyBudgets)
 		// Gazetteer PII encryption (NDPA, MS-4): AES-256-GCM when a 32-byte key is
 		// configured, else a Noop (dev/CI) — never store plaintext in prod.
 		var enc Encryptor = NoopEncryptor{}

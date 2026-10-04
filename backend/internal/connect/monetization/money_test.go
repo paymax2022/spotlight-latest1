@@ -84,7 +84,7 @@ func TestPurchase_UsesServerPriceNotClient(t *testing.T) {
 	s, _ := newServiceWithFakes(w)
 	withStubPlan(s, boostPlan())
 
-	_, _, _ = s.Purchase(context.Background(), "user-1", "idem-abc", KindBoost,
+	_, _, _ = s.Purchase(context.Background(), "user-1", "idem-abc", KindBoost, //nolint:dogsled // tuple: side-effect only
 		PurchaseRequest{PlanCode: "boost_30min"})
 
 	if !w.called {

@@ -1,4 +1,4 @@
-package services //nolint:testpackage // exercises unexported authService internals; package-internal tests are the established convention here
+package services
 
 import (
 	"encoding/json"
@@ -62,7 +62,7 @@ func TestChangePassword_UpdatesPasswordAndRevokesSessions(t *testing.T) {
 	defer srv.Close()
 
 	svc := &authService{supabase: integrations.NewSupabaseRestClient(srv.URL, "key"), cfg: config.Config{}}
-	if err := svc.ChangePassword("valid-token", "correct-pw", "new-strong-pw"); err != nil {
+	if err := svc.ChangePassword(t.Context(), "valid-token", "correct-pw", "new-strong-pw"); err != nil {
 		t.Fatalf("valid change must succeed, got: %v", err)
 	}
 	if !adminCalled {
@@ -80,7 +80,7 @@ func TestChangePassword_WrongCurrentPasswordDoesNotUpdate(t *testing.T) {
 	defer srv.Close()
 
 	svc := &authService{supabase: integrations.NewSupabaseRestClient(srv.URL, "key"), cfg: config.Config{}}
-	err := svc.ChangePassword("valid-token", "wrong-pw-999", "new-strong-pw")
+	err := svc.ChangePassword(t.Context(), "valid-token", "wrong-pw-999", "new-strong-pw")
 	if err == nil {
 		t.Fatal("wrong current password must fail, got nil error")
 	}
@@ -100,7 +100,7 @@ func TestChangePassword_BadTokenRefuses(t *testing.T) {
 	defer srv.Close()
 
 	svc := &authService{supabase: integrations.NewSupabaseRestClient(srv.URL, "key"), cfg: config.Config{}}
-	if err := svc.ChangePassword("bad-token", "correct-pw", "new-strong-pw"); err == nil {
+	if err := svc.ChangePassword(t.Context(), "bad-token", "correct-pw", "new-strong-pw"); err == nil {
 		t.Fatal("invalid bearer token must refuse, got nil error")
 	}
 }

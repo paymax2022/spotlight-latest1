@@ -43,8 +43,7 @@ func writeError(c *gin.Context, err error) {
 	}
 	// A wrong PIN says how many tries are left, so the customer is warned before
 	// the lockout rather than after it.
-	var attempt *PinAttemptError
-	if errors.As(err, &attempt) {
+	if attempt, ok := errors.AsType[*PinAttemptError](err); ok {
 		body["attempts_remaining"] = attempt.Remaining
 	}
 	c.JSON(HTTPStatusForError(err), body)

@@ -5,9 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
@@ -18,6 +15,10 @@ import (
 	"spotlight/backend/internal/insurance/policy"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const keyError = "error"
@@ -81,10 +82,10 @@ func NewService(d Deps) *Service {
 // state machine end-to-end and is idempotent on ev.SourceEventID.
 func (s *Service) Handle(ctx context.Context, ev EmbeddedEvent) (*Result, error) {
 	if ev.SourceEventID == "" {
-		return nil, fmt.Errorf("embedded: source_event_id required")
+		return nil, errors.New("embedded: source_event_id required")
 	}
 	if ev.UserID == "" {
-		return nil, fmt.Errorf("embedded: user_id required")
+		return nil, errors.New("embedded: user_id required")
 	}
 
 	// (idempotency, guard 1) — already bound off this event? Safe no-op.

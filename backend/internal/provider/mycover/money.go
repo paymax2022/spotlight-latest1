@@ -2,6 +2,7 @@ package mycover
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"regexp"
@@ -54,7 +55,7 @@ var (
 // float64 is involved at any point.
 func parseDecimal(s string) (*big.Rat, error) {
 	if s == "" {
-		return nil, fmt.Errorf("mycover: empty decimal amount")
+		return nil, errors.New("mycover: empty decimal amount")
 	}
 	if !decimalRe.MatchString(s) {
 		return nil, fmt.Errorf("mycover: %q is not a plain non-negative decimal", s)

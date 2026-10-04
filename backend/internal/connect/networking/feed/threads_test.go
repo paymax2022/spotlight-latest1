@@ -2,17 +2,18 @@ package connectfeed
 
 import "testing"
 
-func strptr(s string) *string { return &s }
+//go:fix inline
+func strptr(s string) *string { return new(s) }
 
 // Comment threading: replies attach to their top-level parent in order; top-level
 // comments remain in their original chronological order.
 func TestBuildThreads_NestsRepliesUnderParent(t *testing.T) {
 	comments := []Comment{
 		{ID: "c1", PostID: "p", Body: "top one"},
-		{ID: "c2", PostID: "p", Body: "reply to c1", ParentCommentID: strptr("c1")},
+		{ID: "c2", PostID: "p", Body: "reply to c1", ParentCommentID: new("c1")},
 		{ID: "c3", PostID: "p", Body: "top two"},
-		{ID: "c4", PostID: "p", Body: "another reply to c1", ParentCommentID: strptr("c1")},
-		{ID: "c5", PostID: "p", Body: "reply to c3", ParentCommentID: strptr("c3")},
+		{ID: "c4", PostID: "p", Body: "another reply to c1", ParentCommentID: new("c1")},
+		{ID: "c5", PostID: "p", Body: "reply to c3", ParentCommentID: new("c3")},
 	}
 	nodes := BuildThreads(comments)
 
@@ -35,7 +36,7 @@ func TestBuildThreads_NestsRepliesUnderParent(t *testing.T) {
 func TestBuildThreads_OrphanReplyPromoted(t *testing.T) {
 	comments := []Comment{
 		{ID: "c1", PostID: "p", Body: "top"},
-		{ID: "c9", PostID: "p", Body: "orphan", ParentCommentID: strptr("missing")},
+		{ID: "c9", PostID: "p", Body: "orphan", ParentCommentID: new("missing")},
 	}
 	nodes := BuildThreads(comments)
 	if len(nodes) != 2 {

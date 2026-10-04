@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -171,7 +172,7 @@ func (s *Service) CompleteOnboardingStep(ctx context.Context, userID, step, risk
 	if err != nil {
 		return InvestorProfile{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `INSERT INTO cf_investor_profiles (user_id) VALUES ($1)
 		ON CONFLICT (user_id) DO NOTHING`, userID); err != nil {
@@ -279,7 +280,7 @@ func (s *Service) Subscribe(ctx context.Context, userID string, in InvestmentSub
 	if err != nil {
 		return InvestmentCertificate{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Idempotency: replay returns the existing certificate, never a second insert.
 	if cert, ok, err := s.certByIdemKey(ctx, tx, idemKey); err != nil {
@@ -438,7 +439,7 @@ func computeUnitsOrPct(model InvestmentModel, amountKobo, targetKobo int64, proj
 // formatNaira renders kobo as a ₦ amount with thousands separators.
 func formatNaira(kobo int64) string {
 	naira := kobo / 100
-	s := fmt.Sprintf("%d", naira)
+	s := strconv.FormatInt(naira, 10)
 	n := len(s)
 	if n <= 3 {
 		return "₦" + s

@@ -51,7 +51,7 @@ func (f *fakeStore) UpsertScore(_ context.Context, schoolID, classID, sessionID,
 	// the repository's staging behaviour.
 	for _, p := range f.promos {
 		if p.StudentID == studentID && ptr.ZeroIfNil(p.SessionID) == sessionID && ptr.ZeroIfNil(p.FromClassID) == classID {
-			p.ExamScore = f64(score)
+			p.ExamScore = new(score)
 			return nil
 		}
 	}
@@ -62,7 +62,7 @@ func (f *fakeStore) UpsertScore(_ context.Context, schoolID, classID, sessionID,
 		StudentID:   studentID,
 		FromClassID: ptrOrNil(classID),
 		SessionID:   ptrOrNil(sessionID),
-		ExamScore:   f64(score),
+		ExamScore:   new(score),
 		State:       StateSessionActive,
 		CreatedAt:   time.Now(),
 	}
@@ -195,8 +195,6 @@ func (f *fakeStore) ReassignFeeSchedule(_ context.Context, schoolID, studentID, 
 }
 
 func (f *fakeStore) WriteAudit(_ context.Context, _, _, _, _, _, _ string, _ any) error { return nil }
-
-func f64(v float64) *float64 { return &v }
 
 func itoa(n int) string {
 	if n == 0 {

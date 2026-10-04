@@ -41,6 +41,7 @@ package ledger_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -62,6 +63,7 @@ import (
 // CheckPermission, the only method middleware.RequirePermission calls.
 type fakeAdminTxRBAC struct {
 	services.RBACService
+
 	allow bool
 }
 
@@ -189,7 +191,7 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 	// name/email.
 	refA := fmt.Sprintf("fx:convert:%s-A", tag)
 	refB := fmt.Sprintf("arena:support:%s-B", tag)
-	refD := fmt.Sprintf("%sopaqueNoColon", tag)
+	refD := tag + "opaqueNoColon"
 	refE := uuid.NewString()
 
 	// rowA: 10 days ago, CREDIT 150000 kobo, colon-namespaced reference "fx:convert:...".
@@ -469,7 +471,7 @@ func TestAdminListTransactions_RBAC(t *testing.T) {
 
 	t.Run("denied without the permission", func(t *testing.T) {
 		r := buildRouter(false)
-		req := httptest.NewRequest(http.MethodGet, "/api/finance/admin/transactions?search="+f.tag, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/finance/admin/transactions?search="+f.tag, nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusForbidden {
@@ -479,7 +481,7 @@ func TestAdminListTransactions_RBAC(t *testing.T) {
 
 	t.Run("allowed with the permission returns real rows", func(t *testing.T) {
 		r := buildRouter(true)
-		req := httptest.NewRequest(http.MethodGet, "/api/finance/admin/transactions?search="+f.tag, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/finance/admin/transactions?search="+f.tag, nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
@@ -594,7 +596,7 @@ func TestAdminGetTransaction_NonUniqueReferenceCapsButReportsRealTotal(t *testin
 	sharedRef := "admtx-shared-ref-" + f.tag
 	const extraRows = 25 // > adminRelatedEntriesLimit (20), so the cap actually bites
 	var ids []string
-	for i := 0; i < extraRows; i++ {
+	for i := range extraRows {
 		var id string
 		if err := f.pool.QueryRow(ctx, `
 			INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, created_at)
@@ -633,7 +635,7 @@ func TestAdminGetTransaction_NotFound(t *testing.T) {
 	f := setupAdminTxFixture(t)
 	ctx := context.Background()
 
-	if _, err := f.svc.AdminGetTransaction(ctx, uuid.NewString()); err != ledger.ErrTransactionNotFound {
+	if _, err := f.svc.AdminGetTransaction(ctx, uuid.NewString()); !errors.Is(err, ledger.ErrTransactionNotFound) {
 		t.Fatalf("expected ErrTransactionNotFound for an unknown id, got %v", err)
 	}
 
@@ -648,7 +650,7 @@ func TestAdminGetTransaction_NotFound(t *testing.T) {
 		middleware.RequirePermission(&fakeAdminTxRBAC{allow: true}, "finance.admin.transactions.view"),
 		h.GetTransaction)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/finance/admin/transactions/"+uuid.NewString(), nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/finance/admin/transactions/"+uuid.NewString(), nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
@@ -657,7 +659,7 @@ func TestAdminGetTransaction_NotFound(t *testing.T) {
 
 	// And the happy path through the real HTTP handler, to prove the route
 	// wiring + JSON envelope (not just the service method).
-	req2 := httptest.NewRequest(http.MethodGet, "/api/finance/admin/transactions/"+f.rowB, nil)
+	req2 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/finance/admin/transactions/"+f.rowB, nil)
 	w2 := httptest.NewRecorder()
 	r.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusOK {

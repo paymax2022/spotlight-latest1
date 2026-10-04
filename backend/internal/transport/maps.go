@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 
@@ -59,7 +60,7 @@ func haversineM(a, b LatLng) float64 {
 // Real adapters call a geocoding API; the mock just needs stable, distinct output.
 func (m *MockMaps) Geocode(_ context.Context, address string) (LatLng, error) {
 	if address == "" {
-		return LatLng{}, fmt.Errorf("transport: empty address")
+		return LatLng{}, errors.New("transport: empty address")
 	}
 	var sum int
 	for _, r := range address {

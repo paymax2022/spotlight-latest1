@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"log"
 	"net/http"
@@ -30,6 +27,10 @@ import (
 	"spotlight/backend/internal/provider/octamile"
 	"spotlight/backend/internal/services"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // RegisterInsurance wires the §6–§12 Insurance / Protection core onto the finance
@@ -416,7 +417,7 @@ func (h *insuranceUploadHandler) Upload(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	contentType := header.Header.Get("Content-Type")
 	ext, ok := allowedInsuranceUploadTypes[contentType]
@@ -458,7 +459,7 @@ func (h *insuranceUploadHandler) Upload(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "could not upload file"})
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "could not upload file"})
 		return

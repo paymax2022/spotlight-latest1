@@ -24,11 +24,11 @@ func listEndpointsLivePool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping lab list-endpoints live-DB tests")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	if err := pool.Ping(context.Background()); err != nil {
+	if err := pool.Ping(t.Context()); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
 	t.Cleanup(pool.Close)
@@ -56,14 +56,14 @@ func seedLabProvider(t *testing.T, ctx context.Context, pool *pgxpool.Pool, owne
 		t.Fatalf("seed lab provider: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM health_providers WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM health_providers WHERE id=$1`, id)
 	})
 	return id
 }
 
 func TestLiveDB_ListPackages_ReturnsActiveBundles(t *testing.T) {
 	pool := listEndpointsLivePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := NewService(pool, nil, nil, nil, nil, nil, nil, nil)
 
 	owner := uuid.New().String()
@@ -87,7 +87,7 @@ func TestLiveDB_ListPackages_ReturnsActiveBundles(t *testing.T) {
 			t.Fatalf("seed package %s: %v", row.name, err)
 		}
 		t.Cleanup(func(id string) func() {
-			return func() { pool.Exec(context.Background(), `DELETE FROM lab_packages WHERE id=$1`, id) }
+			return func() { _, _ = pool.Exec(t.Context(), `DELETE FROM lab_packages WHERE id=$1`, id) }
 		}(row.id))
 	}
 
@@ -109,7 +109,7 @@ func TestLiveDB_ListPackages_ReturnsActiveBundles(t *testing.T) {
 
 func TestLiveDB_ListOrdersForPatient_ScopedToCaller(t *testing.T) {
 	pool := listEndpointsLivePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := NewService(pool, nil, nil, nil, nil, nil, nil, nil)
 
 	patient := uuid.New().String()
@@ -133,7 +133,7 @@ func TestLiveDB_ListOrdersForPatient_ScopedToCaller(t *testing.T) {
 			t.Fatalf("seed order: %v", err)
 		}
 		t.Cleanup(func(id string) func() {
-			return func() { pool.Exec(context.Background(), `DELETE FROM lab_orders WHERE id=$1`, id) }
+			return func() { _, _ = pool.Exec(t.Context(), `DELETE FROM lab_orders WHERE id=$1`, id) }
 		}(row.id))
 	}
 
@@ -156,7 +156,7 @@ func TestLiveDB_ListOrdersForPatient_ScopedToCaller(t *testing.T) {
 // the exact shape mismatch that crashed the mobile lab tests client.
 func TestLiveDB_ListOrdersForPatient_EmptyIsEmptyNotNil(t *testing.T) {
 	pool := listEndpointsLivePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	svc := NewService(pool, nil, nil, nil, nil, nil, nil, nil)
 
 	got, err := svc.ListOrdersForPatient(ctx, uuid.New().String())

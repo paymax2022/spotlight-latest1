@@ -1,6 +1,7 @@
 package tuition
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -29,28 +30,28 @@ func TestCalculateInstallmentAmount_WithRemainder(t *testing.T) {
 
 func TestCalculateInstallmentAmount_ZeroTuition(t *testing.T) {
 	_, err := CalculateInstallmentAmount(0, 4)
-	if err != ErrZeroTuition {
+	if !errors.Is(err, ErrZeroTuition) {
 		t.Errorf("expected ErrZeroTuition, got %v", err)
 	}
 }
 
 func TestCalculateInstallmentAmount_NegativeTuition(t *testing.T) {
 	_, err := CalculateInstallmentAmount(-1000, 4)
-	if err != ErrZeroTuition {
+	if !errors.Is(err, ErrZeroTuition) {
 		t.Errorf("expected ErrZeroTuition, got %v", err)
 	}
 }
 
 func TestCalculateInstallmentAmount_ZeroCount(t *testing.T) {
 	_, err := CalculateInstallmentAmount(5000, 0)
-	if err != ErrInvalidAmount {
+	if !errors.Is(err, ErrInvalidAmount) {
 		t.Errorf("expected ErrInvalidAmount, got %v", err)
 	}
 }
 
 func TestCalculateInstallmentAmount_NegativeCount(t *testing.T) {
 	_, err := CalculateInstallmentAmount(5000, -1)
-	if err != ErrInvalidAmount {
+	if !errors.Is(err, ErrInvalidAmount) {
 		t.Errorf("expected ErrInvalidAmount, got %v", err)
 	}
 }

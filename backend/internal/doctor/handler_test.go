@@ -45,7 +45,7 @@ func TestRequestPayout_NoAuth(t *testing.T) {
 	r.POST("/api/v1/doctor/payouts", h.RequestPayout) // no auth middleware
 
 	body := `{"amountKobo": 5000}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/doctor/payouts", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/doctor/payouts", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "idem-1")
 	w := httptest.NewRecorder()
@@ -75,7 +75,7 @@ func TestReads_NoAuth(t *testing.T) {
 			r := newTestGin()
 			tc.bind(r) // no auth middleware -> unauthenticated
 			w := httptest.NewRecorder()
-			r.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil))
 			if w.Code != http.StatusUnauthorized {
 				t.Errorf("%s: expected 401 without auth, got %d", tc.name, w.Code)
 			}
@@ -91,7 +91,7 @@ func TestRequestPayout_BadBody(t *testing.T) {
 	r.POST("/payouts", authAs("user-abc"), h.RequestPayout)
 
 	body := `{"bankAccountId": "acc-1"}` // amountKobo missing -> binding error
-	req := httptest.NewRequest(http.MethodPost, "/payouts", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/payouts", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "idem-1")
 	w := httptest.NewRecorder()
@@ -108,7 +108,7 @@ func TestRequestPayout_MalformedJSON(t *testing.T) {
 	r := newTestGin()
 	r.POST("/payouts", authAs("user-abc"), h.RequestPayout)
 
-	req := httptest.NewRequest(http.MethodPost, "/payouts", bytes.NewBufferString("not-json"))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/payouts", bytes.NewBufferString("not-json"))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "idem-1")
 	w := httptest.NewRecorder()
@@ -127,7 +127,7 @@ func TestUpdateAppointmentStatus_BadBody(t *testing.T) {
 	r.POST("/appointments/:appointmentId/status", authAs("user-abc"), h.UpdateAppointmentStatus)
 
 	body := `{"detail": {}}` // status missing -> binding error
-	req := httptest.NewRequest(http.MethodPost, "/appointments/appt-1/status", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/appointments/appt-1/status", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -143,7 +143,7 @@ func TestSubmitVerification_MalformedJSON(t *testing.T) {
 	r := newTestGin()
 	r.POST("/verification", authAs("user-abc"), h.SubmitVerification)
 
-	req := httptest.NewRequest(http.MethodPost, "/verification", bytes.NewBufferString("{"))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/verification", bytes.NewBufferString("{"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -157,7 +157,7 @@ func TestSubmitVerification_MalformedJSON(t *testing.T) {
 // key from the Idempotency-Key header (not the body), matching the OpenAPI
 // parameter definition (header, required).
 func TestIdempotencyKeyHeaderRead(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/payouts", bytes.NewBufferString(`{"amountKobo":5000}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/payouts", bytes.NewBufferString(`{"amountKobo":5000}`))
 	req.Header.Set("Idempotency-Key", "from-header-001")
 	if got := req.Header.Get("Idempotency-Key"); got != "from-header-001" {
 		t.Errorf("Idempotency-Key header = %q, want from-header-001", got)

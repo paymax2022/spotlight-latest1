@@ -66,7 +66,7 @@ func (f tallyFixture) purchase(t *testing.T, ctx context.Context, ref string, op
 		t.Fatalf("seed purchase: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM public.vote_transactions WHERE id=$1`, id)
+		_, _ = f.pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.vote_transactions WHERE id=$1`, id)
 	})
 	return id
 }

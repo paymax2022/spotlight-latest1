@@ -156,7 +156,7 @@ func (s *AnalyticsService) GetLearnerAnalytics(ctx context.Context, userID strin
 	s.getPreferredExamType(ctx, userID, analytics)
 
 	if s.cache != nil {
-		s.cache.SetLearnerAnalyticsCache(ctx, userID, analytics)
+		_ = s.cache.SetLearnerAnalyticsCache(ctx, userID, analytics)
 	}
 
 	return analytics, nil
@@ -258,7 +258,7 @@ func (s *AnalyticsService) getSubjectPerformance(ctx context.Context, userID str
 		}
 	}
 
-	for i := 0; i < len(subjects); i++ {
+	for i := range subjects {
 		if perf, exists := subjectMap[i]; exists {
 			analytics.SubjectPerformance = append(analytics.SubjectPerformance, perf)
 		}
@@ -402,7 +402,7 @@ func (s *AnalyticsService) GetAdminAnalytics(ctx context.Context, timeRange stri
 	row := s.pool.QueryRow(ctx, `
 		SELECT COUNT(DISTINCT user_id) FROM v_mock_attempt_scores WHERE status = 'graded'
 	`)
-	row.Scan(&analytics.TotalLearners)
+	_ = row.Scan(&analytics.TotalLearners)
 
 	row = s.pool.QueryRow(ctx, `
 		SELECT
@@ -422,7 +422,7 @@ func (s *AnalyticsService) GetAdminAnalytics(ctx context.Context, timeRange stri
 		SELECT COUNT(DISTINCT user_id) FROM v_mock_attempt_scores
 		WHERE status = 'graded' AND submitted_at >= $1
 	`, weekAgo)
-	row.Scan(&analytics.ActiveThisWeek)
+	_ = row.Scan(&analytics.ActiveThisWeek)
 
 	if err := s.getActivityData(ctx, startDate, analytics); err != nil {
 		// Continue on error
@@ -443,7 +443,7 @@ func (s *AnalyticsService) GetAdminAnalytics(ctx context.Context, timeRange stri
 	s.getMostAttemptedExam(ctx, startDate, analytics)
 
 	if s.cache != nil {
-		s.cache.SetAdminAnalyticsCache(ctx, timeRange, analytics)
+		_ = s.cache.SetAdminAnalyticsCache(ctx, timeRange, analytics)
 	}
 
 	return analytics, nil

@@ -90,7 +90,7 @@ var errAlreadyHandled = errors.New("invest: event already handled")
 func (r *Repository) FindOrderByProviderRef(ctx context.Context, ref string) (*Order, error) {
 	var o Order
 	err := scanOrder(r.db.QueryRow(ctx, "SELECT "+orderCols+" FROM invest_orders WHERE provider_reference=$1 ORDER BY created_at DESC LIMIT 1", ref), &o)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {

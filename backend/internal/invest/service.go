@@ -182,7 +182,7 @@ func (s *Service) Eligibility(ctx context.Context, userID string) (map[string]an
 	if err != nil {
 		return nil, err
 	}
-	_, _, _, suitabilityDone, err := s.repo.LatestSuitability(ctx, userID)
+	_, _, _, suitabilityDone, err := s.repo.LatestSuitability(ctx, userID) //nolint:dogsled // tuple: only suitabilityDone needed
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +268,7 @@ func (s *Service) refreshProfileGates(ctx context.Context, userID string) error 
 	if err != nil {
 		return err
 	}
-	_, _, _, suitabilityDone, err := s.repo.LatestSuitability(ctx, userID)
+	_, _, _, suitabilityDone, err := s.repo.LatestSuitability(ctx, userID) //nolint:dogsled // tuple: only suitabilityDone needed
 	if err != nil {
 		return err
 	}
@@ -704,7 +704,7 @@ func (s *Service) Buy(ctx context.Context, userID, idem string, req BuyOrderRequ
 
 	if res.Status != "filled" {
 		// Resting (limit) order — cash stays locked; no fill yet.
-		s.repo.UpdateOrder(ctx, o, StatusAccepted, "resting limit order")
+		_ = s.repo.UpdateOrder(ctx, o, StatusAccepted, "resting limit order")
 		return s.receipt(o), nil
 	}
 
@@ -837,7 +837,7 @@ func (s *Service) Sell(ctx context.Context, userID, idem string, req SellOrderRe
 		return nil, err
 	}
 	if res.Status != "filled" {
-		s.repo.UpdateOrder(ctx, o, StatusAccepted, "resting limit order")
+		_ = s.repo.UpdateOrder(ctx, o, StatusAccepted, "resting limit order")
 		return s.receipt(o), nil
 	}
 
@@ -1119,7 +1119,7 @@ func (s *Service) feeSchedule(ctx context.Context) FeeSchedule {
 	if err != nil {
 		return s.fees
 	}
-	return FeeSchedule{CommissionBPS: fc.CommissionBPS, MinFeeKobo: fc.MinFeeKobo}
+	return FeeSchedule(fc)
 }
 
 func (st StockAsset) providerSym() string {

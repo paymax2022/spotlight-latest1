@@ -2,6 +2,7 @@ package restaurant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -43,11 +44,11 @@ type GroupOrderItem struct {
 // (0 = no cap) is the per-contributor spend limit (SG-004).
 func (s *Service) CreateGroupOrder(ctx context.Context, hostID, restaurantID string, capKobo int64) (*GroupOrder, error) {
 	if capKobo < 0 {
-		return nil, fmt.Errorf("restaurant: per_contributor_cap_kobo must be >= 0")
+		return nil, errors.New("restaurant: per_contributor_cap_kobo must be >= 0")
 	}
 	var exists bool
 	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM restaurants WHERE id=$1)`, restaurantID).Scan(&exists); err != nil || !exists {
-		return nil, fmt.Errorf("restaurant: not found")
+		return nil, errors.New("restaurant: not found")
 	}
 	g := &GroupOrder{ID: uuid.New().String(), HostID: hostID, RestaurantID: restaurantID, Status: "open", PerContributorCapKobo: capKobo}
 	if _, err := s.db.Exec(ctx,
@@ -63,12 +64,12 @@ func (s *Service) CreateGroupOrder(ctx context.Context, hostID, restaurantID str
 // contributor's running total stays within the per-contributor cap (SG-004).
 func (s *Service) AddGroupItem(ctx context.Context, groupID, contributorID, menuItemID string, quantity int) (*GroupOrderItem, error) {
 	if quantity < 1 {
-		return nil, fmt.Errorf("restaurant: quantity must be >= 1")
+		return nil, errors.New("restaurant: quantity must be >= 1")
 	}
 	var restaurantID, status string
 	var cap int64
 	if err := s.db.QueryRow(ctx, `SELECT restaurant_id, status, per_contributor_cap_kobo FROM group_orders WHERE id=$1`, groupID).Scan(&restaurantID, &status, &cap); err != nil {
-		return nil, fmt.Errorf("restaurant: group not found")
+		return nil, errors.New("restaurant: group not found")
 	}
 	if status != "open" {
 		return nil, fmt.Errorf("restaurant: group is %s (not accepting items)", status)
@@ -77,7 +78,7 @@ func (s *Service) AddGroupItem(ctx context.Context, groupID, contributorID, menu
 	var price int64
 	var available bool
 	if err := s.db.QueryRow(ctx, `SELECT name, price_kobo, is_available FROM menu_items WHERE id=$1 AND restaurant_id=$2`, menuItemID, restaurantID).Scan(&name, &price, &available); err != nil {
-		return nil, fmt.Errorf("restaurant: item not on this restaurant's menu")
+		return nil, errors.New("restaurant: item not on this restaurant's menu")
 	}
 	if !available {
 		return nil, fmt.Errorf("restaurant: item '%s' is not available", name)
@@ -104,7 +105,7 @@ func (s *Service) GetGroupOrder(ctx context.Context, groupID string) (*GroupOrde
 	if err := s.db.QueryRow(ctx,
 		`SELECT id, host_id, restaurant_id, status, per_contributor_cap_kobo, order_id FROM group_orders WHERE id=$1`, groupID).
 		Scan(&g.ID, &g.HostID, &g.RestaurantID, &g.Status, &g.PerContributorCapKobo, &g.OrderID); err != nil {
-		return nil, fmt.Errorf("restaurant: group not found")
+		return nil, errors.New("restaurant: group not found")
 	}
 	rows, err := s.db.Query(ctx, `SELECT id, contributor_id, menu_item_id, name, price_kobo, quantity FROM group_order_items WHERE group_id=$1 ORDER BY created_at`, groupID)
 	if err != nil {
@@ -136,7 +137,7 @@ func (s *Service) FinalizeGroupOrder(ctx context.Context, groupID, hostID string
 		return nil, fmt.Errorf("restaurant: group is already %s", g.Status)
 	}
 	if len(g.Items) == 0 {
-		return nil, fmt.Errorf("restaurant: the group cart is empty")
+		return nil, errors.New("restaurant: the group cart is empty")
 	}
 	// Lock the group so no more items land while we place the order.
 	if _, err := s.db.Exec(ctx, `UPDATE group_orders SET status='locked', updated_at=now() WHERE id=$1 AND status='open'`, groupID); err != nil {

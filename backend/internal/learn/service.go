@@ -2,6 +2,7 @@ package learn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -67,7 +68,7 @@ func (s *Service) GetPath(ctx context.Context, userID, pathID string) (*LearnPat
 	var p LearnPath
 	var level string
 	if err := s.db.QueryRow(ctx, q, pathID).Scan(&p.ID, &p.Title, &p.Description, &p.IconColor, &level); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("learn: get path: %w", err)
@@ -125,7 +126,7 @@ func (s *Service) GetLesson(ctx context.Context, userID, lessonID string) (*Less
 	var l Lesson
 	var kind string
 	if err := s.db.QueryRow(ctx, q, lessonID).Scan(&l.ID, &l.PathID, &l.Title, &l.DurationMins, &kind, &l.Body, &l.Summary); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("learn: get lesson: %w", err)
@@ -152,7 +153,7 @@ func (s *Service) GetQuiz(ctx context.Context, lessonID string) (*Quiz, error) {
 	const qq = `SELECT id FROM learn_quizzes WHERE lesson_id=$1`
 	var quizID string
 	if err := s.db.QueryRow(ctx, qq, lessonID).Scan(&quizID); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("learn: get quiz: %w", err)
@@ -166,7 +167,7 @@ func (s *Service) GetQuiz(ctx context.Context, lessonID string) (*Quiz, error) {
 func (s *Service) loadQuiz(ctx context.Context, quizID string, withKey bool) (*Quiz, error) {
 	var q Quiz
 	if err := s.db.QueryRow(ctx, `SELECT id, lesson_id FROM learn_quizzes WHERE id=$1`, quizID).Scan(&q.ID, &q.LessonID); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("learn: load quiz: %w", err)

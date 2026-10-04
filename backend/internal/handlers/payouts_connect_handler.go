@@ -101,7 +101,7 @@ func (h *PayoutsConnectHandler) RequestPayout(c *gin.Context) {
 		return
 	}
 
-	reference := fmt.Sprintf("PAYOUT-%s", generateShortID())
+	reference := "PAYOUT-" + generateShortID()
 
 	// Payout funds leave the user wallet into the settlement account, which the
 	// disbursement job draws against. Balanced journal, tier-gated, TOCTOU-safe.
@@ -122,7 +122,7 @@ func (h *PayoutsConnectHandler) RequestPayout(c *gin.Context) {
 	}
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "request_payout", "wallet", "payout",
-			payout.ID, nil, map[string]interface{}{
+			payout.ID, nil, map[string]any{
 				"amount":    body.AmountKobo,
 				"reference": reference,
 			}, ginutil.ClientIP(c), c.Request.UserAgent(), "warning")

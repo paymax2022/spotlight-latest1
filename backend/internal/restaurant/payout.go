@@ -89,6 +89,7 @@ type PayoutLine struct {
 // PayoutRunDetail is a run plus its append-only lines (GET /payouts/:id).
 type PayoutRunDetail struct {
 	PayoutRun
+
 	Lines []PayoutLine `json:"lines"`
 }
 
@@ -116,7 +117,7 @@ func (s *Service) BuildRun(ctx context.Context, periodKey, providerType, provide
 		return nil, ErrPayoutBadProvider
 	}
 	if s.ledger == nil {
-		return nil, fmt.Errorf("restaurant: payout runs require a ledger (WithLedger not wired)")
+		return nil, errors.New("restaurant: payout runs require a ledger (WithLedger not wired)")
 	}
 
 	items, err := s.loadUnpaidSettlements(ctx, providerType, providerID)
@@ -128,7 +129,7 @@ func (s *Service) BuildRun(ctx context.Context, periodKey, providerType, provide
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: payout build begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Resolve (or create) the single draft run for this provider+period. The unique
 	// (provider_type, provider_id, period_key) index makes this idempotent — a
@@ -294,7 +295,7 @@ func (s *Service) ProcessRun(ctx context.Context, runID, idempotencyKey string) 
 		return nil, ErrPayoutMissingIdem
 	}
 	if s.ledger == nil {
-		return nil, fmt.Errorf("restaurant: payout runs require a ledger (WithLedger not wired)")
+		return nil, errors.New("restaurant: payout runs require a ledger (WithLedger not wired)")
 	}
 
 	// Guarded transition draft -> processing. Atomic: only one caller wins the

@@ -4,14 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/credential"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // Phase-3 Paymax Black extension. ADDITIVE to the P2 loyalty engine: Black is the
@@ -92,7 +93,7 @@ func NewBlackService(base *Service, cred *credential.Service) *BlackService {
 // the route layer (loyalty.black.manage). Idempotent on (user_id) ACTIVE.
 func (b *BlackService) Enroll(ctx context.Context, userID string, expiresAt *time.Time) (*BlackMember, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("loyalty: user required")
+		return nil, errors.New("loyalty: user required")
 	}
 	const ins = `
 		INSERT INTO loyalty_black_members (user_id, state, granted_at, expires_at)
@@ -113,7 +114,7 @@ func (b *BlackService) Cancel(ctx context.Context, userID string) error {
 		return fmt.Errorf("loyalty: cancel black: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("loyalty: not an active black member")
+		return errors.New("loyalty: not an active black member")
 	}
 	b.base.log(userID, "loyalty.black.cancel", userID, nil)
 	return nil
@@ -124,7 +125,7 @@ func (b *BlackService) GetMember(ctx context.Context, userID string) (*BlackMemb
 	const q = `SELECT user_id, state, granted_at, expires_at, cancelled_at FROM loyalty_black_members WHERE user_id=$1`
 	var m BlackMember
 	if err := b.base.db.QueryRow(ctx, q, userID).Scan(&m.UserID, &m.State, &m.GrantedAt, &m.ExpiresAt, &m.CancelledAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotBlack
 		}
 		return nil, err
@@ -135,7 +136,7 @@ func (b *BlackService) GetMember(ctx context.Context, userID string) (*BlackMemb
 // isActiveBlack returns true only for an ACTIVE, unexpired Black member.
 func (b *BlackService) isActiveBlack(ctx context.Context, userID string) (bool, error) {
 	m, err := b.GetMember(ctx, userID)
-	if err == ErrNotBlack {
+	if errors.Is(err, ErrNotBlack) {
 		return false, nil
 	}
 	if err != nil {
@@ -188,13 +189,13 @@ func (b *BlackService) RedeemPerk(ctx context.Context, userID, perkCode, context
 	var maxPerMonth int
 	var active bool
 	if err := b.base.db.QueryRow(ctx, pq, perkCode).Scan(&code, &redeemVia, &maxPerMonth, &active); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("loyalty: perk %s not found", perkCode)
 		}
 		return nil, err
 	}
 	if !active {
-		return nil, fmt.Errorf("loyalty: perk inactive")
+		return nil, errors.New("loyalty: perk inactive")
 	}
 
 	// Monthly cap (fail-closed): never over-grant a capped perk.
@@ -246,7 +247,7 @@ func (b *BlackService) RedeemPerk(ctx context.Context, userID, perkCode, context
 // Paymax, not Paymax ↔ member.
 func (b *BlackService) RecordPartnerSettlement(ctx context.Context, partnerID, offerID string, amountKobo int64) (*PartnerSettlement, error) {
 	if amountKobo < 0 {
-		return nil, fmt.Errorf("loyalty: settlement amount must be non-negative kobo")
+		return nil, errors.New("loyalty: settlement amount must be non-negative kobo")
 	}
 	ps := &PartnerSettlement{
 		ID:         uuid.New().String(),
@@ -266,8 +267,8 @@ func (b *BlackService) RecordPartnerSettlement(ctx context.Context, partnerID, o
 
 // Sentinel errors.
 var (
-	ErrNotBlack       = fmt.Errorf("loyalty: not an active Paymax Black member")
-	ErrPerkCapReached = fmt.Errorf("loyalty: monthly perk redemption cap reached")
+	ErrNotBlack       = errors.New("loyalty: not an active Paymax Black member")
+	ErrPerkCapReached = errors.New("loyalty: monthly perk redemption cap reached")
 )
 
 // BlackHandler exposes Paymax Black member + admin endpoints. Member endpoints let

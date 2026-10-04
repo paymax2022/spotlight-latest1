@@ -2,15 +2,17 @@ package connectvoting
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
+	"spotlight/backend/go-common/httperr"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/go-common/httperr"
 )
 
 // SupportService handles voting support ticket operations
@@ -58,7 +60,7 @@ func (s *SupportService) ListSupportTickets(ctx context.Context, userID, status 
 		FROM voting_support_tickets
 		WHERE user_id = $1
 	`
-	args := []interface{}{userID}
+	args := []any{userID}
 	argIndex := 2
 
 	if status != "" {
@@ -140,7 +142,7 @@ func (s *SupportService) AddTicketMessage(ctx context.Context, userID, ticketID,
 	var exists bool
 	err := s.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM voting_support_tickets WHERE id = $1 AND user_id = $2)", ticketID, userID).Scan(&exists)
 	if err != nil || !exists {
-		return nil, fmt.Errorf("ticket not found")
+		return nil, errors.New("ticket not found")
 	}
 
 	msgID := uuid.New().String()
@@ -169,7 +171,7 @@ func (s *SupportService) ListTicketMessages(ctx context.Context, userID, ticketI
 	var exists bool
 	err := s.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM voting_support_tickets WHERE id = $1 AND user_id = $2)", ticketID, userID).Scan(&exists)
 	if err != nil || !exists {
-		return nil, fmt.Errorf("ticket not found")
+		return nil, errors.New("ticket not found")
 	}
 
 	query := `

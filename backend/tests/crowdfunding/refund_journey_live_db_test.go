@@ -222,7 +222,7 @@ func TestLiveDB_RefundJourney_LegacyRowsStillDecideButMoveNoMoney(t *testing.T) 
 		t.Fatalf("insert legacy refund: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(ctx, `DELETE FROM cf_refunds WHERE id = $1`, legacyID); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_refunds WHERE id = $1`, legacyID); err != nil {
 			t.Errorf("cleanup legacy refund: %v", err)
 		}
 	})

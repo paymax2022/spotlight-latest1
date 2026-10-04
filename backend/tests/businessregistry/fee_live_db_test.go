@@ -78,8 +78,8 @@ func TestLiveDB_CACFeeDebit_FundedHappyPath(t *testing.T) {
 	user := seedUser(t, ctx, pool)
 	// Give the wallet more than the fee. tiers: lift the user so the debit limit
 	// clears the fee (a fresh user may be tier 0 with a low cap).
-	pool.Exec(ctx, `UPDATE public.users SET kyc_tier=3 WHERE id=$1`, user)
-	pool.Exec(ctx, `UPDATE public.user_profiles SET kyc_tier=3 WHERE id=$1`, user)
+	_, _ = pool.Exec(ctx, `UPDATE public.users SET kyc_tier=3 WHERE id=$1`, user)
+	_, _ = pool.Exec(ctx, `UPDATE public.user_profiles SET kyc_tier=3 WHERE id=$1`, user)
 	if err := wal.Credit(ctx, user, "cac-fee-test-fund", "fund-"+user, totalFee+500_000); err != nil {
 		t.Fatalf("fund wallet: %v", err)
 	}

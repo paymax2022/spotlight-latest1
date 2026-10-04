@@ -83,7 +83,7 @@ func runSettle(e *effectLog, vendorID, idemKey string, grossIfUnsettled, feeBps 
 
 func TestSettleVendor_LedgerBeforeMark_ExactlyOnceUnderCrashAtEveryStep(t *testing.T) {
 	const gross, feeBps int64 = 10_000, 250 // 2.5% -> fee 250, net 9_750
-	for crashAt := 0; crashAt <= 3; crashAt++ {
+	for crashAt := range 4 {
 		e := newEffectLog()
 		runSettle(e, "v1", "idem-A", gross, feeBps, &crashClock{at: crashAt}) // crash
 		runSettle(e, "v1", "idem-A", gross, feeBps, &crashClock{at: -1})      // same-key retry to completion
@@ -160,7 +160,7 @@ func runCloseWallet(e *effectLog, walletID string, residual int64, cc *crashCloc
 }
 
 func TestCloseWallet_RefundBeforeMark_ExactlyOnceUnderCrashAtEveryStep(t *testing.T) {
-	for crashAt := 0; crashAt <= 2; crashAt++ {
+	for crashAt := range 3 {
 		e := newEffectLog()
 		runCloseWallet(e, "w1", 3_500, &crashClock{at: crashAt})
 		runCloseWallet(e, "w1", 3_500, &crashClock{at: -1})
@@ -244,7 +244,7 @@ func TestPurchase_PendingResume_NeverFreeTicket_NeverDoubleCharge(t *testing.T) 
 	// Funded buyer: for a crash at EVERY step, a same-idemKey retry must converge to
 	// PAID with the debit posted exactly once and exactly one ticket — and must NEVER
 	// leave a PAID/ticketed order whose debit never posted (the "free ticket" bug).
-	for crashAt := 0; crashAt <= 4; crashAt++ {
+	for crashAt := range 5 {
 		w := &purchaseWorld{e: newEffectLog(), canPay: true}
 		runPurchase(w, "idem-P", 5_000, &crashClock{at: crashAt})
 		runPurchase(w, "idem-P", 5_000, &crashClock{at: -1})

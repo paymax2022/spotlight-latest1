@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"testing"
 
 	"spotlight/backend/internal/domain"
@@ -12,9 +13,9 @@ type fakeRBACService struct {
 	scopes []domain.UserScope
 }
 
-func (f fakeRBACService) GetUserRoles(string) ([]string, error)            { return f.roles, nil }
-func (f fakeRBACService) GetUserScopes(string) ([]domain.UserScope, error) { return f.scopes, nil }
-func (f fakeRBACService) GetUserPermissions(string, string, string) ([]string, error) {
+func (f fakeRBACService) GetUserRoles(context.Context, string) ([]string, error) { return f.roles, nil }
+func (f fakeRBACService) GetUserScopes(string) ([]domain.UserScope, error)       { return f.scopes, nil }
+func (f fakeRBACService) GetUserPermissions(context.Context, string, string, string) ([]string, error) {
 	return nil, nil
 }
 func (f fakeRBACService) CheckPermission(string, string, string, string) (bool, error) {
@@ -44,7 +45,7 @@ func (f fakeRBACService) RemovePermissionFromRole(string, string) error         
 func (f fakeRBACService) DeletePermission(string) error                                 { return nil }
 func (f fakeRBACService) AssignRoleToUser(string, string, string, string, string) error { return nil }
 func (f fakeRBACService) RemoveRoleFromUser(string, string, string) error               { return nil }
-func (f fakeRBACService) GetUserStatus(string) (string, error)                          { return "active", nil }
+func (f fakeRBACService) GetUserStatus(context.Context, string) (string, error)         { return "active", nil }
 func (f fakeRBACService) SuspendUser(string) error                                      { return nil }
 func (f fakeRBACService) UnsuspendUser(string) error                                    { return nil }
 func (f fakeRBACService) LockUser(string) error                                         { return nil }
@@ -83,33 +84,33 @@ func (fakeAuditService) ListSecurityEvents(domain.AuditFilter) ([]map[string]any
 
 func TestCanAccessUser_StateScope(t *testing.T) {
 	h := NewAdminUsersHandler(fakeRBACService{roles: []string{"state-coordinator"}, scopes: []domain.UserScope{{ScopeType: "state", ScopeID: "Lagos"}}}, fakeAuditService{})
-	if !h.canAccessUser("actor", domain.AdminUser{State: "lagos"}) {
+	if !h.canAccessUser(t.Context(), "actor", domain.AdminUser{State: "lagos"}) {
 		t.Fatalf("expected state scope allow")
 	}
-	if h.canAccessUser("actor", domain.AdminUser{State: "Abuja"}) {
+	if h.canAccessUser(t.Context(), "actor", domain.AdminUser{State: "Abuja"}) {
 		t.Fatalf("expected state scope deny")
 	}
 }
 
 func TestCanAccessUser_ProgramContestSchoolScopes(t *testing.T) {
 	h := NewAdminUsersHandler(fakeRBACService{roles: []string{"program-manager"}, scopes: []domain.UserScope{{ScopeType: "program", ScopeID: "music"}, {ScopeType: "contest", ScopeID: "contest-1"}, {ScopeType: "school", ScopeID: "school-1"}}}, fakeAuditService{})
-	if !h.canAccessUser("actor", domain.AdminUser{ProgramID: "music"}) {
+	if !h.canAccessUser(t.Context(), "actor", domain.AdminUser{ProgramID: "music"}) {
 		t.Fatalf("expected program allow")
 	}
-	if !h.canAccessUser("actor", domain.AdminUser{ContestID: "contest-1"}) {
+	if !h.canAccessUser(t.Context(), "actor", domain.AdminUser{ContestID: "contest-1"}) {
 		t.Fatalf("expected contest allow")
 	}
-	if !h.canAccessUser("actor", domain.AdminUser{SchoolID: "school-1"}) {
+	if !h.canAccessUser(t.Context(), "actor", domain.AdminUser{SchoolID: "school-1"}) {
 		t.Fatalf("expected school allow")
 	}
-	if h.canAccessUser("actor", domain.AdminUser{ProgramID: "film", ContestID: "contest-2", SchoolID: "school-2"}) {
+	if h.canAccessUser(t.Context(), "actor", domain.AdminUser{ProgramID: "film", ContestID: "contest-2", SchoolID: "school-2"}) {
 		t.Fatalf("expected deny")
 	}
 }
 
 func TestCanAccessUser_SuperAdminBypass(t *testing.T) {
 	h := NewAdminUsersHandler(fakeRBACService{roles: []string{"super-admin"}}, fakeAuditService{})
-	if !h.canAccessUser("actor", domain.AdminUser{}) {
+	if !h.canAccessUser(t.Context(), "actor", domain.AdminUser{}) {
 		t.Fatalf("expected super-admin allow")
 	}
 }

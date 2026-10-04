@@ -2,6 +2,7 @@ package healthconsult
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/cryptox"
@@ -113,7 +114,7 @@ func NewService(db *pgxpool.Pool, avKey string, audit Auditor) *Service {
 // Schedule creates a SCHEDULED consult (recording OFF by default).
 func (s *Service) Schedule(ctx context.Context, providerID, patientID string, appointmentID *string) (*Consult, error) {
 	if providerID == "" || patientID == "" {
-		return nil, fmt.Errorf("consult: provider and patient required")
+		return nil, errors.New("consult: provider and patient required")
 	}
 	c := &Consult{
 		ID:            uuid.New().String(),
@@ -142,7 +143,7 @@ func (s *Service) IssueLobbyToken(ctx context.Context, userID, consultID string)
 		return nil, err
 	}
 	if userID != c.PatientID && userID != providerOwner {
-		return nil, fmt.Errorf("consult: forbidden")
+		return nil, errors.New("consult: forbidden")
 	}
 	exp := time.Now().Add(15 * time.Minute).Unix()
 	room := "consult-" + consultID
@@ -176,14 +177,14 @@ func (s *Service) Complete(ctx context.Context, providerOwnerID, consultID strin
 	if err != nil {
 		return nil, nil, fmt.Errorf("consult: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	c, providerOwner, err := lockConsult(ctx, tx, consultID)
 	if err != nil {
 		return nil, nil, err
 	}
 	if providerOwnerID != providerOwner { // only the clinician completes + signs the note
-		return nil, nil, fmt.Errorf("consult: forbidden")
+		return nil, nil, errors.New("consult: forbidden")
 	}
 	if c.State == StateCompleted {
 		return c, nil, nil
@@ -220,10 +221,10 @@ func (s *Service) AddNote(ctx context.Context, providerOwnerID, consultID string
 		return nil, err
 	}
 	if providerOwnerID != providerOwner {
-		return nil, fmt.Errorf("consult: forbidden")
+		return nil, errors.New("consult: forbidden")
 	}
 	if c.State != StateInProgress && c.State != StateScheduled {
-		return nil, fmt.Errorf("consult: notes only while scheduled/in-progress")
+		return nil, errors.New("consult: notes only while scheduled/in-progress")
 	}
 	note.ID = uuid.New().String()
 	note.ConsultID = consultID
@@ -262,8 +263,8 @@ func (s *Service) LoadByAppointment(ctx context.Context, appointmentID string) (
 	           ORDER BY cs.created_at DESC LIMIT 1`
 	if err := s.db.QueryRow(ctx, q, appointmentID).Scan(&c.ID, &c.AppointmentID, &c.ProviderID, &c.PatientID,
 		&state, &c.RecordingEnabled, &c.StartedAt, &c.CompletedAt, &c.CreatedAt, &providerOwner); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, "", fmt.Errorf("consult: not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", errors.New("consult: not found")
 		}
 		return nil, "", err
 	}
@@ -276,14 +277,14 @@ func (s *Service) transition(ctx context.Context, actorID, consultID string, to 
 	if err != nil {
 		return nil, fmt.Errorf("consult: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	c, providerOwner, err := lockConsult(ctx, tx, consultID)
 	if err != nil {
 		return nil, err
 	}
 	if actorID != c.PatientID && actorID != providerOwner {
-		return nil, fmt.Errorf("consult: forbidden")
+		return nil, errors.New("consult: forbidden")
 	}
 	if c.State == to {
 		return c, nil
@@ -319,8 +320,8 @@ func (s *Service) load(ctx context.Context, consultID string) (*Consult, string,
 	           WHERE cs.id=$1`
 	if err := s.db.QueryRow(ctx, q, consultID).Scan(&c.ID, &c.AppointmentID, &c.ProviderID, &c.PatientID,
 		&state, &c.RecordingEnabled, &c.StartedAt, &c.CompletedAt, &c.CreatedAt, &c.ParentConsultID, &c.ReferralID, &providerOwner); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, "", fmt.Errorf("consult: not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", errors.New("consult: not found")
 		}
 		return nil, "", err
 	}
@@ -336,8 +337,8 @@ func lockConsult(ctx context.Context, tx pgx.Tx, consultID string) (*Consult, st
 	           LEFT JOIN health_providers p ON p.id = cs.provider_id
 	           WHERE cs.id=$1 FOR UPDATE OF cs`
 	if err := tx.QueryRow(ctx, q, consultID).Scan(&c.ID, &c.ProviderID, &c.PatientID, &state, &c.RecordingEnabled, &providerOwner); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, "", fmt.Errorf("consult: not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", errors.New("consult: not found")
 		}
 		return nil, "", err
 	}

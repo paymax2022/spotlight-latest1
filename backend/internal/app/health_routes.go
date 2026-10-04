@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"os"
 	"spotlight/backend/go-common/ginutil"
@@ -31,6 +29,9 @@ import (
 	"spotlight/backend/internal/services"
 	"strconv"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // RegisterHealth wires the Phase-0 SHARED health platform (the 7 net-new shared
@@ -224,7 +225,7 @@ func (g *capabilityGranter) GetUserRoles(userID string) ([]string, error) {
 	if g.rbac == nil {
 		return nil, nil
 	}
-	return g.rbac.GetUserRoles(userID)
+	return g.rbac.GetUserRoles(context.Background(), userID)
 }
 
 func (g *capabilityGranter) AssignRoleToUser(userID, roleID, scopeType, scopeID, assignedBy string) error {

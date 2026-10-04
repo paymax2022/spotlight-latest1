@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,10 +26,10 @@ import (
 // constructs it. With an anon key GoTrue answers 401 and this returns an error.
 func (c *SupabaseRestClient) AdminConfirmEmail(ctx context.Context, userID string) error {
 	if strings.TrimSpace(c.baseURL) == "" || strings.TrimSpace(c.apiKey) == "" {
-		return fmt.Errorf("supabase: not configured")
+		return errors.New("supabase: not configured")
 	}
 	if strings.TrimSpace(userID) == "" {
-		return fmt.Errorf("supabase: empty user id")
+		return errors.New("supabase: empty user id")
 	}
 
 	body, err := json.Marshal(map[string]any{"email_confirm": true})
@@ -40,7 +41,7 @@ func (c *SupabaseRestClient) AdminConfirmEmail(ctx context.Context, userID strin
 	if err != nil {
 		return err
 	}
-	req.Header.Set("apikey", c.apiKey)
+	req.Header.Set("Apikey", c.apiKey)
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -48,7 +49,7 @@ func (c *SupabaseRestClient) AdminConfirmEmail(ctx context.Context, userID strin
 	if err != nil {
 		return fmt.Errorf("supabase: confirm email: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		// The body can name the reason (e.g. a missing service-role key). The
 		// address is NOT included — an error string that carries it ends up in
@@ -73,8 +74,8 @@ const (
 // credentials are wrong; GoTrue mints a session for a correct pair which we
 // discard — it expires unused. Uses the client's bounded http client, not
 // http.DefaultClient.
-func (c *SupabaseRestClient) VerifyPasswordGrant(email, password string) error {
-	req, err := c.buildRequest(http.MethodPost, "/auth/v1/token",
+func (c *SupabaseRestClient) VerifyPasswordGrant(ctx context.Context, email, password string) error {
+	req, err := c.buildRequest(ctx, http.MethodPost, "/auth/v1/token",
 		map[string]string{"grant_type": gotruePasswordField},
 		map[string]any{gotrueEmailField: email, gotruePasswordField: password})
 	if err != nil {
@@ -102,10 +103,10 @@ func (c *SupabaseRestClient) VerifyPasswordGrant(email, password string) error {
 // here — errors from this function are safe to log verbatim.
 func (c *SupabaseRestClient) AdminSetPassword(ctx context.Context, userID, password string) error {
 	if strings.TrimSpace(userID) == "" {
-		return fmt.Errorf("supabase: empty user id")
+		return errors.New("supabase: empty user id")
 	}
 	if password == "" {
-		return fmt.Errorf("supabase: empty password")
+		return errors.New("supabase: empty password")
 	}
 	return c.adminUserPatch(ctx, userID, map[string]any{"password": password}, "set password")
 }
@@ -130,10 +131,10 @@ func (c *SupabaseRestClient) AdminSetPassword(ctx context.Context, userID, passw
 func (c *SupabaseRestClient) MintSessionByEmail(ctx context.Context, email string) (map[string]any, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" {
-		return nil, fmt.Errorf("supabase: empty email")
+		return nil, errors.New("supabase: empty email")
 	}
 	if strings.TrimSpace(c.baseURL) == "" || strings.TrimSpace(c.apiKey) == "" {
-		return nil, fmt.Errorf("supabase: not configured")
+		return nil, errors.New("supabase: not configured")
 	}
 
 	var link struct {
@@ -146,7 +147,7 @@ func (c *SupabaseRestClient) MintSessionByEmail(ctx context.Context, email strin
 	if strings.TrimSpace(link.EmailOTP) == "" {
 		// A GoTrue version that stops returning email_otp would otherwise show up
 		// as a 400 from /verify with no explanation.
-		return nil, fmt.Errorf("supabase: generate_link returned no email_otp")
+		return nil, errors.New("supabase: generate_link returned no email_otp")
 	}
 
 	var session map[string]any
@@ -155,7 +156,7 @@ func (c *SupabaseRestClient) MintSessionByEmail(ctx context.Context, email strin
 		return nil, fmt.Errorf("supabase: verify magiclink: %w", err)
 	}
 	if s, _ := session["access_token"].(string); strings.TrimSpace(s) == "" {
-		return nil, fmt.Errorf("supabase: verify returned no access_token")
+		return nil, errors.New("supabase: verify returned no access_token")
 	}
 	return session, nil
 }
@@ -163,7 +164,7 @@ func (c *SupabaseRestClient) MintSessionByEmail(ctx context.Context, email strin
 // adminUserPatch PUTs a partial update to one user.
 func (c *SupabaseRestClient) adminUserPatch(ctx context.Context, userID string, body map[string]any, what string) error {
 	if strings.TrimSpace(c.baseURL) == "" || strings.TrimSpace(c.apiKey) == "" {
-		return fmt.Errorf("supabase: not configured")
+		return errors.New("supabase: not configured")
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -179,7 +180,7 @@ func (c *SupabaseRestClient) adminUserPatch(ctx context.Context, userID string, 
 	if err != nil {
 		return fmt.Errorf("supabase: %s: %w", what, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<10))
 		return fmt.Errorf("supabase: %s failed: %d: %s", what, resp.StatusCode, strings.TrimSpace(string(msg)))
@@ -204,7 +205,7 @@ func (c *SupabaseRestClient) authPost(ctx context.Context, path string, body map
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<10))
 		return fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
@@ -217,7 +218,7 @@ func (c *SupabaseRestClient) authPost(ctx context.Context, path string, body map
 }
 
 func (c *SupabaseRestClient) authHeaders(req *http.Request) {
-	req.Header.Set("apikey", c.apiKey)
+	req.Header.Set("Apikey", c.apiKey)
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 }
@@ -237,21 +238,21 @@ func (c *SupabaseRestClient) authHeaders(req *http.Request) {
 // project deliberately closed.
 func (c *SupabaseRestClient) SignupDisabled(ctx context.Context) (bool, error) {
 	if strings.TrimSpace(c.baseURL) == "" {
-		return false, fmt.Errorf("supabase: not configured")
+		return false, errors.New("supabase: not configured")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		strings.TrimRight(c.baseURL, "/")+"/auth/v1/settings", nil)
 	if err != nil {
 		return false, err
 	}
-	req.Header.Set("apikey", c.apiKey)
-	req.Header.Set("accept", "application/json")
+	req.Header.Set("Apikey", c.apiKey)
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("supabase: read auth settings: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
 		return false, fmt.Errorf("supabase: auth settings returned %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
@@ -267,7 +268,7 @@ func (c *SupabaseRestClient) SignupDisabled(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("supabase: decode auth settings: %w", err)
 	}
 	if settings.DisableSignup == nil {
-		return false, fmt.Errorf("supabase: auth settings has no disable_signup field")
+		return false, errors.New("supabase: auth settings has no disable_signup field")
 	}
 	return *settings.DisableSignup, nil
 }

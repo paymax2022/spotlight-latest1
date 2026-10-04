@@ -48,9 +48,9 @@ func (a genericFoodResolverAdapter) ResolveGenericDispute(ctx context.Context, d
 	case err == nil:
 		return nil
 	case errors.Is(err, ErrForbidden):
-		return fmt.Errorf("%w: %s", disputes.ErrDisputeForbidden, err)
+		return fmt.Errorf("%w: %w", disputes.ErrDisputeForbidden, err)
 	case errors.Is(err, ErrDisputeInvalid):
-		return fmt.Errorf("%w: %s", disputes.ErrDisputeNotResolvable, err)
+		return fmt.Errorf("%w: %w", disputes.ErrDisputeNotResolvable, err)
 	default:
 		return err
 	}

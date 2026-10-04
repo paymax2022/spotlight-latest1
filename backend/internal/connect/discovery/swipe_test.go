@@ -189,7 +189,7 @@ func TestOrderPairLocalCanonical(t *testing.T) {
 	if a != c || b != d {
 		t.Fatalf("order not canonical: (%s,%s) vs (%s,%s)", a, b, c, d)
 	}
-	if !(a < b) {
+	if a >= b {
 		t.Fatalf("expected a<b, got a=%s b=%s", a, b)
 	}
 }

@@ -113,13 +113,13 @@ type ApproveWithdrawalResult struct {
 // DB unique constraint on idempotency_key) so ErrDuplicate on replay is success.
 func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverID, idempotencyKey string) (*ApproveWithdrawalResult, error) {
 	if withdrawalID == "" {
-		return nil, fmt.Errorf("adminext: withdrawal id is required")
+		return nil, errors.New("adminext: withdrawal id is required")
 	}
 	if approverID == "" {
-		return nil, fmt.Errorf("adminext: approver id is required")
+		return nil, errors.New("adminext: approver id is required")
 	}
 	if idempotencyKey == "" {
-		return nil, fmt.Errorf("adminext: Idempotency-Key is required")
+		return nil, errors.New("adminext: Idempotency-Key is required")
 	}
 	if s.ledger == nil {
 		return nil, ErrLedgerUnavailable
@@ -192,7 +192,7 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverI
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// PENDING → APPROVED (skipped/no-op if already APPROVED from a prior attempt).
 	if _, err := tx.Exec(ctx,

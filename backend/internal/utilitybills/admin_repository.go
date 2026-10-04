@@ -65,6 +65,7 @@ const adminProviderCols = `id, name, code, adapter_code, status, supported_categ
 // caller populates it.
 type AdminProviderView struct {
 	ProviderRow
+
 	LastHealthCheckAt     *time.Time `json:"last_health_check_at"`
 	CredentialsConfigured bool       `json:"credentials_configured"`
 }

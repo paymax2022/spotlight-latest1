@@ -84,10 +84,10 @@ func NewBindRegistry(db *pgxpool.Pool) *BindRegistry { return &BindRegistry{db: 
 // money. A refused purchase is recoverable; a duplicate one is not.
 func (r *BindRegistry) Claim(ctx context.Context, key, provider, productCode, policyID string) (BindClaim, error) {
 	if r == nil || r.db == nil {
-		return BindClaim{}, fmt.Errorf("policy: bind registry unavailable — refusing to purchase without idempotency protection")
+		return BindClaim{}, errors.New("policy: bind registry unavailable — refusing to purchase without idempotency protection")
 	}
 	if key == "" {
-		return BindClaim{}, fmt.Errorf("policy: Idempotency-Key required for a provider purchase")
+		return BindClaim{}, errors.New("policy: Idempotency-Key required for a provider purchase")
 	}
 
 	var pid any
@@ -210,7 +210,7 @@ func (r *BindRegistry) Unknown(ctx context.Context, key, reason string) {
 // see, or holding cover we did not record.
 func (r *BindRegistry) UnresolvedCount(ctx context.Context) (int, error) {
 	if r == nil || r.db == nil {
-		return 0, fmt.Errorf("policy: bind registry unavailable")
+		return 0, errors.New("policy: bind registry unavailable")
 	}
 	var n int
 	err := r.db.QueryRow(ctx, `

@@ -231,7 +231,7 @@ func testEngine(sec SecondaryStore, userID string) *gin.Engine {
 
 func doJSON(t *testing.T, r *gin.Engine, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

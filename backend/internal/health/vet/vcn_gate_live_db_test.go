@@ -30,7 +30,7 @@ func vcnGatePool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping vet VCN-gate live-DB tests")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -92,13 +92,13 @@ func seedVCNGateFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (
 		t.Fatalf("seed payment row: %v", err)
 	}
 	t.Cleanup(func() {
-		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM vet_appointment_payments WHERE appointment_id=$1`, apptID)
-		pool.Exec(bg, `DELETE FROM health_appointments WHERE id=$1`, apptID)
-		pool.Exec(bg, `DELETE FROM pets WHERE id=$1`, petID)
-		pool.Exec(bg, `DELETE FROM vet_services WHERE id=$1`, serviceID)
+		bg := t.Context()
+		_, _ = pool.Exec(bg, `DELETE FROM vet_appointment_payments WHERE appointment_id=$1`, apptID)
+		_, _ = pool.Exec(bg, `DELETE FROM health_appointments WHERE id=$1`, apptID)
+		_, _ = pool.Exec(bg, `DELETE FROM pets WHERE id=$1`, petID)
+		_, _ = pool.Exec(bg, `DELETE FROM vet_services WHERE id=$1`, serviceID)
 	})
-	return
+	return providerID, vetOwnerID, apptID
 }
 
 // TestLiveDB_Confirm_RejectsSuspendedVet locks the fix: a vet whose VCN
@@ -106,7 +106,7 @@ func seedVCNGateFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (
 // approved=false) must be refused at Confirm, not just at Accept.
 func TestLiveDB_Confirm_RejectsSuspendedVet(t *testing.T) {
 	pool := vcnGatePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	sched := scheduler.NewService(pool)
 	schedulingSvc := healthscheduling.NewService(pool, sched, nil)
 
@@ -131,7 +131,7 @@ func TestLiveDB_Confirm_RejectsSuspendedVet(t *testing.T) {
 // must not fail closed for legitimate vets.
 func TestLiveDB_Confirm_AllowsApprovedVet(t *testing.T) {
 	pool := vcnGatePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	sched := scheduler.NewService(pool)
 	schedulingSvc := healthscheduling.NewService(pool, sched, nil)
 
@@ -153,7 +153,7 @@ func TestLiveDB_Confirm_AllowsApprovedVet(t *testing.T) {
 // are not a vet).
 func TestLiveDB_Confirm_OwnerCallerUnaffectedByVCNGate(t *testing.T) {
 	pool := vcnGatePool(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	sched := scheduler.NewService(pool)
 	schedulingSvc := healthscheduling.NewService(pool, sched, nil)
 

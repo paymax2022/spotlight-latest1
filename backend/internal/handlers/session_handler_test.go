@@ -1,15 +1,17 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 type fakeSessionService struct {
@@ -24,7 +26,7 @@ func (f *fakeSessionService) IssueSession(string, services.IssuedTokens, service
 func (f *fakeSessionService) RotateRefresh(string, services.IssuedTokens, services.LoginContext) (*domain.Session, error) {
 	return &domain.Session{}, nil
 }
-func (f *fakeSessionService) ValidateAccess(string) (*domain.Session, error) {
+func (f *fakeSessionService) ValidateAccess(context.Context, string) (*services.Session, error) {
 	return &domain.Session{}, nil
 }
 func (f *fakeSessionService) ListMySessions(string) ([]domain.Session, error) { return f.listed, nil }
@@ -72,7 +74,7 @@ func TestSessionEndpointsDenyByDefaultWhenFlagOff(t *testing.T) {
 		{http.MethodPost, "/admin/users/u9/force-logout"},
 	} {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusServiceUnavailable {
 			t.Fatalf("%s %s: expected 503 when flag off, got %d", tc.method, tc.path, w.Code)
@@ -84,7 +86,7 @@ func TestSessionEndpointsDenyByDefaultWhenFlagOff(t *testing.T) {
 func TestListMySessionsWhenFlagOn(t *testing.T) {
 	r, _ := setupSessionRouter(true)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/sessions", nil)
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())
@@ -94,7 +96,7 @@ func TestListMySessionsWhenFlagOn(t *testing.T) {
 func TestAdminForceLogoutWhenFlagOn(t *testing.T) {
 	r, _ := setupSessionRouter(true)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/admin/users/u9/force-logout", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/users/u9/force-logout", nil)
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())

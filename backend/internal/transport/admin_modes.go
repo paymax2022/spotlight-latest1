@@ -457,16 +457,16 @@ func deriveParcelPodStatus(status string, proofURL *string) string {
 func (a *AdminService) ModeKPIs(ctx context.Context) map[string]any {
 	db := a.svc.db
 	var parcels, parcelsDelivered, busTickets, busBoarded, towing, towingDone, movers, moversDone, carHire, carHireDone int
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM parcels`).Scan(&parcels)
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM parcels WHERE status='delivered'`).Scan(&parcelsDelivered)
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM bus_tickets WHERE status NOT IN ('cancelled','refunded')`).Scan(&busTickets)
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM bus_tickets WHERE boarding_status='boarded'`).Scan(&busBoarded)
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM towing_jobs`).Scan(&towing)
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM towing_jobs WHERE status='completed'`).Scan(&towingDone)
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM mover_jobs`).Scan(&movers)
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM mover_jobs WHERE status='completion_confirmed'`).Scan(&moversDone)
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM car_hire_bookings`).Scan(&carHire)
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM car_hire_bookings WHERE status='completed'`).Scan(&carHireDone)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM parcels`).Scan(&parcels)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM parcels WHERE status='delivered'`).Scan(&parcelsDelivered)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM bus_tickets WHERE status NOT IN ('cancelled','refunded')`).Scan(&busTickets)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM bus_tickets WHERE boarding_status='boarded'`).Scan(&busBoarded)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM towing_jobs`).Scan(&towing)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM towing_jobs WHERE status='completed'`).Scan(&towingDone)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM mover_jobs`).Scan(&movers)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM mover_jobs WHERE status='completion_confirmed'`).Scan(&moversDone)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM car_hire_bookings`).Scan(&carHire)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM car_hire_bookings WHERE status='completed'`).Scan(&carHireDone)
 	return map[string]any{
 		"parcels_total":      parcels,
 		"parcels_delivered":  parcelsDelivered,

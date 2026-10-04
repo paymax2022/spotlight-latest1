@@ -70,7 +70,7 @@ func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKo
 
 func (s *Service) CreateMerchant(ctx context.Context, in CreateMerchantInput) (*Merchant, error) {
 	if in.Name == "" || in.Slug == "" {
-		return nil, fmt.Errorf("merchant: name and slug required")
+		return nil, errors.New("merchant: name and slug required")
 	}
 	return s.repo.CreateMerchant(ctx, in)
 }
@@ -90,7 +90,7 @@ func (s *Service) GetMerchantByOwner(ctx context.Context, ownerUserID string) (*
 
 func (s *Service) CreateCampaign(ctx context.Context, in CreateMCInput) (*MerchantCampaign, error) {
 	if in.MerchantID == "" || in.Name == "" {
-		return nil, fmt.Errorf("merchant: merchant_id and name required")
+		return nil, errors.New("merchant: merchant_id and name required")
 	}
 	return s.repo.CreateMC(ctx, in)
 }
@@ -105,24 +105,24 @@ func (s *Service) ListCampaigns(ctx context.Context, merchantID string) ([]Merch
 // the finance ledger posts a balanced double-entry.
 func (s *Service) Fund(ctx context.Context, mcID string, amountKobo int64, idempotencyKey string) (*MerchantCampaign, error) {
 	if idempotencyKey == "" {
-		return nil, fmt.Errorf("merchant: Idempotency-Key required to fund")
+		return nil, errors.New("merchant: Idempotency-Key required to fund")
 	}
 	if amountKobo <= 0 {
-		return nil, fmt.Errorf("merchant: funding amount must be positive")
+		return nil, errors.New("merchant: funding amount must be positive")
 	}
 	mc, err := s.repo.GetMC(ctx, mcID)
 	if err != nil {
-		return nil, fmt.Errorf("merchant: campaign not found")
+		return nil, errors.New("merchant: campaign not found")
 	}
 	m, err := s.repo.GetMerchant(ctx, mc.MerchantID)
 	if err != nil {
 		return nil, err
 	}
 	if m.FundingWalletUserID == "" {
-		return nil, fmt.Errorf("merchant: no funding wallet configured")
+		return nil, errors.New("merchant: no funding wallet configured")
 	}
 	if s.finance == nil {
-		return nil, fmt.Errorf("merchant: finance ledger unavailable")
+		return nil, errors.New("merchant: finance ledger unavailable")
 	}
 
 	// Tier gate (fail-closed, E2E-FIN-046): funding debits the merchant's
@@ -146,12 +146,12 @@ func (s *Service) Fund(ctx context.Context, mcID string, amountKobo int64, idemp
 	}
 	ref := "referral:merchant:fund:" + mcID
 	if err := s.finance.Debit(ctx, m.FundingWalletUserID, ref, idempotencyKey, escrow.ID, amountKobo); err != nil {
-		if err == financeledger.ErrDuplicate {
+		if errors.Is(err, financeledger.ErrDuplicate) {
 			// Already processed under this key — return current state idempotently.
 			return s.repo.GetMC(ctx, mcID)
 		}
-		if err == financeledger.ErrInsufficientFunds {
-			return nil, fmt.Errorf("merchant: insufficient wallet balance")
+		if errors.Is(err, financeledger.ErrInsufficientFunds) {
+			return nil, errors.New("merchant: insufficient wallet balance")
 		}
 		return nil, fmt.Errorf("merchant: fund debit: %w", err)
 	}
@@ -162,11 +162,11 @@ func (s *Service) Fund(ctx context.Context, mcID string, amountKobo int64, idemp
 // amount on the campaign envelope.
 func (s *Service) Settle(ctx context.Context, mcID string, amountKobo int64, idempotencyKey string) error {
 	if idempotencyKey == "" {
-		return fmt.Errorf("merchant: Idempotency-Key required to settle")
+		return errors.New("merchant: Idempotency-Key required to settle")
 	}
 	mc, err := s.repo.GetMC(ctx, mcID)
 	if err != nil {
-		return fmt.Errorf("merchant: campaign not found")
+		return errors.New("merchant: campaign not found")
 	}
 	if s.settlement != nil {
 		if err := s.settlement.Settle(ctx, mc.MerchantID, mcID, amountKobo, idempotencyKey); err != nil {
@@ -181,10 +181,10 @@ func (s *Service) Settle(ctx context.Context, mcID string, amountKobo int64, ide
 // once for the caller to copy.
 func (s *Service) IssueKey(ctx context.Context, in IssueKeyInput) (*IssuedKey, error) {
 	if in.MerchantID == "" {
-		return nil, fmt.Errorf("merchant: merchant_id required")
+		return nil, errors.New("merchant: merchant_id required")
 	}
 	if _, err := s.repo.GetMerchant(ctx, in.MerchantID); err != nil {
-		return nil, fmt.Errorf("merchant: merchant not found")
+		return nil, errors.New("merchant: merchant not found")
 	}
 	secret, prefix := generateKey()
 	plain := prefix + "." + secret
@@ -215,7 +215,7 @@ func (s *Service) RevokeKey(ctx context.Context, id string) error {
 // and scopes when valid. (Wiring of a partner-API middleware is deferred.)
 func (s *Service) AuthenticateKey(ctx context.Context, presented string) (merchantID string, scopes []string, ok bool, err error) {
 	prefix := presented
-	for i := 0; i < len(presented); i++ {
+	for i := range len(presented) {
 		if presented[i] == '.' {
 			prefix = presented[:i]
 			break

@@ -86,7 +86,7 @@ func TestMain(m *testing.M) {
 		ctx := context.Background()
 		if pool, err := pgxpool.New(ctx, dsn); err == nil {
 			for _, pattern := range fixtureCategorySlugs {
-				rows, err := pool.Query(ctx, `SELECT id::text FROM public.mkt_categories WHERE slug LIKE $1`, pattern)
+				rows, err := pool.Query(context.WithoutCancel(ctx), `SELECT id::text FROM public.mkt_categories WHERE slug LIKE $1`, pattern)
 				if err != nil {
 					continue
 				}

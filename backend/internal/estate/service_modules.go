@@ -2,7 +2,9 @@ package estate
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,13 +21,13 @@ func (s *Service) roleIn(ctx context.Context, estateID, userID string) (string, 
 	if err := s.db.QueryRow(ctx,
 		`SELECT role, banned_at IS NOT NULL, deleted_at IS NOT NULL FROM estate_residents WHERE estate_id=$1 AND user_id=$2`, estateID, userID,
 	).Scan(&role, &banned, &deleted); err != nil {
-		return "", fmt.Errorf("estate: not a member of this estate")
+		return "", errors.New("estate: not a member of this estate")
 	}
 	if deleted {
-		return "", fmt.Errorf("estate: this account has been deleted")
+		return "", errors.New("estate: this account has been deleted")
 	}
 	if banned {
-		return "", fmt.Errorf("estate: this account is banned from the estate")
+		return "", errors.New("estate: this account is banned from the estate")
 	}
 	return role, nil
 }
@@ -103,7 +105,7 @@ func (s *Service) UpdateTaskStatus(ctx context.Context, estateID, userID, taskID
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("estate: task not found or not permitted")
+		return errors.New("estate: task not found or not permitted")
 	}
 	return nil
 }
@@ -174,13 +176,13 @@ func (s *Service) AddRepairUpdate(ctx context.Context, estateID, userID, repairI
 	// Verify the repair belongs to this estate (cross-estate isolation).
 	var cnt int
 	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM estate_repair_requests WHERE id=$1 AND estate_id=$2`, repairID, estateID).Scan(&cnt); err != nil || cnt == 0 {
-		return nil, fmt.Errorf("estate: repair not found in this estate")
+		return nil, errors.New("estate: repair not found in this estate")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	u := &RepairUpdate{ID: uuid.New().String(), RequestID: repairID, Status: req.Status, Note: req.Note, ByUser: &userID, CreatedAt: time.Now()}
 	if _, err := tx.Exec(ctx,
@@ -261,7 +263,7 @@ func (s *Service) BookFacility(ctx context.Context, estateID, residentID, facili
 		return nil, err
 	}
 	if !req.EndsAt.After(req.StartsAt) {
-		return nil, fmt.Errorf("estate: ends_at must be after starts_at")
+		return nil, errors.New("estate: ends_at must be after starts_at")
 	}
 	// Dues-restriction enforcement: soft AND hard both block facility booking.
 	if err := s.enforceNotRestricted(ctx, estateID, residentID, ActionFacility); err != nil {
@@ -270,7 +272,7 @@ func (s *Service) BookFacility(ctx context.Context, estateID, residentID, facili
 	// Load fee (estate-scoped).
 	var fee int64
 	if err := s.db.QueryRow(ctx, `SELECT fee_kobo FROM estate_facilities WHERE id=$1 AND estate_id=$2`, facilityID, estateID).Scan(&fee); err != nil {
-		return nil, fmt.Errorf("estate: facility not found in this estate")
+		return nil, errors.New("estate: facility not found in this estate")
 	}
 	b := &FacilityBooking{
 		ID: uuid.New().String(), EstateID: estateID, FacilityID: facilityID, ResidentID: residentID,
@@ -359,7 +361,7 @@ func (s *Service) MarkAnnouncementRead(ctx context.Context, estateID, userID, an
 	// Verify announcement belongs to this estate (cross-estate isolation).
 	var cnt int
 	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM estate_announcements WHERE id=$1 AND estate_id=$2`, announcementID, estateID).Scan(&cnt); err != nil || cnt == 0 {
-		return fmt.Errorf("estate: announcement not found in this estate")
+		return errors.New("estate: announcement not found in this estate")
 	}
 	_, err := s.db.Exec(ctx,
 		`INSERT INTO announcement_reads (id, estate_id, announcement_id, user_id) VALUES (gen_random_uuid(),$1,$2,$3)
@@ -423,7 +425,7 @@ func (s *Service) UpdateEmergencyStatus(ctx context.Context, estateID, adminID, 
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("estate: emergency not found in this estate")
+		return errors.New("estate: emergency not found in this estate")
 	}
 	return nil
 }
@@ -524,12 +526,7 @@ func (s *Service) ListDocuments(ctx context.Context, estateID, userID, category 
 }
 
 func allowedContentType(ct string) bool {
-	for _, a := range AllowedDocumentTypes {
-		if a == ct {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(AllowedDocumentTypes, ct)
 }
 
 func (s *Service) CreateVendor(ctx context.Context, estateID, adminID string, req CreateVendorRequest) (*Vendor, error) {
@@ -584,14 +581,14 @@ func (s *Service) VerifyVendor(ctx context.Context, estateID, adminID, vendorID,
 		return err
 	}
 	if status != "verified" && status != "suspended" && status != "pending" {
-		return fmt.Errorf("estate: invalid vendor status")
+		return errors.New("estate: invalid vendor status")
 	}
 	ct, err := s.db.Exec(ctx, `UPDATE estate_vendors SET status=$1 WHERE id=$2 AND estate_id=$3`, status, vendorID, estateID)
 	if err != nil {
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("estate: vendor not found in this estate")
+		return errors.New("estate: vendor not found in this estate")
 	}
 	return nil
 }

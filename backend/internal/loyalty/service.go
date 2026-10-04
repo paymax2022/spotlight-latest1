@@ -10,15 +10,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/points"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Auditor mirrors services.AuditService (NL-12); nil-safe.
@@ -80,12 +81,12 @@ func (s *Service) ReevaluateTier(ctx context.Context, userID string, delta int64
 	if err != nil {
 		return "", fmt.Errorf("loyalty: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var lifetime int64
 	var curTier string
 	err = tx.QueryRow(ctx, `SELECT lifetime_points, tier FROM loyalty_memberships WHERE user_id=$1 FOR UPDATE`, userID).Scan(&lifetime, &curTier)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		curTier = string(Tier1)
 		lifetime = 0
 		if _, err := tx.Exec(ctx, `INSERT INTO loyalty_memberships (user_id, tier, lifetime_points) VALUES ($1,'TIER1',0)`, userID); err != nil {
@@ -141,7 +142,7 @@ func (s *Service) tierForTx(ctx context.Context, tx pgx.Tx, lifetime int64, cur 
 	const q = `SELECT tier FROM loyalty_tiers WHERE active=true AND threshold_points <= $1 ORDER BY threshold_points DESC LIMIT 1`
 	var t string
 	err := tx.QueryRow(ctx, q, lifetime).Scan(&t)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return cur, nil
 	}
 	if err != nil {
@@ -178,7 +179,7 @@ func (s *Service) GetMembership(ctx context.Context, userID string) (*Membership
 	var m Membership
 	var tier string
 	err := s.db.QueryRow(ctx, q, userID).Scan(&m.UserID, &tier, &m.LifetimePoints, &m.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		_, _ = s.db.Exec(ctx, `INSERT INTO loyalty_memberships (user_id, tier, lifetime_points) VALUES ($1,'TIER1',0) ON CONFLICT (user_id) DO NOTHING`, userID)
 		return &Membership{UserID: userID, Tier: Tier1, LifetimePoints: 0, UpdatedAt: time.Now()}, nil
 	}
@@ -199,7 +200,7 @@ func (s *Service) Redeem(ctx context.Context, userID, sku string) (*Redemption, 
 		return nil, err
 	}
 	if !item.Active {
-		return nil, fmt.Errorf("loyalty: reward inactive")
+		return nil, errors.New("loyalty: reward inactive")
 	}
 	m, err := s.GetMembership(ctx, userID)
 	if err != nil {
@@ -264,7 +265,7 @@ func (s *Service) bindingRuleKey(ctx context.Context, module, trigger string) (s
 	const q = `SELECT rule_key FROM loyalty_earn_rules WHERE module=$1 AND trigger=$2 AND active=true LIMIT 1`
 	var rk string
 	err := s.db.QueryRow(ctx, q, module, trigger).Scan(&rk)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil
 	}
 	if err != nil {
@@ -278,7 +279,7 @@ func (s *Service) catalogItem(ctx context.Context, sku string) (*CatalogItem, er
 	var it CatalogItem
 	var minTier string
 	if err := s.db.QueryRow(ctx, q, sku).Scan(&it.ID, &it.SKU, &it.Title, &it.Kind, &it.CostPoints, &minTier, &it.Active); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("loyalty: reward %s not found", sku)
 		}
 		return nil, fmt.Errorf("loyalty: load reward: %w", err)
@@ -295,7 +296,7 @@ func (s *Service) log(actor, action, id string, meta map[string]any) {
 }
 
 // Sentinel errors.
-var ErrTierTooLow = fmt.Errorf("loyalty: membership tier too low for this reward")
+var ErrTierTooLow = errors.New("loyalty: membership tier too low for this reward")
 
 // Handler exposes loyalty member endpoints (membership, rewards, redeem). Awards are
 // never a public endpoint — they fire only as side effects of live-module actions

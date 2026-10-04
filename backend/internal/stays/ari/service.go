@@ -2,6 +2,7 @@ package ari
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -70,10 +71,10 @@ func (s *Service) AvailabilityCalendar(ctx context.Context, roomTypeID, from, to
 // SetRateDay upserts one rate-calendar cell.
 func (s *Service) SetRateDay(ctx context.Context, d RateDay) error {
 	if d.RatePlanID == "" || d.Date == "" {
-		return fmt.Errorf("ari: rate day requires rate_plan_id + date")
+		return errors.New("ari: rate day requires rate_plan_id + date")
 	}
 	if d.PriceKobo < 0 {
-		return fmt.Errorf("ari: price_kobo must be >= 0")
+		return errors.New("ari: price_kobo must be >= 0")
 	}
 	return s.repo.UpsertRateDay(ctx, d)
 }
@@ -81,10 +82,10 @@ func (s *Service) SetRateDay(ctx context.Context, d RateDay) error {
 // SetAvailabilityDay upserts one availability-calendar cell (opens inventory).
 func (s *Service) SetAvailabilityDay(ctx context.Context, d AvailabilityDay) error {
 	if d.RoomTypeID == "" || d.Date == "" {
-		return fmt.Errorf("ari: availability day requires room_type_id + date")
+		return errors.New("ari: availability day requires room_type_id + date")
 	}
 	if d.Allotment < 0 {
-		return fmt.Errorf("ari: allotment must be >= 0")
+		return errors.New("ari: allotment must be >= 0")
 	}
 	return s.repo.UpsertAvailabilityDay(ctx, d)
 }
@@ -154,7 +155,7 @@ func (s *Service) SetRestrictions(ctx context.Context, ratePlanID string, e Bulk
 // (FixedKobo). This is rule-driven and idempotent: re-running re-derives the cells.
 func (s *Service) ApplyDerivedRate(ctx context.Context, rule DerivedRateRule, from, to string) (int, error) {
 	if rule.ParentRatePlanID == "" || rule.ChildRatePlanID == "" {
-		return 0, fmt.Errorf("ari: derived rate requires parent + child rate_plan_id")
+		return 0, errors.New("ari: derived rate requires parent + child rate_plan_id")
 	}
 	parent, err := s.repo.ListRateDays(ctx, rule.ParentRatePlanID, from, to)
 	if err != nil {
@@ -185,13 +186,13 @@ func (s *Service) ApplyDerivedRate(ctx context.Context, rule DerivedRateRule, fr
 // CreatePromotion validates + inserts a promotion.
 func (s *Service) CreatePromotion(ctx context.Context, p Promotion) (string, error) {
 	if p.PropertyID == "" || p.Name == "" {
-		return "", fmt.Errorf("ari: promotion requires property_id + name")
+		return "", errors.New("ari: promotion requires property_id + name")
 	}
 	if err := validRange(p.DateFrom, p.DateTo); err != nil {
 		return "", err
 	}
 	if p.DiscountBps < 0 || p.DiscountBps > 10000 {
-		return "", fmt.Errorf("ari: discount_bps out of range")
+		return "", errors.New("ari: discount_bps out of range")
 	}
 	return s.repo.CreatePromotion(ctx, p)
 }

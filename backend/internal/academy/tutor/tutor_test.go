@@ -2,6 +2,7 @@ package tutor
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -275,7 +276,7 @@ func TestVerifyTutor_KYCGate(t *testing.T) {
 	f := newFakeStore()
 	f.seedTutor("t1", "u1", TutorPending)
 	s := newTestService(f, fakeKYC{tier: 0}, newFakeRail())
-	if _, err := s.VerifyTutor(ctx, "admin", "t1"); err != ErrKYCNotMet {
+	if _, err := s.VerifyTutor(ctx, "admin", "t1"); !errors.Is(err, ErrKYCNotMet) {
 		t.Fatalf("tier 0 must reject with ErrKYCNotMet, got %v", err)
 	}
 	if f.tutors["t1"].Status == TutorVerified {
@@ -300,7 +301,7 @@ func TestVerifyTutor_KYCErrorFailsClosed(t *testing.T) {
 	f := newFakeStore()
 	f.seedTutor("t1", "u1", TutorPending)
 	s := newTestService(f, fakeKYC{err: context.DeadlineExceeded}, newFakeRail())
-	if _, err := s.VerifyTutor(context.Background(), "admin", "t1"); err != ErrKYCNotMet {
+	if _, err := s.VerifyTutor(context.Background(), "admin", "t1"); !errors.Is(err, ErrKYCNotMet) {
 		t.Errorf("KYC read error must fail closed with ErrKYCNotMet, got %v", err)
 	}
 	if f.tutors["t1"].Status == TutorVerified {
@@ -355,7 +356,7 @@ func TestRequestPayout_InsufficientBalance(t *testing.T) {
 	rail := newFakeRail()
 	s := newTestService(f, fakeKYC{tier: 1}, rail)
 
-	if _, err := s.RequestPayout(ctx, "u1", 30_000, "idem-x"); err != ErrInsufficientBalance {
+	if _, err := s.RequestPayout(ctx, "u1", 30_000, "idem-x"); !errors.Is(err, ErrInsufficientBalance) {
 		t.Fatalf("expected ErrInsufficientBalance, got %v", err)
 	}
 	if f.insertCnt != 0 {
@@ -373,13 +374,13 @@ func TestRequestPayout_Guards(t *testing.T) {
 	f.seedPending("t1", 50_000)
 	s := newTestService(f, fakeKYC{tier: 1}, newFakeRail())
 
-	if _, err := s.RequestPayout(ctx, "u1", 30_000, ""); err != ErrIdempotencyRequired {
+	if _, err := s.RequestPayout(ctx, "u1", 30_000, ""); !errors.Is(err, ErrIdempotencyRequired) {
 		t.Errorf("missing idem key must reject with ErrIdempotencyRequired, got %v", err)
 	}
-	if _, err := s.RequestPayout(ctx, "u1", 0, "k"); err != ErrInvalidAmount {
+	if _, err := s.RequestPayout(ctx, "u1", 0, "k"); !errors.Is(err, ErrInvalidAmount) {
 		t.Errorf("zero amount must reject with ErrInvalidAmount, got %v", err)
 	}
-	if _, err := s.RequestPayout(ctx, "u1", -5, "k"); err != ErrInvalidAmount {
+	if _, err := s.RequestPayout(ctx, "u1", -5, "k"); !errors.Is(err, ErrInvalidAmount) {
 		t.Errorf("negative amount must reject with ErrInvalidAmount, got %v", err)
 	}
 }

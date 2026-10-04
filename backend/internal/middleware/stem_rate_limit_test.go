@@ -43,8 +43,8 @@ func TestStemRateLimit_AllowsWithinLimit(t *testing.T) {
 	r.Use(StemRateLimit(2, time.Minute))
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	for i := range 2 {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
@@ -63,14 +63,14 @@ func TestStemRateLimit_BlocksWhenExceeded(t *testing.T) {
 	r.Use(StemRateLimit(1, time.Minute))
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-	req1 := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req1 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 	w1 := httptest.NewRecorder()
 	r.ServeHTTP(w1, req1)
 	if w1.Code != http.StatusOK {
 		t.Fatalf("expected first request 200, got %d", w1.Code)
 	}
 
-	req2 := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req2 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil)
 	w2 := httptest.NewRecorder()
 	r.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusTooManyRequests {

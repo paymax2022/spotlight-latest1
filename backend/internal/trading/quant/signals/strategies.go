@@ -3,6 +3,7 @@ package signals
 import (
 	"fmt"
 	"math"
+	"slices"
 	"spotlight/backend/internal/trading/quant/regime"
 )
 
@@ -42,12 +43,7 @@ func GenerateCandidates(ctx Context, catalog []Strategy) []Candidate {
 }
 
 func regimeAllowed(r regime.Regime, valid []regime.Regime) bool {
-	for _, v := range valid {
-		if v == r {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(valid, r)
 }
 
 // Long when the fast EMA is above the slow EMA and the regime trend is up (and

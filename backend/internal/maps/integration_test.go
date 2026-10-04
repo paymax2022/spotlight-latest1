@@ -43,10 +43,12 @@ func TestIntegration_NearbyAndZone(t *testing.T) {
 
 	const etype = "itest_merchant"
 	_, _ = pool.Exec(ctx, `DELETE FROM merchant_locations WHERE entity_type=$1`, etype)
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM merchant_locations WHERE entity_type=$1`, etype) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM merchant_locations WHERE entity_type=$1`, etype)
+	})
 
 	ins := func(id string, lat, lng float64) {
-		_, err := pool.Exec(ctx,
+		_, err := pool.Exec(context.WithoutCancel(ctx),
 			`INSERT INTO merchant_locations (entity_id, entity_type, geog)
 			 VALUES ($1,$2, ST_SetSRID(ST_MakePoint($4,$3),4326)::geography)`,
 			id, etype, lat, lng)
@@ -85,9 +87,9 @@ func TestIntegration_NearbyAndZone(t *testing.T) {
 
 	// Geofence via ST_Contains.
 	const zone = "itest_zone"
-	_, _ = pool.Exec(ctx, `DELETE FROM service_areas WHERE id=$1`, zone)
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM service_areas WHERE id=$1`, zone) })
-	_, err = pool.Exec(ctx,
+	_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM service_areas WHERE id=$1`, zone)
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM service_areas WHERE id=$1`, zone) })
+	_, err = pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO service_areas (id, name, geog)
 		 VALUES ($1,'itest', ST_SetSRID(ST_GeomFromText($2),4326)::geography)`,
 		zone, "POLYGON((3.30 6.40,3.50 6.40,3.50 6.55,3.30 6.55,3.30 6.40))")
@@ -109,9 +111,9 @@ func TestIntegration_GeocodeCache(t *testing.T) {
 
 	cache := NewCache(pool, time.Hour)
 	key := NormalizeQuery("itest 10 Awolowo Road, Ikoyi")
-	_, _ = pool.Exec(ctx, `DELETE FROM geocode_cache WHERE normalized_query IN ($1,$2)`, key, "itest_g")
+	_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM geocode_cache WHERE normalized_query IN ($1,$2)`, key, "itest_g")
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM geocode_cache WHERE normalized_query IN ($1,$2)`, key, "itest_g")
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM geocode_cache WHERE normalized_query IN ($1,$2)`, key, "itest_g")
 	})
 
 	// OSM result is cached and read back.
@@ -143,8 +145,8 @@ func TestIntegration_UsageCap(t *testing.T) {
 
 	const prov = "itest_prov"
 	month := currentMonth()
-	_, _ = pool.Exec(ctx, `DELETE FROM map_usage WHERE provider=$1`, prov)
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM map_usage WHERE provider=$1`, prov) })
+	_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM map_usage WHERE provider=$1`, prov)
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM map_usage WHERE provider=$1`, prov) })
 
 	ut := NewUsageTracker(pool, map[string]int64{capKey(prov, PrimGeocode): 2}, func(string, Primitive, int, int64, int64) {})
 	ut.Record(ctx, prov, PrimGeocode)
@@ -178,23 +180,23 @@ func TestIntegration_TriggerSync(t *testing.T) {
 	t.Cleanup(pool.Close)
 
 	uid := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING`, uid, uid+"@itest.local"); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING`, uid, uid+"@itest.local"); err != nil {
 		t.Skipf("cannot seed auth.users (%v) — skipping trigger sync test", err)
 	}
 	testsupport.CleanupUser(t, pool, uid)
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, uid) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, uid) })
 
 	rid := uuid.New().String()
-	_, _ = pool.Exec(ctx, `DELETE FROM merchant_locations WHERE entity_id=$1`, rid)
-	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address) VALUES ($1,$2,$3,$4)`,
+	_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM merchant_locations WHERE entity_id=$1`, rid)
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO restaurants (id, owner_id, name, address) VALUES ($1,$2,$3,$4)`,
 		rid, uid, "itest resto", "Ikoyi"); err != nil {
 		t.Fatalf("insert restaurant: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM restaurants WHERE id=$1`, rid) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM restaurants WHERE id=$1`, rid) })
 
 	count := func() int {
 		var n int
-		_ = pool.QueryRow(ctx, `SELECT count(*) FROM merchant_locations WHERE entity_id=$1 AND entity_type='restaurant'`, rid).Scan(&n)
+		_ = pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM merchant_locations WHERE entity_id=$1 AND entity_type='restaurant'`, rid).Scan(&n)
 		return n
 	}
 
@@ -202,7 +204,7 @@ func TestIntegration_TriggerSync(t *testing.T) {
 		t.Fatal("no coordinates yet → expected 0 merchant_locations rows")
 	}
 	// Gaining a pin fires the sync trigger.
-	if _, err := pool.Exec(ctx, `UPDATE restaurants SET geo_lat=$2, geo_lng=$3 WHERE id=$1`, rid, 6.4541, 3.3947); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `UPDATE restaurants SET geo_lat=$2, geo_lng=$3 WHERE id=$1`, rid, 6.4541, 3.3947); err != nil {
 		t.Fatalf("update geo: %v", err)
 	}
 	if count() != 1 {
@@ -221,7 +223,7 @@ func TestIntegration_TriggerSync(t *testing.T) {
 		t.Fatal("synced restaurant not returned by FindNearbyOwn")
 	}
 	// Deleting the source row removes the projection.
-	if _, err := pool.Exec(ctx, `DELETE FROM restaurants WHERE id=$1`, rid); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM restaurants WHERE id=$1`, rid); err != nil {
 		t.Fatalf("delete restaurant: %v", err)
 	}
 	if count() != 0 {

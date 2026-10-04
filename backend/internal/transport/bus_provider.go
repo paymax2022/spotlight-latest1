@@ -388,7 +388,6 @@ func (s *Service) SearchBusTrips(ctx context.Context, fromState, toState, provid
 	if date != "" {
 		q += fmt.Sprintf(" AND s.departure_time::date = $%d::date", i)
 		args = append(args, date)
-		i++
 	}
 	q += " ORDER BY s.departure_time LIMIT 100"
 	rows, err := s.db.Query(ctx, q, args...)
@@ -441,7 +440,6 @@ func (s *Service) ListBusProviders(ctx context.Context, state, query string) ([]
 	if query != "" {
 		q += fmt.Sprintf(" AND p.business_name ILIKE $%d", i)
 		args = append(args, "%"+query+"%")
-		i++
 	}
 	q += " ORDER BY p.business_name LIMIT 100"
 	rows, err := s.db.Query(ctx, q, args...)

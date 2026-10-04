@@ -107,8 +107,8 @@ func (s *Service) activeConsent(ctx context.Context, locale string) (*ConsentTex
 	           ORDER BY (locale=$1) DESC, version DESC LIMIT 1`
 	var ct ConsentText
 	if err := s.db.QueryRow(ctx, q, locale).Scan(&ct.Version, &ct.Locale, &ct.Body); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("preconsult: no active consent version")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("preconsult: no active consent version")
 		}
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (s *Service) getConfig(ctx context.Context, key string) (json.RawMessage, e
 	var raw []byte
 	err := s.db.QueryRow(ctx, `SELECT value FROM health_intake_config WHERE config_key=$1`, key).Scan(&raw)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -169,7 +169,7 @@ func (s *Service) latestPriorResponse(ctx context.Context, patientID, excludeRes
 	           ORDER BY r.created_at DESC LIMIT 1`
 	var raw []byte
 	if err := s.db.QueryRow(ctx, q, patientID, excludeResponseID).Scan(&raw); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

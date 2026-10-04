@@ -89,12 +89,12 @@ func TestConnectFlow_LiveDB(t *testing.T) {
 
 	t.Cleanup(func() {
 		// Children first (FKs), then parents. Thread id resolved by listing/buyer.
-		_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_deal_reviews WHERE thread_id IN (SELECT id FROM public.mkt_threads WHERE listing_id=$1)`, listingID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_messages WHERE thread_id IN (SELECT id FROM public.mkt_threads WHERE listing_id=$1)`, listingID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_threads WHERE listing_id=$1`, listingID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_offers WHERE listing_id=$1`, listingID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_listings WHERE id=$1`, listingID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_categories WHERE id=$1`, catID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_deal_reviews WHERE thread_id IN (SELECT id FROM public.mkt_threads WHERE listing_id=$1)`, listingID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_messages WHERE thread_id IN (SELECT id FROM public.mkt_threads WHERE listing_id=$1)`, listingID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_threads WHERE listing_id=$1`, listingID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_offers WHERE listing_id=$1`, listingID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_listings WHERE id=$1`, listingID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.mkt_categories WHERE id=$1`, catID)
 	})
 
 	thread, err := svc.StartOrGetThread(ctx, buyer, listingID, "Hi, is this still available?")

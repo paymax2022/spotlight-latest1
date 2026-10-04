@@ -13,12 +13,12 @@ import (
 var ErrNotFound = errors.New("connect: payout not found")
 
 // ErrForwardOnly is returned when a status transition is attempted on a payout
-// that is no longer in a forward-transitionable state (e.g. trying to settle or
+// that is no longer in a forward-transitional state (e.g. trying to settle or
 // reject a payout that is already 'settled' or 'failed'). Ledger/payout status
 // is forward-only by design — corrections are reversing entries, never in-place
 // edits — so the caller must re-read the row and decide (idempotent no-op vs
 // real conflict) rather than the repo silently no-op'ing.
-var ErrForwardOnly = errors.New("connect: payout is not in a forward-transitionable state")
+var ErrForwardOnly = errors.New("connect: payout is not in a forward-transitional state")
 
 // Repository handles connect_payouts over a pgx pool. Inserts record the payout;
 // a forward-only status update stamps the settlement reference. Parameterized.
@@ -165,10 +165,7 @@ func (r *Repository) AdminList(ctx context.Context, f AdminListFilter) ([]AdminP
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	offset := f.Offset
-	if offset < 0 {
-		offset = 0
-	}
+	offset := max(f.Offset, 0)
 	var creatorID *string
 	if f.CreatorID != nil && *f.CreatorID != "" {
 		creatorID = f.CreatorID

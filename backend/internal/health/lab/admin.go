@@ -2,6 +2,7 @@ package healthlab
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -154,7 +155,7 @@ func (s *Service) AdminDeactivateTest(ctx context.Context, adminID, testID strin
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("lab: test not found")
+		return errors.New("lab: test not found")
 	}
 	s.audited(adminID, "", "health.lab.test.deactivate", testID,
 		map[string]any{"active": true}, map[string]any{"active": false})

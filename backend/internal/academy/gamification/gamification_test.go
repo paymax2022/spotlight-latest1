@@ -151,7 +151,7 @@ func TestBadgeEarned_Idempotent(t *testing.T) {
 	crit := map[string]any{"min_level": float64(5)}
 	stats := BadgeStats{Level: 5}
 	first := badgeEarned(crit, stats)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		if badgeEarned(crit, stats) != first {
 			t.Fatalf("badgeEarned must be deterministic across calls")
 		}

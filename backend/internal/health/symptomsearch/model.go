@@ -276,7 +276,7 @@ type PharmacySkuOption struct {
 //
 //	SUBMITTED → AUTO_CLEARED (T1) | PHARMACIST_REVIEW (T2/POM)
 //	PHARMACIST_REVIEW → APPROVED | REJECTED | NEEDS_INFO
-//	NEEDS_INFO → PHARMACIST_REVIEW
+//	→ PHARMACIST_REVIEW
 //
 // Guarded transitions only — anything not in the map is rejected.
 type ReviewState string

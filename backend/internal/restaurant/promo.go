@@ -228,7 +228,7 @@ func (s *Service) reservePromoRedemption(ctx context.Context, promoID, orderID, 
 	if err != nil {
 		return fmt.Errorf("restaurant: begin promo reservation: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var usageLimit, perUserLimit *int
 	if err := tx.QueryRow(ctx,
@@ -363,22 +363,22 @@ func (s *Service) CreatePromo(ctx context.Context, restaurantID, userID string, 
 	switch req.Kind {
 	case PromoPercent:
 		if req.ValueBp < 1 || req.ValueBp > 10000 {
-			return nil, fmt.Errorf("restaurant: percent promo needs value_bp in [1,10000]")
+			return nil, errors.New("restaurant: percent promo needs value_bp in [1,10000]")
 		}
 	case PromoFixed:
 		if req.AmountKobo < 1 {
-			return nil, fmt.Errorf("restaurant: fixed promo needs amount_kobo >= 1")
+			return nil, errors.New("restaurant: fixed promo needs amount_kobo >= 1")
 		}
 	case PromoFreeDelivery:
 		// No value needed — the discount is the order's delivery fee at checkout.
 	default:
-		return nil, fmt.Errorf("restaurant: promo kind must be 'percent', 'fixed' or 'free_delivery'")
+		return nil, errors.New("restaurant: promo kind must be 'percent', 'fixed' or 'free_delivery'")
 	}
 	if req.MinSubtotalKobo < 0 || (req.MaxDiscountKobo != nil && *req.MaxDiscountKobo < 0) {
-		return nil, fmt.Errorf("restaurant: promo amounts must be non-negative")
+		return nil, errors.New("restaurant: promo amounts must be non-negative")
 	}
 	if req.StartsAt != nil && req.EndsAt != nil && req.EndsAt.Before(*req.StartsAt) {
-		return nil, fmt.Errorf("restaurant: promo ends_at is before starts_at")
+		return nil, errors.New("restaurant: promo ends_at is before starts_at")
 	}
 	p := &Promo{
 		ID: uuid.New().String(), RestaurantID: &restaurantID, Code: req.Code,

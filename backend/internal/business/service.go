@@ -3,6 +3,7 @@ package business
 import (
 	"context"
 	"errors"
+	"maps"
 	"strings"
 	"time"
 
@@ -738,9 +739,7 @@ func metaString(m map[string]any, key string) string {
 // preserving existing entries (used as a transition setter for metadata).
 func mergeMetaJSON(existing map[string]any, key string, val any) map[string]any {
 	out := map[string]any{}
-	for k, v := range existing {
-		out[k] = v
-	}
+	maps.Copy(out, existing)
 	out[key] = val
 	return out
 }

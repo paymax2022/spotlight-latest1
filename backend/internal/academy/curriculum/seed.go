@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"spotlight/backend/go-common/ptr"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/go-common/ptr"
 )
 
 // Seed installs the baseline VERSIONED curriculum data idempotently. Every insert
@@ -31,7 +32,7 @@ func Seed(ctx context.Context, pool *pgxpool.Pool) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := seedVersions(ctx, tx); err != nil {
 		return err

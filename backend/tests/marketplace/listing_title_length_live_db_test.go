@@ -37,7 +37,7 @@ func TestListingTitle_ShortTitlesArePublishable(t *testing.T) {
 				t.Fatalf("CreateListing rejected %q: %v", title, err)
 			}
 			t.Cleanup(func() {
-				_, _ = pool.Exec(context.Background(), `DELETE FROM public.mkt_listings WHERE id=$1`, l.ID)
+				_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.mkt_listings WHERE id=$1`, l.ID)
 			})
 			if l.Title != title {
 				t.Errorf("stored title = %q, want %q", l.Title, title)
@@ -67,7 +67,7 @@ func TestListingTitle_EmptyAndOverlongAreStillRefused(t *testing.T) {
 				State:       "Lagos",
 			})
 			if err == nil {
-				_, _ = pool.Exec(context.Background(), `DELETE FROM public.mkt_listings WHERE id=$1`, l.ID)
+				_, _ = pool.Exec(ctx, `DELETE FROM public.mkt_listings WHERE id=$1`, l.ID)
 				t.Fatalf("CreateListing accepted a %s title", name)
 			}
 			if !strings.Contains(strings.ToLower(err.Error()), "title") {

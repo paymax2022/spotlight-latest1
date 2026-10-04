@@ -46,8 +46,8 @@ type FieldOption struct {
 
 // VisibleWhen makes a field conditional on another field's value.
 type VisibleWhen struct {
-	Field  string      `json:"field"`
-	Equals interface{} `json:"equals"`
+	Field  string `json:"field"`
+	Equals any    `json:"equals"`
 }
 
 // Field is a single input in a form step.
@@ -93,23 +93,23 @@ type Check struct {
 
 // Application is a user's onboarding application for one merchant type.
 type Application struct {
-	ID                string                 `json:"id"`
-	UserID            string                 `json:"userId"`
-	MerchantTypeID    string                 `json:"merchantTypeId"`
-	MerchantTypeName  string                 `json:"merchantTypeName"`
-	ModuleID          string                 `json:"moduleId"`
-	ModuleName        string                 `json:"moduleName"`
-	FormSchemaID      string                 `json:"formSchemaId"`
-	FormSchemaVersion int                    `json:"formSchemaVersion"`
-	Status            string                 `json:"status"`
-	Data              map[string]interface{} `json:"data"`
-	Checks            []Check                `json:"checks"`
-	DecisionReason    string                 `json:"decisionReason,omitempty"`
-	InfoChecklist     []string               `json:"infoChecklist"`
-	CreatedAt         time.Time              `json:"createdAt"`
-	UpdatedAt         time.Time              `json:"updatedAt"`
-	SubmittedAt       *time.Time             `json:"submittedAt,omitempty"`
-	DecidedAt         *time.Time             `json:"decidedAt,omitempty"`
+	ID                string         `json:"id"`
+	UserID            string         `json:"userId"`
+	MerchantTypeID    string         `json:"merchantTypeId"`
+	MerchantTypeName  string         `json:"merchantTypeName"`
+	ModuleID          string         `json:"moduleId"`
+	ModuleName        string         `json:"moduleName"`
+	FormSchemaID      string         `json:"formSchemaId"`
+	FormSchemaVersion int            `json:"formSchemaVersion"`
+	Status            string         `json:"status"`
+	Data              map[string]any `json:"data"`
+	Checks            []Check        `json:"checks"`
+	DecisionReason    string         `json:"decisionReason,omitempty"`
+	InfoChecklist     []string       `json:"infoChecklist"`
+	CreatedAt         time.Time      `json:"createdAt"`
+	UpdatedAt         time.Time      `json:"updatedAt"`
+	SubmittedAt       *time.Time     `json:"submittedAt,omitempty"`
+	DecidedAt         *time.Time     `json:"decidedAt,omitempty"`
 }
 
 // MerchantProfile is the activated merchant identity created on approval.
@@ -138,12 +138,12 @@ type Capabilities struct {
 }
 
 type CreateApplicationRequest struct {
-	MerchantTypeID string                 `json:"merchantTypeId" binding:"required"`
-	Data           map[string]interface{} `json:"data"`
+	MerchantTypeID string         `json:"merchantTypeId" binding:"required"`
+	Data           map[string]any `json:"data"`
 }
 
 type SaveDraftRequest struct {
-	Data map[string]interface{} `json:"data"`
+	Data map[string]any `json:"data"`
 }
 
 type RejectRequest struct {

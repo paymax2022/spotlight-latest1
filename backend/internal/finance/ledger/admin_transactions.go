@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -70,6 +71,7 @@ type AdminTransactionsPage struct {
 // should render a caveat rather than trust the grouping.
 type AdminTransactionDetail struct {
 	AdminTransactionRow
+
 	RelatedEntries      []AdminTransactionRow `json:"related_entries"`
 	RelatedEntriesTotal int64                 `json:"related_entries_total"`
 	// CommissionKobo is the total, among RelatedEntries, that landed in a known
@@ -102,7 +104,7 @@ const adminRelatedEntriesLimit = 20
 
 // ErrTransactionNotFound is returned when no ledger_entries row matches the
 // requested id.
-var ErrTransactionNotFound = fmt.Errorf("ledger: transaction not found")
+var ErrTransactionNotFound = errors.New("ledger: transaction not found")
 
 // AdminGetTransaction fetches the comprehensive detail view for one
 // ledger_entries row by id, including every other row sharing its reference
@@ -163,7 +165,7 @@ type rowScanner interface {
 func (r *Repository) AdminGetTransaction(ctx context.Context, id string) (*AdminTransactionDetail, error) {
 	row, err := scanAdminTransactionRow(r.db.QueryRow(ctx, `SELECT `+adminTransactionSelectCols+adminTransactionFrom+` WHERE le.id = $1`, id))
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrTransactionNotFound
 		}
 		return nil, fmt.Errorf("ledger: admin get transaction: %w", err)
@@ -233,10 +235,7 @@ func (r *Repository) AdminListTransactions(ctx context.Context, f AdminTransacti
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	offset := f.Offset
-	if offset < 0 {
-		offset = 0
-	}
+	offset := max(f.Offset, 0)
 
 	q := `SELECT ` + adminTransactionSelectCols + `, COUNT(*) OVER() AS total_count` + adminTransactionFrom + `
 		WHERE 1=1`

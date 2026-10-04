@@ -280,7 +280,7 @@ func (r *Repository) AdminDecideKYB(ctx context.Context, propertyID, legalName, 
 	if err != nil {
 		return fmt.Errorf("extranet: begin kyb decision tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO public.stays_hotelier_kyb

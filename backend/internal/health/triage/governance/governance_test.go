@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -224,7 +225,7 @@ func TestContentLifecycle_RequiresSignOffToPublish(t *testing.T) {
 	}
 
 	// Sign-off required: publish with empty reviewer must fail (SC-6).
-	if _, err := gov.transitionContent(ctx, "system", ci.ID, triage.ContentPublished, ""); err != ErrSignOffRequired {
+	if _, err := gov.transitionContent(ctx, "system", ci.ID, triage.ContentPublished, ""); !errors.Is(err, ErrSignOffRequired) {
 		t.Fatalf("expected ErrSignOffRequired, got %v", err)
 	}
 
@@ -397,7 +398,7 @@ func TestWhatsApp_SignatureVerifyAndIdempotent(t *testing.T) {
 	// Bad signature → 401.
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/wh", strings.NewReader(string(body)))
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/wh", strings.NewReader(string(body)))
 	c.Request.Header.Set("X-Hub-Signature-256", "sha256=deadbeef")
 	h.Handle(c)
 	if w.Code != http.StatusUnauthorized {
@@ -407,7 +408,7 @@ func TestWhatsApp_SignatureVerifyAndIdempotent(t *testing.T) {
 	// Good signature → 200, reply carries SC-8 footer, driver called once.
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/wh", strings.NewReader(string(body)))
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/wh", strings.NewReader(string(body)))
 	c.Request.Header.Set("X-Hub-Signature-256", sign(secret, body))
 	h.Handle(c)
 	if w.Code != http.StatusOK {
@@ -423,7 +424,7 @@ func TestWhatsApp_SignatureVerifyAndIdempotent(t *testing.T) {
 	// Redelivery of the SAME message id → idempotent, driver NOT called again.
 	w = httptest.NewRecorder()
 	c, _ = gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/wh", strings.NewReader(string(body)))
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/wh", strings.NewReader(string(body)))
 	c.Request.Header.Set("X-Hub-Signature-256", sign(secret, body))
 	h.Handle(c)
 	if driver.calls != 1 {

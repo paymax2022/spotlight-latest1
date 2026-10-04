@@ -36,7 +36,7 @@ func TestLiveDB_ListProducts_ToleratesAProductWithNoPharmacy(t *testing.T) {
 		t.Fatalf("seed unowned product: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM pharmacy_products WHERE id=$1::uuid`, id)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM pharmacy_products WHERE id=$1::uuid`, id)
 	})
 
 	products, err := svc.ListProducts(ctx, "", "")

@@ -66,7 +66,7 @@ func (s *Service) InviteStaffByEmail(ctx context.Context, actorUserID, propertyI
 	}
 	email = strings.TrimSpace(strings.ToLower(email))
 	if email == "" {
-		return nil, fmt.Errorf("extranet: email is required")
+		return nil, errors.New("extranet: email is required")
 	}
 	role = strutil.FirstNonEmpty(strings.ToUpper(strings.TrimSpace(role)), "READ_ONLY")
 	if !grantableInviteRoles[role] {
@@ -171,7 +171,7 @@ func (r *Repository) acceptStaffInvite(ctx context.Context, tokenHash, callerUse
 	if err != nil {
 		return fmt.Errorf("extranet: begin accept-invite tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var inviteID, propertyID, invEmail, invRole string
 	var expiresAt time.Time
@@ -267,7 +267,7 @@ func (m *resendStaffInviteMailer) send(to, subject, body string) {
 		defer func() { _ = recover() }() // never let email delivery crash the request goroutine
 		payload := map[string]any{"from": m.from, "to": []string{to}, "subject": subject, "text": body}
 		b, _ := json.Marshal(payload)
-		req, err := http.NewRequest(http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(b))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(b))
 		if err != nil {
 			return
 		}

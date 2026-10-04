@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -441,12 +442,12 @@ func (s *Service) RescheduleScheduled(ctx context.Context, id, userID string, re
 		add("pickup_label", dbutil.NullStr(req.Pickup.Label))
 		// geo update via a dedicated expression (parameter order handled below).
 		args = append(args, req.Pickup.Lng, req.Pickup.Lat)
-		sets = append(sets, fmt.Sprintf("pickup_geo=%s", geogArgAt(len(args)-1, len(args))))
+		sets = append(sets, "pickup_geo="+geogArgAt(len(args)-1, len(args)))
 	}
 	if req.Dropoff != nil {
 		add("dropoff_label", dbutil.NullStr(req.Dropoff.Label))
 		args = append(args, req.Dropoff.Lng, req.Dropoff.Lat)
-		sets = append(sets, fmt.Sprintf("dropoff_geo=%s", geogArgAt(len(args)-1, len(args))))
+		sets = append(sets, "dropoff_geo="+geogArgAt(len(args)-1, len(args)))
 	}
 	if req.ModePayload != nil {
 		// Merge over the existing payload so a partial edit doesn't clobber it.
@@ -648,12 +649,14 @@ func geogArgAt(lng, lat int) string {
 
 func joinComma(parts []string) string {
 	out := ""
+	var outSb651 strings.Builder
 	for i, p := range parts {
 		if i > 0 {
-			out += ", "
+			outSb651.WriteString(", ")
 		}
-		out += p
+		outSb651.WriteString(p)
 	}
+	out += outSb651.String()
 	return out
 }
 

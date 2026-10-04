@@ -6,11 +6,12 @@ import (
 	"errors"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/go-common/dbutil"
 )
 
 // Store is the data-access contract for the promotion engine. Defined as an
@@ -360,7 +361,7 @@ func (r *Repository) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := fn(tx); err != nil {
 		return err
 	}

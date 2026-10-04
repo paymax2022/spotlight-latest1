@@ -2,6 +2,7 @@ package connectassess
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -223,7 +224,8 @@ func TestSA04_CooldownBlocksStart(t *testing.T) {
 }
 
 func asCooldown(err error, target **CooldownError) bool {
-	if ce, ok := err.(*CooldownError); ok {
+	ce := &CooldownError{}
+	if errors.As(err, &ce) {
 		*target = ce
 		return true
 	}

@@ -207,6 +207,7 @@ func (e envelope) OK() bool { return e.Success }
 
 type quoteResponse struct {
 	envelope
+
 	Quote struct {
 		Reference      string         `json:"reference"`
 		PremiumKobo    int64          `json:"premium"`
@@ -221,6 +222,7 @@ type quoteResponse struct {
 
 type policyResponse struct {
 	envelope
+
 	Policy struct {
 		Reference      string `json:"reference"`
 		PlanCode       string `json:"plan_code"`
@@ -257,6 +259,7 @@ func (p policyResponse) toPolicy(aggregator string) gateway.Policy {
 
 type claimResponse struct {
 	envelope
+
 	Claim struct {
 		Reference          string `json:"reference"`
 		PolicyReference    string `json:"policy_reference"`
@@ -322,7 +325,7 @@ func (c *Client) do(req *http.Request, dst any) error {
 	if err != nil {
 		return fmt.Errorf("octamile: http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("octamile: read response: %w", err)

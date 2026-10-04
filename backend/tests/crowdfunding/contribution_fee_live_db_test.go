@@ -75,10 +75,10 @@ func seedSettledContribution(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	}
 
 	t.Cleanup(func() {
-		if _, err := pool.Exec(ctx, `DELETE FROM contributions WHERE id = $1`, contributionID); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM contributions WHERE id = $1`, contributionID); err != nil {
 			t.Errorf("cleanup contribution: %v", err)
 		}
-		if _, err := pool.Exec(ctx, `DELETE FROM settlements WHERE id = $1`, settlementID); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM settlements WHERE id = $1`, settlementID); err != nil {
 			t.Errorf("cleanup settlement: %v", err)
 		}
 	})

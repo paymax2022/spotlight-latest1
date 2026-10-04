@@ -6,8 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/go-common/ptr"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Service is the EdTech School onboarding + verification-tier domain. It owns:

@@ -156,12 +156,9 @@ func feeFromRoute(roadKm, eta float64, night, weather bool, cfg DeliveryFeeConfi
 		weatherKobo = cfg.WeatherFeeKobo
 	}
 
-	total := afterDemand + nightKobo + weatherKobo + cfg.HandlingFeeKobo - cfg.PromoDiscountKobo
-
-	// Clamp: floor at min (and never below 0), cap at max when set.
-	if total < cfg.MinFeeKobo {
-		total = cfg.MinFeeKobo
-	}
+	total := max(
+		// Clamp: floor at min (and never below 0), cap at max when set.
+		afterDemand+nightKobo+weatherKobo+cfg.HandlingFeeKobo-cfg.PromoDiscountKobo, cfg.MinFeeKobo)
 	if cfg.MaxFeeKobo > 0 && total > cfg.MaxFeeKobo {
 		total = cfg.MaxFeeKobo
 	}

@@ -2,6 +2,7 @@ package invest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/dbutil"
@@ -88,11 +89,11 @@ func (r *Repository) ListAllOrders(ctx context.Context, status string, limit, of
 	args := []any{}
 	i := 1
 	if status != "" {
-		sb.WriteString(fmt.Sprintf(" WHERE status=$%d", i))
+		fmt.Fprintf(&sb, " WHERE status=$%d", i)
 		args = append(args, status)
 		i++
 	}
-	sb.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", i, i+1))
+	fmt.Fprintf(&sb, " ORDER BY created_at DESC LIMIT $%d OFFSET $%d", i, i+1)
 	args = append(args, limit, offset)
 	rows, err := r.db.Query(ctx, sb.String(), args...)
 	if err != nil {
@@ -138,7 +139,7 @@ func (r *Repository) GetFeeConfig(ctx context.Context) (FeeConfig, error) {
 	var fc FeeConfig
 	err := r.db.QueryRow(ctx, `SELECT commission_bps, min_fee_kobo FROM invest_fee_config WHERE is_active=true LIMIT 1`).
 		Scan(&fc.CommissionBPS, &fc.MinFeeKobo)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return FeeConfig{CommissionBPS: 150, MinFeeKobo: 10_000}, nil
 	}
 	if err != nil {
@@ -181,7 +182,7 @@ func (r *Repository) ListAudit(ctx context.Context, limit, offset int) ([]map[st
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, adminID, action, entityType, entityID, reason string
-		var created interface{}
+		var created any
 		if err := rows.Scan(&id, &adminID, &action, &entityType, &entityID, &reason, &created); err != nil {
 			return nil, err
 		}

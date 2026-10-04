@@ -223,7 +223,7 @@ type scannable interface {
 
 func scanReferral(row scannable) (*CareReferral, error) {
 	c, err := scanReferralRow(row)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return c, err
@@ -242,7 +242,7 @@ func scanReferralRow(row scannable) (*CareReferral, error) {
 
 func scanEscalation(row scannable) (*Escalation, error) {
 	e, err := scanEscalationRow(row)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return e, err

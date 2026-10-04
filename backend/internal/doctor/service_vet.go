@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"spotlight/backend/go-common/ptr"
 	platformRedis "spotlight/backend/internal/platform/redis"
@@ -37,7 +38,7 @@ func vetEcho(raw json.RawMessage) json.RawMessage {
 // GetVetDashboard composites the vet profile + the vet's pets.
 func (s *Service) GetVetDashboard(ctx context.Context, userID string) (*VetDashboard, error) {
 	vet, err := s.repo.GetVetProfile(ctx, userID)
-	if err != nil && err != ErrNotFound {
+	if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
 	pets, err := s.repo.ListPets(ctx, userID)

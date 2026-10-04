@@ -31,7 +31,7 @@ func postPresign(t *testing.T, h *Handler, userID, body string) *httptest.Respon
 	t.Helper()
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/uploads/logo/presign", strings.NewReader(body))
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/uploads/logo/presign", strings.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	if userID != "" {
 		c.Set("user_id", userID)
@@ -113,7 +113,7 @@ func TestPresignLogoKeyIsScopedToTheCaller(t *testing.T) {
 	if !strings.HasSuffix(res.Data.ObjectKey, ".png") {
 		t.Errorf("objectKey = %q; extension must be normalised to lowercase .png", res.Data.ObjectKey)
 	}
-	if res.Data.Method != "PUT" || res.Data.UploadURL == "" {
+	if res.Data.Method != http.MethodPut || res.Data.UploadURL == "" {
 		t.Errorf("got method=%q url=%q; want a PUT url", res.Data.Method, res.Data.UploadURL)
 	}
 	if res.Data.ContentType != "image/png" {

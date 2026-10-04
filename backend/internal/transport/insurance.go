@@ -109,7 +109,7 @@ type parcelDriverVehicle struct {
 
 // mycoverVehicleType maps our constrained vehicle_type enum to MyCover's real,
 // live options for this product (fetched from its options_url and verified on
-// 2026-09-02: Bus, Car, Jeep - Suv, Suv, Truck, Mini-Van, Bike, Tricycle).
+// 2026-09-02: Bus, Car, Jeep - Suv, Truck, Mini-Van, Bike, Tricycle).
 func mycoverVehicleType(ourType string) string {
 	switch ourType {
 	case "car":

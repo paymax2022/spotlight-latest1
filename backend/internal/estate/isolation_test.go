@@ -2,6 +2,7 @@ package estate_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"spotlight/backend/internal/estate"
@@ -26,13 +27,13 @@ func TestMoneyPathGuardsPrecedeDataAccess(t *testing.T) {
 
 	// No ledger + no idempotency key: must fail on the idempotency guard first.
 	svcNoLedger := estate.NewService(nil, nil)
-	if _, err := svcNoLedger.PayDues(ctx, "estate-A", "user-1", estate.PayDuesRequest{InvoiceID: "inv"}); err != estate.ErrIdempotencyRequired {
+	if _, err := svcNoLedger.PayDues(ctx, "estate-A", "user-1", estate.PayDuesRequest{InvoiceID: "inv"}); !errors.Is(err, estate.ErrIdempotencyRequired) {
 		t.Fatalf("expected ErrIdempotencyRequired before any DB/ledger access, got %v", err)
 	}
 
 	// Idempotency key present but ledger unwired: must fail on the ledger guard,
 	// still before any estate data is read.
-	if _, err := svcNoLedger.PayDues(ctx, "estate-A", "user-1", estate.PayDuesRequest{InvoiceID: "inv", IdempotencyKey: "k1"}); err != estate.ErrLedgerUnavailable {
+	if _, err := svcNoLedger.PayDues(ctx, "estate-A", "user-1", estate.PayDuesRequest{InvoiceID: "inv", IdempotencyKey: "k1"}); !errors.Is(err, estate.ErrLedgerUnavailable) {
 		t.Fatalf("expected ErrLedgerUnavailable before any DB access, got %v", err)
 	}
 }

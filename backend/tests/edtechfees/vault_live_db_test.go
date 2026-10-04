@@ -26,6 +26,7 @@ package edtechfees_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -105,8 +106,8 @@ func (a vaultInvoiceAdapter) RecordPayment(ctx context.Context, invoiceID, guard
 func cleanupVault(t *testing.T, pool *pgxpool.Pool, vaultID string) {
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = pool.Exec(ctx, `DELETE FROM public.academy_pot_contributions WHERE pot_id=$1`, vaultID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.academy_savings_pots WHERE id=$1`, vaultID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.academy_pot_contributions WHERE pot_id=$1`, vaultID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.academy_savings_pots WHERE id=$1`, vaultID)
 	})
 }
 
@@ -284,7 +285,7 @@ func TestLiveDB_Vault_Contribute_RequiresIdempotencyKey(t *testing.T) {
 	}
 	cleanupVault(t, pool, v.ID)
 
-	if _, err := vaultSvc.Contribute(ctx, guardianID, v.ID, 10_000, ""); err != feesvault.ErrIdempotencyRequired {
+	if _, err := vaultSvc.Contribute(ctx, guardianID, v.ID, 10_000, ""); !errors.Is(err, feesvault.ErrIdempotencyRequired) {
 		t.Fatalf("keyless Contribute: err = %v, want ErrIdempotencyRequired", err)
 	}
 	if n := countContributions(t, ctx, pool, v.ID); n != 0 {

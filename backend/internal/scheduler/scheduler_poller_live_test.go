@@ -74,7 +74,7 @@ func TestPoll_ExecutesDueJob_LiveDB(t *testing.T) {
 		t.Fatalf("Schedule: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM scheduler_jobs WHERE id=$1`, job.ID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM scheduler_jobs WHERE id=$1`, job.ID)
 	})
 
 	pollCtx, cancel := context.WithCancel(ctx)
@@ -134,7 +134,7 @@ func TestRunDue_SkipsUnhandledJobType_LiveDB(t *testing.T) {
 		t.Fatalf("Schedule: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM scheduler_jobs WHERE id=$1`, job.ID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM scheduler_jobs WHERE id=$1`, job.ID)
 	})
 
 	n, err := svc.RunDue(ctx)

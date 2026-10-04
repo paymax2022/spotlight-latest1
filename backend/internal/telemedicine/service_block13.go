@@ -2,6 +2,7 @@ package telemedicine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/dbutil"
@@ -29,7 +30,7 @@ func (s *Service) GetAvailability(ctx context.Context, doctorID string) ([]Slot,
 		return nil, err
 	}
 	if !exists {
-		return nil, fmt.Errorf("telemedicine: doctor not found")
+		return nil, errors.New("telemedicine: doctor not found")
 	}
 
 	rows, err := s.db.Query(ctx, `
@@ -68,7 +69,7 @@ func (s *Service) GetAvailability(ctx context.Context, doctorID string) ([]Slot,
 func synthSlots(doctorID string) []Slot {
 	out := make([]Slot, 0, 5*len(defaultSlotTimes))
 	today := time.Now()
-	for d := 0; d < 5; d++ {
+	for d := range 5 {
 		date := today.AddDate(0, 0, d).Format("2006-01-02")
 		for i, tm := range defaultSlotTimes {
 			out = append(out, Slot{
@@ -90,13 +91,13 @@ func (s *Service) ConfirmAppointment(ctx context.Context, appointmentID, userID 
 	if err := s.db.QueryRow(ctx,
 		`SELECT patient_id, status FROM appointments WHERE id=$1`, appointmentID).
 		Scan(&patientID, &status); err != nil {
-		return fmt.Errorf("telemedicine: appointment not found")
+		return errors.New("telemedicine: appointment not found")
 	}
 	if !s.isParticipant(ctx, appointmentID, userID, patientID) {
-		return fmt.Errorf("telemedicine: not authorised for this appointment")
+		return errors.New("telemedicine: not authorised for this appointment")
 	}
 	if status != string(ApptBooked) {
-		return fmt.Errorf("telemedicine: only booked appointments can be confirmed")
+		return errors.New("telemedicine: only booked appointments can be confirmed")
 	}
 	_, err := s.db.Exec(ctx, `UPDATE appointments SET status='confirmed' WHERE id=$1`, appointmentID)
 	return err
@@ -110,10 +111,10 @@ func (s *Service) RescheduleAppointment(ctx context.Context, appointmentID, user
 	if err := s.db.QueryRow(ctx,
 		`SELECT patient_id, status FROM appointments WHERE id=$1`, appointmentID).
 		Scan(&patientID, &status); err != nil {
-		return fmt.Errorf("telemedicine: appointment not found")
+		return errors.New("telemedicine: appointment not found")
 	}
 	if !s.isParticipant(ctx, appointmentID, userID, patientID) {
-		return fmt.Errorf("telemedicine: not authorised for this appointment")
+		return errors.New("telemedicine: not authorised for this appointment")
 	}
 	if status == string(ApptCompleted) || status == string(ApptCancelled) {
 		return fmt.Errorf("telemedicine: cannot reschedule a %s appointment", status)
@@ -128,19 +129,19 @@ func (s *Service) RescheduleAppointment(ctx context.Context, appointmentID, user
 // a second review for the same appointment is rejected by the UNIQUE constraint.
 func (s *Service) AddReview(ctx context.Context, appointmentID, patientID string, req SubmitReviewRequest) (*Review, error) {
 	if req.Rating < 1 || req.Rating > 5 {
-		return nil, fmt.Errorf("telemedicine: rating must be between 1 and 5")
+		return nil, errors.New("telemedicine: rating must be between 1 and 5")
 	}
 	var dbPatientID, doctorID, status string
 	if err := s.db.QueryRow(ctx,
 		`SELECT patient_id, doctor_id, status FROM appointments WHERE id=$1`, appointmentID).
 		Scan(&dbPatientID, &doctorID, &status); err != nil {
-		return nil, fmt.Errorf("telemedicine: appointment not found")
+		return nil, errors.New("telemedicine: appointment not found")
 	}
 	if dbPatientID != patientID {
-		return nil, fmt.Errorf("telemedicine: only the patient can review this appointment")
+		return nil, errors.New("telemedicine: only the patient can review this appointment")
 	}
 	if status != string(ApptCompleted) {
-		return nil, fmt.Errorf("telemedicine: reviews are only allowed for completed appointments")
+		return nil, errors.New("telemedicine: reviews are only allowed for completed appointments")
 	}
 
 	r := &Review{
@@ -157,7 +158,7 @@ func (s *Service) AddReview(ctx context.Context, appointmentID, patientID string
 		VALUES ($1,$2,$3,$4,$5,$6)`
 	if _, err := s.db.Exec(ctx, ins, r.ID, r.AppointmentID, r.DoctorID, r.PatientID, r.Rating, r.Comment); err != nil {
 		if dbutil.IsUniqueViolation(err) {
-			return nil, fmt.Errorf("telemedicine: this appointment has already been reviewed")
+			return nil, errors.New("telemedicine: this appointment has already been reviewed")
 		}
 		return nil, fmt.Errorf("telemedicine: save review: %w", err)
 	}
@@ -208,10 +209,10 @@ func (s *Service) GetVisitSummary(ctx context.Context, appointmentID, userID str
 	var patientID string
 	if err := s.db.QueryRow(ctx,
 		`SELECT patient_id FROM appointments WHERE id=$1`, appointmentID).Scan(&patientID); err != nil {
-		return nil, fmt.Errorf("telemedicine: appointment not found")
+		return nil, errors.New("telemedicine: appointment not found")
 	}
 	if !s.isParticipant(ctx, appointmentID, userID, patientID) {
-		return nil, fmt.Errorf("telemedicine: not authorised for this appointment")
+		return nil, errors.New("telemedicine: not authorised for this appointment")
 	}
 
 	var vs VisitSummary
@@ -230,7 +231,7 @@ func (s *Service) GetVisitSummary(ctx context.Context, appointmentID, userID str
 		FROM doctor_soap_notes WHERE appointment_id=$1`, appointmentID).
 		Scan(&doctorID, &assessment, &objective, &plan)
 	if derr != nil {
-		return nil, fmt.Errorf("telemedicine: no visit summary available")
+		return nil, errors.New("telemedicine: no visit summary available")
 	}
 	return &VisitSummary{
 		AppointmentID: appointmentID,

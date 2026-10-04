@@ -1,6 +1,9 @@
 package fractionalre
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 // TestThresholdDecidesAllocateVsRefund verifies the round-close branch: a round
 // at or above its minimum threshold ALLOCATES; below it REFUNDS all subscribers.
@@ -43,7 +46,7 @@ func TestMakerCheckerSoD(t *testing.T) {
 		t.Error("distinct maker/checker must be allowed")
 	}
 	// Sentinel must be distinct and non-nil.
-	if ErrMakerChecker == nil || ErrMakerChecker == ErrTitleSoD {
+	if ErrMakerChecker == nil || errors.Is(ErrMakerChecker, ErrTitleSoD) {
 		t.Error("ErrMakerChecker must be a distinct non-nil sentinel")
 	}
 }
@@ -110,12 +113,12 @@ func TestLifecycleTransitions(t *testing.T) {
 func TestSubscribeRequiresIdempotencyKey(t *testing.T) {
 	s := &Service{} // guard runs before any collaborator is used
 	_, err := s.Subscribe(nil, "user-1", "", "offering-1", SubscribeRequest{Units: 1})
-	if err != ErrIdempotencyKey {
+	if !errors.Is(err, ErrIdempotencyKey) {
 		t.Errorf("expected ErrIdempotencyKey for empty key, got %v", err)
 	}
 	// Whitespace-only key is also rejected.
 	_, err = s.Subscribe(nil, "user-1", "   ", "offering-1", SubscribeRequest{Units: 1})
-	if err != ErrIdempotencyKey {
+	if !errors.Is(err, ErrIdempotencyKey) {
 		t.Errorf("expected ErrIdempotencyKey for whitespace key, got %v", err)
 	}
 }
@@ -125,7 +128,7 @@ func TestSubscribeRequiresIdempotencyKey(t *testing.T) {
 func TestScheduleDistributionRequiresIdempotencyKey(t *testing.T) {
 	s := &Service{}
 	_, err := s.ScheduleDistribution(nil, "maker-1", "", ScheduleDistributionRequest{AssetID: "a", GrossKobo: 100})
-	if err != ErrIdempotencyKey {
+	if !errors.Is(err, ErrIdempotencyKey) {
 		t.Errorf("expected ErrIdempotencyKey, got %v", err)
 	}
 }

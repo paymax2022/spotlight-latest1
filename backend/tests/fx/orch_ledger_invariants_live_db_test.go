@@ -106,10 +106,10 @@ func sumByAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cust, a
 func orchCleanup(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cust string) {
 	t.Helper()
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_ledger_entries WHERE customer_id=$1`, cust)
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_conversions WHERE customer_id=$1`, cust)
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_transfers WHERE customer_id=$1`, cust)
-		_, _ = pool.Exec(ctx, `DELETE FROM orch_balances WHERE customer_id=$1`, cust)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_ledger_entries WHERE customer_id=$1`, cust)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_conversions WHERE customer_id=$1`, cust)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_transfers WHERE customer_id=$1`, cust)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM orch_balances WHERE customer_id=$1`, cust)
 	})
 }
 

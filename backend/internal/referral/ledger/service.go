@@ -56,7 +56,7 @@ var forwardTransitions = map[string]map[string]bool{
 }
 
 // ErrIllegalTransition is returned when a non-forward state move is requested.
-var ErrIllegalTransition = fmt.Errorf("referral/ledger: illegal state transition")
+var ErrIllegalTransition = errors.New("referral/ledger: illegal state transition")
 
 // MinWithdrawTier is the verified KYC-tier floor required to withdraw referral
 // earnings into the wallet. Mirrors the referral payout gate (referral/finance
@@ -65,7 +65,7 @@ const MinWithdrawTier = 1
 
 // ErrKYCRequired is returned when the caller's verified KYC tier is below
 // MinWithdrawTier.
-var ErrKYCRequired = fmt.Errorf("referral/ledger: verified KYC required to withdraw")
+var ErrKYCRequired = errors.New("referral/ledger: verified KYC required to withdraw")
 
 // ErrAccountNotEligible is returned when the beneficiary's platform_users
 // account status blocks referral money movement (REF-009) — both a payout
@@ -74,7 +74,7 @@ var ErrKYCRequired = fmt.Errorf("referral/ledger: verified KYC required to withd
 // finance/ledger.Service.Credit primitive — changing that would have app-wide
 // blast radius. Gating both callers achieves the same outcome here without
 // touching shared infrastructure.
-var ErrAccountNotEligible = fmt.Errorf("referral/ledger: account status blocks this action")
+var ErrAccountNotEligible = errors.New("referral/ledger: account status blocks this action")
 
 // AuditSink records a durable audit event for a money mutation. Optional; wired
 // by the route registrar to the referral events sink. Must be idempotent on key.
@@ -141,7 +141,7 @@ func (s *Service) Accrue(ctx context.Context, in AccrueInput) (string, error) {
 		return "", fmt.Errorf("referral/ledger: accrue negative amount %d", in.AmountKobo)
 	}
 	if in.BeneficiaryID == "" && in.HouseAccountID == "" {
-		return "", fmt.Errorf("referral/ledger: accrue requires a beneficiary or house account")
+		return "", errors.New("referral/ledger: accrue requires a beneficiary or house account")
 	}
 	currency := in.Currency
 	if currency == "" {
@@ -172,7 +172,7 @@ func (s *Service) Accrue(ctx context.Context, in AccrueInput) (string, error) {
 		in.IsHouse, // also drives excluded_from_override + excluded_from_kfactor
 		in.IdempotencyKey,
 	).Scan(&id)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// Duplicate accrual (same idempotency key) — fetch existing id.
 		return s.idByKey(ctx, in.IdempotencyKey)
 	}
@@ -228,7 +228,7 @@ func (s *Service) Transition(ctx context.Context, rewardID, nextState, idempoten
 		}
 		ref := "referral:payout:" + rewardID
 		if err := s.finance.Credit(ctx, *beneficiaryID, ref, idempotencyKey, acc.ID, amountKobo); err != nil {
-			if err != financeledger.ErrDuplicate {
+			if !errors.Is(err, financeledger.ErrDuplicate) {
 				return fmt.Errorf("referral/ledger: post payout: %w", err)
 			}
 		}
@@ -256,7 +256,7 @@ func (s *Service) Transition(ctx context.Context, rewardID, nextState, idempoten
 		// restoreAccountID=acc.ID (standing account gets its balance back),
 		// releaseAccountID=wallet.ID (beneficiary's wallet is drained).
 		if err := s.finance.PostReversal(ctx, acc.ID, wallet.ID, amountKobo, refAndKey, refAndKey); err != nil {
-			if err != financeledger.ErrDuplicate {
+			if !errors.Is(err, financeledger.ErrDuplicate) {
 				return fmt.Errorf("referral/ledger: post clawback reversal: %w", err)
 			}
 		}
@@ -354,10 +354,10 @@ type WithdrawResult struct {
 // Money is integer kobo throughout. Returns the amount moved and remaining eligible.
 func (s *Service) WithdrawEligible(ctx context.Context, beneficiaryID, idempotencyKey string) (*WithdrawResult, error) {
 	if beneficiaryID == "" {
-		return nil, fmt.Errorf("referral/ledger: withdraw requires a beneficiary")
+		return nil, errors.New("referral/ledger: withdraw requires a beneficiary")
 	}
 	if idempotencyKey == "" {
-		return nil, fmt.Errorf("referral/ledger: withdraw requires an idempotency key")
+		return nil, errors.New("referral/ledger: withdraw requires an idempotency key")
 	}
 
 	// (4) KYC/tier gate — fail-closed.
@@ -386,7 +386,7 @@ func (s *Service) WithdrawEligible(ctx context.Context, beneficiaryID, idempoten
 	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(hashtext($1))`, lockName+beneficiaryID); err != nil {
 		return nil, fmt.Errorf("referral/ledger: withdraw lock: %w", err)
 	}
-	defer func() {
+	defer func() { //nolint:contextcheck // deliberate: unlock must not die with the request ctx
 		// Unlock on a fresh context; the request ctx may already be done.
 		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext($1))`, lockName+beneficiaryID)
 	}()
@@ -465,7 +465,7 @@ func (s *Service) verifiedKYCTier(ctx context.Context, userID string) (int, erro
 	const q = `SELECT COALESCE(kyc_tier, 0) FROM user_profiles WHERE id = $1 AND kyc_status = 'verified'`
 	var tier int
 	err := s.db.QueryRow(ctx, q, userID).Scan(&tier)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
 	if err != nil {
@@ -494,7 +494,7 @@ func (s *Service) checkAccountEligibleForMoneyMovement(ctx context.Context, user
 		deletedAt   *time.Time
 	)
 	err := s.db.QueryRow(ctx, q, userID).Scan(&status, &lockedUntil, &deletedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {

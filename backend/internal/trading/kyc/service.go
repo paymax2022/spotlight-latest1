@@ -41,7 +41,7 @@ func (s *Service) HasTradingAccess(ctx context.Context, userID string) (bool, er
 // transition applies from→to with the FSM guard + optimistic-version guard, and
 // records the audit event. Retries once on a concurrent version conflict.
 func (s *Service) transition(ctx context.Context, userID string, to Status, build func(cur Record) Apply) error {
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		cur, exists, err := s.repo.Get(ctx, userID)
 		if err != nil {
 			return err
@@ -54,7 +54,7 @@ func (s *Service) transition(ctx context.Context, userID string, to Status, buil
 		a.ExpectVersion = cur.Version
 		a.RowExists = exists
 		if err := s.repo.Apply(ctx, userID, cur.Status, a); err != nil {
-			if err == ErrVersionConflict && attempt == 0 {
+			if errors.Is(err, ErrVersionConflict) && attempt == 0 {
 				continue // reload and retry once
 			}
 			return err

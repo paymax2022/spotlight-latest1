@@ -300,7 +300,7 @@ func (r *Repository) HireApplicant(ctx context.Context, appID string, from AppSt
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// (a) guarded application → hired; capture job id.
 	var jobID string

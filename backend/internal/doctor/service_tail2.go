@@ -121,7 +121,7 @@ func (s *Service) GetCommissionBreakdown(ctx context.Context, userID string) (*C
 	default:
 		return nil, err
 	}
-	gross, commission, _, _, _, err := s.repo.invoiceTotals(ctx, userID)
+	gross, commission, _, _, _, err := s.repo.invoiceTotals(ctx, userID) //nolint:dogsled // tuple: gross+commission only
 	if err != nil {
 		return nil, err
 	}

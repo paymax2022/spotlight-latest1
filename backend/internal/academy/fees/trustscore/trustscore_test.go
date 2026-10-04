@@ -2,6 +2,7 @@ package feestrustscore
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -143,13 +144,13 @@ func TestOverride_RecordsActorAndReason(t *testing.T) {
 func TestOverride_RequiresReasonAndValidScore(t *testing.T) {
 	svc := NewService(newFakeMetrics(), newFakeOverrides())
 	ctx := context.Background()
-	if _, err := svc.Override(ctx, "a", OverrideRequest{SchoolID: "s", Score: 50}); err != ErrMissingReason {
+	if _, err := svc.Override(ctx, "a", OverrideRequest{SchoolID: "s", Score: 50}); !errors.Is(err, ErrMissingReason) {
 		t.Errorf("missing reason must be rejected, got %v", err)
 	}
-	if _, err := svc.Override(ctx, "a", OverrideRequest{SchoolID: "s", Score: 150, Reason: "x"}); err != ErrInvalidScore {
+	if _, err := svc.Override(ctx, "a", OverrideRequest{SchoolID: "s", Score: 150, Reason: "x"}); !errors.Is(err, ErrInvalidScore) {
 		t.Errorf("out-of-range score must be rejected, got %v", err)
 	}
-	if _, err := svc.Override(ctx, "", OverrideRequest{SchoolID: "s", Score: 50, Reason: "x"}); err != ErrUnauthenticated {
+	if _, err := svc.Override(ctx, "", OverrideRequest{SchoolID: "s", Score: 50, Reason: "x"}); !errors.Is(err, ErrUnauthenticated) {
 		t.Errorf("missing actor must be rejected, got %v", err)
 	}
 }

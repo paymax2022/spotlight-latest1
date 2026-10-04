@@ -17,10 +17,8 @@ package creators
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"spotlight/backend/internal/cashtag"
 	"spotlight/backend/internal/finance/kyc"
@@ -28,6 +26,10 @@ import (
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/scheduler"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // JobTypeSubscriptionCharge is the scheduler handler key for recurring subscription
@@ -118,7 +120,7 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 // Apply creates a PENDING creator profile (object-level: the caller is the creator).
 func (s *Service) Apply(ctx context.Context, userID, displayName, bio, handle string) (*Profile, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("creators: user required")
+		return nil, errors.New("creators: user required")
 	}
 	// Optional cashtag binding for tips/pay (REUSE cashtag directory).
 	if handle != "" && s.tags != nil {
@@ -160,7 +162,7 @@ func (s *Service) Suspend(ctx context.Context, creatorID, actorID string) error 
 		return fmt.Errorf("creators: suspend: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("creators: not suspendable")
+		return errors.New("creators: not suspendable")
 	}
 	s.log(actorID, "creators.suspend", creatorID, nil)
 	return nil
@@ -186,7 +188,7 @@ func (s *Service) GetProfile(ctx context.Context, creatorID string) (*Profile, e
 	var p Profile
 	var state string
 	if err := s.db.QueryRow(ctx, q, creatorID).Scan(&p.UserID, &p.Handle, &p.DisplayName, &p.Bio, &state, &p.StorefrontURL, &p.CreatedAt, &p.UpdatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotCreator
 		}
 		return nil, err
@@ -210,13 +212,13 @@ func (s *Service) requireApproved(ctx context.Context, creatorID string) error {
 // net of fee). Idempotent (NL-9). NL-5: a tip is a gift for content, not a return.
 func (s *Service) Tip(ctx context.Context, fromUserID, creatorID, idemKey string, amountKobo int64) (*Tip, error) {
 	if fromUserID == "" || creatorID == "" || idemKey == "" {
-		return nil, fmt.Errorf("creators: from, creator and idempotency key required")
+		return nil, errors.New("creators: from, creator and idempotency key required")
 	}
 	if fromUserID == creatorID {
-		return nil, fmt.Errorf("creators: cannot tip yourself")
+		return nil, errors.New("creators: cannot tip yourself")
 	}
 	if amountKobo <= 0 {
-		return nil, fmt.Errorf("creators: tip amount must be positive kobo")
+		return nil, errors.New("creators: tip amount must be positive kobo")
 	}
 	if err := s.requireApproved(ctx, creatorID); err != nil {
 		return nil, err
@@ -249,10 +251,10 @@ func (s *Service) CreateContent(ctx context.Context, creatorID, title, body stri
 		return nil, err
 	}
 	if priceKobo < 0 {
-		return nil, fmt.Errorf("creators: price must be non-negative kobo")
+		return nil, errors.New("creators: price must be non-negative kobo")
 	}
 	if !validRating(rating) {
-		return nil, fmt.Errorf("creators: invalid age rating")
+		return nil, errors.New("creators: invalid age rating")
 	}
 	cnt := &Content{
 		ID: uuid.New().String(), CreatorID: creatorID, Title: title, Body: body,
@@ -275,13 +277,13 @@ func (s *Service) CreateContent(ctx context.Context, creatorID, title, body stri
 // Controls are never weakened for engagement — a REJECTED item stays hidden.
 func (s *Service) Moderate(ctx context.Context, contentID string, decision ModerationState, moderatorID, reason string) error {
 	if decision != ModApproved && decision != ModRejected {
-		return fmt.Errorf("creators: moderation decision must be APPROVED or REJECTED")
+		return errors.New("creators: moderation decision must be APPROVED or REJECTED")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("creators: moderate begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	published := decision == ModApproved
 	const upd = `UPDATE creator_content SET moderation_state=$2, published=$3 WHERE id=$1 AND moderation_state='PENDING'`
@@ -290,7 +292,7 @@ func (s *Service) Moderate(ctx context.Context, contentID string, decision Moder
 		return fmt.Errorf("creators: moderate content: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("creators: content not in PENDING moderation")
+		return errors.New("creators: content not in PENDING moderation")
 	}
 	const updMod = `UPDATE content_moderation SET state=$2, moderator_id=$3, reason=$4, decided_at=now()
 	                WHERE content_id=$1 AND state='PENDING'`
@@ -321,7 +323,7 @@ func (s *Service) Moderate(ctx context.Context, contentID string, decision Moder
 // Idempotent on idemKey. NL-5: this is payment-for-content, never a return.
 func (s *Service) PurchaseContent(ctx context.Context, viewerID, contentID, idemKey string) (*Entitlement, error) {
 	if viewerID == "" || idemKey == "" {
-		return nil, fmt.Errorf("creators: viewer and idempotency key required")
+		return nil, errors.New("creators: viewer and idempotency key required")
 	}
 	cnt, err := s.getContent(ctx, contentID)
 	if err != nil {
@@ -335,10 +337,10 @@ func (s *Service) PurchaseContent(ctx context.Context, viewerID, contentID, idem
 		return nil, err
 	}
 	if cnt.PriceKobo <= 0 {
-		return nil, fmt.Errorf("creators: content is free — no purchase required")
+		return nil, errors.New("creators: content is free — no purchase required")
 	}
 	if viewerID == cnt.CreatorID {
-		return nil, fmt.Errorf("creators: creator already owns their content")
+		return nil, errors.New("creators: creator already owns their content")
 	}
 
 	// Idempotent: existing entitlement for this purchase key returns as-is.
@@ -411,7 +413,7 @@ func (s *Service) CreateTier(ctx context.Context, creatorID, name string, priceK
 		return nil, err
 	}
 	if priceKobo <= 0 || intervalSecs <= 0 {
-		return nil, fmt.Errorf("creators: tier price and interval must be positive")
+		return nil, errors.New("creators: tier price and interval must be positive")
 	}
 	t := &SubscriptionTier{ID: uuid.New().String(), CreatorID: creatorID, Name: name, PriceKobo: priceKobo, IntervalSecs: intervalSecs, Active: true, CreatedAt: time.Now()}
 	const ins = `INSERT INTO creator_subscription_tiers (id, creator_id, name, price_kobo, interval_secs, active)
@@ -427,17 +429,17 @@ func (s *Service) CreateTier(ctx context.Context, creatorID, name string, priceK
 // owned by the scheduler). Idempotent on idemKey for the first charge.
 func (s *Service) Subscribe(ctx context.Context, subscriberID, tierID, idemKey string) (*Subscription, error) {
 	if subscriberID == "" || idemKey == "" {
-		return nil, fmt.Errorf("creators: subscriber and idempotency key required")
+		return nil, errors.New("creators: subscriber and idempotency key required")
 	}
 	tier, err := s.getTier(ctx, tierID)
 	if err != nil {
 		return nil, err
 	}
 	if !tier.Active {
-		return nil, fmt.Errorf("creators: tier inactive")
+		return nil, errors.New("creators: tier inactive")
 	}
 	if subscriberID == tier.CreatorID {
-		return nil, fmt.Errorf("creators: cannot subscribe to yourself")
+		return nil, errors.New("creators: cannot subscribe to yourself")
 	}
 
 	// First-period charge (NL-9 idempotent).
@@ -482,8 +484,8 @@ func (s *Service) Subscribe(ctx context.Context, subscriberID, tierID, idemKey s
 func (s *Service) Cancel(ctx context.Context, subscriptionID, actorID string) error {
 	var jobID, state string
 	if err := s.db.QueryRow(ctx, `SELECT job_id, state FROM creator_subscriptions WHERE id=$1`, subscriptionID).Scan(&jobID, &state); err != nil {
-		if err == pgx.ErrNoRows {
-			return fmt.Errorf("creators: subscription not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("creators: subscription not found")
 		}
 		return err
 	}
@@ -513,7 +515,7 @@ func (s *Service) chargeSubscriptionJob(hctx scheduler.HandlerCtx) error {
 	tierIDv, _ := job.PayloadValue("tier_id")
 	tierID, _ := tierIDv.(string)
 	if tierID == "" {
-		return fmt.Errorf("creators: subscription charge missing tier_id")
+		return errors.New("creators: subscription charge missing tier_id")
 	}
 
 	// Skip if cancelled between schedule and run.
@@ -561,7 +563,7 @@ func (s *Service) RequestPayout(ctx context.Context, creatorID string, amountKob
 		return nil, err
 	}
 	if amountKobo <= 0 {
-		return nil, fmt.Errorf("creators: payout amount must be positive kobo")
+		return nil, errors.New("creators: payout amount must be positive kobo")
 	}
 	// NL-10 payout KYC gate.
 	if s.kyc != nil {
@@ -601,7 +603,7 @@ func (s *Service) MarkPayoutPaid(ctx context.Context, payoutID, actorID string) 
 		return fmt.Errorf("creators: mark paid: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("creators: payout not in REQUESTED state")
+		return errors.New("creators: payout not in REQUESTED state")
 	}
 	s.log(actorID, "creators.payout.paid", payoutID, nil)
 	return nil
@@ -671,8 +673,8 @@ func (s *Service) getContent(ctx context.Context, contentID string) (*Content, e
 	var c Content
 	var rating, mod string
 	if err := s.db.QueryRow(ctx, q, contentID).Scan(&c.ID, &c.CreatorID, &c.Title, &c.Body, &c.PriceKobo, &rating, &mod, &c.Published, &c.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("creators: content not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("creators: content not found")
 		}
 		return nil, err
 	}
@@ -685,8 +687,8 @@ func (s *Service) getTier(ctx context.Context, tierID string) (*SubscriptionTier
 	const q = `SELECT id, creator_id, name, price_kobo, interval_secs, active, created_at FROM creator_subscription_tiers WHERE id=$1`
 	var t SubscriptionTier
 	if err := s.db.QueryRow(ctx, q, tierID).Scan(&t.ID, &t.CreatorID, &t.Name, &t.PriceKobo, &t.IntervalSecs, &t.Active, &t.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("creators: tier not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("creators: tier not found")
 		}
 		return nil, err
 	}
@@ -705,7 +707,7 @@ func (s *Service) entitlementByIdem(ctx context.Context, idemKey string) (*Entit
 	var e Entitlement
 	var state string
 	if err := s.db.QueryRow(ctx, q, idemKey).Scan(&e.ID, &e.UserID, &e.ContentID, &state, &e.GrantedAt, &e.RevokedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, pgx.ErrNoRows
 		}
 		return nil, err
@@ -718,7 +720,7 @@ func (s *Service) tipByIdem(ctx context.Context, idemKey string) (*Tip, error) {
 	const q = `SELECT id, from_user_id, creator_id, amount_kobo, idempotency_key, created_at FROM creator_tips WHERE idempotency_key=$1`
 	var t Tip
 	if err := s.db.QueryRow(ctx, q, idemKey).Scan(&t.ID, &t.FromUserID, &t.CreatorID, &t.AmountKobo, &t.IdempotencyKey, &t.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, pgx.ErrNoRows
 		}
 		return nil, err
@@ -743,13 +745,13 @@ func validRating(r AgeRating) bool {
 
 // Sentinel errors.
 var (
-	ErrNotCreator           = fmt.Errorf("creators: not a creator")
-	ErrCreatorNotApproved   = fmt.Errorf("creators: creator not approved")
-	ErrContentNotAvailable  = fmt.Errorf("creators: content not available")
-	ErrNotEntitled          = fmt.Errorf("creators: no entitlement for this content")
-	ErrAgeRestricted        = fmt.Errorf("creators: content is age-restricted")
-	ErrPayoutKYC            = fmt.Errorf("creators: payout requires verified KYC")
-	ErrInsufficientEarnings = fmt.Errorf("creators: insufficient earnings balance")
+	ErrNotCreator           = errors.New("creators: not a creator")
+	ErrCreatorNotApproved   = errors.New("creators: creator not approved")
+	ErrContentNotAvailable  = errors.New("creators: content not available")
+	ErrNotEntitled          = errors.New("creators: no entitlement for this content")
+	ErrAgeRestricted        = errors.New("creators: content is age-restricted")
+	ErrPayoutKYC            = errors.New("creators: payout requires verified KYC")
+	ErrInsufficientEarnings = errors.New("creators: insufficient earnings balance")
 )
 
 // Additive DB-backed member reads surfaced by the mobile integration agents

@@ -71,8 +71,8 @@ func (a scholarshipInvoiceAdapter) RecordPayment(ctx context.Context, actorID, i
 func cleanupPledge(t *testing.T, pool *pgxpool.Pool, pledgeID string) {
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = pool.Exec(ctx, `DELETE FROM public.academy_scholarship_awards WHERE scholarship_id=$1 OR pledge_id=$1`, pledgeID)
-		_, _ = pool.Exec(ctx, `DELETE FROM public.academy_scholarship_pledges WHERE id=$1`, pledgeID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.academy_scholarship_awards WHERE scholarship_id=$1 OR pledge_id=$1`, pledgeID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.academy_scholarship_pledges WHERE id=$1`, pledgeID)
 	})
 }
 

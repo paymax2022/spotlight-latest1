@@ -39,7 +39,7 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 	const qr = `SELECT ` + discoveryColumns + ` FROM restaurants r WHERE r.id=$1`
 	if err := s.db.QueryRow(ctx, qr, restaurantID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
 		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng, &r.HasPromo, &r.IsFeatured, &r.LikeCount); err != nil {
-		return nil, fmt.Errorf("restaurant: not found")
+		return nil, errors.New("restaurant: not found")
 	}
 
 	cats := map[string]*MenuCategory{}
@@ -101,7 +101,7 @@ func (s *Service) GetOrder(ctx context.Context, orderID, userID string) (*Order,
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("restaurant: not a participant of this order")
+		return nil, errors.New("restaurant: not a participant of this order")
 	}
 	var o Order
 	const q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, total_kobo,
@@ -113,7 +113,7 @@ func (s *Service) GetOrder(ctx context.Context, orderID, userID string) (*Order,
 		&o.SubtotalKobo, &o.DeliveryKobo, &o.SurgeKobo, &o.ServiceFeeKobo, &o.TipKobo, &o.DiscountKobo, &o.TotalKobo, &o.Status, &o.IdempotencyKey, &o.SettlementID,
 		&o.DeliveryAddress, &o.DispatchStatus, &o.DeliveryCode, &o.PickupCode, &o.PromoID, &o.PromoFunder,
 		&o.SpecialInstructions, &o.ScheduledFor, &o.CreatedAt); err != nil {
-		return nil, fmt.Errorf("restaurant: order not found")
+		return nil, errors.New("restaurant: order not found")
 	}
 	items, err := s.loadOrderItems(ctx, orderID)
 	if err != nil {
@@ -248,7 +248,7 @@ func isAdminOverride(ctx context.Context) bool {
 func (s *Service) assertOwner(ctx context.Context, restaurantID, userID string) error {
 	var ownerID string
 	if err := s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID); err != nil {
-		return fmt.Errorf("restaurant: not found")
+		return errors.New("restaurant: not found")
 	}
 	// The existence check above still runs for admins, so a bad id is a 404 for
 	// operators too rather than a silent success.
@@ -256,7 +256,7 @@ func (s *Service) assertOwner(ctx context.Context, restaurantID, userID string) 
 		return nil
 	}
 	if ownerID != userID {
-		return fmt.Errorf("restaurant: only the owner may manage the menu")
+		return errors.New("restaurant: only the owner may manage the menu")
 	}
 	return nil
 }
@@ -351,7 +351,7 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 	           FROM menu_items WHERE id=$1 AND restaurant_id=$2`
 	if err := s.db.QueryRow(ctx, q, itemID, restaurantID).Scan(&it.ID, &catID, &it.RestaurantID, &it.Name,
 		&it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags); err != nil {
-		return nil, fmt.Errorf("restaurant: menu item not found")
+		return nil, errors.New("restaurant: menu item not found")
 	}
 	if catID != nil {
 		it.CategoryID = *catID
@@ -392,7 +392,7 @@ func (s *Service) getRestaurantCore(ctx context.Context, restaurantID string) (*
 	if err := s.db.QueryRow(ctx, q, restaurantID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description,
 		&r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
 		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng); err != nil {
-		return nil, fmt.Errorf("restaurant: not found")
+		return nil, errors.New("restaurant: not found")
 	}
 	return &r, nil
 }
@@ -441,7 +441,7 @@ func (s *Service) UpdateRestaurant(ctx context.Context, restaurantID, userID str
 		return nil, err
 	}
 	if req.Name != nil && *req.Name == "" {
-		return nil, fmt.Errorf("restaurant: name cannot be empty")
+		return nil, errors.New("restaurant: name cannot be empty")
 	}
 	// Packaging is money the customer will be charged on every future order, so the
 	// bounds are enforced here rather than left to the DB check alone: a negative
@@ -450,14 +450,14 @@ func (s *Service) UpdateRestaurant(ctx context.Context, restaurantID, userID str
 	// that would otherwise be billed to real customers before anyone noticed.
 	if req.PackagingFeeKobo != nil {
 		if *req.PackagingFeeKobo < 0 {
-			return nil, fmt.Errorf("restaurant: packaging fee cannot be negative")
+			return nil, errors.New("restaurant: packaging fee cannot be negative")
 		}
 		if *req.PackagingFeeKobo > maxPackagingFeePerPackKobo {
 			return nil, fmt.Errorf("restaurant: packaging fee per pack may not exceed %d kobo", maxPackagingFeePerPackKobo)
 		}
 	}
 	if !validGeoPointPair(req.GeoLat, req.GeoLng) {
-		return nil, fmt.Errorf("restaurant: invalid coordinates")
+		return nil, errors.New("restaurant: invalid coordinates")
 	}
 	const q = `UPDATE restaurants
 	              SET name               = COALESCE($2, name),
@@ -532,7 +532,7 @@ func (s *Service) DeleteItem(ctx context.Context, restaurantID, userID, itemID s
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("restaurant: menu item not found")
+		return errors.New("restaurant: menu item not found")
 	}
 	return nil
 }
@@ -551,14 +551,14 @@ func (s *Service) DeleteCategory(ctx context.Context, restaurantID, userID, cate
 		return err
 	}
 	if itemCount > 0 {
-		return fmt.Errorf("restaurant: remove the category's items before deleting it")
+		return errors.New("restaurant: remove the category's items before deleting it")
 	}
 	ct, err := s.db.Exec(ctx, `DELETE FROM menu_categories WHERE id=$1 AND restaurant_id=$2`, categoryID, restaurantID)
 	if err != nil {
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("restaurant: menu category not found")
+		return errors.New("restaurant: menu category not found")
 	}
 	return nil
 }
@@ -571,10 +571,10 @@ func (s *Service) AssignRider(ctx context.Context, orderID, actorID, candidateID
 		return err
 	}
 	if actorID != owner {
-		return fmt.Errorf("restaurant: only the restaurant may assign a rider")
+		return errors.New("restaurant: only the restaurant may assign a rider")
 	}
 	if candidateID == "" {
-		return fmt.Errorf("restaurant: rider id required")
+		return errors.New("restaurant: rider id required")
 	}
 	if _, err := s.db.Exec(ctx, `UPDATE orders SET rider_candidate_id=$1 WHERE id=$2`, candidateID, orderID); err != nil {
 		return err
@@ -593,16 +593,16 @@ func (s *Service) AcceptDelivery(ctx context.Context, orderID, riderID string) e
 	if err != nil {
 		return fmt.Errorf("restaurant: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var candidate *string
 	var existingRider *string
 	if err := tx.QueryRow(ctx, `SELECT rider_candidate_id, rider_id FROM orders WHERE id=$1 FOR UPDATE`, orderID).
 		Scan(&candidate, &existingRider); err != nil {
-		return fmt.Errorf("restaurant: order not found")
+		return errors.New("restaurant: order not found")
 	}
 	if existingRider != nil {
-		return fmt.Errorf("restaurant: order already has a rider")
+		return errors.New("restaurant: order already has a rider")
 	}
 
 	// The rider must have an open auto-dispatch offer, or be the legacy candidate.
@@ -614,7 +614,7 @@ func (s *Service) AcceptDelivery(ctx context.Context, orderID, riderID string) e
 		return fmt.Errorf("restaurant: check offer: %w", err)
 	}
 	if !offered && (candidate == nil || *candidate != riderID) {
-		return fmt.Errorf("restaurant: you are not an offered rider for this order")
+		return errors.New("restaurant: you are not an offered rider for this order")
 	}
 
 	if _, err := tx.Exec(ctx, `UPDATE orders SET rider_id=$1, dispatch_status='assigned', assigned_at=COALESCE(assigned_at, now()) WHERE id=$2`, riderID, orderID); err != nil {
@@ -645,7 +645,7 @@ func (s *Service) AcceptDelivery(ctx context.Context, orderID, riderID string) e
 		s.notify(ctx, Notification{UserID: owner, Event: EventOrderAccepted, Title: "Rider accepted",
 			Body: "A rider accepted the delivery.", Data: map[string]any{"order_id": orderID}})
 	}
-	s.broadcastStatus(orderID, OrderStatus("rider_accepted"))
+	s.broadcastStatus(orderID, OrderStatus("rider_accepted")) //nolint:contextcheck // WS publish outlives the request by design
 	return nil
 }
 
@@ -657,7 +657,7 @@ func (s *Service) PostLocation(ctx context.Context, orderID, riderID string, lat
 		return err
 	}
 	if rider == "" || rider != riderID {
-		return fmt.Errorf("restaurant: only the assigned rider may post location")
+		return errors.New("restaurant: only the assigned rider may post location")
 	}
 	if _, err := s.db.Exec(ctx,
 		`INSERT INTO restaurant_rider_locations (id, order_id, rider_id, lat, lng)
@@ -665,7 +665,7 @@ func (s *Service) PostLocation(ctx context.Context, orderID, riderID string, lat
 		uuid.New().String(), orderID, riderID, lat, lng); err != nil {
 		return err
 	}
-	s.broadcastLocation(orderID, lat, lng)
+	s.broadcastLocation(orderID, lat, lng) //nolint:contextcheck // WS publish outlives the request by design
 	return nil
 }
 
@@ -826,7 +826,7 @@ func (s *Service) SendMessage(ctx context.Context, orderID, senderID string, req
 			Data:   map[string]any{"order_id": orderID, "sender_role": role},
 		})
 	}
-	s.broadcastMessage(orderID, m)
+	s.broadcastMessage(orderID, m) //nolint:contextcheck // WS publish outlives the request by design
 	return m, nil
 }
 
@@ -869,7 +869,7 @@ func (s *Service) AddAddress(ctx context.Context, userID string, a SavedAddress)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var count int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM customer_addresses WHERE user_id=$1`, userID).Scan(&count); err != nil {
@@ -922,7 +922,7 @@ func (s *Service) SetDefaultAddress(ctx context.Context, userID, addressID strin
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `SELECT 1 FROM customer_addresses WHERE id=$1 AND user_id=$2`, addressID, userID)
 	if err != nil {
 		return err

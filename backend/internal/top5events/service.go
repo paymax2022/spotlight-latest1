@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -102,7 +103,7 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 // CreateEvent drafts a new event owned by organiserID (organiser capability).
 func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) (*Event, error) {
 	if organiserID == "" {
-		return nil, fmt.Errorf("events: organiser required")
+		return nil, errors.New("events: organiser required")
 	}
 	e.ID = uuid.New().String()
 	e.OrganiserID = organiserID
@@ -146,7 +147,7 @@ func (s *Service) Suspend(ctx context.Context, adminID, eventID string) error {
 		return fmt.Errorf("events: suspend: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("events: not suspendable (missing or terminal)")
+		return errors.New("events: not suspendable (missing or terminal)")
 	}
 	s.log(adminID, "events.suspend", eventID, nil)
 	return nil
@@ -169,12 +170,12 @@ func (s *Service) transition(ctx context.Context, eventID string, from, to Event
 	if err != nil {
 		return fmt.Errorf("events: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var organiser, state string
 	if err := tx.QueryRow(ctx, `SELECT organiser_id, state FROM events WHERE id=$1 FOR UPDATE`, eventID).Scan(&organiser, &state); err != nil {
-		if err == pgx.ErrNoRows {
-			return fmt.Errorf("events: not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("events: not found")
 		}
 		return fmt.Errorf("events: fetch: %w", err)
 	}
@@ -206,7 +207,7 @@ func (s *Service) GetEvent(ctx context.Context, eventID string) (*Event, error) 
 	if err := s.db.QueryRow(ctx, q, eventID).Scan(
 		&e.ID, &e.OrganiserID, &e.Title, &e.Description, &e.Venue, &state, &e.Category, &e.StartsAt, &e.EndsAt, &e.FeeBps, &e.CreatedAt,
 	); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -231,10 +232,7 @@ func (s *Service) ListEvents(ctx context.Context, callerID string, filter EventL
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	offset := filter.Offset
-	if offset < 0 {
-		offset = 0
-	}
+	offset := max(filter.Offset, 0)
 
 	// WHERE clause is parameterised — filter values are never interpolated.
 	args := []any{}
@@ -246,13 +244,7 @@ func (s *Service) ListEvents(ctx context.Context, callerID string, filter EventL
 	}
 
 	requestedState := filter.State
-	isPublicState := false
-	for _, st := range publiclyVisibleStates {
-		if requestedState == st {
-			isPublicState = true
-			break
-		}
-	}
+	isPublicState := slices.Contains(publiclyVisibleStates, requestedState)
 
 	if callerID != "" {
 		// Organiser/admin-ish caller: own events at any state, PLUS public states
@@ -322,7 +314,7 @@ func (s *Service) AddTier(ctx context.Context, organiserID, eventID string, t Ti
 		return nil, err
 	}
 	if t.PriceKobo < 0 || t.Capacity < 0 {
-		return nil, fmt.Errorf("events: tier price/capacity must be non-negative")
+		return nil, errors.New("events: tier price/capacity must be non-negative")
 	}
 	t.ID = uuid.New().String()
 	t.EventID = eventID
@@ -341,7 +333,7 @@ func (s *Service) AddPromo(ctx context.Context, organiserID, eventID string, p P
 		return nil, err
 	}
 	if p.PercentOff < 0 || p.PercentOff > 100 {
-		return nil, fmt.Errorf("events: percent_off out of range")
+		return nil, errors.New("events: percent_off out of range")
 	}
 	var maxVer int
 	_ = s.db.QueryRow(ctx, `SELECT COALESCE(MAX(version),0) FROM event_promo_codes WHERE event_id=$1 AND code=$2`, eventID, p.Code).Scan(&maxVer)
@@ -366,7 +358,7 @@ func (s *Service) AddPromo(ctx context.Context, organiserID, eventID string, p P
 // (rotating-QR gate entry) and an ISSUED ticket bound to it.
 func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo, idemKey string) (*Ticket, error) {
 	if buyerID == "" || idemKey == "" {
-		return nil, fmt.Errorf("events: buyer and idempotency key required")
+		return nil, errors.New("events: buyer and idempotency key required")
 	}
 
 	// Idempotent replay / crash-resume: if an order already exists for this key,
@@ -390,19 +382,19 @@ func (s *Service) Purchase(ctx context.Context, buyerID, eventID, tierID, promo,
 	if err != nil {
 		return nil, fmt.Errorf("events: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var price int64
 	var capacity, sold int
 	var active bool
 	if err := tx.QueryRow(ctx, `SELECT price_kobo, capacity, sold, active FROM event_ticket_tiers WHERE id=$1 AND event_id=$2 FOR UPDATE`, tierID, eventID).Scan(&price, &capacity, &sold, &active); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("events: tier not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("events: tier not found")
 		}
 		return nil, fmt.Errorf("events: lock tier: %w", err)
 	}
 	if !active {
-		return nil, fmt.Errorf("events: tier inactive")
+		return nil, errors.New("events: tier inactive")
 	}
 	if capacity > 0 && sold >= capacity {
 		return nil, ErrSoldOut
@@ -475,9 +467,9 @@ func (s *Service) finalizePurchase(ctx context.Context, o pendingOrder) (*Ticket
 	// Terminal states only. PAID is intentionally NOT terminal here — see above.
 	switch o.status {
 	case "EXPIRED":
-		return nil, fmt.Errorf("events: order expired (payment not completed)")
+		return nil, errors.New("events: order expired (payment not completed)")
 	case "REFUNDED":
-		return nil, fmt.Errorf("events: order was refunded")
+		return nil, errors.New("events: order was refunded")
 	}
 
 	ev, err := s.GetEvent(ctx, o.eventID)
@@ -504,7 +496,7 @@ func (s *Service) finalizePurchase(ctx context.Context, o pendingOrder) (*Ticket
 			// posted; otherwise the money is already in escrow and we finalize as PAID.
 			posted, perr := s.led.Posted(ctx, o.idemKey+":ticket")
 			if perr != nil {
-				return nil, fmt.Errorf("events: ticket debit (%v) + posted-check: %w", err, perr)
+				return nil, fmt.Errorf("events: ticket debit (%w) + posted-check: %w", err, perr)
 			}
 			if !posted {
 				s.expireOrder(ctx, o.id, o.tierID)
@@ -586,7 +578,7 @@ func (s *Service) expireOrder(ctx context.Context, orderID, tierID string) {
 	if err != nil {
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var status string
 	if err := tx.QueryRow(ctx, `SELECT status FROM event_orders WHERE id=$1 FOR UPDATE`, orderID).Scan(&status); err != nil {
 		return
@@ -650,11 +642,11 @@ func (s *Service) GiftTicket(ctx context.Context, ownerID, ticketID, recipientHa
 	if err != nil {
 		return nil, fmt.Errorf("events: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var owner, state, eventID, oldCred string
 	if err := tx.QueryRow(ctx, `SELECT owner_id, state, event_id, credential_id FROM event_tickets WHERE id=$1 FOR UPDATE`, ticketID).Scan(&owner, &state, &eventID, &oldCred); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -854,7 +846,7 @@ func (s *Service) getTicket(ctx context.Context, id string) (*Ticket, error) {
 func (s *Service) TicketToken(ctx context.Context, callerID, ticketID string) (*credential.Token, error) {
 	t, err := s.getTicket(ctx, ticketID)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -863,7 +855,7 @@ func (s *Service) TicketToken(ctx context.Context, callerID, ticketID string) (*
 		return nil, ErrForbidden
 	}
 	if t.CredentialID == "" {
-		return nil, fmt.Errorf("events: ticket has no credential")
+		return nil, errors.New("events: ticket has no credential")
 	}
 	return s.cred.CurrentToken(ctx, t.CredentialID)
 }
@@ -891,7 +883,7 @@ func (s *Service) OpenWallet(ctx context.Context, ownerID, eventID string) (*Eve
 // externally and only credit the sub-balance. Idempotent on idemKey (NL-9).
 func (s *Service) TopUp(ctx context.Context, ownerID, walletID string, amountKobo int64, source TopUpSource, idemKey string) (*EventWallet, error) {
 	if amountKobo <= 0 {
-		return nil, fmt.Errorf("events: top-up must be positive kobo")
+		return nil, errors.New("events: top-up must be positive kobo")
 	}
 	w, err := s.loadWallet(ctx, walletID)
 	if err != nil {
@@ -901,7 +893,7 @@ func (s *Service) TopUp(ctx context.Context, ownerID, walletID string, amountKob
 		return nil, ErrForbidden
 	}
 	if w.State == WalletClosed {
-		return nil, fmt.Errorf("events: wallet closed")
+		return nil, errors.New("events: wallet closed")
 	}
 
 	// Closed-loop funding from the main wallet into the event float (escrow).
@@ -928,7 +920,7 @@ func (s *Service) TopUp(ctx context.Context, ownerID, walletID string, amountKob
 // vendor is paid out net of fees at settlement. Idempotent on idemKey (NL-9).
 func (s *Service) TapCharge(ctx context.Context, callerID, vendorID, walletID string, amountKobo int64, idemKey string) (*VendorCharge, error) {
 	if amountKobo <= 0 {
-		return nil, fmt.Errorf("events: charge must be positive kobo")
+		return nil, errors.New("events: charge must be positive kobo")
 	}
 	// Vendor-ownership authZ: TapCharge moves an attendee's float onto a
 	// vendor's own accrued takings — unlike AddTier/AddPromo/AddVendor
@@ -941,19 +933,19 @@ func (s *Service) TapCharge(ctx context.Context, callerID, vendorID, walletID st
 	var vendorActive bool
 	if err := s.db.QueryRow(ctx, `SELECT user_id, active FROM event_vendors WHERE id=$1`, vendorID).
 		Scan(&vendorUserID, &vendorActive); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("events: vendor not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("events: vendor not found")
 		}
 		return nil, err
 	}
 	if !vendorActive || callerID != vendorUserID {
-		return nil, fmt.Errorf("events: only the vendor's own operator may tap-charge")
+		return nil, errors.New("events: only the vendor's own operator may tap-charge")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("events: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Idempotency: a replayed tap returns the existing charge.
 	var existing string
@@ -964,13 +956,13 @@ func (s *Service) TapCharge(ctx context.Context, callerID, vendorID, walletID st
 	// Balance projection is locked under the row guard (FOR UPDATE).
 	var state string
 	if err := tx.QueryRow(ctx, `SELECT state FROM event_wallets WHERE id=$1 FOR UPDATE`, walletID).Scan(&state); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("events: wallet not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("events: wallet not found")
 		}
 		return nil, err
 	}
 	if EventWalletState(state) == WalletClosed {
-		return nil, fmt.Errorf("events: wallet closed")
+		return nil, errors.New("events: wallet closed")
 	}
 	bal, err := s.walletBalanceTx(ctx, tx, walletID)
 	if err != nil {
@@ -1011,12 +1003,12 @@ func (s *Service) CloseWallet(ctx context.Context, walletID string) error {
 	if err != nil {
 		return fmt.Errorf("events: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var owner, state string
 	if err := tx.QueryRow(ctx, `SELECT owner_id, state FROM event_wallets WHERE id=$1 FOR UPDATE`, walletID).Scan(&owner, &state); err != nil {
-		if err == pgx.ErrNoRows {
-			return fmt.Errorf("events: wallet not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("events: wallet not found")
 		}
 		return err
 	}
@@ -1128,8 +1120,8 @@ func (s *Service) AddVendor(ctx context.Context, organiserID, eventID string, v 
 func (s *Service) SettleVendor(ctx context.Context, eventID, vendorID, idemKey string) (int64, error) {
 	var vendorUser string
 	if err := s.db.QueryRow(ctx, `SELECT user_id FROM event_vendors WHERE id=$1 AND event_id=$2`, vendorID, eventID).Scan(&vendorUser); err != nil {
-		if err == pgx.ErrNoRows {
-			return 0, fmt.Errorf("events: vendor not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, errors.New("events: vendor not found")
 		}
 		return 0, err
 	}
@@ -1151,7 +1143,7 @@ func (s *Service) SettleVendor(ctx context.Context, eventID, vendorID, idemKey s
 	if err != nil {
 		return 0, fmt.Errorf("events: begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Sum unsettled vendor float under a row lock. The lock is held across the
 	// ledger posts below, so a concurrent SettleVendor for the same vendor blocks
@@ -1170,7 +1162,7 @@ func (s *Service) SettleVendor(ctx context.Context, eventID, vendorID, idemKey s
 		return 0, fmt.Errorf("events: sum float: %w", err)
 	}
 	if gross <= 0 {
-		return 0, fmt.Errorf("events: nothing to settle")
+		return 0, errors.New("events: nothing to settle")
 	}
 	fee := (gross * int64(ev.FeeBps)) / 10000 // integer bps, truncates toward zero (favours vendor); net+fee==gross exactly
 	net := gross - fee
@@ -1285,7 +1277,7 @@ func (s *Service) loadWallet(ctx context.Context, walletID string) (*EventWallet
 	var w EventWallet
 	var state string
 	if err := s.db.QueryRow(ctx, q, walletID).Scan(&w.ID, &w.EventID, &w.OwnerID, &state, &w.CredentialID, &w.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -1319,7 +1311,7 @@ func (s *Service) chargeByID(ctx context.Context, id string) (*VendorCharge, err
 func (s *Service) assertOwner(ctx context.Context, eventID, organiserID string) error {
 	var owner string
 	if err := s.db.QueryRow(ctx, `SELECT organiser_id FROM events WHERE id=$1`, eventID).Scan(&owner); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
@@ -1339,9 +1331,9 @@ func (s *Service) log(actor, action, id string, meta map[string]any) {
 
 // Sentinel errors.
 var (
-	ErrNotFound          = fmt.Errorf("events: not found")
-	ErrForbidden         = fmt.Errorf("events: forbidden")
-	ErrSoldOut           = fmt.Errorf("events: tier sold out")
-	ErrInsufficientFloat = fmt.Errorf("events: insufficient event-wallet balance")
-	ErrKYCRequired       = fmt.Errorf("events: vendor must complete KYC before payout (NL-10)")
+	ErrNotFound          = errors.New("events: not found")
+	ErrForbidden         = errors.New("events: forbidden")
+	ErrSoldOut           = errors.New("events: tier sold out")
+	ErrInsufficientFloat = errors.New("events: insufficient event-wallet balance")
+	ErrKYCRequired       = errors.New("events: vendor must complete KYC before payout (NL-10)")
 )

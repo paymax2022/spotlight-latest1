@@ -197,9 +197,9 @@ func (f *fakeRBAC) CheckPermission(userID, permission, scopeType, scopeID string
 // The rest of services.RBACService is unused by middleware.RequirePermission
 // (which calls CheckPermission alone) — stubbed only so *fakeRBAC satisfies
 // the interface signature RequirePermission requires.
-func (f *fakeRBAC) GetUserRoles(string) ([]string, error)            { return nil, nil }
-func (f *fakeRBAC) GetUserScopes(string) ([]domain.UserScope, error) { return nil, nil }
-func (f *fakeRBAC) GetUserPermissions(string, string, string) ([]string, error) {
+func (f *fakeRBAC) GetUserRoles(context.Context, string) ([]string, error) { return nil, nil }
+func (f *fakeRBAC) GetUserScopes(string) ([]domain.UserScope, error)       { return nil, nil }
+func (f *fakeRBAC) GetUserPermissions(context.Context, string, string, string) ([]string, error) {
 	return nil, nil
 }
 func (f *fakeRBAC) ListRoles() ([]domain.Role, error) { return nil, nil }
@@ -229,12 +229,12 @@ func (f *fakeRBAC) DeletePermission(string) error                       { return
 func (f *fakeRBAC) AssignRoleToUser(string, string, string, string, string) error {
 	return nil
 }
-func (f *fakeRBAC) RemoveRoleFromUser(string, string, string) error { return nil }
-func (f *fakeRBAC) GetUserStatus(string) (string, error)            { return "", nil }
-func (f *fakeRBAC) SuspendUser(string) error                        { return nil }
-func (f *fakeRBAC) UnsuspendUser(string) error                      { return nil }
-func (f *fakeRBAC) LockUser(string) error                           { return nil }
-func (f *fakeRBAC) UnlockUser(string) error                         { return nil }
+func (f *fakeRBAC) RemoveRoleFromUser(string, string, string) error       { return nil }
+func (f *fakeRBAC) GetUserStatus(context.Context, string) (string, error) { return "", nil }
+func (f *fakeRBAC) SuspendUser(string) error                              { return nil }
+func (f *fakeRBAC) UnsuspendUser(string) error                            { return nil }
+func (f *fakeRBAC) LockUser(string) error                                 { return nil }
+func (f *fakeRBAC) UnlockUser(string) error                               { return nil }
 func (f *fakeRBAC) ListAdminUsers(domain.AdminUserFilter) ([]domain.AdminUser, error) {
 	return nil, nil
 }
@@ -317,7 +317,7 @@ func TestLiveDB_AdminSettlePayouts_RBACBlocksNonAdmin(t *testing.T) {
 
 	// Non-admin caller: must be refused BEFORE the handler runs (403), and the
 	// payout must be untouched.
-	req := httptest.NewRequest(http.MethodPost, "/api/connect/admin/payouts/"+p.ID+"/settle",
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/connect/admin/payouts/"+p.ID+"/settle",
 		strings.NewReader(`{"settlementRef":"manual-bank-ref-1"}`))
 	req.Header.Set("X-Test-User", nonAdmin)
 	req.Header.Set("Content-Type", "application/json")
@@ -337,7 +337,7 @@ func TestLiveDB_AdminSettlePayouts_RBACBlocksNonAdmin(t *testing.T) {
 
 	// Admin caller with the permission: must succeed and the DB row must move
 	// to 'settled' with the supplied settlement ref stamped.
-	req2 := httptest.NewRequest(http.MethodPost, "/api/connect/admin/payouts/"+p.ID+"/settle",
+	req2 := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/connect/admin/payouts/"+p.ID+"/settle",
 		strings.NewReader(`{"settlementRef":"manual-bank-ref-1"}`))
 	req2.Header.Set("X-Test-User", admin)
 	req2.Header.Set("Content-Type", "application/json")

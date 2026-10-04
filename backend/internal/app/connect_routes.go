@@ -3,8 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"os"
 	"spotlight/backend/internal/config"
@@ -52,6 +50,9 @@ import (
 	"spotlight/backend/internal/services"
 	"strconv"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // registerConnectRoutes wires the Paymax Connect module under /api/v1/connect/*

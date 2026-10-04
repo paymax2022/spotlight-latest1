@@ -137,7 +137,7 @@ func (m *memCardStore) TerminateCard(_ context.Context, business, id string) err
 	if !m.owned(business, id) {
 		return ErrCardNotFound
 	}
-	_, _, _ = m.setStatus(business, id, "terminated")
+	_, _, _ = m.setStatus(business, id, "terminated") //nolint:dogsled // tuple: only side-effect matters
 	return nil
 }
 func (m *memCardStore) UpdateControls(_ context.Context, business, id string, controls SpendingControls) (Card, bool, error) {
@@ -176,7 +176,7 @@ func cardsRouter(store CardStore, userID string) *gin.Engine {
 
 func doCardJSON(t *testing.T, r *gin.Engine, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
 		req.Header.Set(k, v)

@@ -2,6 +2,7 @@ package healthlab
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -113,7 +114,7 @@ func TestAmendResult_LiveDB(t *testing.T) {
 	svc := NewService(pool, nil, nil, amendFakeProv{}, nil, notify, nil, nil)
 
 	// Guard: an amendment must state why.
-	if _, err := svc.AmendResult(ctx, scientistID, orderID, AmendResultInput{TestID: testID, Value: "9.9", Status: ResultCritical}); err != ErrNoAmendmentReason {
+	if _, err := svc.AmendResult(ctx, scientistID, orderID, AmendResultInput{TestID: testID, Value: "9.9", Status: ResultCritical}); !errors.Is(err, ErrNoAmendmentReason) {
 		t.Fatalf("empty reason should be rejected with ErrNoAmendmentReason, got %v", err)
 	}
 

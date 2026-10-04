@@ -8,9 +8,10 @@ import (
 	"fmt"
 	"time"
 
+	"spotlight/backend/go-common/jsonx"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/go-common/jsonx"
 )
 
 // RegistrationStore provides data access for contest registration.
@@ -134,7 +135,7 @@ func (s *RegistrationStore) ListApplications(ctx context.Context, userID string,
 			app.FraudFlags = []string{}
 		}
 		if err := json.Unmarshal(formDataJSON, &app.FormData); err != nil {
-			app.FormData = make(map[string]interface{})
+			app.FormData = make(map[string]any)
 		}
 
 		applications = append(applications, app)
@@ -177,7 +178,7 @@ func (s *RegistrationStore) CreateApplication(ctx context.Context, userID string
 		app.FraudFlags = []string{}
 	}
 	if err := json.Unmarshal(formDataJSON, &app.FormData); err != nil {
-		app.FormData = make(map[string]interface{})
+		app.FormData = make(map[string]any)
 	}
 
 	return &app, nil
@@ -212,14 +213,14 @@ func (s *RegistrationStore) GetApplication(ctx context.Context, userID string, a
 		app.FraudFlags = []string{}
 	}
 	if err := json.Unmarshal(formDataJSON, &app.FormData); err != nil {
-		app.FormData = make(map[string]interface{})
+		app.FormData = make(map[string]any)
 	}
 
 	return &app, nil
 }
 
 // SaveStep updates form_data and step progress.
-func (s *RegistrationStore) SaveStep(ctx context.Context, userID string, appID string, stepKey string, values map[string]interface{}, newPercent int) (*Application, error) {
+func (s *RegistrationStore) SaveStep(ctx context.Context, userID string, appID string, stepKey string, values map[string]any, newPercent int) (*Application, error) {
 	row := s.db.QueryRow(ctx, `
 		UPDATE registrations
 		SET
@@ -248,7 +249,7 @@ func (s *RegistrationStore) SaveStep(ctx context.Context, userID string, appID s
 		app.FraudFlags = []string{}
 	}
 	if err := json.Unmarshal(formDataJSON, &app.FormData); err != nil {
-		app.FormData = make(map[string]interface{})
+		app.FormData = make(map[string]any)
 	}
 
 	return &app, nil
@@ -283,7 +284,7 @@ func (s *RegistrationStore) SubmitApplication(ctx context.Context, userID string
 		app.FraudFlags = []string{}
 	}
 	if err := json.Unmarshal(formDataJSON, &app.FormData); err != nil {
-		app.FormData = make(map[string]interface{})
+		app.FormData = make(map[string]any)
 	}
 
 	return &app, nil
@@ -319,7 +320,7 @@ func (s *RegistrationStore) WithdrawApplication(ctx context.Context, userID stri
 		app.FraudFlags = []string{}
 	}
 	if err := json.Unmarshal(formDataJSON, &app.FormData); err != nil {
-		app.FormData = make(map[string]interface{})
+		app.FormData = make(map[string]any)
 	}
 
 	return &app, nil
@@ -342,7 +343,7 @@ func (s *RegistrationStore) GetStatusTimeline(ctx context.Context, userID string
 	var owned bool
 	err := s.db.QueryRow(ctx, "SELECT true FROM registrations WHERE id = $1 AND user_id = $2", appID, userID).Scan(&owned)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("application not found")
+		return nil, errors.New("application not found")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("verify ownership: %w", err)

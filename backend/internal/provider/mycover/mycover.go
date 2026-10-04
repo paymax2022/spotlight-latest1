@@ -450,7 +450,7 @@ func (c *Client) ListProducts(ctx context.Context, page, limit int) ([]CatalogPr
 
 	for i, light := range payload.Products {
 		if light.ID == "" {
-			results[i] = result{idx: i, err: fmt.Errorf("product has no id")}
+			results[i] = result{idx: i, err: errors.New("product has no id")}
 			continue
 		}
 		wg.Add(1)
@@ -486,7 +486,7 @@ func (c *Client) ListProducts(ctx context.Context, page, limit int) ([]CatalogPr
 // GetProduct fetches ONE full product record by MyCover uuid.
 func (c *Client) GetProduct(ctx context.Context, productID string) (CatalogProduct, error) {
 	if productID == "" {
-		return CatalogProduct{}, fmt.Errorf("mycover: empty product id")
+		return CatalogProduct{}, errors.New("mycover: empty product id")
 	}
 	env, err := c.get(ctx, pathProduct+url.PathEscape(productID))
 	if err != nil {
@@ -524,7 +524,7 @@ func normaliseProduct(rp rawProduct) (CatalogProduct, error) {
 	// invisible cover is worse than an ugly code.
 	if rp.RouteName == "" {
 		if rp.ID == "" {
-			return CatalogProduct{}, fmt.Errorf("product has neither route_name nor id")
+			return CatalogProduct{}, errors.New("product has neither route_name nor id")
 		}
 		rp.RouteName = rp.ID
 	}
@@ -712,7 +712,7 @@ func providerBody(p gateway.ProviderProduct, inputs map[string]any) (map[string]
 	}
 	body, err := ConvertMoneyInputsToNaira(inputs, p.MoneyInputPaths)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %s", gateway.ErrProviderRejected, p.Code, err)
+		return nil, fmt.Errorf("%w: %s: %w", gateway.ErrProviderRejected, p.Code, err)
 	}
 	if body == nil {
 		body = map[string]any{}
@@ -887,7 +887,7 @@ func (c *Client) BindPolicy(ctx context.Context, req gateway.BindRequest) (gatew
 // provider's uuid.
 func (c *Client) GetPolicy(ctx context.Context, providerPolicyRef string) (gateway.Policy, error) {
 	if providerPolicyRef == "" {
-		return gateway.Policy{}, fmt.Errorf("mycover: empty policy reference")
+		return gateway.Policy{}, errors.New("mycover: empty policy reference")
 	}
 	env, err := c.get(ctx, pathPolicies+"/"+url.PathEscape(providerPolicyRef))
 	if err != nil {
@@ -985,7 +985,7 @@ func (c *Client) ListClaims(ctx context.Context, page, limit int) ([]gateway.Cla
 // GetClaim reads one claim by provider reference.
 func (c *Client) GetClaim(ctx context.Context, providerClaimRef string) (gateway.Claim, error) {
 	if providerClaimRef == "" {
-		return gateway.Claim{}, fmt.Errorf("mycover: empty claim reference")
+		return gateway.Claim{}, errors.New("mycover: empty claim reference")
 	}
 	env, err := c.get(ctx, pathClaims+"/"+url.PathEscape(providerClaimRef))
 	if err != nil {
@@ -1341,13 +1341,13 @@ func (c *Client) get(ctx context.Context, path string) (envelope, error) {
 // request body (PII), the Authorization header, or the API key.
 func (c *Client) do(req *http.Request) (envelope, error) {
 	if c.apiKey == "" {
-		return envelope{}, fmt.Errorf("mycover: no API key configured")
+		return envelope{}, errors.New("mycover: no API key configured")
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return envelope{}, fmt.Errorf("mycover: http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {

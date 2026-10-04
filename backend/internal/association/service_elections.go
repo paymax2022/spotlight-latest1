@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 
 	"errors"
 	"fmt"
@@ -177,7 +178,7 @@ func (s *Service) CreateElection(ctx context.Context, userID, orgIDOverride stri
 		return "", err
 	}
 	if len(in.Positions) == 0 {
-		return "", fmt.Errorf("association: election needs at least one position")
+		return "", errors.New("association: election needs at least one position")
 	}
 	requireGood := true
 	if in.RequireGoodStanding != nil {
@@ -188,7 +189,7 @@ func (s *Service) CreateElection(ctx context.Context, userID, orgIDOverride stri
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_elections (id, organisation_id, title, description, status, voting_opens_at, voting_closes_at, require_good_standing, created_by)
 		VALUES ($1,$2,$3,$4,'DRAFT',$5,$6,$7,$8)`,
@@ -196,10 +197,7 @@ func (s *Service) CreateElection(ctx context.Context, userID, orgIDOverride stri
 		return "", fmt.Errorf("association: create election: %w", err)
 	}
 	for i, p := range in.Positions {
-		seats := p.Seats
-		if seats < 1 {
-			seats = 1
-		}
+		seats := max(p.Seats, 1)
 		var role any
 		if p.Role != "" {
 			if !electionRoles[p.Role] {
@@ -247,7 +245,7 @@ func (s *Service) AddCandidate(ctx context.Context, userID, electionID string, i
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO assoc_election_candidates (id, election_id, position_id, membership_id, manifesto, status)
 		VALUES ($1,$2,$3,$4,$5,'APPROVED')`, candidateID, electionID, in.PositionID, in.MembershipID, in.Manifesto); err != nil {
@@ -272,7 +270,7 @@ func (s *Service) setElectionStatus(ctx context.Context, userID, electionID, fro
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `UPDATE assoc_elections SET status=$3 WHERE id=$1 AND status=$2`, electionID, from, to)
 	if err != nil {
 		return fmt.Errorf("association: election status: %w", err)
@@ -340,7 +338,7 @@ func (s *Service) CastVote(ctx context.Context, userID, electionID string, in Ca
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// One-member-one-vote: the unique (election,position,voter) key makes a second
 	// vote impossible under retries/concurrency. ON CONFLICT DO NOTHING → 0 rows.
@@ -426,7 +424,7 @@ type pgxQuerier interface {
 func checksumFor(results []CandidateResult) string {
 	rows := make([]string, 0, len(results))
 	for _, r := range results {
-		rows = append(rows, r.CandidateID+":"+fmt.Sprintf("%d", r.Votes))
+		rows = append(rows, r.CandidateID+":"+strconv.Itoa(r.Votes))
 	}
 	sort.Strings(rows)
 	h := sha256.New()
@@ -514,7 +512,7 @@ func (s *Service) PublishResults(ctx context.Context, userID, electionID string)
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Only publishable from CLOSED, and exactly once (immutability).
 	tag, err := tx.Exec(ctx, `UPDATE assoc_elections SET status='PUBLISHED', published_at=now() WHERE id=$1 AND status='CLOSED'`, electionID)
@@ -799,7 +797,7 @@ func (s *Service) HandoverElection(ctx context.Context, userID, electionID strin
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Claim the handover exactly once: only from PUBLISHED and only if not already done.
 	tag, err := tx.Exec(ctx, `UPDATE assoc_elections SET handover_at=now() WHERE id=$1 AND status='PUBLISHED' AND handover_at IS NULL`, electionID)

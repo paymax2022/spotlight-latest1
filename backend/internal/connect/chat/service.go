@@ -201,7 +201,7 @@ func (s *Service) SendMessage(ctx context.Context, convID, userID string, req Se
 	if err != nil {
 		return nil, fmt.Errorf("connect: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	pm, err := s.resolveConversationByID(ctx, tx, convID, userID)
 	if err != nil {

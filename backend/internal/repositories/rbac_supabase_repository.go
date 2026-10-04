@@ -1,6 +1,8 @@
 package repositories
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"spotlight/backend/internal/domain"
@@ -11,10 +13,10 @@ import (
 )
 
 type RBACRepository interface {
-	GetUserStatus(userID string) (string, error)
-	GetUserRoles(userID string) ([]string, error)
+	GetUserStatus(ctx context.Context, userID string) (string, error)
+	GetUserRoles(ctx context.Context, userID string) ([]string, error)
 	GetUserScopes(userID string) ([]domain.UserScope, error)
-	GetUserPermissions(userID string, scopeType string, scopeID string) ([]string, error)
+	GetUserPermissions(ctx context.Context, userID string, scopeType string, scopeID string) ([]string, error)
 	HasPermission(userID string, permission string, scopeType string, scopeID string) (bool, error)
 	ListRoles() ([]domain.Role, error)
 	CreateRole(role domain.Role) (domain.Role, error)
@@ -50,11 +52,11 @@ func NewRBACSupabaseRepository(client *integrations.SupabaseRestClient) *RBACSup
 	return &RBACSupabaseRepository{client: client}
 }
 
-func (r *RBACSupabaseRepository) GetUserStatus(userID string) (string, error) {
+func (r *RBACSupabaseRepository) GetUserStatus(ctx context.Context, userID string) (string, error) {
 	var rows []struct {
 		Status string `json:"status"`
 	}
-	err := r.client.REST(http.MethodGet, "platform_users", map[string]string{"select": "status", "id": "eq." + userID, "limit": "1"}, nil, &rows)
+	err := r.client.REST(ctx, http.MethodGet, "platform_users", map[string]string{"select": "status", "id": "eq." + userID, "limit": "1"}, nil, &rows) //nolint:goconst // PostgREST query key; literal is self-describing
 	if err != nil || len(rows) == 0 {
 		if err == nil {
 			return "pending", nil
@@ -64,13 +66,13 @@ func (r *RBACSupabaseRepository) GetUserStatus(userID string) (string, error) {
 	return strings.ToLower(strings.TrimSpace(rows[0].Status)), nil
 }
 
-func (r *RBACSupabaseRepository) GetUserRoles(userID string) ([]string, error) {
+func (r *RBACSupabaseRepository) GetUserRoles(ctx context.Context, userID string) ([]string, error) {
 	var roleRows []struct {
 		Roles struct {
 			Slug string `json:"slug"`
 		} `json:"roles"`
 	}
-	err := r.client.REST(http.MethodGet, "user_roles", map[string]string{
+	err := r.client.REST(ctx, http.MethodGet, "user_roles", map[string]string{
 		"select": "roles!inner(slug)", "user_id": "eq." + userID, "is_active": "eq.true",
 	}, nil, &roleRows)
 	if err != nil {
@@ -90,7 +92,7 @@ func (r *RBACSupabaseRepository) GetUserScopes(userID string) ([]domain.UserScop
 		ScopeType string `json:"scope_type"`
 		ScopeID   string `json:"scope_id"`
 	}
-	err := r.client.REST(http.MethodGet, "user_roles", map[string]string{
+	err := r.client.REST(context.Background(), http.MethodGet, "user_roles", map[string]string{
 		"select":    "scope_type,scope_id",
 		"user_id":   "eq." + userID,
 		"is_active": "eq.true",
@@ -105,7 +107,7 @@ func (r *RBACSupabaseRepository) GetUserScopes(userID string) ([]domain.UserScop
 	return out, nil
 }
 
-func (r *RBACSupabaseRepository) GetUserPermissions(userID string, scopeType string, scopeID string) ([]string, error) {
+func (r *RBACSupabaseRepository) GetUserPermissions(ctx context.Context, userID string, scopeType string, scopeID string) ([]string, error) {
 	if scopeType == "" {
 		scopeType = "global"
 	}
@@ -113,7 +115,7 @@ func (r *RBACSupabaseRepository) GetUserPermissions(userID string, scopeType str
 	var rows []struct {
 		PermissionSlug string `json:"permission_slug"`
 	}
-	if err := r.client.RPC("effective_permissions", payload, &rows); err != nil {
+	if err := r.client.RPC(ctx, "effective_permissions", payload, &rows); err != nil {
 		return nil, err
 	}
 	out := make([]string, 0, len(rows))
@@ -128,24 +130,24 @@ func (r *RBACSupabaseRepository) HasPermission(userID string, permission string,
 		scopeType = "global"
 	}
 	var ok bool
-	err := r.client.RPC("user_has_permission", map[string]any{"p_user_id": userID, "p_permission_slug": permission, "p_scope_type": scopeType, "p_scope_id": emptyToNilRBAC(scopeID)}, &ok)
+	err := r.client.RPC(context.Background(), "user_has_permission", map[string]any{"p_user_id": userID, "p_permission_slug": permission, "p_scope_type": scopeType, "p_scope_id": emptyToNilRBAC(scopeID)}, &ok)
 	return ok, err
 }
 
 func (r *RBACSupabaseRepository) ListRoles() ([]domain.Role, error) {
 	var rows []domain.Role
-	err := r.client.REST(http.MethodGet, "roles", map[string]string{"select": "id,name,slug,description,role_type,is_system_role,is_active,created_at", "order": "created_at.asc"}, nil, &rows)
+	err := r.client.REST(context.Background(), http.MethodGet, "roles", map[string]string{"select": "id,name,slug,description,role_type,is_system_role,is_active,created_at", "order": "created_at.asc"}, nil, &rows) //nolint:goconst // PostgREST order key; literal is self-describing
 	return rows, err
 }
 
 func (r *RBACSupabaseRepository) GetRole(roleID string) (domain.Role, error) {
 	var rows []domain.Role
-	err := r.client.REST(http.MethodGet, "roles", map[string]string{"select": "id,name,slug,description,role_type,is_system_role,is_active,created_at", "id": "eq." + roleID, "limit": "1"}, nil, &rows)
+	err := r.client.REST(context.Background(), http.MethodGet, "roles", map[string]string{"select": "id,name,slug,description,role_type,is_system_role,is_active,created_at", "id": "eq." + roleID, "limit": "1"}, nil, &rows)
 	if err != nil {
 		return domain.Role{}, err
 	}
 	if len(rows) == 0 {
-		return domain.Role{}, fmt.Errorf("role not found")
+		return domain.Role{}, errors.New("role not found")
 	}
 	return rows[0], nil
 }
@@ -156,12 +158,12 @@ func (r *RBACSupabaseRepository) CreateRole(role domain.Role) (domain.Role, erro
 		"is_system_role": false, "is_active": true,
 	}
 	var rows []domain.Role
-	err := r.client.REST(http.MethodPost, "roles", map[string]string{"select": "id,name,slug,description,role_type,is_system_role,is_active,created_at", "on_conflict": "slug"}, payload, &rows)
+	err := r.client.REST(context.Background(), http.MethodPost, "roles", map[string]string{"select": "id,name,slug,description,role_type,is_system_role,is_active,created_at", "on_conflict": "slug"}, payload, &rows)
 	if err != nil {
 		return domain.Role{}, err
 	}
 	if len(rows) == 0 {
-		return domain.Role{}, fmt.Errorf("create role failed")
+		return domain.Role{}, errors.New("create role failed")
 	}
 	return rows[0], nil
 }
@@ -169,12 +171,12 @@ func (r *RBACSupabaseRepository) CreateRole(role domain.Role) (domain.Role, erro
 func (r *RBACSupabaseRepository) UpdateRole(roleID string, role domain.Role) (domain.Role, error) {
 	payload := map[string]any{"name": role.Name, "description": role.Description, "role_type": role.RoleType, "is_active": role.IsActive}
 	var rows []domain.Role
-	err := r.client.REST(http.MethodPatch, "roles", map[string]string{"id": "eq." + roleID, "select": "id,name,slug,description,role_type,is_system_role,is_active,created_at"}, payload, &rows)
+	err := r.client.REST(context.Background(), http.MethodPatch, "roles", map[string]string{"id": "eq." + roleID, "select": "id,name,slug,description,role_type,is_system_role,is_active,created_at"}, payload, &rows)
 	if err != nil {
 		return domain.Role{}, err
 	}
 	if len(rows) == 0 {
-		return domain.Role{}, fmt.Errorf("role not found")
+		return domain.Role{}, errors.New("role not found")
 	}
 	return rows[0], nil
 }
@@ -191,7 +193,7 @@ func (r *RBACSupabaseRepository) CloneRole(sourceRoleID string, newName, newSlug
 	var pairs []struct {
 		PermissionID string `json:"permission_id"`
 	}
-	if err := r.client.REST(http.MethodGet, "role_permissions", map[string]string{"select": "permission_id", "role_id": "eq." + sourceRoleID}, nil, &pairs); err == nil {
+	if err := r.client.REST(context.Background(), http.MethodGet, "role_permissions", map[string]string{"select": "permission_id", "role_id": "eq." + sourceRoleID}, nil, &pairs); err == nil { //nolint:goconst // PostgREST column key; literal is self-describing
 		for _, p := range pairs {
 			_ = r.AssignPermissionToRole(created.ID, p.PermissionID)
 		}
@@ -200,12 +202,12 @@ func (r *RBACSupabaseRepository) CloneRole(sourceRoleID string, newName, newSlug
 }
 
 func (r *RBACSupabaseRepository) DeleteRole(roleID string) error {
-	return r.client.REST(http.MethodDelete, "roles", map[string]string{"id": "eq." + roleID}, nil, nil)
+	return r.client.REST(context.Background(), http.MethodDelete, "roles", map[string]string{"id": "eq." + roleID}, nil, nil)
 }
 
 func (r *RBACSupabaseRepository) ListPermissions() ([]domain.Permission, error) {
 	var rows []domain.Permission
-	err := r.client.REST(http.MethodGet, "permissions", map[string]string{"select": "id,name,slug,module,resource,action,description,is_system_permission", "order": "module.asc,slug.asc"}, nil, &rows)
+	err := r.client.REST(context.Background(), http.MethodGet, "permissions", map[string]string{"select": "id,name,slug,module,resource,action,description,is_system_permission", "order": "module.asc,slug.asc"}, nil, &rows) //nolint:goconst // PostgREST select list; literal is self-describing
 	return rows, err
 }
 
@@ -220,12 +222,12 @@ func (r *RBACSupabaseRepository) CreatePermission(permission domain.Permission) 
 		"is_system_permission": false,
 	}
 	var rows []domain.Permission
-	err := r.client.REST(http.MethodPost, "permissions", map[string]string{"select": "id,name,slug,module,resource,action,description,is_system_permission"}, payload, &rows)
+	err := r.client.REST(context.Background(), http.MethodPost, "permissions", map[string]string{"select": "id,name,slug,module,resource,action,description,is_system_permission"}, payload, &rows)
 	if err != nil {
 		return domain.Permission{}, err
 	}
 	if len(rows) == 0 {
-		return domain.Permission{}, fmt.Errorf("permission create failed")
+		return domain.Permission{}, errors.New("permission create failed")
 	}
 	return rows[0], nil
 }
@@ -239,24 +241,24 @@ func (r *RBACSupabaseRepository) UpdatePermission(permissionID string, permissio
 		"description": permission.Description,
 	}
 	var rows []domain.Permission
-	err := r.client.REST(http.MethodPatch, "permissions", map[string]string{"id": "eq." + permissionID, "select": "id,name,slug,module,resource,action,description,is_system_permission"}, payload, &rows)
+	err := r.client.REST(context.Background(), http.MethodPatch, "permissions", map[string]string{"id": "eq." + permissionID, "select": "id,name,slug,module,resource,action,description,is_system_permission"}, payload, &rows)
 	if err != nil {
 		return domain.Permission{}, err
 	}
 	if len(rows) == 0 {
-		return domain.Permission{}, fmt.Errorf("permission not found")
+		return domain.Permission{}, errors.New("permission not found")
 	}
 	return rows[0], nil
 }
 
 func (r *RBACSupabaseRepository) GetPermission(permissionID string) (domain.Permission, error) {
 	var rows []domain.Permission
-	err := r.client.REST(http.MethodGet, "permissions", map[string]string{"select": "id,name,slug,module,resource,action,description,is_system_permission", "id": "eq." + permissionID, "limit": "1"}, nil, &rows)
+	err := r.client.REST(context.Background(), http.MethodGet, "permissions", map[string]string{"select": "id,name,slug,module,resource,action,description,is_system_permission", "id": "eq." + permissionID, "limit": "1"}, nil, &rows)
 	if err != nil {
 		return domain.Permission{}, err
 	}
 	if len(rows) == 0 {
-		return domain.Permission{}, fmt.Errorf("permission not found")
+		return domain.Permission{}, errors.New("permission not found")
 	}
 	return rows[0], nil
 }
@@ -268,7 +270,7 @@ func (r *RBACSupabaseRepository) ListRolePermissionPairs() (map[string]map[strin
 			Slug string `json:"slug"`
 		} `json:"permissions"`
 	}
-	err := r.client.REST(http.MethodGet, "role_permissions", map[string]string{"select": "role_id,permissions!inner(slug)"}, nil, &rows)
+	err := r.client.REST(context.Background(), http.MethodGet, "role_permissions", map[string]string{"select": "role_id,permissions!inner(slug)"}, nil, &rows)
 	if err != nil {
 		return nil, err
 	}
@@ -286,15 +288,15 @@ func (r *RBACSupabaseRepository) ListRolePermissionPairs() (map[string]map[strin
 
 func (r *RBACSupabaseRepository) AssignPermissionToRole(roleID string, permissionID string) error {
 	payload := map[string]any{"role_id": roleID, "permission_id": permissionID, "created_at": time.Now().UTC().Format(time.RFC3339Nano)}
-	return r.client.REST(http.MethodPost, "role_permissions", map[string]string{}, payload, nil)
+	return r.client.REST(context.Background(), http.MethodPost, "role_permissions", map[string]string{}, payload, nil)
 }
 
 func (r *RBACSupabaseRepository) RemovePermissionFromRole(roleID string, permissionID string) error {
-	return r.client.REST(http.MethodDelete, "role_permissions", map[string]string{"role_id": "eq." + roleID, "permission_id": "eq." + permissionID}, nil, nil)
+	return r.client.REST(context.Background(), http.MethodDelete, "role_permissions", map[string]string{"role_id": "eq." + roleID, "permission_id": "eq." + permissionID}, nil, nil)
 }
 
 func (r *RBACSupabaseRepository) DeletePermission(permissionID string) error {
-	return r.client.REST(http.MethodDelete, "permissions", map[string]string{"id": "eq." + permissionID}, nil, nil)
+	return r.client.REST(context.Background(), http.MethodDelete, "permissions", map[string]string{"id": "eq." + permissionID}, nil, nil)
 }
 
 func (r *RBACSupabaseRepository) AssignRoleToUser(userID string, roleID string, scopeType string, scopeID string, assignedBy string) error {
@@ -302,16 +304,16 @@ func (r *RBACSupabaseRepository) AssignRoleToUser(userID string, roleID string, 
 		scopeType = "global"
 	}
 	payload := map[string]any{"user_id": userID, "role_id": roleID, "scope_type": scopeType, "scope_id": emptyToNilRBAC(scopeID), "assigned_by": emptyToNilRBAC(assignedBy), "is_active": true}
-	return r.client.REST(http.MethodPost, "user_roles", map[string]string{}, payload, nil)
+	return r.client.REST(context.Background(), http.MethodPost, "user_roles", map[string]string{}, payload, nil)
 }
 
 func (r *RBACSupabaseRepository) RemoveRoleFromUser(userID, roleID string) error {
-	return r.client.REST(http.MethodDelete, "user_roles", map[string]string{"user_id": "eq." + userID, "role_id": "eq." + roleID}, nil, nil)
+	return r.client.REST(context.Background(), http.MethodDelete, "user_roles", map[string]string{"user_id": "eq." + userID, "role_id": "eq." + roleID}, nil, nil)
 }
 
 func (r *RBACSupabaseRepository) CountActiveSuperAdmins() (int, error) {
 	var rows []map[string]any
-	err := r.client.REST(http.MethodGet, "user_roles", map[string]string{"select": "id,roles!inner(slug)", "is_active": "eq.true", "roles.slug": "eq.super-admin", "limit": "1000"}, nil, &rows)
+	err := r.client.REST(context.Background(), http.MethodGet, "user_roles", map[string]string{"select": "id,roles!inner(slug)", "is_active": "eq.true", "roles.slug": "eq.super-admin", "limit": "1000"}, nil, &rows)
 	if err != nil {
 		return 0, err
 	}
@@ -319,16 +321,16 @@ func (r *RBACSupabaseRepository) CountActiveSuperAdmins() (int, error) {
 }
 
 func (r *RBACSupabaseRepository) SuspendUser(userID string) error {
-	return r.client.REST(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + userID}, map[string]any{"status": "suspended"}, nil)
+	return r.client.REST(context.Background(), http.MethodPatch, "platform_users", map[string]string{"id": "eq." + userID}, map[string]any{"status": "suspended"}, nil)
 }
 func (r *RBACSupabaseRepository) UnsuspendUser(userID string) error {
-	return r.client.REST(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + userID}, map[string]any{"status": "active"}, nil)
+	return r.client.REST(context.Background(), http.MethodPatch, "platform_users", map[string]string{"id": "eq." + userID}, map[string]any{"status": "active"}, nil)
 }
 func (r *RBACSupabaseRepository) LockUser(userID string) error {
-	return r.client.REST(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + userID}, map[string]any{"status": "locked", "failed_login_attempts": 10}, nil)
+	return r.client.REST(context.Background(), http.MethodPatch, "platform_users", map[string]string{"id": "eq." + userID}, map[string]any{"status": "locked", "failed_login_attempts": 10}, nil)
 }
 func (r *RBACSupabaseRepository) UnlockUser(userID string) error {
-	return r.client.REST(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + userID}, map[string]any{"status": "active", "failed_login_attempts": 0, "locked_until": nil}, nil)
+	return r.client.REST(context.Background(), http.MethodPatch, "platform_users", map[string]string{"id": "eq." + userID}, map[string]any{"status": "active", "failed_login_attempts": 0, "locked_until": nil}, nil)
 }
 
 func emptyToNilRBAC(v string) any {
@@ -466,7 +468,7 @@ func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) (
 	q["select"] = sel
 
 	var rows []adminUserRow
-	if err := r.client.REST(http.MethodGet, "platform_users", q, nil, &rows); err != nil {
+	if err := r.client.REST(context.Background(), http.MethodGet, "platform_users", q, nil, &rows); err != nil {
 		return nil, err
 	}
 	out := make([]domain.AdminUser, 0, len(rows))
@@ -504,7 +506,7 @@ func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) (
 func (r *RBACSupabaseRepository) GetAdminUser(userID string) (domain.AdminUser, error) {
 	id := strings.TrimSpace(userID)
 	if id == "" {
-		return domain.AdminUser{}, fmt.Errorf("user not found")
+		return domain.AdminUser{}, errors.New("user not found")
 	}
 	q := map[string]string{
 		"select": adminUserSelect,
@@ -512,13 +514,13 @@ func (r *RBACSupabaseRepository) GetAdminUser(userID string) (domain.AdminUser, 
 		"limit":  "1",
 	}
 	var rows []adminUserRow
-	if err := r.client.REST(http.MethodGet, "platform_users", q, nil, &rows); err != nil {
+	if err := r.client.REST(context.Background(), http.MethodGet, "platform_users", q, nil, &rows); err != nil {
 		return domain.AdminUser{}, err
 	}
 	if len(rows) == 0 {
-		return domain.AdminUser{}, fmt.Errorf("user not found")
+		return domain.AdminUser{}, errors.New("user not found")
 	}
-	user, _, _, _, _, _ := adminUserFromRow(rows[0])
+	user, _, _, _, _, _ := adminUserFromRow(rows[0]) //nolint:dogsled // row tuple; only the user is needed
 	return user, nil
 }
 
@@ -531,7 +533,7 @@ func (r *RBACSupabaseRepository) UpdateAdminUser(userID string, patch map[string
 		}
 	}
 	if len(payload) == 0 {
-		return domain.AdminUser{}, fmt.Errorf("no updatable fields provided")
+		return domain.AdminUser{}, errors.New("no updatable fields provided")
 	}
 	var rows []struct {
 		ID string `json:"id"`
@@ -543,11 +545,11 @@ func (r *RBACSupabaseRepository) UpdateAdminUser(userID string, patch map[string
 	// below would report "user not found" even for a patch that succeeded.
 	// This was masked until now because GetAdminUser's pre-check (AUTH-019)
 	// 404'd before any request ever reached here.
-	if err := r.client.RESTReturn(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + userID, "select": "id"}, payload, &rows); err != nil {
+	if err := r.client.RESTReturn(context.Background(), http.MethodPatch, "platform_users", map[string]string{"id": "eq." + userID, "select": "id"}, payload, &rows); err != nil {
 		return domain.AdminUser{}, err
 	}
 	if len(rows) == 0 {
-		return domain.AdminUser{}, fmt.Errorf("user not found")
+		return domain.AdminUser{}, errors.New("user not found")
 	}
 	return r.GetAdminUser(userID)
 }

@@ -59,11 +59,13 @@ func TestLiveDB_GetElection_PlatformAdminWithoutMembershipCanView(t *testing.T) 
 	if _, err := pool.Exec(ctx, `INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, $2)`, adminID, roleID); err != nil {
 		t.Fatalf("grant platform super-admin role: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(ctx, `DELETE FROM public.user_roles WHERE user_id = $1`, adminID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.user_roles WHERE user_id = $1`, adminID)
+	})
 
 	// Prove the premise: this admin genuinely has no membership row in this org.
 	var membershipCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assoc_memberships WHERE user_id=$1 AND organisation_id=$2`, adminID, org).Scan(&membershipCount); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM assoc_memberships WHERE user_id=$1 AND organisation_id=$2`, adminID, org).Scan(&membershipCount); err != nil {
 		t.Fatalf("count memberships: %v", err)
 	}
 	if membershipCount != 0 {

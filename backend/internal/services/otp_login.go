@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"strings"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ErrAccountUnavailable is returned when the lockout gate refuses a step-up.
@@ -76,8 +77,8 @@ func (b *otpAuthBridge) WithSessions(sessions SessionService, enabled bool) *otp
 // the two factors, and an account suspended in between must not complete a
 // login that started before it. The password path is not the authority on
 // whether an account is still allowed in at the moment a session is issued.
-func (b *otpAuthBridge) gate(email string) (*platformUser, error) {
-	user, err := b.svc.findPlatformUserByEmail(email)
+func (b *otpAuthBridge) gate(ctx context.Context, email string) (*platformUser, error) {
+	user, err := b.svc.findPlatformUserByEmail(ctx, email)
 	if err != nil {
 		// The lookup itself failed (REST/network) — distinct from the zero-rows
 		// case below: propagate as-is.
@@ -94,7 +95,7 @@ func (b *otpAuthBridge) gate(email string) (*platformUser, error) {
 		return nil, fmt.Errorf("%w: platform user not found", ErrAccountUnavailable)
 	}
 	if err := b.svc.validateLoginStatus(user); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrAccountUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ErrAccountUnavailable, err)
 	}
 	return user, nil
 }
@@ -104,7 +105,7 @@ func (b *otpAuthBridge) MintSession(ctx context.Context, email string) (map[stri
 	if email == "" {
 		return nil, nil
 	}
-	user, err := b.gate(email)
+	user, err := b.gate(ctx, email)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +172,7 @@ func (b *otpAuthBridge) SetPassword(ctx context.Context, email, newPassword stri
 	}
 	// The lockout gate applies here too. A suspended account must not be able to
 	// take a new password and walk back in.
-	if _, err := b.gate(email); err != nil {
+	if _, err := b.gate(ctx, email); err != nil {
 		return false, err
 	}
 

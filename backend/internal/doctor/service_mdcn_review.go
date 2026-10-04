@@ -167,10 +167,10 @@ func (s *MDCNReviewService) Decide(ctx context.Context, reviewerID, verification
 	}
 	if in.Action == "approve" {
 		if in.LicenceExpiry == nil {
-			return nil, fmt.Errorf("doctor: licence_expiry required to approve")
+			return nil, errors.New("doctor: licence_expiry required to approve")
 		}
 		if in.Discipline == nil || (*in.Discipline != "medical" && *in.Discipline != "dental") {
-			return nil, fmt.Errorf("doctor: discipline (medical|dental) required to approve")
+			return nil, errors.New("doctor: discipline (medical|dental) required to approve")
 		}
 	}
 	// Idempotency: repeated identical terminal decision is a no-op success.

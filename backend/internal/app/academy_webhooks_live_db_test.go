@@ -76,7 +76,7 @@ func signedWebhookPost(t *testing.T, r *gin.Engine, rail string, payload map[str
 	buf, _ := json.Marshal(payload)
 	mac := hmac.New(sha256.New, []byte(academyWHTestSecret))
 	mac.Write(buf)
-	req := httptest.NewRequest(http.MethodPost, "/internal/webhooks/academy/"+rail, bytes.NewReader(buf))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/internal/webhooks/academy/"+rail, bytes.NewReader(buf))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Fake-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	w := httptest.NewRecorder()

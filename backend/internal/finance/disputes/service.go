@@ -143,7 +143,7 @@ func (s *Service) Resolve(ctx context.Context, disputeID string, resolution Reso
 func (s *Service) moduleTypeOf(ctx context.Context, disputeID string) (string, error) {
 	var moduleType string
 	if err := s.db.QueryRow(ctx, `SELECT module_type FROM disputes WHERE id=$1`, disputeID).Scan(&moduleType); err != nil {
-		return "", fmt.Errorf("%w: dispute not found: %v", ErrDisputeNotResolvable, err)
+		return "", fmt.Errorf("%w: dispute not found: %w", ErrDisputeNotResolvable, err)
 	}
 	return moduleType, nil
 }

@@ -13,7 +13,8 @@ import (
 	"spotlight/backend/internal/utilitybills"
 )
 
-func kobo(v int64) *int64 { return &v }
+//go:fix inline
+func kobo(v int64) *int64 { return new(v) }
 
 // This is the sum the WALLET IS DEBITED FOR. If it ever drifts from its parts,
 // the member is charged an amount no line item explains.
@@ -29,16 +30,16 @@ func TestInvariant_RetailIsExactlySumOfParts(t *testing.T) {
 			name: "variable electricity with fee and markup",
 			product: utilitybills.Product{
 				AmountType:    utilitybills.AmountTypeVariable,
-				MinAmountKobo: kobo(100_000), MaxAmountKobo: kobo(10_000_000),
+				MinAmountKobo: new(int64(100_000)), MaxAmountKobo: new(int64(10_000_000)),
 				MarkupBps: 150, ConvenienceFeeKobo: 10_000, ProviderDiscountBps: 200,
 			},
 			mapping:    utilitybills.ProviderMapping{Status: utilitybills.MappingStatusActive, ProviderDiscountBps: 200},
-			amountKobo: kobo(500_000),
+			amountKobo: new(int64(500_000)),
 		},
 		{
 			name: "fixed data bundle, no fee, no markup",
 			product: utilitybills.Product{
-				AmountType: utilitybills.AmountTypeFixed, AmountKobo: kobo(50_000),
+				AmountType: utilitybills.AmountTypeFixed, AmountKobo: new(int64(50_000)),
 				ProviderDiscountBps: 500,
 			},
 			mapping: utilitybills.ProviderMapping{Status: utilitybills.MappingStatusActive, ProviderDiscountBps: 500},
@@ -50,7 +51,7 @@ func TestInvariant_RetailIsExactlySumOfParts(t *testing.T) {
 				MarkupBps:  333, ConvenienceFeeKobo: 1, ProviderDiscountBps: 111,
 			},
 			mapping:    utilitybills.ProviderMapping{Status: utilitybills.MappingStatusActive, ProviderDiscountBps: 111},
-			amountKobo: kobo(100_001),
+			amountKobo: new(int64(100_001)),
 		},
 	}
 
@@ -77,7 +78,7 @@ func TestInvariant_PricingRejectsNonPositiveAmounts(t *testing.T) {
 	mapping := utilitybills.ProviderMapping{Status: utilitybills.MappingStatusActive}
 
 	for _, amount := range []int64{0, -1, -500_000} {
-		if _, err := utilitybills.CalculateUtilityPricing(product, mapping, kobo(amount)); !errors.Is(err, utilitybills.ErrInvalidAmount) {
+		if _, err := utilitybills.CalculateUtilityPricing(product, mapping, new(amount)); !errors.Is(err, utilitybills.ErrInvalidAmount) {
 			t.Fatalf("amount %d: got %v, want ErrInvalidAmount", amount, err)
 		}
 	}
@@ -93,11 +94,11 @@ func TestInvariant_PricingRejectsNonPositiveAmounts(t *testing.T) {
 // downstream.
 
 func TestInvariant_NonPositiveProviderCostIsRefused(t *testing.T) {
-	product := utilitybills.Product{AmountType: utilitybills.AmountTypeFixed, AmountKobo: kobo(50_000)}
+	product := utilitybills.Product{AmountType: utilitybills.AmountTypeFixed, AmountKobo: new(int64(50_000))}
 	for _, cost := range []int64{0, -1} {
 		mapping := utilitybills.ProviderMapping{
 			Status:           utilitybills.MappingStatusActive,
-			ProviderCostKobo: kobo(cost),
+			ProviderCostKobo: new(cost),
 		}
 		if _, err := utilitybills.CalculateUtilityPricing(product, mapping, nil); !errors.Is(err, utilitybills.ErrProviderCostNotPositive) {
 			t.Fatalf("cost %d: got %v, want ErrProviderCostNotPositive", cost, err)

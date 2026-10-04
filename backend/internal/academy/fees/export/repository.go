@@ -6,12 +6,13 @@ import (
 	"errors"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+	"spotlight/backend/go-common/ptr"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/go-common/dbutil"
-	"spotlight/backend/go-common/ptr"
 )
 
 // Store is the data-access contract for the compliance-export log. It is defined as an

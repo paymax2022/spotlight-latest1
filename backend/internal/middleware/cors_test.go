@@ -17,7 +17,7 @@ func runCORS(t *testing.T, allowedCSV, appEnv, method, origin string) *httptest.
 	r.Use(CORSMiddleware(allowedCSV, appEnv))
 	r.GET("/x", func(c *gin.Context) { c.Status(http.StatusOK) })
 
-	req := httptest.NewRequest(method, "/x", nil)
+	req := httptest.NewRequestWithContext(t.Context(), method, "/x", nil)
 	if origin != "" {
 		req.Header.Set("Origin", origin)
 	}

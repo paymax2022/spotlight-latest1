@@ -28,7 +28,7 @@ func TestLiveDB_AdminDispenseAudit_UnfilteredAndFiltered(t *testing.T) {
 		t.Fatalf("seed dispense record: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM dispense_records WHERE id=$1`, dispenseID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM dispense_records WHERE id=$1`, dispenseID)
 	})
 
 	// UNFILTERED — the call that 500'd on `uuid = ''` before the fix.

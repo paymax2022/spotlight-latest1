@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -25,7 +26,7 @@ func NewService(repo *Repository, reward *referralledger.Service, events *referr
 // stored (compliance: paid-ambassador disclosure).
 func (s *Service) Apply(ctx context.Context, userID string, in ApplyInput) (*Ambassador, error) {
 	if !in.DisclosureAccepted || in.DisclosureText == "" {
-		return nil, fmt.Errorf("network: ambassador disclosure must be accepted and stored")
+		return nil, errors.New("network: ambassador disclosure must be accepted and stored")
 	}
 	return s.repo.Apply(ctx, userID, in.Tier, in.DisclosureText)
 }
@@ -62,7 +63,7 @@ func (s *Service) NetworkMembers(ctx context.Context, networkID, callerUserID st
 		return nil, err
 	}
 	if !isAdmin && n.LeadUserID != callerUserID {
-		return nil, fmt.Errorf("network: forbidden")
+		return nil, errors.New("network: forbidden")
 	}
 	return s.repo.ListMembers(ctx, networkID)
 }
@@ -78,10 +79,10 @@ func (s *Service) ListPolicies(ctx context.Context) ([]OverridePolicy, error) {
 
 func (s *Service) SetPolicy(ctx context.Context, in PolicyInput) (*OverridePolicy, error) {
 	if in.Tier == "" {
-		return nil, fmt.Errorf("network: policy tier required")
+		return nil, errors.New("network: policy tier required")
 	}
 	if in.OverrideBps < 0 || in.PerMemberCapKobo < 0 || in.MonthlyCapKobo < 0 {
-		return nil, fmt.Errorf("network: policy values must be non-negative")
+		return nil, errors.New("network: policy values must be non-negative")
 	}
 	return s.repo.UpsertPolicy(ctx, in)
 }
@@ -102,14 +103,14 @@ func (s *Service) SetPolicy(ctx context.Context, in PolicyInput) (*OverridePolic
 // zero activity).
 func (s *Service) AccrueOverride(ctx context.Context, in AccrueOverrideInput) (*Override, error) {
 	if in.IdempotencyKey == "" {
-		return nil, fmt.Errorf("network: idempotency key required for override accrual")
+		return nil, errors.New("network: idempotency key required for override accrual")
 	}
 	n, err := s.repo.GetNetwork(ctx, in.NetworkID)
 	if err != nil {
 		return nil, err
 	}
 	if n.Status != "active" {
-		return nil, fmt.Errorf("network: network not active")
+		return nil, errors.New("network: network not active")
 	}
 	leadID := n.LeadUserID
 
@@ -119,7 +120,7 @@ func (s *Service) AccrueOverride(ctx context.Context, in AccrueOverrideInput) (*
 		return nil, err
 	}
 	if mem == nil || mem.Status != "active" {
-		return nil, fmt.Errorf("network: source user is not an active member")
+		return nil, errors.New("network: source user is not an active member")
 	}
 
 	// (2) HOUSE-EXCLUDED: house-attributed signups never form an override base.

@@ -2,6 +2,7 @@ package estate_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestPayDuesRequiresIdempotencyKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("PayDues must fail closed when Idempotency-Key is empty")
 	}
-	if err != estate.ErrIdempotencyRequired {
+	if !errors.Is(err, estate.ErrIdempotencyRequired) {
 		t.Fatalf("expected ErrIdempotencyRequired, got %v", err)
 	}
 }

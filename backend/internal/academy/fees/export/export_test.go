@@ -2,6 +2,8 @@ package feesexport
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -35,9 +37,9 @@ func (f *fakeStore) AppendExport(_ context.Context, e ComplianceExport) (*Compli
 
 func (f *fakeStore) ListExports(_ context.Context, schoolID string) ([]ComplianceExport, error) {
 	out := []ComplianceExport{}
-	for i := len(f.exports) - 1; i >= 0; i-- {
-		if f.exports[i].SchoolID == schoolID {
-			out = append(out, f.exports[i])
+	for _, v := range slices.Backward(f.exports) {
+		if v.SchoolID == schoolID {
+			out = append(out, v)
 		}
 	}
 	return out, nil
@@ -123,7 +125,7 @@ func TestTriggerExport_NonOptedInCategory_Rejected(t *testing.T) {
 		ReportType:     "SF-11-quarterly",
 		DataCategories: []DataCategory{CategoryEnrollment, CategoryResults}, // results NOT opted in
 	})
-	if err != ErrCategoryNotOptedIn {
+	if !errors.Is(err, ErrCategoryNotOptedIn) {
 		t.Fatalf("expected ErrCategoryNotOptedIn, got %v", err)
 	}
 	// Fail-closed: NOTHING appended to the compliance log.
@@ -161,7 +163,7 @@ func TestTriggerExport_RequestCarriedOptInFallback(t *testing.T) {
 		ReportType:     "SF-11",
 		DataCategories: []DataCategory{CategoryFees},
 	})
-	if err != ErrCategoryNotOptedIn {
+	if !errors.Is(err, ErrCategoryNotOptedIn) {
 		t.Fatalf("no opt-in at all must reject, got %v", err)
 	}
 }
@@ -224,7 +226,7 @@ func TestSchoolDataExport_VerifiedOnly(t *testing.T) {
 
 	// Unverified school → rejected.
 	_, err = svc.TriggerSchoolDataExport(ctx, "owner", SchoolDataExportRequest{SchoolID: "new-school"})
-	if err != ErrSchoolNotVerified {
+	if !errors.Is(err, ErrSchoolNotVerified) {
 		t.Fatalf("unverified school must be rejected, got %v", err)
 	}
 }
@@ -232,7 +234,7 @@ func TestSchoolDataExport_VerifiedOnly(t *testing.T) {
 func TestSchoolDataExport_NoVerifier_FailsClosed(t *testing.T) {
 	svc := NewServiceWithDeps(newFakeStore(), nil, nil)
 	_, err := svc.TriggerSchoolDataExport(context.Background(), "owner", SchoolDataExportRequest{SchoolID: "s"})
-	if err != ErrSchoolNotVerified {
+	if !errors.Is(err, ErrSchoolNotVerified) {
 		t.Fatalf("no verifier must fail closed with ErrSchoolNotVerified, got %v", err)
 	}
 }

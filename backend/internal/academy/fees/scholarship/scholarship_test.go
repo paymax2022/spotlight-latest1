@@ -2,6 +2,7 @@ package feesscholarship
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -217,7 +218,7 @@ func TestFundPledge_RequiresIdempotencyKey(t *testing.T) {
 	store := newFakeStore()
 	svc := NewServiceWithDeps(store, newFakeLedger(), newFakeInvoicePayer())
 	p, _ := svc.CreatePledge(ctx, "sponsor-1", CreatePledgeRequest{TargetStudentID: "stu-1", AmountMinor: 1000})
-	if _, err := svc.FundPledge(ctx, "sponsor-1", p.ID, ""); err != ErrIdempotencyRequired {
+	if _, err := svc.FundPledge(ctx, "sponsor-1", p.ID, ""); !errors.Is(err, ErrIdempotencyRequired) {
 		t.Fatalf("missing idempotency key must be rejected, got %v", err)
 	}
 }
@@ -313,7 +314,7 @@ func TestApplyAward_RejectsUnfundedPledge(t *testing.T) {
 	p, _ := svc.CreatePledge(ctx, "sponsor-1", CreatePledgeRequest{TargetStudentID: "stu-1", AmountMinor: 5000})
 	// Not funded yet.
 	_, err := svc.ApplyAward(ctx, "admin-1", ApplyAwardRequest{PledgeID: p.ID, InvoiceID: "inv-1", AmountMinor: 1000}, "idem-x")
-	if err != ErrPledgeNotFunded {
+	if !errors.Is(err, ErrPledgeNotFunded) {
 		t.Fatalf("applying an unfunded pledge must be rejected, got %v", err)
 	}
 }
@@ -323,7 +324,7 @@ func TestApplyAward_RejectsOverHeadroom(t *testing.T) {
 	store := newFakeStore()
 	svc, fp := fundedPledge(t, store, newFakeLedger(), newFakeInvoicePayer(), 10000)
 	_, err := svc.ApplyAward(ctx, "admin-1", ApplyAwardRequest{PledgeID: fp.ID, InvoiceID: "inv-1", AmountMinor: 15000}, "idem-y")
-	if err != ErrPledgeExhausted {
+	if !errors.Is(err, ErrPledgeExhausted) {
 		t.Fatalf("applying more than the pledged amount must be rejected, got %v", err)
 	}
 }

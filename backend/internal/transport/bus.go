@@ -65,7 +65,6 @@ func (s *Service) SearchBusRoutes(ctx context.Context, origin, dest string) ([]m
 	if dest != "" {
 		q += fmt.Sprintf(" AND dest_terminal ILIKE $%d", i)
 		args = append(args, "%"+dest+"%")
-		i++
 	}
 	q += " ORDER BY origin_terminal LIMIT 100"
 	rows, err := s.db.Query(ctx, q, args...)
@@ -197,7 +196,7 @@ func (s *Service) BookBusTicket(ctx context.Context, userID string, req BusBookR
 		qr, fare, sett.ID, idempotencyKey,
 	); err != nil {
 		// Seat already taken (unique violation) → refund escrow, surface conflict.
-		s.settlement.Refund(ctx, sett.ID, "seat_unavailable")
+		_ = s.settlement.Refund(ctx, sett.ID, "seat_unavailable")
 		return nil, codedErr(http.StatusConflict, "SEAT_TAKEN", "seat already booked")
 	}
 
@@ -304,7 +303,7 @@ func (s *Service) CancelBusTicket(ctx context.Context, id, userID, reason string
 	}
 	// Settlement was already released to the operator on issue; refund reverses it.
 	if settID != nil {
-		s.settlement.Refund(ctx, *settID, "bus_cancelled:"+reason)
+		_ = s.settlement.Refund(ctx, *settID, "bus_cancelled:"+reason)
 	}
 	s.recordModeEvent(ctx, userID, "bus.cancelled", "bus_ticket", id, status, "cancelled", map[string]any{"reason": reason})
 	return nil
@@ -354,7 +353,7 @@ func (a *AdminService) CreateBusRoute(ctx context.Context, adminID string, req B
 		dbutil.NullInt(int64(req.DistanceM)), dbutil.NullInt(int64(req.EstDurationS)), category); err != nil {
 		return nil, err
 	}
-	writeAudit(ctx, a.svc.db, adminID, "bus.route.create", "bus_route", id, nil,
+	_ = writeAudit(ctx, a.svc.db, adminID, "bus.route.create", "bus_route", id, nil,
 		map[string]any{"origin": req.OriginTerminal, "dest": req.DestTerminal, "operator_id": req.OperatorID}, req.Reason)
 	return map[string]any{"id": id, "status": "active"}, nil
 }
@@ -409,7 +408,7 @@ func (a *AdminService) CreateBusSchedule(ctx context.Context, adminID string, re
 	if _, err := a.svc.db.Exec(ctx, q, id, req.RouteID, dep, arr, req.TotalSeats, req.FareKobo); err != nil {
 		return nil, err
 	}
-	writeAudit(ctx, a.svc.db, adminID, "bus.schedule.create", "bus_schedule", id, nil,
+	_ = writeAudit(ctx, a.svc.db, adminID, "bus.schedule.create", "bus_schedule", id, nil,
 		map[string]any{"route_id": req.RouteID, "fare_kobo": req.FareKobo, "total_seats": req.TotalSeats}, req.Reason)
 	return map[string]any{"id": id, "fareApproved": false, "status": "scheduled"}, nil
 }
@@ -452,9 +451,9 @@ func (a *AdminService) SetBusProviderVerification(ctx context.Context, adminID, 
 	// Keep the operational status consistent so discovery reflects the decision at once.
 	switch newStatus {
 	case "suspended":
-		a.svc.db.Exec(ctx, `UPDATE bus_providers SET status='inactive' WHERE id=$1`, providerID)
+		_, _ = a.svc.db.Exec(ctx, `UPDATE bus_providers SET status='inactive' WHERE id=$1`, providerID)
 	case "verified":
-		a.svc.db.Exec(ctx, `UPDATE bus_providers SET status='active' WHERE id=$1`, providerID)
+		_, _ = a.svc.db.Exec(ctx, `UPDATE bus_providers SET status='active' WHERE id=$1`, providerID)
 	}
 	return writeAudit(ctx, a.svc.db, adminID, "bus_provider.verification", "bus_provider", providerID,
 		map[string]any{"verification_status": oldStatus, "status": oldOpStatus},

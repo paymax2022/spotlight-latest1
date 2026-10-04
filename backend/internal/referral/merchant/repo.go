@@ -2,6 +2,7 @@ package merchant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -205,7 +206,7 @@ func (r *Repository) RevokePartnerKey(ctx context.Context, id string) error {
 		return fmt.Errorf("merchant: revoke partner key: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("merchant: key not found or already revoked")
+		return errors.New("merchant: key not found or already revoked")
 	}
 	return nil
 }
@@ -218,7 +219,7 @@ func (r *Repository) LookupActiveKeyByPrefix(ctx context.Context, prefix string)
 		WHERE key_prefix = $1 AND status = 'active'`
 	var raw []byte
 	if e := r.db.QueryRow(ctx, q, prefix).Scan(&merchantID, &hash, &raw); e != nil {
-		if e == pgx.ErrNoRows {
+		if errors.Is(e, pgx.ErrNoRows) {
 			return "", "", nil, nil
 		}
 		return "", "", nil, fmt.Errorf("merchant: lookup key: %w", e)

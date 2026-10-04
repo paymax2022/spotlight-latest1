@@ -37,7 +37,7 @@ func seedOrgOfType(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name, 
 // member-detail reads inner-join on. jsonb columns rely on their schema defaults.
 func seedMemberProfile(t *testing.T, ctx context.Context, pool *pgxpool.Pool, membershipID, fullName string) {
 	t.Helper()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_member_profiles (membership_id, full_name)
 		VALUES ($1, $2) ON CONFLICT (membership_id) DO NOTHING`, membershipID, fullName); err != nil {
 		t.Fatalf("seed member profile: %v", err)
@@ -47,7 +47,7 @@ func seedMemberProfile(t *testing.T, ctx context.Context, pool *pgxpool.Pool, me
 func seedChatThread(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID string) string {
 	t.Helper()
 	threadID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_chat_threads (id, organisation_id, title, scope)
 		VALUES ($1, $2, 'General', 'GENERAL')`, threadID, orgID); err != nil {
 		t.Fatalf("seed chat thread: %v", err)
@@ -58,7 +58,7 @@ func seedChatThread(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID
 func seedApplication(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, userID string) string {
 	t.Helper()
 	appID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_applications (id, organisation_id, user_id, status)
 		VALUES ($1, $2, $3, 'PENDING')`, appID, orgID, userID); err != nil {
 		t.Fatalf("seed application: %v", err)
@@ -69,7 +69,7 @@ func seedApplication(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgI
 func seedOfflinePayment(t *testing.T, ctx context.Context, pool *pgxpool.Pool, membershipID, invoiceID string, amountKobo int64) string {
 	t.Helper()
 	paymentID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_payments (id, invoice_id, membership_id, amount_kobo, method, status, offline)
 		VALUES ($1, $2, $3, $4, 'BANK_TRANSFER', 'PENDING', true)`,
 		paymentID, invoiceID, membershipID, amountKobo); err != nil {
@@ -122,7 +122,7 @@ func TestLiveDB_IDOR_SendChatMessage_CrossOrgForbidden(t *testing.T) {
 	}
 	// And no foreign message was written.
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assoc_chat_messages WHERE thread_id=$1 AND body='intrusion'`, threadA).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM assoc_chat_messages WHERE thread_id=$1 AND body='intrusion'`, threadA).Scan(&n); err != nil {
 		t.Fatalf("count messages: %v", err)
 	}
 	if n != 0 {
@@ -157,7 +157,7 @@ func TestLiveDB_IDOR_ReactToMessage_CrossOrgForbidden(t *testing.T) {
 		t.Fatal("CROSS-ORG IDOR: member of org B reacted to org A's message (want error)")
 	}
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assoc_chat_message_reactions WHERE message_id=$1 AND emoji='🔥'`, msg.ID).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM assoc_chat_message_reactions WHERE message_id=$1 AND emoji='🔥'`, msg.ID).Scan(&n); err != nil {
 		t.Fatalf("count reactions: %v", err)
 	}
 	if n != 0 {

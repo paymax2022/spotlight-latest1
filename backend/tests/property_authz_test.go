@@ -44,6 +44,7 @@ import (
 
 type denyAllRBAC struct {
 	services.RBACService
+
 	asked []string
 }
 
@@ -54,6 +55,7 @@ func (d *denyAllRBAC) CheckPermission(userID, permission, scopeType, scopeID str
 
 type allowAllRBAC struct {
 	services.RBACService
+
 	asked []string
 }
 
@@ -102,7 +104,7 @@ func TestPropertyRoutes_FlagOff_AllFourRoutesAbsent(t *testing.T) {
 	for _, rp := range propertyRoutePaths {
 		t.Run(rp.method+" "+rp.path, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest(rp.method, rp.path, strings.NewReader("{}"))
+			req := httptest.NewRequestWithContext(t.Context(), rp.method, rp.path, strings.NewReader("{}"))
 			req.Header.Set("Content-Type", "application/json")
 			r.ServeHTTP(w, req)
 			if w.Code != http.StatusNotFound {
@@ -157,7 +159,7 @@ func TestPropertyLookup_DeniedWithoutPermission_NoPassportLeaked(t *testing.T) {
 
 	target := uuid.NewString()
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/finance/property/rent-passport/lookup/"+target, nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/finance/property/rent-passport/lookup/"+target, nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusForbidden {
@@ -197,7 +199,7 @@ func seedPropertyAuthzUser(t *testing.T, pool *pgxpool.Pool) string {
 		`INSERT INTO auth.users (id, email, created_at) VALUES ($1,$2,NOW())`, id, id+"@property-authz.invalid"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id=$1`, id) })
 	testsupport.CleanupUser(t, pool, id)
 	return id
 }
@@ -219,26 +221,32 @@ func TestLiveDB_PropertyLookup_AllowedPermission_ReturnsTargetNotCaller(t *testi
 	// a wrong-user swap detectable via totalPaidKobo too.
 	estateID := uuid.NewString()
 	admin := seedPropertyAuthzUser(t, pool)
-	if _, err := pool.Exec(ctx, `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Lookup Estate',$2)`, estateID, admin); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO estates (id, name, admin_id) VALUES ($1,'Lookup Estate',$2)`, estateID, admin); err != nil {
 		t.Fatalf("seed estate: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estates WHERE id=$1`, estateID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estates WHERE id=$1`, estateID)
+	})
 	invoiceID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO estate_dues_invoices (id, estate_id, resident_id, category, amount_kobo, due_date)
 		 VALUES ($1,$2,$3,'rent',500000, NOW() + interval '1 day')`,
 		invoiceID, estateID, target); err != nil {
 		t.Fatalf("seed invoice: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estate_dues_invoices WHERE id=$1`, invoiceID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estate_dues_invoices WHERE id=$1`, invoiceID)
+	})
 	payID := uuid.NewString()
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO estate_payments (id, estate_id, invoice_id, payer_id, amount_kobo, method, status)
 		 VALUES ($1,$2,$3,$4,500000,'wallet','successful')`,
 		payID, estateID, invoiceID, target); err != nil {
 		t.Fatalf("seed payment: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM estate_payments WHERE id=$1`, payID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM estate_payments WHERE id=$1`, payID)
+	})
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -248,7 +256,7 @@ func TestLiveDB_PropertyLookup_AllowedPermission_ReturnsTargetNotCaller(t *testi
 	registerPropertyRoutes(r, true, h, rbac, caller)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/finance/property/rent-passport/lookup/"+target, nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/finance/property/rent-passport/lookup/"+target, nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -284,7 +292,7 @@ func TestLiveDB_SwitchContext_HTTP_FailClosedNoWrite(t *testing.T) {
 
 	body := `{"contextType":"agency","contextId":"` + unheldAgency + `"}`
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/finance/property/context/switch", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/finance/property/context/switch", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -296,7 +304,7 @@ func TestLiveDB_SwitchContext_HTTP_FailClosedNoWrite(t *testing.T) {
 	}
 
 	var count int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM property_active_context WHERE user_id=$1`, caller).Scan(&count); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM property_active_context WHERE user_id=$1`, caller).Scan(&count); err != nil {
 		t.Fatalf("query property_active_context: %v", err)
 	}
 	if count != 0 {

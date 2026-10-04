@@ -65,7 +65,7 @@ func (s *Service) RaiseFoodDispute(ctx context.Context, orderID, actorID, dtype,
 	}
 	var status string
 	if err := s.db.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1`, orderID).Scan(&status); err != nil {
-		return nil, fmt.Errorf("restaurant: order not found")
+		return nil, errors.New("restaurant: order not found")
 	}
 	if status != string(OrderDelivered) {
 		return nil, fmt.Errorf("%w: only a delivered order can be disputed (use cancellation before delivery)", ErrDisputeInvalid)
@@ -114,7 +114,7 @@ func (s *Service) RaiseFoodDispute(ctx context.Context, orderID, actorID, dtype,
 // rider's wallet is never driven negative either way.
 func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminID string, res FoodDisputeResolution, requestedRefundKobo int64, note string) (*FoodDispute, error) {
 	if s.ledger == nil {
-		return nil, fmt.Errorf("restaurant: dispute refunds require the ledger (not configured)")
+		return nil, errors.New("restaurant: dispute refunds require the ledger (not configured)")
 	}
 	// Load the ticket; must be a food dispute in a resolvable state.
 	var reference, moduleType, status string
@@ -139,7 +139,7 @@ func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminI
 		`SELECT customer_id, rider_id, total_kobo, COALESCE(tip_kobo,0), COALESCE(settlement_id::text,'')
 		   FROM orders WHERE id=$1`, orderID).
 		Scan(&customerID, &riderID, &totalKobo, &tipKobo, &settlementID); err != nil {
-		return nil, fmt.Errorf("restaurant: dispute order not found")
+		return nil, errors.New("restaurant: dispute order not found")
 	}
 	// orders.tip_kobo is what the CUSTOMER was charged; it is not proof of what the rider
 	// was PAID. Clamp it to the order total so diverged data can never claw back more than
@@ -165,7 +165,7 @@ func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminI
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: begin dispute refund: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	// Lowercased: the DB backstop trigger takes this SAME lock keyed on
 	// lower(order_id::text), and the two must be byte-identical or they serialise in
 	// separate namespaces and neither protects the other. orderID comes from
@@ -241,7 +241,7 @@ func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminI
 				if _, ok, e := s.postedDisputeRefundKobo(ctx, refundKey); e != nil {
 					return nil, e
 				} else if !ok {
-					return nil, fmt.Errorf("restaurant: dispute refund credit reported duplicate but no entry was posted — retry")
+					return nil, errors.New("restaurant: dispute refund credit reported duplicate but no entry was posted — retry")
 				}
 			}
 		}
@@ -425,7 +425,7 @@ func (s *Service) refundBudgetKobo(ctx context.Context, disputeID string) (int64
 	if err := s.db.QueryRow(ctx,
 		`SELECT total_kobo, COALESCE(tip_kobo,0) FROM orders WHERE id=$1`, orderID).
 		Scan(&totalKobo, &tipKobo); err != nil {
-		return 0, fmt.Errorf("restaurant: dispute order not found")
+		return 0, errors.New("restaurant: dispute order not found")
 	}
 	if tipKobo > totalKobo {
 		tipKobo = totalKobo

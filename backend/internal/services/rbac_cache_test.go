@@ -1,6 +1,7 @@
 package services_test
 
 import (
+	"context"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -18,15 +19,15 @@ type stubRBAC struct {
 	statusErr                           error
 }
 
-func (s *stubRBAC) GetUserStatus(string) (string, error) {
+func (s *stubRBAC) GetUserStatus(context.Context, string) (string, error) {
 	s.statusCalls.Add(1)
 	return "active", s.statusErr
 }
-func (s *stubRBAC) GetUserRoles(string) ([]string, error) {
+func (s *stubRBAC) GetUserRoles(context.Context, string) ([]string, error) {
 	s.rolesCalls.Add(1)
 	return []string{"member"}, nil
 }
-func (s *stubRBAC) GetUserPermissions(_, _, _ string) ([]string, error) {
+func (s *stubRBAC) GetUserPermissions(context.Context, string, string, string) ([]string, error) {
 	s.permsCalls.Add(1)
 	return []string{"wallet.read"}, nil
 }
@@ -36,13 +37,13 @@ func TestCachedRBAC_CachesWithinTTL(t *testing.T) {
 	stub := &stubRBAC{}
 	c := services.NewCachedRBACService(stub, time.Minute)
 	for range 5 {
-		if _, err := c.GetUserStatus("u1"); err != nil {
+		if _, err := c.GetUserStatus(t.Context(), "u1"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := c.GetUserRoles("u1"); err != nil {
+		if _, err := c.GetUserRoles(t.Context(), "u1"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := c.GetUserPermissions("u1", "global", ""); err != nil {
+		if _, err := c.GetUserPermissions(t.Context(), "u1", "global", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -55,11 +56,11 @@ func TestCachedRBAC_CachesWithinTTL(t *testing.T) {
 func TestCachedRBAC_ExpiresAfterTTL(t *testing.T) {
 	stub := &stubRBAC{}
 	c := services.NewCachedRBACService(stub, 20*time.Millisecond)
-	if _, err := c.GetUserStatus("u1"); err != nil {
+	if _, err := c.GetUserStatus(t.Context(), "u1"); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(30 * time.Millisecond)
-	if _, err := c.GetUserStatus("u1"); err != nil {
+	if _, err := c.GetUserStatus(t.Context(), "u1"); err != nil {
 		t.Fatal(err)
 	}
 	if stub.statusCalls.Load() != 2 {
@@ -70,11 +71,11 @@ func TestCachedRBAC_ExpiresAfterTTL(t *testing.T) {
 func TestCachedRBAC_ErrorsNotCached(t *testing.T) {
 	stub := &stubRBAC{statusErr: errors.New("upstream down")}
 	c := services.NewCachedRBACService(stub, time.Minute)
-	if _, err := c.GetUserStatus("u1"); err == nil {
+	if _, err := c.GetUserStatus(t.Context(), "u1"); err == nil {
 		t.Fatal("want upstream error")
 	}
 	stub.statusErr = nil
-	v, err := c.GetUserStatus("u1")
+	v, err := c.GetUserStatus(t.Context(), "u1")
 	if err != nil || v != "active" {
 		t.Fatalf("second call should re-fetch after error: v=%q err=%v", v, err)
 	}
@@ -86,13 +87,13 @@ func TestCachedRBAC_ErrorsNotCached(t *testing.T) {
 func TestCachedRBAC_MutationInvalidates(t *testing.T) {
 	stub := &stubRBAC{}
 	c := services.NewCachedRBACService(stub, time.Minute)
-	if _, err := c.GetUserStatus("u1"); err != nil {
+	if _, err := c.GetUserStatus(t.Context(), "u1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.SuspendUser("u1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.GetUserStatus("u1"); err != nil {
+	if _, err := c.GetUserStatus(t.Context(), "u1"); err != nil {
 		t.Fatal(err)
 	}
 	if stub.statusCalls.Load() != 2 {

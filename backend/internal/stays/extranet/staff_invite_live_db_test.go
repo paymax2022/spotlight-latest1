@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/url"
 	"os"
 	"strings"
@@ -87,9 +88,9 @@ func newInviteFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inv
 
 	t.Cleanup(func() {
 		bg := context.Background()
-		pool.Exec(bg, `DELETE FROM public.stays_staff_invite WHERE property_id = $1`, property)
-		pool.Exec(bg, `DELETE FROM public.stays_hotelier_profile WHERE property_id = $1`, property)
-		pool.Exec(bg, `DELETE FROM public.stays_property WHERE id = $1`, property)
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_staff_invite WHERE property_id = $1`, property)
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_hotelier_profile WHERE property_id = $1`, property)
+		_, _ = pool.Exec(bg, `DELETE FROM public.stays_property WHERE id = $1`, property)
 	})
 	return inviteFixture{svc: svc, pool: pool, mailer: mailer, owner: owner, property: property}
 }
@@ -105,7 +106,9 @@ func seedPlatformUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ema
 		t.Fatalf("seed auth user: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, id)
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM public.platform_users WHERE id = $1`, id) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM public.platform_users WHERE id = $1`, id)
+	})
 	return id
 }
 
@@ -144,7 +147,7 @@ func TestLiveDB_InviteExistingPlatformUserGrantsImmediately(t *testing.T) {
 	}
 
 	var role, status string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT role, status FROM public.stays_hotelier_profile WHERE user_id = $1 AND property_id = $2`,
 		invitee, f.property).Scan(&role, &status); err != nil {
 		t.Fatalf("read grant: %v", err)
@@ -161,7 +164,7 @@ func TestLiveDB_InviteExistingPlatformUserGrantsImmediately(t *testing.T) {
 	}
 
 	var pending int
-	pool.QueryRow(ctx, `SELECT count(*) FROM public.stays_staff_invite WHERE property_id = $1`, f.property).Scan(&pending)
+	_ = pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM public.stays_staff_invite WHERE property_id = $1`, f.property).Scan(&pending)
 	if pending != 0 {
 		t.Errorf("pending invite rows = %d, want 0 — an immediate grant needs no invite record", pending)
 	}
@@ -188,7 +191,7 @@ func TestLiveDB_InviteUnknownEmailStoresOnlyTheTokenHash(t *testing.T) {
 	token := acceptTokenFromURL(t, f.mailer.invites[0].acceptURL)
 
 	var storedHash, status string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT token_hash, status FROM public.stays_staff_invite WHERE property_id = $1 AND email = $2`,
 		f.property, strings.ToLower(email)).Scan(&storedHash, &status); err != nil {
 		t.Fatalf("read invite row: %v", err)
@@ -218,13 +221,13 @@ func TestLiveDB_AcceptStaffInviteBindsToEmailAndIsSingleUse(t *testing.T) {
 	token := acceptTokenFromURL(t, f.mailer.invites[0].acceptURL)
 
 	invitee := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, invitee, email); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, invitee, email); err != nil {
 		t.Fatalf("seed invitee: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, invitee)
 
 	// A forwarded link is useless to anyone else: wrong email, right token.
-	if err := f.svc.AcceptStaffInvite(ctx, invitee, "someone-else@test.test", token); err != ErrInviteNotValid {
+	if err := f.svc.AcceptStaffInvite(ctx, invitee, "someone-else@test.test", token); !errors.Is(err, ErrInviteNotValid) {
 		t.Errorf("accept with mismatched email = %v, want ErrInviteNotValid", err)
 	}
 
@@ -234,7 +237,7 @@ func TestLiveDB_AcceptStaffInviteBindsToEmailAndIsSingleUse(t *testing.T) {
 	}
 
 	var role, status string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT role, status FROM public.stays_hotelier_profile WHERE user_id = $1 AND property_id = $2`,
 		invitee, f.property).Scan(&role, &status); err != nil {
 		t.Fatalf("read grant: %v", err)
@@ -244,14 +247,14 @@ func TestLiveDB_AcceptStaffInviteBindsToEmailAndIsSingleUse(t *testing.T) {
 	}
 
 	var inviteStatus string
-	pool.QueryRow(ctx, `SELECT status FROM public.stays_staff_invite WHERE property_id = $1 AND email = $2`,
+	_ = pool.QueryRow(context.WithoutCancel(ctx), `SELECT status FROM public.stays_staff_invite WHERE property_id = $1 AND email = $2`,
 		f.property, strings.ToLower(email)).Scan(&inviteStatus)
 	if inviteStatus != "ACCEPTED" {
 		t.Errorf("invite status = %s, want ACCEPTED", inviteStatus)
 	}
 
 	// Replaying the same token must not resurrect the grant if it were later revoked.
-	if err := f.svc.AcceptStaffInvite(ctx, invitee, email, token); err != ErrInviteNotValid {
+	if err := f.svc.AcceptStaffInvite(ctx, invitee, email, token); !errors.Is(err, ErrInviteNotValid) {
 		t.Errorf("second accept of the same token = %v, want ErrInviteNotValid", err)
 	}
 }
@@ -268,19 +271,19 @@ func TestLiveDB_AcceptStaffInviteRejectsAnExpiredInvite(t *testing.T) {
 	}
 	token := acceptTokenFromURL(t, f.mailer.invites[0].acceptURL)
 
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`UPDATE public.stays_staff_invite SET expires_at = now() - interval '1 hour' WHERE property_id = $1 AND email = $2`,
 		f.property, strings.ToLower(email)); err != nil {
 		t.Fatalf("backdate expiry: %v", err)
 	}
 
 	invitee := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, invitee, email); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, invitee, email); err != nil {
 		t.Fatalf("seed invitee: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, invitee)
 
-	if err := f.svc.AcceptStaffInvite(ctx, invitee, email, token); err != ErrInviteNotValid {
+	if err := f.svc.AcceptStaffInvite(ctx, invitee, email, token); !errors.Is(err, ErrInviteNotValid) {
 		t.Errorf("accept of an expired invite = %v, want ErrInviteNotValid", err)
 	}
 }
@@ -295,7 +298,7 @@ func TestLiveDB_InviteRejectsOwnerRole(t *testing.T) {
 		t.Error("inviting OWNER succeeded — it must mirror the property creator only")
 	}
 	var n int
-	pool.QueryRow(ctx, `SELECT count(*) FROM public.stays_staff_invite WHERE property_id = $1`, f.property).Scan(&n)
+	_ = pool.QueryRow(context.WithoutCancel(ctx), `SELECT count(*) FROM public.stays_staff_invite WHERE property_id = $1`, f.property).Scan(&n)
 	if n != 0 {
 		t.Errorf("invite rows created for a rejected OWNER invite = %d, want 0", n)
 	}
@@ -308,12 +311,12 @@ func TestLiveDB_InviteRequiresOwnerOrManager(t *testing.T) {
 	f := newInviteFixture(t, ctx, pool)
 
 	stranger := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, stranger, stranger+"@seed.test"); err != nil {
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, stranger, stranger+"@seed.test"); err != nil {
 		t.Fatalf("seed stranger: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, stranger)
 
-	if _, err := f.svc.InviteStaffByEmail(ctx, stranger, f.property, "", "nobody@stranger-test.test", "READ_ONLY"); err != ErrForbidden {
+	if _, err := f.svc.InviteStaffByEmail(ctx, stranger, f.property, "", "nobody@stranger-test.test", "READ_ONLY"); !errors.Is(err, ErrForbidden) {
 		t.Errorf("invite by a non-staff caller = %v, want ErrForbidden", err)
 	}
 }

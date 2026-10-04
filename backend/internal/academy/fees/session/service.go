@@ -7,8 +7,9 @@ import (
 
 	"spotlight/backend/go-common/timeutil"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/go-common/ptr"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Service owns AcademicSession + Class CRUD for a school. Session status changes go

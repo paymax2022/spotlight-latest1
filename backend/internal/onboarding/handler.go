@@ -2,8 +2,6 @@ package onboarding
 
 import (
 	"errors"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
@@ -12,6 +10,9 @@ import (
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 	"strconv"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Handler exposes the onboarding API over Gin.
@@ -28,8 +29,7 @@ var errMap = httperr.New(http.StatusInternalServerError,
 )
 
 func (h *Handler) fail(c *gin.Context, err error) {
-	var ve *ValidationError
-	if errors.As(err, &ve) {
+	if ve, ok := errors.AsType[*ValidationError](err); ok {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation failed", "fields": ve.Fields})
 		return
 	}

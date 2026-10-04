@@ -33,7 +33,7 @@ func TestModerationQueue_ReturnsPendingListings(t *testing.T) {
 		t.Fatalf("CreateListing: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.mkt_listings WHERE id=$1`, l.ID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.mkt_listings WHERE id=$1`, l.ID)
 	})
 
 	// A seller with no trust profile does not auto-approve, so the listing lands
@@ -67,7 +67,7 @@ func TestModerationQueue_RespectsLimitAndOffset(t *testing.T) {
 	ctx := context.Background()
 	cat := seedCategoryInMarket(t, ctx, pool, "NG")
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		l, err := svc.CreateListing(ctx, uuid.NewString(), mkt.CreateListingInput{
 			CategoryID:  cat,
 			Title:       "Queue paging fixture",
@@ -80,7 +80,7 @@ func TestModerationQueue_RespectsLimitAndOffset(t *testing.T) {
 		}
 		id := l.ID
 		t.Cleanup(func() {
-			_, _ = pool.Exec(context.Background(), `DELETE FROM public.mkt_listings WHERE id=$1`, id)
+			_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.mkt_listings WHERE id=$1`, id)
 		})
 		if _, err := pool.Exec(ctx,
 			`UPDATE public.mkt_listings SET status='pending_review' WHERE id=$1`, id); err != nil {

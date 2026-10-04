@@ -219,7 +219,7 @@ func (s *Service) CreateTicket(ctx context.Context, userID string, in CreateTick
 	if err != nil {
 		return "", fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `INSERT INTO assoc_support_tickets (id, membership_id, subject, category, status) VALUES ($1,$2,$3,$4,'OPEN')`,
 		id, mid, in.Subject, in.Category); err != nil {
 		return "", fmt.Errorf("association: create ticket: %w", err)
@@ -598,7 +598,7 @@ func (s *Service) SetAiNoteStatus(ctx context.Context, adminID, noteID, status, 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `UPDATE assoc_ai_notes SET status=$2 WHERE id=$1`, noteID, status); err != nil {
 		return fmt.Errorf("association: ai note status: %w", err)
 	}
@@ -713,7 +713,7 @@ func (s *Service) SubmitApplication(ctx context.Context, userID string, d JoinDr
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const q = `INSERT INTO assoc_applications (id, organisation_id, user_id, category_id, chapter_id, sponsor_name, status)
 	           VALUES ($1,$2,$3,$4,$5,$6,$7)`
@@ -878,7 +878,7 @@ func (s *Service) ImportPreview(ctx context.Context, adminID, orgID, fileName st
 // that is already CONFIRMED returns its recorded result without re-importing.
 func (s *Service) ConfirmImport(ctx context.Context, adminID, batchID string, sendInvites bool) (*ImportResult, error) {
 	if strings.TrimSpace(batchID) == "" {
-		return nil, fmt.Errorf("association: batchId is required")
+		return nil, errors.New("association: batchId is required")
 	}
 	var orgID, status string
 	var rowsJSON []byte
@@ -911,7 +911,7 @@ func (s *Service) ConfirmImport(ctx context.Context, adminID, batchID string, se
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	imported, skipped, invited = 0, 0, 0
 	for _, row := range rows {
@@ -994,10 +994,10 @@ func validateOrgIdentity(d *OrgDraft) error {
 	d.LogoURL = strings.TrimSpace(d.LogoURL)
 
 	if d.LogoURL == "" {
-		return fmt.Errorf("association: a logo is required — provide a logo URL or upload one")
+		return errors.New("association: a logo is required — provide a logo URL or upload one")
 	}
 	if d.FoundedYear == nil {
-		return fmt.Errorf("association: founded year is required")
+		return errors.New("association: founded year is required")
 	}
 	thisYear := time.Now().Year()
 	if *d.FoundedYear < 1800 || *d.FoundedYear > thisYear {
@@ -1008,7 +1008,7 @@ func validateOrgIdentity(d *OrgDraft) error {
 
 func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgDraft) (*PublishResult, error) {
 	if !d.AcceptedTerms {
-		return nil, fmt.Errorf("association: terms must be accepted")
+		return nil, errors.New("association: terms must be accepted")
 	}
 	if err := validateOrgIdentity(&d); err != nil {
 		return nil, err
@@ -1033,7 +1033,7 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	graceDays := 30
 	if d.Restrictions.GraceDays != nil && *d.Restrictions.GraceDays >= 0 {

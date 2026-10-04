@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	referralevents "spotlight/backend/internal/referral/events"
@@ -40,7 +41,7 @@ func (s *Service) ListRules(ctx context.Context) ([]Rule, error) { return s.repo
 
 func (s *Service) UpsertRule(ctx context.Context, in RuleInput) (*Rule, error) {
 	if in.Code == "" || in.Name == "" || in.RuleType == "" {
-		return nil, fmt.Errorf("risk: rule code, name and rule_type are required")
+		return nil, errors.New("risk: rule code, name and rule_type are required")
 	}
 	switch in.RuleType {
 	case TypeKYCDedup, TypeDevice, TypeVelocity, TypeCohort, TypeSelfReferral, TypeBlocklist:
@@ -60,7 +61,7 @@ func (s *Service) SetRuleEnabled(ctx context.Context, id string, enabled bool) e
 // pending). NOTE: no raw PII is read — only hashes and ids.
 func (s *Service) Evaluate(ctx context.Context, in EvaluateInput) (*EvaluateResult, error) {
 	if in.SubjectID == "" {
-		return nil, fmt.Errorf("risk: evaluate requires a subject id")
+		return nil, errors.New("risk: evaluate requires a subject id")
 	}
 	rules, err := s.repo.EnabledRules(ctx)
 	if err != nil {
@@ -226,7 +227,7 @@ func (s *Service) ApproveReview(ctx context.Context, itemID, decidedBy string) e
 		return err
 	}
 	if item == nil {
-		return fmt.Errorf("risk: review item not found")
+		return errors.New("risk: review item not found")
 	}
 	if err := s.repo.DecideReview(ctx, itemID, ReviewApproved, decidedBy); err != nil {
 		return err
@@ -249,7 +250,7 @@ func (s *Service) RejectReview(ctx context.Context, itemID, decidedBy string) er
 		return err
 	}
 	if item == nil {
-		return fmt.Errorf("risk: review item not found")
+		return errors.New("risk: review item not found")
 	}
 	if err := s.repo.DecideReview(ctx, itemID, ReviewClawedBack, decidedBy); err != nil {
 		return err
@@ -273,13 +274,13 @@ func (s *Service) ListReviewQueue(ctx context.Context, status string) ([]ReviewI
 // reason code is audited; no PII.
 func (s *Service) ExecuteClawback(ctx context.Context, in ClawbackInput, actorID string) error {
 	if in.RewardID == "" {
-		return fmt.Errorf("risk: clawback requires reward_id")
+		return errors.New("risk: clawback requires reward_id")
 	}
 	if in.IdempotencyKey == "" {
-		return fmt.Errorf("risk: clawback requires an idempotency key")
+		return errors.New("risk: clawback requires an idempotency key")
 	}
 	if s.reward == nil {
-		return fmt.Errorf("risk: reward ledger unavailable")
+		return errors.New("risk: reward ledger unavailable")
 	}
 	if err := s.reward.ClawBack(ctx, in.RewardID, "clawback:"+in.IdempotencyKey); err != nil {
 		return fmt.Errorf("risk: execute clawback: %w", err)
@@ -318,7 +319,7 @@ func (s *Service) CaseWorkbench(ctx context.Context, caseID string) (*Case, []Al
 		return nil, nil, err
 	}
 	if c == nil {
-		return nil, nil, fmt.Errorf("risk: case not found")
+		return nil, nil, errors.New("risk: case not found")
 	}
 	alerts, err := s.repo.CaseAlerts(ctx, caseID)
 	if err != nil {
@@ -338,7 +339,7 @@ func (s *Service) UpdateCaseStatus(ctx context.Context, id, status, resolution, 
 
 func (s *Service) AddBlocklist(ctx context.Context, in BlocklistInput, addedBy string) (*BlocklistEntry, error) {
 	if in.EntryType == "" || in.EntryValue == "" {
-		return nil, fmt.Errorf("risk: blocklist entry_type and entry_value are required")
+		return nil, errors.New("risk: blocklist entry_type and entry_value are required")
 	}
 	switch in.EntryType {
 	case "user", "identity_hash", "device_hash", "ip_hash", "email_hash":
@@ -432,7 +433,7 @@ func (s *Service) ReportAbuse(ctx context.Context, reporterID string, in ReportI
 		}
 	}
 	if in.TargetUserID == reporterID {
-		return nil, fmt.Errorf("risk: cannot report yourself")
+		return nil, errors.New("risk: cannot report yourself")
 	}
 	reason := in.ReasonCode
 	if reason == "" {
@@ -458,9 +459,7 @@ func (s *Service) audit(ctx context.Context, eventType, userID, rewardID, referr
 		return
 	}
 	payload := map[string]any{}
-	for k, v := range extra {
-		payload[k] = v
-	}
+	maps.Copy(payload, extra)
 	if rewardID != "" {
 		payload["reward_id"] = rewardID
 	}

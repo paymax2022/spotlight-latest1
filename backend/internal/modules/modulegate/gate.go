@@ -22,13 +22,14 @@ package modulegate
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
 	"log"
 	"net/http"
 	"spotlight/backend/internal/modules"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // StateSource is the registry read the gate depends on. An interface so the middleware

@@ -29,6 +29,7 @@ package spotlightwealth_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -209,7 +210,7 @@ func TestLiveDB_CompleteChallenge_RequiresJoinFirst(t *testing.T) {
 	stranger := uuid.New().String()
 
 	_, err := svc.CompleteChallenge(ctx, stranger, challengeID, newIdemKey(t, "never-joined"))
-	if err != spotlightwealth.ErrForbidden {
+	if !errors.Is(err, spotlightwealth.ErrForbidden) {
 		t.Fatalf("CompleteChallenge without joining first: err = %v, want ErrForbidden", err)
 	}
 
@@ -238,7 +239,7 @@ func TestLiveDB_CompleteChallenge_RequiresIdempotencyKey(t *testing.T) {
 	}
 
 	_, err := svc.CompleteChallenge(ctx, userID, challengeID, "")
-	if err != spotlightwealth.ErrBadInput {
+	if !errors.Is(err, spotlightwealth.ErrBadInput) {
 		t.Fatalf("CompleteChallenge with empty Idempotency-Key: err = %v, want ErrBadInput", err)
 	}
 
@@ -303,7 +304,7 @@ func TestLiveDB_JoinChallenge_RejectsEndedChallenge(t *testing.T) {
 	userID := seedUser(t, ctx, pool)
 
 	_, err := svc.JoinChallenge(ctx, userID, challengeID)
-	if err != spotlightwealth.ErrChallengeEnded {
+	if !errors.Is(err, spotlightwealth.ErrChallengeEnded) {
 		t.Fatalf("JoinChallenge on an ended challenge: err = %v, want ErrChallengeEnded", err)
 	}
 

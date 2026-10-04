@@ -105,7 +105,9 @@ func TestLiveDB_Withdraw_ExactAvailableAmountSucceeds(t *testing.T) {
 		"11111111-1111-1111-1111-111111111111", creatorID); err != nil {
 		t.Fatalf("seed bank account: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(ctx, `DELETE FROM cf_bank_accounts WHERE user_id = $1`, creatorID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_bank_accounts WHERE user_id = $1`, creatorID)
+	})
 
 	result, err := walletSvc.SubmitWithdrawal(ctx, creatorID, campaignID, "cf-uat-sec004-exact-"+campaignID,
 		cfwallet.WithdrawalRequestInput{
@@ -154,8 +156,8 @@ func TestLiveDB_Contribute_IdempotencyReplayWithDifferentAmountReturnsOriginal(t
 		t.Fatalf("seed campaign: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(ctx, `DELETE FROM contributions WHERE campaign_id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM contributions WHERE campaign_id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM campaigns WHERE id = $1`, campaignID)
 	})
 
 	// Fund the contributor generously — enough for either amount below.

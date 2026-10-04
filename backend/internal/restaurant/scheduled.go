@@ -2,6 +2,7 @@ package restaurant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -26,7 +27,7 @@ func validateScheduledFor(now, slot time.Time, hours []BusinessHour, loc *time.L
 		return fmt.Errorf("restaurant: a scheduled slot may be at most %v out", scheduledHorizon)
 	}
 	if len(hours) > 0 && !isOpenAt(hours, slot, loc) {
-		return fmt.Errorf("restaurant: the restaurant is closed at the requested slot")
+		return errors.New("restaurant: the restaurant is closed at the requested slot")
 	}
 	return nil
 }

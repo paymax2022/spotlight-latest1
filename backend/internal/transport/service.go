@@ -202,7 +202,7 @@ func (s *Service) SetDriverStatus(ctx context.Context, userID string, status Dri
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("transport: driver not found")
+		return errors.New("transport: driver not found")
 	}
 	return nil
 }
@@ -251,7 +251,7 @@ func (s *Service) RequestTrip(ctx context.Context, riderID string, req RequestTr
 func (s *Service) AcceptTrip(ctx context.Context, tripID, driverUserID string) error {
 	var driverID string
 	if err := s.db.QueryRow(ctx, `SELECT id FROM drivers WHERE user_id=$1 AND status='online' AND verification_status='approved'`, driverUserID).Scan(&driverID); err != nil {
-		return fmt.Errorf("transport: driver not found, not online, or not approved")
+		return errors.New("transport: driver not found, not online, or not approved")
 	}
 	const q = `UPDATE trips SET status='accepted', phase='driver_assigned', driver_id=$1 WHERE id=$2 AND status='requested'`
 	tag, err := s.db.Exec(ctx, q, driverID, tripID)
@@ -259,9 +259,9 @@ func (s *Service) AcceptTrip(ctx context.Context, tripID, driverUserID string) e
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("transport: trip not available for acceptance")
+		return errors.New("transport: trip not available for acceptance")
 	}
-	s.db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, driverID)
+	_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, driverID)
 	s.recordEvent(ctx, tripID, "driver_assigned", driverUserID, PhaseRequested, PhaseDriverAssigned, nil)
 	return nil
 }
@@ -285,7 +285,7 @@ func (s *Service) UpdateTripStatus(ctx context.Context, tripID, actorUserID stri
 			return codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
 		var ownerUser string
-		s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *trip.DriverID).Scan(&ownerUser)
+		_ = s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *trip.DriverID).Scan(&ownerUser)
 		if !tripActorAllowed(actorUserID, trip.RiderID, &ownerUser) {
 			return codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
@@ -319,7 +319,7 @@ func (s *Service) UpdateTripStatus(ctx context.Context, tripID, actorUserID stri
 			s.markSettlementPending(ctx, &trip, err)
 			return fmt.Errorf("transport: trip completed but settlement failed (marked pending for reconciliation): %w", err)
 		}
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *trip.DriverID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *trip.DriverID)
 	}
 	if newStatus == TripCancelled {
 		// Defense-in-depth, matching refundTrip: never wallet-credit a refund for
@@ -334,7 +334,7 @@ func (s *Service) UpdateTripStatus(ctx context.Context, tripID, actorUserID stri
 			return fmt.Errorf("transport: refund fare: %w", err)
 		}
 		if trip.DriverID != nil {
-			s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *trip.DriverID)
+			_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *trip.DriverID)
 		}
 	}
 	return nil
@@ -400,7 +400,7 @@ func (s *Service) transitionPhase(ctx context.Context, tx pgx.Tx, tripID, actorI
 func (s *Service) settleTrip(ctx context.Context, t *tripRow) error {
 	var driverUserID, tier string
 	if t.DriverID != nil {
-		s.db.QueryRow(ctx, `SELECT user_id, commission_tier FROM drivers WHERE id=$1`, *t.DriverID).Scan(&driverUserID, &tier)
+		_ = s.db.QueryRow(ctx, `SELECT user_id, commission_tier FROM drivers WHERE id=$1`, *t.DriverID).Scan(&driverUserID, &tier)
 	}
 	comm, err := s.commissionForTier(ctx, tier)
 	if err != nil {
@@ -499,7 +499,7 @@ func (s *Service) markSettlementPending(ctx context.Context, t *tripRow, cause e
 	// if the migration has not yet added it this UPDATE affects 0 rows and is a
 	// harmless no-op (the trip_events marker above is still durable). Expected
 	// column: trips.settlement_status TEXT DEFAULT 'settled'.
-	s.db.Exec(ctx, `UPDATE trips SET settlement_status=$2, updated_at=NOW() WHERE id=$1`, t.ID, settlementPendingStatus)
+	_, _ = s.db.Exec(ctx, `UPDATE trips SET settlement_status=$2, updated_at=NOW() WHERE id=$1`, t.ID, settlementPendingStatus)
 }
 
 // generatePin returns a deterministic-length random 4-digit trip PIN.
@@ -542,7 +542,7 @@ func (s *Service) recordEvent(ctx context.Context, tripID, eventType, actorID st
 	const q = `
 		INSERT INTO trip_events (trip_id, event_type, actor_id, from_phase, to_phase, metadata)
 		VALUES ($1,$2,$3,$4,$5,$6)`
-	s.db.Exec(ctx, q, tripID, eventType, dbutil.NullStr(actorID), nullPhase(from), nullPhase(to), metaJSON)
+	_, _ = s.db.Exec(ctx, q, tripID, eventType, dbutil.NullStr(actorID), nullPhase(from), nullPhase(to), metaJSON)
 }
 
 // recordEventTx inserts a trip_events row inside a transaction (atomic with the transition).
@@ -652,7 +652,7 @@ func (s *Service) ReconcileStuckSettlements(ctx context.Context, graceInterval t
 		reconciled++
 		// Clear the crash-safety mirror now that escrow is released. Best-effort:
 		// the settlements table already reflects the truth. A legal CHECK value.
-		s.db.Exec(ctx, `UPDATE trips SET settlement_status='settled', updated_at=NOW() WHERE id=$1`, id)
+		_, _ = s.db.Exec(ctx, `UPDATE trips SET settlement_status='settled', updated_at=NOW() WHERE id=$1`, id)
 		log.Printf("[transport] reconcile settled stranded escrow trip=%s", id)
 	}
 	return reconciled, nil
@@ -755,9 +755,9 @@ func (s *Service) CreateIncident(ctx context.Context, userID string, incType str
 	if tripID != nil && incType == "sos" {
 		var t tripRow
 		if err := s.loadTrip(ctx, *tripID, &t); err == nil {
-			s.db.Exec(ctx, `UPDATE trips SET safety_status='sos' WHERE id=$1`, *tripID)
+			_, _ = s.db.Exec(ctx, `UPDATE trips SET safety_status='sos' WHERE id=$1`, *tripID)
 			if canTransition(t.Phase, PhaseSafetyHold) {
-				s.db.Exec(ctx, `UPDATE trips SET phase='safety_hold', updated_at=NOW() WHERE id=$1`, *tripID)
+				_, _ = s.db.Exec(ctx, `UPDATE trips SET phase='safety_hold', updated_at=NOW() WHERE id=$1`, *tripID)
 				s.recordEvent(ctx, *tripID, "safety_hold", userID, t.Phase, PhaseSafetyHold, map[string]any{"incident_id": inc.ID})
 			}
 		}
@@ -972,7 +972,7 @@ func (s *Service) CompletionSummary(ctx context.Context, tripID string) (map[str
 	out := map[string]any{"paymentMethod": paymentMethod, "fareKobo": fareKobo}
 	if isCashPayment(paymentMethod) && driverID != nil {
 		var tier string
-		s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, *driverID).Scan(&tier)
+		_ = s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, *driverID).Scan(&tier)
 		if fee, err := s.platformFeeKobo(ctx, tier, fareKobo); err == nil {
 			out["platformFeeKobo"] = fee
 		}

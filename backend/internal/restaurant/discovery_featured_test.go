@@ -36,7 +36,7 @@ func TestDiscoveryOrderByPutsFeaturedFirstOnEverySort(t *testing.T) {
 		// Featured has to be the FIRST ordering term, otherwise rating or
 		// distance decides the page and the paid slot is merely a tiebreak.
 		after := strings.TrimPrefix(got, " ORDER BY ")
-		first := strings.SplitN(after, ", ", 2)[0]
+		first, _, _ := strings.Cut(after, ", ")
 		if !strings.Contains(first, "RESTAURANT_TOP") {
 			t.Errorf("sort %q ranks featured after another term; first term = %q", tc.name, first)
 		}

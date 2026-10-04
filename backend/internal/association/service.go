@@ -243,7 +243,7 @@ func (s *Service) PayInvoice(ctx context.Context, userID, invoiceID string, req 
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	paymentID := uuid.New().String()
 	const insPayment = `
@@ -351,7 +351,7 @@ func (s *Service) DecideApplication(ctx context.Context, adminID, appID string, 
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `UPDATE assoc_applications SET status=$2 WHERE id=$1`, appID, next); err != nil {
 		return fmt.Errorf("association: update application: %w", err)
@@ -831,7 +831,7 @@ func (s *Service) requireCap(ctx context.Context, userID string, check func(Admi
 }
 
 // capabilitiesFor maps a role to what it may do. Named fields, not positional:
-// the literals used to be AdminCapabilities{true, true, true, true}, which says
+// the literals used to be AdminCapabilities{true, true, true}, which says
 // nothing about which flag is which and silently shifts meaning the moment a
 // field is added.
 func capabilitiesFor(role string) AdminCapabilities {
@@ -1390,12 +1390,7 @@ func (s *Service) ListAdminOrganisations(ctx context.Context, adminID string, f 
 			JOIN assoc_memberships am ON am.id=ar.membership_id
 			WHERE am.user_id=$%d AND ar.role != 'NONE')`, len(args))
 	}
-	q := fmt.Sprintf(`
-		SELECT o.id, o.name, o.acronym, o.category, o.status, o.published, o.verified,
-		       (SELECT count(*) FROM assoc_memberships m WHERE m.organisation_id=o.id),
-		       o.created_at::text
-		FROM assoc_organisations o
-		WHERE %s`, scope)
+	q := "\n\t\tSELECT o.id, o.name, o.acronym, o.category, o.status, o.published, o.verified,\n\t\t       (SELECT count(*) FROM assoc_memberships m WHERE m.organisation_id=o.id),\n\t\t       o.created_at::text\n\t\tFROM assoc_organisations o\n\t\tWHERE " + scope
 
 	if f.Search != "" {
 		args = append(args, "%"+f.Search+"%")

@@ -94,7 +94,7 @@ func TestConcurrentConversionsNoOverdraw(t *testing.T) {
 
 	const n = 8
 	quotes := make([]string, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		q, e := svc.CreateQuote(ctx, cust, "retail", QuoteRequest{Source: "USD", Destination: "NGN", Amount: 100_00, Intent: IntentConversion, Lock: true})
 		if e != nil {
 			t.Fatalf("quote %d: %v", i, e)
@@ -104,7 +104,7 @@ func TestConcurrentConversionsNoOverdraw(t *testing.T) {
 
 	var success int32
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

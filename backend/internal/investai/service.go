@@ -155,7 +155,7 @@ func (s *Service) appendMessage(ctx context.Context, m *ChatMessage) error {
 		return err
 	}
 	// Touch the session so ListSessions orders by recency.
-	s.db.Exec(ctx, `UPDATE investai_sessions SET updated_at=NOW() WHERE id=$1`, m.SessionID)
+	_, _ = s.db.Exec(ctx, `UPDATE investai_sessions SET updated_at=NOW() WHERE id=$1`, m.SessionID)
 	return nil
 }
 

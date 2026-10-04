@@ -19,6 +19,7 @@ import (
 // quietly returning a zero value.
 type denyAllRBAC struct {
 	services.RBACService
+
 	asked []string
 }
 
@@ -61,7 +62,7 @@ func TestRegisterAdmin_EveryRouteRequiresPermission(t *testing.T) {
 		t.Run(ri.Method+" "+ri.Path, func(t *testing.T) {
 			// Fill in :params so the request actually matches this route.
 			path := ri.Path
-			for _, seg := range strings.Split(ri.Path, "/") {
+			for seg := range strings.SplitSeq(ri.Path, "/") {
 				if strings.HasPrefix(seg, ":") {
 					path = strings.Replace(path, seg, "11111111-1111-1111-1111-111111111111", 1)
 				}
@@ -69,7 +70,7 @@ func TestRegisterAdmin_EveryRouteRequiresPermission(t *testing.T) {
 
 			before := len(rbac.asked)
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest(ri.Method, path, strings.NewReader("{}"))
+			req := httptest.NewRequestWithContext(t.Context(), ri.Method, path, strings.NewReader("{}"))
 			req.Header.Set("Content-Type", "application/json")
 			// An ungated route reaches its handler with a nil pool: it panics, or it
 			// answers 2xx/4xx/5xx. Any of those fails this assertion, which is the point.
@@ -112,7 +113,7 @@ func TestRegisterAdmin_ReadsAndWritesUseDistinctPermissions(t *testing.T) {
 			RegisterAdmin(grp, nil, nil, nil, rbac)
 
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader("{}"))
+			req := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader("{}"))
 			req.Header.Set("Content-Type", "application/json")
 			r.ServeHTTP(w, req)
 

@@ -20,12 +20,12 @@ import (
 )
 
 type AuthService interface {
-	RegisterUser(in domain.RegisterRequest) (*RegisterResult, error)
-	LoginUser(in domain.LoginRequest) (map[string]any, error)
+	RegisterUser(ctx context.Context, in domain.RegisterRequest) (*RegisterResult, error)
+	LoginUser(ctx context.Context, in domain.LoginRequest) (map[string]any, error)
 	LogoutUser(accessToken string) error
-	RequestPasswordReset(email string) error
-	ChangePassword(accessToken, currentPassword, newPassword string) error
-	CompleteProfile(userID string, profileType string, metadata map[string]any) error
+	RequestPasswordReset(ctx context.Context, email string) error
+	ChangePassword(ctx context.Context, accessToken, currentPassword, newPassword string) error
+	CompleteProfile(ctx context.Context, userID string, profileType string, metadata map[string]any) error
 }
 
 // gotrueHTTPClient bounds the direct GoTrue calls in this file (signup,
@@ -106,10 +106,10 @@ func extractSignupUserID(body []byte) string { return parseSignupResponse(body).
 // admin creation path — which GoTrue does not gate for us — refuses on its behalf.
 var ErrSignupDisabled = errors.New("signups are disabled")
 
-func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, error) {
+func (s *authService) RegisterUser(ctx context.Context, in domain.RegisterRequest) (*RegisterResult, error) {
 	// Only when the client actually sent it — see domain.RegisterRequest.
 	if strings.TrimSpace(in.ConfirmPassword) != "" && in.Password != in.ConfirmPassword {
-		return nil, fmt.Errorf("password confirmation mismatch")
+		return nil, errors.New("password confirmation mismatch")
 	}
 
 	// full_name is what the on_auth_user_created trigger (handle_new_user) copies
@@ -145,7 +145,7 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, 
 		// policy is enforced here from GoTrue's own /settings — read fresh every
 		// attempt (a cache is a window a just-closed door stays open through).
 		// Fails CLOSED: a settings read that fails signals the create would too.
-		disabled, err := s.supabase.SignupDisabled(context.Background())
+		disabled, err := s.supabase.SignupDisabled(ctx)
 		if err != nil {
 			log.Printf("[auth] register: could not read the project signup policy, refusing: %v", err)
 			return nil, ErrSignupDisabled
@@ -164,18 +164,18 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, 
 	}
 
 	b, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+path, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+path, bytes.NewReader(b))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", s.supabase.APIKey())
+	req.Header.Set("Apikey", s.supabase.APIKey())
 	req.Header.Set("Authorization", "Bearer "+s.supabase.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := gotrueHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
 		// The handler does not echo this: a distinguishable "already registered"
@@ -189,7 +189,7 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, 
 	// the ACCOUNT EXISTS by now, and failing here would send the user back to
 	// register and meet "already registered" on an account that is genuinely theirs.
 	if phone := strings.TrimSpace(in.Phone); phone != "" && result.UserID != "" {
-		if err := s.supabase.REST(http.MethodPatch, "user_profiles",
+		if err := s.supabase.REST(ctx, http.MethodPatch, "user_profiles",
 			map[string]string{"id": "eq." + result.UserID},
 			map[string]any{"phone": phone}, nil); err != nil {
 			log.Printf("[auth] register: profile phone update failed for %s: %v", result.UserID, err)
@@ -207,7 +207,7 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, 
 //
 // Stored phones are not normalised, so the match is on the last 10 digits (see
 // NormalizePhone and the user_profiles_phone_nsn_idx functional index).
-func (s *authService) resolveLoginEmail(identifier, fallbackEmail string) string {
+func (s *authService) resolveLoginEmail(ctx context.Context, identifier, fallbackEmail string) string {
 	id := strings.TrimSpace(identifier)
 	if id == "" {
 		return strings.TrimSpace(strings.ToLower(fallbackEmail))
@@ -219,7 +219,7 @@ func (s *authService) resolveLoginEmail(identifier, fallbackEmail string) string
 	if nsn == "" {
 		return "" // not an email, not a usable phone — no match
 	}
-	return s.phoneToEmail(nsn)
+	return s.phoneToEmail(ctx, nsn)
 }
 
 // phoneToEmail finds the account email behind a normalised 10-digit national number.
@@ -229,9 +229,9 @@ func (s *authService) resolveLoginEmail(identifier, fallbackEmail string) string
 // `like` PostgREST can index-assist), then confirm with the same normalisation the
 // caller used. Returns "" on no match or ambiguity — two accounts sharing a number is
 // a data problem, and guessing between them would sign somebody into the wrong account.
-func (s *authService) phoneToEmail(nsn string) string {
+func (s *authService) phoneToEmail(ctx context.Context, nsn string) string {
 	var rows []map[string]any
-	if err := s.supabase.REST(http.MethodGet, "user_profiles", map[string]string{
+	if err := s.supabase.REST(ctx, http.MethodGet, "user_profiles", map[string]string{
 		"phone":  "like.*" + nsn,
 		"select": "email,phone",
 		"limit":  "5",
@@ -293,12 +293,12 @@ type LoginFailureError struct {
 func (e *LoginFailureError) Error() string { return e.Err.Error() }
 func (e *LoginFailureError) Unwrap() error { return e.Err }
 
-func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) {
-	email := s.resolveLoginEmail(in.Identifier, in.Email)
+func (s *authService) LoginUser(ctx context.Context, in domain.LoginRequest) (map[string]any, error) {
+	email := s.resolveLoginEmail(ctx, in.Identifier, in.Email)
 	if email == "" {
 		// Same error the wrong-password path returns, deliberately: a distinct
 		// "no such account" would leak which phone numbers are registered.
-		return nil, fmt.Errorf("invalid credentials")
+		return nil, errors.New("invalid credentials")
 	}
 	var user *platformUser
 	// fail reports err with whatever identity was resolved before the failure,
@@ -310,7 +310,7 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 		}
 		return f
 	}
-	user, err := s.findPlatformUserByEmail(email)
+	user, err := s.findPlatformUserByEmail(ctx, email)
 	if err == nil {
 		if user == nil {
 			// Zero platform_users rows for an email that is attempting to log in
@@ -336,13 +336,13 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 
 	payload := map[string]any{"email": email, "password": in.Password}
 	b, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/token?grant_type=password", bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/token?grant_type=password", bytes.NewReader(b))
 	if err != nil {
 		// A request that cannot even be built is a configuration failure, not a
 		// credential verdict.
 		return nil, fail(fmt.Errorf("%w: build token request: %w", ErrAuthUnavailable, err))
 	}
-	req.Header.Set("apikey", s.supabase.APIKey())
+	req.Header.Set("Apikey", s.supabase.APIKey())
 	req.Header.Set("Authorization", "Bearer "+s.supabase.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := gotrueHTTPClient.Do(req)
@@ -353,7 +353,7 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 		// against an account whose password was never evaluated.
 		return nil, fail(fmt.Errorf("%w: %w", ErrAuthUnavailable, err))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		errBody, _ := io.ReadAll(resp.Body)
 		var upstream struct {
@@ -382,7 +382,7 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 		if user != nil {
 			// A failed bump must not go silent — an uncounted failure is one
 			// free retry against the lockout budget (AUD-BE-007).
-			if err := s.bumpFailedLogin(user); err != nil {
+			if err := s.bumpFailedLogin(ctx, user); err != nil {
 				log.Printf("bumpFailedLogin(%s): %v", user.ID, err)
 			}
 		}
@@ -410,7 +410,7 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 		if user.Status == "locked" {
 			patch.Status = "active"
 		}
-		_ = s.supabase.REST(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + user.ID}, patch, nil)
+		_ = s.supabase.REST(ctx, http.MethodPatch, "platform_users", map[string]string{"id": "eq." + user.ID}, patch, nil)
 		// Surface the platform user id to the handler (internal hint, stripped
 		// before the response is returned to the client). Lets the session layer
 		// issue a tracked session + run suspicious-login detection.
@@ -420,7 +420,7 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 	// (richer row + rotation metadata), so skip the legacy minimal insert to
 	// avoid duplicate rows. Flag OFF keeps the existing behaviour.
 	if !s.cfg.FeatureSessionHardeningEnabled {
-		_ = s.createSession(user, out)
+		_ = s.createSession(ctx, user, out)
 	}
 	return out, nil
 }
@@ -449,21 +449,21 @@ func (s *authService) LogoutUser(accessToken string) error {
 	return nil
 }
 
-func (s *authService) RequestPasswordReset(email string) error {
+func (s *authService) RequestPasswordReset(ctx context.Context, email string) error {
 	payload := map[string]any{"email": strings.TrimSpace(strings.ToLower(email))}
 	b, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/recover", bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/recover", bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("apikey", s.supabase.APIKey())
+	req.Header.Set("Apikey", s.supabase.APIKey())
 	req.Header.Set("Authorization", "Bearer "+s.supabase.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := gotrueHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// A 4xx is EXPECTED and must stay quiet: Supabase answers this way for an
 	// address with no account, and the endpoint deliberately does not disclose
@@ -482,11 +482,11 @@ func (s *authService) RequestPasswordReset(email string) error {
 	return nil
 }
 
-func (s *authService) ChangePassword(accessToken, currentPassword, newPassword string) error {
+func (s *authService) ChangePassword(ctx context.Context, accessToken, currentPassword, newPassword string) error {
 	if strings.TrimSpace(accessToken) == "" || len(currentPassword) < 8 || len(newPassword) < 8 {
-		return fmt.Errorf("invalid password change payload")
+		return errors.New("invalid password change payload")
 	}
-	authUser, err := s.supabase.AuthUser(accessToken)
+	authUser, err := s.supabase.AuthUser(ctx, accessToken)
 	if err != nil {
 		// AUD-AUTH-001: a definitive rejection means bad/expired token; any
 		// other failure is an auth-backend outage, not an authz verdict.
@@ -506,14 +506,14 @@ func (s *authService) ChangePassword(accessToken, currentPassword, newPassword s
 	if strings.TrimSpace(email) == "" {
 		return errors.New("unauthorized")
 	}
-	if err := s.supabase.VerifyPasswordGrant(email, currentPassword); err != nil {
+	if err := s.supabase.VerifyPasswordGrant(ctx, email, currentPassword); err != nil {
 		return errors.New("current password is incorrect")
 	}
-	if err := s.supabase.AdminSetPassword(context.Background(), userID, newPassword); err != nil {
+	if err := s.supabase.AdminSetPassword(ctx, userID, newPassword); err != nil {
 		return errors.New("password update failed")
 	}
 	// Revoke existing sessions after password change.
-	_ = s.supabase.REST(http.MethodPatch, "auth_sessions", map[string]string{
+	_ = s.supabase.REST(ctx, http.MethodPatch, "auth_sessions", map[string]string{
 		"user_id":    "eq." + userID,
 		"expires_at": "gt." + time.Now().UTC().Format(time.RFC3339),
 		"revoked_at": "is.null",
@@ -540,9 +540,9 @@ var profileMetadataAdminKeys = map[string]bool{
 	"is_admin": true, "permissions": true, "verified": true,
 }
 
-func (s *authService) CompleteProfile(userID string, profileType string, metadata map[string]any) error {
+func (s *authService) CompleteProfile(ctx context.Context, userID string, profileType string, metadata map[string]any) error {
 	if strings.TrimSpace(userID) == "" || strings.TrimSpace(profileType) == "" {
-		return fmt.Errorf("user and profile type are required")
+		return errors.New("user and profile type are required")
 	}
 	if !allowedProfileTypes[profileType] {
 		return errors.New("invalid profile type")
@@ -558,7 +558,7 @@ func (s *authService) CompleteProfile(userID string, profileType string, metadat
 		"metadata":         metadata,
 		"completion_score": 100,
 	}
-	return s.supabase.REST(http.MethodPost, "profiles", map[string]string{}, payload, nil)
+	return s.supabase.REST(ctx, http.MethodPost, "profiles", map[string]string{}, payload, nil)
 }
 
 type platformUser struct {
@@ -580,9 +580,9 @@ type platformUserLoginSuccessPatch struct {
 	Status              string     `json:"status,omitempty"`
 }
 
-func (s *authService) findPlatformUserByEmail(email string) (*platformUser, error) {
+func (s *authService) findPlatformUserByEmail(ctx context.Context, email string) (*platformUser, error) {
 	var rows []map[string]any
-	err := s.supabase.REST(http.MethodGet, "platform_users", map[string]string{
+	err := s.supabase.REST(ctx, http.MethodGet, "platform_users", map[string]string{
 		"email":  "eq." + email,
 		"select": "id,status,failed_login_attempts,locked_until,deleted_at",
 		"limit":  "1",
@@ -604,10 +604,10 @@ func (s *authService) findPlatformUserByEmail(email string) (*platformUser, erro
 func (s *authService) validateLoginStatus(u *platformUser) error {
 	now := time.Now().UTC()
 	if u.DeletedAt != nil {
-		return fmt.Errorf("account unavailable")
+		return errors.New("account unavailable")
 	}
 	if u.Status == "suspended" || u.Status == "deleted" {
-		return fmt.Errorf("account unavailable")
+		return errors.New("account unavailable")
 	}
 	// A nil LockedUntil means "no expiry" (see UnlockUser, which clears it to nil
 	// as part of unlocking), not "not locked" — an indefinite manual lock (e.g.
@@ -615,7 +615,7 @@ func (s *authService) validateLoginStatus(u *platformUser) error {
 	// ever setting LockedUntil) must still refuse. Only a LockedUntil that has
 	// actually passed lets an auto-lockout (which always sets it) self-expire.
 	if u.Status == "locked" && (u.LockedUntil == nil || u.LockedUntil.After(now)) {
-		return fmt.Errorf("account locked")
+		return errors.New("account locked")
 	}
 	return nil
 }
@@ -625,9 +625,9 @@ func (s *authService) validateLoginStatus(u *platformUser) error {
 // The previous read-then-PATCH undercounted concurrent failures — two
 // requests both read n and both wrote n+1 (AUD-BE-007). The lockout decision
 // moved into the function so increment+lock is one statement.
-func (s *authService) bumpFailedLogin(u *platformUser) error {
+func (s *authService) bumpFailedLogin(ctx context.Context, u *platformUser) error {
 	var attempts int
-	if err := s.supabase.RPC("bump_failed_login_attempts", map[string]any{
+	if err := s.supabase.RPC(ctx, "bump_failed_login_attempts", map[string]any{
 		"p_user_id":      u.ID,
 		"p_max_attempts": s.cfg.MaxFailedLoginAttempts,
 		"p_lock_minutes": s.cfg.AccountLockMinutes,
@@ -638,7 +638,7 @@ func (s *authService) bumpFailedLogin(u *platformUser) error {
 	return nil
 }
 
-func (s *authService) createSession(u *platformUser, out map[string]any) error {
+func (s *authService) createSession(ctx context.Context, u *platformUser, out map[string]any) error {
 	if u == nil {
 		return nil
 	}
@@ -651,7 +651,7 @@ func (s *authService) createSession(u *platformUser, out map[string]any) error {
 		expiresIn = 86400
 	}
 	sum := sha256.Sum256([]byte(refresh))
-	return s.supabase.REST(http.MethodPost, "auth_sessions", map[string]string{}, map[string]any{
+	return s.supabase.REST(ctx, http.MethodPost, "auth_sessions", map[string]string{}, map[string]any{
 		"user_id":            u.ID,
 		"refresh_token_hash": hex.EncodeToString(sum[:]),
 		"expires_at":         time.Now().UTC().Add(time.Duration(expiresIn) * time.Second).Format(time.RFC3339),

@@ -35,11 +35,13 @@ func TestGetTasks_OrgScopeIsAdminOnly(t *testing.T) {
 	svc := newLiveAssociationService(pool)
 
 	orgID, adminID, memberID := orgWithAdminAndMember(t, ctx, pool, svc)
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM assoc_tasks WHERE organisation_id=$1`, orgID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_tasks WHERE organisation_id=$1`, orgID)
+	})
 
 	// A task assigned to nobody: it belongs to the organisation, so it must show
 	// up in the tracking view even though it is in no one's inbox.
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO assoc_tasks (organisation_id, title, status, priority, due_date)
 		VALUES ($1, 'Unassigned work', 'ASSIGNED', 'MEDIUM', now() + interval '7 days')`, orgID); err != nil {
 		t.Fatalf("seed task: %v", err)
@@ -89,7 +91,9 @@ func TestGetTasks_OverdueIsDerivedNotStored(t *testing.T) {
 	svc := newLiveAssociationService(pool)
 
 	orgID, adminID, _ := orgWithAdminAndMember(t, ctx, pool, svc)
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM assoc_tasks WHERE organisation_id=$1`, orgID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_tasks WHERE organisation_id=$1`, orgID)
+	})
 
 	cases := []struct {
 		title  string
@@ -110,7 +114,7 @@ func TestGetTasks_OverdueIsDerivedNotStored(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		if _, err := pool.Exec(ctx, `
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `
 			INSERT INTO assoc_tasks (organisation_id, title, status, priority, due_date)
 			VALUES ($1,$2,$3,'MEDIUM',$4)`, orgID, tc.title, tc.status, tc.due); err != nil {
 			t.Fatalf("seed %q: %v", tc.title, err)

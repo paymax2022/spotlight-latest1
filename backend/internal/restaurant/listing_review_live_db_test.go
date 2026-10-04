@@ -23,9 +23,9 @@ func seedListing(t *testing.T, ctx context.Context, f staffFixture, name, status
 		t.Fatalf("seed listing: %v", err)
 	}
 	t.Cleanup(func() {
-		bg := context.Background()
-		f.pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, id)
-		f.pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, id)
+		bg := t.Context()
+		_, _ = f.pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, id)
+		_, _ = f.pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, id)
 	})
 	return id
 }
@@ -33,7 +33,7 @@ func seedListing(t *testing.T, ctx context.Context, f staffFixture, name, status
 func TestLiveDB_ModerationOffChangesNothingForCustomers(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	// An open shop that has NOT been approved. With moderation off it must still
@@ -59,7 +59,7 @@ func TestLiveDB_ModerationOffChangesNothingForCustomers(t *testing.T) {
 func TestLiveDB_ModerationOnHidesUnapprovedListings(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	pending := seedListing(t, ctx, f, "Gated Kitchen", "PENDING", true)
@@ -103,7 +103,7 @@ func TestLiveDB_ModerationOnHidesUnapprovedListings(t *testing.T) {
 func TestLiveDB_OwnerSubmitsAndReviewerDecides(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	shop := seedListing(t, ctx, f, "Review Me", "DRAFT", false)
@@ -113,7 +113,7 @@ func TestLiveDB_OwnerSubmitsAndReviewerDecides(t *testing.T) {
 	}
 	var status string
 	var snapshot *string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`SELECT listing_review_status, published_snapshot::text FROM restaurants WHERE id=$1`, shop).
 		Scan(&status, &snapshot); err != nil {
 		t.Fatalf("read: %v", err)
@@ -133,7 +133,7 @@ func TestLiveDB_OwnerSubmitsAndReviewerDecides(t *testing.T) {
 	if err := f.svc.DecideListing(ctx, shop, f.owner, ListingApproved, ""); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT listing_review_status FROM restaurants WHERE id=$1`, shop).Scan(&status); err != nil {
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `SELECT listing_review_status FROM restaurants WHERE id=$1`, shop).Scan(&status); err != nil {
 		t.Fatalf("re-read: %v", err)
 	}
 	if status != "APPROVED" {
@@ -144,7 +144,7 @@ func TestLiveDB_OwnerSubmitsAndReviewerDecides(t *testing.T) {
 func TestLiveDB_StaffWithoutStoreRightsCannotSubmit(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	shop := seedListing(t, ctx, f, "Guarded Listing", "DRAFT", false)
@@ -158,7 +158,7 @@ func TestLiveDB_StaffWithoutStoreRightsCannotSubmit(t *testing.T) {
 func TestLiveDB_ModerationQueueShowsPendingOnly(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
+	ctx := t.Context()
 	f := newStaffFixture(t, ctx, pool)
 
 	pending := seedListing(t, ctx, f, "Queue Me", "PENDING", false)

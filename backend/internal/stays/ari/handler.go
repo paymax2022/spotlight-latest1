@@ -4,8 +4,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/go-common/httperr"
+
+	"github.com/gin-gonic/gin"
 )
 
 const keyForbidden = "forbidden"

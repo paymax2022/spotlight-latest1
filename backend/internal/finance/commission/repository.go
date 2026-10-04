@@ -279,7 +279,7 @@ func (r *Repository) InsertEarning(ctx context.Context, e *Earning) (out *Earnin
 
 	// Duplicate — fetch and return the pre-existing row.
 	if e.IdempotencyKey == nil {
-		return nil, false, fmt.Errorf("commission: earning conflict without idempotency key")
+		return nil, false, errors.New("commission: earning conflict without idempotency key")
 	}
 	existing, gerr := r.GetEarningByIdempotencyKey(ctx, *e.IdempotencyKey)
 	if gerr != nil {

@@ -137,7 +137,7 @@ func TestLiveDB_RefundRequestIsOwnerScoped(t *testing.T) {
 	// cf_refund_requests cascades from contributions, which seedCampaign already
 	// deletes — but delete it explicitly first so the order is not load-bearing.
 	t.Cleanup(func() {
-		if _, err := pool.Exec(ctx, `DELETE FROM cf_refund_requests WHERE contribution_id = $1`, contributionID); err != nil {
+		if _, err := pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_refund_requests WHERE contribution_id = $1`, contributionID); err != nil {
 			t.Errorf("cleanup refund requests: %v", err)
 		}
 	})

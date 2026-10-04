@@ -108,7 +108,7 @@ func registerRaw(t *testing.T, otpEnabled bool, settings func(*captured)) (strin
 	// The admin path is gated on OTP being OPERATIONAL, not merely flagged — see
 	// TestRegisterUsesSignupWhenTheFlagIsOnButOTPNeverWired.
 	SetOTPOperational(svc, otpEnabled)
-	_, err := svc.RegisterUser(domain.RegisterRequest{
+	_, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
 		Email: "Ada@Example.com", Password: "correct-horse-battery",
 		FirstName: "Ada", LastName: "Lovelace",
 	})
@@ -256,7 +256,7 @@ func TestRegisterUsesSignupWhenTheFlagIsOnButOTPNeverWired(t *testing.T) {
 	)
 	// … but the OTP service was never built, so SetOTPOperational is never called.
 
-	if _, err := svc.RegisterUser(domain.RegisterRequest{
+	if _, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
 		Email: "Ada@Example.com", Password: "correct-horse-battery",
 		FirstName: "Ada", LastName: "Lovelace",
 	}); err != nil {

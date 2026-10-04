@@ -2,14 +2,16 @@ package credential
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/go-common/dbutil"
 	"strconv"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Auditor is the minimal slice of services.AuditService the credential core needs
@@ -39,7 +41,7 @@ const defaultRotateTTL = 30 * time.Second
 // CurrentToken to get the rotating value each render so screenshots go stale.
 func (s *Service) Issue(ctx context.Context, subjectRef string, kind Kind, policy Policy) (*Credential, error) {
 	if subjectRef == "" {
-		return nil, fmt.Errorf("credential: subjectRef required")
+		return nil, errors.New("credential: subjectRef required")
 	}
 	if policy.RotateTTL <= 0 {
 		policy.RotateTTL = defaultRotateTTL
@@ -242,7 +244,7 @@ func (s *Service) Revoke(ctx context.Context, credentialID string) error {
 		return fmt.Errorf("credential: revoke: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("credential: not revocable (missing or terminal)")
+		return errors.New("credential: not revocable (missing or terminal)")
 	}
 	s.log("", "credential.revoke", credentialID, nil)
 	return nil
@@ -305,8 +307,8 @@ func (s *Service) load(ctx context.Context, id string) (*Credential, error) {
 		&c.Policy.SingleUse, &c.Policy.AllowReentry, &reentrySecs, &rotateSecs,
 		&c.Policy.ValidFrom, &validTo, &c.IssuedAt,
 	); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("credential: not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("credential: not found")
 		}
 		return nil, fmt.Errorf("credential: load: %w", err)
 	}

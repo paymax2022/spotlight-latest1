@@ -2,6 +2,7 @@ package claims
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,8 +21,8 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 // Sentinel errors.
 var (
-	ErrConflict = fmt.Errorf("claims: version conflict (concurrent transition)")
-	ErrNotFound = fmt.Errorf("claims: not found")
+	ErrConflict = errors.New("claims: version conflict (concurrent transition)")
+	ErrNotFound = errors.New("claims: not found")
 )
 
 const claimCols = `id, policy_id, claimant_user_id, provider, provider_claim_ref, state,

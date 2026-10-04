@@ -177,7 +177,7 @@ func withLock(ctx context.Context, rc *platformRedis.Client, key string, ttl tim
 	if err != nil || !ok {
 		return false
 	}
-	defer platformRedis.ReleaseLock(ctx, rc, key, val)
+	defer func() { _ = platformRedis.ReleaseLock(ctx, rc, key, val) }()
 	fn()
 	return true
 }

@@ -85,10 +85,10 @@ func seedMember(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, em
 		t.Fatalf("seed membership: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_committee_members WHERE membership_id=$1`, membershipID)
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_member_roles WHERE membership_id=$1`, membershipID)
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_memberships WHERE id=$1`, membershipID)
-		_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, userID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_committee_members WHERE membership_id=$1`, membershipID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_member_roles WHERE membership_id=$1`, membershipID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_memberships WHERE id=$1`, membershipID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, userID)
 	})
 	return userID, membershipID
 }
@@ -104,9 +104,9 @@ func seedThread(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, sc
 		t.Fatalf("seed thread: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_chat_thread_state WHERE thread_id=$1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_chat_messages WHERE thread_id=$1`, id)
-		_, _ = pool.Exec(ctx, `DELETE FROM assoc_chat_threads WHERE id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_chat_thread_state WHERE thread_id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_chat_messages WHERE thread_id=$1`, id)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_chat_threads WHERE id=$1`, id)
 	})
 	return id
 }
@@ -139,15 +139,17 @@ func TestChatRealtimeGate_MatchesTheAPI(t *testing.T) {
 
 	// A committee, with the plain member NOT on it and a second member on it.
 	var committeeID string
-	if err := pool.QueryRow(ctx,
+	if err := pool.QueryRow(context.WithoutCancel(ctx),
 		`INSERT INTO assoc_committees (organisation_id, name) VALUES ($1,'Gate Committee') RETURNING id::text`,
 		orgID).Scan(&committeeID); err != nil {
 		t.Fatalf("seed committee: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM assoc_committees WHERE id=$1`, committeeID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM assoc_committees WHERE id=$1`, committeeID)
+	})
 
 	committeeUserID, committeeMembership := seedMember(t, ctx, pool, orgID, "@cmte.test")
-	if _, err := pool.Exec(ctx,
+	if _, err := pool.Exec(context.WithoutCancel(ctx),
 		`INSERT INTO assoc_committee_members (committee_id, membership_id, status, joined_at) VALUES ($1,$2,'ACTIVE',now())`,
 		committeeID, committeeMembership); err != nil {
 		t.Fatalf("seed committee member: %v", err)
@@ -155,12 +157,12 @@ func TestChatRealtimeGate_MatchesTheAPI(t *testing.T) {
 
 	// An outsider: a real user with no membership in this organisation.
 	outsiderID := uuid.NewString()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		outsiderID, outsiderID+"@outsider.test"); err != nil {
 		t.Fatalf("seed outsider: %v", err)
 	}
 	testsupport.CleanupUser(t, pool, outsiderID)
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, outsiderID) })
+	t.Cleanup(func() { _, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM auth.users WHERE id=$1`, outsiderID) })
 
 	general := seedThread(t, ctx, pool, orgID, "GENERAL", nil)
 	executive := seedThread(t, ctx, pool, orgID, "EXECUTIVE", nil)

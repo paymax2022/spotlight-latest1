@@ -2,6 +2,7 @@ package regime
 
 import (
 	"math"
+	"slices"
 )
 
 // Classify maps validated point-in-time inputs to a RegimeState, deterministically.
@@ -98,11 +99,8 @@ func EligibleStrategies(rs RegimeState, catalog []StrategyDecl) []StrategyDecl {
 	}
 	var out []StrategyDecl
 	for _, s := range catalog {
-		for _, r := range s.ValidRegimes {
-			if r == rs.Regime {
-				out = append(out, s)
-				break
-			}
+		if slices.Contains(s.ValidRegimes, rs.Regime) {
+			out = append(out, s)
 		}
 	}
 	return out

@@ -112,10 +112,7 @@ func customBoostDuration(now, endsAt time.Time) (int, error) {
 	if !endsAt.After(now) {
 		return 0, fieldErr(CodeInvalidBoostRange, "ends_at must be in the future", "ends_at")
 	}
-	days := int(math.Ceil(endsAt.Sub(now).Hours() / 24))
-	if days < minCustomBoostDays {
-		days = minCustomBoostDays
-	}
+	days := max(int(math.Ceil(endsAt.Sub(now).Hours()/24)), minCustomBoostDays)
 	if days > maxCustomBoostDays {
 		return 0, fieldErr(CodeInvalidBoostRange, fmt.Sprintf("a custom boost cannot exceed %d days", maxCustomBoostDays), "ends_at")
 	}
@@ -400,10 +397,7 @@ func proratedBoostRefund(b *Boost, now time.Time) int64 {
 	if remaining > total {
 		remaining = total
 	}
-	refund := int64(float64(b.PriceKobo) * (float64(remaining) / float64(total)))
-	if refund > b.PriceKobo {
-		refund = b.PriceKobo
-	}
+	refund := min(int64(float64(b.PriceKobo)*(float64(remaining)/float64(total))), b.PriceKobo)
 	return refund
 }
 

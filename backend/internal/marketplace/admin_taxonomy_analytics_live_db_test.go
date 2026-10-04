@@ -18,6 +18,7 @@ package marketplace
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -37,7 +38,9 @@ func TestLiveDBAdminTaxonomyCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert category: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_categories WHERE id=$1`, created.ID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_categories WHERE id=$1`, created.ID)
+	})
 
 	if created.RiskTier != 1 || created.CommissionBps != 300 || !created.IsActive {
 		t.Fatalf("created category fields wrong: %+v", created)
@@ -137,13 +140,15 @@ func TestLiveDBAdminTaxonomyDuplicateSlugConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert first category: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_categories WHERE id=$1`, first.ID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_categories WHERE id=$1`, first.ID)
+	})
 
 	_, err = repo.AdminInsertCategory(ctx, Category{
 		MarketID: DefaultMarketID, Slug: slug, Name: "Duplicate slug", RiskTier: 0, CommissionBps: 200, IsActive: true,
 		AttributeSchema: []byte(`{}`),
 	})
-	if err != ErrConflict {
+	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("expected ErrConflict on duplicate slug, got %v", err)
 	}
 }
@@ -172,38 +177,44 @@ func TestLiveDBAdminAnalyticsRevenueAndFunnel(t *testing.T) {
 		retainedBoostID, listingID, sellerID, "analytics-test-"+retainedBoostID); err != nil {
 		t.Fatalf("seed retained boost: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, retainedBoostID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_boosts WHERE id=$1`, retainedBoostID)
+	})
 
 	// Rejected boost: 300,000 kobo, status 'rejected_with_reason' — must be
 	// EXCLUDED from revenue (mirrors AdminMetrics.TotalGMVKobo's own filter).
 	rejectedBoostID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO mkt_boosts (id, market_id, listing_id, seller_id, tier, duration_days, price_kobo, ledger_charge_ref, status, rejection_reason_code, created_at)
 		VALUES ($1,'NG',$2,$3,'featured',7,300000,$4,'rejected_with_reason','policy_violation', now())`,
 		rejectedBoostID, listingID, sellerID, "analytics-test-"+rejectedBoostID); err != nil {
 		t.Fatalf("seed rejected boost: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE id=$1`, rejectedBoostID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_boosts WHERE id=$1`, rejectedBoostID)
+	})
 
 	// One contact reveal (real funnel.contacts signal — mkt_contact_reveals.revealed_at).
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO mkt_contact_reveals (listing_id, viewer_id, seller_id) VALUES ($1,$2,$3)`,
 		listingID, buyerID, sellerID); err != nil {
 		t.Fatalf("seed contact reveal: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM mkt_contact_reveals WHERE listing_id=$1`, listingID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_contact_reveals WHERE listing_id=$1`, listingID)
 	})
 
 	// One thread marked "met" (real funnel.deals signal — mkt_threads.met_at).
 	threadID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO mkt_threads (id, listing_id, buyer_id, seller_id, met_at, met_by)
 		VALUES ($1,$2,$3,$4, now(), $3)`,
 		threadID, listingID, buyerID, sellerID); err != nil {
 		t.Fatalf("seed met thread: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_threads WHERE id=$1`, threadID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_threads WHERE id=$1`, threadID)
+	})
 
 	a, err := repo.AdminAnalytics(ctx, DefaultMarketID, 30)
 	if err != nil {
@@ -223,7 +234,7 @@ func TestLiveDBAdminAnalyticsRevenueAndFunnel(t *testing.T) {
 	// aggregate SQL itself, independent of whatever else lives in this shared
 	// dev DB).
 	var isolatedRevenue int64
-	if err := pool.QueryRow(ctx, `
+	if err := pool.QueryRow(context.WithoutCancel(ctx), `
 		SELECT COALESCE(sum(price_kobo - COALESCE(refunded_kobo,0)), 0) FROM mkt_boosts
 		WHERE listing_id=$1 AND status IN ('purchased','active','completed')`, listingID).Scan(&isolatedRevenue); err != nil {
 		t.Fatalf("isolated revenue query: %v", err)
@@ -288,13 +299,15 @@ func TestLiveDBAdminAnalyticsNewAndActiveListings(t *testing.T) {
 	activeID := seedActiveListing(t, ctx, pool, sellerID, categoryID)
 
 	draftID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO mkt_listings (id, market_id, seller_id, category_id, title, description, price_kobo, currency, condition, status, escrow_eligible, state)
 		VALUES ($1,'NG',$2,$3,'Draft Test Listing Title','A perfectly ordinary listing description with eight whole words',
 		        500000,'NGN','used','draft',true,'Lagos')`, draftID, sellerID, categoryID); err != nil {
 		t.Fatalf("seed draft listing: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM mkt_listings WHERE id=$1`, draftID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_listings WHERE id=$1`, draftID)
+	})
 	_ = activeID
 
 	after, err := repo.AdminAnalytics(ctx, DefaultMarketID, 1)

@@ -2,15 +2,17 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 // parityRBAC is a focused RBACService fake for #23 parity endpoints. It records
@@ -22,9 +24,9 @@ type parityRBAC struct {
 	bulkRoleResult []services.BulkOpResult
 }
 
-func (p *parityRBAC) GetUserRoles(string) ([]string, error)            { return p.roles, nil }
-func (p *parityRBAC) GetUserScopes(string) ([]domain.UserScope, error) { return nil, nil }
-func (p *parityRBAC) GetUserPermissions(string, string, string) ([]string, error) {
+func (p *parityRBAC) GetUserRoles(context.Context, string) ([]string, error) { return p.roles, nil }
+func (p *parityRBAC) GetUserScopes(string) ([]domain.UserScope, error)       { return nil, nil }
+func (p *parityRBAC) GetUserPermissions(context.Context, string, string, string) ([]string, error) {
 	return nil, nil
 }
 func (p *parityRBAC) CheckPermission(string, string, string, string) (bool, error) {
@@ -54,7 +56,7 @@ func (p *parityRBAC) RemovePermissionFromRole(string, string) error             
 func (p *parityRBAC) DeletePermission(string) error                                 { return nil }
 func (p *parityRBAC) AssignRoleToUser(string, string, string, string, string) error { return nil }
 func (p *parityRBAC) RemoveRoleFromUser(string, string, string) error               { return nil }
-func (p *parityRBAC) GetUserStatus(string) (string, error)                          { return "active", nil }
+func (p *parityRBAC) GetUserStatus(context.Context, string) (string, error)         { return "active", nil }
 func (p *parityRBAC) SuspendUser(string) error                                      { return nil }
 func (p *parityRBAC) UnsuspendUser(string) error                                    { return nil }
 func (p *parityRBAC) LockUser(string) error                                         { return nil }
@@ -115,7 +117,7 @@ func TestBulkAssignRolesToUser_SuccessAudited(t *testing.T) {
 	r.POST("/users/:id/roles/bulk", withActor("admin-1"), h.BulkAssignRoles)
 
 	body := `{"roleIds":["r1","r2"],"scopeType":"global"}`
-	req := httptest.NewRequest(http.MethodPost, "/users/u9/roles/bulk", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/users/u9/roles/bulk", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -147,7 +149,7 @@ func TestBulkAssignRoleToUsers_ScopeDeniedDroppedAndAudited(t *testing.T) {
 	r.POST("/users/bulk-roles", withActor("coord-1"), h.BulkAssignRoleToUsers)
 
 	body := `{"roleId":"r1","userIds":["u1","u2"],"scopeType":"global"}`
-	req := httptest.NewRequest(http.MethodPost, "/users/bulk-roles", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/users/bulk-roles", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -171,7 +173,7 @@ func TestAdminUserExport_Audited(t *testing.T) {
 	r := gin.New()
 	r.GET("/users/export", withActor("admin-1"), h.Export)
 
-	req := httptest.NewRequest(http.MethodGet, "/users/export", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/users/export", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -195,7 +197,7 @@ func TestAdminUserSessions_FeatureDisabled503(t *testing.T) {
 	r := gin.New()
 	r.GET("/users/:id/sessions", withActor("admin-1"), h.Sessions)
 
-	req := httptest.NewRequest(http.MethodGet, "/users/u1/sessions", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/users/u1/sessions", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -217,7 +219,7 @@ func TestBulkAssignRoles_MissingBody400(t *testing.T) {
 	r := gin.New()
 	r.POST("/users/:id/roles/bulk", withActor("admin-1"), h.BulkAssignRoles)
 
-	req := httptest.NewRequest(http.MethodPost, "/users/u9/roles/bulk", bytes.NewBufferString(`{}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/users/u9/roles/bulk", bytes.NewBufferString(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

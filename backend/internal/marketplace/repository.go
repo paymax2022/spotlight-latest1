@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"maps"
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/strutil"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -98,7 +99,7 @@ func (r *Repository) InsertListingMedia(ctx context.Context, listingID string, k
 			VALUES ($1,$2,$2,$2,'','',$3)`, listingID, k, i)
 	}
 	br := r.db.SendBatch(ctx, batch)
-	defer br.Close()
+	defer func() { _ = br.Close() }()
 	for range keys {
 		if _, err := br.Exec(); err != nil {
 			return wrapInternal("insert listing media", err)
@@ -217,7 +218,7 @@ func (r *Repository) AppendListingMedia(ctx context.Context, listingID string, k
 			VALUES ($1,$2,$2,$2,'','',$3)`, listingID, k, startSortOrder+i)
 	}
 	br := r.db.SendBatch(ctx, batch)
-	defer br.Close()
+	defer func() { _ = br.Close() }()
 	for range keys {
 		if _, err := br.Exec(); err != nil {
 			return wrapInternal("append listing media", err)
@@ -250,7 +251,7 @@ func (r *Repository) ReorderListingMedia(ctx context.Context, listingID string, 
 		batch.Queue(`UPDATE public.mkt_listing_media SET sort_order=$1 WHERE id=$2 AND listing_id=$3`, i, id, listingID)
 	}
 	br := r.db.SendBatch(ctx, batch)
-	defer br.Close()
+	defer func() { _ = br.Close() }()
 	for range orderedIDs {
 		if _, err := br.Exec(); err != nil {
 			return wrapInternal("reorder listing media", err)
@@ -414,7 +415,7 @@ func (r *Repository) ExpireDueListings(ctx context.Context, now time.Time, limit
 	if err != nil {
 		return nil, wrapInternal("expire listings: begin", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// LIMIT the batch via a subselect (Postgres UPDATE has no LIMIT clause).
 	rows, err := tx.Query(ctx, `
@@ -541,7 +542,7 @@ func (r *Repository) InsertOrderAtomic(ctx context.Context, o *Order) (*Order, e
 	if err != nil {
 		return nil, wrapInternal("begin order tx", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// (1) Lock the listing row; (2) read its current status under the lock.
 	var status string
@@ -971,6 +972,7 @@ const boostColsB = `b.id, b.listing_id, b.seller_id, b.tier, b.duration_days, b.
 // admin marketplace boost screen (frontend-admin MktBoost) renders unchanged.
 type AdminBoostRow struct {
 	Boost
+
 	ListingTitle string `json:"listing_title,omitempty"`
 }
 

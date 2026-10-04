@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"spotlight/backend/internal/cashtag"
 	"spotlight/backend/internal/config"
@@ -28,6 +26,9 @@ import (
 	"spotlight/backend/internal/spray"
 	"spotlight/backend/internal/top5events"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // RegisterSavings wires the Top-5 Phase-1 Savings module (vaults / Ajo-Esusu /

@@ -16,7 +16,7 @@ func TestParseRule_Valid(t *testing.T) {
 		"term_count = 1",
 		"concept:headache AND duration_days > 3",
 		"NOT who:ADULT",
-		"NOT NOT concept:fever",
+		"NOT NOT concept:fever", //nolint:dupword // double-negation is valid grammar
 		"(concept:fever OR concept:cough) AND NOT who:PREGNANT_OR_BF",
 		"duration_days <= 3 OR term_count < 4",
 		"concept:a1_b2 AND (who:CHILD_6_12 OR duration_days >= 2)",
@@ -45,7 +45,7 @@ func TestParseRule_Malformed(t *testing.T) {
 		"concept:fever AND",               // dangling AND
 		"(concept:fever",                  // unclosed paren
 		"concept:fever)",                  // trailing token
-		"concept:fever OR OR concept:c",   // double operator
+		"concept:fever OR OR concept:c",   //nolint:dupword // the double operator is the malformed case under test
 		"fever",                           // bare word is not a predicate
 		"concept:fever and concept:cough", // keywords are case-sensitive UPPERCASE
 		"duration_days ! 3",               // illegal character

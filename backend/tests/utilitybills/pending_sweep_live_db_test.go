@@ -123,7 +123,7 @@ func TestLiveDB_SweepPending_RespectsLimitOldestFirst(t *testing.T) {
 	// limit=1 deliberately strands one row — terminalize both so this test
 	// does not become the next run's stale leftover itself.
 	t.Cleanup(func() {
-		if _, err := f.pool.Exec(context.Background(), `
+		if _, err := f.pool.Exec(context.WithoutCancel(t.Context()), `
 			UPDATE public.utility_transactions SET status = 'failed'
 			WHERE status IN ('initiated','wallet_debited','provider_pending')`); err != nil {
 			t.Logf("cleanup pending rows: %v", err)

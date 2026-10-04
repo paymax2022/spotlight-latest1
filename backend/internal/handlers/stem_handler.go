@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -9,11 +10,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 type StemHandler struct {
@@ -111,7 +113,7 @@ func (h *StemHandler) MyRole(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "missing verified identity"})
 		return
 	}
-	roleSlugs, err := h.rbac.GetUserRoles(adminUserID)
+	roleSlugs, err := h.rbac.GetUserRoles(c.Request.Context(), adminUserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not resolve roles"})
 		return
@@ -1020,14 +1022,14 @@ func validateStemArtifactURL(raw string, kind string) error {
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid URL format")
+		return errors.New("invalid URL format")
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("URL must use http or https")
+		return errors.New("URL must use http or https")
 	}
 	ext := strings.ToLower(path.Ext(parsed.Path))
 	if ext == "" {
-		return fmt.Errorf("missing file extension")
+		return errors.New("missing file extension")
 	}
 
 	allowed := map[string]map[string]struct{}{
@@ -1049,7 +1051,7 @@ func validateStemArtifactURL(raw string, kind string) error {
 	}
 	group, ok := allowed[kind]
 	if !ok {
-		return fmt.Errorf("unknown artifact type")
+		return errors.New("unknown artifact type")
 	}
 	if _, ok := group[ext]; !ok {
 		return fmt.Errorf("unsupported file extension %s", ext)

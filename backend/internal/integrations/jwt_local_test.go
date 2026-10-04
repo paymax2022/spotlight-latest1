@@ -80,7 +80,7 @@ func validClaims() map[string]any {
 func TestVerifyLocalJWT_HS256(t *testing.T) {
 	c := integrations.NewSupabaseRestClient("", "")
 	c.EnableLocalJWTVerify("test-secret")
-	info, err := c.AuthUser(signHS256(t, "test-secret", validClaims()))
+	info, err := c.AuthUser(t.Context(), signHS256(t, "test-secret", validClaims()))
 	if err != nil {
 		t.Fatalf("valid token rejected: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestVerifyLocalJWT_ES256ViaJWKS(t *testing.T) {
 	srv := jwksServer(t, &priv.PublicKey, "kid-1")
 	c := integrations.NewSupabaseRestClient(srv.URL, "")
 	c.EnableLocalJWTVerify("")
-	info, err := c.AuthUser(signES256(t, priv, "kid-1", validClaims()))
+	info, err := c.AuthUser(t.Context(), signES256(t, priv, "kid-1", validClaims()))
 	if err != nil {
 		t.Fatalf("valid ES256 token rejected: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestVerifyLocalJWT_ES256WrongKey(t *testing.T) {
 	srv := jwksServer(t, &other.PublicKey, "kid-1") // jwks carries a different key
 	c := integrations.NewSupabaseRestClient(srv.URL, "")
 	c.EnableLocalJWTVerify("")
-	if _, err := c.AuthUser(signES256(t, priv, "kid-1", validClaims())); !errors.Is(err, integrations.ErrTokenInvalid) {
+	if _, err := c.AuthUser(t.Context(), signES256(t, priv, "kid-1", validClaims())); !errors.Is(err, integrations.ErrTokenInvalid) {
 		t.Fatalf("want ErrTokenInvalid, got %v", err)
 	}
 }
@@ -125,7 +125,7 @@ func TestVerifyLocalJWT_ES256UnknownKid(t *testing.T) {
 	srv := jwksServer(t, &priv.PublicKey, "kid-1")
 	c := integrations.NewSupabaseRestClient(srv.URL, "")
 	c.EnableLocalJWTVerify("")
-	if _, err := c.AuthUser(signES256(t, priv, "kid-other", validClaims())); !errors.Is(err, integrations.ErrTokenInvalid) {
+	if _, err := c.AuthUser(t.Context(), signES256(t, priv, "kid-other", validClaims())); !errors.Is(err, integrations.ErrTokenInvalid) {
 		t.Fatalf("want ErrTokenInvalid, got %v", err)
 	}
 }
@@ -171,7 +171,7 @@ func TestVerifyLocalJWT_Rejects(t *testing.T) {
 			} else {
 				c.EnableLocalJWTVerify(secret)
 			}
-			if _, err := c.AuthUser(mk(t)); !errors.Is(err, integrations.ErrTokenInvalid) {
+			if _, err := c.AuthUser(t.Context(), mk(t)); !errors.Is(err, integrations.ErrTokenInvalid) {
 				t.Fatalf("want ErrTokenInvalid, got %v", err)
 			}
 		})
@@ -184,7 +184,7 @@ func TestVerifyLocalJWT_FlagOffKeepsRemote(t *testing.T) {
 	// proving the local path was not taken.
 	c := integrations.NewSupabaseRestClient("", "")
 	tok := signHS256(t, "any", validClaims())
-	if _, err := c.AuthUser(tok); errors.Is(err, integrations.ErrTokenInvalid) || err == nil {
+	if _, err := c.AuthUser(t.Context(), tok); errors.Is(err, integrations.ErrTokenInvalid) || err == nil {
 		t.Fatalf("remote path not taken: %v", err)
 	}
 }

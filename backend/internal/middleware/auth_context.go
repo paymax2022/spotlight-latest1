@@ -6,10 +6,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -38,7 +39,7 @@ func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACSe
 			return
 		}
 		token := strings.TrimSpace(h[7:])
-		info, err := supabase.AuthUser(token)
+		info, err := supabase.AuthUser(c.Request.Context(), token)
 		if err != nil {
 			// AUD-AUTH-001: only a definitive rejection means a bad token. A
 			// transport error/5xx means the auth backend is down — answer 503 so
@@ -72,22 +73,20 @@ func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACSe
 		wg.Add(3)
 		go func() {
 			defer wg.Done()
-			status, serr = rbac.GetUserStatus(id)
+			status, serr = rbac.GetUserStatus(c.Request.Context(), id)
 		}()
 		go func() {
 			defer wg.Done()
-			roles, _ = rbac.GetUserRoles(id)
+			roles, _ = rbac.GetUserRoles(c.Request.Context(), id)
 		}()
 		go func() {
 			defer wg.Done()
-			perms, _ = rbac.GetUserPermissions(id, "global", "")
+			perms, _ = rbac.GetUserPermissions(c.Request.Context(), id, "global", "")
 		}()
 		if enforce && sessions != nil {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				_, sessErr = sessions.ValidateAccess(token)
-			}()
+			wg.Go(func() {
+				_, sessErr = sessions.ValidateAccess(c.Request.Context(), token)
+			})
 		}
 		wg.Wait()
 

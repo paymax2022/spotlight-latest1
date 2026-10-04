@@ -35,7 +35,7 @@ func (c *CacheService) GetLearnerAnalyticsFromCache(ctx context.Context, userID 
 		return nil, redis.Nil // Signal cache miss
 	}
 
-	key := fmt.Sprintf("learner:analytics:%s", userID)
+	key := "learner:analytics:" + userID
 	val, err := c.redis.Get(ctx, key).Result()
 	if err != nil {
 		return nil, err // Cache miss or error
@@ -55,7 +55,7 @@ func (c *CacheService) SetLearnerAnalyticsCache(ctx context.Context, userID stri
 		return nil // No-op if Redis unavailable
 	}
 
-	key := fmt.Sprintf("learner:analytics:%s", userID)
+	key := "learner:analytics:" + userID
 	data, err := json.Marshal(analytics)
 	if err != nil {
 		return err
@@ -70,7 +70,7 @@ func (c *CacheService) InvalidateLearnerAnalyticsCache(ctx context.Context, user
 		return nil
 	}
 
-	key := fmt.Sprintf("learner:analytics:%s", userID)
+	key := "learner:analytics:" + userID
 	return c.redis.Del(ctx, key).Err()
 }
 
@@ -80,7 +80,7 @@ func (c *CacheService) GetAdminAnalyticsFromCache(ctx context.Context, timeRange
 		return nil, redis.Nil
 	}
 
-	key := fmt.Sprintf("admin:analytics:%s", timeRange)
+	key := "admin:analytics:" + timeRange
 	val, err := c.redis.Get(ctx, key).Result()
 	if err != nil {
 		return nil, err
@@ -100,7 +100,7 @@ func (c *CacheService) SetAdminAnalyticsCache(ctx context.Context, timeRange str
 		return nil
 	}
 
-	key := fmt.Sprintf("admin:analytics:%s", timeRange)
+	key := "admin:analytics:" + timeRange
 	data, err := json.Marshal(analytics)
 	if err != nil {
 		return err
@@ -117,7 +117,7 @@ func (c *CacheService) InvalidateAdminAnalyticsCache(ctx context.Context) error 
 
 	timeRanges := []string{"week", "month", "quarter", "year"}
 	for _, tr := range timeRanges {
-		key := fmt.Sprintf("admin:analytics:%s", tr)
+		key := "admin:analytics:" + tr
 		c.redis.Del(ctx, key)
 	}
 
@@ -178,18 +178,18 @@ func (c *CacheService) InvalidateTemplatesCache(ctx context.Context) error {
 }
 
 // GetStatisticsFromCache retrieves cached template statistics
-func (c *CacheService) GetStatisticsFromCache(ctx context.Context, templateID string) (interface{}, error) {
+func (c *CacheService) GetStatisticsFromCache(ctx context.Context, templateID string) (any, error) {
 	if c.redis == nil {
 		return nil, redis.Nil
 	}
 
-	key := fmt.Sprintf("stats:%s", templateID)
+	key := "stats:" + templateID
 	val, err := c.redis.Get(ctx, key).Result()
 	if err != nil {
 		return nil, err
 	}
 
-	var stats interface{}
+	var stats any
 	if err := json.Unmarshal([]byte(val), &stats); err != nil {
 		return nil, err
 	}
@@ -198,12 +198,12 @@ func (c *CacheService) GetStatisticsFromCache(ctx context.Context, templateID st
 }
 
 // SetStatisticsCache stores statistics in Redis
-func (c *CacheService) SetStatisticsCache(ctx context.Context, templateID string, stats interface{}) error {
+func (c *CacheService) SetStatisticsCache(ctx context.Context, templateID string, stats any) error {
 	if c.redis == nil {
 		return nil
 	}
 
-	key := fmt.Sprintf("stats:%s", templateID)
+	key := "stats:" + templateID
 	data, err := json.Marshal(stats)
 	if err != nil {
 		return err
@@ -218,7 +218,7 @@ func (c *CacheService) InvalidateStatisticsCache(ctx context.Context, templateID
 		return nil
 	}
 
-	key := fmt.Sprintf("stats:%s", templateID)
+	key := "stats:" + templateID
 	return c.redis.Del(ctx, key).Err()
 }
 
@@ -228,7 +228,7 @@ func (c *CacheService) GetAttemptFromCache(ctx context.Context, attemptID string
 		return nil, redis.Nil
 	}
 
-	key := fmt.Sprintf("attempt:%s", attemptID)
+	key := "attempt:" + attemptID
 	val, err := c.redis.Get(ctx, key).Result()
 	if err != nil {
 		return nil, err
@@ -248,7 +248,7 @@ func (c *CacheService) SetAttemptCache(ctx context.Context, attemptID string, at
 		return nil
 	}
 
-	key := fmt.Sprintf("attempt:%s", attemptID)
+	key := "attempt:" + attemptID
 	data, err := json.Marshal(attempt)
 	if err != nil {
 		return err
@@ -264,7 +264,7 @@ func (c *CacheService) InvalidateAttemptCache(ctx context.Context, attemptID str
 		return nil
 	}
 
-	key := fmt.Sprintf("attempt:%s", attemptID)
+	key := "attempt:" + attemptID
 	return c.redis.Del(ctx, key).Err()
 }
 
@@ -303,7 +303,7 @@ func (c *CacheService) InvalidateUserCaches(ctx context.Context, userID string) 
 	}
 
 	patterns := []string{
-		fmt.Sprintf("learner:analytics:%s", userID),
+		"learner:analytics:" + userID,
 		fmt.Sprintf("attempt:%s*", userID),
 	}
 

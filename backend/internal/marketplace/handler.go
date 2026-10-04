@@ -5,9 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	goredis "github.com/redis/go-redis/v9"
 	"net/http"
 	"path"
 	"spotlight/backend/go-common/cryptox"
@@ -17,6 +14,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // Handler exposes the member (auth) + public marketplace routes. Admin routes live
@@ -82,8 +83,7 @@ func respond(c *gin.Context, status int, data any) {
 // {"error":{code,message,field,request_id}}. A replayError replays the original
 // cached 2xx body (§3: 409 IDEMPOTENCY_KEY_REPLAY returns the original response).
 func fail(c *gin.Context, err error) {
-	var re replayError
-	if errors.As(err, &re) {
+	if re, ok := errors.AsType[replayError](err); ok {
 		c.Data(re.Stored.Status, "application/json; charset=utf-8", re.Stored.Body)
 		return
 	}

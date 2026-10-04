@@ -1,6 +1,7 @@
 package kyc
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -66,25 +67,25 @@ func TestFSM_UnknownStatusRejected(t *testing.T) {
 }
 
 func TestBypass_TwoPersonEnforced(t *testing.T) {
-	if err := ValidateBypass("adm1", "adm1", "reason", time.Hour); err != ErrBypassSameApprover {
+	if err := ValidateBypass("adm1", "adm1", "reason", time.Hour); !errors.Is(err, ErrBypassSameApprover) {
 		t.Fatalf("same maker/checker must be rejected, got %v", err)
 	}
-	if err := ValidateBypass("", "adm2", "reason", time.Hour); err != ErrBypassNoMaker {
+	if err := ValidateBypass("", "adm2", "reason", time.Hour); !errors.Is(err, ErrBypassNoMaker) {
 		t.Fatalf("missing maker must be rejected, got %v", err)
 	}
-	if err := ValidateBypass("adm1", "", "reason", time.Hour); err != ErrBypassNoChecker {
+	if err := ValidateBypass("adm1", "", "reason", time.Hour); !errors.Is(err, ErrBypassNoChecker) {
 		t.Fatalf("missing checker must be rejected, got %v", err)
 	}
 }
 
 func TestBypass_ReasonAndTTLRequired(t *testing.T) {
-	if err := ValidateBypass("adm1", "adm2", "", time.Hour); err != ErrBypassNoReason {
+	if err := ValidateBypass("adm1", "adm2", "", time.Hour); !errors.Is(err, ErrBypassNoReason) {
 		t.Fatalf("missing reason must be rejected, got %v", err)
 	}
-	if err := ValidateBypass("adm1", "adm2", "reason", 0); err != ErrBypassBadTTL {
+	if err := ValidateBypass("adm1", "adm2", "reason", 0); !errors.Is(err, ErrBypassBadTTL) {
 		t.Fatalf("non-positive ttl must be rejected, got %v", err)
 	}
-	if err := ValidateBypass("adm1", "adm2", "reason", MaxBypassTTL+time.Hour); err != ErrBypassTTLTooLong {
+	if err := ValidateBypass("adm1", "adm2", "reason", MaxBypassTTL+time.Hour); !errors.Is(err, ErrBypassTTLTooLong) {
 		t.Fatalf("over-long ttl must be rejected, got %v", err)
 	}
 	if err := ValidateBypass("adm1", "adm2", "reason", MaxBypassTTL); err != nil {

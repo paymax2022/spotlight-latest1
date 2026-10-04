@@ -206,7 +206,7 @@ func (s *Service) reserveSubscribe(ctx context.Context, userID, idemKey string, 
 			return nil, gerr
 		}
 		if prior == nil {
-			return nil, fmt.Errorf("subscribe reserve race: reservation vanished")
+			return nil, errors.New("subscribe reserve race: reservation vanished")
 		}
 		return prior, nil
 	}

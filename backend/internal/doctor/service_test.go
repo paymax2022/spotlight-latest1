@@ -32,7 +32,7 @@ import (
 // return before any nil dependency is touched. Any test that reaches the repo,
 // ledger, or tiers layer must NOT use this constructor.
 func newServiceNoDeps() *Service {
-	// NewService(nil, nil, nil, nil) — fields are stored as-is; nil redis is an
+	// NewService(nil, nil, nil) — fields are stored as-is; nil redis is an
 	// explicitly supported configuration (see NewService doc comment).
 	return NewService(nil, nil, nil, nil)
 }
@@ -182,15 +182,15 @@ func TestInsufficientFundsMapsToLedgerSentinel(t *testing.T) {
 // (kobo), never floats or strings — the project's first iron rule.
 func TestKoboAmountsAreInt64(t *testing.T) {
 	req := RequestPayoutRequest{AmountKobo: 5_000_00} // ₦5,000
-	var _ int64 = req.AmountKobo                      // compile-time: must be int64
+	var _ = req.AmountKobo                            // compile-time: must be int64
 
 	res := Earnings{AvailableKobo: 1, PendingKobo: 0, LifetimeKobo: 1}
-	var _ int64 = res.AvailableKobo
-	var _ int64 = res.PendingKobo
-	var _ int64 = res.LifetimeKobo
+	var _ = res.AvailableKobo
+	var _ = res.PendingKobo
+	var _ = res.LifetimeKobo
 
 	p := Payout{AmountKobo: 99}
-	var _ int64 = p.AmountKobo
+	var _ = p.AmountKobo
 
 	if req.AmountKobo <= 0 {
 		t.Errorf("AmountKobo must be a positive integer, got %d", req.AmountKobo)

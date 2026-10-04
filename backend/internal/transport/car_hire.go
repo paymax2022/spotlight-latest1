@@ -96,10 +96,7 @@ func (s *Service) loadCarHire(ctx context.Context, id string, b *carHireRow) err
 // carHireFare computes fare (base + per_hour) and deposit (one period base).
 // per_km_kobo is reused as the per-hour rate for the car_hire service_type.
 func carHireFare(durationHours int, cfg *PricingConfig) (fare, deposit int64) {
-	fare = cfg.BaseFareKobo + int64(durationHours)*cfg.PerKMKobo
-	if fare < cfg.MinFareKobo {
-		fare = cfg.MinFareKobo
-	}
+	fare = max(cfg.BaseFareKobo+int64(durationHours)*cfg.PerKMKobo, cfg.MinFareKobo)
 	// Deposit = one base period (refundable security hold).
 	deposit = cfg.BaseFareKobo
 	return fare, deposit
@@ -202,7 +199,7 @@ func (s *Service) CarHireDetail(ctx context.Context, id, callerID string) (map[s
 			return nil, codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
 		var ownerUser string
-		s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *driverID).Scan(&ownerUser)
+		_ = s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *driverID).Scan(&ownerUser)
 		if ownerUser != callerID {
 			return nil, codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
@@ -291,7 +288,7 @@ func (s *Service) CompleteCarHire(ctx context.Context, id, callerID string) erro
 			return codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
 		var ownerUser string
-		s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *b.DriverID).Scan(&ownerUser)
+		_ = s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *b.DriverID).Scan(&ownerUser)
 		if ownerUser != callerID {
 			return codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
 		}
@@ -308,7 +305,7 @@ func (s *Service) CompleteCarHire(ctx context.Context, id, callerID string) erro
 	comm, _ := s.commissionForTier(ctx, s.driverTier(ctx, b.DriverID))
 	var driverUserID string
 	if b.DriverID != nil {
-		s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *b.DriverID).Scan(&driverUserID)
+		_ = s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *b.DriverID).Scan(&driverUserID)
 	}
 	split := settlementSplit(driverUserID, comm, 0)
 	// Fare + extensions: reference 'carhire:<id>' and 'carhire:<id>:ext:%' (NOT deposit).
@@ -344,10 +341,10 @@ func (s *Service) CompleteCarHire(ctx context.Context, id, callerID string) erro
 	if err := s.db.QueryRow(ctx,
 		`SELECT id FROM settlements WHERE reference=$1 AND status='escrowed' LIMIT 1`,
 		"carhire:"+id+":deposit").Scan(&depositSettID); err == nil {
-		s.settlement.Refund(ctx, depositSettID, "car_hire_deposit_released")
+		_ = s.settlement.Refund(ctx, depositSettID, "car_hire_deposit_released")
 	}
 	if b.DriverID != nil {
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *b.DriverID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *b.DriverID)
 	}
 	s.recordModeEvent(ctx, callerID, "carhire.completed", "car_hire_booking", id, from, "completed", nil)
 	return nil
@@ -357,7 +354,7 @@ func (s *Service) CompleteCarHire(ctx context.Context, id, callerID string) erro
 func (s *Service) driverTier(ctx context.Context, driverID *string) string {
 	tier := "standard"
 	if driverID != nil {
-		s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, *driverID).Scan(&tier)
+		_ = s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, *driverID).Scan(&tier)
 	}
 	return tier
 }
@@ -372,7 +369,7 @@ func (s *Service) CancelCarHire(ctx context.Context, id, userID, reason string) 
 		return codedErr(http.StatusForbidden, CodeForbidden, "not your booking")
 	}
 	if !canTransitionCarHire(b.Status, "cancelled") {
-		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot cancel from status %s", b.Status))
+		return codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from status "+b.Status)
 	}
 	if err := s.carHireSetStatus(ctx, id, b.Status, "cancelled"); err != nil {
 		return err
@@ -385,16 +382,16 @@ func (s *Service) CancelCarHire(ctx context.Context, id, userID, reason string) 
 		var ids []string
 		for rows.Next() {
 			var sid string
-			rows.Scan(&sid)
+			_ = rows.Scan(&sid)
 			ids = append(ids, sid)
 		}
 		rows.Close()
 		for _, sid := range ids {
-			s.settlement.Refund(ctx, sid, "car_hire_cancelled:"+reason)
+			_ = s.settlement.Refund(ctx, sid, "car_hire_cancelled:"+reason)
 		}
 	}
 	if b.DriverID != nil {
-		s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *b.DriverID)
+		_, _ = s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *b.DriverID)
 	}
 	s.recordModeEvent(ctx, userID, "carhire.cancelled", "car_hire_booking", id, b.Status, "cancelled", map[string]any{"reason": reason})
 	return nil
@@ -406,12 +403,12 @@ func (s *Service) carHireSetStatus(ctx context.Context, id, from, to string) err
 		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("illegal car-hire transition %s → %s", from, to))
 	}
 	if to == "cancelled" && !canTransitionCarHire(from, "cancelled") {
-		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot cancel from %s", from))
+		return codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from "+from)
 	}
 	if to == "completed" {
 		ok := from == "active" || from == "extended" || from == "confirmed"
 		if !ok {
-			return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot complete from %s", from))
+			return codedErr(http.StatusConflict, CodeInvalidState, "cannot complete from "+from)
 		}
 	}
 	tag, err := s.db.Exec(ctx, `UPDATE car_hire_bookings SET status=$1, updated_at=NOW() WHERE id=$2 AND status=$3`, to, id, from)

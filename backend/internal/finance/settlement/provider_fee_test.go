@@ -23,14 +23,15 @@ const (
 	pctRider    = 0.10
 )
 
-func riderRef(s string) *string { return &s }
+//go:fix inline
+func riderRef(s string) *string { return new(s) }
 
 func baseSplit() settlement.Split {
 	return settlement.Split{
 		ProviderID:  "restaurant-owner",
 		ProviderPct: pctProvider,
 		PlatformPct: pctPlatform,
-		RiderID:     riderRef("rider-1"),
+		RiderID:     new("rider-1"),
 		RiderPct:    pctRider,
 	}
 }

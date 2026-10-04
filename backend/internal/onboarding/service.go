@@ -93,7 +93,7 @@ func (s *Service) CreateApplication(ctx context.Context, userID string, req Crea
 	}
 	data := req.Data
 	if data == nil {
-		data = map[string]interface{}{}
+		data = map[string]any{}
 	}
 	id, err := s.repo.InsertApplication(ctx, userID, req.MerchantTypeID, data)
 	if err != nil {
@@ -274,7 +274,7 @@ func (s *Service) Approve(ctx context.Context, reviewerID, id string) (*Applicat
 			"business": "A verified CAC business is required to become a merchant. Verify or register your business first.",
 		}}
 	}
-	workspaceRoute := fmt.Sprintf("/merchant/%s", mt.Slug)
+	workspaceRoute := "/merchant/" + mt.Slug
 
 	// 1) idempotent profile activation
 	if _, err := s.repo.activateProfile(ctx, app.UserID, mt.ModuleID, mt.ID, id, mt.RoleToGrant, workspaceRoute); err != nil {

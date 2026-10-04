@@ -2,11 +2,13 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/go-common/httperr"
+
+	"github.com/gin-gonic/gin"
 )
 
 const keyMessage = "message"
@@ -92,7 +94,7 @@ const boundStates = `('ACTIVE','RENEWAL_DUE','EXPIRED','CANCELLED','LAPSED')`
 // DashboardStats assembles the admin KPIs.
 func (s *Service) DashboardStats(ctx context.Context) (*Dashboard, error) {
 	if s == nil || s.db == nil {
-		return nil, fmt.Errorf("catalog: nil pool")
+		return nil, errors.New("catalog: nil pool")
 	}
 	d := &Dashboard{
 		PoliciesByState: map[string]int{},

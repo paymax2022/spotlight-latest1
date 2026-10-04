@@ -36,7 +36,7 @@ func TestPromotion_FullClimbAndGates_LiveDB(t *testing.T) {
 	s, pool := live(t)
 	t.Cleanup(pool.Close)
 	ctx := context.Background()
-	sid := "strat-" + uuid.NewString()
+	sid := "start-" + uuid.NewString()
 	maker, checker := uuid.NewString(), uuid.NewString()
 
 	if err := s.Register(ctx, sid); err != nil {

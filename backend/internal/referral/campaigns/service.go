@@ -2,6 +2,7 @@ package campaigns
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -56,7 +57,7 @@ func (s *Service) Get(ctx context.Context, id string) (*Campaign, error) {
 // Create validates and creates a campaign (admin).
 func (s *Service) Create(ctx context.Context, in CreateInput, createdBy string) (*Campaign, error) {
 	if in.Name == "" || in.Slug == "" {
-		return nil, fmt.Errorf("campaigns: name and slug are required")
+		return nil, errors.New("campaigns: name and slug are required")
 	}
 	switch in.RewardModel {
 	case RewardFlat, RewardDynamic, RewardLTV:
@@ -96,7 +97,7 @@ func (s *Service) End(ctx context.Context, id string) error {
 // Throttle sets a 0-100 percentage and flips status to 'throttled' when < 100.
 func (s *Service) Throttle(ctx context.Context, id string, pct int) error {
 	if pct < 0 || pct > 100 {
-		return fmt.Errorf("campaigns: throttle pct must be 0-100")
+		return errors.New("campaigns: throttle pct must be 0-100")
 	}
 	if err := s.repo.SetThrottle(ctx, id, pct); err != nil {
 		return err
@@ -110,7 +111,7 @@ func (s *Service) Throttle(ctx context.Context, id string, pct int) error {
 // SetBudget configures the budget governor for a campaign.
 func (s *Service) SetBudget(ctx context.Context, id string, in BudgetInput) (*Budget, error) {
 	if in.TotalBudgetKobo < 0 || in.PerUserCapKobo < 0 || in.DailyCapKobo < 0 || in.MaxCACKobo < 0 {
-		return nil, fmt.Errorf("campaigns: budget amounts must be non-negative")
+		return nil, errors.New("campaigns: budget amounts must be non-negative")
 	}
 	return s.repo.SetBudget(ctx, id, in)
 }
@@ -126,7 +127,7 @@ func (s *Service) CheckAndReserve(ctx context.Context, campaignID string, amount
 		return nil // non-campaign reward — nothing to govern
 	}
 	if amountKobo < 0 {
-		return fmt.Errorf("campaigns: negative reward amount")
+		return errors.New("campaigns: negative reward amount")
 	}
 	c, err := s.repo.Get(ctx, campaignID)
 	if err != nil {
@@ -221,10 +222,7 @@ func (s *Service) analytics(ctx context.Context, campaignID string, b *Budget, c
 	if err != nil {
 		return nil, err
 	}
-	remaining := b.TotalBudgetKobo - b.SpentKobo
-	if remaining < 0 {
-		remaining = 0
-	}
+	remaining := max(b.TotalBudgetKobo-b.SpentKobo, 0)
 	var burn float64
 	if b.TotalBudgetKobo > 0 {
 		burn = float64(b.SpentKobo) / float64(b.TotalBudgetKobo) * 100

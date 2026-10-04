@@ -2,6 +2,7 @@ package restaurant
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -185,7 +186,7 @@ func (h *Handler) AdminListPayoutRuns(c *gin.Context) {
 func (h *Handler) AdminGetPayoutRun(c *gin.Context) {
 	run, err := h.svc.GetRun(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		if err == ErrPayoutRunNotFound {
+		if errors.Is(err, ErrPayoutRunNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 			return
 		}
@@ -230,10 +231,10 @@ func (h *Handler) AdminProcessPayoutRun(c *gin.Context) {
 	}
 	run, err := h.svc.ProcessRun(c.Request.Context(), c.Param("id"), idem)
 	if err != nil {
-		switch err {
-		case ErrPayoutRunNotFound:
+		switch {
+		case errors.Is(err, ErrPayoutRunNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
-		case ErrPayoutMissingIdem, ErrPayoutNothingDue:
+		case errors.Is(err, ErrPayoutMissingIdem), errors.Is(err, ErrPayoutNothingDue):
 			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		default:
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": httperr.Msg(c, http.StatusUnprocessableEntity, err)})

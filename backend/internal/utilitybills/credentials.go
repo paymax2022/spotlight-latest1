@@ -61,7 +61,7 @@ func isHex64(raw string) bool {
 	if len(raw) != 64 {
 		return false
 	}
-	for i := 0; i < len(raw); i++ {
+	for i := range len(raw) {
 		c := raw[i]
 		switch {
 		case c >= '0' && c <= '9':
@@ -88,7 +88,7 @@ func isHex64(raw string) bool {
 func nodeBase64Decode(raw string) []byte {
 	// Collect only alphabet characters, normalising the URL-safe variants.
 	filtered := make([]byte, 0, len(raw))
-	for i := 0; i < len(raw); i++ {
+	for i := range len(raw) {
 		c := raw[i]
 		switch {
 		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '+', c == '/':

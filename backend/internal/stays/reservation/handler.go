@@ -42,6 +42,7 @@ func (h *Handler) SetContentResolver(fn contentResolver) { h.content = fn }
 // and adds an optional resolved content block.
 type reservationView struct {
 	*Reservation
+
 	Content *contentView `json:"content,omitempty"`
 }
 

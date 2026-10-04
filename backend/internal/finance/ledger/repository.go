@@ -209,7 +209,7 @@ func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey st
 	if err != nil {
 		return fmt.Errorf("ledger: begin debit tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const lock = `SELECT pg_advisory_xact_lock(hashtext($1))`
 	if _, err := tx.Exec(ctx, lock, "wallet:"+walletLockKey); err != nil {
@@ -285,7 +285,7 @@ func (r *Repository) PostJournal(ctx context.Context, j JournalEntry) error {
 	if err != nil {
 		return fmt.Errorf("ledger: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insertEntry = `
 		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
@@ -326,7 +326,7 @@ func (r *Repository) PostReversalPair(ctx context.Context, creditAccountID, debi
 	if err != nil {
 		return fmt.Errorf("ledger: begin reversal tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const insertEntry = `
 		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)

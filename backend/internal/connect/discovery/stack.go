@@ -346,7 +346,7 @@ func (s *Service) Rewind(ctx context.Context, userID string) (undone string, err
 	if err != nil {
 		return "", fmt.Errorf("connect: begin rewind tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var likeTarget string
 	var likeAt time.Time

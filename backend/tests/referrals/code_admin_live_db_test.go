@@ -25,7 +25,7 @@ func poolOrSkip(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set — skipping live-DB test")
 	}
-	p, err := pgxpool.New(context.Background(), dsn)
+	p, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -43,7 +43,7 @@ func newUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 		t.Fatalf("seed user: %v", err)
 	}
 	t.Cleanup(func() {
-		c := context.Background()
+		c := t.Context()
 		_, _ = pool.Exec(c, `DELETE FROM public.referral_links WHERE referrer_id=$1`, id)
 		_, _ = pool.Exec(c, `DELETE FROM public.finance_referral_codes WHERE user_id=$1`, id)
 		_, _ = pool.Exec(c, `DELETE FROM auth.users WHERE id=$1`, id)
@@ -58,7 +58,7 @@ func svc(pool *pgxpool.Pool) *referrals.RewardService {
 // The headline requirement: issued codes are 5 characters, not 11.
 func TestLiveDB_ReferralCode_IssuedCodeIsFiveChars(t *testing.T) {
 	pool := poolOrSkip(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	s := svc(pool)
 
 	link, err := s.GetOrCreateLink(ctx, newUser(t, ctx, pool))
@@ -75,7 +75,7 @@ func TestLiveDB_ReferralCode_IssuedCodeIsFiveChars(t *testing.T) {
 
 func TestLiveDB_ReferralCode_AdminCanSetACustomCode(t *testing.T) {
 	pool := poolOrSkip(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	s := svc(pool)
 	user := newUser(t, ctx, pool)
 
@@ -100,7 +100,7 @@ func TestLiveDB_ReferralCode_AdminCanSetACustomCode(t *testing.T) {
 // The requirement: check for a duplicate before saving.
 func TestLiveDB_ReferralCode_RefusesACodeAnotherUserHolds(t *testing.T) {
 	pool := poolOrSkip(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	s := svc(pool)
 	first, second := newUser(t, ctx, pool), newUser(t, ctx, pool)
 
@@ -122,7 +122,7 @@ func TestLiveDB_ReferralCode_RefusesACodeAnotherUserHolds(t *testing.T) {
 // check against a stored "TAKEN" and both rows would exist.
 func TestLiveDB_ReferralCode_DuplicateCheckIgnoresCase(t *testing.T) {
 	pool := poolOrSkip(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	s := svc(pool)
 	first, second := newUser(t, ctx, pool), newUser(t, ctx, pool)
 
@@ -140,7 +140,7 @@ func TestLiveDB_ReferralCode_DuplicateCheckIgnoresCase(t *testing.T) {
 // stops being paid — no error raised anywhere. A one-table check ships that bug.
 func TestLiveDB_ReferralCode_RefusesACodeHeldInTheLegacyTable(t *testing.T) {
 	pool := poolOrSkip(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	s := svc(pool)
 	legacyOwner, newcomer := newUser(t, ctx, pool), newUser(t, ctx, pool)
 
@@ -159,7 +159,7 @@ func TestLiveDB_ReferralCode_RefusesACodeHeldInTheLegacyTable(t *testing.T) {
 // not report failure when someone double-clicks save.
 func TestLiveDB_ReferralCode_ReassigningYourOwnCodeSucceeds(t *testing.T) {
 	pool := poolOrSkip(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	s := svc(pool)
 	user := newUser(t, ctx, pool)
 
@@ -177,7 +177,7 @@ func TestLiveDB_ReferralCode_ReassigningYourOwnCodeSucceeds(t *testing.T) {
 
 func TestLiveDB_ReferralCode_RejectsBadShapesBeforeTouchingTheDatabase(t *testing.T) {
 	pool := poolOrSkip(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	s := svc(pool)
 	user := newUser(t, ctx, pool)
 

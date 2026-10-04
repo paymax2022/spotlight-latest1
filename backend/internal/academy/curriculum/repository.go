@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 
+	"strconv"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"strconv"
 )
 
 // Repository is the pgx data-access layer for the academy curriculum.

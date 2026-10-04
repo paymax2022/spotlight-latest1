@@ -128,7 +128,7 @@ func (r *Repository) TransitionSession(ctx context.Context, actor, id string, to
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from SessionState
 	err = tx.QueryRow(ctx, `SELECT state FROM public.academy_live_sessions WHERE id = $1 FOR UPDATE`, id).Scan(&from)
@@ -484,7 +484,7 @@ func (r *Repository) TransitionReport(ctx context.Context, moderatorID, reportID
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var curState ReportState
 	var entityType, entityID string
@@ -531,7 +531,7 @@ func (r *Repository) DecideReport(ctx context.Context, moderatorID, reportID, ac
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var curState ReportState
 	var entityType, entityID string

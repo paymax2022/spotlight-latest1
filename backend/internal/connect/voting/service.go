@@ -364,10 +364,7 @@ func (s *Service) FreeVoteAllowanceFor(ctx context.Context, contestID, voterID s
 	if err != nil {
 		return FreeVoteAllowance{}, err
 	}
-	remaining := total - used
-	if remaining < 0 {
-		remaining = 0
-	}
+	remaining := max(total-used, 0)
 	return FreeVoteAllowance{Total: total, Used: used, Remaining: remaining}, nil
 }
 

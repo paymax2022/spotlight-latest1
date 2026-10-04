@@ -59,8 +59,8 @@ func seedFixtureUser(t *testing.T, pool *pgxpool.Pool) string {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM user_profiles WHERE id = $1`, userID)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1`, userID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM user_profiles WHERE id = $1`, userID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM auth.users WHERE id = $1`, userID)
 	})
 	return userID
 }
@@ -81,18 +81,20 @@ func TestAdminTransactionResolver_InsurancePremium_Match(t *testing.T) {
 		policyID, userID, productCode, provider, underwriter, state); err != nil {
 		t.Fatalf("seed insurance_policy: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM insurance_policy WHERE id = $1`, policyID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM insurance_policy WHERE id = $1`, policyID)
+	})
 
 	reference := "insurance:premium:" + policyID
 	idemKey := "idem-" + uuid.NewString()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO insurance_premium_transaction (policy_id, wallet_ledger_ref, idempotency_key, amount_kobo, direction, status)
 		VALUES ($1,$2,$3,150000,'DEBIT','posted')`,
 		policyID, reference, idemKey); err != nil {
 		t.Fatalf("seed insurance_premium_transaction: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM insurance_premium_transaction WHERE policy_id = $1`, policyID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM insurance_premium_transaction WHERE policy_id = $1`, policyID)
 	})
 
 	r := NewInsurancePremiumResolver(pool)
@@ -146,14 +148,14 @@ func TestAdminTransactionResolver_FXConversion_Match(t *testing.T) {
 	reference := "fx:" + uuid.NewString()
 	idemKey := "idem-" + uuid.NewString()
 	status := "completed"
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO fx_conversions (user_id, source_currency, target_currency, source_amount_kobo, target_amount_minor, rate, status, reference, idempotency_key)
 		VALUES ($1,'NGN','USD',1000000,650,1538.46,$2,$3,$4)`,
 		userID, status, reference, idemKey); err != nil {
 		t.Fatalf("seed fx_conversions: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM fx_conversions WHERE reference = $1`, reference)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM fx_conversions WHERE reference = $1`, reference)
 	})
 
 	r := NewFXConversionResolver(pool)
@@ -221,32 +223,36 @@ func TestAdminTransactionResolver_MarketplaceBoost_Match(t *testing.T) {
 	// mkt_boosts.listing_id has an FK to mkt_listings — seed a minimal listing
 	// and its required category first.
 	categoryID := uuid.NewString()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO mkt_categories (id, name, slug) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
 		categoryID, "Resolver Test Category", "resolver-test-"+uuid.NewString()[:8]); err != nil {
 		t.Fatalf("seed mkt_categories: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_categories WHERE id = $1`, categoryID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_categories WHERE id = $1`, categoryID)
+	})
 
 	listingID := uuid.NewString()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO mkt_listings (id, seller_id, category_id, title, description, price_kobo, state)
 		VALUES ($1,$2,$3,'Resolver test listing','A listing seeded only for the admin transaction resolver live-DB test.',500000,'Lagos')`,
 		listingID, sellerID, categoryID); err != nil {
 		t.Fatalf("seed mkt_listings: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM mkt_listings WHERE id = $1`, listingID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_listings WHERE id = $1`, listingID)
+	})
 
 	tier := "vip_gold"
 	reference := "mkt:boost:" + sellerID + ":" + listingID + ":" + tier + ":charge"
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO mkt_boosts (listing_id, seller_id, tier, duration_days, price_kobo, ledger_charge_ref, status)
 		VALUES ($1,$2,$3,7,250000,$4,'active')`,
 		listingID, sellerID, tier, reference); err != nil {
 		t.Fatalf("seed mkt_boosts: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM mkt_boosts WHERE ledger_charge_ref = $1`, reference)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM mkt_boosts WHERE ledger_charge_ref = $1`, reference)
 	})
 
 	r := NewMarketplaceBoostResolver(pool)
@@ -296,27 +302,29 @@ func TestAdminTransactionResolver_UtilityBill_Match(t *testing.T) {
 
 	billerID := uuid.NewString()
 	billerCode := "resolver-test-biller-" + uuid.NewString()[:8]
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO utility_billers (id, category, name, code) VALUES ($1,'airtime','Resolver Test Biller',$2)`,
 		billerID, billerCode); err != nil {
 		t.Fatalf("seed utility_billers: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM utility_billers WHERE id = $1`, billerID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM utility_billers WHERE id = $1`, billerID)
+	})
 
 	providerID := uuid.NewString()
 	providerCode := "resolver-test-provider-" + uuid.NewString()[:8]
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO utility_providers (id, name, code, adapter_code) VALUES ($1,'VTpass',$2,'vtpass')`,
 		providerID, providerCode); err != nil {
 		t.Fatalf("seed utility_providers: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM utility_providers WHERE id = $1`, providerID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM utility_providers WHERE id = $1`, providerID)
 	})
 
 	receipt := "UTL-20260918-" + uuid.NewString()[:8]
 	idemKey := "idem-" + uuid.NewString()
-	if _, err := pool.Exec(ctx, `
+	if _, err := pool.Exec(context.WithoutCancel(ctx), `
 		INSERT INTO utility_transactions (
 			user_id, category, biller_id, provider_id, customer_reference, customer_name,
 			amount_kobo, retail_amount_kobo, provider_cost_kobo, status, receipt_number,
@@ -326,7 +334,7 @@ func TestAdminTransactionResolver_UtilityBill_Match(t *testing.T) {
 		t.Fatalf("seed utility_transactions: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM utility_transactions WHERE receipt_number = $1`, receipt)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM utility_transactions WHERE receipt_number = $1`, receipt)
 	})
 
 	r := NewUtilityBillResolver(pool)

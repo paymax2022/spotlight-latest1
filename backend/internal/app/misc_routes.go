@@ -1,9 +1,6 @@
 package app
 
 import (
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
-	goredis "github.com/redis/go-redis/v9"
 	"log"
 	"net/http"
 	"regexp"
@@ -30,6 +27,10 @@ import (
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/spotlightwealth"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // RegisterPublicMedia mounts read-only, unauthenticated access to a small,

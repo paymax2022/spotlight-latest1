@@ -296,7 +296,7 @@ func (s *Service) VerifyDoctor(ctx context.Context, reviewerID, doctorUserID str
 	// Object-level authZ: mirrors doctor/service_mdcn_review.go's self-approval
 	// block — a doctor can never verify themselves, even via the admin console.
 	if reviewerID == doctorUserID {
-		return nil, fmt.Errorf("telemedicine: a doctor may not verify their own MDCN status")
+		return nil, errors.New("telemedicine: a doctor may not verify their own MDCN status")
 	}
 
 	var doctorExists bool
@@ -305,7 +305,7 @@ func (s *Service) VerifyDoctor(ctx context.Context, reviewerID, doctorUserID str
 		return nil, fmt.Errorf("telemedicine: check doctor exists: %w", err)
 	}
 	if !doctorExists {
-		return nil, fmt.Errorf("telemedicine: doctor not found")
+		return nil, errors.New("telemedicine: doctor not found")
 	}
 
 	var verifID, curStatus string

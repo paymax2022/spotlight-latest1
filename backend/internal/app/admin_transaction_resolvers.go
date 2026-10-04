@@ -13,6 +13,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -50,7 +51,7 @@ func (r *MarketplaceBoostResolver) Resolve(ctx context.Context, reference string
 		WHERE ledger_charge_ref = $1
 		LIMIT 1`, reference).Scan(&tier, &durationDays, &status)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("marketplace boost resolver: %w", err)
@@ -94,7 +95,7 @@ func (r *InsurancePremiumResolver) Resolve(ctx context.Context, reference string
 		WHERE ipt.wallet_ledger_ref = $1
 		LIMIT 1`, reference).Scan(&productCode, &provider, &underwriter, &state, &displayName)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("insurance premium resolver: %w", err)
@@ -142,7 +143,7 @@ func (r *FXConversionResolver) Resolve(ctx context.Context, reference string) (*
 		WHERE reference = $1
 		LIMIT 1`, reference).Scan(&sourceCurrency, &targetCurrency, &status)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("fx conversion resolver: %w", err)
@@ -188,7 +189,7 @@ func (r *UtilityBillResolver) Resolve(ctx context.Context, reference string) (*l
 		WHERE ut.receipt_number = $1
 		LIMIT 1`, reference).Scan(&category, &customerReference, &customerName, &paymentSource, &status, &billerName, &providerName)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("utility bill resolver: %w", err)

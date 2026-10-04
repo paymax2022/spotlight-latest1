@@ -29,14 +29,14 @@ func (s *Service) ScheduleDistribution(ctx context.Context, makerID, idempotency
 		return nil, ErrIdempotencyKey
 	}
 	if req.GrossKobo <= 0 {
-		return nil, fmt.Errorf("fractionalre: gross_kobo must be positive")
+		return nil, errors.New("fractionalre: gross_kobo must be positive")
 	}
 	if req.FeeKobo < 0 || req.WithholdingKobo < 0 {
-		return nil, fmt.Errorf("fractionalre: fee/withholding must be non-negative")
+		return nil, errors.New("fractionalre: fee/withholding must be non-negative")
 	}
 	netPool := req.GrossKobo - req.FeeKobo - req.WithholdingKobo
 	if netPool <= 0 {
-		return nil, fmt.Errorf("fractionalre: net distributable must be positive")
+		return nil, errors.New("fractionalre: net distributable must be positive")
 	}
 
 	caps, err := s.repo.GetCapTable(ctx, req.AssetID)
@@ -44,14 +44,14 @@ func (s *Service) ScheduleDistribution(ctx context.Context, makerID, idempotency
 		return nil, err
 	}
 	if len(caps) == 0 {
-		return nil, fmt.Errorf("fractionalre: no cap-table holders to distribute to")
+		return nil, errors.New("fractionalre: no cap-table holders to distribute to")
 	}
 	var totalUnits int64
 	for _, c := range caps {
 		totalUnits += c.Units
 	}
 	if totalUnits <= 0 {
-		return nil, fmt.Errorf("fractionalre: zero total units")
+		return nil, errors.New("fractionalre: zero total units")
 	}
 
 	dist := &Distribution{
@@ -70,7 +70,7 @@ func (s *Service) ScheduleDistribution(ctx context.Context, makerID, idempotency
 	dist.SubmittedAt = &now
 	if err := s.repo.InsertDistribution(ctx, dist); err != nil {
 		if isUniqueViolation(err) {
-			return nil, fmt.Errorf("fractionalre: distribution with this idempotency key already exists")
+			return nil, errors.New("fractionalre: distribution with this idempotency key already exists")
 		}
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func (s *Service) ApproveDistribution(ctx context.Context, checkerID, distributi
 		return nil, fmt.Errorf("fractionalre: distribution not in an approvable state (%s)", d.Status)
 	}
 	if d.MakerID == nil {
-		return nil, fmt.Errorf("fractionalre: distribution has no maker")
+		return nil, errors.New("fractionalre: distribution has no maker")
 	}
 	if *d.MakerID == checkerID {
 		return nil, ErrMakerChecker

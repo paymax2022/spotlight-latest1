@@ -62,10 +62,7 @@ func SystemFare(distanceM, durationS int, cfg *PricingConfig) int64 {
 	if surge <= 0 {
 		surge = 1.0
 	}
-	fare := int64(math.Round(raw * surge))
-	if fare < cfg.MinFareKobo {
-		fare = cfg.MinFareKobo
-	}
+	fare := max(int64(math.Round(raw*surge)), cfg.MinFareKobo)
 	return fare
 }
 
@@ -200,7 +197,7 @@ func (s *Service) recordModeEvent(ctx context.Context, actorID, action, entityTy
 func (s *Service) settleModeProvider(ctx context.Context, settlementID, providerDriverID string, serviceFeeKobo int64) error {
 	var providerUserID, tier string
 	if providerDriverID != "" {
-		s.db.QueryRow(ctx, `SELECT user_id, commission_tier FROM drivers WHERE id=$1`, providerDriverID).Scan(&providerUserID, &tier)
+		_ = s.db.QueryRow(ctx, `SELECT user_id, commission_tier FROM drivers WHERE id=$1`, providerDriverID).Scan(&providerUserID, &tier)
 	}
 	comm, err := s.commissionForTier(ctx, tier)
 	if err != nil {

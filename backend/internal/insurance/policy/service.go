@@ -232,7 +232,7 @@ func (s *Service) GetQuote(ctx context.Context, userID, quoteID string) (*QuoteR
 // whole saga is replay-safe.
 func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotencyKey string) (*Policy, error) {
 	if idempotencyKey == "" {
-		return nil, fmt.Errorf("policy: Idempotency-Key required for bind")
+		return nil, errors.New("policy: Idempotency-Key required for bind")
 	}
 	qr, ownerID, err := s.repo.getQuote(ctx, quoteID)
 	if err != nil {
@@ -495,7 +495,7 @@ func (s *Service) autoReverse(ctx context.Context, p *Policy, idempotencyKey, pr
 			s.auditSafe(ctx, p.PolicyholderID, "insurance.auto_reverse_failed", map[string]any{
 				"policy_id": p.ID, "err": revErr.Error(),
 			})
-			return p, fmt.Errorf("policy: bind failed AND auto-reverse failed: bind=%v reverse=%v", cause, revErr)
+			return p, fmt.Errorf("policy: bind failed AND auto-reverse failed: bind=%w reverse=%w", cause, revErr)
 		}
 		_ = s.repo.InsertPremiumTx(ctx, PremiumTx{
 			PolicyID:        p.ID,
@@ -581,7 +581,7 @@ func (s *Service) CertificateRef(ctx context.Context, userID, policyID string) (
 		return "", err
 	}
 	if p.CertificateRef == nil || *p.CertificateRef == "" {
-		return "", fmt.Errorf("policy: certificate not yet issued")
+		return "", errors.New("policy: certificate not yet issued")
 	}
 	return *p.CertificateRef, nil
 }

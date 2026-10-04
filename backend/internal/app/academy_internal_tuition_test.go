@@ -106,7 +106,7 @@ func seedAcademyInstallment(t *testing.T, pool *pgxpool.Pool, amountNGN int64) a
 		t.Fatalf("seed batch: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(),
+		if _, err := pool.Exec(context.WithoutCancel(t.Context()),
 			`DELETE FROM public.academy_batches WHERE id=$1`, batchID); err != nil {
 			t.Errorf("cleanup batch: %v", err)
 		}

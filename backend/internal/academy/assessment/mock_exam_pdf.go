@@ -121,13 +121,13 @@ func (s *PDFReportService) buildResultsHTML(attempt *MockExamAttempt, instance *
 	grade := calculateGrade(int(attempt.ScorePercent))
 	scoreColor := getGradeColor(grade)
 
-	buf.WriteString(fmt.Sprintf(`
+	fmt.Fprintf(&buf, `
 	<div class="score-box" style="background: linear-gradient(135deg, %s 0%%, %s 100%%);">
 		<div class="score-large">%d%%</div>
 		<div class="score-label">Final Score</div>
 		<div style="font-size: 36px; margin-top: 10px;">Grade: %s</div>
 	</div>
-`, scoreColor, adjustColor(scoreColor), int(attempt.ScorePercent), grade))
+`, scoreColor, adjustColor(scoreColor), int(attempt.ScorePercent), grade)
 
 	buf.WriteString(`
 	<div class="metrics">
@@ -135,7 +135,7 @@ func (s *PDFReportService) buildResultsHTML(attempt *MockExamAttempt, instance *
 
 	var correctAnswers, totalAnswered, unanswered int
 	if len(attempt.Performance) > 0 {
-		var perf map[string]interface{}
+		var perf map[string]any
 		if err := json.Unmarshal(attempt.Performance, &perf); err == nil {
 			if c, ok := perf["correct_answers"].(float64); ok {
 				correctAnswers = int(c)
@@ -157,7 +157,7 @@ func (s *PDFReportService) buildResultsHTML(attempt *MockExamAttempt, instance *
 	minutes := attempt.TotalSeconds / 60
 	seconds := attempt.TotalSeconds % 60
 
-	buf.WriteString(fmt.Sprintf(`
+	fmt.Fprintf(&buf, `
 		<div class="metric">
 			<div class="metric-value">%d</div>
 			<div class="metric-label">Correct Answers</div>
@@ -175,7 +175,7 @@ func (s *PDFReportService) buildResultsHTML(attempt *MockExamAttempt, instance *
 			<div class="metric-label">Status</div>
 		</div>
 	</div>
-`, correctAnswers, accuracy, minutes, seconds, strings.ToUpper(attempt.Status)))
+`, correctAnswers, accuracy, minutes, seconds, strings.ToUpper(attempt.Status))
 
 	buf.WriteString(`
 	<div class="section">
@@ -184,7 +184,7 @@ func (s *PDFReportService) buildResultsHTML(attempt *MockExamAttempt, instance *
 `)
 
 	incorrect := totalAnswered - correctAnswers
-	buf.WriteString(fmt.Sprintf(`
+	fmt.Fprintf(&buf, `
 			<div class="performance-item">
 				<div class="performance-number">%d</div>
 				<div class="performance-label">Correct</div>
@@ -199,7 +199,7 @@ func (s *PDFReportService) buildResultsHTML(attempt *MockExamAttempt, instance *
 			</div>
 		</div>
 	</div>
-`, correctAnswers, incorrect, unanswered))
+`, correctAnswers, incorrect, unanswered)
 
 	recommendations := generateRecommendations(int(attempt.ScorePercent))
 	buf.WriteString(`
@@ -210,8 +210,8 @@ func (s *PDFReportService) buildResultsHTML(attempt *MockExamAttempt, instance *
 `)
 
 	for _, rec := range recommendations {
-		buf.WriteString(fmt.Sprintf(`			<li>%s</li>
-`, rec))
+		fmt.Fprintf(&buf, `			<li>%s</li>
+`, rec)
 	}
 
 	buf.WriteString(`
@@ -220,7 +220,7 @@ func (s *PDFReportService) buildResultsHTML(attempt *MockExamAttempt, instance *
 	</div>
 `)
 
-	buf.WriteString(fmt.Sprintf(`
+	fmt.Fprintf(&buf, `
 	<div class="section">
 		<div class="section-title">Exam Details</div>
 		<table>
@@ -250,7 +250,7 @@ func (s *PDFReportService) buildResultsHTML(attempt *MockExamAttempt, instance *
 			</tr>
 		</table>
 	</div>
-`, attempt.ID, instance.InstanceCode, attempt.SubmittedAt.Format(time.RFC3339), int(attempt.ScorePercent), grade))
+`, attempt.ID, instance.InstanceCode, attempt.SubmittedAt.Format(time.RFC3339), int(attempt.ScorePercent), grade)
 
 	buf.WriteString(`
 	<div class="footer">
@@ -297,7 +297,7 @@ func (s *PDFReportService) LearnerAnalyticsPDF(analytics *LearnerAnalytics) stri
 	<div class="kpi-grid">
 `)
 
-	buf.WriteString(fmt.Sprintf(`
+	fmt.Fprintf(&buf, `
 		<div class="kpi">
 			<div class="kpi-value">%d</div>
 			<div class="kpi-label">Total Attempts</div>
@@ -315,7 +315,7 @@ func (s *PDFReportService) LearnerAnalyticsPDF(analytics *LearnerAnalytics) stri
 			<div class="kpi-label">Pass Rate</div>
 		</div>
 	</div>
-`, analytics.TotalAttempts, analytics.AverageScore, analytics.BestScore, analytics.PassRate))
+`, analytics.TotalAttempts, analytics.AverageScore, analytics.BestScore, analytics.PassRate)
 
 	buf.WriteString(`
 	<div class="section">
@@ -331,7 +331,7 @@ func (s *PDFReportService) LearnerAnalyticsPDF(analytics *LearnerAnalytics) stri
 `)
 
 	for _, attempt := range analytics.Attempts {
-		buf.WriteString(fmt.Sprintf(`
+		fmt.Fprintf(&buf, `
 			<tr>
 				<td>%s</td>
 				<td>%s</td>
@@ -339,7 +339,7 @@ func (s *PDFReportService) LearnerAnalyticsPDF(analytics *LearnerAnalytics) stri
 				<td>%s</td>
 				<td>%s</td>
 			</tr>
-`, attempt.TemplateName, attempt.ExamType, attempt.ScorePercent, attempt.Grade, attempt.AttemptedAt))
+`, attempt.TemplateName, attempt.ExamType, attempt.ScorePercent, attempt.Grade, attempt.AttemptedAt)
 	}
 
 	buf.WriteString(`

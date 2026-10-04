@@ -30,16 +30,16 @@ func rawJSON(b []byte) any {
 func (a *AdminService) Dashboard(ctx context.Context) (map[string]any, error) {
 	db := a.svc.db
 	var totalTrips, completed, cancelled, activeDrivers, openIncidents int
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM trips`).Scan(&totalTrips)
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM trips WHERE phase='completed'`).Scan(&completed)
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM trips WHERE phase IN ('cancelled','no_show')`).Scan(&cancelled)
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM drivers WHERE status IN ('online','on_trip') AND verification_status='approved'`).Scan(&activeDrivers)
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM safety_incidents WHERE status IN ('open','investigating','escalated')`).Scan(&openIncidents)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM trips`).Scan(&totalTrips)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM trips WHERE phase='completed'`).Scan(&completed)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM trips WHERE phase IN ('cancelled','no_show')`).Scan(&cancelled)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM drivers WHERE status IN ('online','on_trip') AND verification_status='approved'`).Scan(&activeDrivers)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM safety_incidents WHERE status IN ('open','investigating','escalated')`).Scan(&openIncidents)
 
 	var gbv, revenue, driverEarnings int64
-	db.QueryRow(ctx, `SELECT COALESCE(SUM(total_kobo),0) FROM settlements WHERE module_type='transport' AND status='settled'`).Scan(&gbv)
-	db.QueryRow(ctx, `SELECT COALESCE(SUM(fee_kobo),0) FROM settlements WHERE module_type='transport' AND status='settled'`).Scan(&revenue)
-	db.QueryRow(ctx, `SELECT COALESCE(SUM(provider_kobo),0) FROM settlements WHERE module_type='transport' AND status='settled'`).Scan(&driverEarnings)
+	_ = db.QueryRow(ctx, `SELECT COALESCE(SUM(total_kobo),0) FROM settlements WHERE module_type='transport' AND status='settled'`).Scan(&gbv)
+	_ = db.QueryRow(ctx, `SELECT COALESCE(SUM(fee_kobo),0) FROM settlements WHERE module_type='transport' AND status='settled'`).Scan(&revenue)
+	_ = db.QueryRow(ctx, `SELECT COALESCE(SUM(provider_kobo),0) FROM settlements WHERE module_type='transport' AND status='settled'`).Scan(&driverEarnings)
 
 	completionRate, cancelRate := 0.0, 0.0
 	if totalTrips > 0 {
@@ -71,13 +71,13 @@ func (a *AdminService) ReportsSummary(ctx context.Context) (map[string]any, erro
 	db := a.svc.db
 	var settledCount int
 	var totalKobo, feeKobo, providerKobo int64
-	db.QueryRow(ctx, `
+	_ = db.QueryRow(ctx, `
 		SELECT COUNT(*), COALESCE(SUM(total_kobo),0), COALESCE(SUM(fee_kobo),0), COALESCE(SUM(provider_kobo),0)
 		FROM settlements WHERE module_type='transport' AND status='settled'`).
 		Scan(&settledCount, &totalKobo, &feeKobo, &providerKobo)
 	var totalTrips, cancelled int
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM trips`).Scan(&totalTrips)
-	db.QueryRow(ctx, `SELECT COUNT(*) FROM trips WHERE phase IN ('cancelled','no_show')`).Scan(&cancelled)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM trips`).Scan(&totalTrips)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM trips WHERE phase IN ('cancelled','no_show')`).Scan(&cancelled)
 	cancelRate := 0.0
 	if totalTrips > 0 {
 		cancelRate = float64(cancelled) / float64(totalTrips)
@@ -152,7 +152,7 @@ func (a *AdminService) SetVerification(ctx context.Context, adminID, driverID, n
 	}
 	// A rejected/suspended driver is forced offline.
 	if newStatus == "rejected" || newStatus == "suspended" {
-		db.Exec(ctx, `UPDATE drivers SET status='offline' WHERE id=$1`, driverID)
+		_, _ = db.Exec(ctx, `UPDATE drivers SET status='offline' WHERE id=$1`, driverID)
 	}
 	return writeAudit(ctx, db, adminID, "driver.verification", "driver", driverID,
 		map[string]any{"verification_status": oldStatus}, map[string]any{"verification_status": newStatus}, reason)
@@ -257,7 +257,7 @@ func (a *AdminService) DispatchLive(ctx context.Context) (map[string]any, error)
 		return nil, err
 	}
 	var sosCount int
-	a.svc.db.QueryRow(ctx, `SELECT COUNT(*) FROM trips WHERE safety_status<>'normal' AND phase NOT IN ('completed','cancelled')`).Scan(&sosCount)
+	_ = a.svc.db.QueryRow(ctx, `SELECT COUNT(*) FROM trips WHERE safety_status<>'normal' AND phase NOT IN ('completed','cancelled')`).Scan(&sosCount)
 	return map[string]any{
 		"active_trips":   inflight,
 		"online_drivers": drivers,
@@ -283,7 +283,7 @@ func (a *AdminService) ManualAssign(ctx context.Context, adminID, tripID, driver
 	if _, err := db.Exec(ctx, `UPDATE trips SET driver_id=$1, phase='driver_assigned', status='accepted', updated_at=NOW() WHERE id=$2`, driverID, tripID); err != nil {
 		return err
 	}
-	db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, driverID)
+	_, _ = db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, driverID)
 	a.svc.recordEvent(ctx, tripID, "manual_assign", adminID, TripPhase(phase), PhaseDriverAssigned, map[string]any{"driver_id": driverID})
 	return writeAudit(ctx, db, adminID, "dispatch.assign", "trip", tripID,
 		map[string]any{"driver_id": oldDriver}, map[string]any{"driver_id": driverID}, reason)
@@ -329,7 +329,7 @@ func (a *AdminService) PatchPricing(ctx context.Context, adminID string, req Pri
 		return nil, err
 	}
 	updated, _ := a.svc.queryPricing(ctx, zone, st)
-	writeAudit(ctx, db, adminID, "pricing.update", "pricing_config", zone+":"+st, old, updated, req.Reason)
+	_ = writeAudit(ctx, db, adminID, "pricing.update", "pricing_config", zone+":"+st, old, updated, req.Reason)
 	return updated, nil
 }
 
@@ -377,7 +377,7 @@ func (a *AdminService) PatchCommission(ctx context.Context, adminID, tier string
 		return nil, err
 	}
 	updated := &CommissionConfig{Tier: tier, ProviderPct: newProvider, PlatformPct: newPlatform, Active: true}
-	writeAudit(ctx, db, adminID, "commission.update", "commission_config", tier, old, updated, req.Reason)
+	_ = writeAudit(ctx, db, adminID, "commission.update", "commission_config", tier, old, updated, req.Reason)
 	return updated, nil
 }
 
@@ -425,7 +425,7 @@ func (a *AdminService) PatchIncident(ctx context.Context, adminID, incidentID st
 		return err
 	}
 	if req.Status == "resolved" || req.Status == "closed" {
-		db.Exec(ctx, `UPDATE trips SET safety_status='resolved' WHERE id=(SELECT trip_id FROM safety_incidents WHERE id=$1)`, incidentID)
+		_, _ = db.Exec(ctx, `UPDATE trips SET safety_status='resolved' WHERE id=(SELECT trip_id FROM safety_incidents WHERE id=$1)`, incidentID)
 	}
 	return writeAudit(ctx, db, adminID, "safety.update", "safety_incident", incidentID,
 		map[string]any{"status": oldStatus}, map[string]any{"status": req.Status, "resolution_note": req.ResolutionNote}, "")

@@ -228,7 +228,7 @@ func (s *Service) OnChargeSuccess(ctx context.Context, reference, gatewayRef str
 
 	status, err := s.gateway.VerifyPayment(ctx, reference)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrVerifyUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ErrVerifyUnavailable, err)
 	}
 	if status == nil || strings.ToLower(status.Status) != "success" {
 		return nil, ErrChargeNotSuccessful

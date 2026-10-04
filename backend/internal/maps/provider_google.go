@@ -2,6 +2,7 @@ package maps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -262,7 +263,7 @@ func googleLatLngList(pts []Point) string {
 // yields a zero cell (callers treat zero distance as "unavailable").
 func (g *Google) Matrix(ctx context.Context, origins, dests []Point) (Matrix, error) {
 	if len(origins) == 0 || len(dests) == 0 {
-		return Matrix{}, fmt.Errorf("maps: google matrix needs origins and destinations")
+		return Matrix{}, errors.New("maps: google matrix needs origins and destinations")
 	}
 	u := fmt.Sprintf(
 		"https://maps.googleapis.com/maps/api/distancematrix/json?origins=%s&destinations=%s&mode=driving&departure_time=now&key=%s",

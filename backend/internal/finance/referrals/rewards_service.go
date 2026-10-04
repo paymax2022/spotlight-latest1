@@ -65,10 +65,10 @@ func (s *RewardService) emit(ctx context.Context, event string, fields map[strin
 // Idempotent: a replay with the same TransactionID is a safe no-op.
 func (s *RewardService) OnPurchaseSettled(ctx context.Context, in PurchaseSettled) error {
 	if strings.TrimSpace(in.TransactionID) == "" {
-		return fmt.Errorf("referrals: OnPurchaseSettled requires transaction_id")
+		return errors.New("referrals: OnPurchaseSettled requires transaction_id")
 	}
 	if strings.TrimSpace(in.PayerUserID) == "" {
-		return fmt.Errorf("referrals: OnPurchaseSettled requires payer_user_id")
+		return errors.New("referrals: OnPurchaseSettled requires payer_user_id")
 	}
 	if in.MarginKobo <= 0 {
 		return nil
@@ -141,7 +141,7 @@ func (s *RewardService) OnPurchaseSettled(ctx context.Context, in PurchaseSettle
 // refund event is a safe no-op.
 func (s *RewardService) OnPurchaseRefunded(ctx context.Context, in PurchaseRefunded) error {
 	if strings.TrimSpace(in.TransactionID) == "" {
-		return fmt.Errorf("referrals: OnPurchaseRefunded requires transaction_id")
+		return errors.New("referrals: OnPurchaseRefunded requires transaction_id")
 	}
 
 	const q = `SELECT id, referrer_id, reward_kobo, status FROM referral_rewards
@@ -230,7 +230,7 @@ func (s *RewardService) ActiveConfig(ctx context.Context) (*ProgramConfig, error
 	err := s.db.QueryRow(ctx, q).Scan(
 		&c.ID, &c.Version, &tierJSON, &msJSON, &c.IsActive, &c.EffectiveFrom, &c.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("referrals: no active program config")
+		return nil, errors.New("referrals: no active program config")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("referrals: load active config: %w", err)
@@ -342,7 +342,7 @@ func (s *RewardService) GetOrCreateLink(ctx context.Context, referrerID string) 
 		}
 		// Code taken by another referrer — fall through and draw a fresh one.
 	}
-	for attempt := 0; attempt < codeIssueAttempts; attempt++ {
+	for range codeIssueAttempts {
 		code, gerr := generateRewardCode()
 		if gerr != nil {
 			return nil, gerr
@@ -777,7 +777,7 @@ func (s *RewardService) GetActiveConfig(ctx context.Context) (*ProgramConfig, er
 // which transactions use it. If effectiveFrom is zero it defaults to now().
 func (s *RewardService) PublishConfig(ctx context.Context, tiers []TierBand, milestones []MilestoneBand, effectiveFrom time.Time, adminID string) (*ProgramConfig, error) {
 	if len(tiers) == 0 || len(milestones) == 0 {
-		return nil, fmt.Errorf("referrals: config requires tier_table and milestone_table")
+		return nil, errors.New("referrals: config requires tier_table and milestone_table")
 	}
 	if effectiveFrom.IsZero() {
 		effectiveFrom = time.Now()
@@ -952,7 +952,7 @@ func (s *RewardService) ActionFraudFlag(ctx context.Context, flagID, action, not
 		return fmt.Errorf("referrals: invalid fraud action %q", action)
 	}
 	if strings.TrimSpace(note) == "" {
-		return fmt.Errorf("referrals: fraud action requires a logged note")
+		return errors.New("referrals: fraud action requires a logged note")
 	}
 	const upd = `
 		UPDATE referral_fraud_flags
@@ -963,7 +963,7 @@ func (s *RewardService) ActionFraudFlag(ctx context.Context, flagID, action, not
 		return fmt.Errorf("referrals: action fraud flag: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("referrals: fraud flag not found or already actioned")
+		return errors.New("referrals: fraud flag not found or already actioned")
 	}
 	s.emit(ctx, "referral.fraud.actioned", map[string]any{
 		"flag_id": flagID, "action": action, "reviewer_id": reviewerID,
@@ -1014,13 +1014,13 @@ func (s *RewardService) GetCase(ctx context.Context, referrerID string) (*CaseVi
 // referral_case_adjustments for audit.
 func (s *RewardService) AdjustCase(ctx context.Context, referrerID string, adjustKobo int64, reason, adminID, idempotencyKey string) error {
 	if strings.TrimSpace(reason) == "" {
-		return fmt.Errorf("referrals: manual adjustment requires a logged reason")
+		return errors.New("referrals: manual adjustment requires a logged reason")
 	}
 	if adjustKobo == 0 {
-		return fmt.Errorf("referrals: adjustment amount must be non-zero")
+		return errors.New("referrals: adjustment amount must be non-zero")
 	}
 	if strings.TrimSpace(idempotencyKey) == "" {
-		return fmt.Errorf("referrals: manual adjustment requires an idempotency key")
+		return errors.New("referrals: manual adjustment requires an idempotency key")
 	}
 
 	// Record the audit row first (UNIQUE idempotency_key makes a replay a no-op).

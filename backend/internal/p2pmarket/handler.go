@@ -136,7 +136,7 @@ func (h *Handler) Confirm(c *gin.Context) {
 	}
 	if err := h.svc.ConfirmReceipt(c.Request.Context(), c.Param("orderId"), uid); err != nil {
 		status := http.StatusBadRequest
-		if err == ErrNotParty {
+		if errors.Is(err, ErrNotParty) {
 			status = http.StatusForbidden
 		}
 		c.JSON(status, gin.H{keyError: httperr.Msg(c, status, err)})
@@ -158,7 +158,7 @@ func (h *Handler) Dispute(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	if err := h.svc.RaiseDispute(c.Request.Context(), c.Param("orderId"), uid, req.Evidence); err != nil {
 		status := http.StatusBadRequest
-		if err == escrow.ErrDisputeNotParty {
+		if errors.Is(err, escrow.ErrDisputeNotParty) {
 			status = http.StatusForbidden
 		}
 		c.JSON(status, gin.H{keyError: httperr.Msg(c, status, err)})
@@ -180,7 +180,7 @@ func (h *Handler) Arbitrate(c *gin.Context) {
 	}
 	if err := h.svc.Arbitrate(c.Request.Context(), c.Param("orderId"), escrow.DisputeDecision(req.Decision), arbiterID); err != nil {
 		status := http.StatusBadRequest
-		if err == escrow.ErrArbiterConflict {
+		if errors.Is(err, escrow.ErrArbiterConflict) {
 			status = http.StatusForbidden
 		}
 		c.JSON(status, gin.H{keyError: httperr.Msg(c, status, err)})
@@ -207,7 +207,7 @@ func (h *Handler) Rate(c *gin.Context) {
 	r, err := h.svc.RateSeller(c.Request.Context(), c.Param("orderId"), uid, req.Stars, req.Comment)
 	if err != nil {
 		status := http.StatusBadRequest
-		if err == ErrNotParty {
+		if errors.Is(err, ErrNotParty) {
 			status = http.StatusForbidden
 		}
 		c.JSON(status, gin.H{keyError: httperr.Msg(c, status, err)})

@@ -116,7 +116,7 @@ func (r *Repository) SetRuleEnabled(ctx context.Context, id string, enabled bool
 		return fmt.Errorf("risk: set rule enabled: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("risk: rule not found")
+		return errors.New("risk: rule not found")
 	}
 	return nil
 }
@@ -215,7 +215,7 @@ func (r *Repository) SetAlertStatus(ctx context.Context, id, status, caseID stri
 		return fmt.Errorf("risk: set alert status: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("risk: alert not found")
+		return errors.New("risk: alert not found")
 	}
 	return nil
 }
@@ -284,7 +284,7 @@ func (r *Repository) ListCases(ctx context.Context, status string, limit int) ([
 // GetCase returns one case by id.
 func (r *Repository) GetCase(ctx context.Context, id string) (*Case, error) {
 	c, err := scanCase(r.db.QueryRow(ctx, `SELECT `+caseCols+` FROM referral_cases WHERE id = $1`, id))
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -309,7 +309,7 @@ func (r *Repository) UpdateCaseStatus(ctx context.Context, id, status, resolutio
 		return fmt.Errorf("risk: update case status: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("risk: case not found")
+		return errors.New("risk: case not found")
 	}
 	return nil
 }
@@ -372,7 +372,7 @@ func (r *Repository) DeactivateBlocklist(ctx context.Context, id string) error {
 		return fmt.Errorf("risk: deactivate blocklist: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("risk: blocklist entry not found")
+		return errors.New("risk: blocklist entry not found")
 	}
 	return nil
 }
@@ -472,7 +472,7 @@ func (r *Repository) ListReviewQueue(ctx context.Context, status string) ([]Revi
 // GetReviewItem returns one review item by id.
 func (r *Repository) GetReviewItem(ctx context.Context, id string) (*ReviewItem, error) {
 	it, err := scanReview(r.db.QueryRow(ctx, `SELECT `+rqCols+` FROM referral_review_queue WHERE id = $1`, id))
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -492,7 +492,7 @@ func (r *Repository) DecideReview(ctx context.Context, id, status, decidedBy str
 		return fmt.Errorf("risk: decide review: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("risk: review item not found or already decided")
+		return errors.New("risk: review item not found or already decided")
 	}
 	return nil
 }
@@ -515,7 +515,7 @@ func (r *Repository) IdentityHashOf(ctx context.Context, userID string) (string,
 	const q = `SELECT COALESCE(bvn_hash, nin_hash, '') FROM user_profiles WHERE id = $1`
 	var h string
 	err := r.db.QueryRow(ctx, q, userID).Scan(&h)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
@@ -583,7 +583,7 @@ func (r *Repository) AttributionRiskFlag(ctx context.Context, userID string) (st
 	const q = `SELECT COALESCE(risk_flag, '') FROM referral_attributions WHERE referred_user_id = $1`
 	var flag string
 	err := r.db.QueryRow(ctx, q, userID).Scan(&flag)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil
 	}
 	if err != nil {

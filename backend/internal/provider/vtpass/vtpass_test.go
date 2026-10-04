@@ -280,9 +280,9 @@ func TestSandboxGetBill_AlwaysSuccessful(t *testing.T) {
 func TestAuthHeaders_PostUsesSecretKey(t *testing.T) {
 	var gotAPIKey, gotSecretKey, gotPublicKey string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAPIKey = r.Header.Get("api-key")
-		gotSecretKey = r.Header.Get("secret-key")
-		gotPublicKey = r.Header.Get("public-key")
+		gotAPIKey = r.Header.Get("Api-Key")
+		gotSecretKey = r.Header.Get("Secret-Key")
+		gotPublicKey = r.Header.Get("Public-Key")
 		_, _ = w.Write([]byte(`{"code":"000","response_description":"successful","requestId":"req-x"}`))
 	}))
 	defer srv.Close()
@@ -311,8 +311,8 @@ func TestAuthHeaders_PostUsesSecretKey(t *testing.T) {
 func TestAuthHeaders_GetUsesPublicKey(t *testing.T) {
 	var gotPublicKey, gotSecretKey string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPublicKey = r.Header.Get("public-key")
-		gotSecretKey = r.Header.Get("secret-key")
+		gotPublicKey = r.Header.Get("Public-Key")
+		gotSecretKey = r.Header.Get("Secret-Key")
 		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer srv.Close()

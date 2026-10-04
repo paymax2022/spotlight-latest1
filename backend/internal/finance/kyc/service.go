@@ -78,7 +78,7 @@ func (s *Service) Initiate(ctx context.Context, userID string, req InitiateReque
 	if err != nil {
 		return nil, fmt.Errorf("kyc: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Captured for the audit row below — kyc_events.old_status/old_tier record
 	// what the profile was BEFORE this transition, and new_tier is NOT NULL even
@@ -137,7 +137,7 @@ func (s *Service) Approve(ctx context.Context, userID string, newTier int, actor
 	if err != nil {
 		return nil, fmt.Errorf("kyc: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var oldStatus string
 	var oldTier int
@@ -220,7 +220,7 @@ func (s *Service) Fail(ctx context.Context, userID string, actorID *string) erro
 	if err != nil {
 		return fmt.Errorf("kyc: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var oldStatus string
 	var oldTier int

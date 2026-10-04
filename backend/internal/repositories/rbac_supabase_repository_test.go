@@ -1,4 +1,4 @@
-package repositories //nolint:testpackage // asserts on PostgREST query construction via the real client
+package repositories
 
 import (
 	"net/http"

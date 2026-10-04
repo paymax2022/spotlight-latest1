@@ -50,11 +50,11 @@ func liveDBPool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("no TEST_DATABASE_URL set — skipping live-DB restaurant payout integration test; see bring-up note in payout_live_db_test.go")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	if err := pool.Ping(context.Background()); err != nil {
+	if err := pool.Ping(t.Context()); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
 	return pool
@@ -166,7 +166,7 @@ func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *t
 	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveRestaurantService(pool, led)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	owner := seedUser(t, ctx, pool)    // restaurant provider (money lands in this wallet)
 	customer := seedUser(t, ctx, pool) // settlement payer

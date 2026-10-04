@@ -473,7 +473,7 @@ func TestLiveDB_BindRegistry_UnknownOutcomeBlocksRetry(t *testing.T) {
 	reg := utilitybills.NewBindRegistry(pool)
 	key := "test-bind-" + uuid.New().String()
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.utility_provider_bind WHERE idempotency_key=$1`, key)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.utility_provider_bind WHERE idempotency_key=$1`, key)
 	})
 
 	claim, err := reg.Claim(ctx, key, "vtpass", "eko-electric", "prepaid", "")
@@ -511,7 +511,7 @@ func TestLiveDB_BindRegistry_UnknownOutcomeBlocksRetry(t *testing.T) {
 	// retry (or a failover to the next provider) is safe.
 	otherKey := "test-bind-failed-" + uuid.New().String()
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM public.utility_provider_bind WHERE idempotency_key=$1`, otherKey)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM public.utility_provider_bind WHERE idempotency_key=$1`, otherKey)
 	})
 	if _, err := reg.Claim(ctx, otherKey, "vtpass", "eko-electric", "prepaid", ""); err != nil {
 		t.Fatalf("claim: %v", err)

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"maps"
 	"slices"
@@ -83,7 +84,7 @@ func (s *MeritService) Append(ctx context.Context, actorID string, e arena.Signe
 			"stage":            string(e.Payload.Stage),
 			"adapter_id":       e.Payload.AdapterID,
 			"normalized_score": e.Payload.NormalizedScore,
-			"entry_hash":       fmt.Sprintf("%x", e.EntryHash),
+			"entry_hash":       hex.EncodeToString(e.EntryHash),
 		},
 	})
 }
@@ -311,9 +312,7 @@ func PeoplesChampion(rows []SupportRow) (string, map[string]int64) {
 // per-state tally. Ties break by state code (deterministic).
 func StatePride(rows []SupportRow) (string, map[string]int64) {
 	var winner string
-	var tally map[string]int64
-
-	tally = map[string]int64{}
+	var tally map[string]int64 = map[string]int64{}
 	for _, r := range rows {
 		if r.HomeState == "" {
 			continue

@@ -74,10 +74,10 @@ func TestLiveDB_Broadcast_NotifiesOptedInBackersOnly(t *testing.T) {
 	seedContribution(refundedBacker, "refunded") // must never be notified
 
 	t.Cleanup(func() {
-		pool.Exec(ctx, `DELETE FROM cf_notifications WHERE campaign_id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM contributions WHERE campaign_id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
-		pool.Exec(ctx, `DELETE FROM cf_notification_prefs WHERE user_id = $1`, backerOut)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_notifications WHERE campaign_id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM contributions WHERE campaign_id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM campaigns WHERE id = $1`, campaignID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM cf_notification_prefs WHERE user_id = $1`, backerOut)
 	})
 
 	// Non-owner is refused before anything is sent.
@@ -150,7 +150,9 @@ func TestLiveDB_Broadcast_RejectsShortFieldsAndNoChannel(t *testing.T) {
 		campaignID, creatorID); err != nil {
 		t.Fatalf("seed campaign: %v", err)
 	}
-	t.Cleanup(func() { pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM campaigns WHERE id = $1`, campaignID)
+	})
 
 	cases := []struct {
 		name  string

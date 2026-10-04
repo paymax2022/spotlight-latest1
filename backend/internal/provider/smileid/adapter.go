@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"spotlight/backend/go-common/timeutil"
 	"spotlight/backend/internal/provider"
@@ -43,9 +44,7 @@ func (c *Client) submitJob(ctx context.Context, jobType int, req provider.KycVer
 			"job_type": jobType,
 		},
 	}
-	for k, v := range extra {
-		body[k] = v
-	}
+	maps.Copy(body, extra)
 	raw, err := c.post(ctx, "/async_job", body, nil)
 	if err != nil {
 		return provider.KycCheckResult{}, err
@@ -238,7 +237,7 @@ func (c *Client) do(req *http.Request, dst any) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("smileid: http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("smileid: read response: %w", err)

@@ -16,7 +16,7 @@ func TestCreateSchool_Validation(t *testing.T) {
 	r.POST("/schools", h.CreateSchool)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/schools", bytes.NewBufferString(`{"state":"Lagos"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/schools", bytes.NewBufferString(`{"state":"Lagos"}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -32,7 +32,7 @@ func TestCreateSchool_InvalidArtifactURL(t *testing.T) {
 	r.POST("/schools", h.CreateSchool)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(t.Context(),
 		http.MethodPost,
 		"/schools",
 		bytes.NewBufferString(`{"schoolName":"Test School","registrationDocumentUrl":"https://cdn.example.com/doc.exe"}`),
@@ -52,7 +52,7 @@ func TestCreateSchoolProfile_Validation(t *testing.T) {
 	r.POST("/profiles", h.CreateSchoolProfile)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/profiles", bytes.NewBufferString(`{"roleType":"SCHOOL_ADMIN"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/profiles", bytes.NewBufferString(`{"roleType":"SCHOOL_ADMIN"}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -68,7 +68,7 @@ func TestCreateContest_Validation(t *testing.T) {
 	r.POST("/contests", h.CreateContest)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/contests", bytes.NewBufferString(`{"name":"My Contest"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/contests", bytes.NewBufferString(`{"name":"My Contest"}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -84,7 +84,7 @@ func TestCheckEligibility_Validation(t *testing.T) {
 	r.POST("/eligibility", h.CheckEligibility)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/eligibility", bytes.NewBufferString(`{"participantType":"SCHOOL_TEAM"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/eligibility", bytes.NewBufferString(`{"participantType":"SCHOOL_TEAM"}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -100,7 +100,7 @@ func TestUpdateSubmissionStatus_Validation(t *testing.T) {
 	r.PATCH("/submissions/:id/status", h.UpdateSubmissionStatus)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPatch, "/submissions/abc/status", bytes.NewBufferString(`{"reviewStage":"screening"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/submissions/abc/status", bytes.NewBufferString(`{"reviewStage":"screening"}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -116,7 +116,7 @@ func TestCreateJudgingScore_Validation(t *testing.T) {
 	r.POST("/judging/scores", h.CreateJudgingScore)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/judging/scores", bytes.NewBufferString(`{"overallScore":78}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/judging/scores", bytes.NewBufferString(`{"overallScore":78}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -132,7 +132,7 @@ func TestLeaderboardSlices_Validation(t *testing.T) {
 	r.GET("/leaderboard/slices", h.LeaderboardSlices)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/leaderboard/slices?by=state", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/leaderboard/slices?by=state", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -147,7 +147,7 @@ func TestJudgingScores_Validation(t *testing.T) {
 	r.GET("/judging/scores", h.JudgingScores)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/judging/scores", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/judging/scores", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -162,7 +162,7 @@ func TestCreateJudgingRubric_Validation(t *testing.T) {
 	r.POST("/judging/rubrics", h.CreateJudgingRubric)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/judging/rubrics", bytes.NewBufferString(`{"name":"Default Rubric"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/judging/rubrics", bytes.NewBufferString(`{"name":"Default Rubric"}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -178,7 +178,7 @@ func TestCreateEmergingInnovator_InvalidArtifactURL(t *testing.T) {
 	r.POST("/emerging", h.CreateEmergingInnovator)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(t.Context(),
 		http.MethodPost,
 		"/emerging",
 		bytes.NewBufferString(`{"fullName":"Jane Doe","email":"jane@example.com","videoDemoUrl":"https://cdn.example.com/video.exe"}`),
@@ -198,7 +198,7 @@ func TestJudgingCriteria_Validation(t *testing.T) {
 	r.GET("/judging/criteria", h.JudgingCriteria)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/judging/criteria", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/judging/criteria", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -213,7 +213,7 @@ func TestCreateJudgeAssignment_Validation(t *testing.T) {
 	r.POST("/judging/assignments", h.CreateJudgeAssignment)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/judging/assignments", bytes.NewBufferString(`{"contestId":"c1"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/judging/assignments", bytes.NewBufferString(`{"contestId":"c1"}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -229,7 +229,7 @@ func TestUpdateJudgingScoreReviewState_Validation(t *testing.T) {
 	r.PATCH("/judging/scores/:id/review-state", h.UpdateJudgingScoreReviewState)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPatch, "/judging/scores/abc/review-state", bytes.NewBufferString(`{"isLocked":true}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/judging/scores/abc/review-state", bytes.NewBufferString(`{"isLocked":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -245,7 +245,7 @@ func TestUpdateJudgingScoreReviewState_LockedWithoutReason(t *testing.T) {
 	r.PATCH("/judging/scores/:id/review-state", h.UpdateJudgingScoreReviewState)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPatch, "/judging/scores/abc/review-state", bytes.NewBufferString(`{"reviewStatus":"locked","isLocked":true}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/judging/scores/abc/review-state", bytes.NewBufferString(`{"reviewStatus":"locked","isLocked":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -261,7 +261,7 @@ func TestCreateJudgeAssignment_InvalidStatus(t *testing.T) {
 	r.POST("/judging/assignments", h.CreateJudgeAssignment)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/judging/assignments", bytes.NewBufferString(`{"contestId":"c1","applicationId":"a1","judgeUserId":"j1","status":"unknown"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/judging/assignments", bytes.NewBufferString(`{"contestId":"c1","applicationId":"a1","judgeUserId":"j1","status":"unknown"}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -277,7 +277,7 @@ func TestUpdateJudgeAssignmentConflict_Validation(t *testing.T) {
 	r.PATCH("/judging/assignments/:id/conflict", h.UpdateJudgeAssignmentConflict)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPatch, "/judging/assignments/x/conflict", bytes.NewBufferString(`{"hasConflict":true}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/judging/assignments/x/conflict", bytes.NewBufferString(`{"hasConflict":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
@@ -285,7 +285,7 @@ func TestUpdateJudgeAssignmentConflict_Validation(t *testing.T) {
 	}
 
 	w2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodPatch, "/judging/assignments/x/conflict", bytes.NewBufferString(`{"hasConflict":false,"status":"flagged_conflict"}`))
+	req2 := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/judging/assignments/x/conflict", bytes.NewBufferString(`{"hasConflict":false,"status":"flagged_conflict"}`))
 	req2.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusBadRequest {

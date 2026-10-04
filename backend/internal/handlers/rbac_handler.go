@@ -5,11 +5,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 type RBACHandler struct {

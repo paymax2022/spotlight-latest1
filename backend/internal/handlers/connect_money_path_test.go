@@ -88,7 +88,7 @@ func TestKYCLimitsLadder_MatchesEnforcedConfig(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/kyc/limits", nil)
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/kyc/limits", nil)
 
 	// GetLimits reads only the tiers config — no DB, so a nil service is fine.
 	(&KYCConnectHandler{}).GetLimits(c)

@@ -164,7 +164,7 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 		return nil, ErrWithdrawBadAmount
 	}
 	if s.ledger == nil {
-		return nil, fmt.Errorf("restaurant: withdrawals require a ledger (WithLedger not wired)")
+		return nil, errors.New("restaurant: withdrawals require a ledger (WithLedger not wired)")
 	}
 	if s.tiers == nil {
 		// Fail-closed: a money path with no tier gate must refuse to move money.
@@ -216,7 +216,7 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: withdrawal begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Serialise concurrent debits of THIS wallet so the balance check + reserve are
 	// atomic (no TOCTOU overdraw). Same advisory-lock key as finance/transfers.
@@ -338,7 +338,7 @@ func (s *Service) disburse(ctx context.Context, req WithdrawalDisburseRequest) (
 // settle leg is idempotent on the :settle key, so a duplicate webhook is a no-op.
 func (s *Service) MarkWithdrawalPaid(ctx context.Context, withdrawalID, providerRef, _ string) (*Withdrawal, error) {
 	if s.ledger == nil {
-		return nil, fmt.Errorf("restaurant: withdrawals require a ledger (WithLedger not wired)")
+		return nil, errors.New("restaurant: withdrawals require a ledger (WithLedger not wired)")
 	}
 	suspenseAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountFailedTransferSusp)
 	if err != nil {
@@ -353,7 +353,7 @@ func (s *Service) MarkWithdrawalPaid(ctx context.Context, withdrawalID, provider
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: withdrawal settle begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	w, err := s.lockWithdrawalTx(ctx, tx, withdrawalID)
 	if err != nil {
@@ -417,7 +417,7 @@ func (s *Service) MarkWithdrawalPaid(ctx context.Context, withdrawalID, provider
 // returned). A duplicate failure webhook is a no-op.
 func (s *Service) MarkWithdrawalFailed(ctx context.Context, withdrawalID, reason, _ string) (*Withdrawal, error) {
 	if s.ledger == nil {
-		return nil, fmt.Errorf("restaurant: withdrawals require a ledger (WithLedger not wired)")
+		return nil, errors.New("restaurant: withdrawals require a ledger (WithLedger not wired)")
 	}
 	suspenseAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountFailedTransferSusp)
 	if err != nil {
@@ -428,7 +428,7 @@ func (s *Service) MarkWithdrawalFailed(ctx context.Context, withdrawalID, reason
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: withdrawal reversal begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	w, err := s.lockWithdrawalTx(ctx, tx, withdrawalID)
 	if err != nil {
@@ -792,7 +792,7 @@ func (s *Service) SetDefaultBankAccount(ctx context.Context, ownerID, accountID 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
 		`UPDATE restaurant_bank_accounts SET is_default=false, updated_at=now() WHERE user_id=$1 AND is_default`, ownerID); err != nil {
 		return err

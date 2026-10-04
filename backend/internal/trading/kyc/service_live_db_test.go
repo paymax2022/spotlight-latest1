@@ -10,6 +10,7 @@ package kyc
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func TestLiveDB_KYC_HappyPathAndGate(t *testing.T) {
 		t.Fatal("NOT_STARTED must NOT have trading access")
 	}
 	// Illegal jump: approve without submit.
-	if err := svc.Approve(ctx, uuid.NewString(), u, "x"); err != ErrInvalidTransition {
+	if err := svc.Approve(ctx, uuid.NewString(), u, "x"); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("approve from NOT_STARTED must be illegal, got %v", err)
 	}
 
@@ -83,7 +84,7 @@ func TestLiveDB_KYC_RejectRequiresReasonAndResubmit(t *testing.T) {
 	reviewer := uuid.NewString()
 	_ = svc.Submit(ctx, u)
 
-	if err := svc.Reject(ctx, reviewer, u, ""); err != ErrReasonRequired {
+	if err := svc.Reject(ctx, reviewer, u, ""); !errors.Is(err, ErrReasonRequired) {
 		t.Fatalf("reject without reason must be refused, got %v", err)
 	}
 	if err := svc.Reject(ctx, reviewer, u, "doc_mismatch"); err != nil {
@@ -110,16 +111,16 @@ func TestLiveDB_KYC_BypassPolicyAndRegister(t *testing.T) {
 	checker := uuid.NewString()
 
 	// Policy rejections (two-person, reason, bounded ttl).
-	if err := svc.Bypass(ctx, maker, maker, u, "r", time.Hour, nil); err != ErrBypassSameApprover {
+	if err := svc.Bypass(ctx, maker, maker, u, "r", time.Hour, nil); !errors.Is(err, ErrBypassSameApprover) {
 		t.Fatalf("same maker/checker must be refused, got %v", err)
 	}
-	if err := svc.Bypass(ctx, maker, checker, u, "", time.Hour, nil); err != ErrBypassNoReason {
+	if err := svc.Bypass(ctx, maker, checker, u, "", time.Hour, nil); !errors.Is(err, ErrBypassNoReason) {
 		t.Fatalf("missing reason must be refused, got %v", err)
 	}
-	if err := svc.Bypass(ctx, maker, checker, u, "r", 0, nil); err != ErrBypassBadTTL {
+	if err := svc.Bypass(ctx, maker, checker, u, "r", 0, nil); !errors.Is(err, ErrBypassBadTTL) {
 		t.Fatalf("non-positive ttl must be refused, got %v", err)
 	}
-	if err := svc.Bypass(ctx, maker, checker, u, "r", MaxBypassTTL+time.Hour, nil); err != ErrBypassTTLTooLong {
+	if err := svc.Bypass(ctx, maker, checker, u, "r", MaxBypassTTL+time.Hour, nil); !errors.Is(err, ErrBypassTTLTooLong) {
 		t.Fatalf("over-long ttl must be refused, got %v", err)
 	}
 
