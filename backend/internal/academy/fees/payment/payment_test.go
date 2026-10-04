@@ -168,7 +168,7 @@ func newTestService(t *testing.T, verifyAmount int64) (*Service, *fakeGateway, *
 // Intent creation.
 
 func TestCreateIntent_ReturnsAuthURL(t *testing.T) {
-	svc, gw, _, _, _ := newTestService(t, 50000)
+	svc, gw, _, _, _ := newTestService(t, 50000) //nolint:dogsled // tuple unpack
 	ctx := context.Background()
 
 	out, err := svc.CreatePaymentIntent(ctx, "guardian-1", CreatePaymentIntentRequest{
@@ -259,7 +259,7 @@ func TestConfirm_PostsLedgerMoveAndRecordsInvoice(t *testing.T) {
 // setter for the confirmation path to call. This test asserts the amount flows through
 // RecordPayment (the derived-balance discipline) and the returned derived status is surfaced.
 func TestConfirm_SF2_RecordsPaymentNeverBalance(t *testing.T) {
-	svc, _, _, inv, _ := newTestService(t, 50000)
+	svc, _, _, inv, _ := newTestService(t, 50000) //nolint:dogsled // tuple unpack
 	ctx := context.Background()
 
 	intent, _ := svc.CreatePaymentIntent(ctx, "g", CreatePaymentIntentRequest{InvoiceID: "inv-1", AmountMinor: 50000}, "idem-sf2")
