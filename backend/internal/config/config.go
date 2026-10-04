@@ -446,9 +446,8 @@ type Config struct {
 	FeatureSavingsEnabled   bool // Group & Goal Savings (Ajo/Esusu)
 
 	// SavingsEarlyBreakPenaltyBps is the fee for breaking a LOCK vault before
-	// maturity, in basis points (1000 = 10%). MUST stay server-side: it used to
-	// be read from the request body, so a member could break a lock for free by
-	// sending 0.
+	// maturity, in basis points (1000 = 10%). MUST stay server-side: a
+	// client-supplied value would let a member break a lock for free by sending 0.
 	SavingsEarlyBreakPenaltyBps int
 	FeatureCreatorsEnabled      bool // Creator & Talent Monetisation
 	FeatureLoyaltyEnabled       bool // Unified Loyalty & Paymax Black
@@ -508,8 +507,12 @@ type Config struct {
 	MapsMapboxToken string
 
 	// Cost-guard knobs: per-user proxy rate limit + budget-alert webhook.
-	MapsRateLimitPerMin    int    // per-user requests/min on /api/finance/maps/* (default 120)
-	MapsBudgetAlertWebhook string // POST budget alerts (50/75/90%) here; "" = log only
+	MapsRateLimitPerMin int // per-user requests/min on /api/finance/maps/* (default 120)
+	// FinanceTransferRatePerMin caps per-user transfer-initiate requests/min —
+	// E2E-SEC-058: money mutations had no rate limit (15 rapid transfers, no
+	// 429). Covers /transfers/paymax|bank|bank-to-bank initiates.
+	FinanceTransferRatePerMin int
+	MapsBudgetAlertWebhook    string // POST budget alerts (50/75/90%) here; "" = log only
 
 	// Connect voting cost guards: per-user POSTs/min on the vote endpoints.
 	// The paid path debits a wallet, so it gets the tighter budget.
@@ -885,19 +888,20 @@ func Load() Config {
 		InfermedicaBaseURL:                       getEnv("INFERMEDICA_BASE_URL", ""),
 		TriageWhatsAppSecret:                     getEnv("TRIAGE_WHATSAPP_SECRET", ""),
 
-		MapsConfigPath:         getEnv("MAPS_CONFIG_PATH", ""),
-		MapsDefaultSurface:     getEnv("MAPS_DEFAULT_SURFACE", "default"),
-		MapsProvider:           getEnv("MAPS_PROVIDER", "mock"),
-		MapsBaseURL:            getEnv("MAPS_BASE_URL", ""),
-		MapsAPIKey:             getEnv("MAPS_API_KEY", ""),
-		MapsGeoapifyKey:        getEnv("MAPS_GEOAPIFY_KEY", ""),
-		MapsMapTilerKey:        getEnv("MAPS_MAPTILER_KEY", ""),
-		MapsOSRMBaseURL:        getEnv("MAPS_OSRM_BASE_URL", ""),
-		MapsTileStyleURL:       getEnv("MAPS_TILE_STYLE_URL", ""),
-		MapsGoogleKey:          getEnv("MAPS_GOOGLE_KEY", ""),
-		MapsMapboxToken:        getEnv("MAPS_MAPBOX_TOKEN", ""),
-		MapsRateLimitPerMin:    getEnvInt("MAPS_RATE_LIMIT_PER_MIN", 120),
-		MapsBudgetAlertWebhook: getEnv("MAPS_BUDGET_ALERT_WEBHOOK", ""),
+		MapsConfigPath:            getEnv("MAPS_CONFIG_PATH", ""),
+		MapsDefaultSurface:        getEnv("MAPS_DEFAULT_SURFACE", "default"),
+		MapsProvider:              getEnv("MAPS_PROVIDER", "mock"),
+		MapsBaseURL:               getEnv("MAPS_BASE_URL", ""),
+		MapsAPIKey:                getEnv("MAPS_API_KEY", ""),
+		MapsGeoapifyKey:           getEnv("MAPS_GEOAPIFY_KEY", ""),
+		MapsMapTilerKey:           getEnv("MAPS_MAPTILER_KEY", ""),
+		MapsOSRMBaseURL:           getEnv("MAPS_OSRM_BASE_URL", ""),
+		MapsTileStyleURL:          getEnv("MAPS_TILE_STYLE_URL", ""),
+		MapsGoogleKey:             getEnv("MAPS_GOOGLE_KEY", ""),
+		MapsMapboxToken:           getEnv("MAPS_MAPBOX_TOKEN", ""),
+		MapsRateLimitPerMin:       getEnvInt("MAPS_RATE_LIMIT_PER_MIN", 120),
+		FinanceTransferRatePerMin: getEnvInt("FINANCE_TRANSFER_RATE_PER_MIN", 30),
+		MapsBudgetAlertWebhook:    getEnv("MAPS_BUDGET_ALERT_WEBHOOK", ""),
 
 		ConnectFreeVoteRatePerMin: getEnvInt("CONNECT_FREE_VOTE_RATE_PER_MIN", 30),
 		ConnectPaidVoteRatePerMin: getEnvInt("CONNECT_PAID_VOTE_RATE_PER_MIN", 10),

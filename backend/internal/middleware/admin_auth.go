@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"crypto/subtle"
 	"log"
 	"net/http"
 	"sync"
@@ -47,7 +48,7 @@ func RequireAdmin(expectedKey string, appEnv string) gin.HandlerFunc {
 				gin.H{"success": false, "error": "admin API is not configured"})
 			return
 		}
-		if c.GetHeader("x-admin-api-key") != expectedKey {
+		if subtle.ConstantTimeCompare([]byte(c.GetHeader("x-admin-api-key")), []byte(expectedKey)) != 1 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthorized"})
 			return
 		}
