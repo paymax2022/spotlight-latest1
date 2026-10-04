@@ -510,9 +510,15 @@ type Config struct {
 	MapsRateLimitPerMin int // per-user requests/min on /api/finance/maps/* (default 120)
 	// FinanceTransferRatePerMin caps per-user transfer-initiate requests/min —
 	// E2E-SEC-058: money mutations had no rate limit (15 rapid transfers, no
-	// 429). Covers /transfers/paymax|bank|bank-to-bank initiates.
+	// 429). Covers the transfer initiates plus the other money-moving writes
+	// that share the budget: resolve-account, beneficiaries, fx/convert, and
+	// the FX-orchestrator conversion/transfer/VA/beneficiary/card-fund posts.
 	FinanceTransferRatePerMin int
-	MapsBudgetAlertWebhook    string // POST budget alerts (50/75/90%) here; "" = log only
+	// FinancePinRatePerMin is the tighter budget for /transfers/pin|pin/verify —
+	// a verify oracle on a 4-6 digit space needs less headroom than a
+	// money transfer does.
+	FinancePinRatePerMin   int
+	MapsBudgetAlertWebhook string // POST budget alerts (50/75/90%) here; "" = log only
 
 	// Connect voting cost guards: per-user POSTs/min on the vote endpoints.
 	// The paid path debits a wallet, so it gets the tighter budget.
@@ -901,6 +907,7 @@ func Load() Config {
 		MapsMapboxToken:           getEnv("MAPS_MAPBOX_TOKEN", ""),
 		MapsRateLimitPerMin:       getEnvInt("MAPS_RATE_LIMIT_PER_MIN", 120),
 		FinanceTransferRatePerMin: getEnvInt("FINANCE_TRANSFER_RATE_PER_MIN", 30),
+		FinancePinRatePerMin:      getEnvInt("FINANCE_PIN_RATE_PER_MIN", 10),
 		MapsBudgetAlertWebhook:    getEnv("MAPS_BUDGET_ALERT_WEBHOOK", ""),
 
 		ConnectFreeVoteRatePerMin: getEnvInt("CONNECT_FREE_VOTE_RATE_PER_MIN", 30),

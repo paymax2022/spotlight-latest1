@@ -394,13 +394,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// inside the handler). Idempotency-Key required on initiates.
 	transferGroup.POST("/bank-to-bank", transferRate, transfersHandler.InitiateBankToBank)
 	transferGroup.GET("/banks", transfersHandler.ListBanks)
-	transferGroup.POST("/resolve-account", transfersHandler.ResolveAccount)
+	// resolve-account spends a PSP lookup per call — metering it bounds the
+	// cost of an account-number spray the same way the initiates are bounded.
+	transferGroup.POST("/resolve-account", transferRate, transfersHandler.ResolveAccount)
 	transferGroup.GET("/beneficiaries", transfersHandler.ListBeneficiaries)
-	transferGroup.POST("/beneficiaries", transfersHandler.SaveBeneficiary)
+	transferGroup.POST("/beneficiaries", transferRate, transfersHandler.SaveBeneficiary)
 	transferGroup.DELETE("/beneficiaries/:id", transfersHandler.DeleteBeneficiary)
 	transferGroup.GET("/pin/status", transfersHandler.PinStatus)
-	transferGroup.POST("/pin", transfersHandler.SetPin)
-	transferGroup.POST("/pin/verify", transfersHandler.VerifyPin)
+	// PIN endpoints get a tighter budget: /pin/verify is a brute-force oracle
+	// on a 4-6 digit space, so the 30/min transfer budget is too generous.
+	pinRate := middleware.PerUserRateLimit(redisClient, "finance-pin", cfg.FinancePinRatePerMin)
+	transferGroup.POST("/pin", pinRate, transfersHandler.SetPin)
+	transferGroup.POST("/pin/verify", pinRate, transfersHandler.VerifyPin)
 
 	// Mounted on the root engine with requireUserID + RequireAuthContext so the
 	// permission middleware can read the caller; per-route RBAC fail-closed.
@@ -725,7 +730,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeatureFXEnabled && fxHandler != nil {
 		fxGroup := finance.Group("/fx")
 		fxGroup.POST("/quote", fxHandler.GetQuote)
-		fxGroup.POST("/convert", fxHandler.Convert)
+		// convert is a money mutation — same budget as the transfer initiates.
+		fxGroup.POST("/convert", transferRate, fxHandler.Convert)
 		fxGroup.GET("/history", fxHandler.ListHistory)
 		fxGroup.GET("/wallets/:currency", fxHandler.GetWallet)
 	}
@@ -851,9 +857,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		og.Use(requireUserID())
 		og.POST("/quotes", orchHandler.CreateQuote)
 		og.POST("/quotes/:id/lock", orchHandler.LockQuote)
-		og.POST("/conversions", orchHandler.CreateConversion)
-		og.POST("/transfers", orchHandler.CreateTransfer)
-		og.POST("/collections/virtual-accounts", orchHandler.CreateCollection)
+		// Money-moving orchestrator writes share the transfer budget; reads
+		// (rates, balances, transactions) stay unmetered.
+		og.POST("/conversions", transferRate, orchHandler.CreateConversion)
+		og.POST("/transfers", transferRate, orchHandler.CreateTransfer)
+		og.POST("/collections/virtual-accounts", transferRate, orchHandler.CreateCollection)
 		og.GET("/rates", orchHandler.GetRates)
 		og.GET("/balances", orchHandler.GetBalances)
 		og.GET("/transactions", orchHandler.ListTransactions)
@@ -867,7 +875,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		og.GET("/collections", orchHandler.ListCollections)
 		og.GET("/collections/virtual-accounts", orchHandler.ListVirtualAccounts)
 		og.GET("/beneficiaries", orchHandler.ListBeneficiaries)
-		og.POST("/beneficiaries", orchHandler.CreateBeneficiary)
+		og.POST("/beneficiaries", transferRate, orchHandler.CreateBeneficiary)
 		og.POST("/beneficiaries/validate", orchHandler.ValidateBeneficiary)
 		og.PUT("/beneficiaries/:id", orchHandler.UpdateBeneficiary)
 		og.PATCH("/beneficiaries/:id", orchHandler.FavoriteBeneficiary)
@@ -914,7 +922,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		og.GET("/cards/:id", orchHandler.GetCard)
 		og.GET("/cards/:id/transactions", orchHandler.ListCardTransactions)
 		og.POST("/cards/:id/reveal", orchHandler.RevealCard)
-		og.POST("/cards/:id/fund", orchHandler.FundCard)
+		og.POST("/cards/:id/fund", transferRate, orchHandler.FundCard)
 		og.POST("/cards/:id/freeze", orchHandler.FreezeCard)
 		og.POST("/cards/:id/unfreeze", orchHandler.UnfreezeCard)
 		og.POST("/cards/:id/terminate", orchHandler.TerminateCard)
