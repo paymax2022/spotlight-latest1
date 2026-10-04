@@ -337,13 +337,10 @@ type HealthHandler struct {
 	pingRedis func(ctx context.Context) error
 
 	// Readiness verdict is probed at most once per readyProbeInterval and
-	// cached in between. Without this, every load-balancer/uptime/k8s probe
-	// (and every VU in a loadtest) issues its own pool.Ping — under a saturated
-	// pool those pings queue behind real traffic, exceed their deadline, and
-	// flap the pod out of service exactly when load is highest. One probe per
-	// interval bounds the probe cost regardless of request rate and still
-	// reports a real outage within readyProbeInterval. The same window covers
-	// the Redis ping — one probe of each component, never more.
+	// cached between probes — otherwise every LB/uptime/k8s probe issues its
+	// own pool.Ping, which under a saturated pool queues, times out, and flaps
+	// the pod exactly when load is highest. The same window covers the Redis
+	// ping — one probe per component, never more.
 	mu          sync.Mutex
 	lastReady   bool
 	lastReason  string
@@ -504,19 +501,13 @@ func (h *HealthHandler) GenericHealth(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
-// Build reports which commit this process is serving.
-// PublicHealth cannot answer that: its body is a fixed string, byte-identical on
-// every build, so probing it before and after a deploy proves nothing. Verifying
-// a deploy therefore meant trusting CI job conclusions and the platform's own
-// status — never an observation of the running binary. This endpoint makes the
-// server say it itself, in one unauthenticated request.
-// Deliberately exposes ONLY build identity: commit, branch, dirty flag, process
-// start time. No config, no environment, no versions of anything else — this is
-// internet-facing and unauthenticated, and a commit SHA of a private repo is not
-// a secret, whereas a dependency inventory would hand an attacker a target list.
-// Reports commit "" with source "unknown" rather than inventing a value when
-// nothing supplied one. A wrong commit here would be worse than a missing one:
-// it would be believed, and the next person would verify a deploy against a lie.
+// Build reports which commit this process is serving — PublicHealth's body is a
+// fixed string, byte-identical on every build, so it cannot distinguish
+// "deployed" from "did not deploy".
+// Exposes ONLY build identity (commit, branch, dirty flag, process start): the
+// endpoint is unauthenticated, so no config/environment/dependency inventory.
+// Reports commit "" with source "unknown" rather than inventing a value — a
+// wrong commit would be believed.
 func (h *HealthHandler) Build(c *gin.Context) {
 	dir, err := os.Getwd()
 	if err != nil {

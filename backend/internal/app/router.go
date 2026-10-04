@@ -34,22 +34,12 @@ func NewRouter(cfg config.Config) *gin.Engine {
 // gracefully alongside the HTTP server.
 func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	// gin.SetMode is a package-level global, so this must run before
-	// gin.Default() constructs the engine's default logger. Nothing in this
-	// server ever set it (only the separate voting-test-server binary does),
-	// so it has run in gin's default DEBUG mode in every environment,
-	// including staging and production, printing a "[GIN-debug] <method>
-	// <path> --> <handler>" line for EVERY route on every startup. With a
-	// couple hundred routes that's noise; with the full module set enabled
-	// (see the "why this exists" header on staging-module-flags.yml) it's
-	// thousands of lines in the first second of boot, fast enough to blow
-	// through Railway's 500 logs/sec rate limit — a staging deploy right
-	// after that flag audit landed sat in DEPLOYING for ~2-3 minutes with
-	// "Messages dropped: 3487" in the log and then FAILED with no panic or
-	// fatal line at all, consistent with the burst of synchronous stdout
-	// writes stalling init past the healthcheck window rather than crashing.
-	// Debug route-registration logging is genuinely useful for local
-	// development, so it stays on there; every other environment gets Gin's
-	// quiet release logger.
+	// gin.Default() constructs the engine's default logger. In DEBUG mode Gin
+	// prints a route-registration line per route at boot — with the full module
+	// set that is thousands of synchronous stdout writes, enough to trip the
+	// deploy platform's log rate limit and stall init past the healthcheck
+	// window (observed on a staging deploy). Debug logging stays on for local
+	// development; every other environment gets the quiet release logger.
 	if cfg.AppEnv != "development" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -438,19 +428,14 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	// Single shared pgx pool for all DB-backed module aggregators. nil when
 	// DATABASE_URL is unset or the connection fails; each aggregator skips its
 	// routes on a nil pool.
-	// Outside development a nil pool is FATAL, not a warning. A degraded boot
-	// still binds :8080 and answers /api/v1/public/health with 200, so Railway
-	// marks the deployment SUCCESS, replaces the previous (working) one, and
-	// every DB-backed route — all of /api/finance/*, wallet, KYC, restaurant,
-	// association, health — 404s for as long as that deployment lives. Refusing
-	// to start turns that into a FAILED deployment that Railway keeps rolled
-	// back (restartPolicyType ON_FAILURE), which is the outcome we want. Same
-	// doctrine as the ASSOC_CARD_SIGNING_SECRET guard in finance_routes.go:
-	// a missing dependency must stop the process, not silently degrade it.
-	// Only the deployed tiers fail closed. Development, "test", and the empty
-	// AppEnv that unit tests construct NewRouter with keep the lenient path, so
-	// the Supabase-only surfaces stay usable without a local Postgres and the
-	// router tests keep running without one. Matches IsProd()'s normalisation.
+	// Outside development a nil pool is FATAL, not a warning: a degraded boot
+	// still binds :8080 and serves 200 on the public health probe, so the
+	// platform marks the deploy SUCCESS while every DB-backed route 404s.
+	// Refusing to start yields a FAILED deploy that stays rolled back instead
+	// (same doctrine as the ASSOC_CARD_SIGNING_SECRET guard: a missing
+	// dependency must stop the process, not silently degrade it). Development,
+	// "test" and the empty AppEnv unit tests construct keep the lenient path so
+	// Supabase-only surfaces stay usable without a local Postgres.
 	deployedTier := func() bool {
 		e := strings.ToLower(strings.TrimSpace(cfg.AppEnv))
 		return e == "staging" || cfg.IsProd()

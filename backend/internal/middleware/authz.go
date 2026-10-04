@@ -39,22 +39,12 @@ var consoleAdminRoleSlugs = map[string]bool{
 // RequireAdminConsoleRole authenticates the caller with the same real,
 // cryptographically-verified bearer-token flow as RequireAuthContext (resolves
 // the user via Supabase, never trusts a client-supplied string), then checks the
-// authenticated user's REAL RBAC roles against consoleAdminRoleSlugs.
-// Previously this validated only a client-supplied `X-Admin-Role` header against
-// a fixed set of role NAMES — it never verified the caller was actually that
-// role, or authenticated at all. A request carrying X-Admin-Role: SuperAdmin (or
-// any other listed name) passed with no proof of identity whatsoever. Worse, the
-// live admin-console `/overview` endpoint isn't even wired through this
-// middleware (see router.go) and was found returning real financial/operational
-// data to fully anonymous requests — a separate gate's issue, not this one's,
-// but proof the console's authorization story needs a real identity check
-// wherever it's applied.
-// It does NOT yet enforce per-endpoint permission checks — that's still a future
-// phase, same as before. For now, any user holding one of consoleAdminRoleSlugs
-// can access any /api/v1/admin/* endpoint gated by this middleware — but now
-// that requires a real, verified admin identity instead of an unverified string.
-// Future: extend this to check specific permissions per role per endpoint via
-// rbac.CheckPermission, the same mechanism /api/admin/* already uses.
+// authenticated user's REAL RBAC roles against consoleAdminRoleSlugs. The
+// client-supplied X-Admin-Role header is never trusted for authorisation.
+// It does NOT yet enforce per-endpoint permission checks: any verified caller
+// holding a consoleAdminRoleSlugs role may access every /api/v1/admin/*
+// endpoint gated by this middleware (finer-grained checks via
+// rbac.CheckPermission are a future phase).
 func RequireAdminConsoleRole(supabase *integrations.SupabaseRestClient, rbac services.RBACService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, ok := resolveVerifiedIdentity(c, supabase, rbac)
@@ -102,16 +92,11 @@ func RequireAdminConsoleRole(supabase *integrations.SupabaseRestClient, rbac ser
 }
 
 // resolveVerifiedIdentity validates the bearer token against Supabase and
-// checks the account isn't suspended/locked/deleted, exactly as
-// RequireAdminConsoleRole always has. On success it sets "adminUserID" on the
-// context (so it is set identically regardless of which caller below
-// resolved it) and returns (userID, true); on failure it has already written
-// the abort response and the caller must return immediately without doing
-// anything further.
-// Split out (ADR-057) so RequireVerifiedIdentity below can share this
-// identity check without also hard-requiring consoleAdminRoleSlugs — see that
-// function's doc comment for why a real, distinct set of callers needs
-// exactly that.
+// checks the account isn't suspended/locked/deleted. On success it sets
+// "adminUserID" on the context and returns (userID, true); on failure it has
+// already written the abort response and the caller must return immediately.
+// Split out (ADR-057) so RequireVerifiedIdentity can share the check without
+// also requiring consoleAdminRoleSlugs.
 func resolveVerifiedIdentity(c *gin.Context, supabase *integrations.SupabaseRestClient, rbac services.RBACService) (string, bool) {
 	h := strings.TrimSpace(c.GetHeader("Authorization"))
 	if !strings.HasPrefix(strings.ToLower(h), "bearer ") {
@@ -167,22 +152,14 @@ func resolveVerifiedIdentity(c *gin.Context, supabase *integrations.SupabaseRest
 	return userID, true
 }
 
-// RequireVerifiedIdentity authenticates the caller with the same real,
-// cryptographically-verified bearer-token flow as RequireAdminConsoleRole
-// (resolves the user via Supabase, checks the account isn't
-// suspended/locked/deleted) and sets "adminUserID" on the context — but,
-// unlike RequireAdminConsoleRole, does NOT additionally require the caller
-// hold a consoleAdminRoleSlugs role (super-admin/system-admin).
-// ADR-057 (docs/adr/ADR-057-stem-routes-verified-identity-gate.md): STEM
-// routes (router.go's stemRead/stemManage) must NOT sit under adminGroup,
-// which requires RequireAdminConsoleRole — a real person holding e.g. only
-// 'judge' (and neither 'super-admin' nor 'system-admin') could never reach a
-// STEM route at all, no matter what RequireStemRoles decided (see ADR-056
-// point 6). consoleAdminRoleSlugs is deliberately narrow because it gates
-// unrelated PII-bearing routes (leads, chatbot transcripts, handoffs) that a
-// STEM judge has no business seeing. STEM routes use this middleware instead:
-// a real verified identity, with the STEM-specific role decision left
-// entirely to RequireStemRoles's own allow-list per route.
+// RequireVerifiedIdentity runs the same verified-identity check as
+// RequireAdminConsoleRole and sets "adminUserID", but does NOT require a
+// consoleAdminRoleSlugs role. ADR-057: STEM routes (router.go's
+// stemRead/stemManage) must not sit under the admin-console gate — a caller
+// holding only a STEM role (e.g. 'judge') could never reach them, and
+// consoleAdminRoleSlugs must stay narrow because it also gates PII-bearing
+// routes a STEM judge has no business seeing. The STEM role decision is left
+// to RequireStemRoles per route.
 func RequireVerifiedIdentity(supabase *integrations.SupabaseRestClient, rbac services.RBACService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if _, ok := resolveVerifiedIdentity(c, supabase, rbac); ok {
@@ -191,13 +168,11 @@ func RequireVerifiedIdentity(supabase *integrations.SupabaseRestClient, rbac ser
 	}
 }
 
-// RequireAdminConsolePermission is a future helper that will check specific permissions.
-// For now, it's a stub. After we build the permissions system, this will verify
-// that the role has the required permission before allowing the endpoint to proceed.
+// RequireAdminConsolePermission is a stub: it allows every verified admin
+// through (they already passed RequireAdminConsoleRole). A future phase will
+// check the role's RBAC permissions before allowing the endpoint to proceed.
 func RequireAdminConsolePermission(permission string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// TODO: Query the role's permissions from the RBAC table, check if they have this permission.
-		// For now, just allow all valid roles through (they already passed RequireAdminConsoleRole).
 		c.Next()
 	}
 }
@@ -215,28 +190,13 @@ func AdminRoleFromContext(c *gin.Context) string {
 // RequireStemRoles enforces which STEM sub-role an already-verified admin
 // must hold for protected admin STEM endpoints. If no roles are configured,
 // the middleware allows all requests.
-// It is NOT proof of identity on its own: this middleware refuses to run at
-// all unless a real, cryptographically-verified identity already exists on
-// the request context — i.e. RequireVerifiedIdentity or RequireAdminConsoleRole
-// (or an equivalent real-auth middleware) has already run and set
-// "adminUserID". In the live router (router.go), stemRead/stemManage require
-// RequireVerifiedIdentity — a real identity check with NO role floor of its
-// own (see ADR-057, docs/adr/ADR-057-stem-routes-verified-identity-gate.md) —
-// before this middleware ever runs, so the role decision is entirely this
-// middleware's. This fails closed instead of assuming router wiring: if this
-// middleware is ever mounted somewhere that skips real auth, it refuses
-// rather than resolving roles for an unverified caller.
-// AUTH-020: the caller's STEM sub-role is resolved from rbac.GetUserRoles(userID),
-// same as RequireAdminConsoleRole — never from a client-supplied `x-stem-role`
-// header, which would be unverified input.
-// See ADR-056 (docs/adr/ADR-056-stem-role-real-rbac.md) for the design
-// decisions this rests on, and 20270205000000_stem_admin_rbac_roles.sql for
-// the public.roles rows
-// (operations-manager, school-admin, teacher-coach, mentor, sponsor) this
-// depends on; contest-manager, judge, super-admin and system-admin already
-// existed (20260527100000_enterprise_auth_rbac.sql). Per ADR-057, STEM-specific
-// roles are reachable by someone who holds only one of them, not just by
-// platform admins who also qualify via the ADMIN/SUPER_ADMIN alias.
+// It is NOT proof of identity on its own: it refuses to run unless a verified
+// identity already exists on the context ("adminUserID" set by
+// RequireVerifiedIdentity / RequireAdminConsoleRole or equivalent) — fail
+// closed rather than assume router wiring (ADR-056/ADR-057).
+// AUTH-020: the STEM sub-role is resolved from rbac.GetUserRoles(userID) —
+// never from a client-supplied `x-stem-role` header, which is unverified
+// input.
 func RequireStemRoles(rbac services.RBACService, allowedRoles ...string) gin.HandlerFunc {
 	allowed := map[string]struct{}{}
 	for _, role := range allowedRoles {
@@ -348,19 +308,12 @@ var AllStemRoleNames = []string{
 }
 
 // ResolveStemRoleNames maps a user's real RBAC role slugs (as returned by
-// rbac.GetUserRoles) to the STEM role name(s) router.go's allow-lists use
-// (e.g. "JUDGE", "CONTEST_MANAGER"), using the exact same rule
-// RequireStemRoles itself checks against — exported so a "what STEM role do
-// I have" endpoint (StemHandler.MyRole) can report the same answer
-// RequireStemRoles would compute for this user, without duplicating or
-// drifting from the mapping.
-// normalizeStemRoleSlug is a MECHANICAL conversion — it has no notion of
-// which resulting names are actually meaningful STEM roles, so a slug like
-// 'registered-user' converts to "REGISTERED_USER" just as readily as
-// 'judge' converts to "JUDGE". Filtered against AllStemRoleNames here so the
-// answer only ever contains roles someone could actually be granted STEM
-// access through. Order is deterministic (input order, first occurrence);
-// duplicates are removed.
+// rbac.GetUserRoles) to the STEM role name(s) router.go's allow-lists use,
+// applying the exact same rule RequireStemRoles checks against — so
+// StemHandler.MyRole reports what the middleware would compute without
+// duplicating the mapping. normalizeStemRoleSlug is a mechanical conversion
+// with no notion of which names are real STEM roles, so results are filtered
+// against AllStemRoleNames. Order is deterministic; duplicates removed.
 func ResolveStemRoleNames(roleSlugs []string) []string {
 	recognized := make(map[string]struct{}, len(AllStemRoleNames))
 	for _, n := range AllStemRoleNames {
