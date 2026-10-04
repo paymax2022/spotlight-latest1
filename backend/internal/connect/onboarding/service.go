@@ -10,6 +10,7 @@ import (
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/timeutil"
 	connectsafety "spotlight/backend/internal/connect/safety"
+	"spotlight/backend/internal/otp"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -132,7 +133,10 @@ type OnboardingStatus struct {
 	MissingConsents  []string `json:"missing_consents"`
 }
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc      *Service
+	phoneOTP *otp.Service
+}
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
