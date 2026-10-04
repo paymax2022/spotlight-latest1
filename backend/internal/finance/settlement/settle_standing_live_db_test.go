@@ -11,7 +11,7 @@ package settlement_test
 // still requires a real auth.users row (FK).
 //
 // SKIPPED whenever TEST_DATABASE_URL is unset.
-//   export TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+//   export TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres" // trufflehog:ignore
 //   cd backend && go test ./internal/finance/settlement/ -run TestLiveDB_SettleToStanding -v -count=1
 
 import (

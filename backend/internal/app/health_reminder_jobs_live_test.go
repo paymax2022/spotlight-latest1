@@ -8,7 +8,7 @@ package app
 //     enqueue error, which the run must see so it can retry)
 // SKIPPED whenever TEST_DATABASE_URL is unset — same gate as the rest of the
 // package's live suites.
-//	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres" // trufflehog:ignore
 //	cd backend && go test ./internal/app/ -run HealthReminder -v
 
 import (

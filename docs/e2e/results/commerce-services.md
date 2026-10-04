@@ -110,7 +110,7 @@ Follow-up pass on the stays money paths in
   saga's own FK-checked inserts into `stays_reservation` children
   (commission deltas, payment intents) — proven by live test.
 
-**Live-DB pins** (`TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54322/postgres`):
+**Live-DB pins** (`TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54322/postgres`): <!-- trufflehog:ignore -->:
 `TestLiveDB_ModifyDownRebalance_CancelUsesResidualAllocation` (commission-grew
 rebalance + asymmetric residual cancel), `TestLiveDB_CancelRetryAfterPartialEscrowRelease_Converges`
 (posted+flipped and posted-not-flipped wedge variants),

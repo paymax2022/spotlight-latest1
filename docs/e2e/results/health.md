@@ -116,7 +116,7 @@ Spec: `tests/e2e/health/hlt-006-edge.spec.ts`.
 cd frontend-web && npx playwright test tests/e2e/health/ --reporter=list
 
 # Go suites (unit + live-DB)
-cd backend && TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:54322/postgres" \
+cd backend && TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:54322/postgres" \ <!-- trufflehog:ignore -->
   go test ./internal/health/... ./internal/nutrition/... ./internal/aicare/... ./internal/doctor/...
 
 # defect probes (any authed admin/owner token)
