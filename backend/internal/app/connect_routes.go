@@ -46,6 +46,7 @@ import (
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/loyalty"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/otp"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/points"
 	"spotlight/backend/internal/services"
@@ -82,6 +83,26 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	onboardingSvc := connectonboarding.NewService(pool, safetySvc)
 	onboardingHandler := connectonboarding.NewHandler(onboardingSvc)
 
+	// SOC-039: phone_verified had no write path — onboarding could never reach
+	// 'complete'. Wire an SMS-delivering OTP service (Termii) so the
+	// phone/request + phone/verify endpoints can close the loop. Unconfigured
+	// (no OTP_PEPPER or TERMII_API_KEY) → handler answers 503.
+	if sender := integrations.NewTermiiClient(cfg.TermiiAPIKey, cfg.TermiiSenderID); sender != nil && cfg.OTPPepper != "" {
+		phoneOTP, err := otp.NewService(
+			otp.NewPostgresStore(pool),
+			sender,
+			otp.NewPostgresLimiter(pool),
+			otp.Config{Pepper: []byte(cfg.OTPPepper)},
+		)
+		if err != nil {
+			log.Printf("[connect] phone-verify OTP service failed to build: %v", err)
+		} else {
+			onboardingHandler.WithPhoneOTP(phoneOTP)
+		}
+	} else {
+		log.Println("[connect] phone verification unavailable — OTP_PEPPER or TERMII_API_KEY unset")
+	}
+
 	accountHandler := connectaccount.NewHandler(connectaccount.NewService(pool))
 
 	// Auth wrapper: runs RequireAuthContext then mirrors the user id into
@@ -101,6 +122,8 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	member.POST("/onboarding/age-gate", onboardingHandler.AgeGate)
 	member.POST("/onboarding/consent", onboardingHandler.Consent)
 	member.GET("/onboarding/status", onboardingHandler.Status)
+	member.POST("/onboarding/phone/request", onboardingHandler.RequestPhoneCode)
+	member.POST("/onboarding/phone/verify", onboardingHandler.VerifyPhoneCode)
 	// Safety report (invariant 7): always opens a connect_case, never fails silently.
 	member.POST("/safety/report", safetyHandler.Report)
 	// Account deletion / DSR (ON-010, EC-011): self-serve, subject = authed user.

@@ -35,12 +35,13 @@ const (
 	PurposeLogin         = "login"
 	PurposeVerifyEmail   = "verify_email"
 	PurposePasswordReset = "password_reset"
+	PurposePhoneVerify   = "phone_verify"
 )
 
 // IsAllowedPurpose reports whether p is one this service will issue for.
 func IsAllowedPurpose(p string) bool {
 	switch p {
-	case PurposeLogin, PurposeVerifyEmail, PurposePasswordReset:
+	case PurposeLogin, PurposeVerifyEmail, PurposePasswordReset, PurposePhoneVerify:
 		return true
 	default:
 		return false
