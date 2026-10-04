@@ -2,7 +2,9 @@ package finance
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -40,13 +42,13 @@ func NewService(repo *Repository, finance *financeledger.Service, events *referr
 // re-checked at approval (fail-closed). Idempotent on idempotency_key.
 func (s *Service) QueuePayout(ctx context.Context, in PayoutRequest, requestedBy string) (*Payout, error) {
 	if in.BeneficiaryID == "" {
-		return nil, fmt.Errorf("finance: payout requires beneficiary_id")
+		return nil, errors.New("finance: payout requires beneficiary_id")
 	}
 	if in.AmountKobo <= 0 {
-		return nil, fmt.Errorf("finance: payout amount must be positive (kobo)")
+		return nil, errors.New("finance: payout amount must be positive (kobo)")
 	}
 	if in.IdempotencyKey == "" {
-		return nil, fmt.Errorf("finance: payout requires an idempotency key")
+		return nil, errors.New("finance: payout requires an idempotency key")
 	}
 	tier, err := s.repo.KYCTier(ctx, in.BeneficiaryID)
 	if err != nil {
@@ -80,7 +82,7 @@ func (s *Service) ApprovePayout(ctx context.Context, payoutID, approvedBy string
 		return nil, err
 	}
 	if p == nil {
-		return nil, fmt.Errorf("finance: payout not found")
+		return nil, errors.New("finance: payout not found")
 	}
 	if p.Status == PayoutPaid {
 		return p, nil // idempotent
@@ -98,7 +100,7 @@ func (s *Service) ApprovePayout(ctx context.Context, payoutID, approvedBy string
 	}
 
 	if s.finance == nil {
-		return nil, fmt.Errorf("finance: ledger unavailable")
+		return nil, errors.New("finance: ledger unavailable")
 	}
 	acc, err := s.finance.GetOrCreateStandingAccount(ctx, financeledger.AccountReferralReward)
 	if err != nil {
@@ -107,7 +109,7 @@ func (s *Service) ApprovePayout(ctx context.Context, payoutID, approvedBy string
 	idemKey := "referral_payout:" + payoutID
 	ref := "referral:payout:" + payoutID
 	if err := s.finance.Credit(ctx, p.BeneficiaryID, ref, idemKey, acc.ID, p.AmountKobo); err != nil {
-		if err != financeledger.ErrDuplicate {
+		if !errors.Is(err, financeledger.ErrDuplicate) {
 			_ = s.repo.MarkPayoutFailed(ctx, payoutID, "ledger_post_failed")
 			return nil, fmt.Errorf("finance: post payout credit: %w", err)
 		}
@@ -137,7 +139,7 @@ func (s *Service) RejectPayout(ctx context.Context, payoutID, approvedBy, reason
 // postings for a period and records a snapshot (balanced or variance).
 func (s *Service) Reconcile(ctx context.Context, since, until, createdBy string) (*Reconciliation, error) {
 	if since == "" || until == "" {
-		return nil, fmt.Errorf("finance: reconcile requires since and until")
+		return nil, errors.New("finance: reconcile requires since and until")
 	}
 	ledgerPaid, err := s.repo.LedgerPaidInPeriod(ctx, since, until)
 	if err != nil {
@@ -171,10 +173,10 @@ func (s *Service) ListReconciliations(ctx context.Context) ([]Reconciliation, er
 
 func (s *Service) UpsertBudget(ctx context.Context, in BudgetInput) (*Budget, error) {
 	if in.BudgetKobo < 0 {
-		return nil, fmt.Errorf("finance: budget must be non-negative")
+		return nil, errors.New("finance: budget must be non-negative")
 	}
 	if in.AlertThresholdPct != nil && (*in.AlertThresholdPct < 0 || *in.AlertThresholdPct > 100) {
-		return nil, fmt.Errorf("finance: alert threshold must be 0..100")
+		return nil, errors.New("finance: alert threshold must be 0..100")
 	}
 	return s.repo.UpsertBudget(ctx, in)
 }
@@ -197,7 +199,7 @@ func (s *Service) ListBudgets(ctx context.Context) ([]Budget, error) {
 
 func (s *Service) SnapshotFloat(ctx context.Context, fundedKobo int64, note string) (*Float, error) {
 	if fundedKobo < 0 {
-		return nil, fmt.Errorf("finance: funded amount must be non-negative")
+		return nil, errors.New("finance: funded amount must be non-negative")
 	}
 	return s.repo.SnapshotFloat(ctx, fundedKobo, note)
 }
@@ -213,9 +215,7 @@ func (s *Service) audit(ctx context.Context, eventType, userID, rewardID string,
 		return
 	}
 	payload := map[string]any{}
-	for k, v := range extra {
-		payload[k] = v
-	}
+	maps.Copy(payload, extra)
 	if rewardID != "" {
 		payload["reward_id"] = rewardID
 	}

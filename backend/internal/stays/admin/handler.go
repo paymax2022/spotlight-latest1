@@ -4,9 +4,10 @@ import (
 	"net/http"
 	"strconv"
 
+	"spotlight/backend/go-common/httperr"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/go-common/httperr"
 )
 
 const keyError = "error"

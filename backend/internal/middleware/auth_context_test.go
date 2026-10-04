@@ -6,8 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/integrations"
+
+	"github.com/gin-gonic/gin"
 )
 
 // AUTH-005: RequireAuthContext's base bearer-token-verification path had only
@@ -18,6 +19,7 @@ import (
 // the no-op mockRBAC already used elsewhere in this package.
 type statusRBAC struct {
 	mockRBAC
+
 	status string
 	err    error
 }

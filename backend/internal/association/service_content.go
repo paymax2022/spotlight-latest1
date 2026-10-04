@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/go-common/strutil"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // Content authoring for an organisation: announcements, meetings, documents,
@@ -700,10 +701,7 @@ func (s *Service) RunDues(ctx context.Context, adminID, orgID string, r DuesRunR
 		runID).Scan(&totalKobo); err != nil {
 		return nil, fmt.Errorf("association: sum run: %w", err)
 	}
-	skipped := eligible - invoiced
-	if skipped < 0 {
-		skipped = 0
-	}
+	skipped := max(eligible-invoiced, 0)
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE assoc_dues_runs SET invoiced=$2, skipped=$3, total_kobo=$4 WHERE id=$1`,
@@ -1372,7 +1370,7 @@ func (s *Service) ListAdminAnnouncements(ctx context.Context, adminID, orgID str
 	const q = `
 		SELECT a.id::text, a.title, COALESCE(a.audience,''),
 		       CASE WHEN a.urgent THEN 'URGENT' ELSE 'POSTED' END,
-		       a.posted_at::text, a.posted_at::text, jsonb_build_object(
+		       a.posted_at::text, jsonb_build_object(
 		         'body', a.body, 'audience', a.audience, 'author', a.author,
 		         'urgent', a.urgent, 'requiresAck', a.requires_ack,
 		         'readCount', (SELECT count(*) FROM assoc_announcement_reads r
@@ -1411,7 +1409,7 @@ func (s *Service) ListAdminDocuments(ctx context.Context, adminID, orgID string,
 	const q = `
 		SELECT d.id::text, d.title, d.category,
 		       CASE WHEN d.restricted THEN 'RESTRICTED' ELSE 'OPEN' END,
-		       d.updated_at::text, d.updated_at::text, jsonb_build_object(
+		       d.updated_at::text, jsonb_build_object(
 		         'kind', d.kind, 'storageKey', d.storage_key, 'sizeLabel', d.size_label,
 		         'version', d.version, 'restricted', d.restricted,
 		         'requiresAck', d.requires_ack, 'aiSummary', d.ai_summary,
@@ -1466,7 +1464,7 @@ func (s *Service) ListAdminTasks(ctx context.Context, adminID, orgID string, lim
 func (s *Service) ListAdminDuesRuns(ctx context.Context, adminID, orgID string, limit, offset int) ([]AdminContentRow, error) {
 	const q = `
 		SELECT r.id::text, r.title, r.scope, 'RAISED',
-		       r.created_at::text, r.created_at::text, jsonb_build_object(
+		       r.created_at::text, jsonb_build_object(
 		         'invoiced', r.invoiced, 'skipped', r.skipped, 'totalKobo', r.total_kobo,
 		         'categoryId', r.category_id, 'chapterId', r.chapter_id,
 		         'paidCount', (SELECT count(*) FROM assoc_dues_invoices i

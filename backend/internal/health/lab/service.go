@@ -143,7 +143,7 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 // tests for that lab. Prep instructions + TAT are surfaced to the patient.
 func (s *Service) UpsertTest(ctx context.Context, ownerID string, t Test) (*Test, error) {
 	if ownerID == "" {
-		return nil, fmt.Errorf("lab: unauthenticated")
+		return nil, errors.New("lab: unauthenticated")
 	}
 	if s.prov != nil {
 		ok, err := s.prov.VerifiedLabOwner(ctx, ownerID, t.LabProviderID)
@@ -151,17 +151,17 @@ func (s *Service) UpsertTest(ctx context.Context, ownerID string, t Test) (*Test
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: not a verified lab owner (HL-2)")
+			return nil, errors.New("lab: not a verified lab owner (HL-2)")
 		}
 	}
 	if strings.TrimSpace(t.Name) == "" {
-		return nil, fmt.Errorf("lab: test name required")
+		return nil, errors.New("lab: test name required")
 	}
 	if t.PriceKobo <= 0 {
-		return nil, fmt.Errorf("lab: price must be positive kobo")
+		return nil, errors.New("lab: price must be positive kobo")
 	}
 	if t.TATHours < 0 {
-		return nil, fmt.Errorf("lab: tat_hours must be non-negative")
+		return nil, errors.New("lab: tat_hours must be non-negative")
 	}
 	if t.ID == "" {
 		t.ID = uuid.New().String()
@@ -309,16 +309,16 @@ type CreateOrderInput struct {
 // idempotency_key).
 func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOrderInput) (*Order, error) {
 	if patientID == "" {
-		return nil, fmt.Errorf("lab: unauthenticated")
+		return nil, errors.New("lab: unauthenticated")
 	}
 	if in.IdempotencyKey == "" {
-		return nil, fmt.Errorf("lab: idempotency key required (HL-9)")
+		return nil, errors.New("lab: idempotency key required (HL-9)")
 	}
 	if len(in.TestIDs) == 0 {
-		return nil, fmt.Errorf("lab: at least one test required")
+		return nil, errors.New("lab: at least one test required")
 	}
 	if in.CollectionMethod != CollectHome && in.CollectionMethod != CollectWalkIn {
-		return nil, fmt.Errorf("lab: collection_method must be HOME or WALK_IN")
+		return nil, errors.New("lab: collection_method must be HOME or WALK_IN")
 	}
 	// Replay: return the existing order for this idempotency key (no double-hold).
 	if existing, err := s.getByIdem(ctx, in.IdempotencyKey); err == nil && existing != nil {
@@ -331,7 +331,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: supplier is not an approved MLSCN lab (HL-2)")
+			return nil, errors.New("lab: supplier is not an approved MLSCN lab (HL-2)")
 		}
 	}
 
@@ -344,13 +344,13 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		var active bool
 		const tq = `SELECT name, price_kobo, active FROM lab_tests WHERE id=$1 AND lab_provider_id=$2`
 		if err := s.db.QueryRow(ctx, tq, testID, in.LabProviderID).Scan(&name, &price, &active); err != nil {
-			if err == pgx.ErrNoRows {
-				return nil, fmt.Errorf("lab: test not found in this lab catalog")
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, errors.New("lab: test not found in this lab catalog")
 			}
 			return nil, err
 		}
 		if !active {
-			return nil, fmt.Errorf("lab: test is not active")
+			return nil, errors.New("lab: test is not active")
 		}
 		prices = append(prices, price)
 		lines = append(lines, OrderLine{
@@ -363,7 +363,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		return nil, err
 	}
 	if total <= 0 {
-		return nil, fmt.Errorf("lab: order total must be positive")
+		return nil, errors.New("lab: order total must be positive")
 	}
 
 	orderID := uuid.New().String()
@@ -462,7 +462,7 @@ func (s *Service) Collect(ctx context.Context, collectorID, orderID, note string
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: only a verified phlebotomist may collect (HL-2)")
+			return nil, errors.New("lab: only a verified phlebotomist may collect (HL-2)")
 		}
 	}
 	// One sample per order (HL-6: the order's specimen is a single tracked entity).
@@ -534,7 +534,7 @@ func (s *Service) Handover(ctx context.Context, actorID, sampleID, toCustodianID
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: only a verified phlebotomist may hand over custody (HL-2)")
+			return nil, errors.New("lab: only a verified phlebotomist may hand over custody (HL-2)")
 		}
 	}
 	to := SampleHandedOver
@@ -587,7 +587,7 @@ func (s *Service) Accession(ctx context.Context, scientistID, sampleID, scannedB
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: only a verified lab scientist may accession (HL-2)")
+			return nil, errors.New("lab: only a verified lab scientist may accession (HL-2)")
 		}
 	}
 	// Sample↔patient integrity (EC-001/LB-005): if the accessioning scientist
@@ -677,7 +677,7 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID, scanne
 		return nil, fmt.Errorf("lab: order must be PROCESSING to enter results, is %s", o.State)
 	}
 	if len(results) == 0 {
-		return nil, fmt.Errorf("lab: at least one result required")
+		return nil, errors.New("lab: at least one result required")
 	}
 	// HL-2: only a verified scientist of this lab may enter/validate results.
 	if s.prov != nil {
@@ -686,13 +686,13 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID, scanne
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: only a verified lab scientist may enter results (HL-2)")
+			return nil, errors.New("lab: only a verified lab scientist may enter results (HL-2)")
 		}
 	}
 	// HL-6: no result without an unbroken, accessioned chain of custody.
 	sm, err := s.sampleByOrder(ctx, orderID)
 	if err != nil || sm == nil {
-		return nil, fmt.Errorf("lab: no sample for order — cannot enter results (HL-6)")
+		return nil, errors.New("lab: no sample for order — cannot enter results (HL-6)")
 	}
 	if sm.State != SampleAccessioned {
 		return nil, fmt.Errorf("lab: sample not accessioned (state %s) — no result without an unbroken chain (HL-6)", sm.State)
@@ -714,11 +714,11 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID, scanne
 
 	for _, r := range results {
 		if r.Status != ResultNormal && r.Status != ResultAbnormal && r.Status != ResultCritical {
-			return nil, fmt.Errorf("lab: result status must be NORMAL, ABNORMAL or CRITICAL")
+			return nil, errors.New("lab: result status must be NORMAL, ABNORMAL or CRITICAL")
 		}
 		var name string
 		if err := tx.QueryRow(ctx, `SELECT test_name FROM lab_order_lines WHERE order_id=$1 AND test_id=$2`, orderID, r.TestID).Scan(&name); err != nil {
-			if err == pgx.ErrNoRows {
+			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, fmt.Errorf("lab: result test %s not part of this order", r.TestID)
 			}
 			return nil, err
@@ -784,7 +784,7 @@ func (s *Service) Release(ctx context.Context, scientistID, orderID string) (*Or
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: only a verified lab scientist may release results (HL-2/HL-7)")
+			return nil, errors.New("lab: only a verified lab scientist may release results (HL-2/HL-7)")
 		}
 	}
 
@@ -793,7 +793,7 @@ func (s *Service) Release(ctx context.Context, scientistID, orderID string) (*Or
 		return nil, err
 	}
 	if len(results) == 0 {
-		return nil, fmt.Errorf("lab: no results to release")
+		return nil, errors.New("lab: no results to release")
 	}
 
 	// HL-7: critical/abnormal value → human escalation BEFORE release.
@@ -835,7 +835,7 @@ func (s *Service) Release(ctx context.Context, scientistID, orderID string) (*Or
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: lab not payout-eligible — KYC tier required (HL-10)")
+			return nil, errors.New("lab: lab not payout-eligible — KYC tier required (HL-10)")
 		}
 	}
 
@@ -896,7 +896,7 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 		return nil, err
 	}
 	if o.PatientID != patientID {
-		return nil, fmt.Errorf("lab: forbidden")
+		return nil, errors.New("lab: forbidden")
 	}
 	if !isPreCollection(o.State) {
 		return nil, fmt.Errorf("lab: order can only be cancelled before it enters the lab pipeline, is %s", o.State)
@@ -934,7 +934,7 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 // a follow-up.
 func (s *Service) ListProviderOrders(ctx context.Context, ownerID, providerID string) ([]ProviderOrderSummary, error) {
 	if providerID == "" {
-		return nil, fmt.Errorf("lab: lab_provider_id required")
+		return nil, errors.New("lab: lab_provider_id required")
 	}
 	if s.prov != nil {
 		ok, err := s.prov.VerifiedLabOwner(ctx, ownerID, providerID)
@@ -942,7 +942,7 @@ func (s *Service) ListProviderOrders(ctx context.Context, ownerID, providerID st
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("lab: not a verified owner of this lab (HL-2)")
+			return nil, errors.New("lab: not a verified owner of this lab (HL-2)")
 		}
 	}
 	const q = `
@@ -986,7 +986,7 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
-		return nil, fmt.Errorf("lab: forbidden")
+		return nil, errors.New("lab: forbidden")
 	}
 	o.Lines, _ = s.loadLines(ctx, orderID)
 	return o, nil
@@ -1002,7 +1002,7 @@ func (s *Service) Results(ctx context.Context, requesterID, orderID string, isAd
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
-		return nil, fmt.Errorf("lab: forbidden")
+		return nil, errors.New("lab: forbidden")
 	}
 	return s.loadResults(ctx, orderID)
 }
@@ -1016,7 +1016,7 @@ func (s *Service) CustodyTrail(ctx context.Context, requesterID, orderID string,
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
 	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
-		return nil, fmt.Errorf("lab: forbidden")
+		return nil, errors.New("lab: forbidden")
 	}
 	sm, err := s.sampleByOrder(ctx, orderID)
 	if err != nil || sm == nil {
@@ -1142,8 +1142,8 @@ func lockOrder(ctx context.Context, tx pgx.Tx, orderID string) (*Order, error) {
 	           FROM lab_orders WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.LabProviderID, &state, &method,
 		&o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.ResultRecordID, &o.CancelReason, &o.IdempotencyKey, &o.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("lab: order not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("lab: order not found")
 		}
 		return nil, err
 	}
@@ -1160,8 +1160,8 @@ func (s *Service) load(ctx context.Context, orderID string) (*Order, error) {
 	           FROM lab_orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.LabProviderID, &state, &method,
 		&o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.ResultRecordID, &o.CancelReason, &o.IdempotencyKey, &o.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("lab: order not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("lab: order not found")
 		}
 		return nil, err
 	}
@@ -1208,8 +1208,8 @@ func lockSample(ctx context.Context, tx pgx.Tx, sampleID string) (*Sample, error
 	           FROM lab_samples WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, q, sampleID).Scan(&sm.ID, &sm.OrderID, &state, &method,
 		&sm.CustodianID, &sm.BarcodeRef, &sm.CollectedBy, &sm.CollectedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("lab: sample not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("lab: sample not found")
 		}
 		return nil, err
 	}
@@ -1225,8 +1225,8 @@ func (s *Service) loadSample(ctx context.Context, sampleID string) (*Sample, err
 	           FROM lab_samples WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, sampleID).Scan(&sm.ID, &sm.OrderID, &state, &method,
 		&sm.CustodianID, &sm.BarcodeRef, &sm.CollectedBy, &sm.CollectedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("lab: sample not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("lab: sample not found")
 		}
 		return nil, err
 	}
@@ -1238,7 +1238,7 @@ func (s *Service) loadSample(ctx context.Context, sampleID string) (*Sample, err
 func (s *Service) sampleByOrder(ctx context.Context, orderID string) (*Sample, error) {
 	var id string
 	if err := s.db.QueryRow(ctx, `SELECT id FROM lab_samples WHERE order_id=$1 LIMIT 1`, orderID).Scan(&id); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -1300,7 +1300,7 @@ func (s *Service) loadCustody(ctx context.Context, sampleID string) ([]CustodyEv
 func (s *Service) labOwner(ctx context.Context, providerID string) (string, error) {
 	var owner string
 	if err := s.db.QueryRow(ctx, `SELECT owner_user_id FROM health_providers WHERE id=$1`, providerID).Scan(&owner); err != nil {
-		return "", fmt.Errorf("lab: provider not found")
+		return "", errors.New("lab: provider not found")
 	}
 	return owner, nil
 }

@@ -2,6 +2,7 @@ package gamification
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -62,11 +63,11 @@ func (s *Service) MyProgress(ctx context.Context, userID string) ([]MissionProgr
 // money grant is also idempotent. Points are non-cash and require no ledger entry.
 func (s *Service) Claim(ctx context.Context, missionID, userID, idemKey string) (*ClaimResult, error) {
 	if idemKey == "" {
-		return nil, fmt.Errorf("gamification: Idempotency-Key required to claim")
+		return nil, errors.New("gamification: Idempotency-Key required to claim")
 	}
 	m, err := s.repo.GetMission(ctx, missionID)
 	if err != nil {
-		return nil, fmt.Errorf("gamification: mission not found")
+		return nil, errors.New("gamification: mission not found")
 	}
 	claimed, err := s.repo.MarkClaimed(ctx, missionID, userID, idemKey)
 	if err != nil {
@@ -78,7 +79,7 @@ func (s *Service) Claim(ctx context.Context, missionID, userID, idemKey string) 
 		if p != nil && p.Status == ProgressClaimed {
 			return &ClaimResult{MissionID: missionID, Status: ProgressClaimed}, nil
 		}
-		return nil, fmt.Errorf("gamification: mission not completed yet")
+		return nil, errors.New("gamification: mission not completed yet")
 	}
 
 	res := &ClaimResult{
@@ -126,14 +127,14 @@ func (s *Service) ListContests(ctx context.Context, onlyActive bool) ([]Contest,
 
 func (s *Service) CreateMission(ctx context.Context, in MissionInput) (*Mission, error) {
 	if in.Slug == "" || in.Title == "" {
-		return nil, fmt.Errorf("gamification: slug and title required")
+		return nil, errors.New("gamification: slug and title required")
 	}
 	return s.repo.CreateMission(ctx, in)
 }
 
 func (s *Service) CreateRank(ctx context.Context, in RankInput) (*Rank, error) {
 	if in.Slug == "" || in.Name == "" {
-		return nil, fmt.Errorf("gamification: slug and name required")
+		return nil, errors.New("gamification: slug and name required")
 	}
 	return s.repo.CreateRank(ctx, in)
 }

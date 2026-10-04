@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/jackc/pgx/v5"
 	"spotlight/backend/go-common/dbutil"
 	"strconv"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // repository_account.go — pgx data layer for the Trust & Account gap tables
@@ -367,7 +368,7 @@ func prefixCols(alias, cols string) string {
 		}
 		col = col[:0]
 	}
-	for i := 0; i < len(cols); i++ {
+	for i := range len(cols) {
 		c := cols[i]
 		if c == ',' {
 			flush()

@@ -2,6 +2,7 @@ package healthvet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"spotlight/backend/internal/health/clinicalsafety"
@@ -147,13 +148,13 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 // consent-gated, access-logged there); the vault is never reimplemented.
 func (s *Service) CreatePet(ctx context.Context, ownerID string, p Pet) (*Pet, error) {
 	if ownerID == "" {
-		return nil, fmt.Errorf("vet: unauthenticated")
+		return nil, errors.New("vet: unauthenticated")
 	}
 	if strings.TrimSpace(p.Name) == "" {
-		return nil, fmt.Errorf("vet: pet name required")
+		return nil, errors.New("vet: pet name required")
 	}
 	if strings.TrimSpace(p.Species) == "" {
-		return nil, fmt.Errorf("vet: pet species required")
+		return nil, errors.New("vet: pet species required")
 	}
 	p.ID = uuid.New().String()
 	p.OwnerUserID = ownerID
@@ -180,7 +181,7 @@ func (s *Service) CreatePet(ctx context.Context, ownerID string, p Pet) (*Pet, e
 // ListPets returns the caller's own pets only (object-level authZ; HL-8).
 func (s *Service) ListPets(ctx context.Context, ownerID string) ([]Pet, error) {
 	if ownerID == "" {
-		return nil, fmt.Errorf("vet: unauthenticated")
+		return nil, errors.New("vet: unauthenticated")
 	}
 	// birth_date is cast to text: pgx v5 cannot bind a binary-format Postgres
 	// `date` into *string (Pet.BirthDate), so a pet with a non-null birth_date
@@ -295,7 +296,7 @@ func (s *Service) DiscoverVets(ctx context.Context, lat, lng *float64, radiusM f
 // list services for that provider. Price is positive kobo (NL-8).
 func (s *Service) UpsertService(ctx context.Context, ownerID string, v VetService) (*VetService, error) {
 	if ownerID == "" {
-		return nil, fmt.Errorf("vet: unauthenticated")
+		return nil, errors.New("vet: unauthenticated")
 	}
 	if s.prov != nil {
 		ok, err := s.prov.VerifiedVetOwner(ctx, ownerID, v.ProviderID)
@@ -303,17 +304,17 @@ func (s *Service) UpsertService(ctx context.Context, ownerID string, v VetServic
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("vet: not a verified VCN vet owner (HL-2)")
+			return nil, errors.New("vet: not a verified VCN vet owner (HL-2)")
 		}
 	}
 	if strings.TrimSpace(v.Name) == "" {
-		return nil, fmt.Errorf("vet: service name required")
+		return nil, errors.New("vet: service name required")
 	}
 	if !validVisit(v.VisitType) {
-		return nil, fmt.Errorf("vet: invalid visit_type")
+		return nil, errors.New("vet: invalid visit_type")
 	}
 	if v.PriceKobo <= 0 {
-		return nil, fmt.Errorf("vet: price must be positive kobo")
+		return nil, errors.New("vet: price must be positive kobo")
 	}
 	if v.ID == "" {
 		v.ID = uuid.New().String()
@@ -348,13 +349,13 @@ type BookInput struct {
 // money leg; the vet_appointment_payments row carries a UNIQUE idempotency_key).
 func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appointment, error) {
 	if ownerID == "" {
-		return nil, fmt.Errorf("vet: unauthenticated")
+		return nil, errors.New("vet: unauthenticated")
 	}
 	if in.IdempotencyKey == "" {
-		return nil, fmt.Errorf("vet: idempotency key required (HL-9)")
+		return nil, errors.New("vet: idempotency key required (HL-9)")
 	}
 	if !validVisit(in.VisitType) {
-		return nil, fmt.Errorf("vet: visit_type must be TELE, HOME or CLINIC")
+		return nil, errors.New("vet: visit_type must be TELE, HOME or CLINIC")
 	}
 	// Object-level authZ: the booker must own the pet (HL-8).
 	owns, err := s.ownsPet(ctx, ownerID, in.PetID)
@@ -362,7 +363,7 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 		return nil, err
 	}
 	if !owns {
-		return nil, fmt.Errorf("vet: forbidden — not the pet owner")
+		return nil, errors.New("vet: forbidden — not the pet owner")
 	}
 	// Replay: return the existing appointment for this idempotency key (no re-hold).
 	if existing, err := s.getByIdem(ctx, in.IdempotencyKey); err == nil && existing != nil {
@@ -375,7 +376,7 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("vet: provider is not an approved VCN vet (HL-2)")
+			return nil, errors.New("vet: provider is not an approved VCN vet (HL-2)")
 		}
 	}
 	// Price from the pinned service (server-side, kobo integers).
@@ -383,21 +384,21 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 	var active bool
 	const sq = `SELECT price_kobo, active FROM vet_services WHERE id=$1 AND provider_id=$2`
 	if err := s.db.QueryRow(ctx, sq, in.ServiceID, in.ProviderID).Scan(&total, &active); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("vet: service not found for this vet")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("vet: service not found for this vet")
 		}
 		return nil, err
 	}
 	if !active {
-		return nil, fmt.Errorf("vet: service is not active")
+		return nil, errors.New("vet: service is not active")
 	}
 	if total <= 0 {
-		return nil, fmt.Errorf("vet: appointment total must be positive")
+		return nil, errors.New("vet: appointment total must be positive")
 	}
 
 	// Create the appointment via the shared scheduling engine (subject_type=PET).
 	if s.sched == nil {
-		return nil, fmt.Errorf("vet: scheduling engine unavailable")
+		return nil, errors.New("vet: scheduling engine unavailable")
 	}
 	appt, err := s.sched.Request(ctx, ownerID, in.ProviderID, "PET", string(in.VisitType), in.SlotStart, in.SlotEnd)
 	if err != nil {
@@ -449,7 +450,7 @@ func (s *Service) Accept(ctx context.Context, actorID, apptID string) (*Appointm
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("vet: only the verified vet may accept (HL-2)")
+			return nil, errors.New("vet: only the verified vet may accept (HL-2)")
 		}
 	}
 	if _, err := s.sched.Transition(ctx, actorID, apptID, healthscheduling.StateAccepted); err != nil {
@@ -480,7 +481,7 @@ func (s *Service) Confirm(ctx context.Context, actorID, apptID string) (*Appoint
 				return nil, perr
 			}
 			if !ok {
-				return nil, fmt.Errorf("vet: only the verified vet may confirm (HL-2)")
+				return nil, errors.New("vet: only the verified vet may confirm (HL-2)")
 			}
 		}
 	}
@@ -502,7 +503,7 @@ func (s *Service) Cancel(ctx context.Context, actorID, apptID, reason string) (*
 	owner := a.OwnerID
 	vetOwner, _ := s.providerOwner(ctx, a.ProviderID)
 	if actorID != owner && actorID != vetOwner {
-		return nil, fmt.Errorf("vet: forbidden")
+		return nil, errors.New("vet: forbidden")
 	}
 	if _, err := s.sched.Transition(ctx, actorID, apptID, healthscheduling.StateCancelled); err != nil {
 		return nil, err
@@ -533,7 +534,7 @@ func (s *Service) Dispatch(ctx context.Context, actorID, apptID string) (*Appoin
 		return nil, err
 	}
 	if a.VisitType != VisitHome {
-		return nil, fmt.Errorf("vet: dispatch only applies to HOME visits")
+		return nil, errors.New("vet: dispatch only applies to HOME visits")
 	}
 	if s.prov != nil {
 		ok, perr := s.prov.VerifiedVetOwner(ctx, actorID, a.ProviderID)
@@ -541,11 +542,11 @@ func (s *Service) Dispatch(ctx context.Context, actorID, apptID string) (*Appoin
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("vet: only the verified vet may dispatch (HL-2)")
+			return nil, errors.New("vet: only the verified vet may dispatch (HL-2)")
 		}
 	}
 	if s.dispatch == nil {
-		return nil, fmt.Errorf("vet: dispatch rail unavailable")
+		return nil, errors.New("vet: dispatch rail unavailable")
 	}
 	ref, derr := s.dispatch.CreateDelivery(ctx, a.OwnerID, "vet-homevisit:"+apptID, apptID+":homevisit")
 	if derr != nil {
@@ -574,11 +575,11 @@ func (s *Service) StartConsult(ctx context.Context, actorID, apptID string) (*Ap
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("vet: only the verified vet may start the consult (HL-2)")
+			return nil, errors.New("vet: only the verified vet may start the consult (HL-2)")
 		}
 	}
 	if s.consult == nil {
-		return nil, fmt.Errorf("vet: consult engine unavailable")
+		return nil, errors.New("vet: consult engine unavailable")
 	}
 	// Move the appointment into the consult window (guarded by scheduling engine).
 	if _, err := s.sched.Transition(ctx, actorID, apptID, healthscheduling.StateInProgress); err != nil {
@@ -651,14 +652,14 @@ func (s *Service) CompleteConsult(ctx context.Context, vetOwnerID, apptID string
 		return nil, err
 	}
 	if a.ConsultID == nil {
-		return nil, fmt.Errorf("vet: no consult started for this appointment")
+		return nil, errors.New("vet: no consult started for this appointment")
 	}
 	vetOwner, err := s.providerOwner(ctx, a.ProviderID)
 	if err != nil {
 		return nil, err
 	}
 	if vetOwnerID != vetOwner {
-		return nil, fmt.Errorf("vet: only the verified vet may complete the consult (HL-2)")
+		return nil, errors.New("vet: only the verified vet may complete the consult (HL-2)")
 	}
 	// HL-2: ownership alone is not the same as current VCN approval — a vet
 	// accepted while APPROVED and suspended before completing must not be
@@ -669,7 +670,7 @@ func (s *Service) CompleteConsult(ctx context.Context, vetOwnerID, apptID string
 			return nil, perr
 		}
 		if !ok {
-			return nil, fmt.Errorf("vet: only the verified vet may complete the consult (HL-2)")
+			return nil, errors.New("vet: only the verified vet may complete the consult (HL-2)")
 		}
 	}
 
@@ -736,7 +737,7 @@ func (s *Service) CompleteConsult(ctx context.Context, vetOwnerID, apptID string
 				return nil, perr
 			}
 			if !ok {
-				return nil, fmt.Errorf("vet: vet not payout-eligible — KYC tier required (HL-10)")
+				return nil, errors.New("vet: vet not payout-eligible — KYC tier required (HL-10)")
 			}
 		}
 		if err := s.escrow.Release(ctx, *a.EscrowID, vetOwner); err != nil {
@@ -770,17 +771,17 @@ func (s *Service) CompleteConsult(ctx context.Context, vetOwnerID, apptID string
 // must own the pet.
 func (s *Service) ScheduleVaccination(ctx context.Context, ownerID, petID, vaccine string, dueAt time.Time) (*Vaccination, error) {
 	if ownerID == "" {
-		return nil, fmt.Errorf("vet: unauthenticated")
+		return nil, errors.New("vet: unauthenticated")
 	}
 	owns, err := s.ownsPet(ctx, ownerID, petID)
 	if err != nil {
 		return nil, err
 	}
 	if !owns {
-		return nil, fmt.Errorf("vet: forbidden — not the pet owner")
+		return nil, errors.New("vet: forbidden — not the pet owner")
 	}
 	if strings.TrimSpace(vaccine) == "" {
-		return nil, fmt.Errorf("vet: vaccine required")
+		return nil, errors.New("vet: vaccine required")
 	}
 	v := &Vaccination{
 		ID: uuid.New().String(), PetID: petID, OwnerUserID: ownerID,
@@ -826,7 +827,7 @@ type SOSResult struct {
 // never books a tele appointment and never auto-charges.
 func (s *Service) EmergencySOS(ctx context.Context, ownerID string, lat, lng float64) (*SOSResult, error) {
 	if ownerID == "" {
-		return nil, fmt.Errorf("vet: unauthenticated")
+		return nil, errors.New("vet: unauthenticated")
 	}
 	// Route to nearest in-person vets only (tele excluded by design — HL-11).
 	vets, err := s.DiscoverVets(ctx, &lat, &lng, 50000) // wider 50km emergency radius
@@ -851,7 +852,7 @@ func (s *Service) Get(ctx context.Context, requesterID, apptID string, isAdmin b
 	}
 	vetOwner, _ := s.providerOwner(ctx, a.ProviderID)
 	if !isAdmin && requesterID != a.OwnerID && requesterID != vetOwner {
-		return nil, fmt.Errorf("vet: forbidden")
+		return nil, errors.New("vet: forbidden")
 	}
 	return a, nil
 }
@@ -909,8 +910,8 @@ func (s *Service) load(ctx context.Context, apptID string) (*Appointment, error)
 	if err := s.db.QueryRow(ctx, q, apptID).Scan(&a.ID, &a.ProviderID, &a.OwnerID, &visit, &state,
 		&a.SlotStart, &a.SlotEnd, &a.PetID, &a.ServiceID, &a.TotalKobo, &a.EscrowID, &a.ConsultID,
 		&a.DeliveryRef, &payState, &a.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("vet: appointment not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("vet: appointment not found")
 		}
 		return nil, err
 	}
@@ -931,7 +932,7 @@ func (s *Service) getByIdem(ctx context.Context, idemKey string) (*Appointment, 
 func (s *Service) providerOwner(ctx context.Context, providerID string) (string, error) {
 	var owner string
 	if err := s.db.QueryRow(ctx, `SELECT owner_user_id::text FROM health_providers WHERE id=$1`, providerID).Scan(&owner); err != nil {
-		return "", fmt.Errorf("vet: provider not found")
+		return "", errors.New("vet: provider not found")
 	}
 	return owner, nil
 }
@@ -1049,7 +1050,7 @@ func (s *Service) AdminDeactivateService(ctx context.Context, adminID, serviceID
 		return fmt.Errorf("vet: deactivate service: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("vet: service not found")
+		return errors.New("vet: service not found")
 	}
 	s.audited(adminID, "", "health.vet.service.deactivate", serviceID, nil, map[string]any{"active": false})
 	return nil

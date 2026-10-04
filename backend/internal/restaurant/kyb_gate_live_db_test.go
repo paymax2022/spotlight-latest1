@@ -118,9 +118,9 @@ func TestLiveDB_AdminListApplications_StatusReflectsRealKYBState(t *testing.T) {
 	}
 
 	noRow := mk(nil)
-	underReview := mk(strPtr("under_review"))
-	approved := mk(strPtr("approved"))
-	rejected := mk(strPtr("rejected"))
+	underReview := mk(new("under_review"))
+	approved := mk(new("approved"))
+	rejected := mk(new("rejected"))
 
 	apps, err := svc.AdminListApplications(ctx, "")
 	if err != nil {
@@ -163,4 +163,5 @@ func TestLiveDB_AdminListApplications_StatusReflectsRealKYBState(t *testing.T) {
 	}
 }
 
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func strPtr(s string) *string { return new(s) }

@@ -2,6 +2,7 @@ package estate
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -1144,10 +1145,10 @@ func (h *Handler) RequestVendorPayout(c *gin.Context) {
 	idem := ginutil.IdempotencyKey(c)
 	j, err := h.svc.RequestPayout(c.Request.Context(), c.Param("id"), ginutil.UserID(c), c.Param("jid"), idem)
 	if err != nil {
-		switch err {
-		case ErrIdempotencyRequired:
+		switch {
+		case errors.Is(err, ErrIdempotencyRequired):
 			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
-		case ErrLedgerUnavailable:
+		case errors.Is(err, ErrLedgerUnavailable):
 			c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})

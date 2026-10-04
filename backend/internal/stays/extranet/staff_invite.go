@@ -66,7 +66,7 @@ func (s *Service) InviteStaffByEmail(ctx context.Context, actorUserID, propertyI
 	}
 	email = strings.TrimSpace(strings.ToLower(email))
 	if email == "" {
-		return nil, fmt.Errorf("extranet: email is required")
+		return nil, errors.New("extranet: email is required")
 	}
 	role = strutil.FirstNonEmpty(strings.ToUpper(strings.TrimSpace(role)), "READ_ONLY")
 	if !grantableInviteRoles[role] {

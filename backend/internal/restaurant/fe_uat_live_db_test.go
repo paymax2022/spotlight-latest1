@@ -7,6 +7,7 @@ package restaurant
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -246,7 +247,7 @@ func TestLiveDB_FE005_ConcurrentPayoutRunsNeverDoubleDisburseSameSettlement(t *t
 			if procRuns[i].NetMinor != 80_000 {
 				t.Errorf("processed run %d net = %d, want 80000", i, procRuns[i].NetMinor)
 			}
-		} else if e != ErrPayoutNothingDue {
+		} else if !errors.Is(e, ErrPayoutNothingDue) {
 			t.Errorf("processed run %d unexpected error: %v", i, e)
 		}
 	}

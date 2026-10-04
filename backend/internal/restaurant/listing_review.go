@@ -82,7 +82,7 @@ func (s *Service) SubmitListingForReview(ctx context.Context, restaurantID, user
 	if err := s.db.QueryRow(ctx,
 		`SELECT COALESCE(listing_review_status,'DRAFT') FROM restaurants WHERE id=$1`, restaurantID).
 		Scan(&current); err != nil {
-		return fmt.Errorf("restaurant: not found")
+		return errors.New("restaurant: not found")
 	}
 	if !CanTransitionListing(ListingReviewStatus(current), ListingPending) {
 		return fmt.Errorf("restaurant: a %s listing cannot be submitted for review", current)
@@ -111,7 +111,7 @@ func (s *Service) DecideListing(ctx context.Context, restaurantID, reviewerID st
 	if err := s.db.QueryRow(ctx,
 		`SELECT COALESCE(listing_review_status,'DRAFT') FROM restaurants WHERE id=$1`, restaurantID).
 		Scan(&current); err != nil {
-		return fmt.Errorf("restaurant: not found")
+		return errors.New("restaurant: not found")
 	}
 	if !CanTransitionListing(ListingReviewStatus(current), to) {
 		return fmt.Errorf("restaurant: cannot move a listing from %s to %s", current, to)

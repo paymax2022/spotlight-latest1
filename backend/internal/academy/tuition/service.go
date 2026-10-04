@@ -129,14 +129,14 @@ func NewService(repo *Repository, ledgerSvc *ledger.Service, paymentProvider pro
 // leaving revenue recognized for a payment that was never actually marked paid.
 func (s *Service) ConfirmPayment(ctx context.Context, idempotencyKey, planID, paymentID, reference, userID string) (*PaymentResult, error) {
 	if idempotencyKey == "" {
-		return nil, fmt.Errorf("tuition: Idempotency-Key header is required")
+		return nil, errors.New("tuition: Idempotency-Key header is required")
 	}
 	if planID == "" || paymentID == "" || reference == "" {
-		return nil, fmt.Errorf("tuition: planId, paymentId, and reference are required")
+		return nil, errors.New("tuition: planId, paymentId, and reference are required")
 	}
 
 	if s.redisClient != nil {
-		idemKey := fmt.Sprintf("tuition:confirm:%s", idempotencyKey)
+		idemKey := "tuition:confirm:" + idempotencyKey
 		claimed, err := redis.SetNX(ctx, s.redisClient, idemKey, "claimed", 24*time.Hour)
 		if err != nil {
 			return nil, fmt.Errorf("idempotency check failed: %w", err)
@@ -228,7 +228,7 @@ func (s *Service) ConfirmPayment(ctx context.Context, idempotencyKey, planID, pa
 		revErr := s.ledgerSvc.PostReversal(ctx, providerClearing.ID, settlement.ID, expectedKobo,
 			ledgerRef+"_reversal", idempotencyKey+"_reversal")
 		if revErr != nil {
-			return fmt.Errorf("%w (reversal also failed: %v)", cause, revErr)
+			return fmt.Errorf("%w (reversal also failed: %w)", cause, revErr)
 		}
 		return cause
 	}

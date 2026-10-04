@@ -26,6 +26,7 @@ package edtechfees_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -284,7 +285,7 @@ func TestLiveDB_Vault_Contribute_RequiresIdempotencyKey(t *testing.T) {
 	}
 	cleanupVault(t, pool, v.ID)
 
-	if _, err := vaultSvc.Contribute(ctx, guardianID, v.ID, 10_000, ""); err != feesvault.ErrIdempotencyRequired {
+	if _, err := vaultSvc.Contribute(ctx, guardianID, v.ID, 10_000, ""); !errors.Is(err, feesvault.ErrIdempotencyRequired) {
 		t.Fatalf("keyless Contribute: err = %v, want ErrIdempotencyRequired", err)
 	}
 	if n := countContributions(t, ctx, pool, v.ID); n != 0 {

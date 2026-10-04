@@ -28,7 +28,7 @@ func NewService(pool *pgxpool.Pool) *Service {
 // Register idempotently creates a strategy at NOT_PROMOTED.
 func (s *Service) Register(ctx context.Context, strategyID string) error {
 	if strings.TrimSpace(strategyID) == "" {
-		return fmt.Errorf("promotion: strategy id required")
+		return errors.New("promotion: strategy id required")
 	}
 	return s.repo.Register(ctx, strategyID)
 }

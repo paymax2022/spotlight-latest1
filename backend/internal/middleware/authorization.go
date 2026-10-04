@@ -4,9 +4,10 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 // hasEffectivePermission mirrors user_has_permission()'s semantics using the

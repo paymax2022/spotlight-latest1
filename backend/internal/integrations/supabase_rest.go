@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -37,7 +38,7 @@ func (c *SupabaseRestClient) APIKey() string  { return c.apiKey }
 
 func (c *SupabaseRestClient) Count(table string) (int, error) {
 	if !c.Enabled() {
-		return 0, fmt.Errorf("supabase REST is not configured")
+		return 0, errors.New("supabase REST is not configured")
 	}
 
 	u, err := url.Parse(c.baseURL + "/rest/v1/" + table)
@@ -52,7 +53,7 @@ func (c *SupabaseRestClient) Count(table string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	req.Header.Set("apikey", c.apiKey)
+	req.Header.Set("Apikey", c.apiKey)
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Range", "0-0")
 	req.Header.Set("Prefer", "count=exact")

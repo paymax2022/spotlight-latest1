@@ -35,6 +35,7 @@ package crypto_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -247,7 +248,7 @@ func TestLiveDB_Swap_OversellRejected_HoldingsUnchanged(t *testing.T) {
 	fromUnitsBefore := findHoldingUnits(holdingsBefore, fromAssetID)
 
 	_, err = svc.Swap(ctx, userID, fromAssetID, toAssetID, fromUnitsBefore*1000, newIdemKey(t, "oversell"))
-	if err != crypto.ErrInsufficient {
+	if !errors.Is(err, crypto.ErrInsufficient) {
 		t.Fatalf("oversell swap: err = %v, want ErrInsufficient", err)
 	}
 
@@ -498,7 +499,7 @@ func TestLiveDB_Withdraw_OverWithdrawalRejected_HoldingUnchanged(t *testing.T) {
 	unitsBefore := findHoldingUnits(holdingsBefore, fromAssetID)
 
 	_, err = svc.Withdraw(ctx, userID, fromAssetID, addr.ID, unitsBefore*1000, 15_000, newIdemKey(t, "over-withdraw"))
-	if err != crypto.ErrInsufficient {
+	if !errors.Is(err, crypto.ErrInsufficient) {
 		t.Fatalf("over-withdrawal: err = %v, want ErrInsufficient", err)
 	}
 

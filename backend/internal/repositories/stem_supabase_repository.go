@@ -3,6 +3,7 @@ package repositories
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"spotlight/backend/go-common/timeutil"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/integrations"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -143,7 +145,7 @@ func (r *StemSupabaseRepository) listSchoolsFromApplications(limit int) ([]domai
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 
 	httpClient := &http.Client{Timeout: 12 * time.Second}
@@ -215,11 +217,11 @@ func (r *StemSupabaseRepository) listSchoolsFromApplications(limit int) ([]domai
 
 func (r *StemSupabaseRepository) CreateSchool(input domain.StemSchoolCreateInput) (domain.StemSchool, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemSchool{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemSchool{}, errors.New("supabase REST is not configured")
 	}
 	schoolName := strings.TrimSpace(input.SchoolName)
 	if schoolName == "" {
-		return domain.StemSchool{}, fmt.Errorf("school name is required")
+		return domain.StemSchool{}, errors.New("school name is required")
 	}
 
 	payload := map[string]any{
@@ -266,7 +268,7 @@ func (r *StemSupabaseRepository) CreateSchool(input domain.StemSchoolCreateInput
 	if err != nil {
 		return domain.StemSchool{}, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -290,7 +292,7 @@ func (r *StemSupabaseRepository) CreateSchool(input domain.StemSchoolCreateInput
 		return domain.StemSchool{}, err
 	}
 	if len(rows) == 0 {
-		return domain.StemSchool{}, fmt.Errorf("school create failed: empty response")
+		return domain.StemSchool{}, errors.New("school create failed: empty response")
 	}
 	return domain.StemSchool{
 		ID:                 rows[0].ID,
@@ -305,7 +307,7 @@ func (r *StemSupabaseRepository) UpdateSchoolVerification(schoolID string, statu
 		return nil
 	}
 	if strings.TrimSpace(schoolID) == "" || strings.TrimSpace(status) == "" {
-		return fmt.Errorf("school id and status are required")
+		return errors.New("school id and status are required")
 	}
 
 	prevStatus, err := r.schoolVerificationStatus(schoolID)
@@ -349,7 +351,7 @@ func (r *StemSupabaseRepository) schoolVerificationStatus(schoolID string) (stri
 	if err != nil {
 		return "", err
 	}
-	currentReq.Header.Set("apikey", r.client.APIKey())
+	currentReq.Header.Set("Apikey", r.client.APIKey())
 	currentReq.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 
 	currentResp, err := (&http.Client{Timeout: 10 * time.Second}).Do(currentReq)
@@ -394,7 +396,7 @@ func (r *StemSupabaseRepository) patchSchoolVerification(schoolID, status, reaso
 	if err != nil {
 		return err
 	}
-	updateReq.Header.Set("apikey", r.client.APIKey())
+	updateReq.Header.Set("Apikey", r.client.APIKey())
 	updateReq.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	updateReq.Header.Set("Content-Type", "application/json")
 	updateReq.Header.Set("Prefer", "return=minimal")
@@ -427,7 +429,7 @@ func (r *StemSupabaseRepository) logSchoolVerification(schoolID, prevStatus, sta
 	if err != nil {
 		return err
 	}
-	verificationReq.Header.Set("apikey", r.client.APIKey())
+	verificationReq.Header.Set("Apikey", r.client.APIKey())
 	verificationReq.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	verificationReq.Header.Set("Content-Type", "application/json")
 	verificationReq.Header.Set("Prefer", "return=minimal")
@@ -451,14 +453,14 @@ func (r *StemSupabaseRepository) listSchoolsFromDedicatedTable(limit int) ([]dom
 	q := u.Query()
 	q.Set("select", "id,school_name,state,verification_status")
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
@@ -510,14 +512,14 @@ func (r *StemSupabaseRepository) ListEmergingInnovators(limit int) ([]domain.Ste
 	q := u.Query()
 	q.Set("select", "id,full_name,email,phone,state,current_status,innovation_track,team_name,prototype_available,verification_status")
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
@@ -565,12 +567,12 @@ func (r *StemSupabaseRepository) ListEmergingInnovators(limit int) ([]domain.Ste
 
 func (r *StemSupabaseRepository) CreateEmergingInnovator(input domain.StemEmergingInnovatorCreateInput) (domain.StemEmergingInnovator, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemEmergingInnovator{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemEmergingInnovator{}, errors.New("supabase REST is not configured")
 	}
 	fullName := strings.TrimSpace(input.FullName)
 	email := strings.TrimSpace(strings.ToLower(input.Email))
 	if fullName == "" || email == "" {
-		return domain.StemEmergingInnovator{}, fmt.Errorf("full name and email are required")
+		return domain.StemEmergingInnovator{}, errors.New("full name and email are required")
 	}
 
 	payload := map[string]any{
@@ -615,7 +617,7 @@ func (r *StemSupabaseRepository) CreateEmergingInnovator(input domain.StemEmergi
 	if err != nil {
 		return domain.StemEmergingInnovator{}, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -645,7 +647,7 @@ func (r *StemSupabaseRepository) CreateEmergingInnovator(input domain.StemEmergi
 		return domain.StemEmergingInnovator{}, err
 	}
 	if len(rows) == 0 {
-		return domain.StemEmergingInnovator{}, fmt.Errorf("emerging innovator create failed: empty response")
+		return domain.StemEmergingInnovator{}, errors.New("emerging innovator create failed: empty response")
 	}
 	return domain.StemEmergingInnovator{
 		ID:                 rows[0].ID,
@@ -668,7 +670,7 @@ func (r *StemSupabaseRepository) GetSchoolDashboard(schoolID string) (domain.Ste
 	}
 	schoolID = strings.TrimSpace(schoolID)
 	if schoolID == "" {
-		return out, fmt.Errorf("school id is required")
+		return out, errors.New("school id is required")
 	}
 
 	u, err := url.Parse(strings.TrimRight(r.client.BaseURL(), "/") + "/rest/v1/stem_schools")
@@ -685,7 +687,7 @@ func (r *StemSupabaseRepository) GetSchoolDashboard(schoolID string) (domain.Ste
 	if err != nil {
 		return out, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
@@ -706,7 +708,7 @@ func (r *StemSupabaseRepository) GetSchoolDashboard(schoolID string) (domain.Ste
 		return out, err
 	}
 	if len(schools) == 0 {
-		return out, fmt.Errorf("school not found")
+		return out, errors.New("school not found")
 	}
 	out.SchoolID = schools[0].ID
 	out.SchoolName = schools[0].SchoolName
@@ -739,7 +741,7 @@ func (r *StemSupabaseRepository) fillSchoolDashboardStats(out *domain.StemSchool
 	if err != nil {
 		return err
 	}
-	appReq.Header.Set("apikey", r.client.APIKey())
+	appReq.Header.Set("Apikey", r.client.APIKey())
 	appReq.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 
 	appResp, err := (&http.Client{Timeout: 10 * time.Second}).Do(appReq)
@@ -790,13 +792,13 @@ func (r *StemSupabaseRepository) ListSchoolProfiles(limit int) ([]domain.StemSch
 	q := u.Query()
 	q.Set("select", "id,school_id,user_id,role_type,full_name,email,phone,grade_level,specialization,status")
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -833,7 +835,7 @@ func (r *StemSupabaseRepository) ListSchoolProfiles(limit int) ([]domain.StemSch
 
 func (r *StemSupabaseRepository) CreateSchoolProfile(input domain.StemSchoolProfileCreateInput) (domain.StemSchoolProfile, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemSchoolProfile{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemSchoolProfile{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{
 		"school_id":      strings.TrimSpace(input.SchoolID),
@@ -861,7 +863,7 @@ func (r *StemSupabaseRepository) CreateSchoolProfile(input domain.StemSchoolProf
 	if err != nil {
 		return domain.StemSchoolProfile{}, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -889,7 +891,7 @@ func (r *StemSupabaseRepository) CreateSchoolProfile(input domain.StemSchoolProf
 		return domain.StemSchoolProfile{}, err
 	}
 	if len(rows) == 0 {
-		return domain.StemSchoolProfile{}, fmt.Errorf("create school profile failed: empty response")
+		return domain.StemSchoolProfile{}, errors.New("create school profile failed: empty response")
 	}
 	return domain.StemSchoolProfile{
 		ID: rows[0].ID, SchoolID: rows[0].SchoolID, UserID: rows[0].UserID, RoleType: rows[0].RoleType, FullName: rows[0].FullName,
@@ -914,13 +916,13 @@ func (r *StemSupabaseRepository) ListSchoolTeams(limit int) ([]domain.StemSchool
 	q := u.Query()
 	q.Set("select", "id,school_id,team_name,contest_category,coach_name,project_title,team_size")
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -954,7 +956,7 @@ func (r *StemSupabaseRepository) ListSchoolTeams(limit int) ([]domain.StemSchool
 
 func (r *StemSupabaseRepository) CreateSchoolTeam(input domain.StemSchoolTeamCreateInput) (domain.StemSchoolTeam, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemSchoolTeam{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemSchoolTeam{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{
 		"school_id":        strings.TrimSpace(input.SchoolID),
@@ -979,7 +981,7 @@ func (r *StemSupabaseRepository) CreateSchoolTeam(input domain.StemSchoolTeamCre
 	if err != nil {
 		return domain.StemSchoolTeam{}, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -1004,7 +1006,7 @@ func (r *StemSupabaseRepository) CreateSchoolTeam(input domain.StemSchoolTeamCre
 		return domain.StemSchoolTeam{}, err
 	}
 	if len(rows) == 0 {
-		return domain.StemSchoolTeam{}, fmt.Errorf("create school team failed: empty response")
+		return domain.StemSchoolTeam{}, errors.New("create school team failed: empty response")
 	}
 	return domain.StemSchoolTeam{
 		ID: rows[0].ID, SchoolID: rows[0].SchoolID, TeamName: rows[0].TeamName, ContestCategory: rows[0].ContestCategory,
@@ -1029,13 +1031,13 @@ func (r *StemSupabaseRepository) ListEmergingTeams(limit int) ([]domain.StemEmer
 	q := u.Query()
 	q.Set("select", "id,innovator_id,team_name,innovation_track,team_size")
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -1067,7 +1069,7 @@ func (r *StemSupabaseRepository) ListEmergingTeams(limit int) ([]domain.StemEmer
 
 func (r *StemSupabaseRepository) CreateEmergingTeam(input domain.StemEmergingTeamCreateInput) (domain.StemEmergingTeam, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemEmergingTeam{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemEmergingTeam{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{
 		"innovator_id":     strings.TrimSpace(input.InnovatorID),
@@ -1090,7 +1092,7 @@ func (r *StemSupabaseRepository) CreateEmergingTeam(input domain.StemEmergingTea
 	if err != nil {
 		return domain.StemEmergingTeam{}, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -1113,7 +1115,7 @@ func (r *StemSupabaseRepository) CreateEmergingTeam(input domain.StemEmergingTea
 		return domain.StemEmergingTeam{}, err
 	}
 	if len(rows) == 0 {
-		return domain.StemEmergingTeam{}, fmt.Errorf("create emerging team failed: empty response")
+		return domain.StemEmergingTeam{}, errors.New("create emerging team failed: empty response")
 	}
 	return domain.StemEmergingTeam{
 		ID: rows[0].ID, InnovatorID: rows[0].InnovatorID, TeamName: rows[0].TeamName,
@@ -1138,13 +1140,13 @@ func (r *StemSupabaseRepository) ListEmergingProjects(limit int) ([]domain.StemE
 	q := u.Query()
 	q.Set("select", "id,team_id,project_title,category,status")
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -1175,7 +1177,7 @@ func (r *StemSupabaseRepository) ListEmergingProjects(limit int) ([]domain.StemE
 
 func (r *StemSupabaseRepository) CreateEmergingProject(input domain.StemEmergingProjectCreateInput) (domain.StemEmergingProject, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemEmergingProject{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemEmergingProject{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{
 		"team_id":           strings.TrimSpace(input.TeamID),
@@ -1200,7 +1202,7 @@ func (r *StemSupabaseRepository) CreateEmergingProject(input domain.StemEmerging
 	if err != nil {
 		return domain.StemEmergingProject{}, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -1223,7 +1225,7 @@ func (r *StemSupabaseRepository) CreateEmergingProject(input domain.StemEmerging
 		return domain.StemEmergingProject{}, err
 	}
 	if len(rows) == 0 {
-		return domain.StemEmergingProject{}, fmt.Errorf("create emerging project failed: empty response")
+		return domain.StemEmergingProject{}, errors.New("create emerging project failed: empty response")
 	}
 	return domain.StemEmergingProject{
 		ID: rows[0].ID, TeamID: rows[0].TeamID, ProjectTitle: rows[0].ProjectTitle, Category: rows[0].Category, Status: rows[0].Status,
@@ -1247,13 +1249,13 @@ func (r *StemSupabaseRepository) ListContests(limit int) ([]domain.StemContest, 
 	q := u.Query()
 	q.Set("select", "id,name,slug,contest_type,contest_mode,eligible_participant_types,eligible_school_levels,eligible_states,allow_mixed_channels,ranking_formula,stage_lifecycle,stage_transitions,status")
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -1295,7 +1297,7 @@ func (r *StemSupabaseRepository) ListContests(limit int) ([]domain.StemContest, 
 
 func (r *StemSupabaseRepository) CreateContest(input domain.StemContestCreateInput) (domain.StemContest, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemContest{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemContest{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{
 		"name":                       strings.TrimSpace(input.Name),
@@ -1326,7 +1328,7 @@ func (r *StemSupabaseRepository) CreateContest(input domain.StemContestCreateInp
 	if err != nil {
 		return domain.StemContest{}, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -1357,7 +1359,7 @@ func (r *StemSupabaseRepository) CreateContest(input domain.StemContestCreateInp
 		return domain.StemContest{}, err
 	}
 	if len(rows) == 0 {
-		return domain.StemContest{}, fmt.Errorf("create stem contest failed: empty response")
+		return domain.StemContest{}, errors.New("create stem contest failed: empty response")
 	}
 	created := domain.StemContest{
 		ID: rows[0].ID, Name: rows[0].Name, Slug: rows[0].Slug, ContestType: rows[0].ContestType, ContestMode: rows[0].ContestMode,
@@ -1385,11 +1387,11 @@ func (r *StemSupabaseRepository) CreateContest(input domain.StemContestCreateInp
 func (r *StemSupabaseRepository) GetContestByID(contestID string) (domain.StemContest, error) {
 	out := domain.StemContest{}
 	if r.client == nil || !r.client.Enabled() {
-		return out, fmt.Errorf("supabase REST is not configured")
+		return out, errors.New("supabase REST is not configured")
 	}
 	contestID = strings.TrimSpace(contestID)
 	if contestID == "" {
-		return out, fmt.Errorf("contest id required")
+		return out, errors.New("contest id required")
 	}
 	u, err := url.Parse(strings.TrimRight(r.client.BaseURL(), "/") + "/rest/v1/stem_contests")
 	if err != nil {
@@ -1404,7 +1406,7 @@ func (r *StemSupabaseRepository) GetContestByID(contestID string) (domain.StemCo
 	if err != nil {
 		return out, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -1433,7 +1435,7 @@ func (r *StemSupabaseRepository) GetContestByID(contestID string) (domain.StemCo
 		return out, err
 	}
 	if len(rows) == 0 {
-		return out, fmt.Errorf("contest not found")
+		return out, errors.New("contest not found")
 	}
 	return domain.StemContest{
 		ID: rows[0].ID, Name: rows[0].Name, Slug: rows[0].Slug, ContestType: rows[0].ContestType, ContestMode: rows[0].ContestMode,
@@ -1448,7 +1450,7 @@ func (r *StemSupabaseRepository) ListLeaderboard(contestID string, limit int) ([
 		return []domain.StemLeaderboardEntry{}, nil
 	}
 	if strings.TrimSpace(contestID) == "" {
-		return nil, fmt.Errorf("contest id is required")
+		return nil, errors.New("contest id is required")
 	}
 	if limit <= 0 {
 		limit = 100
@@ -1464,13 +1466,13 @@ func (r *StemSupabaseRepository) ListLeaderboard(contestID string, limit int) ([
 	q.Set("select", "id,contest_id,participant_id,participant_type,display_name,judge_score,vote_score,stage_score,final_score,rank_position")
 	q.Set("contest_id", "eq."+strings.TrimSpace(contestID))
 	q.Set("order", "rank_position.asc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -1531,7 +1533,7 @@ func (r *StemSupabaseRepository) GetLeaderboardRankSnapshot(contestID string) (m
 	if err != nil {
 		return out, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -1574,7 +1576,7 @@ func (r *StemSupabaseRepository) SaveLeaderboardRankSnapshot(contestID string, r
 	if err != nil {
 		return err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=minimal")
@@ -1653,13 +1655,13 @@ func (r *StemSupabaseRepository) ListSubmissions(limit int, status string) ([]do
 		q.Set("status", "eq."+strings.TrimSpace(status))
 	}
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -1697,7 +1699,7 @@ func (r *StemSupabaseRepository) UpdateSubmissionStatus(submissionID string, sta
 	}
 	submissionID = strings.TrimSpace(submissionID)
 	if submissionID == "" {
-		return fmt.Errorf("submission id required")
+		return errors.New("submission id required")
 	}
 	payload := map[string]any{
 		"status": strings.TrimSpace(status),
@@ -1720,7 +1722,7 @@ func (r *StemSupabaseRepository) UpdateSubmissionStatus(submissionID string, sta
 	if err != nil {
 		return err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=minimal")
@@ -1748,7 +1750,7 @@ func (r *StemSupabaseRepository) UpdateSubmissionStatus(submissionID string, sta
 
 func (r *StemSupabaseRepository) UpsertJudgingScore(score domain.StemJudgingScore) (domain.StemJudgingScore, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemJudgingScore{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemJudgingScore{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{
 		"application_id":        strings.TrimSpace(score.ApplicationID),
@@ -1780,7 +1782,7 @@ func (r *StemSupabaseRepository) UpsertJudgingScore(score domain.StemJudgingScor
 	if err != nil {
 		return domain.StemJudgingScore{}, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -1813,7 +1815,7 @@ func (r *StemSupabaseRepository) UpsertJudgingScore(score domain.StemJudgingScor
 		return domain.StemJudgingScore{}, err
 	}
 	if len(rows) == 0 {
-		return domain.StemJudgingScore{}, fmt.Errorf("judging score create failed: empty response")
+		return domain.StemJudgingScore{}, errors.New("judging score create failed: empty response")
 	}
 	return domain.StemJudgingScore{
 		ID: rows[0].ID, ApplicationID: rows[0].ApplicationID, ReviewerID: rows[0].ReviewerID, InnovationScore: rows[0].InnovationScore,
@@ -1828,7 +1830,7 @@ func (r *StemSupabaseRepository) ListJudgingScores(applicationID string, limit i
 		return []domain.StemJudgingScore{}, nil
 	}
 	if strings.TrimSpace(applicationID) == "" {
-		return nil, fmt.Errorf("application id is required")
+		return nil, errors.New("application id is required")
 	}
 	if limit <= 0 {
 		limit = 100
@@ -1844,13 +1846,13 @@ func (r *StemSupabaseRepository) ListJudgingScores(applicationID string, limit i
 	q.Set("select", "id,application_id,reviewer_id,innovation_score,technical_depth_score,impact_score,overall_score,notes,review_status,is_locked,lock_reason,locked_at,locked_by,has_conflict,conflict_reason")
 	q.Set("application_id", "eq."+strings.TrimSpace(applicationID))
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -1898,7 +1900,7 @@ func (r *StemSupabaseRepository) UpdateJudgingScoreReviewState(scoreID string, r
 	}
 	scoreID = strings.TrimSpace(scoreID)
 	if scoreID == "" {
-		return fmt.Errorf("score id required")
+		return errors.New("score id required")
 	}
 	payload := map[string]any{
 		"review_status": fallback(strings.TrimSpace(reviewStatus), "submitted"),
@@ -1924,7 +1926,7 @@ func (r *StemSupabaseRepository) UpdateJudgingScoreReviewState(scoreID string, r
 	if err != nil {
 		return err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=minimal")
@@ -1957,7 +1959,7 @@ func (r *StemSupabaseRepository) CreateJudgingRubric(
 	criteria []domain.StemJudgingCriterion,
 ) (domain.StemJudgingRubric, []domain.StemJudgingCriterion, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemJudgingRubric{}, []domain.StemJudgingCriterion{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemJudgingRubric{}, []domain.StemJudgingCriterion{}, errors.New("supabase REST is not configured")
 	}
 	rubricPayload := map[string]any{
 		"contest_id":  strings.TrimSpace(rubric.ContestID),
@@ -1980,7 +1982,7 @@ func (r *StemSupabaseRepository) CreateJudgingRubric(
 	if err != nil {
 		return domain.StemJudgingRubric{}, nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -2003,7 +2005,7 @@ func (r *StemSupabaseRepository) CreateJudgingRubric(
 		return domain.StemJudgingRubric{}, nil, err
 	}
 	if len(rubrics) == 0 {
-		return domain.StemJudgingRubric{}, nil, fmt.Errorf("judging rubric create failed: empty response")
+		return domain.StemJudgingRubric{}, nil, errors.New("judging rubric create failed: empty response")
 	}
 	created := domain.StemJudgingRubric{
 		ID: rubrics[0].ID, ContestID: rubrics[0].ContestID, Name: rubrics[0].Name, Description: rubrics[0].Description, Status: rubrics[0].Status,
@@ -2050,7 +2052,7 @@ func (r *StemSupabaseRepository) CreateJudgingRubric(
 	if err != nil {
 		return domain.StemJudgingRubric{}, nil, err
 	}
-	creq.Header.Set("apikey", r.client.APIKey())
+	creq.Header.Set("Apikey", r.client.APIKey())
 	creq.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	creq.Header.Set("Content-Type", "application/json")
 	creq.Header.Set("Prefer", "return=representation")
@@ -2116,13 +2118,13 @@ func (r *StemSupabaseRepository) ListJudgingRubrics(contestID string, limit int)
 		q.Set("contest_id", "eq."+strings.TrimSpace(contestID))
 	}
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -2156,7 +2158,7 @@ func (r *StemSupabaseRepository) ListJudgingCriteria(rubricID string, limit int)
 		return []domain.StemJudgingCriterion{}, nil
 	}
 	if strings.TrimSpace(rubricID) == "" {
-		return nil, fmt.Errorf("rubric id is required")
+		return nil, errors.New("rubric id is required")
 	}
 	if limit <= 0 {
 		limit = 100
@@ -2172,13 +2174,13 @@ func (r *StemSupabaseRepository) ListJudgingCriteria(rubricID string, limit int)
 	q.Set("select", "id,rubric_id,criterion_key,label,weight_pct,max_score,description")
 	q.Set("rubric_id", "eq."+strings.TrimSpace(rubricID))
 	q.Set("order", "created_at.asc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -2211,7 +2213,7 @@ func (r *StemSupabaseRepository) ListJudgingCriteria(rubricID string, limit int)
 
 func (r *StemSupabaseRepository) CreateJudgeAssignment(assignment domain.StemJudgeAssignment) (domain.StemJudgeAssignment, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemJudgeAssignment{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemJudgeAssignment{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{
 		"contest_id":      strings.TrimSpace(assignment.ContestID),
@@ -2236,7 +2238,7 @@ func (r *StemSupabaseRepository) CreateJudgeAssignment(assignment domain.StemJud
 	if err != nil {
 		return domain.StemJudgeAssignment{}, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -2261,7 +2263,7 @@ func (r *StemSupabaseRepository) CreateJudgeAssignment(assignment domain.StemJud
 		return domain.StemJudgeAssignment{}, err
 	}
 	if len(rows) == 0 {
-		return domain.StemJudgeAssignment{}, fmt.Errorf("judge assignment create failed: empty response")
+		return domain.StemJudgeAssignment{}, errors.New("judge assignment create failed: empty response")
 	}
 	created := domain.StemJudgeAssignment{
 		ID: rows[0].ID, ContestID: rows[0].ContestID, ApplicationID: rows[0].ApplicationID, JudgeUserID: rows[0].JudgeUserID, Status: rows[0].Status,
@@ -2310,13 +2312,13 @@ func (r *StemSupabaseRepository) ListJudgeAssignments(contestID string, applicat
 		q.Set("judge_user_id", "eq."+strings.TrimSpace(judgeUserID))
 	}
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -2354,7 +2356,7 @@ func (r *StemSupabaseRepository) UpdateJudgeAssignmentConflict(assignmentID stri
 	}
 	assignmentID = strings.TrimSpace(assignmentID)
 	if assignmentID == "" {
-		return fmt.Errorf("assignment id required")
+		return errors.New("assignment id required")
 	}
 	payload := map[string]any{
 		"has_conflict":    hasConflict,
@@ -2378,7 +2380,7 @@ func (r *StemSupabaseRepository) UpdateJudgeAssignmentConflict(assignmentID stri
 	if err != nil {
 		return err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=minimal")
@@ -2407,7 +2409,7 @@ func (r *StemSupabaseRepository) UpdateJudgeAssignmentConflict(assignmentID stri
 
 func (r *StemSupabaseRepository) UpsertVotingRule(rule domain.StemVotingRule) (domain.StemVotingRule, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemVotingRule{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemVotingRule{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{
 		"contest_id": rule.ContestID, "voting_status": fallback(strings.TrimSpace(rule.VotingStatus), "NOT_STARTED"),
@@ -2421,7 +2423,7 @@ func (r *StemSupabaseRepository) UpsertVotingRule(rule domain.StemVotingRule) (d
 	q.Set("contest_id", "eq."+strings.TrimSpace(rule.ContestID))
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "resolution=merge-duplicates,return=representation")
@@ -2443,7 +2445,7 @@ func (r *StemSupabaseRepository) UpsertVotingRule(rule domain.StemVotingRule) (d
 		AllowPaidVotes bool   `json:"allow_paid_votes"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil || len(rows) == 0 {
-		return domain.StemVotingRule{}, fmt.Errorf("voting rule decode failed")
+		return domain.StemVotingRule{}, errors.New("voting rule decode failed")
 	}
 	return domain.StemVotingRule{
 		ID: rows[0].ID, ContestID: rows[0].ContestID, VotingStatus: rows[0].VotingStatus, VotingMode: rows[0].VotingMode,
@@ -2466,10 +2468,10 @@ func (r *StemSupabaseRepository) ListVotingRules(contestID string, limit int) ([
 		q.Set("contest_id", "eq."+strings.TrimSpace(contestID))
 	}
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -2502,7 +2504,7 @@ func (r *StemSupabaseRepository) ListVotingRules(contestID string, limit int) ([
 
 func (r *StemSupabaseRepository) CreateVotePackage(pkg domain.StemVotePackage) (domain.StemVotePackage, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemVotePackage{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemVotePackage{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{"contest_id": pkg.ContestID, "name": pkg.Name, "votes": pkg.Votes, "amount_ngn": pkg.AmountNGN, "is_active": pkg.IsActive}
 	body, _ := json.Marshal(payload)
@@ -2511,7 +2513,7 @@ func (r *StemSupabaseRepository) CreateVotePackage(pkg domain.StemVotePackage) (
 	q.Set("select", "id,contest_id,name,votes,amount_ngn,is_active")
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -2532,7 +2534,7 @@ func (r *StemSupabaseRepository) CreateVotePackage(pkg domain.StemVotePackage) (
 		IsActive  bool    `json:"is_active"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil || len(rows) == 0 {
-		return domain.StemVotePackage{}, fmt.Errorf("vote package decode failed")
+		return domain.StemVotePackage{}, errors.New("vote package decode failed")
 	}
 	return domain.StemVotePackage{ID: rows[0].ID, ContestID: rows[0].ContestID, Name: rows[0].Name, Votes: rows[0].Votes, AmountNGN: rows[0].AmountNGN, IsActive: rows[0].IsActive}, nil
 }
@@ -2552,10 +2554,10 @@ func (r *StemSupabaseRepository) ListVotePackages(contestID string, limit int) (
 		q.Set("contest_id", "eq."+contestID)
 	}
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -2584,7 +2586,7 @@ func (r *StemSupabaseRepository) ListVotePackages(contestID string, limit int) (
 
 func (r *StemSupabaseRepository) CreateVoteTransaction(tx domain.StemVoteTransaction) (domain.StemVoteTransaction, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemVoteTransaction{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemVoteTransaction{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{
 		"contest_id":        strings.TrimSpace(tx.ContestID),
@@ -2602,7 +2604,7 @@ func (r *StemSupabaseRepository) CreateVoteTransaction(tx domain.StemVoteTransac
 	q.Set("select", "id,contest_id,application_id,package_id,voter_ref,payment_reference,amount_ngn,votes_allocated,status")
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -2626,7 +2628,7 @@ func (r *StemSupabaseRepository) CreateVoteTransaction(tx domain.StemVoteTransac
 		VotesAllocated   int     `json:"votes_allocated"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil || len(rows) == 0 {
-		return domain.StemVoteTransaction{}, fmt.Errorf("vote tx decode failed")
+		return domain.StemVoteTransaction{}, errors.New("vote tx decode failed")
 	}
 	return domain.StemVoteTransaction{
 		ID: rows[0].ID, ContestID: rows[0].ContestID, ApplicationID: rows[0].ApplicationID, PackageID: rows[0].PackageID,
@@ -2650,10 +2652,10 @@ func (r *StemSupabaseRepository) ListVoteTransactions(contestID string, limit in
 		q.Set("contest_id", "eq."+contestID)
 	}
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -2685,7 +2687,7 @@ func (r *StemSupabaseRepository) ListVoteTransactions(contestID string, limit in
 
 func (r *StemSupabaseRepository) CreateBootcampCohort(cohort domain.StemBootcampCohort) (domain.StemBootcampCohort, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemBootcampCohort{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemBootcampCohort{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{"contest_id": emptyToNilStem(cohort.ContestID), "name": cohort.Name, "status": fallback(cohort.Status, "planned"), "start_date": emptyToNilStem(cohort.StartDate), "end_date": emptyToNilStem(cohort.EndDate)}
 	body, _ := json.Marshal(payload)
@@ -2694,7 +2696,7 @@ func (r *StemSupabaseRepository) CreateBootcampCohort(cohort domain.StemBootcamp
 	q.Set("select", "id,contest_id,name,status,start_date,end_date")
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -2715,7 +2717,7 @@ func (r *StemSupabaseRepository) CreateBootcampCohort(cohort domain.StemBootcamp
 		EndDate   string `json:"end_date"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil || len(rows) == 0 {
-		return domain.StemBootcampCohort{}, fmt.Errorf("cohort decode failed")
+		return domain.StemBootcampCohort{}, errors.New("cohort decode failed")
 	}
 	return domain.StemBootcampCohort{ID: rows[0].ID, ContestID: rows[0].ContestID, Name: rows[0].Name, Status: rows[0].Status, StartDate: rows[0].StartDate, EndDate: rows[0].EndDate}, nil
 }
@@ -2735,10 +2737,10 @@ func (r *StemSupabaseRepository) ListBootcampCohorts(contestID string, limit int
 		q.Set("contest_id", "eq."+contestID)
 	}
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -2767,7 +2769,7 @@ func (r *StemSupabaseRepository) ListBootcampCohorts(contestID string, limit int
 
 func (r *StemSupabaseRepository) CreateBootcampTask(task domain.StemBootcampTask) (domain.StemBootcampTask, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemBootcampTask{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemBootcampTask{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{
 		"cohort_id":   strings.TrimSpace(task.CohortID),
@@ -2791,7 +2793,7 @@ func (r *StemSupabaseRepository) CreateBootcampTask(task domain.StemBootcampTask
 	if err != nil {
 		return domain.StemBootcampTask{}, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -2815,7 +2817,7 @@ func (r *StemSupabaseRepository) CreateBootcampTask(task domain.StemBootcampTask
 		return domain.StemBootcampTask{}, err
 	}
 	if len(rows) == 0 {
-		return domain.StemBootcampTask{}, fmt.Errorf("create stem bootcamp task failed: empty response")
+		return domain.StemBootcampTask{}, errors.New("create stem bootcamp task failed: empty response")
 	}
 	return domain.StemBootcampTask{
 		ID: rows[0].ID, CohortID: rows[0].CohortID, Title: rows[0].Title, Description: rows[0].Description,
@@ -2843,13 +2845,13 @@ func (r *StemSupabaseRepository) ListBootcampTasks(cohortID string, limit int) (
 		q.Set("cohort_id", "eq."+strings.TrimSpace(cohortID))
 	}
 	q.Set("order", "day_number.asc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -2882,7 +2884,7 @@ func (r *StemSupabaseRepository) ListBootcampTasks(cohortID string, limit int) (
 
 func (r *StemSupabaseRepository) UpsertBootcampScore(score domain.StemBootcampScore) (domain.StemBootcampScore, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemBootcampScore{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemBootcampScore{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{
 		"cohort_id":      strings.TrimSpace(score.CohortID),
@@ -2906,7 +2908,7 @@ func (r *StemSupabaseRepository) UpsertBootcampScore(score domain.StemBootcampSc
 	if err != nil {
 		return domain.StemBootcampScore{}, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "resolution=merge-duplicates,return=representation")
@@ -2930,7 +2932,7 @@ func (r *StemSupabaseRepository) UpsertBootcampScore(score domain.StemBootcampSc
 		return domain.StemBootcampScore{}, err
 	}
 	if len(rows) == 0 {
-		return domain.StemBootcampScore{}, fmt.Errorf("upsert stem bootcamp score failed: empty response")
+		return domain.StemBootcampScore{}, errors.New("upsert stem bootcamp score failed: empty response")
 	}
 	return domain.StemBootcampScore{
 		ID: rows[0].ID, CohortID: rows[0].CohortID, TaskID: rows[0].TaskID,
@@ -2961,13 +2963,13 @@ func (r *StemSupabaseRepository) ListBootcampScores(cohortID string, application
 		q.Set("application_id", "eq."+strings.TrimSpace(applicationID))
 	}
 	q.Set("order", "updated_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -3000,7 +3002,7 @@ func (r *StemSupabaseRepository) ListBootcampScores(cohortID string, application
 
 func (r *StemSupabaseRepository) CreateSponsor(sponsor domain.StemSponsor) (domain.StemSponsor, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemSponsor{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemSponsor{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{"name": sponsor.Name, "sponsor_type": fallback(sponsor.SponsorType, "general"), "logo_url": sponsor.LogoURL, "website_url": sponsor.WebsiteURL, "campaign_message": sponsor.CampaignMessage, "cta_url": sponsor.CTAURL, "is_active": sponsor.IsActive}
 	body, _ := json.Marshal(payload)
@@ -3009,7 +3011,7 @@ func (r *StemSupabaseRepository) CreateSponsor(sponsor domain.StemSponsor) (doma
 	q.Set("select", "id,name,sponsor_type,logo_url,website_url,campaign_message,cta_url,is_active")
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -3032,7 +3034,7 @@ func (r *StemSupabaseRepository) CreateSponsor(sponsor domain.StemSponsor) (doma
 		IsActive        bool   `json:"is_active"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil || len(rows) == 0 {
-		return domain.StemSponsor{}, fmt.Errorf("sponsor decode failed")
+		return domain.StemSponsor{}, errors.New("sponsor decode failed")
 	}
 	return domain.StemSponsor{ID: rows[0].ID, Name: rows[0].Name, SponsorType: rows[0].SponsorType, LogoURL: rows[0].LogoURL, WebsiteURL: rows[0].WebsiteURL, CampaignMessage: rows[0].CampaignMessage, CTAURL: rows[0].CTAURL, IsActive: rows[0].IsActive}, nil
 }
@@ -3049,10 +3051,10 @@ func (r *StemSupabaseRepository) ListSponsors(limit int) ([]domain.StemSponsor, 
 	q := u.Query()
 	q.Set("select", "id,name,sponsor_type,logo_url,website_url,campaign_message,cta_url,is_active")
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -3083,7 +3085,7 @@ func (r *StemSupabaseRepository) ListSponsors(limit int) ([]domain.StemSponsor, 
 
 func (r *StemSupabaseRepository) CreateCertificate(cert domain.StemCertificate) (domain.StemCertificate, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemCertificate{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemCertificate{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{"application_id": emptyToNilStem(cert.ApplicationID), "certificate_type": cert.CertificateType, "certificate_number": cert.CertificateNumber, "file_url": cert.FileURL}
 	body, _ := json.Marshal(payload)
@@ -3092,7 +3094,7 @@ func (r *StemSupabaseRepository) CreateCertificate(cert domain.StemCertificate) 
 	q.Set("select", "id,application_id,certificate_type,certificate_number,issued_at,file_url")
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -3113,7 +3115,7 @@ func (r *StemSupabaseRepository) CreateCertificate(cert domain.StemCertificate) 
 		FileURL           string `json:"file_url"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil || len(rows) == 0 {
-		return domain.StemCertificate{}, fmt.Errorf("certificate decode failed")
+		return domain.StemCertificate{}, errors.New("certificate decode failed")
 	}
 	return domain.StemCertificate{ID: rows[0].ID, ApplicationID: rows[0].ApplicationID, CertificateType: rows[0].CertificateType, CertificateNumber: rows[0].CertificateNumber, IssuedAt: rows[0].IssuedAt, FileURL: rows[0].FileURL}, nil
 }
@@ -3130,10 +3132,10 @@ func (r *StemSupabaseRepository) ListCertificates(limit int) ([]domain.StemCerti
 	q := u.Query()
 	q.Set("select", "id,application_id,certificate_type,certificate_number,issued_at,file_url")
 	q.Set("order", "issued_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -3162,7 +3164,7 @@ func (r *StemSupabaseRepository) ListCertificates(limit int) ([]domain.StemCerti
 
 func (r *StemSupabaseRepository) CreateBadge(badge domain.StemBadge) (domain.StemBadge, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemBadge{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemBadge{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{"name": badge.Name, "description": badge.Description, "icon_url": badge.IconURL}
 	body, _ := json.Marshal(payload)
@@ -3171,7 +3173,7 @@ func (r *StemSupabaseRepository) CreateBadge(badge domain.StemBadge) (domain.Ste
 	q.Set("select", "id,name,description,icon_url")
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -3190,7 +3192,7 @@ func (r *StemSupabaseRepository) CreateBadge(badge domain.StemBadge) (domain.Ste
 		IconURL     string `json:"icon_url"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil || len(rows) == 0 {
-		return domain.StemBadge{}, fmt.Errorf("badge decode failed")
+		return domain.StemBadge{}, errors.New("badge decode failed")
 	}
 	return domain.StemBadge{ID: rows[0].ID, Name: rows[0].Name, Description: rows[0].Description, IconURL: rows[0].IconURL}, nil
 }
@@ -3207,10 +3209,10 @@ func (r *StemSupabaseRepository) ListBadges(limit int) ([]domain.StemBadge, erro
 	q := u.Query()
 	q.Set("select", "id,name,description,icon_url")
 	q.Set("order", "created_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -3237,7 +3239,7 @@ func (r *StemSupabaseRepository) ListBadges(limit int) ([]domain.StemBadge, erro
 
 func (r *StemSupabaseRepository) AwardBadge(award domain.StemBadgeAward) (domain.StemBadgeAward, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.StemBadgeAward{}, fmt.Errorf("supabase REST is not configured")
+		return domain.StemBadgeAward{}, errors.New("supabase REST is not configured")
 	}
 	payload := map[string]any{"badge_id": award.BadgeID, "application_id": emptyToNilStem(award.ApplicationID), "note": award.Note}
 	body, _ := json.Marshal(payload)
@@ -3246,7 +3248,7 @@ func (r *StemSupabaseRepository) AwardBadge(award domain.StemBadgeAward) (domain
 	q.Set("select", "id,badge_id,application_id,awarded_at,note")
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -3266,7 +3268,7 @@ func (r *StemSupabaseRepository) AwardBadge(award domain.StemBadgeAward) (domain
 		Note          string `json:"note"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil || len(rows) == 0 {
-		return domain.StemBadgeAward{}, fmt.Errorf("badge award decode failed")
+		return domain.StemBadgeAward{}, errors.New("badge award decode failed")
 	}
 	return domain.StemBadgeAward{ID: rows[0].ID, BadgeID: rows[0].BadgeID, ApplicationID: rows[0].ApplicationID, AwardedAt: rows[0].AwardedAt, Note: rows[0].Note}, nil
 }
@@ -3286,10 +3288,10 @@ func (r *StemSupabaseRepository) ListBadgeAwards(applicationID string, limit int
 		q.Set("application_id", "eq."+applicationID)
 	}
 	q.Set("order", "awarded_at.desc")
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -3380,10 +3382,10 @@ func (r *StemSupabaseRepository) GetReportBuckets(kind string, contestID string,
 	if table == "stem_vote_transactions" && strings.TrimSpace(contestID) != "" {
 		q.Set("contest_id", "eq."+strings.TrimSpace(contestID))
 	}
-	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -3484,7 +3486,7 @@ func (r *StemSupabaseRepository) logAdminAuditAction(
 	if err != nil {
 		return err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=minimal")

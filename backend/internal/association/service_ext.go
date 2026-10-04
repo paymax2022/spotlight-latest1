@@ -878,7 +878,7 @@ func (s *Service) ImportPreview(ctx context.Context, adminID, orgID, fileName st
 // that is already CONFIRMED returns its recorded result without re-importing.
 func (s *Service) ConfirmImport(ctx context.Context, adminID, batchID string, sendInvites bool) (*ImportResult, error) {
 	if strings.TrimSpace(batchID) == "" {
-		return nil, fmt.Errorf("association: batchId is required")
+		return nil, errors.New("association: batchId is required")
 	}
 	var orgID, status string
 	var rowsJSON []byte
@@ -994,10 +994,10 @@ func validateOrgIdentity(d *OrgDraft) error {
 	d.LogoURL = strings.TrimSpace(d.LogoURL)
 
 	if d.LogoURL == "" {
-		return fmt.Errorf("association: a logo is required — provide a logo URL or upload one")
+		return errors.New("association: a logo is required — provide a logo URL or upload one")
 	}
 	if d.FoundedYear == nil {
-		return fmt.Errorf("association: founded year is required")
+		return errors.New("association: founded year is required")
 	}
 	thisYear := time.Now().Year()
 	if *d.FoundedYear < 1800 || *d.FoundedYear > thisYear {
@@ -1008,7 +1008,7 @@ func validateOrgIdentity(d *OrgDraft) error {
 
 func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgDraft) (*PublishResult, error) {
 	if !d.AcceptedTerms {
-		return nil, fmt.Errorf("association: terms must be accepted")
+		return nil, errors.New("association: terms must be accepted")
 	}
 	if err := validateOrgIdentity(&d); err != nil {
 		return nil, err

@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/jsonx"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // scopeSync namespaces the idempotency keys this endpoint records so a sync key can

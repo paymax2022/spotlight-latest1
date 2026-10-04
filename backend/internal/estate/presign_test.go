@@ -44,7 +44,7 @@ func TestEstateUploadAllowlistsRestrictive(t *testing.T) {
 // that differs across calls (prevents object-key guessing / overwrite).
 func TestEstateRandTokenUnguessable(t *testing.T) {
 	seen := map[string]bool{}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		tok := estateRandToken()
 		if len(tok) != 32 {
 			t.Fatalf("token len = %d, want 32 hex chars", len(tok))

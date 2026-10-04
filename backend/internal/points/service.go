@@ -4,16 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Auditor mirrors services.AuditService (NL-12); nil-safe.
@@ -42,7 +43,7 @@ func NewService(db *pgxpool.Pool, audit Auditor) *Service {
 // re-eval) contribute a delta exactly once even when a webhook is replayed.
 func (s *Service) Earn(ctx context.Context, userID, ruleKey string, ec EarnContext) (*Entry, bool, error) {
 	if userID == "" || ruleKey == "" {
-		return nil, false, fmt.Errorf("points: user and rule_key required")
+		return nil, false, errors.New("points: user and rule_key required")
 	}
 	rule, err := s.activeRule(ctx, ruleKey)
 	if err != nil {
@@ -236,7 +237,7 @@ func (s *Service) activeRule(ctx context.Context, ruleKey string) (*EarnRule, er
 	if err := s.db.QueryRow(ctx, q, ruleKey).Scan(
 		&r.ID, &r.RuleKey, &r.Module, &r.Version, &r.PointsFixed, &r.PointsPerKobo, &r.ExpiryDays, &r.Active, &r.CreatedAt,
 	); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("points: no active rule for %s", ruleKey)
 		}
 		return nil, fmt.Errorf("points: load rule: %w", err)
@@ -250,7 +251,7 @@ func (s *Service) catalogItem(ctx context.Context, sku string) (*CatalogItem, er
 	if err := s.db.QueryRow(ctx, q, sku).Scan(
 		&it.ID, &it.SKU, &it.Title, &it.Kind, &it.CostPoints, &it.ValueKobo, &it.Active,
 	); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("points: catalog item %s not found", sku)
 		}
 		return nil, fmt.Errorf("points: load catalog: %w", err)
@@ -330,8 +331,8 @@ func (s *Service) log(userID, action, id string, meta map[string]any) {
 
 // Sentinel errors.
 var (
-	ErrInsufficientPoints      = fmt.Errorf("points: insufficient points")
-	ErrCashRedemptionForbidden = fmt.Errorf("points: points cannot be redeemed for cash (NL-4)")
+	ErrInsufficientPoints      = errors.New("points: insufficient points")
+	ErrCashRedemptionForbidden = errors.New("points: points cannot be redeemed for cash (NL-4)")
 )
 
 // Handler exposes read-only points endpoints to members. Earn is never a public

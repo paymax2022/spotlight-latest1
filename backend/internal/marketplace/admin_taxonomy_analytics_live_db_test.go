@@ -18,6 +18,7 @@ package marketplace
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -143,7 +144,7 @@ func TestLiveDBAdminTaxonomyDuplicateSlugConflicts(t *testing.T) {
 		MarketID: DefaultMarketID, Slug: slug, Name: "Duplicate slug", RiskTier: 0, CommissionBps: 200, IsActive: true,
 		AttributeSchema: []byte(`{}`),
 	})
-	if err != ErrConflict {
+	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("expected ErrConflict on duplicate slug, got %v", err)
 	}
 }

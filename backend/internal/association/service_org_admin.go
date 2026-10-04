@@ -3,6 +3,7 @@ package association
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -269,7 +270,7 @@ func (s *Service) UpdateOrganisation(ctx context.Context, adminID, orgID string,
 		return nil, fmt.Errorf("association: update organisation: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return nil, fmt.Errorf("association: organisation not found")
+		return nil, errors.New("association: organisation not found")
 	}
 	if err := s.audit(ctx, tx, orgID, adminID, "ORG_UPDATE", "organisation", orgID,
 		map[string]any{"fields": len(sets) - 1}); err != nil {

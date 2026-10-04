@@ -50,7 +50,7 @@ func (r *ChatSupabaseRepository) ListSessions(limit int) ([]domain.ChatSession, 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
@@ -92,7 +92,7 @@ func (r *ChatSupabaseRepository) GetSessionDetail(id string) (domain.ChatSession
 	httpClient := &http.Client{Timeout: 12 * time.Second}
 	base := strings.TrimRight(r.client.BaseURL(), "/") + "/rest/v1/"
 	headers := func(req *http.Request) {
-		req.Header.Set("apikey", r.client.APIKey())
+		req.Header.Set("Apikey", r.client.APIKey())
 		req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	}
 

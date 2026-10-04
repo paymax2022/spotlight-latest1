@@ -534,7 +534,7 @@ func TestLiveDB_PayDues_ConcurrentSameKeySettlesExactlyOnce(t *testing.T) {
 	results := make([]*DuesPayment, n)
 	errs := make([]error, n)
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
 			defer wg.Done()
 			results[i], errs[i] = svc.PayDues(ctx, estateID, resident, PayDuesRequest{
@@ -545,7 +545,7 @@ func TestLiveDB_PayDues_ConcurrentSameKeySettlesExactlyOnce(t *testing.T) {
 	wg.Wait()
 
 	var successIDs []string
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if errs[i] == nil {
 			successIDs = append(successIDs, results[i].ID)
 		}

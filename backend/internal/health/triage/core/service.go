@@ -3,7 +3,9 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"spotlight/backend/internal/health/triage"
 	"strings"
 	"time"
@@ -79,7 +81,7 @@ func NewSessionService(db *pgxpool.Pool, engine triage.EngineProvider, extractor
 // CreateProfile creates a triage profile (self/child/dependant) for the user.
 func (s *SessionService) CreateProfile(ctx context.Context, userID, kind, name, sex string, dob *time.Time, pregnant bool) (*Profile, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("core: user required")
+		return nil, errors.New("core: user required")
 	}
 	if kind == "" {
 		kind = "self"
@@ -110,7 +112,7 @@ type StartParams struct {
 // No interviewing or engine call happens before consent is on record.
 func (s *SessionService) StartSession(ctx context.Context, userID string, p StartParams) (*Session, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("core: user required")
+		return nil, errors.New("core: user required")
 	}
 	lang := strutil.FirstNonEmpty(p.Language, "en")
 	ch := strutil.FirstNonEmpty(p.Channel, "app")
@@ -200,7 +202,7 @@ func (s *SessionService) Answer(ctx context.Context, userID, sessionID, code, va
 		return nil, fmt.Errorf("core: answer requires interviewing session (state=%s)", sess.State)
 	}
 	if code == "" {
-		return nil, fmt.Errorf("core: answer code required")
+		return nil, errors.New("core: answer code required")
 	}
 	answer := []triage.Evidence{{Kind: "answer", Code: code, Value: strutil.FirstNonEmpty(value, keyPresent), Source: "user"}}
 	if err := s.repo.appendEvidence(ctx, sessionID, answer); err != nil {
@@ -434,9 +436,7 @@ func (s *SessionService) transition(ctx context.Context, userID string, sess *Se
 		return fmt.Errorf("core: transition guard failed %s -> %s (state changed concurrently)", from, to)
 	}
 	newV := map[string]any{"state": string(to)}
-	for k, v := range extra {
-		newV[k] = v
-	}
+	maps.Copy(newV, extra)
 	s.auditTo(userID, userID, action, sess.ID, map[string]any{"state": string(from)}, newV)
 	sess.State = string(to)
 	return nil

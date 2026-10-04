@@ -289,7 +289,7 @@ func (s *Service) Prebook(ctx context.Context, userID string, in PrebookInput) (
 // key threads the escrow + provider book + settle so the whole saga is replay-safe.
 func (s *Service) Book(ctx context.Context, userID, reservationID, bookToken, idempotencyKey string, guest gateway.GuestInfo) (*Reservation, error) {
 	if idempotencyKey == "" {
-		return nil, fmt.Errorf("reservation: Idempotency-Key required for book")
+		return nil, errors.New("reservation: Idempotency-Key required for book")
 	}
 	// Idempotent replay: a prior book with this key returns the same reservation.
 	if existing, err := s.repo.FindByIdempotencyKey(ctx, idempotencyKey); err == nil && existing != nil {
@@ -337,7 +337,7 @@ func (s *Service) Book(ctx context.Context, userID, reservationID, bookToken, id
 		_ = s.transition(ctx, res, StatePaymentFailed)
 		_ = s.transition(ctx, res, StateVoid)
 		s.auditSafe(ctx, userID, "stays.payment_failed", map[string]any{"reservation_id": res.ID, "err": err.Error()})
-		return res, fmt.Errorf("%w: %v", ErrInsufficient, err)
+		return res, fmt.Errorf("%w: %w", ErrInsufficient, err)
 	}
 	_ = s.repo.RecordPaymentIntent(ctx, res.ID, string(res.PaymentMethod), "held", "stays:"+res.ID, holdKey, res.GrossAmountKobo)
 	if err := s.transition(ctx, res, StatePaymentHeld); err != nil {
@@ -447,7 +447,7 @@ func (s *Service) autoRelease(ctx context.Context, res *Reservation, settlementI
 		s.auditSafe(ctx, res.GuestUserID, "stays.auto_release_failed", map[string]any{
 			"reservation_id": res.ID, "err": relErr.Error(),
 		})
-		return res, fmt.Errorf("reservation: book failed AND auto-release failed: book=%v release=%v", cause, relErr)
+		return res, fmt.Errorf("reservation: book failed AND auto-release failed: book=%w release=%w", cause, relErr)
 	}
 	_ = s.repo.RecordPaymentIntent(ctx, res.ID, string(res.PaymentMethod), "released", "stays:release:"+res.ID, res.IdempotencyKey+":release", res.GrossAmountKobo)
 
@@ -498,7 +498,7 @@ func (s *Service) Voucher(ctx context.Context, userID, reservationID string) (st
 		return "", err
 	}
 	if res.VoucherRef == nil || *res.VoucherRef == "" {
-		return "", fmt.Errorf("reservation: voucher not yet issued")
+		return "", errors.New("reservation: voucher not yet issued")
 	}
 	return *res.VoucherRef, nil
 }
@@ -607,7 +607,7 @@ func (s *Service) Cancel(ctx context.Context, userID, reservationID, reason stri
 // UNIQUE(idempotency_key) + ledger idempotency make the charge/refund replay-safe).
 func (s *Service) Modify(ctx context.Context, userID, reservationID, idempotencyKey string, newCheckIn, newCheckOut time.Time) (*Reservation, error) {
 	if idempotencyKey == "" {
-		return nil, fmt.Errorf("reservation: Idempotency-Key required for modify")
+		return nil, errors.New("reservation: Idempotency-Key required for modify")
 	}
 	res, err := s.Get(ctx, userID, reservationID)
 	if err != nil {
@@ -718,7 +718,7 @@ func (s *Service) Modify(ctx context.Context, userID, reservationID, idempotency
 			s.auditSafe(ctx, userID, "stays.modify_charge_failed", map[string]any{
 				"reservation_id": res.ID, "delta_kobo": delta, "err": escErr.Error(),
 			})
-			return nil, fmt.Errorf("%w: modify charge: %v", ErrInsufficient, escErr)
+			return nil, fmt.Errorf("%w: modify charge: %w", ErrInsufficient, escErr)
 		}
 		if setErr := s.settleModifyDelta(ctx, res, sett.ID, newRevenueKobo, delta); setErr != nil {
 			log.Printf("[stays] WARN: modify charge held but settle failed for reservation %s: %v", res.ID, setErr)

@@ -6,13 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/hibiken/asynq"
 	"io"
 	"log"
 	"net/http"
 	"spotlight/backend/internal/platform/metrics"
 	"spotlight/backend/internal/platform/queue"
 	"time"
+
+	"github.com/hibiken/asynq"
 )
 
 // Channel represents a notification delivery channel.

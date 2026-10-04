@@ -129,10 +129,10 @@ var validDocTypes = map[string]bool{"VCN_CERT": true, "ANNUAL_LICENCE": true, "G
 // application may submit. NDPA: requires explicit consent; never stores register data.
 func (s *Service) Submit(ctx context.Context, ownerID string, in SubmitInput) (*VerificationRecord, error) {
 	if !in.Consent {
-		return nil, fmt.Errorf("credential: consent required to verify (NDPA)")
+		return nil, errors.New("credential: consent required to verify (NDPA)")
 	}
 	if in.RegNumber == "" || in.FullName == "" {
-		return nil, fmt.Errorf("credential: reg_number and full_name required")
+		return nil, errors.New("credential: reg_number and full_name required")
 	}
 	// Object-level authZ + must be a vet application (GetApplication enforces owner).
 	app, err := s.providers.GetApplication(ctx, ownerID, in.ApplicationID)
@@ -140,7 +140,7 @@ func (s *Service) Submit(ctx context.Context, ownerID string, in SubmitInput) (*
 		return nil, ErrForbidden
 	}
 	if app.ProviderType != "vet" {
-		return nil, fmt.Errorf("credential: not a vet application")
+		return nil, errors.New("credential: not a vet application")
 	}
 
 	// Attach evidence docs to the vault (reuses providers.AddCredential, HL-8 —
@@ -297,7 +297,7 @@ func (s *Service) Decide(ctx context.Context, reviewerID, recordID, action strin
 		return nil, fmt.Errorf("credential: unknown action %q", action)
 	}
 	if action == "approve" && licenceExpiry == nil {
-		return nil, fmt.Errorf("credential: licence_expiry required to approve")
+		return nil, errors.New("credential: licence_expiry required to approve")
 	}
 	// Idempotency: a repeated identical terminal decision is a no-op success.
 	if rec.Status == to {

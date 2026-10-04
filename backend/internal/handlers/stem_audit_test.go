@@ -7,9 +7,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 // spyAudit is a fake AuditService sink that records every LogAction call so

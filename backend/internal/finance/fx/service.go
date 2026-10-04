@@ -249,7 +249,7 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ledger.Debit(ctx, userID, reference, req.IdempotencyKey+":debit", fxSpreadAcc.ID, totalDebitKobo); err != nil && err != ledger.ErrDuplicate {
+	if err := s.ledger.Debit(ctx, userID, reference, req.IdempotencyKey+":debit", fxSpreadAcc.ID, totalDebitKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, fmt.Errorf("fx: debit source wallet: %w", err)
 	}
 
@@ -276,7 +276,7 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 		AmountKobo:      convResp.TargetAmountMinor,
 		DebitAccountID:  settlementAcc.ID,
 		CreditAccountID: fxSpreadAcc.ID,
-	}); err != nil && err != ledger.ErrDuplicate {
+	}); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, fmt.Errorf("fx: post target-leg journal: %w", err)
 	}
 
@@ -319,7 +319,7 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 		conv.SourceAmountKobo, conv.TargetAmountMinor, conv.Rate, conv.FeeKobo,
 		conv.Reference, conv.IdempotencyKey,
 	).Scan(&insertedID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// Lost the race — idempotent replay: skip the mirror, return existing.
 		_ = tx.Rollback(ctx)
 		return s.getConversionByKey(ctx, req.IdempotencyKey)

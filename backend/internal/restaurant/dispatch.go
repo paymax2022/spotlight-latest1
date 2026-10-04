@@ -35,7 +35,7 @@ func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
 	if err := s.db.QueryRow(ctx,
 		`SELECT restaurant_id, rider_id, status, ready_at, dispatch_attempts FROM orders WHERE id=$1`, orderID).
 		Scan(&restaurantID, &existingRider, &status, &readyAt, &attempts); err != nil {
-		return fmt.Errorf("restaurant: order not found")
+		return errors.New("restaurant: order not found")
 	}
 	if existingRider != nil {
 		return nil // already has a rider — nothing to dispatch
@@ -152,16 +152,16 @@ func (s *Service) ConfirmPickup(ctx context.Context, orderID, riderID, code stri
 	if err := s.db.QueryRow(ctx,
 		`SELECT rider_id, pickup_code, status FROM orders WHERE id=$1`, orderID).
 		Scan(&rider, &dbCode, &status); err != nil {
-		return fmt.Errorf("restaurant: order not found")
+		return errors.New("restaurant: order not found")
 	}
 	if rider == nil || *rider != riderID {
-		return fmt.Errorf("restaurant: only the assigned rider may confirm pickup")
+		return errors.New("restaurant: only the assigned rider may confirm pickup")
 	}
 	if dbCode == nil || *dbCode == "" {
-		return fmt.Errorf("restaurant: no pickup code on this order")
+		return errors.New("restaurant: no pickup code on this order")
 	}
 	if code == "" || code != *dbCode {
-		return fmt.Errorf("restaurant: incorrect pickup code")
+		return errors.New("restaurant: incorrect pickup code")
 	}
 	if _, err := s.db.Exec(ctx, `UPDATE orders SET picked_up_at=COALESCE(picked_up_at, now()) WHERE id=$1`, orderID); err != nil {
 		return err
@@ -179,16 +179,16 @@ func (s *Service) ConfirmHandoff(ctx context.Context, orderID, riderID, code str
 	if err := s.db.QueryRow(ctx,
 		`SELECT rider_id, delivery_code, status FROM orders WHERE id=$1`, orderID).
 		Scan(&rider, &dbCode, &status); err != nil {
-		return fmt.Errorf("restaurant: order not found")
+		return errors.New("restaurant: order not found")
 	}
 	if rider == nil || *rider != riderID {
-		return fmt.Errorf("restaurant: only the assigned rider may confirm handoff")
+		return errors.New("restaurant: only the assigned rider may confirm handoff")
 	}
 	if dbCode == nil || *dbCode == "" {
-		return fmt.Errorf("restaurant: no delivery code on this order")
+		return errors.New("restaurant: no delivery code on this order")
 	}
 	if code == "" || code != *dbCode {
-		return fmt.Errorf("restaurant: incorrect delivery code")
+		return errors.New("restaurant: incorrect delivery code")
 	}
 	if _, err := s.db.Exec(ctx,
 		`UPDATE orders SET delivered_at=COALESCE(delivered_at, now()), dispatch_status='delivered' WHERE id=$1`,
@@ -216,7 +216,7 @@ func (s *Service) ConfirmHandoff(ctx context.Context, orderID, riderID, code str
 func (s *Service) ensureDeliveryCode(ctx context.Context, orderID string) (string, error) {
 	var existing *string
 	if err := s.db.QueryRow(ctx, `SELECT delivery_code FROM orders WHERE id=$1`, orderID).Scan(&existing); err != nil {
-		return "", fmt.Errorf("restaurant: order not found")
+		return "", errors.New("restaurant: order not found")
 	}
 	if existing != nil && *existing != "" {
 		return *existing, nil
@@ -238,7 +238,7 @@ func (s *Service) ensureDeliveryCode(ctx context.Context, orderID string) (strin
 func (s *Service) ensurePickupCode(ctx context.Context, orderID string) (string, error) {
 	var existing *string
 	if err := s.db.QueryRow(ctx, `SELECT pickup_code FROM orders WHERE id=$1`, orderID).Scan(&existing); err != nil {
-		return "", fmt.Errorf("restaurant: order not found")
+		return "", errors.New("restaurant: order not found")
 	}
 	if existing != nil && *existing != "" {
 		return *existing, nil

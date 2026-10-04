@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"sync"
 	"testing"
@@ -47,9 +48,7 @@ func (s *stubAuthService) LoginUser(domain.LoginRequest) (map[string]any, error)
 	// A fresh copy per call: the handler deletes the internal hints in place, and
 	// a shared map would make the second test in a run see them already gone.
 	out := map[string]any{}
-	for k, v := range s.loginOut {
-		out[k] = v
-	}
+	maps.Copy(out, s.loginOut)
 	return out, nil
 }
 func (s *stubAuthService) LogoutUser(token string) error {

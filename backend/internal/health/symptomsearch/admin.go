@@ -119,7 +119,7 @@ func validateTaxonomyPayload(entity string, p map[string]any) error {
 			return fmt.Errorf("%w: expression must be 1–500 characters", ErrValidation)
 		}
 		if _, err := ParseRule(expr); err != nil {
-			return fmt.Errorf("%w: expression does not parse: %v", ErrValidation, err)
+			return fmt.Errorf("%w: expression does not parse: %w", ErrValidation, err)
 		}
 		// Effect shape — illegal states unreachable (mirrors the schema CHECK).
 		escalateTo := getString(p, "escalate_to_tier")
@@ -193,6 +193,7 @@ type ReviewStateEvent struct {
 // context (e.g. catalogue POM orders).
 type PharmacyReviewCaseDetail struct {
 	PharmacyReviewCase
+
 	SymptomTerms    []string           `json:"symptom_terms"`
 	MatchedConcepts []string           `json:"matched_concepts"`
 	ClusterName     *string            `json:"cluster_name"`

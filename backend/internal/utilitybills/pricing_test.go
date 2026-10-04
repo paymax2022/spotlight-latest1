@@ -5,7 +5,8 @@ import (
 	"testing"
 )
 
-func ptr(v int64) *int64 { return &v }
+//go:fix inline
+func ptr(v int64) *int64 { return new(v) }
 
 // Two cases below (333333@250bps and 7@5000bps) land on a non-exact
 // division on purpose, to prove the floor/truncation direction is right —
@@ -100,7 +101,7 @@ func TestCalculateUtilityPricing_VariableAmountWithinBoundsPricesCorrectly(t *te
 		ProviderCostKobo:    ptr(300_000), // used verbatim, discount fallback unused
 		ProviderDiscountBps: 0,
 	}
-	requested := ptr(int64(333_333))
+	requested := new(int64(333_333))
 
 	got, err := CalculateUtilityPricing(product, mapping, requested)
 	if err != nil {
@@ -127,7 +128,7 @@ func TestCalculateUtilityPricing_VariableAmountOutsideBoundsErrors(t *testing.T)
 		MinAmountKobo: ptr(100_000),
 		MaxAmountKobo: ptr(1_000_000),
 	}
-	mapping := ProviderMapping{Status: MappingStatusActive, ProviderCostKobo: ptr(int64(1))}
+	mapping := ProviderMapping{Status: MappingStatusActive, ProviderCostKobo: new(int64(1))}
 
 	t.Run("below minimum", func(t *testing.T) {
 		_, err := CalculateUtilityPricing(product, mapping, ptr(50_000))
@@ -145,7 +146,7 @@ func TestCalculateUtilityPricing_VariableAmountOutsideBoundsErrors(t *testing.T)
 }
 
 func TestCalculateUtilityPricing_MissingAmountErrors(t *testing.T) {
-	mapping := ProviderMapping{Status: MappingStatusActive, ProviderCostKobo: ptr(int64(1))}
+	mapping := ProviderMapping{Status: MappingStatusActive, ProviderCostKobo: new(int64(1))}
 
 	t.Run("variable product without requested amount", func(t *testing.T) {
 		product := Product{AmountType: AmountTypeVariable}
@@ -173,12 +174,12 @@ func TestCalculateUtilityPricing_NonPositiveProviderCostErrors(t *testing.T) {
 		{
 			name:    "mapping cost explicitly zero, used verbatim (not treated as missing)",
 			product: Product{AmountType: AmountTypeFixed, AmountKobo: ptr(100_000)},
-			mapping: ProviderMapping{Status: MappingStatusActive, ProviderCostKobo: ptr(int64(0))},
+			mapping: ProviderMapping{Status: MappingStatusActive, ProviderCostKobo: new(int64(0))},
 		},
 		{
 			name:    "mapping cost explicitly negative",
 			product: Product{AmountType: AmountTypeFixed, AmountKobo: ptr(100_000)},
-			mapping: ProviderMapping{Status: MappingStatusActive, ProviderCostKobo: ptr(int64(-100))},
+			mapping: ProviderMapping{Status: MappingStatusActive, ProviderCostKobo: new(int64(-100))},
 		},
 		{
 			name: "computed cost via 100% discount lands exactly on zero",

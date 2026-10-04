@@ -2,14 +2,15 @@ package marketplace
 
 import (
 	"context"
-	"github.com/jackc/pgx/v5/pgxpool"
-	goredis "github.com/redis/go-redis/v9"
 	"log"
 	"regexp"
 	"spotlight/backend/internal/finance/ledger"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // Service is the single entry point for the marketplace domain. It owns the four

@@ -3,6 +3,7 @@ package extranet
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -83,7 +84,7 @@ func (r *Repository) UpdatePropertyContent(ctx context.Context, propertyID, name
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("extranet: property not found")
+		return errors.New("extranet: property not found")
 	}
 	return nil
 }
@@ -133,7 +134,7 @@ func (r *Repository) UpdatePropertyDetails(ctx context.Context, propertyID strin
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("extranet: property not found")
+		return errors.New("extranet: property not found")
 	}
 	return nil
 }
@@ -234,7 +235,7 @@ func (r *Repository) CreateRatePlan(ctx context.Context, propertyID, roomTypeID,
 		return "", err
 	}
 	if !owns {
-		return "", fmt.Errorf("extranet: room type not in property")
+		return "", errors.New("extranet: room type not in property")
 	}
 	var id string
 	err := r.db.QueryRow(ctx, `
@@ -336,6 +337,7 @@ func (r *Repository) dashboardWindow(ctx context.Context, propertyID, where, dat
 // ReservationDetail is the full reservation detail (object-scoped to property).
 type ReservationDetail struct {
 	ReservationRow
+
 	PropertyID     string         `json:"property_id"`
 	RoomTypeID     string         `json:"room_type_id"`
 	RatePlanID     string         `json:"rate_plan_id"`
@@ -393,7 +395,7 @@ func (r *Repository) MarkNoShow(ctx context.Context, reservationID, propertyID s
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("extranet: reservation not CONFIRMED or not in property")
+		return errors.New("extranet: reservation not CONFIRMED or not in property")
 	}
 	return tx.Commit(ctx)
 }

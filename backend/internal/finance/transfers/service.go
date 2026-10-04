@@ -614,7 +614,7 @@ func (s *Service) markFunded(ctx context.Context, bt *BankTransfer, curStatus Ba
 		AmountKobo:      total,
 		DebitAccountID:  clearingAcc.ID,
 		CreditAccountID: suspenseAcc.ID,
-	}); err != nil && err != ledger.ErrDuplicate {
+	}); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return fmt.Errorf("bank_to_bank funded: post journal: %w", err)
 	}
 	const up = `UPDATE bank_transfers SET status='funded', funding_status='successful' WHERE id=$1 AND status='awaiting_funding'`
@@ -779,7 +779,7 @@ func (s *Service) settleTransfer(ctx context.Context, bt *BankTransfer, next Ban
 			AmountKobo:      bt.AmountKobo,
 			DebitAccountID:  suspenseAcc.ID,
 			CreditAccountID: settlementAcc.ID,
-		}); err != nil && err != ledger.ErrDuplicate {
+		}); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 			return fmt.Errorf("settle: sweep amount: %w", err)
 		}
 		// Recognize the fee: DR suspense(fee) → CR paymax_revenue.
@@ -794,7 +794,7 @@ func (s *Service) settleTransfer(ctx context.Context, bt *BankTransfer, next Ban
 				AmountKobo:      bt.FeeKobo,
 				DebitAccountID:  suspenseAcc.ID,
 				CreditAccountID: revenueAcc.ID,
-			}); err != nil && err != ledger.ErrDuplicate {
+			}); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 				return fmt.Errorf("settle: recognize fee: %w", err)
 			}
 		}
@@ -815,7 +815,7 @@ func (s *Service) settleTransfer(ctx context.Context, bt *BankTransfer, next Ban
 		}
 		rev := BuildReversalEntry(bt.Reference, restoreAcc.ID, suspenseAcc.ID, bt.AmountKobo+bt.FeeKobo, bt.IdempotencyKey, next)
 		if err := s.ledger.PostReversal(ctx, rev.UserAccountID, rev.SuspenseAccountID, rev.AmountKobo, rev.Reference, rev.IdempotencyKey); err != nil {
-			if err == ledger.ErrDuplicate {
+			if errors.Is(err, ledger.ErrDuplicate) {
 				// fall through to the status update (idempotent)
 			} else {
 				return fmt.Errorf("settle: post reversal: %w", err)

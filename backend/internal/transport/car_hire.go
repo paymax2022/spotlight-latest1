@@ -96,10 +96,7 @@ func (s *Service) loadCarHire(ctx context.Context, id string, b *carHireRow) err
 // carHireFare computes fare (base + per_hour) and deposit (one period base).
 // per_km_kobo is reused as the per-hour rate for the car_hire service_type.
 func carHireFare(durationHours int, cfg *PricingConfig) (fare, deposit int64) {
-	fare = cfg.BaseFareKobo + int64(durationHours)*cfg.PerKMKobo
-	if fare < cfg.MinFareKobo {
-		fare = cfg.MinFareKobo
-	}
+	fare = max(cfg.BaseFareKobo+int64(durationHours)*cfg.PerKMKobo, cfg.MinFareKobo)
 	// Deposit = one base period (refundable security hold).
 	deposit = cfg.BaseFareKobo
 	return fare, deposit
@@ -372,7 +369,7 @@ func (s *Service) CancelCarHire(ctx context.Context, id, userID, reason string) 
 		return codedErr(http.StatusForbidden, CodeForbidden, "not your booking")
 	}
 	if !canTransitionCarHire(b.Status, "cancelled") {
-		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot cancel from status %s", b.Status))
+		return codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from status "+b.Status)
 	}
 	if err := s.carHireSetStatus(ctx, id, b.Status, "cancelled"); err != nil {
 		return err
@@ -406,12 +403,12 @@ func (s *Service) carHireSetStatus(ctx context.Context, id, from, to string) err
 		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("illegal car-hire transition %s → %s", from, to))
 	}
 	if to == "cancelled" && !canTransitionCarHire(from, "cancelled") {
-		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot cancel from %s", from))
+		return codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from "+from)
 	}
 	if to == "completed" {
 		ok := from == "active" || from == "extended" || from == "confirmed"
 		if !ok {
-			return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot complete from %s", from))
+			return codedErr(http.StatusConflict, CodeInvalidState, "cannot complete from "+from)
 		}
 	}
 	tag, err := s.db.Exec(ctx, `UPDATE car_hire_bookings SET status=$1, updated_at=NOW() WHERE id=$2 AND status=$3`, to, id, from)

@@ -365,10 +365,7 @@ func (s *Service) GetCreatorStats(ctx context.Context, userID string) (*CreatorS
 	st.TotalRaisedKobo = escrow + released
 	st.EscrowBalanceKobo = escrow
 	st.PendingBalanceKobo = pending
-	available := released - withdrawn - pending
-	if available < 0 {
-		available = 0
-	}
+	available := max(released-withdrawn-pending, 0)
 	st.AvailableBalanceKobo = available
 
 	// Deterministic engagement metrics derived from the creator's footprint.

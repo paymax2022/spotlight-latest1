@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"spotlight/backend/internal/arena"
@@ -53,7 +54,7 @@ func TestLifecycle_GuardRejectsIllegalJump(t *testing.T) {
 	svc := NewContestantService(repo, nil, nil, nil, nil, fakeTier{3}, fakeCfg{Config{}}, &fakeAudit{}, nil)
 
 	// APPLIED → CROWNED is an illegal jump.
-	if err := svc.Transition(context.Background(), "actor", "c1", "k1", arena.StCrowned, "x"); err != ErrBadState {
+	if err := svc.Transition(context.Background(), "actor", "c1", "k1", arena.StCrowned, "x"); !errors.Is(err, ErrBadState) {
 		t.Fatalf("illegal jump must be ErrBadState, got %v", err)
 	}
 	// A legal non-advancement move (APPLIED → SCREENED) passes the guard (no merit read).

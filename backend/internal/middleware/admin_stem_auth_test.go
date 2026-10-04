@@ -5,8 +5,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/integrations"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestRequireAdmin_MissingAPIKey(t *testing.T) {

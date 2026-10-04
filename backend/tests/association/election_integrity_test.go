@@ -73,7 +73,7 @@ func TestLiveDB_Election_FullFlow_TallyWinnerImmutableResults(t *testing.T) {
 	ctx := context.Background()
 	f := buildOpenElection(t, ctx, pool, svc)
 
-	// Three eligible voters: A, A, B  →  candA wins 2–1.
+	// Three eligible voters: A, B  →  candA wins 2–1.
 	v1, _ := seedActiveMembership(t, ctx, pool, f.org)
 	v2, _ := seedActiveMembership(t, ctx, pool, f.org)
 	v3, _ := seedActiveMembership(t, ctx, pool, f.org)
@@ -188,7 +188,7 @@ func TestLiveDB_Election_ConcurrentDoubleVote_ExactlyOne(t *testing.T) {
 
 	const N = 8
 	var wg sync.WaitGroup
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		cand := f.candA
 		if i%2 == 1 {

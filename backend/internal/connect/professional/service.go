@@ -72,7 +72,7 @@ func (s *Service) RequestBusinessVerification(ctx context.Context, userID, evide
 		return fmt.Errorf("connect: request business verification: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("connect: verification already pending or verified")
+		return errors.New("connect: verification already pending or verified")
 	}
 	_ = s.audit.WriteAudit(ctx, "connect.business.verification.request", userID,
 		"connect_professional_profile", userID, map[string]any{"status": "pending"})
@@ -93,7 +93,7 @@ func (s *Service) ReviewBusinessVerification(ctx context.Context, adminID, profi
 		return fmt.Errorf("connect: review business verification: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("connect: no pending verification for user")
+		return errors.New("connect: no pending verification for user")
 	}
 	_ = s.audit.WriteAudit(ctx, "connect.business.verification.review", adminID,
 		"connect_professional_profile", profileUserID,
@@ -303,7 +303,7 @@ func (s *Service) JoinRoom(ctx context.Context, userID, roomID string) error {
 		_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM connect_room_members WHERE room_id=$1 AND user_id=$2`,
 			roomID, userID).Scan(&exists)
 		if exists == 0 {
-			return fmt.Errorf("connect: room not joinable")
+			return errors.New("connect: room not joinable")
 		}
 	}
 	return nil

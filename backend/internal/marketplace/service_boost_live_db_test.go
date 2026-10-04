@@ -308,7 +308,7 @@ func TestLiveDB_PurchaseBoost_MissingIdempotencyKey(t *testing.T) {
 	_, err := svc.PurchaseBoost(ctx, seller, "", CreateBoostInput{ListingID: listingID, Tier: "start"})
 	if !errors.Is(err, error(ErrIdemMissing)) {
 		var ce *CodedError
-		if !(errors.As(err, &ce) && ce.Code == CodeIdempotencyMissing) {
+		if !errors.As(err, &ce) || ce.Code != CodeIdempotencyMissing {
 			t.Fatalf("err = %v, want IDEMPOTENCY_KEY_REQUIRED", err)
 		}
 	}
@@ -612,7 +612,7 @@ func TestLiveDB_PurchaseBoost_ConcurrentDuplicate_SingleCharge(t *testing.T) {
 	results := make([]*Boost, n)
 	errs := make([]error, n)
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
 			defer wg.Done()
 			results[i], errs[i] = svc.PurchaseBoost(ctx, seller, uuid.New().String(), CreateBoostInput{ListingID: listingID, Tier: "start"})
@@ -621,7 +621,7 @@ func TestLiveDB_PurchaseBoost_ConcurrentDuplicate_SingleCharge(t *testing.T) {
 	wg.Wait()
 
 	successCount := 0
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if errs[i] == nil {
 			successCount++
 		} else {
@@ -711,7 +711,7 @@ func TestLiveDB_PurchaseBoost_NilTierEnforcer_FailsClosed(t *testing.T) {
 	_, err := svc.PurchaseBoost(ctx, seller, "niltier-"+listingID, CreateBoostInput{ListingID: listingID, Tier: "start"})
 	if !errors.Is(err, error(ErrTierGateUnwired)) {
 		var ce *CodedError
-		if !(errors.As(err, &ce) && ce.Code == CodeTierGateUnwired) {
+		if !errors.As(err, &ce) || ce.Code != CodeTierGateUnwired {
 			t.Fatalf("err = %v, want ErrTierGateUnwired (TIER_GATE_UNWIRED)", err)
 		}
 	}

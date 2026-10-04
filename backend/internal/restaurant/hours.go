@@ -218,7 +218,7 @@ func (s *Service) GetBusinessHours(ctx context.Context, restaurantID string) (*B
 	}
 	var isOpen bool
 	if err := s.db.QueryRow(ctx, `SELECT is_open FROM restaurants WHERE id=$1`, restaurantID).Scan(&isOpen); err != nil {
-		return nil, fmt.Errorf("restaurant: not found")
+		return nil, errors.New("restaurant: not found")
 	}
 	views := make([]BusinessHourView, 0, len(hours))
 	for _, h := range hours {

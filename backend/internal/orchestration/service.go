@@ -2,11 +2,12 @@ package orchestration
 
 import (
 	"context"
-	"github.com/google/uuid"
 	"log"
 	"spotlight/backend/go-common/timeutil"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Service is the orchestration engine: quote aggregation, smart order routing,

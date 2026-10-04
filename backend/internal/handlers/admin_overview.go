@@ -145,6 +145,7 @@ type overviewValue struct {
 
 type overviewAttention struct {
 	overviewValue
+
 	Href     string `json:"href"`
 	Severity string `json:"severity"`
 }

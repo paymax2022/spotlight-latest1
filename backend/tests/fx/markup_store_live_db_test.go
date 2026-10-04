@@ -46,7 +46,7 @@ func isolateCorridor(t *testing.T, ctx context.Context, pool *pgxpool.Pool) stri
 // splitCorridor turns "AAA-BBB" back into its two currency halves.
 func splitCorridor(t *testing.T, corridor string) (string, string) {
 	t.Helper()
-	for i := 0; i < len(corridor); i++ {
+	for i := range len(corridor) {
 		if corridor[i] == '-' {
 			return corridor[:i], corridor[i+1:]
 		}

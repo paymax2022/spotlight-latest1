@@ -1,10 +1,11 @@
 package association
 
 import (
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
+
+	"github.com/gin-gonic/gin"
 )
 
 const (

@@ -16,8 +16,11 @@ import (
 	"time"
 )
 
-func strp(s string) *string { return &s }
-func i64p(i int64) *int64   { return &i }
+//go:fix inline
+func strp(s string) *string { return new(s) }
+
+//go:fix inline
+func i64p(i int64) *int64 { return new(i) }
 
 func tsp() *time.Time {
 	t := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
@@ -97,7 +100,7 @@ func TestGuardDelete_RefundedStillCountsAsFunded(t *testing.T) {
 // others. A plain-bool/plain-string struct would emit writes for every column
 // and blank the caller's title and story.
 func TestUpdateAssignments_PartialDoesNotClobberSiblings(t *testing.T) {
-	req := CampaignUpdateRequest{CoverImage: strp("https://cdn/x.png")}
+	req := CampaignUpdateRequest{CoverImage: new("https://cdn/x.png")}
 	as := updateAssignments(req)
 
 	if len(as) != 1 {
@@ -125,7 +128,7 @@ func TestUpdateAssignments_PartialDoesNotClobberSiblings(t *testing.T) {
 // An explicit empty string is NOT the same as an absent key: clearing a summary
 // on purpose must still be possible.
 func TestUpdateAssignments_ExplicitEmptyStringIsAWrite(t *testing.T) {
-	as := updateAssignments(CampaignUpdateRequest{Summary: strp("")})
+	as := updateAssignments(CampaignUpdateRequest{Summary: new("")})
 	if len(as) != 1 || as[0].Column != "summary" || as[0].Value != "" {
 		t.Fatalf("an explicit empty summary must still be written: %#v", as)
 	}
@@ -133,8 +136,8 @@ func TestUpdateAssignments_ExplicitEmptyStringIsAWrite(t *testing.T) {
 
 func TestUpdateAssignments_AllFields(t *testing.T) {
 	as := updateAssignments(CampaignUpdateRequest{
-		Title: strp("T"), Summary: strp("S"), Story: strp("St"),
-		Category: strp("medical"), CoverImage: strp("c"), GoalKobo: i64p(500),
+		Title: new("T"), Summary: new("S"), Story: new("St"),
+		Category: new("medical"), CoverImage: new("c"), GoalKobo: i64p(500),
 	})
 	want := []string{"title", "summary", "story", "category", "cover_url", "goal_kobo"}
 	if len(as) != len(want) {
@@ -158,7 +161,7 @@ func TestBuildCampaignUpdate_EmptyBodyRefused(t *testing.T) {
 // Defence in depth: the UPDATE's own WHERE must re-assert ownership, so even a
 // refactor that drops the explicit guard cannot produce a cross-tenant write.
 func TestBuildCampaignUpdate_WhereCarriesOwnerAndDeletedGuard(t *testing.T) {
-	sql, _, ok := buildCampaignUpdate("camp-1", "owner-1", CampaignUpdateRequest{Title: strp("New")})
+	sql, _, ok := buildCampaignUpdate("camp-1", "owner-1", CampaignUpdateRequest{Title: new("New")})
 	if !ok {
 		t.Fatal("expected a buildable update")
 	}
@@ -176,7 +179,7 @@ func TestBuildCampaignUpdate_WhereCarriesOwnerAndDeletedGuard(t *testing.T) {
 // Column names must be fixed literals, never interpolated caller input.
 func TestBuildCampaignUpdate_ValuesAreBoundNotInlined(t *testing.T) {
 	evil := "x'; DROP TABLE campaigns; --"
-	sql, args, ok := buildCampaignUpdate("camp-1", "owner-1", CampaignUpdateRequest{Title: strp(evil)})
+	sql, args, ok := buildCampaignUpdate("camp-1", "owner-1", CampaignUpdateRequest{Title: new(evil)})
 	if !ok {
 		t.Fatal("expected a buildable update")
 	}
@@ -195,16 +198,16 @@ func TestValidateUpdate(t *testing.T) {
 		want error
 	}{
 		{"empty body is valid (emptiness is caught by the builder)", CampaignUpdateRequest{}, nil},
-		{"title too short", CampaignUpdateRequest{Title: strp("a")}, ErrInvalidTitle},
-		{"title whitespace-only", CampaignUpdateRequest{Title: strp("   ")}, ErrInvalidTitle},
-		{"title too long", CampaignUpdateRequest{Title: strp(strings.Repeat("x", 201))}, ErrInvalidTitle},
-		{"title at max is fine", CampaignUpdateRequest{Title: strp(strings.Repeat("x", 200))}, nil},
-		{"title at min is fine", CampaignUpdateRequest{Title: strp("ab")}, nil},
+		{"title too short", CampaignUpdateRequest{Title: new("a")}, ErrInvalidTitle},
+		{"title whitespace-only", CampaignUpdateRequest{Title: new("   ")}, ErrInvalidTitle},
+		{"title too long", CampaignUpdateRequest{Title: new(strings.Repeat("x", 201))}, ErrInvalidTitle},
+		{"title at max is fine", CampaignUpdateRequest{Title: new(strings.Repeat("x", 200))}, nil},
+		{"title at min is fine", CampaignUpdateRequest{Title: new("ab")}, nil},
 		{"goal below the 100 kobo floor", CampaignUpdateRequest{GoalKobo: i64p(99)}, ErrInvalidGoal},
 		{"goal of zero", CampaignUpdateRequest{GoalKobo: i64p(0)}, ErrInvalidGoal},
 		{"negative goal", CampaignUpdateRequest{GoalKobo: i64p(-1)}, ErrInvalidGoal},
 		{"goal at the floor is fine", CampaignUpdateRequest{GoalKobo: i64p(100)}, nil},
-		{"blank category", CampaignUpdateRequest{Category: strp("  ")}, ErrUnknownCategory},
+		{"blank category", CampaignUpdateRequest{Category: new("  ")}, ErrUnknownCategory},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -233,7 +236,7 @@ func TestGuardGoalNotBelowRaised(t *testing.T) {
 		t.Fatalf("raising the goal is always legal, got %v", err)
 	}
 	// Absent goal key: the raised total is irrelevant.
-	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{Title: strp("x")}, 900_00); err != nil {
+	if err := guardGoalNotBelowRaised(CampaignUpdateRequest{Title: new("x")}, 900_00); err != nil {
 		t.Fatalf("a body with no goalKobo must not be goal-checked, got %v", err)
 	}
 }
@@ -384,7 +387,7 @@ func mustJSONSummary(t *testing.T, s CampaignSummary) string {
 // suspicious edit is greppable — but never mirrors free-text user content.
 func TestAuditUpdateTarget(t *testing.T) {
 	got := auditUpdateTarget("camp-1", CampaignUpdateRequest{
-		Title: strp("New title"), GoalKobo: i64p(100),
+		Title: new("New title"), GoalKobo: i64p(100),
 	})
 	if !strings.Contains(got, "camp-1") {
 		t.Errorf("audit target must name the campaign: %q", got)

@@ -5,6 +5,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -56,7 +57,7 @@ func (s *Service) Get(ctx context.Context) (Config, error) {
 	err := s.db.QueryRow(ctx, q).Scan(
 		&c.AttributionWindowHours, &c.GraceWindowHours, &chainRaw,
 		&c.HouseAccountCode, &c.BudgetNeutral, &c.WelcomeRewardEnabled)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return Defaults(), nil
 	}
 	if err != nil {

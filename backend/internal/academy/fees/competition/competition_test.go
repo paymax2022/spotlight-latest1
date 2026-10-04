@@ -125,7 +125,8 @@ func newService() (*Service, *fakeStore, *fakeLadder, *fakeIdentity) {
 	return svc, store, ladder, ident
 }
 
-func strptr(s string) *string { return &s }
+//go:fix inline
+func strptr(s string) *string { return new(s) }
 
 // SF-7 (RELEASE BLOCKER) — minor-safe serializer
 
@@ -140,7 +141,7 @@ func minorEntry() LeaderboardEntry {
 		SchoolID:      "sch-1",
 		SchoolName:    "Bright Stars Academy",
 		Scope:         ScopeNational,
-		Subject:       strptr("Mathematics"),
+		Subject:       new("Mathematics"),
 		Rank:          1,
 		Score:         980,
 	}
@@ -462,11 +463,11 @@ func TestLeaderboard_ReuseAndSerialize(t *testing.T) {
 		SchoolID: "sch-1", SchoolName: "Bright Stars Academy",
 	}
 	ctx := context.Background()
-	c, _ := svc.Create(ctx, CreateCompetitionRequest{Name: "Cup", Scope: "national", Subject: strptr("Mathematics")})
+	c, _ := svc.Create(ctx, CreateCompetitionRequest{Name: "Cup", Scope: "national", Subject: new("Mathematics")})
 	advanceTo(t, svc, ctx, c.ID, "open_registration", "close_registration", "start")
 	if err := svc.RecordScore(ctx, c.ID, RecordScoreRequest{
 		StudentID: "stu-1", StudentUserID: "user-minor", SchoolID: "sch-1",
-		Scope: "national", Subject: strptr("Mathematics"), PeriodKey: "2026", Score: 42,
+		Scope: "national", Subject: new("Mathematics"), PeriodKey: "2026", Score: 42,
 	}); err != nil {
 		t.Fatal(err)
 	}

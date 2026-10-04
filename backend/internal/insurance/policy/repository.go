@@ -3,10 +3,12 @@ package policy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/insurance/gateway"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Repository is the parameterized data layer for policies, premium transactions
@@ -222,7 +224,7 @@ func (r *Repository) ListBeneficiaries(ctx context.Context, policyID string) ([]
 
 // Sentinel errors.
 var (
-	ErrConflict = fmt.Errorf("policy: version conflict (concurrent transition)")
+	ErrConflict = errors.New("policy: version conflict (concurrent transition)")
 )
 
 // insertQuote persists an ephemeral, TTL-bounded quote and returns its id. The

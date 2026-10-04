@@ -108,7 +108,7 @@ func TestContactReveal_RateLimitsAcrossListings(t *testing.T) {
 
 	// 11 distinct listings, each a different seller with a number: the 11th must
 	// be refused because the hourly budget is 10.
-	for i := 0; i < 11; i++ {
+	for i := range 11 {
 		seller := uuid.NewString()
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 			seller, seller+"@seed.test"); err != nil {
@@ -156,7 +156,7 @@ func TestContactReveal_RepeatOfSameListingIsFree(t *testing.T) {
 	ctx := context.Background()
 	svc, _, viewer, id := seedListingWithSellerPhone(t, ctx, "08031234567")
 
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		if _, err := svc.RevealSellerContact(ctx, viewer, id); err != nil {
 			t.Fatalf("repeat reveal %d of the same listing was refused: %v", i+1, err)
 		}
@@ -172,7 +172,7 @@ func TestContactReveal_IsRecordedForAbuseReports(t *testing.T) {
 	svc2, seller, viewer, id := seedListingWithSellerPhone(t, ctx, "08031234567")
 	_ = svc
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if _, err := svc2.RevealSellerContact(ctx, viewer, id); err != nil {
 			t.Fatalf("reveal: %v", err)
 		}

@@ -135,7 +135,7 @@ func TestRunCtx_Accessors(t *testing.T) {
 func TestRunCtx_SatisfiesInterfaces(t *testing.T) {
 	var _ HandlerCtx = runCtx{}
 	var hc HandlerCtx = runCtx{ctx: context.Background(), job: Job{ID: "x"}}
-	var _ JobView = hc.Job()
+	var _ = hc.Job()
 }
 
 func TestNewService_Defaults(t *testing.T) {
@@ -193,7 +193,7 @@ func TestRegisterJobType_OverwritesExisting(t *testing.T) {
 	if !ok {
 		t.Fatal("handlerFor(k) ok = false after re-register")
 	}
-	if err := h(runCtx{}); err != sentinel {
+	if err := h(runCtx{}); !errors.Is(err, sentinel) {
 		t.Errorf("handler err = %v, want the second (overwriting) handler's error", err)
 	}
 }

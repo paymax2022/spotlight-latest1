@@ -385,7 +385,7 @@ func TestLiveDB_Invoice_RecordPayment_RequiresIdempotencyKey(t *testing.T) {
 	}
 	cleanupInvoice(t, pool, inv.ID)
 
-	if _, err := svc.RecordPayment(ctx, actorID, inv.ID, guardianID, 10_000, "", "", ""); err != feesinvoice.ErrIdempotencyRequired {
+	if _, err := svc.RecordPayment(ctx, actorID, inv.ID, guardianID, 10_000, "", "", ""); !errors.Is(err, feesinvoice.ErrIdempotencyRequired) {
 		t.Fatalf("RecordPayment with empty key: err = %v, want ErrIdempotencyRequired", err)
 	}
 	if n := countPayments(t, ctx, pool, inv.ID); n != 0 {

@@ -2,7 +2,7 @@ package social
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
+	"errors"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
@@ -10,6 +10,8 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Handler exposes the Social Pay member API. user_id is mirrored onto the gin
@@ -45,10 +47,10 @@ func (h *Handler) ClaimHandle(c *gin.Context) {
 	}
 	hd, err := h.tags.Claim(c.Request.Context(), ginutil.UserID(c), req.Handle)
 	if err != nil {
-		switch err {
-		case cashtag.ErrTaken, cashtag.ErrAlreadyClaimed:
+		switch {
+		case errors.Is(err, cashtag.ErrTaken), errors.Is(err, cashtag.ErrAlreadyClaimed):
 			c.JSON(http.StatusConflict, gin.H{"success": false, "error": httperr.Msg(c, http.StatusConflict, err)})
-		case cashtag.ErrReserved, cashtag.ErrImpersonation:
+		case errors.Is(err, cashtag.ErrReserved), errors.Is(err, cashtag.ErrImpersonation):
 			c.JSON(http.StatusForbidden, gin.H{"success": false, "error": httperr.Msg(c, http.StatusForbidden, err)})
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})

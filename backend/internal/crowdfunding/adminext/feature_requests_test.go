@@ -71,7 +71,7 @@ func TestGuardFeatureDecision_RejectionIsNotStatusGated(t *testing.T) {
 // a way around the flags guard.
 func TestFeatureApproval_MatchesDirectFlagsPromotionRule(t *testing.T) {
 	for _, cs := range []string{"ACTIVE", "PENDING_REVIEW", "FROZEN", "REJECTED", "COMPLETED", "DRAFT"} {
-		viaFlags := guardFlagPromotion(cs, CampaignFlagsRequest{Featured: boolPtr(true)})
+		viaFlags := guardFlagPromotion(cs, CampaignFlagsRequest{Featured: new(true)})
 		viaQueue := guardFeatureDecision("PENDING", cs, true)
 
 		if (viaFlags == nil) != (viaQueue == nil) {

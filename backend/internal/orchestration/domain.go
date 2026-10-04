@@ -184,9 +184,9 @@ type VirtualAccount struct {
 	// virtual account number). It is the join key that matches an inbound
 	// collection webhook back to this customer and currency — must be persisted;
 	// `details->>'account_number'` is a jsonb key, not a join key.
-	ProviderRef string                 `json:"-"`
-	Details     map[string]interface{} `json:"details"`
-	CreatedAt   time.Time              `json:"createdAt"`
+	ProviderRef string         `json:"-"`
+	Details     map[string]any `json:"details"`
+	CreatedAt   time.Time      `json:"createdAt"`
 }
 
 // CollectionCredit is an inbound deposit into a provisioned virtual account, as

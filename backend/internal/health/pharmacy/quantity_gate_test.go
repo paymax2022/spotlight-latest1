@@ -82,7 +82,7 @@ func TestCheckQuantityCaps_RejectionPropagates(t *testing.T) {
 
 // Infra failures also propagate — the money path fails closed, never open.
 func TestCheckQuantityCaps_InfraErrorFailsClosed(t *testing.T) {
-	g := &recordingGate{err: fmt.Errorf("db down")}
+	g := &recordingGate{err: errors.New("db down")}
 	s := &Service{}
 	s.SetQuantityGate(g)
 	if err := s.checkQuantityCaps(context.Background(), "patient-1",
@@ -150,7 +150,7 @@ func TestHTTP_CreateOrder_GenericErrorKeepsPlainEnvelope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.POST("/orders", func(c *gin.Context) {
-		failCreateOrder(c, fmt.Errorf("pharmacy: product not found in this pharmacy catalog"))
+		failCreateOrder(c, errors.New("pharmacy: product not found in this pharmacy catalog"))
 	})
 	req := httptest.NewRequest(http.MethodPost, "/orders", nil)
 	w := httptest.NewRecorder()

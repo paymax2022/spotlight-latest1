@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/cashtag"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Auditor is the immutable-audit slice the social module needs (NL-12). nil-safe.
@@ -87,14 +88,14 @@ func (s *Service) enforceDebitLimit(ctx context.Context, userID string, amountKo
 // peer transfer). idemKey makes it replay-safe (NL-9). AML checked first (NL-10).
 func (s *Service) Send(ctx context.Context, senderID, recipientHandle, note, idemKey string, amountKobo int64) (*Payment, error) {
 	if senderID == "" || idemKey == "" {
-		return nil, fmt.Errorf("social: sender and idempotency key required")
+		return nil, errors.New("social: sender and idempotency key required")
 	}
 	recipientID, err := s.tags.Resolve(ctx, recipientHandle)
 	if err != nil {
 		return nil, err
 	}
 	if recipientID == senderID {
-		return nil, fmt.Errorf("social: cannot send to yourself")
+		return nil, errors.New("social: cannot send to yourself")
 	}
 	if err := s.aml.Check(ctx, senderID, amountKobo); err != nil {
 		return nil, err
@@ -148,14 +149,14 @@ func (s *Service) Send(ctx context.Context, senderID, recipientHandle, note, ide
 // someone else. The payer is resolved from a cashtag.
 func (s *Service) CreateRequest(ctx context.Context, requesterID, payerHandle, note string, amountKobo int64) (*Request, error) {
 	if amountKobo <= 0 {
-		return nil, fmt.Errorf("social: amount must be positive")
+		return nil, errors.New("social: amount must be positive")
 	}
 	payerID, err := s.tags.Resolve(ctx, payerHandle)
 	if err != nil {
 		return nil, err
 	}
 	if payerID == requesterID {
-		return nil, fmt.Errorf("social: cannot request from yourself")
+		return nil, errors.New("social: cannot request from yourself")
 	}
 	r := &Request{
 		ID: uuid.New().String(), RequesterID: requesterID, PayerID: payerID,
@@ -196,7 +197,7 @@ func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) err
 	const upd = `UPDATE social_requests SET state='PAID', resolved_at=now() WHERE id=$1 AND state='PENDING'`
 	ct, err := s.db.Exec(ctx, upd, requestID)
 	if err != nil || ct.RowsAffected() == 0 {
-		return fmt.Errorf("social: request state transition failed")
+		return errors.New("social: request state transition failed")
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
@@ -241,7 +242,7 @@ func (s *Service) resolveRequest(ctx context.Context, requestID, actorID string,
 	const upd = `UPDATE social_requests SET state=$2, resolved_at=now() WHERE id=$1 AND state='PENDING'`
 	ct, err := s.db.Exec(ctx, upd, requestID, string(to))
 	if err != nil || ct.RowsAffected() == 0 {
-		return fmt.Errorf("social: request transition failed")
+		return errors.New("social: request transition failed")
 	}
 	s.log(actorID, "", action, "social_request", requestID,
 		map[string]any{"state": "PENDING"}, map[string]any{"state": string(to)})
@@ -260,10 +261,10 @@ type ShareInput struct {
 // PENDING request the participant settles.
 func (s *Service) CreateSplit(ctx context.Context, organiserID, title string, totalKobo int64, mode SplitMode, shares []ShareInput) (*SplitBill, []SplitShare, error) {
 	if totalKobo <= 0 {
-		return nil, nil, fmt.Errorf("social: total must be positive")
+		return nil, nil, errors.New("social: total must be positive")
 	}
 	if len(shares) == 0 {
-		return nil, nil, fmt.Errorf("social: at least one participant required")
+		return nil, nil, errors.New("social: at least one participant required")
 	}
 
 	parts, err := s.resolveShares(ctx, mode, totalKobo, shares)
@@ -371,7 +372,7 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 	var state string
 	const q = `SELECT id, split_id, user_id, amount_kobo, state FROM split_shares WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, shareID).Scan(&sh.ID, &sh.SplitID, &sh.UserID, &sh.AmountKobo, &state); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
@@ -398,7 +399,7 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 	const upd = `UPDATE split_shares SET state='PAID', paid_at=now() WHERE id=$1 AND state='PENDING'`
 	ct, err := s.db.Exec(ctx, upd, shareID)
 	if err != nil || ct.RowsAffected() == 0 {
-		return fmt.Errorf("social: share transition failed")
+		return errors.New("social: share transition failed")
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
@@ -492,14 +493,14 @@ func (s *Service) PoolBalance(ctx context.Context, poolID string) (int64, error)
 // ContributePool moves money from a contributor's wallet into the pool.
 func (s *Service) ContributePool(ctx context.Context, userID, poolID string, amountKobo int64, idemKey string) (int64, error) {
 	if amountKobo <= 0 {
-		return 0, fmt.Errorf("social: contribution must be positive")
+		return 0, errors.New("social: contribution must be positive")
 	}
 	p, err := s.getPool(ctx, poolID)
 	if err != nil {
 		return 0, err
 	}
 	if p.State != PoolOpen {
-		return 0, fmt.Errorf("social: pool not open")
+		return 0, errors.New("social: pool not open")
 	}
 	if err := s.aml.Check(ctx, userID, amountKobo); err != nil {
 		return 0, err
@@ -543,7 +544,7 @@ func (s *Service) PayoutPool(ctx context.Context, organiserID, poolID, idemKey s
 		return err
 	}
 	if bal <= 0 {
-		return fmt.Errorf("social: empty pool")
+		return errors.New("social: empty pool")
 	}
 	beneficiary := p.OrganiserID
 	if p.BeneficiaryID != nil {
@@ -552,7 +553,7 @@ func (s *Service) PayoutPool(ctx context.Context, organiserID, poolID, idemKey s
 	const upd = `UPDATE group_pools SET state='PAID_OUT', updated_at=now() WHERE id=$1 AND state='OPEN'`
 	ct, err := s.db.Exec(ctx, upd, poolID)
 	if err != nil || ct.RowsAffected() == 0 {
-		return fmt.Errorf("social: pool payout transition failed")
+		return errors.New("social: pool payout transition failed")
 	}
 	// Record the drain as a negative contribution so balance reflects zero.
 	const drain = `INSERT INTO pool_contributions (id, pool_id, user_id, amount_kobo, idempotency_key)
@@ -581,7 +582,7 @@ func (s *Service) paymentByIdem(ctx context.Context, idemKey string) (*Payment, 
 	const q = `SELECT id, sender_id, recipient_id, amount_kobo, note, idempotency_key, created_at FROM social_payments WHERE idempotency_key=$1`
 	var p Payment
 	if err := s.db.QueryRow(ctx, q, idemKey).Scan(&p.ID, &p.SenderID, &p.RecipientID, &p.AmountKobo, &p.Note, &p.IdempotencyKey, &p.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -594,7 +595,7 @@ func (s *Service) getRequest(ctx context.Context, requestID string) (*Request, e
 	var r Request
 	var state string
 	if err := s.db.QueryRow(ctx, q, requestID).Scan(&r.ID, &r.RequesterID, &r.PayerID, &r.AmountKobo, &r.Note, &state); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -608,7 +609,7 @@ func (s *Service) getSplit(ctx context.Context, splitID string) (*SplitBill, err
 	var b SplitBill
 	var mode, state string
 	if err := s.db.QueryRow(ctx, q, splitID).Scan(&b.ID, &b.OrganiserID, &b.Title, &b.TotalKobo, &mode, &state); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -623,7 +624,7 @@ func (s *Service) getPool(ctx context.Context, poolID string) (*GroupPool, error
 	var p GroupPool
 	var state string
 	if err := s.db.QueryRow(ctx, q, poolID).Scan(&p.ID, &p.OrganiserID, &p.Title, &p.BeneficiaryID, &state); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -641,8 +642,8 @@ func (s *Service) log(actor, target, action, resType, resID string, oldV, newV m
 
 // Sentinel errors.
 var (
-	ErrForbidden = fmt.Errorf("social: forbidden")
-	ErrNotFound  = fmt.Errorf("social: not found")
+	ErrForbidden = errors.New("social: forbidden")
+	ErrNotFound  = errors.New("social: not found")
 )
 
 // AMLConfig is versioned velocity policy for P2P sends (NL-10). Defaults are

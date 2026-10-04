@@ -104,7 +104,7 @@ func (s *Service) DailyGoal(ctx context.Context, userID string) (*DailyGoal, err
 	}
 
 	cal := make([]StreakDay, 0, calendarDays)
-	for i := 0; i < calendarDays; i++ {
+	for i := range calendarDays {
 		ds := start.AddDate(0, 0, i).Format("2006-01-02")
 		cal = append(cal, StreakDay{Date: ds, State: cellState(ds, today, studied[ds] > 0)})
 	}

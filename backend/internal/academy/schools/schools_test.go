@@ -3,6 +3,7 @@ package schools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 )
@@ -247,7 +248,7 @@ func TestBulkEnroll_SeatCapped(t *testing.T) {
 		InstitutionID: inst.ID,
 		LearnerIDs:    []string{"l1", "l2", "l3", "l4", "l5"},
 	}, "batch-1")
-	if err != ErrSeatLimitExceeded {
+	if !errors.Is(err, ErrSeatLimitExceeded) {
 		t.Fatalf("expected seat_limit_exceeded, got %v", err)
 	}
 	if res.Succeeded != 3 {
@@ -308,7 +309,7 @@ func TestRemoveEnrollment_FreesSeat(t *testing.T) {
 		t.Fatalf("enroll l1: %v", err)
 	}
 	// Cap full: l2 rejected.
-	if _, err := svc.BulkEnroll(ctx, "admin-1", BulkEnrollRequest{InstitutionID: inst.ID, LearnerIDs: []string{"l2"}}, "b2"); err != ErrSeatLimitExceeded {
+	if _, err := svc.BulkEnroll(ctx, "admin-1", BulkEnrollRequest{InstitutionID: inst.ID, LearnerIDs: []string{"l2"}}, "b2"); !errors.Is(err, ErrSeatLimitExceeded) {
 		t.Fatalf("expected seat cap for l2, got %v", err)
 	}
 	// Free l1's seat, then l2 fits.
@@ -335,7 +336,7 @@ func TestLicenceLifecycle_Service(t *testing.T) {
 		t.Fatalf("suspend: %v", err)
 	}
 	// Suspend again is illegal (suspended→suspended).
-	if _, err := svc.SuspendLicence(ctx, "admin-1", lic.ID); err != ErrIllegalTransition {
+	if _, err := svc.SuspendLicence(ctx, "admin-1", lic.ID); !errors.Is(err, ErrIllegalTransition) {
 		t.Errorf("double-suspend should be illegal, got %v", err)
 	}
 	if _, err := svc.ReactivateLicence(ctx, "admin-1", lic.ID); err != nil {
@@ -345,7 +346,7 @@ func TestLicenceLifecycle_Service(t *testing.T) {
 		t.Fatalf("expire: %v", err)
 	}
 	// Expired is terminal.
-	if _, err := svc.ReactivateLicence(ctx, "admin-1", lic.ID); err != ErrIllegalTransition {
+	if _, err := svc.ReactivateLicence(ctx, "admin-1", lic.ID); !errors.Is(err, ErrIllegalTransition) {
 		t.Errorf("reactivate after expire should be illegal, got %v", err)
 	}
 }
@@ -394,7 +395,7 @@ func TestChargeBilling_RequiresIdemKey(t *testing.T) {
 	inst, _ := store.InsertInstitution(ctx, "Zeta", "school", "admin-1", nil, "")
 	svc := newServiceWithStore(store, newFakeBillingRail())
 	b, _ := svc.GenerateBilling(ctx, "admin-1", GenerateBillingRequest{InstitutionID: inst.ID, Period: "2026-07", AmountMinor: 1000})
-	if _, err := svc.ChargeBilling(ctx, "admin-1", b.ID, ""); err != ErrIdempotencyRequired {
+	if _, err := svc.ChargeBilling(ctx, "admin-1", b.ID, ""); !errors.Is(err, ErrIdempotencyRequired) {
 		t.Errorf("expected idempotency_key_required, got %v", err)
 	}
 }

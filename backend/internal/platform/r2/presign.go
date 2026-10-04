@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -120,7 +121,7 @@ func (p *Presigner) presign(method, key, contentType string, expiry time.Duratio
 	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
 	q.Set("X-Amz-Credential", p.cfg.AccessKeyID+"/"+scope)
 	q.Set("X-Amz-Date", amzDate)
-	q.Set("X-Amz-Expires", fmt.Sprintf("%d", int(expiry.Seconds())))
+	q.Set("X-Amz-Expires", strconv.Itoa(int(expiry.Seconds())))
 	q.Set("X-Amz-SignedHeaders", signedHeaders)
 	canonicalQuery := encodeQuery(q)
 
@@ -165,7 +166,7 @@ func deriveSigningKey(secret, dateStamp, region, service string) []byte {
 // prefixes work, matching S3's canonicalisation).
 func encodePath(p string) string {
 	var b strings.Builder
-	for _, seg := range strings.Split(p, "/") {
+	for seg := range strings.SplitSeq(p, "/") {
 		if b.Len() > 0 {
 			b.WriteByte('/')
 		}
@@ -176,12 +177,12 @@ func encodePath(p string) string {
 
 func encodeSegment(s string) string {
 	var b strings.Builder
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := s[i]
 		if isUnreserved(c) {
 			b.WriteByte(c)
 		} else {
-			b.WriteString(fmt.Sprintf("%%%02X", c))
+			fmt.Fprintf(&b, "%%%02X", c)
 		}
 	}
 	return b.String()

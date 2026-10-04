@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -236,7 +237,7 @@ func (s *Service) UpdateTaxInfo(ctx context.Context, userID string, patch json.R
 // VerifyBankAccount performs real-time verification of a bank account against
 // the disbursement provider (Paystack, etc.) without saving it. Used by the
 // frontend verification endpoint so users can verify before adding an account.
-func (s *Service) VerifyBankAccount(ctx context.Context, userID string, req BankAccountRequest) (map[string]interface{}, error) {
+func (s *Service) VerifyBankAccount(ctx context.Context, userID string, req BankAccountRequest) (map[string]any, error) {
 	if req.BankCode == nil || req.AccountNumber == nil {
 		return nil, ErrIdempotencyRequired // reusing for "missing required field" — could be more specific
 	}
@@ -247,7 +248,7 @@ func (s *Service) VerifyBankAccount(ctx context.Context, userID string, req Bank
 	// Soft-fail: if no provider is wired or verification fails, return an error
 	// so the frontend can show the failure to the user.
 	if s.disbursement == nil {
-		return nil, fmt.Errorf("doctor: account verification is not available")
+		return nil, errors.New("doctor: account verification is not available")
 	}
 
 	resolution, err := s.disbursement.ResolveAccount(ctx, bankCode, accountNumber)
@@ -266,7 +267,7 @@ func (s *Service) VerifyBankAccount(ctx context.Context, userID string, req Bank
 		accountNameToReturn = req.AccountName
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"is_verified":           true,
 		"account_name":          accountNameToReturn,
 		"bank_name":             req.BankName,

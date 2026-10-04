@@ -293,7 +293,7 @@ func (s *Service) Book(ctx context.Context, userID, idemKey string, req BookingR
 		return nil, ErrMissingIdem
 	}
 	if req.Kind != "ride" && req.Kind != "ticket" {
-		return nil, fmt.Errorf("connect: booking kind must be ride|ticket")
+		return nil, errors.New("connect: booking kind must be ride|ticket")
 	}
 	if req.AmountKobo <= 0 {
 		return nil, ErrInvalidAmount

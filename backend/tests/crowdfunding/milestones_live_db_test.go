@@ -165,7 +165,7 @@ func TestLiveDB_MilestoneDefaultsAndValidation(t *testing.T) {
 	for _, bad := range []cf.SubmitMilestoneRequest{
 		{Title: "   ", TargetKobo: 1},
 		{Title: "negative", TargetKobo: -1},
-		{Title: "bad date", TargetKobo: 1, DueAt: ptrStr("not-a-date")},
+		{Title: "bad date", TargetKobo: 1, DueAt: new("not-a-date")},
 		{Title: "unknown", TargetKobo: 1, Status: "WHATEVER"},
 	} {
 		if _, err := svc.SubmitForReview(ctx, creator, baseSubmit("Rejected "+bad.Title, bad)); !errors.Is(err, cf.ErrInvalidSubmission) {
@@ -174,4 +174,5 @@ func TestLiveDB_MilestoneDefaultsAndValidation(t *testing.T) {
 	}
 }
 
-func ptrStr(s string) *string { return &s }
+//go:fix inline
+func ptrStr(s string) *string { return new(s) }

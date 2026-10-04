@@ -205,10 +205,10 @@ func (s *VaultService) autoSaveRunner() scheduler.HandlerFunc {
 // CreateVault opens a new vault (OPEN). Lock vaults require a maturity date.
 func (s *VaultService) CreateVault(ctx context.Context, ownerID, name string, kind VaultKind, targetKobo int64, maturesAt *time.Time) (*Vault, error) {
 	if ownerID == "" || name == "" {
-		return nil, fmt.Errorf("savings: owner and name required")
+		return nil, errors.New("savings: owner and name required")
 	}
 	if kind == VaultLock && maturesAt == nil {
-		return nil, fmt.Errorf("savings: lock vault requires a maturity date")
+		return nil, errors.New("savings: lock vault requires a maturity date")
 	}
 	v := &Vault{
 		ID: uuid.New().String(), OwnerUserID: ownerID, Name: name, Kind: kind,
@@ -259,7 +259,7 @@ func (s *VaultService) Balance(ctx context.Context, vaultID string) (int64, erro
 // idemKey makes the whole flow replay-safe.
 func (s *VaultService) Deposit(ctx context.Context, ownerID, vaultID string, amountKobo int64, idemKey string) (int64, error) {
 	if amountKobo <= 0 {
-		return 0, fmt.Errorf("savings: deposit must be positive")
+		return 0, errors.New("savings: deposit must be positive")
 	}
 	v, err := s.getVault(ctx, vaultID)
 	if err != nil {
@@ -298,7 +298,7 @@ func (s *VaultService) Deposit(ctx context.Context, ownerID, vaultID string, amo
 // exceed the derived balance.
 func (s *VaultService) Withdraw(ctx context.Context, ownerID, vaultID string, amountKobo int64, idemKey string) (int64, error) {
 	if amountKobo <= 0 {
-		return 0, fmt.Errorf("savings: withdraw must be positive")
+		return 0, errors.New("savings: withdraw must be positive")
 	}
 	v, err := s.getVault(ctx, vaultID)
 	if err != nil {
@@ -344,7 +344,7 @@ func (s *VaultService) EnableAutoSave(ctx context.Context, ownerID, vaultID stri
 		return "", ErrForbidden
 	}
 	if s.sched == nil {
-		return "", fmt.Errorf("savings: scheduler unavailable")
+		return "", errors.New("savings: scheduler unavailable")
 	}
 	job, err := s.sched.Schedule(ctx, scheduler.Job{
 		JobType:      AutoSaveJobType,
@@ -378,7 +378,7 @@ func (s *VaultService) TransitionState(ctx context.Context, ownerID, vaultID str
 	const q = `UPDATE savings_vaults SET state=$2, updated_at=now() WHERE id=$1 AND state=$3`
 	ct, err := s.db.Exec(ctx, q, vaultID, string(to), string(v.State))
 	if err != nil || ct.RowsAffected() == 0 {
-		return fmt.Errorf("savings: vault transition failed")
+		return errors.New("savings: vault transition failed")
 	}
 	s.log(ownerID, "savings.vault.transition", "savings_vault", vaultID,
 		map[string]any{"state": string(v.State)}, map[string]any{"state": string(to)})
@@ -425,7 +425,7 @@ func (s *VaultService) getVault(ctx context.Context, vaultID string) (*Vault, er
 	var kind, state string
 	if err := s.db.QueryRow(ctx, q, vaultID).Scan(&v.ID, &v.OwnerUserID, &v.Name, &kind,
 		&state, &v.TargetKobo, &v.ConfigVersion, &v.MaturesAt, &v.AutoSaveJobID); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -440,7 +440,7 @@ func (s *VaultService) getVault(ctx context.Context, vaultID string) (*Vault, er
 // the explicit deposit/withdraw — no "interest"/"yield" reason is permitted.
 func (s *VaultService) appendVaultEntry(ctx context.Context, vaultID, direction string, amountKobo int64, reason, idemKey string) error {
 	if reason == "interest" || reason == "yield" {
-		return fmt.Errorf("savings: yield is forbidden (NL-2)")
+		return errors.New("savings: yield is forbidden (NL-2)")
 	}
 	const q = `INSERT INTO savings_vault_ledger (id, vault_id, direction, amount_kobo, reason, idempotency_key)
 	           VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (idempotency_key) DO NOTHING`
@@ -472,8 +472,8 @@ func toInt64(v any) int64 {
 
 // Sentinel errors.
 var (
-	ErrNotFound          = fmt.Errorf("savings: not found")
-	ErrForbidden         = fmt.Errorf("savings: forbidden")
-	ErrLockedVault       = fmt.Errorf("savings: lock vault not yet matured")
-	ErrInsufficientVault = fmt.Errorf("savings: insufficient vault balance")
+	ErrNotFound          = errors.New("savings: not found")
+	ErrForbidden         = errors.New("savings: forbidden")
+	ErrLockedVault       = errors.New("savings: lock vault not yet matured")
+	ErrInsufficientVault = errors.New("savings: insufficient vault balance")
 )

@@ -13,6 +13,7 @@ package top5events_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -129,7 +130,7 @@ func TestLiveDB_AttendeesForEvent_RandomUserForbidden(t *testing.T) {
 	eventID := ticketEventID(t, ctx, pool, ticketID)
 
 	_, err := svc.AttendeesForEvent(ctx, stranger, eventID)
-	if err != top5events.ErrForbidden {
+	if !errors.Is(err, top5events.ErrForbidden) {
 		t.Fatalf("got err=%v, want ErrForbidden", err)
 	}
 }
@@ -200,7 +201,7 @@ func TestLiveDB_WalletEntries_OwnerOnly(t *testing.T) {
 		t.Fatalf("got %+v, want exactly one 100000-kobo TOPUP entry", got)
 	}
 
-	if _, err := svc.WalletEntries(ctx, stranger, walletID); err != top5events.ErrForbidden {
+	if _, err := svc.WalletEntries(ctx, stranger, walletID); !errors.Is(err, top5events.ErrForbidden) {
 		t.Fatalf("got err=%v for a non-owner, want ErrForbidden", err)
 	}
 }

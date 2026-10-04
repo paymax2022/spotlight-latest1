@@ -113,7 +113,7 @@ func (s *Service) RecordRecordingConsent(ctx context.Context, actorID, consultID
 	case providerOwner:
 		role = "PROVIDER"
 	default:
-		return fmt.Errorf("consult: forbidden")
+		return errors.New("consult: forbidden")
 	}
 	if c.State == StateCompleted {
 		return ErrConsultRecordingClosed
@@ -139,7 +139,7 @@ func (s *Service) EnableRecording(ctx context.Context, providerOwnerID, consultI
 		return nil, err
 	}
 	if providerOwnerID != providerOwner {
-		return nil, fmt.Errorf("consult: forbidden")
+		return nil, errors.New("consult: forbidden")
 	}
 	if c.State == StateCompleted {
 		return nil, ErrConsultRecordingClosed
@@ -169,7 +169,7 @@ func (s *Service) WithdrawRecordingConsent(ctx context.Context, actorID, consult
 		return err
 	}
 	if actorID != c.PatientID && actorID != providerOwner {
-		return fmt.Errorf("consult: forbidden")
+		return errors.New("consult: forbidden")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {

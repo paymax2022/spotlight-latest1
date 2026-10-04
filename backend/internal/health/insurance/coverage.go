@@ -34,10 +34,7 @@ func Compute(charge int64, p Policy) Split {
 	if charge <= 0 {
 		return Split{}
 	}
-	pct := p.CoveragePercent
-	if pct < 0 {
-		pct = 0
-	}
+	pct := max(p.CoveragePercent, 0)
 	if pct > 100 {
 		pct = 100
 	}

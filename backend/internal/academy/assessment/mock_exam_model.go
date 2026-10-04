@@ -130,13 +130,13 @@ type MockExamInstanceResponse struct {
 }
 
 type MockExamAttemptResponse struct {
-	ID          string      `json:"id"`
-	InstanceID  string      `json:"instance_id"`
-	Status      string      `json:"status"`
-	Progress    int         `json:"progress"`     // percentage
-	TimeElapsed int         `json:"time_elapsed"` // seconds
-	StartedAt   time.Time   `json:"started_at"`
-	Performance interface{} `json:"performance"`
+	ID          string    `json:"id"`
+	InstanceID  string    `json:"instance_id"`
+	Status      string    `json:"status"`
+	Progress    int       `json:"progress"`     // percentage
+	TimeElapsed int       `json:"time_elapsed"` // seconds
+	StartedAt   time.Time `json:"started_at"`
+	Performance any       `json:"performance"`
 }
 
 type MockExamResultResponse struct {

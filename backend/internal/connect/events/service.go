@@ -175,7 +175,7 @@ func (s *Service) ScanQR(ctx context.Context, scannerID, eventID, qr string) (st
 		return "", fmt.Errorf("connect: event not found: %w", err)
 	}
 	if organizer != scannerID {
-		return "", fmt.Errorf("connect: only the organiser may scan tickets")
+		return "", errors.New("connect: only the organiser may scan tickets")
 	}
 	var ticketID, ownerID, status string
 	if err := s.db.QueryRow(ctx,

@@ -89,7 +89,7 @@ func (f *fakeSchedStore) dispatchSucceeds(settlementID string) {
 func TestEscrowSafety_FailedNoDriverAlwaysRefundsBeforeTerminal(t *testing.T) {
 	f := &fakeSchedStore{status: schedScheduled}
 	// Simulate 3 dispatch attempts, each escrowing then failing to find a driver.
-	for i := 0; i < maxDispatchAttemptsSched; i++ {
+	for i := range maxDispatchAttemptsSched {
 		f.status = schedDispatchPending
 		settlementID := "settlement-attempt-" + string(rune('0'+i))
 		f.attemptDispatchFailure(settlementID)

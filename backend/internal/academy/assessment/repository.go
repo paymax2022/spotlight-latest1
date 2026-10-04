@@ -228,7 +228,7 @@ func (r *Repository) ListItems(ctx context.Context, f ItemFilter) ([]QuestionIte
 	args := []any{}
 	add := func(clause string, v any) {
 		args = append(args, v)
-		sb.WriteString(fmt.Sprintf(" AND %s $%d", clause, len(args)))
+		fmt.Fprintf(&sb, " AND %s $%d", clause, len(args))
 	}
 	if f.SubjectID != "" {
 		add("subject_id =", f.SubjectID)
@@ -241,7 +241,7 @@ func (r *Repository) ListItems(ctx context.Context, f ItemFilter) ([]QuestionIte
 	}
 	if f.Tag != "" {
 		args = append(args, f.Tag)
-		sb.WriteString(fmt.Sprintf(" AND $%d = ANY(tags)", len(args)))
+		fmt.Fprintf(&sb, " AND $%d = ANY(tags)", len(args))
 	}
 	sb.WriteString(" ORDER BY created_at DESC")
 	limit := f.Limit
@@ -249,10 +249,10 @@ func (r *Repository) ListItems(ctx context.Context, f ItemFilter) ([]QuestionIte
 		limit = 50
 	}
 	args = append(args, limit)
-	sb.WriteString(fmt.Sprintf(" LIMIT $%d", len(args)))
+	fmt.Fprintf(&sb, " LIMIT $%d", len(args))
 	if f.Offset > 0 {
 		args = append(args, f.Offset)
-		sb.WriteString(fmt.Sprintf(" OFFSET $%d", len(args)))
+		fmt.Fprintf(&sb, " OFFSET $%d", len(args))
 	}
 
 	rows, err := r.db.Query(ctx, sb.String(), args...)

@@ -2,6 +2,7 @@ package healthrecords
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
@@ -80,10 +81,10 @@ func NewService(db *pgxpool.Pool, consent ConsentChecker, signer Signer, audit A
 // subject's behalf; ownerID is always the data subject (object-level authZ anchor).
 func (s *Service) Create(ctx context.Context, ownerID, createdBy, subjectType, recordType, title, body string, petRef *string) (*Record, error) {
 	if ownerID == "" {
-		return nil, fmt.Errorf("records: owner required")
+		return nil, errors.New("records: owner required")
 	}
 	if subjectType != "PATIENT" && subjectType != "PET" {
-		return nil, fmt.Errorf("records: invalid subject_type")
+		return nil, errors.New("records: invalid subject_type")
 	}
 	r := &Record{
 		ID:          uuid.New().String(),
@@ -120,10 +121,10 @@ func (s *Service) AddDocument(ctx context.Context, accessorID, recordID, storage
 		return nil, err
 	}
 	if owner != accessorID { // only the data subject attaches docs to own record
-		return nil, fmt.Errorf("records: forbidden")
+		return nil, errors.New("records: forbidden")
 	}
 	if storageKey == "" {
-		return nil, fmt.Errorf("records: storage_key required")
+		return nil, errors.New("records: storage_key required")
 	}
 	d := &Document{ID: uuid.New().String(), RecordID: recordID, StorageKey: storageKey, ContentType: contentType, Label: label, CreatedAt: time.Now()}
 	if d.ContentType == "" {
@@ -150,7 +151,7 @@ func (s *Service) Get(ctx context.Context, accessorID, recordID string, isAdmin 
 		return nil, err
 	}
 	if erased {
-		return nil, fmt.Errorf("records: erased")
+		return nil, errors.New("records: erased")
 	}
 
 	// Resolve consent for a non-owner/non-admin BEFORE the decision so authorizeRead
@@ -172,7 +173,7 @@ func (s *Service) Get(ctx context.Context, accessorID, recordID string, isAdmin 
 		_ = s.logAccess(ctx, recordID, accessorID, string(BasisDenied), nil)
 		s.audited(accessorID, owner, "health.record.access_denied", recordID, nil,
 			map[string]any{"basis": string(BasisDenied)})
-		return nil, fmt.Errorf("records: forbidden")
+		return nil, errors.New("records: forbidden")
 	}
 
 	// 2) Append the immutable access log row BEFORE handing back any data (HL-8/HL-12).
@@ -210,7 +211,7 @@ func (s *Service) Erase(ctx context.Context, ownerID, recordID string) error {
 		return err
 	}
 	if owner != ownerID {
-		return fmt.Errorf("records: forbidden")
+		return errors.New("records: forbidden")
 	}
 	const q = `UPDATE health_records SET erased=true, erased_at=now(), body='', title='' WHERE id=$1 AND erased=false`
 	if _, err := s.db.Exec(ctx, q, recordID); err != nil {
@@ -227,7 +228,7 @@ func (s *Service) AccessLog(ctx context.Context, requesterID, recordID string, i
 		return nil, err
 	}
 	if !isAdmin && requesterID != owner {
-		return nil, fmt.Errorf("records: forbidden")
+		return nil, errors.New("records: forbidden")
 	}
 	const q = `SELECT id, accessor_id, access_basis, consent_id, accessed_at
 	           FROM health_record_access_log WHERE record_id=$1 ORDER BY accessed_at DESC`
@@ -261,8 +262,8 @@ func (s *Service) recordOwner(ctx context.Context, recordID string) (string, boo
 	var owner string
 	var erased bool
 	err := s.db.QueryRow(ctx, `SELECT owner_user_id, erased FROM health_records WHERE id=$1`, recordID).Scan(&owner, &erased)
-	if err == pgx.ErrNoRows {
-		return "", false, fmt.Errorf("records: not found")
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, errors.New("records: not found")
 	}
 	if err != nil {
 		return "", false, err

@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"strconv"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ErrNotFound is returned when a requested row does not exist.
@@ -238,7 +239,7 @@ func (r *Repository) scanApplication(row pgx.Row) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	a.Data = map[string]interface{}{}
+	a.Data = map[string]any{}
 	if len(data) > 0 {
 		_ = json.Unmarshal(data, &a.Data)
 	}
@@ -273,7 +274,7 @@ func (r *Repository) HasActiveApplicationOrProfile(ctx context.Context, userID, 
 	return exists, err
 }
 
-func (r *Repository) InsertApplication(ctx context.Context, userID, merchantTypeID string, data map[string]interface{}) (string, error) {
+func (r *Repository) InsertApplication(ctx context.Context, userID, merchantTypeID string, data map[string]any) (string, error) {
 	raw, _ := json.Marshal(data)
 	if len(raw) == 0 {
 		raw = []byte("{}")
@@ -286,7 +287,7 @@ func (r *Repository) InsertApplication(ctx context.Context, userID, merchantType
 	return id, err
 }
 
-func (r *Repository) UpdateDraftData(ctx context.Context, id, userID string, data map[string]interface{}) (int64, error) {
+func (r *Repository) UpdateDraftData(ctx context.Context, id, userID string, data map[string]any) (int64, error) {
 	raw, _ := json.Marshal(data)
 	if len(raw) == 0 {
 		raw = []byte("{}")

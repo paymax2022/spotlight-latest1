@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"spotlight/backend/go-common/dbutil"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,7 +31,7 @@ func (r *Repository) GetProfile(ctx context.Context, userID string) (*Profile, e
 	err := r.db.QueryRow(ctx, q, userID).Scan(&p.ID, &p.UserID, &p.KYCTier, &p.SuitabilityProfileID,
 		&p.RiskCategory, &p.Country, &p.ResidencyCountry, &p.InvestmentEnabled, &p.StockTradingEnabled,
 		&p.PublicOfferEnabled, &p.RightsIssueEnabled, &p.Status, &p.CreatedAt, &p.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -87,10 +88,10 @@ func (r *Repository) GetOrCreateAccount(ctx context.Context, userID string) (*Ac
 	if err == nil {
 		return &a, nil
 	}
-	if err != pgx.ErrNoRows {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	acctNo := "INV" + fmt.Sprintf("%d", time.Now().UnixNano())[3:13]
+	acctNo := "INV" + strconv.FormatInt(time.Now().UnixNano(), 10)[3:13]
 	const ins = `INSERT INTO invest_accounts (user_id, account_number, status) VALUES ($1,$2,'active')
 		RETURNING id, user_id, account_number, broker_provider_id, broker_account_id,
 		cscs_number, clearing_house_number, base_currency, status, created_at`
@@ -114,7 +115,7 @@ func (r *Repository) LatestSuitability(ctx context.Context, userID string) (id s
 	const q = `SELECT id, score, risk_category FROM invest_suitability_profiles
 		WHERE user_id=$1 AND status='active' ORDER BY created_at DESC LIMIT 1`
 	err = r.db.QueryRow(ctx, q, userID).Scan(&id, &score, &cat)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", 0, "", false, nil
 	}
 	if err != nil {
@@ -185,16 +186,16 @@ func (r *Repository) ListStocks(ctx context.Context, query, sector string, limit
 	args := []any{}
 	i := 1
 	if query != "" {
-		sb.WriteString(fmt.Sprintf(" AND (symbol ILIKE $%d OR name ILIKE $%d)", i, i))
+		fmt.Fprintf(&sb, " AND (symbol ILIKE $%d OR name ILIKE $%d)", i, i)
 		args = append(args, "%"+query+"%")
 		i++
 	}
 	if sector != "" {
-		sb.WriteString(fmt.Sprintf(" AND sector=$%d", i))
+		fmt.Fprintf(&sb, " AND sector=$%d", i)
 		args = append(args, sector)
 		i++
 	}
-	sb.WriteString(fmt.Sprintf(" ORDER BY symbol LIMIT $%d OFFSET $%d", i, i+1))
+	fmt.Fprintf(&sb, " ORDER BY symbol LIMIT $%d OFFSET $%d", i, i+1)
 	args = append(args, limit, offset)
 	rows, err := r.db.Query(ctx, sb.String(), args...)
 	if err != nil {
@@ -216,7 +217,7 @@ func (r *Repository) GetStockBySymbol(ctx context.Context, symbol string) (*Stoc
 	const q = "SELECT " + stockCols + " FROM invest_stock_assets WHERE symbol=$1"
 	var s StockAsset
 	if err := scanStock(r.db.QueryRow(ctx, q, strings.ToUpper(symbol)), &s); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -228,7 +229,7 @@ func (r *Repository) GetStockByID(ctx context.Context, id string) (*StockAsset, 
 	const q = "SELECT " + stockCols + " FROM invest_stock_assets WHERE id=$1"
 	var s StockAsset
 	if err := scanStock(r.db.QueryRow(ctx, q, id), &s); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -242,7 +243,7 @@ func (r *Repository) EnsureDefaultWatchlist(ctx context.Context, userID string) 
 	if err == nil {
 		return id, nil
 	}
-	if err != pgx.ErrNoRows {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", err
 	}
 	err = r.db.QueryRow(ctx, `INSERT INTO invest_watchlists (user_id, name, is_default) VALUES ($1,'My Watchlist',true) RETURNING id`, userID).Scan(&id)
@@ -329,7 +330,7 @@ func (r *Repository) AddWatchlistItem(ctx context.Context, userID, watchlistID, 
 	// ownership check
 	var owner string
 	if err := r.db.QueryRow(ctx, `SELECT user_id FROM invest_watchlists WHERE id=$1`, watchlistID).Scan(&owner); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
@@ -416,7 +417,7 @@ func scanOrder(row pgx.Row, o *Order) error {
 func (r *Repository) FindOrderByIdem(ctx context.Context, idem string) (*Order, error) {
 	var o Order
 	err := scanOrder(r.db.QueryRow(ctx, "SELECT "+orderCols+" FROM invest_orders WHERE idempotency_key=$1", idem), &o)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -473,11 +474,11 @@ func (r *Repository) ListOrders(ctx context.Context, userID, status string, limi
 	args := []any{userID}
 	i := 2
 	if status != "" {
-		sb.WriteString(fmt.Sprintf(" AND status=$%d", i))
+		fmt.Fprintf(&sb, " AND status=$%d", i)
 		args = append(args, status)
 		i++
 	}
-	sb.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", i, i+1))
+	fmt.Fprintf(&sb, " ORDER BY created_at DESC LIMIT $%d OFFSET $%d", i, i+1)
 	args = append(args, limit, offset)
 	rows, err := r.db.Query(ctx, sb.String(), args...)
 	if err != nil {
@@ -498,7 +499,7 @@ func (r *Repository) ListOrders(ctx context.Context, userID, status string, limi
 func (r *Repository) GetOrder(ctx context.Context, userID, id string) (*Order, error) {
 	var o Order
 	err := scanOrder(r.db.QueryRow(ctx, "SELECT "+orderCols+" FROM invest_orders WHERE id=$1 AND user_id=$2", id, userID), &o)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -556,7 +557,7 @@ func (r *Repository) GetPosition(ctx context.Context, userID, assetID string) (*
 		WHERE user_id=$1 AND stock_asset_id=$2`, userID, assetID).
 		Scan(&p.ID, &p.UserID, &p.StockAssetID, &p.Symbol, &p.Quantity, &p.LockedQuantity,
 			&p.AverageCostKobo, &p.RealizedGainKobo, &p.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -692,7 +693,7 @@ func (r *Repository) GetPublicOffer(ctx context.Context, id string) (*PublicOffe
 		minimum_subscription_kobo, opening_date::text, closing_date::text, COALESCE(prospectus_url,''), status
 		FROM invest_public_offers WHERE id=$1`, id).Scan(&o.ID, &o.IssuerName, &o.Symbol, &o.OfferPriceKobo,
 		&o.MinimumSubKobo, &o.OpeningDate, &o.ClosingDate, &o.ProspectusURL, &o.Status)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -755,7 +756,7 @@ func (r *Repository) GetRightsIssue(ctx context.Context, id string) (*RightsIssu
 		qualification_date::text, opening_date::text, closing_date::text, status
 		FROM invest_rights_issues WHERE id=$1`, id).Scan(&ri.ID, &ri.IssuerName, &ri.Symbol, &ri.Ratio,
 		&ri.OfferPriceKobo, &ri.QualificationDate, &ri.OpeningDate, &ri.ClosingDate, &ri.Status)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {

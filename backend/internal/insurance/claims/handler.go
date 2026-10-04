@@ -2,12 +2,13 @@ package claims
 
 import (
 	"errors"
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"strconv"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 const keyData = "data"

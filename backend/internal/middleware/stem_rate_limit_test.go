@@ -43,7 +43,7 @@ func TestStemRateLimit_AllowsWithinLimit(t *testing.T) {
 	r.Use(StemRateLimit(2, time.Minute))
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		req := httptest.NewRequest(http.MethodGet, "/x", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)

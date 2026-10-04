@@ -206,10 +206,8 @@ func TestNF001_ClaimFreeVote_TSBridge_HighScaleSameVoter(t *testing.T) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	granted := 0
-	for i := 0; i < attempts; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range attempts {
+		wg.Go(func() {
 			r, err := callClaimFreeVote(ctx, pool, contestID, contestantID, voter, cap)
 			if err != nil {
 				t.Errorf("claim_free_vote: unexpected error: %v", err)
@@ -218,7 +216,7 @@ func TestNF001_ClaimFreeVote_TSBridge_HighScaleSameVoter(t *testing.T) {
 			mu.Lock()
 			granted += r.granted
 			mu.Unlock()
-		}()
+		})
 	}
 	wg.Wait()
 

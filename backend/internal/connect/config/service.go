@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"net/http"
 
+	"spotlight/backend/go-common/httperr"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/go-common/httperr"
 )
 
 // Service reads backend-owned Connect config from public.connect_config.

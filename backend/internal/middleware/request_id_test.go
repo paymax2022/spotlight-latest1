@@ -1,4 +1,4 @@
-package middleware //nolint:testpackage // exercises unexported context key like sibling middleware tests
+package middleware
 
 import (
 	"context"

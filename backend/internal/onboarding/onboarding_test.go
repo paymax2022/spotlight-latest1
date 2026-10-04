@@ -16,8 +16,11 @@ import (
 // seam, so those transitions cannot be exercised without a live database. They are
 // intentionally not tested here (no fake DB is invented).
 
-func fptr(v float64) *float64 { return &v }
-func iptr(v int) *int         { return &v }
+//go:fix inline
+func fptr(v float64) *float64 { return new(v) }
+
+//go:fix inline
+func iptr(v int) *int { return new(v) }
 
 // oneStepSchema wraps a set of fields into a single-step FormSchema.
 func oneStepSchema(fields ...Field) *FormSchema {
@@ -41,7 +44,7 @@ func asValidationError(t *testing.T, err error) *ValidationError {
 }
 
 func TestValidateSubmission_NilSchema(t *testing.T) {
-	err := ValidateSubmission(nil, map[string]interface{}{})
+	err := ValidateSubmission(nil, map[string]any{})
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("nil schema: want ErrValidation, got %v", err)
 	}
@@ -53,7 +56,7 @@ func TestValidateSubmission_AllValid(t *testing.T) {
 		Field{Key: "email", Type: "email", Label: "Email", Required: true},
 		Field{Key: "age", Type: "number", Label: "Age", Min: fptr(18), Max: fptr(120)},
 	)
-	data := map[string]interface{}{
+	data := map[string]any{
 		"name":  "Ada",
 		"email": "ada@example.com",
 		"age":   float64(30),
@@ -69,7 +72,7 @@ func TestValidateSubmission_RequiredMissing(t *testing.T) {
 		Field{Key: "bio", Type: "textarea", Label: "Bio", Required: false},
 	)
 	// name absent entirely; bio blank but optional -> only name errors.
-	err := ValidateSubmission(schema, map[string]interface{}{"bio": "   "})
+	err := ValidateSubmission(schema, map[string]any{"bio": "   "})
 	ve := asValidationError(t, err)
 	if ve.Fields["name"] != "required" {
 		t.Fatalf("want name=required, got %v", ve.Fields)
@@ -84,7 +87,7 @@ func TestValidateSubmission_OptionalEmptySkipped(t *testing.T) {
 		Field{Key: "email", Type: "email", Label: "Email", Required: false},
 	)
 	// Optional email present but empty -> skipped, no format check applied.
-	if err := ValidateSubmission(schema, map[string]interface{}{"email": ""}); err != nil {
+	if err := ValidateSubmission(schema, map[string]any{"email": ""}); err != nil {
 		t.Fatalf("optional empty email should pass, got %v", err)
 	}
 }
@@ -94,7 +97,7 @@ func TestValidateSubmission_MultipleFieldErrors(t *testing.T) {
 		Field{Key: "email", Type: "email", Label: "Email", Required: true},
 		Field{Key: "phone", Type: "phone", Label: "Phone", Required: true},
 	)
-	err := ValidateSubmission(schema, map[string]interface{}{
+	err := ValidateSubmission(schema, map[string]any{
 		"email": "not-an-email",
 		"phone": "abc",
 	})
@@ -116,7 +119,7 @@ func TestValidateSubmission_HiddenRequiredFieldSkipped(t *testing.T) {
 		},
 	)
 	// hasBiz=false -> rcNumber hidden -> its required rule must not fire.
-	if err := ValidateSubmission(schema, map[string]interface{}{"hasBiz": false}); err != nil {
+	if err := ValidateSubmission(schema, map[string]any{"hasBiz": false}); err != nil {
 		t.Fatalf("hidden required field should be skipped, got %v", err)
 	}
 }
@@ -130,7 +133,7 @@ func TestValidateSubmission_VisibleRequiredFieldEnforced(t *testing.T) {
 		},
 	)
 	// hasBiz=true -> rcNumber visible and required -> missing -> error.
-	err := ValidateSubmission(schema, map[string]interface{}{"hasBiz": true})
+	err := ValidateSubmission(schema, map[string]any{"hasBiz": true})
 	ve := asValidationError(t, err)
 	if ve.Fields["rcNumber"] != "required" {
 		t.Fatalf("want rcNumber=required, got %v", ve.Fields)
@@ -145,7 +148,7 @@ func TestValidateSubmission_ControllerFieldAbsentHidesField(t *testing.T) {
 		},
 	)
 	// Controller field absent -> fieldVisible returns false -> skipped.
-	if err := ValidateSubmission(schema, map[string]interface{}{}); err != nil {
+	if err := ValidateSubmission(schema, map[string]any{}); err != nil {
 		t.Fatalf("absent controller should hide field, got %v", err)
 	}
 }
@@ -154,34 +157,34 @@ func TestFieldVisible(t *testing.T) {
 	cases := []struct {
 		name string
 		f    Field
-		data map[string]interface{}
+		data map[string]any
 		want bool
 	}{
-		{"no condition", Field{Key: "x"}, map[string]interface{}{}, true},
+		{"no condition", Field{Key: "x"}, map[string]any{}, true},
 		{
 			"controller absent",
 			Field{Key: "x", VisibleWhen: &VisibleWhen{Field: "c", Equals: "y"}},
-			map[string]interface{}{}, false,
+			map[string]any{}, false,
 		},
 		{
 			"equal string",
 			Field{Key: "x", VisibleWhen: &VisibleWhen{Field: "c", Equals: "y"}},
-			map[string]interface{}{"c": "y"}, true,
+			map[string]any{"c": "y"}, true,
 		},
 		{
 			"not equal",
 			Field{Key: "x", VisibleWhen: &VisibleWhen{Field: "c", Equals: "y"}},
-			map[string]interface{}{"c": "z"}, false,
+			map[string]any{"c": "z"}, false,
 		},
 		{
 			"loose bool vs string",
 			Field{Key: "x", VisibleWhen: &VisibleWhen{Field: "c", Equals: "true"}},
-			map[string]interface{}{"c": true}, true,
+			map[string]any{"c": true}, true,
 		},
 		{
 			"loose number vs string",
 			Field{Key: "x", VisibleWhen: &VisibleWhen{Field: "c", Equals: "5"}},
-			map[string]interface{}{"c": float64(5)}, true,
+			map[string]any{"c": float64(5)}, true,
 		},
 	}
 	for _, tc := range cases {
@@ -208,16 +211,16 @@ func TestLooseEqual(t *testing.T) {
 func TestIsEmpty(t *testing.T) {
 	cases := []struct {
 		name string
-		v    interface{}
+		v    any
 		want bool
 	}{
 		{"nil", nil, true},
 		{"blank string", "   ", true},
 		{"non-blank string", "x", false},
-		{"empty slice", []interface{}{}, true},
-		{"non-empty slice", []interface{}{"a"}, false},
-		{"empty map", map[string]interface{}{}, true},
-		{"non-empty map", map[string]interface{}{"a": 1}, false},
+		{"empty slice", []any{}, true},
+		{"non-empty slice", []any{"a"}, false},
+		{"empty map", map[string]any{}, true},
+		{"non-empty map", map[string]any{"a": 1}, false},
 		{"number is not empty", float64(0), false},
 		{"bool is not empty", false, false},
 	}
@@ -234,7 +237,7 @@ func TestValidateField(t *testing.T) {
 	cases := []struct {
 		name    string
 		field   Field
-		raw     interface{}
+		raw     any
 		wantMsg string // "" means valid
 	}{
 		// text / textarea
@@ -284,12 +287,12 @@ func TestValidateField(t *testing.T) {
 
 		// address
 		{"address string ok", Field{Type: "address"}, "12 Main St", ""},
-		{"address object ok", Field{Type: "address"}, map[string]interface{}{"line1": "x"}, ""},
+		{"address object ok", Field{Type: "address"}, map[string]any{"line1": "x"}, ""},
 		{"address bad type", Field{Type: "address"}, 42, "invalid address"},
 
 		// document
 		{"document string ok", Field{Type: "document"}, "https://r2/doc.pdf", ""},
-		{"document object ok", Field{Type: "document"}, map[string]interface{}{"url": "x"}, ""},
+		{"document object ok", Field{Type: "document"}, map[string]any{"url": "x"}, ""},
 		{"document bad type", Field{Type: "document"}, 42, "invalid document reference"},
 
 		// unknown type -> no rule -> valid
@@ -309,35 +312,35 @@ func TestValidateField_Multiselect(t *testing.T) {
 	cases := []struct {
 		name    string
 		field   Field
-		raw     interface{}
+		raw     any
 		wantMsg string
 	}{
 		{"not a list", Field{Type: "multiselect", Options: opts}, "a", "must be a list"},
-		{"ok subset", Field{Type: "multiselect", Options: opts}, []interface{}{"a", "b"}, ""},
+		{"ok subset", Field{Type: "multiselect", Options: opts}, []any{"a", "b"}, ""},
 		{
 			"disallowed option",
 			Field{Type: "multiselect", Options: opts},
-			[]interface{}{"a", "z"}, "contains a disallowed option",
+			[]any{"a", "z"}, "contains a disallowed option",
 		},
 		{
 			"non-string item",
 			Field{Type: "multiselect", Options: opts},
-			[]interface{}{1}, "contains a disallowed option",
+			[]any{1}, "contains a disallowed option",
 		},
 		{
 			"over max selections",
-			Field{Type: "multiselect", Options: opts, MaxSelections: iptr(1)},
-			[]interface{}{"a", "b"}, "select at most 1",
+			Field{Type: "multiselect", Options: opts, MaxSelections: new(1)},
+			[]any{"a", "b"}, "select at most 1",
 		},
 		{
 			"at max selections",
-			Field{Type: "multiselect", Options: opts, MaxSelections: iptr(2)},
-			[]interface{}{"a", "b"}, "",
+			Field{Type: "multiselect", Options: opts, MaxSelections: new(2)},
+			[]any{"a", "b"}, "",
 		},
 		{
 			"no options means any string allowed",
 			Field{Type: "multiselect"},
-			[]interface{}{"free", "text"}, "",
+			[]any{"free", "text"}, "",
 		},
 	}
 	for _, tc := range cases {
@@ -365,7 +368,7 @@ func TestOptionExists(t *testing.T) {
 func TestToNumber(t *testing.T) {
 	cases := []struct {
 		name   string
-		v      interface{}
+		v      any
 		wantN  float64
 		wantOK bool
 	}{
@@ -392,7 +395,7 @@ func TestBuildChecks(t *testing.T) {
 		Field{Key: "idCard", Type: "document", Label: "ID Card"},
 		Field{Key: "utility", Type: "document", Label: "Utility Bill"},
 	)
-	data := map[string]interface{}{
+	data := map[string]any{
 		"name":   "Ada",
 		"idCard": "https://r2/id.pdf", // present -> pending
 		// utility absent -> failed
@@ -425,7 +428,7 @@ func TestBuildChecks_HiddenDocumentExcluded(t *testing.T) {
 		},
 	)
 	// hasBiz=false hides cacDoc -> no checks derived.
-	checks := buildChecks(schema, map[string]interface{}{"hasBiz": false})
+	checks := buildChecks(schema, map[string]any{"hasBiz": false})
 	if len(checks) != 0 {
 		t.Fatalf("hidden document should produce no check, got %+v", checks)
 	}
@@ -433,7 +436,7 @@ func TestBuildChecks_HiddenDocumentExcluded(t *testing.T) {
 
 func TestBuildChecks_NoDocumentsReturnsEmptyNonNil(t *testing.T) {
 	schema := oneStepSchema(Field{Key: "name", Type: "text", Label: "Name"})
-	checks := buildChecks(schema, map[string]interface{}{"name": "Ada"})
+	checks := buildChecks(schema, map[string]any{"name": "Ada"})
 	if checks == nil {
 		t.Fatal("buildChecks should return non-nil empty slice")
 	}

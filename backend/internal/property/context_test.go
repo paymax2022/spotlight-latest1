@@ -14,6 +14,7 @@ package property
 import (
 	"context"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -218,12 +219,7 @@ func TestLiveDB_GetContext_AggregatesAllFourSources(t *testing.T) {
 }
 
 func hasRole(roles []string, want string) bool {
-	for _, r := range roles {
-		if r == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(roles, want)
 }
 
 // TestLiveDB_SwitchContext_FailClosedOnNonHeldContext is PROPERTY-AUTHZ-006:

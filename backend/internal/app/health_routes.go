@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"os"
 	"spotlight/backend/go-common/ginutil"
@@ -31,6 +29,9 @@ import (
 	"spotlight/backend/internal/services"
 	"strconv"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // RegisterHealth wires the Phase-0 SHARED health platform (the 7 net-new shared

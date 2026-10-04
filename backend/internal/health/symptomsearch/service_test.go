@@ -7,6 +7,7 @@ package symptomsearch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -174,7 +175,7 @@ func (f *fakeRepo) appendCaseEvent(caseID string, from *ReviewState, to ReviewSt
 
 func (f *fakeRepo) InsertReviewCase(_ context.Context, rc *PharmacyReviewCase, actorID string) error {
 	if _, dup := f.casesByOrder[rc.OrderID]; dup {
-		return fmt.Errorf("unique violation: order_id")
+		return errors.New("unique violation: order_id")
 	}
 	cp := *rc
 	f.cases[rc.ID] = &cp
@@ -229,7 +230,8 @@ func (f *fakeRepo) UpsertTaxonomyRow(_ context.Context, entity, action, actorID 
 	return map[string]any{"id": "fake", "entity": entity, "action": action}, nil
 }
 
-func intPtr(v int) *int { return &v }
+//go:fix inline
+func intPtr(v int) *int { return new(v) }
 
 func newFakeRepo() *fakeRepo {
 	f := &fakeRepo{
@@ -286,7 +288,7 @@ func newFakeRepo() *fakeRepo {
 		{ID: "r3", ClusterID: "cl-fever", Expression: "who:PREGNANT_OR_BF", Priority: 30,
 			Effect: EffectRequireConfirmation, Reason: "fever while pregnant or breastfeeding", Status: StatusApproved},
 		{ID: "r4", ClusterID: "cl-hbp", Expression: "who:PREGNANT_OR_BF", Priority: 40,
-			Effect: EffectSuppressClass, SuppressClassID: strPtr("cls-nsaid"),
+			Effect: EffectSuppressClass, SuppressClassID: new("cls-nsaid"),
 			Reason: "NSAIDs suppressed in pregnancy/breastfeeding", Status: StatusApproved},
 	}
 	f.classMap = []ClassMapEntry{
@@ -312,12 +314,13 @@ func newFakeRepo() *fakeRepo {
 			TherapeuticClassID: "cls-para", InStock: false, PregnancySafe: true},
 		{ID: "sku-adult", ProductID: "p6", Name: "Adult only", Brand: "W", PackSize: "1",
 			PriceKobo: 20000, NAFDACRegNo: "A4-2222", Classification: ClassificationOTC,
-			TherapeuticClassID: "cls-para", InStock: true, AgeMinYears: intPtr(12), PregnancySafe: true},
+			TherapeuticClassID: "cls-para", InStock: true, AgeMinYears: new(12), PregnancySafe: true},
 	}
 	return f
 }
 
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func strPtr(s string) *string { return new(s) }
 
 func newTestService() (*Service, *fakeRepo) {
 	f := newFakeRepo()
@@ -448,8 +451,8 @@ func TestResolve_NoPregnancy_NSAIDPresent(t *testing.T) {
 func TestResolve_MalformedApprovedRule_FailsClosedToT3(t *testing.T) {
 	s, f := newTestService()
 	f.rules = append(f.rules, ClusterRule{
-		ID: "r-bad", ClusterID: "cl-hbp", Expression: "concept:headache AND AND broken(",
-		Priority: 1, Effect: EffectEscalate, EscalateToTier: strPtr("T2"), Status: StatusApproved,
+		ID: "r-bad", ClusterID: "cl-hbp", Expression: "concept:headache AND broken(",
+		Priority: 1, Effect: EffectEscalate, EscalateToTier: new("T2"), Status: StatusApproved,
 	})
 	res := resolve(t, s, []string{"headache"}, "", "")
 	if res.Tier != TierT3 {

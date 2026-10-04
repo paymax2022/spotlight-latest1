@@ -83,7 +83,7 @@ func TestLiveDB_DispatchFairnessAndSLA(t *testing.T) {
 	busy := seedDriver(t, ctx, pool, 6.5, 3.4) // co-located but saturated
 
 	// Saturate `busy` with baseMaxRiderLoad active orders so it is filtered out.
-	for i := 0; i < baseMaxRiderLoad; i++ {
+	for range baseMaxRiderLoad {
 		oid := uuid.New().String()
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO orders (id, customer_id, restaurant_id, rider_id, subtotal_kobo, total_kobo, status, dispatch_status, idempotency_key, delivery_address)

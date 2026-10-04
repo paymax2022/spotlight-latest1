@@ -148,7 +148,7 @@ func (s *MarkupStore) SetRate(ctx context.Context, corridor, tier string, bps in
 	}
 	corridor = NormalizeCorridor(corridor)
 	if corridor == "" {
-		return nil, fmt.Errorf("fx: corridor is required")
+		return nil, errors.New("fx: corridor is required")
 	}
 	tier = strings.ToLower(strings.TrimSpace(tier))
 

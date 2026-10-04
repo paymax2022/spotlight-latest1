@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -91,12 +92,7 @@ func (f *fakeMDCNStore) InsertAudit(_ context.Context, _, action, _, _, _ string
 	return nil
 }
 func (f *fakeMDCNStore) hasAudit(a string) bool {
-	for _, x := range f.audits {
-		if x == a {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(f.audits, a)
 }
 
 type fakeIdentity struct{ snap credential.IdentitySnapshot }

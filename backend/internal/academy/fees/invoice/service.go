@@ -365,7 +365,7 @@ func (s *Service) applyEvent(ctx context.Context, actorID string, inv *Invoice, 
 	from := inv.Status
 	to, err := feesstatemachine.InvoiceTransition(from, event)
 	if err != nil {
-		if err == feesstatemachine.ErrAlreadyInState {
+		if errors.Is(err, feesstatemachine.ErrAlreadyInState) {
 			return inv, nil // benign: already in the target state
 		}
 		return nil, ErrIllegalTransition

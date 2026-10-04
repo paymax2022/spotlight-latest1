@@ -5,8 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/go-common/ptr"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // tutorStore is the data-access surface the Service depends on. *Repository is the

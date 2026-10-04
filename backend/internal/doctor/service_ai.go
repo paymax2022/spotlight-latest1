@@ -176,7 +176,7 @@ func errorEnvelope(message string) *AiEnvelope {
 }
 
 // readyEnvelope wraps a successfully-generated, parsed output.
-func readyEnvelope(output interface{}) *AiEnvelope {
+func readyEnvelope(output any) *AiEnvelope {
 	now := time.Now()
 	return &AiEnvelope{
 		Status:      AiStatusReady,

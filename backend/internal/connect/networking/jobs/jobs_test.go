@@ -112,14 +112,14 @@ func assertFSM[S ~string](t *testing.T, name string, all []S, legal map[S][]S, f
 }
 
 func TestPN2_NoSecondLevelBountyRepresentable(t *testing.T) {
-	rt := reflect.TypeOf(ReferralBounty{})
-	for i := 0; i < rt.NumField(); i++ {
-		name := strings.ToLower(rt.Field(i).Name)
+	rt := reflect.TypeFor[ReferralBounty]()
+	for field := range rt.Fields() {
+		name := strings.ToLower(field.Name)
 		// No field may reference a parent bounty / referrer chain / upline — a
 		// referral-of-referral must be impossible to represent (PN-2).
 		for _, banned := range []string{"parent", "chain", "upline", "referredby", "sourcebounty", "level"} {
 			if strings.Contains(name, banned) {
-				t.Fatalf("PN-2 violation: ReferralBounty must not have a %q-like field, found %q", banned, rt.Field(i).Name)
+				t.Fatalf("PN-2 violation: ReferralBounty must not have a %q-like field, found %q", banned, field.Name)
 			}
 		}
 	}

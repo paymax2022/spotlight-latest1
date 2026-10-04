@@ -22,6 +22,7 @@ import (
 // service's metricsReader port resolves.
 type metricsFakeRepo struct {
 	*fakeRepo
+
 	metrics *SafetyMetrics
 	err     error
 }
@@ -137,10 +138,10 @@ func TestHTTP_SymptomSearch_RateLimited429(t *testing.T) {
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("request 3: status = %d, want 429", w.Code)
 	}
-	if got := w.Header().Get("X-RateLimit-Limit"); got != "2" {
+	if got := w.Header().Get("X-Ratelimit-Limit"); got != "2" {
 		t.Fatalf("X-RateLimit-Limit = %q, want 2", got)
 	}
-	if got := w.Header().Get("X-RateLimit-Remaining"); got != "0" {
+	if got := w.Header().Get("X-Ratelimit-Remaining"); got != "0" {
 		t.Fatalf("X-RateLimit-Remaining = %q, want 0", got)
 	}
 	var body map[string]any

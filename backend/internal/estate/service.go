@@ -5,14 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+
+	platformRedis "spotlight/backend/internal/platform/redis"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
-	platformRedis "spotlight/backend/internal/platform/redis"
 
 	"spotlight/backend/go-common/dbutil"
 )
@@ -114,7 +116,7 @@ func (s *Service) IssueVisitorPass(ctx context.Context, estateID, issuerID strin
 		return nil, err
 	}
 	if req.ValidUntil.Before(req.ValidFrom) {
-		return nil, fmt.Errorf("estate: valid_until must be after valid_from")
+		return nil, errors.New("estate: valid_until must be after valid_from")
 	}
 	p := &VisitorPass{
 		ID:          uuid.New().String(),
@@ -150,7 +152,7 @@ func (s *Service) ScanVisitorPass(ctx context.Context, estateID, scannerID, qrCo
 		&p.ID, &p.EstateID, &p.IssuedBy, &p.VisitorName, &p.Purpose,
 		&p.QRCode, &p.ValidFrom, &p.ValidUntil, &p.UsedAt, &p.Status, &p.CreatedAt,
 	); err != nil {
-		return nil, fmt.Errorf("estate: pass not found, already used, or expired")
+		return nil, errors.New("estate: pass not found, already used, or expired")
 	}
 	return p, nil
 }
@@ -161,10 +163,10 @@ func (s *Service) CreateElection(ctx context.Context, estateID, creatorID string
 		return nil, err
 	}
 	if req.EndsAt.Before(req.StartsAt) {
-		return nil, fmt.Errorf("estate: ends_at must be after starts_at")
+		return nil, errors.New("estate: ends_at must be after starts_at")
 	}
 	if len(req.Candidates) < 2 {
-		return nil, fmt.Errorf("estate: election must have at least 2 candidates")
+		return nil, errors.New("estate: election must have at least 2 candidates")
 	}
 
 	el := &Election{
@@ -222,11 +224,11 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 	var startsAt, endsAt time.Time
 	if err := s.db.QueryRow(ctx, `SELECT status, starts_at, ends_at FROM elections WHERE id=$1 AND estate_id=$2`, electionID, estateID).
 		Scan(&status, &startsAt, &endsAt); err != nil {
-		return nil, fmt.Errorf("estate: election not found")
+		return nil, errors.New("estate: election not found")
 	}
 	now := time.Now()
 	if status != "open" || now.Before(startsAt) || now.After(endsAt) {
-		return nil, fmt.Errorf("estate: election is not currently open for voting")
+		return nil, errors.New("estate: election is not currently open for voting")
 	}
 
 	// Acquire Redlock to prevent duplicate concurrent submissions.
@@ -234,7 +236,7 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 	if s.redis != nil {
 		ok, token, err := platformRedis.AcquireLock(ctx, s.redis, lockKey, 10*time.Second)
 		if err != nil || !ok {
-			return nil, fmt.Errorf("estate: vote lock contention — try again")
+			return nil, errors.New("estate: vote lock contention — try again")
 		}
 		defer platformRedis.ReleaseLock(ctx, s.redis, lockKey, token)
 	}
@@ -258,9 +260,9 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 	var insertedID string
 	if err := s.db.QueryRow(ctx, q, v.ID, v.ElectionID, v.VoterID, v.CandidateID).Scan(&insertedID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("estate: you have already voted in this election")
+			return nil, errors.New("estate: you have already voted in this election")
 		}
-		return nil, fmt.Errorf("estate: invalid candidate for this election")
+		return nil, errors.New("estate: invalid candidate for this election")
 	}
 	return v, nil
 }
@@ -269,10 +271,10 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 func (s *Service) GetResults(ctx context.Context, estateID, electionID string) ([]Candidate, error) {
 	var status string
 	if err := s.db.QueryRow(ctx, `SELECT status FROM elections WHERE id=$1 AND estate_id=$2`, electionID, estateID).Scan(&status); err != nil {
-		return nil, fmt.Errorf("estate: election not found")
+		return nil, errors.New("estate: election not found")
 	}
 	if status != "closed" && status != "tallied" {
-		return nil, fmt.Errorf("estate: results only available after election closes")
+		return nil, errors.New("estate: results only available after election closes")
 	}
 	const q = `
 		SELECT ec.id, ec.election_id, ec.name, ec.bio, COUNT(ev.id) AS votes
@@ -340,7 +342,7 @@ func (s *Service) LookupCode(ctx context.Context, estateID, numericCode, qrCode 
 		&c.VehiclePlate, &c.Purpose, &c.CodeType, &c.NumericCode, &c.QRCode,
 		&c.ValidFrom, &c.ValidUntil, &c.UsedCount, &c.MaxUses, &c.Status, &c.Blacklisted, &c.CreatedAt,
 	); err != nil {
-		return nil, fmt.Errorf("access code not found")
+		return nil, errors.New("access code not found")
 	}
 
 	// Resolve the issuing resident's unit for display.
@@ -419,7 +421,7 @@ func (s *Service) CheckOutVisitor(ctx context.Context, estateID, guardID, codeID
 	if err := s.db.QueryRow(ctx,
 		`SELECT COUNT(*) FROM visitor_access_codes WHERE id=$1 AND estate_id=$2`, codeID, estateID,
 	).Scan(&cnt); err != nil || cnt == 0 {
-		return fmt.Errorf("code not found in this estate")
+		return errors.New("code not found in this estate")
 	}
 	_, err := s.db.Exec(ctx,
 		`INSERT INTO visitor_checkins (id, code_id, guard_id, gate_id, event, captured_at)
@@ -567,12 +569,12 @@ func (s *Service) CreateAccessCode(ctx context.Context, estateID, userID string,
 		req.MaxUses = 1
 	}
 	if req.ValidUntil.Before(req.ValidFrom) {
-		return nil, fmt.Errorf("valid_until must be after valid_from")
+		return nil, errors.New("valid_until must be after valid_from")
 	}
 
 	// Retry up to 5 times to get a unique numeric code.
 	var code *AccessCode
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		numeric := generateNumericCode()
 		qrID := uuid.New().String()
 		c := &AccessCode{
@@ -600,7 +602,7 @@ func (s *Service) CreateAccessCode(ctx context.Context, estateID, userID string,
 		break
 	}
 	if code == nil {
-		return nil, fmt.Errorf("failed to generate unique access code, try again")
+		return nil, errors.New("failed to generate unique access code, try again")
 	}
 	return code, nil
 }
@@ -669,7 +671,7 @@ func (s *Service) RevokeCode(ctx context.Context, estateID, userID, codeID strin
 // ExtendCode pushes the valid_until date forward.
 func (s *Service) ExtendCode(ctx context.Context, estateID, userID, codeID string, validUntil time.Time) error {
 	if validUntil.Before(time.Now()) {
-		return fmt.Errorf("new valid_until must be in the future")
+		return errors.New("new valid_until must be in the future")
 	}
 	_, err := s.db.Exec(ctx,
 		`UPDATE visitor_access_codes SET valid_until=$1 WHERE id=$2 AND estate_id=$3 AND issued_by=$4`,
@@ -699,7 +701,7 @@ func (s *Service) GetCheckinHistory(ctx context.Context, estateID, userID, codeI
 	if err := s.db.QueryRow(ctx,
 		`SELECT issued_by FROM visitor_access_codes WHERE id=$1 AND estate_id=$2`, codeID, estateID,
 	).Scan(&ownerID); err != nil || ownerID != userID {
-		return nil, fmt.Errorf("access denied or code not found")
+		return nil, errors.New("access denied or code not found")
 	}
 	const q = `SELECT id, code_id, guard_id, COALESCE(gate_id,''), event, captured_at, COALESCE(photo_url,'')
 		FROM visitor_checkins WHERE code_id=$1 ORDER BY captured_at DESC`
@@ -844,13 +846,13 @@ func (s *Service) getResidentID(ctx context.Context, estateID, userID string) (s
 	if err := s.db.QueryRow(ctx,
 		`SELECT id, banned_at IS NOT NULL, deleted_at IS NOT NULL FROM estate_residents WHERE estate_id=$1 AND user_id=$2`, estateID, userID,
 	).Scan(&id, &banned, &deleted); err != nil {
-		return "", fmt.Errorf("estate: not a member of this estate")
+		return "", errors.New("estate: not a member of this estate")
 	}
 	if deleted {
-		return "", fmt.Errorf("estate: this account has been deleted")
+		return "", errors.New("estate: this account has been deleted")
 	}
 	if banned {
-		return "", fmt.Errorf("estate: this account is banned from the estate")
+		return "", errors.New("estate: this account is banned from the estate")
 	}
 	return id, nil
 }
@@ -1096,7 +1098,7 @@ func (s *Service) GetResidentCard(ctx context.Context, estateID, userID string) 
 		&card.ResidentID, &card.EstateID, &card.EstateName, &card.Unit, &card.Role,
 		&card.OccupancyType, &card.ProfilePhotoURL, &card.FullName,
 	); err != nil {
-		return nil, fmt.Errorf("estate: resident not found in this estate")
+		return nil, errors.New("estate: resident not found in this estate")
 	}
 	card.QRValue = card.EstateID + ":" + card.ResidentID
 	card.IssuedAt = time.Now().UTC().Format(time.RFC3339)
@@ -1109,7 +1111,7 @@ func (s *Service) GenerateInviteCode(ctx context.Context, estateID, adminID stri
 		return nil, err
 	}
 	if req.ExpiresAt.Before(time.Now()) {
-		return nil, fmt.Errorf("estate: expires_at must be in the future")
+		return nil, errors.New("estate: expires_at must be in the future")
 	}
 	// Generate a compact alphanumeric code (12 chars).
 	raw := uuid.New().String()
@@ -1146,13 +1148,13 @@ func (s *Service) JoinWithInviteCode(ctx context.Context, userID, code string) (
 	if err := tx.QueryRow(ctx, lookup, code).Scan(
 		&ic.ID, &ic.EstateID, &ic.MaxUses, &ic.UsedCount, &ic.ExpiresAt,
 	); err != nil {
-		return nil, fmt.Errorf("estate: invalid invite code")
+		return nil, errors.New("estate: invalid invite code")
 	}
 	if time.Now().After(ic.ExpiresAt) {
-		return nil, fmt.Errorf("estate: invite code has expired")
+		return nil, errors.New("estate: invite code has expired")
 	}
 	if ic.UsedCount >= ic.MaxUses {
-		return nil, fmt.Errorf("estate: invite code has reached maximum uses")
+		return nil, errors.New("estate: invite code has reached maximum uses")
 	}
 
 	if _, err := tx.Exec(ctx, `UPDATE estate_invite_codes SET used_count=used_count+1 WHERE id=$1`, ic.ID); err != nil {
@@ -1202,7 +1204,7 @@ func (s *Service) RequestAccess(ctx context.Context, estateID, userID, message s
 // ReviewJoinRequest approves or rejects a pending join request.
 func (s *Service) ReviewJoinRequest(ctx context.Context, estateID, adminID, requestID, decision string) (*JoinRequest, error) {
 	if decision != "approved" && decision != "rejected" {
-		return nil, fmt.Errorf("estate: decision must be 'approved' or 'rejected'")
+		return nil, errors.New("estate: decision must be 'approved' or 'rejected'")
 	}
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
@@ -1225,7 +1227,7 @@ func (s *Service) ReviewJoinRequest(ctx context.Context, estateID, adminID, requ
 		&jr.ID, &jr.EstateID, &jr.UserID, &jr.Message, &jr.Status,
 		&jr.ReviewedBy, &jr.ReviewedAt, &jr.CreatedAt,
 	); err != nil {
-		return nil, fmt.Errorf("estate: join request not found or already reviewed")
+		return nil, errors.New("estate: join request not found or already reviewed")
 	}
 
 	if decision == "approved" {
@@ -1277,7 +1279,7 @@ func (s *Service) GetMyJoinRequest(ctx context.Context, estateID, userID string)
 		&jr.ReviewedBy, &jr.ReviewedAt, &jr.CreatedAt,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("estate: no join request found")
+		return nil, errors.New("estate: no join request found")
 	}
 	return jr, nil
 }
@@ -1353,7 +1355,7 @@ func (s *Service) ListProperties(ctx context.Context, estateID, memberID string)
 // ClaimOwnership submits a document-backed ownership claim for a property.
 func (s *Service) ClaimOwnership(ctx context.Context, propertyID, userID, docURL string) (*OwnershipClaim, error) {
 	if strings.TrimSpace(docURL) == "" {
-		return nil, fmt.Errorf("estate: ownership_doc_url is required")
+		return nil, errors.New("estate: ownership_doc_url is required")
 	}
 	c := &OwnershipClaim{
 		ID:              uuid.New().String(),
@@ -1433,7 +1435,7 @@ func (s *Service) ReviewTenancyRequest(ctx context.Context, requestID, landlordI
 		&tr.ID, &tr.PropertyID, &tr.TenantID, &tr.LandlordID, &tr.LeaseStart, &tr.LeaseEnd,
 		&tr.AgreementURL, &tr.Status, &tr.ReviewedAt, &tr.CreatedAt,
 	); err != nil {
-		return nil, fmt.Errorf("estate: tenancy request not found, not your request, or already reviewed")
+		return nil, errors.New("estate: tenancy request not found, not your request, or already reviewed")
 	}
 
 	// On approval: mark property occupied and upsert a resident record for the tenant.
@@ -1477,18 +1479,16 @@ func (s *Service) assertRoles(ctx context.Context, estateID, userID string, role
 	var role string
 	var banned, deleted bool
 	if err := s.db.QueryRow(ctx, q, estateID, userID).Scan(&role, &banned, &deleted); err != nil {
-		return fmt.Errorf("estate: not a member of this estate")
+		return errors.New("estate: not a member of this estate")
 	}
 	if deleted {
-		return fmt.Errorf("estate: this account has been deleted")
+		return errors.New("estate: this account has been deleted")
 	}
 	if banned {
-		return fmt.Errorf("estate: this account is banned from the estate")
+		return errors.New("estate: this account is banned from the estate")
 	}
-	for _, r := range roles {
-		if role == r {
-			return nil
-		}
+	if slices.Contains(roles, role) {
+		return nil
 	}
-	return fmt.Errorf("estate: insufficient role")
+	return errors.New("estate: insufficient role")
 }

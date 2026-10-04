@@ -1,4 +1,4 @@
-package services //nolint:testpackage // exercises unexported authService internals; package-internal tests are the established convention here
+package services
 
 import (
 	"encoding/json"

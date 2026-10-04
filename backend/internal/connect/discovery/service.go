@@ -56,8 +56,8 @@ type rawCandidate struct {
 func (s *Service) viewer(ctx context.Context, userID string) (profileID string, lat, lng *float64, err error) {
 	const q = `SELECT id, geo_lat, geo_lng FROM connect_profiles WHERE user_id = $1`
 	err = s.db.QueryRow(ctx, q, userID).Scan(&profileID, &lat, &lng)
-	if err == pgx.ErrNoRows {
-		return "", nil, nil, fmt.Errorf("connect: no profile for user")
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, nil, errors.New("connect: no profile for user")
 	}
 	return profileID, lat, lng, err
 }

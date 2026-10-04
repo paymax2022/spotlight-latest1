@@ -2,9 +2,6 @@ package app
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
-	goredis "github.com/redis/go-redis/v9"
 	"log"
 	"os"
 	"spotlight/backend/internal/config"
@@ -19,6 +16,10 @@ import (
 	"spotlight/backend/internal/services"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // NewRouter builds the engine. Kept for callers/tests that have no lifecycle

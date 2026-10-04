@@ -2,6 +2,7 @@ package learn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -226,7 +227,7 @@ func (s *AdminService) AdminGetQuiz(ctx context.Context, quizID string) (*Quiz, 
 func (s *AdminService) loadQuizAdmin(ctx context.Context, quizID string) (*Quiz, error) {
 	var q Quiz
 	if err := s.db.QueryRow(ctx, `SELECT id, lesson_id FROM learn_quizzes WHERE id=$1`, quizID).Scan(&q.ID, &q.LessonID); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("learn admin: load quiz: %w", err)

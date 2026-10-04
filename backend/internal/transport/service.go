@@ -202,7 +202,7 @@ func (s *Service) SetDriverStatus(ctx context.Context, userID string, status Dri
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("transport: driver not found")
+		return errors.New("transport: driver not found")
 	}
 	return nil
 }
@@ -251,7 +251,7 @@ func (s *Service) RequestTrip(ctx context.Context, riderID string, req RequestTr
 func (s *Service) AcceptTrip(ctx context.Context, tripID, driverUserID string) error {
 	var driverID string
 	if err := s.db.QueryRow(ctx, `SELECT id FROM drivers WHERE user_id=$1 AND status='online' AND verification_status='approved'`, driverUserID).Scan(&driverID); err != nil {
-		return fmt.Errorf("transport: driver not found, not online, or not approved")
+		return errors.New("transport: driver not found, not online, or not approved")
 	}
 	const q = `UPDATE trips SET status='accepted', phase='driver_assigned', driver_id=$1 WHERE id=$2 AND status='requested'`
 	tag, err := s.db.Exec(ctx, q, driverID, tripID)
@@ -259,7 +259,7 @@ func (s *Service) AcceptTrip(ctx context.Context, tripID, driverUserID string) e
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("transport: trip not available for acceptance")
+		return errors.New("transport: trip not available for acceptance")
 	}
 	s.db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, driverID)
 	s.recordEvent(ctx, tripID, "driver_assigned", driverUserID, PhaseRequested, PhaseDriverAssigned, nil)

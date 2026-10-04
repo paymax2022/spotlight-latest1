@@ -228,7 +228,7 @@ func (s *Service) RegisterEvent(ctx context.Context, userID, eventID string) (*E
 			return nil, fmt.Errorf("association: event capacity: %w", err)
 		}
 		if taken >= *capacity {
-			return nil, fmt.Errorf("association: event is full")
+			return nil, errors.New("association: event is full")
 		}
 	}
 
@@ -578,7 +578,7 @@ func (s *Service) BulkImportMembers(ctx context.Context, adminID, orgID string, 
 	count := 0
 	for {
 		rec, err := cr.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

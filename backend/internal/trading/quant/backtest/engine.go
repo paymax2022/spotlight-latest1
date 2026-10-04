@@ -23,7 +23,7 @@ func Run(prices []float64, cfg Config, decide DecisionFunc) Result {
 
 	// Open position (single instrument).
 	var (
-		pos        Dir = Flat
+		pos        = Flat
 		entryPrice float64
 		notional   int64
 		units      float64

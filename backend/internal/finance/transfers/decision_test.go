@@ -141,7 +141,7 @@ func TestMaskPhone(t *testing.T) {
 			if got[len(got)-4:] != tc.in[len(tc.in)-4:] {
 				t.Errorf("MaskPhone(%q) must preserve only the last 4 digits", tc.in)
 			}
-			for i := 0; i < len(got)-4; i++ {
+			for i := range len(got) - 4 {
 				if got[i] != '*' {
 					t.Errorf("MaskPhone(%q)=%q leaked a digit at position %d", tc.in, got, i)
 				}

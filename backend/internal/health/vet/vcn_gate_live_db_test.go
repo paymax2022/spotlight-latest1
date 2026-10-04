@@ -98,7 +98,7 @@ func seedVCNGateFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (
 		pool.Exec(bg, `DELETE FROM pets WHERE id=$1`, petID)
 		pool.Exec(bg, `DELETE FROM vet_services WHERE id=$1`, serviceID)
 	})
-	return
+	return providerID, vetOwnerID, apptID
 }
 
 // TestLiveDB_Confirm_RejectsSuspendedVet locks the fix: a vet whose VCN

@@ -367,7 +367,7 @@ func (r *Repository) UpdateOpportunity(ctx context.Context, actor, id string, re
 		if len(args) > 1 {
 			sb.WriteString(", ")
 		}
-		sb.WriteString(fmt.Sprintf("%s = $%d", col, len(args)))
+		fmt.Fprintf(&sb, "%s = $%d", col, len(args))
 	}
 	if req.Title != nil {
 		set("title", *req.Title)
@@ -388,7 +388,7 @@ func (r *Repository) UpdateOpportunity(ctx context.Context, actor, id string, re
 		return r.GetOpportunity(ctx, id) // nothing to update
 	}
 	args = append(args, id)
-	sb.WriteString(fmt.Sprintf(" WHERE id = $%d", len(args)))
+	fmt.Fprintf(&sb, " WHERE id = $%d", len(args))
 	tag, err := r.db.Exec(ctx, sb.String(), args...)
 	if err != nil {
 		return nil, err

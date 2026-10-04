@@ -2,6 +2,7 @@ package investai
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -196,7 +197,7 @@ func TestSystemPrompt_EncodesGuardrail(t *testing.T) {
 func TestExplainAsset(t *testing.T) {
 	s := &Service{} // db/ai unused by ExplainAsset
 
-	if _, err := s.ExplainAsset(context.Background(), "   "); err != ErrBadInput {
+	if _, err := s.ExplainAsset(context.Background(), "   "); !errors.Is(err, ErrBadInput) {
 		t.Errorf("ExplainAsset(blank) err = %v, want ErrBadInput", err)
 	}
 

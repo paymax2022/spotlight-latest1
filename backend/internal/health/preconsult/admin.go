@@ -3,6 +3,7 @@ package preconsult
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -49,18 +50,18 @@ func (s *Service) ListRedFlagRules(ctx context.Context) ([]RedFlagRule, error) {
 // UpsertRedFlagRule creates or updates a rule by unique code (admin A2).
 func (s *Service) UpsertRedFlagRule(ctx context.Context, actor string, r RedFlagRule) (*RedFlagRule, error) {
 	if r.Code == "" || r.Label == "" {
-		return nil, fmt.Errorf("preconsult: code and label required")
+		return nil, errors.New("preconsult: code and label required")
 	}
 	if r.Level < 1 || r.Level > 5 {
-		return nil, fmt.Errorf("preconsult: level must be 1..5")
+		return nil, errors.New("preconsult: level must be 1..5")
 	}
 	if r.Severity != "emergency" && r.Severity != "urgent" {
-		return nil, fmt.Errorf("preconsult: invalid severity")
+		return nil, errors.New("preconsult: invalid severity")
 	}
 	switch r.Routing {
 	case "EMERGENCY", "URGENT_CARE", "CRISIS":
 	default:
-		return nil, fmt.Errorf("preconsult: invalid routing")
+		return nil, errors.New("preconsult: invalid routing")
 	}
 	if len(r.MatchJSON) == 0 {
 		r.MatchJSON = json.RawMessage(`{}`)
@@ -86,7 +87,7 @@ func (s *Service) ToggleRedFlagRule(ctx context.Context, actor, code string, act
 		return nil, err
 	}
 	if ct.RowsAffected() == 0 {
-		return nil, fmt.Errorf("preconsult: rule not found")
+		return nil, errors.New("preconsult: rule not found")
 	}
 	s.audited(actor, "", "health.preconsult.admin.rule.toggle", code, nil, map[string]any{"active": active})
 	return s.getRule(ctx, code)
@@ -132,7 +133,7 @@ func (s *Service) ListConsentVersions(ctx context.Context) ([]ConsentVersion, er
 // CreateConsentVersion authors a new consent version (immutable per version+locale).
 func (s *Service) CreateConsentVersion(ctx context.Context, actor string, c ConsentVersion) (*ConsentVersion, error) {
 	if c.Version < 1 || c.Body == "" {
-		return nil, fmt.Errorf("preconsult: version>=1 and body required")
+		return nil, errors.New("preconsult: version>=1 and body required")
 	}
 	if c.ConsentKey == "" {
 		c.ConsentKey = "PRE_CONSULT_INTAKE"
@@ -158,10 +159,10 @@ func (s *Service) UpsertVocab(ctx context.Context, actor, kind, code, label stri
 	switch kind {
 	case "condition", "allergen", "medication":
 	default:
-		return fmt.Errorf("preconsult: invalid vocab kind")
+		return errors.New("preconsult: invalid vocab kind")
 	}
 	if code == "" || label == "" {
-		return fmt.Errorf("preconsult: code and label required")
+		return errors.New("preconsult: code and label required")
 	}
 	const up = `INSERT INTO health_clinical_vocab (id, kind, code, label, active) VALUES ($1,$2,$3,$4,$5)
 	            ON CONFLICT (kind, code) DO UPDATE SET label=EXCLUDED.label, active=EXCLUDED.active, version=health_clinical_vocab.version+1`
@@ -178,10 +179,10 @@ func (s *Service) GetConfig(ctx context.Context, key string) (json.RawMessage, e
 
 func (s *Service) SetConfig(ctx context.Context, actor, key string, value json.RawMessage) error {
 	if key == "" {
-		return fmt.Errorf("preconsult: config key required")
+		return errors.New("preconsult: config key required")
 	}
 	if len(value) == 0 || !json.Valid(value) {
-		return fmt.Errorf("preconsult: value must be valid JSON")
+		return errors.New("preconsult: value must be valid JSON")
 	}
 	const up = `INSERT INTO health_intake_config (id, config_key, value) VALUES ($1,$2,$3)
 	            ON CONFLICT (config_key) DO UPDATE SET value=EXCLUDED.value, version=health_intake_config.version+1, updated_at=now()`
@@ -248,8 +249,8 @@ type AdminIntakeRecord struct {
 func (s *Service) AdminViewIntake(ctx context.Context, actor, appointmentID string) (*AdminIntakeRecord, error) {
 	it, err := s.getIntakeByAppointment(ctx, appointmentID)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("preconsult: intake not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("preconsult: intake not found")
 		}
 		return nil, err
 	}

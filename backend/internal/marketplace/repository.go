@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"maps"
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/strutil"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -971,6 +972,7 @@ const boostColsB = `b.id, b.listing_id, b.seller_id, b.tier, b.duration_days, b.
 // admin marketplace boost screen (frontend-admin MktBoost) renders unchanged.
 type AdminBoostRow struct {
 	Boost
+
 	ListingTitle string `json:"listing_title,omitempty"`
 }
 

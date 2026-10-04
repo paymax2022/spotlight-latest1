@@ -19,6 +19,7 @@ import (
 // quietly returning a zero value.
 type denyAllRBAC struct {
 	services.RBACService
+
 	asked []string
 }
 
@@ -61,7 +62,7 @@ func TestRegisterAdmin_EveryRouteRequiresPermission(t *testing.T) {
 		t.Run(ri.Method+" "+ri.Path, func(t *testing.T) {
 			// Fill in :params so the request actually matches this route.
 			path := ri.Path
-			for _, seg := range strings.Split(ri.Path, "/") {
+			for seg := range strings.SplitSeq(ri.Path, "/") {
 				if strings.HasPrefix(seg, ":") {
 					path = strings.Replace(path, seg, "11111111-1111-1111-1111-111111111111", 1)
 				}

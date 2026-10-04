@@ -119,10 +119,7 @@ type FailRequest struct {
 // deliveryFare computes a delivery fare from distance × duration × size, floored.
 func deliveryFare(distanceM, durationS int, size string, cfg *PricingConfig) int64 {
 	raw := SystemFare(distanceM, durationS, cfg)
-	scaled := int64(float64(raw) * deliverySizeMultiplier(size))
-	if scaled < cfg.MinFareKobo {
-		scaled = cfg.MinFareKobo
-	}
+	scaled := max(int64(float64(raw)*deliverySizeMultiplier(size)), cfg.MinFareKobo)
 	return scaled
 }
 
@@ -589,7 +586,7 @@ func (s *Service) CancelDelivery(ctx context.Context, id, ownerID, reason string
 		return codedErr(http.StatusForbidden, CodeForbidden, "not your delivery")
 	}
 	if !canTransitionDelivery(d.Status, "cancelled") {
-		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot cancel from status %s", d.Status))
+		return codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from status "+d.Status)
 	}
 	if err := s.deliverySetStatus(ctx, id, d.Status, "cancelled"); err != nil {
 		return err
@@ -783,7 +780,7 @@ func (s *Service) FailDelivery(ctx context.Context, id, driverUserID, reason str
 		return err
 	}
 	if !canTransitionDelivery(d.Status, "failed") {
-		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot fail from status %s", d.Status))
+		return codedErr(http.StatusConflict, CodeInvalidState, "cannot fail from status "+d.Status)
 	}
 	if err := s.deliverySetStatus(ctx, id, d.Status, "failed"); err != nil {
 		return err

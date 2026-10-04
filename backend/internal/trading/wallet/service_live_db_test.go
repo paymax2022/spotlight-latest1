@@ -11,6 +11,7 @@ package wallet
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -178,7 +179,7 @@ func TestLiveDB_TradingWallet_MoneyPath(t *testing.T) {
 	}
 	assertReconciled(t, svc, ctx)
 
-	if _, err := svc.Redeem(ctx, userA, run+"red:over", 1_000_000_000_000); err != ErrInsufficientUnit {
+	if _, err := svc.Redeem(ctx, userA, run+"red:over", 1_000_000_000_000); !errors.Is(err, ErrInsufficientUnit) {
 		t.Fatalf("over-redeem must be rejected, got %v", err)
 	}
 }
@@ -202,7 +203,7 @@ func TestLiveDB_TradingWallet_IdemConflictNoCashout(t *testing.T) {
 	unitsBefore := userUnits(t, ctx, pool, a)
 
 	// Redeem with the SAME key → must be refused, never pay out.
-	if _, err := svc.Redeem(ctx, a, run+"K", 100); err != ErrIdemConflict {
+	if _, err := svc.Redeem(ctx, a, run+"K", 100); !errors.Is(err, ErrIdemConflict) {
 		t.Fatalf("reused subscribe key on redeem must be ErrIdemConflict, got %v", err)
 	}
 	if wal, _ := led.GetBalance(ctx, a); wal != walBefore {
@@ -278,7 +279,7 @@ func TestLiveDB_TradingWallet_NoPhantomMintOnUnpaidReservation(t *testing.T) {
 	}
 
 	// Replay with an empty wallet → drives the debit, insufficient funds, cancels.
-	if _, err := svc.Subscribe(ctx, u, run+"K", 1_000_000); err != ErrInsufficientCash {
+	if _, err := svc.Subscribe(ctx, u, run+"K", 1_000_000); !errors.Is(err, ErrInsufficientCash) {
 		t.Fatalf("unpaid reservation replay must not mint; want ErrInsufficientCash, got %v", err)
 	}
 	if un := userUnits(t, ctx, pool, u); un != 0 {
@@ -310,7 +311,7 @@ func TestLiveDB_TradingWallet_AccessGate(t *testing.T) {
 	resetFund(t, ctx, pool, led)
 	u := seedUser(t, ctx, pool)
 	fundWallet(t, ctx, led, u, 5_000_000)
-	if _, err := svc.Subscribe(ctx, u, "sub:x", 1_000_000); err != ErrNoAccess {
+	if _, err := svc.Subscribe(ctx, u, "sub:x", 1_000_000); !errors.Is(err, ErrNoAccess) {
 		t.Fatalf("deposit without module-KYC must be refused, got %v", err)
 	}
 }

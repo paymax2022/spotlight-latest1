@@ -6,10 +6,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -83,11 +84,9 @@ func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACSe
 			perms, _ = rbac.GetUserPermissions(id, "global", "")
 		}()
 		if enforce && sessions != nil {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				_, sessErr = sessions.ValidateAccess(token)
-			}()
+			})
 		}
 		wg.Wait()
 

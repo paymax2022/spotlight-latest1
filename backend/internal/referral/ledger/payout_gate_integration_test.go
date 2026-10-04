@@ -15,6 +15,7 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -35,7 +36,7 @@ func TestTransition_PayoutAccountStatusGate_Integration(t *testing.T) {
 	rewardID := seedEligibleRewardReturningID(t, pool, suspended, 30_000)
 	mustExec(t, pool, `UPDATE platform_users SET status='suspended' WHERE id=$1`, suspended)
 
-	if err := svc.Transition(ctx, rewardID, StatePaid, "payout-suspended-"+rewardID); err != ErrAccountNotEligible {
+	if err := svc.Transition(ctx, rewardID, StatePaid, "payout-suspended-"+rewardID); !errors.Is(err, ErrAccountNotEligible) {
 		t.Fatalf("suspended account: expected ErrAccountNotEligible, got %v", err)
 	}
 

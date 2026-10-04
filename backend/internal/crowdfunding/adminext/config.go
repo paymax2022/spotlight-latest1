@@ -15,6 +15,7 @@ package adminext
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -94,7 +95,7 @@ func (s *Service) ListCategories(ctx context.Context) ([]CategoryConfig, error) 
 // writes an audit row. Exactly one field is expected per call; both are accepted.
 func (s *Service) PatchCategory(ctx context.Context, id, adminID string, req CategoryPatchRequest) error {
 	if req.Enabled == nil && req.RequiresEnhancedReview == nil {
-		return fmt.Errorf("adminext: no category field supplied")
+		return errors.New("adminext: no category field supplied")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -104,7 +105,7 @@ func (s *Service) PatchCategory(ctx context.Context, id, adminID string, req Cat
 
 	var slug string
 	if err := tx.QueryRow(ctx, `SELECT slug FROM crowdfunding_categories WHERE id=$1 FOR UPDATE`, id).Scan(&slug); err != nil {
-		return fmt.Errorf("adminext: category not found")
+		return errors.New("adminext: category not found")
 	}
 	if req.Enabled != nil {
 		if _, err := tx.Exec(ctx, `UPDATE crowdfunding_categories SET enabled=$1 WHERE id=$2`, *req.Enabled, id); err != nil {
@@ -142,10 +143,10 @@ func (s *Service) GetFees(ctx context.Context) (*FeeConfig, error) {
 func (s *Service) UpdateFees(ctx context.Context, adminID string, f FeeConfig) (*FeeConfig, error) {
 	if f.PlatformFeeBps < 0 || f.PaymentFeeBps < 0 || f.PaymentFeeFlatKobo < 0 ||
 		f.MinContributionKobo < 0 || f.MaxContributionKobo < 0 {
-		return nil, fmt.Errorf("adminext: fee values must be non-negative")
+		return nil, errors.New("adminext: fee values must be non-negative")
 	}
 	if f.MaxContributionKobo > 0 && f.MinContributionKobo > f.MaxContributionKobo {
-		return nil, fmt.Errorf("adminext: minContributionKobo cannot exceed maxContributionKobo")
+		return nil, errors.New("adminext: minContributionKobo cannot exceed maxContributionKobo")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -155,7 +156,7 @@ func (s *Service) UpdateFees(ctx context.Context, adminID string, f FeeConfig) (
 
 	var prevPlatform int
 	if err := tx.QueryRow(ctx, `SELECT platform_fee_bps FROM cf_fee_config WHERE id=1 FOR UPDATE`).Scan(&prevPlatform); err != nil {
-		return nil, fmt.Errorf("adminext: fee config not found")
+		return nil, errors.New("adminext: fee config not found")
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE cf_fee_config SET
@@ -207,7 +208,7 @@ func (s *Service) SetFlag(ctx context.Context, key, adminID string, enabled bool
 
 	var locked bool
 	if err := tx.QueryRow(ctx, `SELECT locked FROM cf_feature_flags WHERE key=$1 FOR UPDATE`, key).Scan(&locked); err != nil {
-		return fmt.Errorf("adminext: feature flag not found")
+		return errors.New("adminext: feature flag not found")
 	}
 	if locked {
 		return fmt.Errorf("adminext: feature flag %q is locked and cannot be changed", key)

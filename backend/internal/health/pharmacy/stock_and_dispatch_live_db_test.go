@@ -119,7 +119,7 @@ func seedStockFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sto
 		pool.Exec(bg, `DELETE FROM pharmacy_products WHERE id=$1`, productID)
 		pool.Exec(bg, `DELETE FROM health_providers WHERE id=$1`, pharmacyID)
 	})
-	return
+	return patientID, pharmacyID, productID
 }
 
 func fundWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID string, kobo int64) {

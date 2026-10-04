@@ -2,6 +2,7 @@ package restaurant
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -34,12 +35,7 @@ const (
 var riderStatuses = []string{"available", "on_delivery", "offline", "suspended"}
 
 func isKnownRiderStatus(s string) bool {
-	for _, v := range riderStatuses {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(riderStatuses, s)
 }
 
 // riderStatusSQL is mapRiderStatus expressed as SQL (ADR-050).
@@ -263,12 +259,7 @@ func (s *Service) riderRoster(ctx context.Context, p AdminRiderParams, withCateg
 var dispatchStatuses = []string{"none", "searching", "assigned", "delivered"}
 
 func isKnownDispatchStatus(s string) bool {
-	for _, v := range dispatchStatuses {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(dispatchStatuses, s)
 }
 
 // ValidateDispatchStatus reports whether a caller-supplied dispatch status is real.

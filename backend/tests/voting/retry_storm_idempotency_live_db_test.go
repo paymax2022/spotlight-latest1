@@ -76,10 +76,8 @@ func TestNF005_CreditPaidVoteTransaction_TSBridge_RetryStorm(t *testing.T) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	wins, replays, errs := 0, 0, 0
-	for i := 0; i < attempts; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range attempts {
+		wg.Go(func() {
 			var alreadyCredited, refMismatch bool
 			var voteID *string
 			err := pool.QueryRow(ctx, `
@@ -104,7 +102,7 @@ func TestNF005_CreditPaidVoteTransaction_TSBridge_RetryStorm(t *testing.T) {
 			} else if voteID != nil {
 				wins++
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -228,10 +226,8 @@ func TestNF005_PaidVote_GoConnect_RetryStorm(t *testing.T) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	successes, dupErrors, otherErrors := 0, 0, 0
-	for i := 0; i < attempts; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range attempts {
+		wg.Go(func() {
 			_, err := svc.PaidVote(ctx, contest, voter, idemKey, connectvoting.PaidVoteRequest{
 				OptionRef: contestant,
 				Quantity:  1,
@@ -251,7 +247,7 @@ func TestNF005_PaidVote_GoConnect_RetryStorm(t *testing.T) {
 				// INSERT, not the ledger's.
 				otherErrors++
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

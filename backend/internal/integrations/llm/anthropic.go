@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -100,7 +101,7 @@ type anthropicResponse struct {
 // caller must treat this as a failure (never present fabricated content).
 func (c *Client) GenerateJSON(ctx context.Context, systemPrompt, userPrompt string) (json.RawMessage, error) {
 	if !c.Enabled() {
-		return nil, fmt.Errorf("llm: client not configured (missing API key)")
+		return nil, errors.New("llm: client not configured (missing API key)")
 	}
 
 	reqBody := anthropicRequest{
@@ -121,9 +122,9 @@ func (c *Client) GenerateJSON(ctx context.Context, systemPrompt, userPrompt stri
 		return nil, fmt.Errorf("llm: build request: %w", err)
 	}
 	// The API key is set ONLY on the outbound request header to api.anthropic.com.
-	httpReq.Header.Set("x-api-key", c.apiKey)
-	httpReq.Header.Set("anthropic-version", anthropicVersion)
-	httpReq.Header.Set("content-type", "application/json")
+	httpReq.Header.Set("X-Api-Key", c.apiKey)
+	httpReq.Header.Set("Anthropic-Version", anthropicVersion)
+	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -146,14 +147,14 @@ func (c *Client) GenerateJSON(ctx context.Context, systemPrompt, userPrompt stri
 		return nil, fmt.Errorf("llm: decode response envelope: %w", err)
 	}
 	if len(parsed.Content) == 0 || parsed.Content[0].Text == "" {
-		return nil, fmt.Errorf("llm: empty completion content")
+		return nil, errors.New("llm: empty completion content")
 	}
 
 	text := parsed.Content[0].Text
 	// Validate the model honoured the "JSON only" instruction. If it did not,
 	// fail rather than return malformed/fabricated content downstream.
 	if !json.Valid([]byte(text)) {
-		return nil, fmt.Errorf("llm: model output was not valid JSON")
+		return nil, errors.New("llm: model output was not valid JSON")
 	}
 	return json.RawMessage(text), nil
 }

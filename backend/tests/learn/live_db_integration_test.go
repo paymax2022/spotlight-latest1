@@ -26,6 +26,7 @@ package learn_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -241,7 +242,7 @@ func TestLiveDB_SubmitQuiz_RequiresAuthenticatedUser(t *testing.T) {
 	quizID, questionID, correctOptID, _ := seedQuizWithOneQuestion(t, ctx, pool, lessonID)
 
 	_, err := svc.SubmitQuiz(ctx, "", quizID, learn.QuizAnswers{questionID: correctOptID})
-	if err != learn.ErrForbidden {
+	if !errors.Is(err, learn.ErrForbidden) {
 		t.Fatalf("SubmitQuiz with empty userID: err = %v, want ErrForbidden", err)
 	}
 

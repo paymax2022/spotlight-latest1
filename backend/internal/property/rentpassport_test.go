@@ -25,7 +25,7 @@ func TestComputeRentScore_ZeroComparablePaymentsScoresZero(t *testing.T) {
 	}{
 		{"no rate, no tenure", 0, nil},
 		{"nonzero rate ignored when comparable=0", 1.0, nil},
-		{"long tenure ignored when comparable=0", 1.0, ptrTime(time.Now().Add(-40 * 30 * 24 * time.Hour))},
+		{"long tenure ignored when comparable=0", 1.0, new(time.Now().Add(-40 * 30 * 24 * time.Hour))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -132,7 +132,8 @@ func monthsAgo(m int) time.Time {
 	return time.Now().Add(-time.Duration(m)*30*24*time.Hour - time.Minute)
 }
 
-func ptrTime(t time.Time) *time.Time { return &t }
+//go:fix inline
+func ptrTime(t time.Time) *time.Time { return new(t) }
 
 // Transcribed from rentpassport.go L93-100 (estate loop) / L142-148 (realtor
 // loop) — both loops share the identical shape:

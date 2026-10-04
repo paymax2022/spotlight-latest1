@@ -99,7 +99,7 @@ func seedHandoverFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 		pool.Exec(bg, `DELETE FROM lab_orders WHERE id=$1`, orderID)
 		pool.Exec(bg, `DELETE FROM health_providers WHERE id=$1`, labID)
 	})
-	return
+	return labID, orderID, sampleID, phleboID, strangerID, patientID
 }
 
 // TestLiveDB_Handover_CollectedToHandedOverSucceeds locks the transition-map

@@ -77,10 +77,10 @@ func NewCareService(repo Repository, pay Payment, loc EmergencyLocator, notify N
 //   - SELF_CARE: routed, no payment, no booking.
 func (s *CareService) Refer(ctx context.Context, userID, sessionID string, level int) (*ReferResult, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("care: unauthenticated")
+		return nil, errors.New("care: unauthenticated")
 	}
 	if sessionID == "" {
-		return nil, fmt.Errorf("care: session id required")
+		return nil, errors.New("care: session id required")
 	}
 	route := triage.RouteForLevel(level)
 
@@ -166,17 +166,17 @@ func (s *CareService) routePaid(ctx context.Context, ref *CareReferral) (*ReferR
 // paid/fulfilled referral is a no-op that returns the current row.
 func (s *CareService) PayReferral(ctx context.Context, userID, referralID, idemKey string) (*CareReferral, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("care: unauthenticated")
+		return nil, errors.New("care: unauthenticated")
 	}
 	if idemKey == "" {
-		return nil, fmt.Errorf("care: idempotency key required")
+		return nil, errors.New("care: idempotency key required")
 	}
 	ref, err := s.repo.GetReferral(ctx, referralID)
 	if err != nil {
 		return nil, err
 	}
 	if ref.UserID != userID {
-		return nil, fmt.Errorf("care: forbidden")
+		return nil, errors.New("care: forbidden")
 	}
 	// Idempotent re-apply: already settled → return as-is (no second charge).
 	if ref.State == triage.RefPaid || ref.State == triage.RefFulfilled ||
@@ -191,7 +191,7 @@ func (s *CareService) PayReferral(ctx context.Context, userID, referralID, idemK
 		return nil, fmt.Errorf("care: referral must be routed before payment, is %s", ref.State)
 	}
 	if ref.AmountMinor <= 0 {
-		return nil, fmt.Errorf("care: referral has no positive amount to charge")
+		return nil, errors.New("care: referral has no positive amount to charge")
 	}
 
 	// Money: ledger-backed, idempotent on idemKey (charges exactly once on replay).
@@ -229,7 +229,7 @@ func (s *CareService) MarkFulfilled(ctx context.Context, userID, referralID stri
 		return nil, err
 	}
 	if ref.UserID != userID {
-		return nil, fmt.Errorf("care: forbidden")
+		return nil, errors.New("care: forbidden")
 	}
 	if ref.State == triage.RefFulfilled || ref.State == triage.RefFollowUp || ref.State == triage.RefClosed {
 		return ref, nil
@@ -249,7 +249,7 @@ func (s *CareService) FollowUp(ctx context.Context, userID, referralID string, a
 		return nil, err
 	}
 	if ref.UserID != userID {
-		return nil, fmt.Errorf("care: forbidden")
+		return nil, errors.New("care: forbidden")
 	}
 	if ref.State == triage.RefFollowUp || ref.State == triage.RefClosed {
 		return ref, nil
@@ -274,7 +274,7 @@ func (s *CareService) Close(ctx context.Context, userID, referralID string) (*Ca
 		return nil, err
 	}
 	if ref.UserID != userID {
-		return nil, fmt.Errorf("care: forbidden")
+		return nil, errors.New("care: forbidden")
 	}
 	if ref.State == triage.RefClosed {
 		return ref, nil
@@ -294,7 +294,7 @@ func (s *CareService) ListReferrals(ctx context.Context, userID string) ([]CareR
 // Raise opens a new escalation case in `raised` (SC-5). Always auditable.
 func (s *CareService) Raise(ctx context.Context, sessionID, userID, reason string) (*Escalation, error) {
 	if sessionID == "" || userID == "" {
-		return nil, fmt.Errorf("care: session id and user id required")
+		return nil, errors.New("care: session id and user id required")
 	}
 	e := &Escalation{
 		ID:        uuid.New().String(),
@@ -353,7 +353,7 @@ func (s *CareService) Notify(ctx context.Context, escalationID string) (*Escalat
 // Acknowledge records a clinician picking up the case (notified → acknowledged).
 func (s *CareService) Acknowledge(ctx context.Context, escalationID, clinicianID string) (*Escalation, error) {
 	if clinicianID == "" {
-		return nil, fmt.Errorf("care: clinician id required")
+		return nil, errors.New("care: clinician id required")
 	}
 	e, err := s.repo.GetEscalation(ctx, escalationID)
 	if err != nil {

@@ -169,7 +169,7 @@ func (s *StatusService) SubmitSelfie(ctx context.Context, req LivenessRequest) (
 	if !canTransition(current, target) {
 		// none→pending→outcome is the normal path; allow none→outcome directly,
 		// but reject e.g. l1_passed→l0_passed downgrades.
-		if !(canTransition(current, StatusPending) && canTransition(StatusPending, target)) {
+		if !canTransition(current, StatusPending) || !canTransition(StatusPending, target) {
 			return nil, fmt.Errorf("%w: %s → %s", ErrInvalidTransition, current, target)
 		}
 	}

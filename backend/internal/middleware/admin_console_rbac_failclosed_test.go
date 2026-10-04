@@ -6,9 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 // newAdminConsoleTestRouter wires RequireAdminConsoleRole behind a throwaway
@@ -125,6 +126,7 @@ func TestRequireAdminConsoleRole_RejectedTokenReturns401(t *testing.T) {
 // trigger.
 type fakeConsoleRBAC struct {
 	services.RBACService
+
 	roles     []string
 	rolesErr  error
 	status    string

@@ -13,7 +13,8 @@ import (
 	"spotlight/backend/internal/utilitybills"
 )
 
-func kobo(v int64) *int64 { return &v }
+//go:fix inline
+func kobo(v int64) *int64 { return new(v) }
 
 // This is the sum the WALLET IS DEBITED FOR. If it ever drifts from its parts,
 // the member is charged an amount no line item explains.
@@ -77,7 +78,7 @@ func TestInvariant_PricingRejectsNonPositiveAmounts(t *testing.T) {
 	mapping := utilitybills.ProviderMapping{Status: utilitybills.MappingStatusActive}
 
 	for _, amount := range []int64{0, -1, -500_000} {
-		if _, err := utilitybills.CalculateUtilityPricing(product, mapping, kobo(amount)); !errors.Is(err, utilitybills.ErrInvalidAmount) {
+		if _, err := utilitybills.CalculateUtilityPricing(product, mapping, new(amount)); !errors.Is(err, utilitybills.ErrInvalidAmount) {
 			t.Fatalf("amount %d: got %v, want ErrInvalidAmount", amount, err)
 		}
 	}
@@ -97,7 +98,7 @@ func TestInvariant_NonPositiveProviderCostIsRefused(t *testing.T) {
 	for _, cost := range []int64{0, -1} {
 		mapping := utilitybills.ProviderMapping{
 			Status:           utilitybills.MappingStatusActive,
-			ProviderCostKobo: kobo(cost),
+			ProviderCostKobo: new(cost),
 		}
 		if _, err := utilitybills.CalculateUtilityPricing(product, mapping, nil); !errors.Is(err, utilitybills.ErrProviderCostNotPositive) {
 			t.Fatalf("cost %d: got %v, want ErrProviderCostNotPositive", cost, err)

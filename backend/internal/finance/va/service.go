@@ -46,7 +46,7 @@ func (s *Service) GetOrProvision(ctx context.Context, userID string) (*VirtualAc
 	if err == nil {
 		return existing, nil
 	}
-	if err != pgx.ErrNoRows {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("va: get existing: %w", err)
 	}
 
@@ -104,7 +104,7 @@ func (s *Service) GetOrProvision(ctx context.Context, userID string) (*VirtualAc
 	err = s.db.QueryRow(ctx, insert,
 		userID, s.vaProvider.Name(), pva.AccountNumber, pva.AccountName, pva.BankName, pva.BankCode,
 	).Scan(&va.ID, &va.UserID, &va.Provider, &va.AccountNumber, &va.AccountName, &va.BankName, &va.BankCode, &va.ProvisionedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// Race — another goroutine won; fetch the winner.
 		return s.get(ctx, userID)
 	}

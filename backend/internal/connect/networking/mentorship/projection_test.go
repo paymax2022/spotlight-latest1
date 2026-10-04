@@ -17,10 +17,10 @@ func TestSafeProjection_NoDatingModeFields(t *testing.T) {
 	allowed := map[string]bool{
 		"userId": true, "role": true, "domains": true, "capacity": true, "displayName": true,
 	}
-	rt := reflect.TypeOf(SafeMentorProfile{})
-	for i := 0; i < rt.NumField(); i++ {
-		tag := rt.Field(i).Tag.Get("json")
-		name := strings.Split(tag, ",")[0]
+	rt := reflect.TypeFor[SafeMentorProfile]()
+	for field := range rt.Fields() {
+		tag := field.Tag.Get("json")
+		name, _, _ := strings.Cut(tag, ",")
 		if !allowed[name] {
 			t.Errorf("SafeMentorProfile exposes unexpected field %q (PN-7: only mentorship/professional fields allowed)", name)
 		}

@@ -62,10 +62,7 @@ func SystemFare(distanceM, durationS int, cfg *PricingConfig) int64 {
 	if surge <= 0 {
 		surge = 1.0
 	}
-	fare := int64(math.Round(raw * surge))
-	if fare < cfg.MinFareKobo {
-		fare = cfg.MinFareKobo
-	}
+	fare := max(int64(math.Round(raw*surge)), cfg.MinFareKobo)
 	return fare
 }
 

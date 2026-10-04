@@ -3,6 +3,7 @@ package crypto
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"net/http"
 	"os"
 	"strings"
@@ -137,7 +138,7 @@ func (s *Service) resolveAssetID(ctx context.Context, ref string) (string, error
 	// Try direct id first (custodians that echo our UUIDs).
 	if a, err := s.repo.GetAsset(ctx, ref); err == nil {
 		return a.ID, nil
-	} else if err != ErrNotFound {
+	} else if !errors.Is(err, ErrNotFound) {
 		return "", err
 	}
 	// Fall back to symbol match.

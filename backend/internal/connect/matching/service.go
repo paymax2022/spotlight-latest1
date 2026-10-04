@@ -131,7 +131,7 @@ func (s *Service) Like(ctx context.Context, fromUserID, toProfileID, kind string
 		return nil, fmt.Errorf("connect: check target: %w", err)
 	}
 	if !exists {
-		return nil, fmt.Errorf("connect: target profile not found")
+		return nil, errors.New("connect: target profile not found")
 	}
 
 	// EC-004 / safety invariant 3: block is absolute. Refuse the like (and thus any

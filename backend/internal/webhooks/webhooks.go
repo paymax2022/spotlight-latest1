@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"io"
 	"net/http"
 	"spotlight/backend/go-common/httperr"
@@ -15,6 +14,8 @@ import (
 	"spotlight/backend/internal/provider"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 const keyError = "error"

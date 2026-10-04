@@ -649,7 +649,7 @@ func TestPurchaseIdempotency_ConcurrentSameKeyIssuesOneTicket(t *testing.T) {
 	debitCalls := 0
 	inv.debitFn = func(int64) error { debitCalls++; return nil }
 
-	for i := 0; i < attempts; i++ {
+	for i := range attempts {
 		id, err := inv.purchase("dupe-key", 1_000_00)
 		if err != nil {
 			t.Fatalf("attempt %d: %v", i, err)

@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 // erroringRBACService reports a GetUserRoles failure — embeds RBACService as

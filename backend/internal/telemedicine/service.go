@@ -210,7 +210,7 @@ func (s *Service) GetDoctor(ctx context.Context, id string) (*Doctor, error) {
 		return nil, err
 	}
 	if len(doctors) == 0 {
-		return nil, fmt.Errorf("telemedicine: doctor not found")
+		return nil, errors.New("telemedicine: doctor not found")
 	}
 	return &doctors[0], nil
 }
@@ -224,7 +224,7 @@ func (s *Service) ToggleDoctorAvailability(ctx context.Context, userID string, i
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("telemedicine: doctor profile not found for user")
+		return errors.New("telemedicine: doctor profile not found for user")
 	}
 	return nil
 }
@@ -239,7 +239,7 @@ func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*Docto
 		`SELECT id, rating, is_online, patients_count FROM doctors WHERE user_id=$1`,
 		userID).Scan(&doctorID, &rating, &isOnline, &patientsCount)
 	if err != nil {
-		return nil, fmt.Errorf("telemedicine: doctor not found")
+		return nil, errors.New("telemedicine: doctor not found")
 	}
 
 	// Weekly revenue from completed appointments. Computed with the SAME integer
@@ -362,10 +362,10 @@ func (s *Service) assertDoctorApproved(ctx context.Context, doctorUserID string)
 		)`
 	if err := s.db.QueryRow(ctx, q, doctorUserID).Scan(&approved); err != nil {
 		// Fail-closed: if we cannot confirm approval, do not permit the action.
-		return fmt.Errorf("telemedicine: doctor credential not verified")
+		return errors.New("telemedicine: doctor credential not verified")
 	}
 	if !approved {
-		return fmt.Errorf("telemedicine: doctor is not MDCN-approved for consultations")
+		return errors.New("telemedicine: doctor is not MDCN-approved for consultations")
 	}
 	return nil
 }
@@ -384,7 +384,7 @@ func (s *Service) assertSlotFree(ctx context.Context, doctorID string, scheduled
 		return fmt.Errorf("telemedicine: check slot availability: %w", err)
 	}
 	if taken {
-		return fmt.Errorf("telemedicine: the selected time slot is no longer available")
+		return errors.New("telemedicine: the selected time slot is no longer available")
 	}
 	return nil
 }
@@ -410,10 +410,10 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 	const qD = `SELECT id, user_id, consult_fee_kobo, is_available, name, specialty FROM doctors WHERE id=$1`
 	if err := s.db.QueryRow(ctx, qD, req.DoctorID).
 		Scan(&doctor.ID, &doctor.UserID, &doctor.ConsultFeeKobo, &doctor.IsAvailable, &doctor.Name, &doctor.Specialty); err != nil {
-		return nil, fmt.Errorf("telemedicine: doctor not found")
+		return nil, errors.New("telemedicine: doctor not found")
 	}
 	if !doctor.IsAvailable {
-		return nil, fmt.Errorf("telemedicine: doctor is not currently available")
+		return nil, errors.New("telemedicine: doctor is not currently available")
 	}
 	// Credential gate (fail-closed): a doctor may only take bookings once their MDCN
 	// credential is APPROVED. is_available alone is a soft availability toggle and
@@ -435,7 +435,7 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 	if !quote.Priceable() {
 		// Fail closed. A doctor whose stored fee is non-positive or absurd cannot be
 		// booked — escrowing the zero total would give away a consultation free.
-		return nil, fmt.Errorf("telemedicine: doctor's consultation fee is not bookable")
+		return nil, errors.New("telemedicine: doctor's consultation fee is not bookable")
 	}
 	// Bound the card rail: it charges the client-quoted amount at the PSP before we
 	// escrow, so a stale quote is caught here, before any money moves.
@@ -583,7 +583,7 @@ func (s *Service) GetAppointment(ctx context.Context, id, userID string) (*Appoi
 		return nil, err
 	}
 	if len(appts) == 0 {
-		return nil, fmt.Errorf("telemedicine: appointment not found")
+		return nil, errors.New("telemedicine: appointment not found")
 	}
 	return &appts[0], nil
 }
@@ -595,18 +595,18 @@ func (s *Service) CompleteAppointment(ctx context.Context, appointmentID, doctor
 	            FROM appointments WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, appointmentID).
 		Scan(&appt.ID, &appt.DoctorID, &appt.Status, &appt.SettlementID, &appt.PlatformFeeKobo); err != nil {
-		return fmt.Errorf("telemedicine: appointment not found")
+		return errors.New("telemedicine: appointment not found")
 	}
 	if appt.Status != ApptBooked && appt.Status != ApptConfirmed {
-		return fmt.Errorf("telemedicine: appointment is not in a completable state")
+		return errors.New("telemedicine: appointment is not in a completable state")
 	}
 	var dbDoctorUserID string
 	if err := s.db.QueryRow(ctx, `SELECT user_id FROM doctors WHERE id=$1`, appt.DoctorID).
 		Scan(&dbDoctorUserID); err != nil {
-		return fmt.Errorf("telemedicine: doctor record not found")
+		return errors.New("telemedicine: doctor record not found")
 	}
 	if dbDoctorUserID != doctorUserID {
-		return fmt.Errorf("telemedicine: only the assigned doctor can complete this appointment")
+		return errors.New("telemedicine: only the assigned doctor can complete this appointment")
 	}
 	// The platform booking fee rides on TOP of the 85/15 split as a 100%-platform
 	// leg (ServiceFeeKobo — the mirror of a rider tip), so it does not dilute the
@@ -636,7 +636,7 @@ func (s *Service) CancelAppointment(ctx context.Context, appointmentID, actorID 
 	if err := s.db.QueryRow(ctx,
 		`SELECT patient_id, doctor_id, status, COALESCE(settlement_id::text,'') FROM appointments WHERE id=$1`,
 		appointmentID).Scan(&patientID, &doctorID, &status, &settlementID); err != nil {
-		return fmt.Errorf("telemedicine: appointment not found")
+		return errors.New("telemedicine: appointment not found")
 	}
 	// Object-level authZ. `actorID` was previously accepted and never compared, so
 	// any authenticated user could cancel any appointment by id — forcing a full
@@ -646,14 +646,14 @@ func (s *Service) CancelAppointment(ctx context.Context, appointmentID, actorID 
 		var doctorUserID string
 		if err := s.db.QueryRow(ctx, `SELECT user_id FROM doctors WHERE id=$1`, doctorID).
 			Scan(&doctorUserID); err != nil {
-			return fmt.Errorf("telemedicine: not permitted to cancel this appointment")
+			return errors.New("telemedicine: not permitted to cancel this appointment")
 		}
 		if actorID != doctorUserID {
-			return fmt.Errorf("telemedicine: not permitted to cancel this appointment")
+			return errors.New("telemedicine: not permitted to cancel this appointment")
 		}
 	}
 	if status == string(ApptCompleted) {
-		return fmt.Errorf("telemedicine: cannot cancel a completed appointment")
+		return errors.New("telemedicine: cannot cancel a completed appointment")
 	}
 	if err := s.settlement.Refund(ctx, settlementID, "appointment_cancelled"); err != nil {
 		return fmt.Errorf("telemedicine: refund fee: %w", err)
@@ -668,17 +668,17 @@ func (s *Service) IssuePrescription(ctx context.Context, appointmentID, doctorUs
 	if err := s.db.QueryRow(ctx,
 		`SELECT patient_id, doctor_id, status FROM appointments WHERE id=$1`,
 		appointmentID).Scan(&patientID, &doctorID, &status); err != nil {
-		return nil, fmt.Errorf("telemedicine: appointment not found")
+		return nil, errors.New("telemedicine: appointment not found")
 	}
 	if status != string(ApptCompleted) {
-		return nil, fmt.Errorf("telemedicine: prescriptions can only be issued for completed appointments")
+		return nil, errors.New("telemedicine: prescriptions can only be issued for completed appointments")
 	}
 	var dbDoctorUserID string
 	if err := s.db.QueryRow(ctx, `SELECT user_id FROM doctors WHERE id=$1`, doctorID).Scan(&dbDoctorUserID); err != nil {
-		return nil, fmt.Errorf("telemedicine: doctor not found")
+		return nil, errors.New("telemedicine: doctor not found")
 	}
 	if dbDoctorUserID != doctorUserID {
-		return nil, fmt.Errorf("telemedicine: only the assigned doctor can issue prescriptions")
+		return nil, errors.New("telemedicine: only the assigned doctor can issue prescriptions")
 	}
 	p := &Prescription{
 		ID:            uuid.New().String(),
@@ -703,14 +703,14 @@ func (s *Service) GetPrescription(ctx context.Context, appointmentID, callerUser
 	if err := s.db.QueryRow(ctx,
 		`SELECT patient_id, doctor_id FROM appointments WHERE id=$1`,
 		appointmentID).Scan(&patientID, &doctorID); err != nil {
-		return nil, fmt.Errorf("telemedicine: appointment not found")
+		return nil, errors.New("telemedicine: appointment not found")
 	}
 	var dbDoctorUserID string
 	if err := s.db.QueryRow(ctx, `SELECT user_id FROM doctors WHERE id=$1`, doctorID).Scan(&dbDoctorUserID); err != nil {
-		return nil, fmt.Errorf("telemedicine: doctor not found")
+		return nil, errors.New("telemedicine: doctor not found")
 	}
 	if callerUserID != patientID && callerUserID != dbDoctorUserID {
-		return nil, fmt.Errorf("telemedicine: not permitted to view this prescription")
+		return nil, errors.New("telemedicine: not permitted to view this prescription")
 	}
 	p := &Prescription{}
 	const q = `SELECT id, appointment_id, doctor_id, patient_id, medications, instructions, issued_at
@@ -718,7 +718,7 @@ func (s *Service) GetPrescription(ctx context.Context, appointmentID, callerUser
 	if err := s.db.QueryRow(ctx, q, appointmentID).Scan(
 		&p.ID, &p.AppointmentID, &p.DoctorID, &p.PatientID, &p.Medications, &p.Instructions, &p.IssuedAt,
 	); err != nil {
-		return nil, fmt.Errorf("telemedicine: prescription not found")
+		return nil, errors.New("telemedicine: prescription not found")
 	}
 	return p, nil
 }
@@ -729,14 +729,14 @@ func (s *Service) SubmitSOAPNote(ctx context.Context, doctorUserID string, req S
 	if err := s.db.QueryRow(ctx,
 		`SELECT patient_id, doctor_id FROM appointments WHERE id=$1`,
 		req.AppointmentID).Scan(&patientID, &doctorID); err != nil {
-		return nil, fmt.Errorf("telemedicine: appointment not found")
+		return nil, errors.New("telemedicine: appointment not found")
 	}
 	var dbDoctorUserID string
 	if err := s.db.QueryRow(ctx, `SELECT user_id FROM doctors WHERE id=$1`, doctorID).Scan(&dbDoctorUserID); err != nil {
-		return nil, fmt.Errorf("telemedicine: doctor not found")
+		return nil, errors.New("telemedicine: doctor not found")
 	}
 	if dbDoctorUserID != doctorUserID {
-		return nil, fmt.Errorf("telemedicine: only the assigned doctor can submit notes for this appointment")
+		return nil, errors.New("telemedicine: only the assigned doctor can submit notes for this appointment")
 	}
 
 	rxJSON, _ := json.Marshal(req.Prescriptions)

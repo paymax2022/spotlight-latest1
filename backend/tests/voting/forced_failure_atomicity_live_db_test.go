@@ -173,4 +173,5 @@ func TestNF004_ClaimFreeVote_GoConnect_FailurePartwayLeavesNoSideEffects(t *test
 	}
 }
 
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func strPtr(s string) *string { return new(s) }

@@ -288,7 +288,7 @@ func (h *HTTPProvider) do(req *http.Request, dst any) error {
 // per-call signature (kept local for readability + redaction symmetry).
 func queryEscape(s string) string {
 	var b strings.Builder
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := s[i]
 		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
 			c == '-' || c == '_' || c == '.' || c == '~' {

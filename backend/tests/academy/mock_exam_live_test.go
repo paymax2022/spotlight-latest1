@@ -125,7 +125,7 @@ func TestLiveDB_MockExamAttemptLifecycle(t *testing.T) {
 	// Save progress: answers + flagged land on the metadata table.
 	flagged := []string{uuid.NewString()}
 	if err := repo.UpdateAttempt(ctx, attempt.ID,
-		map[string]interface{}{"q1": "B"}, flagged); err != nil {
+		map[string]any{"q1": "B"}, flagged); err != nil {
 		t.Fatalf("UpdateAttempt: %v", err)
 	}
 
@@ -158,7 +158,7 @@ func TestLiveDB_MockExamAttemptLifecycle(t *testing.T) {
 	}
 
 	// Submit: grades against the marking scheme, flips state to scored.
-	result, err := svc.SubmitExam(ctx, attempt.ID, map[string]interface{}{"q1": "B", "q2": "C"})
+	result, err := svc.SubmitExam(ctx, attempt.ID, map[string]any{"q1": "B", "q2": "C"})
 	if err != nil {
 		t.Fatalf("SubmitExam: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestLiveDB_MockExamNonDivisorGradingAndResultsReadBack(t *testing.T) {
 	// 2 of 3 correct: integer division scored this 66/100... as 2×(100/3)=66,
 	// but worse, 3 of 3 could only reach 99. Expect exact fraction math.
 	result, err := svc.SubmitExam(ctx, attempt.ID,
-		map[string]interface{}{"q1": "A", "q2": "B", "q3": "X"})
+		map[string]any{"q1": "A", "q2": "B", "q3": "X"})
 	if err != nil {
 		t.Fatalf("SubmitExam: %v", err)
 	}

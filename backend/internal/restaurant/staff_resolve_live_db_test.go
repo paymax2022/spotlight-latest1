@@ -245,4 +245,5 @@ func TestLiveDB_ManagerIsRefusedAtOtherOutletsAndOnBanking(t *testing.T) {
 	}
 }
 
-func ptrInt64Staff(v int64) *int64 { return &v }
+//go:fix inline
+func ptrInt64Staff(v int64) *int64 { return new(v) }

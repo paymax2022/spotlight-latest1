@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
@@ -290,12 +291,7 @@ func (d Detection) PrimaryCategory() Category {
 // shame the user and surface platform-safety guidance (compliance sensitive-topic note).
 func warningFor(cats []Category) string {
 	has := func(c Category) bool {
-		for _, x := range cats {
-			if x == c {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(cats, c)
 	}
 	switch {
 	case has(CategoryFinancial):
@@ -316,7 +312,7 @@ func slug(s string) string {
 }
 
 func sortCategories(cs []Category) {
-	sort.Slice(cs, func(i, j int) bool { return cs[i] < cs[j] })
+	slices.Sort(cs)
 }
 
 // LLM is the seam behind which a real model provider sits. It is intentionally

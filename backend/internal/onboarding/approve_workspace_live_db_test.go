@@ -15,7 +15,6 @@ package onboarding_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -122,7 +121,7 @@ func TestLiveDB_ApprovalWritesAResolvableWorkspaceRoute(t *testing.T) {
 	// The contract the app depends on. If this format changes, app/merchant/[slug]
 	// can no longer work out which workspace to open and every approved merchant
 	// silently loses access to their tools.
-	want := fmt.Sprintf("/merchant/%s", slug)
+	want := "/merchant/" + slug
 	if route != want {
 		t.Errorf("workspace_route = %q, want %q — the app parses the slug back out of this route", route, want)
 	}

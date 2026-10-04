@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"spotlight/backend/go-common/dbutil"
 	"time"
@@ -38,7 +39,7 @@ func (r *Repository) RecordSwapFill(ctx context.Context, o SwapOrder) (string, b
 		o.FromPriceKobo, o.ToPriceKobo, o.CashKobo, o.SpreadKobo, o.SpreadBps,
 		o.IdempotencyKey(), o.Reference,
 	).Scan(&orderID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		if e := tx.QueryRow(ctx,
 			`SELECT id FROM crypto_swap_orders WHERE idempotency_key=$1`, o.IdempotencyKey()).Scan(&orderID); e != nil {
 			return "", false, e
@@ -120,7 +121,7 @@ func (r *Repository) AddAddress(ctx context.Context, userID, assetID, label, net
 	var a Address
 	err := r.db.QueryRow(ctx, q, userID, assetID, label, network, address).Scan(
 		&a.ID, &a.UserID, &a.AssetID, &a.Label, &a.Network, &a.Address, &a.IsActive, &a.VerifiedAt, &a.CreatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// Already exists (active). Fetch and return dup=true.
 		existing, e := r.GetActiveAddressByValue(ctx, userID, assetID, address)
 		if e != nil {
@@ -142,7 +143,7 @@ func (r *Repository) GetActiveAddressByValue(ctx context.Context, userID, assetI
 	var a Address
 	if err := r.db.QueryRow(ctx, q, userID, assetID, address).Scan(
 		&a.ID, &a.UserID, &a.AssetID, &a.Label, &a.Network, &a.Address, &a.IsActive, &a.VerifiedAt, &a.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrAddressNotFound
 		}
 		return nil, err
@@ -160,7 +161,7 @@ func (r *Repository) GetAddress(ctx context.Context, userID, id string) (*Addres
 	if err := r.db.QueryRow(ctx, q, id, userID).Scan(
 		&a.ID, &a.UserID, &a.AssetID, &a.Symbol, &a.Label, &a.Network, &a.Address,
 		&a.IsActive, &a.VerifiedAt, &a.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrAddressNotFound
 		}
 		return nil, err
@@ -232,7 +233,7 @@ func (r *Repository) GetOrCreateDepositAddress(
 		}
 		return &d, nil
 	}
-	if err != pgx.ErrNoRows {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 	// Generate + persist (idempotent on the unique constraint).
@@ -279,7 +280,7 @@ func (r *Repository) CreateWithdrawal(ctx context.Context, w Withdrawal) (string
 		w.UserID, w.AssetID, w.AddressID, w.Units, w.NetworkFeeUnits, w.FeeKobo,
 		w.PriceKobo, w.Provider, w.IdempotencyKey(), w.Reference,
 	).Scan(&wid)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		if e := tx.QueryRow(ctx,
 			`SELECT id FROM crypto_withdrawals WHERE idempotency_key=$1`, w.IdempotencyKey()).Scan(&wid); e != nil {
 			return "", false, e
@@ -435,7 +436,7 @@ type rowScanner interface {
 
 func scanWithdrawal(row pgx.Row) (*Withdrawal, error) {
 	w, err := scanWithdrawalRows(row)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return w, err

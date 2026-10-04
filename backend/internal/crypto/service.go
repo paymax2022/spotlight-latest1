@@ -315,7 +315,7 @@ func (s *Service) Sell(ctx context.Context, userID, assetID string, units int64,
 	if err != nil {
 		return nil, err
 	}
-	if err := s.led.Credit(ctx, userID, o.Reference, idemKey+":wallet", escrow.ID, cashKobo); err != nil && err != ledger.ErrDuplicate {
+	if err := s.led.Credit(ctx, userID, o.Reference, idemKey+":wallet", escrow.ID, cashKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, err
 	}
 	if dup {

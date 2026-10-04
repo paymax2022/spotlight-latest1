@@ -4,10 +4,11 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Handler exposes the per-learner surface over Gin. All routes are member-scoped

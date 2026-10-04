@@ -2,6 +2,7 @@ package maps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"spotlight/backend/go-common/strutil"
@@ -216,7 +217,7 @@ func (h *HERE) Route(ctx context.Context, origin, dest Point, opts RouteOptions)
 		return Route{}, err
 	}
 	if len(r.Routes) == 0 || len(r.Routes[0].Sections) == 0 {
-		return Route{}, fmt.Errorf("maps: here no route")
+		return Route{}, errors.New("maps: here no route")
 	}
 	var distM, durS float64
 	var poly string

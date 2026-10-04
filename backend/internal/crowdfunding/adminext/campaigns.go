@@ -151,10 +151,7 @@ type CampaignDirectoryFilter struct {
 // GROUP BY would too, but the LATERAL keeps the row shape flat and lets the
 // count be DISTINCT contributors without also collapsing the campaign columns).
 func (s *Service) ListCampaignDirectory(ctx context.Context, f CampaignDirectoryFilter) (CampaignDirectoryPage, error) {
-	page := f.Page
-	if page < 1 {
-		page = 1
-	}
+	page := max(f.Page, 1)
 	limit := f.Limit
 	if limit <= 0 || limit > 200 {
 		limit = 25

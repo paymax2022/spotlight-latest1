@@ -103,10 +103,7 @@ func CapsFromLimits(lim Limits, st PortfolioState) SizeCaps {
 	}
 	if lim.MaxGrossLeverageBps > 0 && st.EquityKobo > 0 {
 		maxGross := floorKobo(float64(st.EquityKobo) * lim.MaxGrossLeverageBps.Frac())
-		headroom := maxGross - GrossExposureKobo(st)
-		if headroom < 0 {
-			headroom = 0
-		}
+		headroom := max(maxGross-GrossExposureKobo(st), 0)
 		caps.MaxByLeverageKobo = headroom
 	}
 	return caps

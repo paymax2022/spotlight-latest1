@@ -2,7 +2,7 @@ package analytics
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -60,7 +60,7 @@ func (s *Service) Segmentation(ctx context.Context) (*Segmentation, error) {
 
 func (s *Service) User360(ctx context.Context, userID string) (*User360, error) {
 	if userID == "" {
-		return nil, fmt.Errorf("analytics: user id required")
+		return nil, errors.New("analytics: user id required")
 	}
 	return s.repo.User360(ctx, userID)
 }

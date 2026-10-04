@@ -44,7 +44,7 @@ func (s *Service) Subscribe(ctx context.Context, userID, idempotencyKey, offerin
 	}
 
 	if req.Units <= 0 {
-		return nil, fmt.Errorf("fractionalre: units must be positive")
+		return nil, errors.New("fractionalre: units must be positive")
 	}
 
 	o, err := s.repo.GetOffering(ctx, offeringID)
@@ -144,7 +144,7 @@ func (s *Service) ProposeClose(ctx context.Context, makerID, offeringID string) 
 		return err
 	}
 	if o.Status != OfferingOpen && o.Status != OfferingClosing {
-		return fmt.Errorf("fractionalre: offering not open for close")
+		return errors.New("fractionalre: offering not open for close")
 	}
 	if err := s.repo.SetCloseProposer(ctx, offeringID, makerID); err != nil {
 		return err
@@ -165,7 +165,7 @@ func (s *Service) CloseAndSettle(ctx context.Context, checkerID, offeringID stri
 	}
 	// SoD: maker must have proposed, and checker != maker.
 	if o.CloseProposedBy == nil {
-		return nil, fmt.Errorf("fractionalre: close must be proposed by a maker first")
+		return nil, errors.New("fractionalre: close must be proposed by a maker first")
 	}
 	if *o.CloseProposedBy == checkerID {
 		return nil, ErrMakerChecker

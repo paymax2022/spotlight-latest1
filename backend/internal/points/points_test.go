@@ -3,6 +3,7 @@ package points
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -129,7 +130,7 @@ func TestSentinelErrors_DistinctAndStable(t *testing.T) {
 	if ErrInsufficientPoints == nil || ErrCashRedemptionForbidden == nil {
 		t.Fatal("sentinel errors must be non-nil")
 	}
-	if ErrInsufficientPoints == ErrCashRedemptionForbidden {
+	if errors.Is(ErrInsufficientPoints, ErrCashRedemptionForbidden) {
 		t.Fatal("sentinels must be distinct error values")
 	}
 	if !strings.Contains(ErrInsufficientPoints.Error(), "insufficient points") {

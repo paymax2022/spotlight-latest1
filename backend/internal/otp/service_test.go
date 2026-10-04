@@ -342,7 +342,7 @@ func TestIssueBeyondHourlyBudgetIsRateLimited(t *testing.T) {
 		c.MaxSendsPerHour = 3
 		c.ResendCooldown = 0 // isolate the hourly budget from the cooldown
 	})
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		// Clear the live code so only the hourly budget can stop us.
 		_ = store.Delete(ctx, svc.key(PurposeLogin, "a@b.com"))
 		if err := svc.Issue(ctx, "a@b.com", "A", PurposeLogin, ""); err != nil {
@@ -394,7 +394,7 @@ func TestIssueIsAlsoLimitedPerIP(t *testing.T) {
 func TestVerifyIsLimitedPerIP(t *testing.T) {
 	ctx := context.Background()
 	svc, _, _, _ := newTestService(t, func(c *Config) { c.MaxVerifyPerIP = 2 })
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if err := svc.Verify(ctx, "a@b.com", PurposeLogin, "000000", "8.8.8.8"); !errors.Is(err, ErrInvalidCode) {
 			t.Fatalf("attempt %d error = %v", i, err)
 		}

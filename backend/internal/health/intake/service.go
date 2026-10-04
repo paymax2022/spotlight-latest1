@@ -3,6 +3,7 @@ package healthintake
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -67,10 +68,10 @@ func NewService(db *pgxpool.Pool, audit Auditor) *Service {
 // (slug,version) is rejected by the UNIQUE constraint — versions are immutable.
 func (s *Service) PublishSchema(ctx context.Context, slug string, version int, kind string, fields []Field) (*Schema, error) {
 	if slug == "" || version < 1 {
-		return nil, fmt.Errorf("intake: slug and version>=1 required")
+		return nil, errors.New("intake: slug and version>=1 required")
 	}
 	if !validKind(kind) {
-		return nil, fmt.Errorf("intake: invalid kind")
+		return nil, errors.New("intake: invalid kind")
 	}
 	raw, err := json.Marshal(fields)
 	if err != nil {
@@ -100,7 +101,7 @@ func (s *Service) GetActiveSchemaBySlug(ctx context.Context, slug string) (*Sche
 	           FROM health_intake_schemas WHERE slug=$1 AND active=true
 	           ORDER BY version DESC LIMIT 1`
 	if err := s.db.QueryRow(ctx, q, slug).Scan(&sc.ID, &sc.Slug, &sc.Version, &sc.Kind, &raw, &sc.Active, &sc.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("intake: no active schema for slug %q", slug)
 		}
 		return nil, err
@@ -122,7 +123,7 @@ func (s *Service) ValidateAnswers(fields []Field, answers map[string]any) error 
 // the response pinned to that version (HEALTH-BUILD §5/§6).
 func (s *Service) Submit(ctx context.Context, respondentID, schemaID string, answers map[string]any) (*Response, error) {
 	if respondentID == "" {
-		return nil, fmt.Errorf("intake: respondent required")
+		return nil, errors.New("intake: respondent required")
 	}
 	sc, err := s.loadSchema(ctx, schemaID)
 	if err != nil {
@@ -193,8 +194,8 @@ func (s *Service) loadSchema(ctx context.Context, schemaID string) (*Schema, err
 	var raw []byte
 	const q = `SELECT id, slug, version, kind, schema_json, active, created_at FROM health_intake_schemas WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, schemaID).Scan(&sc.ID, &sc.Slug, &sc.Version, &sc.Kind, &raw, &sc.Active, &sc.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("intake: schema not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("intake: schema not found")
 		}
 		return nil, err
 	}

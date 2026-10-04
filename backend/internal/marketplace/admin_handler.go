@@ -1,10 +1,11 @@
 package marketplace
 
 import (
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"spotlight/backend/internal/domain"
 	"strconv"
+
+	"github.com/gin-gonic/gin"
 )
 
 // admin_handler.go implements the /v1/marketplace/admin routes. Every mutating admin

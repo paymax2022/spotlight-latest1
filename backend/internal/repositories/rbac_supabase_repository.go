@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"spotlight/backend/internal/domain"
@@ -145,7 +146,7 @@ func (r *RBACSupabaseRepository) GetRole(roleID string) (domain.Role, error) {
 		return domain.Role{}, err
 	}
 	if len(rows) == 0 {
-		return domain.Role{}, fmt.Errorf("role not found")
+		return domain.Role{}, errors.New("role not found")
 	}
 	return rows[0], nil
 }
@@ -161,7 +162,7 @@ func (r *RBACSupabaseRepository) CreateRole(role domain.Role) (domain.Role, erro
 		return domain.Role{}, err
 	}
 	if len(rows) == 0 {
-		return domain.Role{}, fmt.Errorf("create role failed")
+		return domain.Role{}, errors.New("create role failed")
 	}
 	return rows[0], nil
 }
@@ -174,7 +175,7 @@ func (r *RBACSupabaseRepository) UpdateRole(roleID string, role domain.Role) (do
 		return domain.Role{}, err
 	}
 	if len(rows) == 0 {
-		return domain.Role{}, fmt.Errorf("role not found")
+		return domain.Role{}, errors.New("role not found")
 	}
 	return rows[0], nil
 }
@@ -225,7 +226,7 @@ func (r *RBACSupabaseRepository) CreatePermission(permission domain.Permission) 
 		return domain.Permission{}, err
 	}
 	if len(rows) == 0 {
-		return domain.Permission{}, fmt.Errorf("permission create failed")
+		return domain.Permission{}, errors.New("permission create failed")
 	}
 	return rows[0], nil
 }
@@ -244,7 +245,7 @@ func (r *RBACSupabaseRepository) UpdatePermission(permissionID string, permissio
 		return domain.Permission{}, err
 	}
 	if len(rows) == 0 {
-		return domain.Permission{}, fmt.Errorf("permission not found")
+		return domain.Permission{}, errors.New("permission not found")
 	}
 	return rows[0], nil
 }
@@ -256,7 +257,7 @@ func (r *RBACSupabaseRepository) GetPermission(permissionID string) (domain.Perm
 		return domain.Permission{}, err
 	}
 	if len(rows) == 0 {
-		return domain.Permission{}, fmt.Errorf("permission not found")
+		return domain.Permission{}, errors.New("permission not found")
 	}
 	return rows[0], nil
 }
@@ -504,7 +505,7 @@ func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) (
 func (r *RBACSupabaseRepository) GetAdminUser(userID string) (domain.AdminUser, error) {
 	id := strings.TrimSpace(userID)
 	if id == "" {
-		return domain.AdminUser{}, fmt.Errorf("user not found")
+		return domain.AdminUser{}, errors.New("user not found")
 	}
 	q := map[string]string{
 		"select": adminUserSelect,
@@ -516,7 +517,7 @@ func (r *RBACSupabaseRepository) GetAdminUser(userID string) (domain.AdminUser, 
 		return domain.AdminUser{}, err
 	}
 	if len(rows) == 0 {
-		return domain.AdminUser{}, fmt.Errorf("user not found")
+		return domain.AdminUser{}, errors.New("user not found")
 	}
 	user, _, _, _, _, _ := adminUserFromRow(rows[0])
 	return user, nil
@@ -531,7 +532,7 @@ func (r *RBACSupabaseRepository) UpdateAdminUser(userID string, patch map[string
 		}
 	}
 	if len(payload) == 0 {
-		return domain.AdminUser{}, fmt.Errorf("no updatable fields provided")
+		return domain.AdminUser{}, errors.New("no updatable fields provided")
 	}
 	var rows []struct {
 		ID string `json:"id"`
@@ -547,7 +548,7 @@ func (r *RBACSupabaseRepository) UpdateAdminUser(userID string, patch map[string
 		return domain.AdminUser{}, err
 	}
 	if len(rows) == 0 {
-		return domain.AdminUser{}, fmt.Errorf("user not found")
+		return domain.AdminUser{}, errors.New("user not found")
 	}
 	return r.GetAdminUser(userID)
 }

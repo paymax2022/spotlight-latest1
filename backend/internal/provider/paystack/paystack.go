@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -342,7 +343,7 @@ func (c *Client) ProvisionVirtualAccount(ctx context.Context, req provider.Provi
 func (c *Client) GetVirtualAccount(ctx context.Context, userID string) (*provider.VirtualAccount, error) {
 	// Paystack DVAs are looked up by customer code. This adapter looks up by
 	// account number stored in our virtual_accounts table (called via the service layer).
-	return nil, fmt.Errorf("paystack: GetVirtualAccount not implemented — use VA service repo")
+	return nil, errors.New("paystack: GetVirtualAccount not implemented — use VA service repo")
 }
 
 func (c *Client) post(ctx context.Context, path string, body, dst any) error {

@@ -67,7 +67,7 @@ func TestModerationQueue_RespectsLimitAndOffset(t *testing.T) {
 	ctx := context.Background()
 	cat := seedCategoryInMarket(t, ctx, pool, "NG")
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		l, err := svc.CreateListing(ctx, uuid.NewString(), mkt.CreateListingInput{
 			CategoryID:  cat,
 			Title:       "Queue paging fixture",

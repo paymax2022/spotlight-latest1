@@ -54,4 +54,5 @@ func TestValidateAddress(t *testing.T) {
 	}
 }
 
-func fptr(f float64) *float64 { return &f }
+//go:fix inline
+func fptr(f float64) *float64 { return new(f) }

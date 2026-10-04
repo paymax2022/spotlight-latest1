@@ -66,7 +66,7 @@ func writeAudit(ctx context.Context, q execer, in AuditInput) error {
 // WriteAudit appends an immutable entry to connect_audit_log (standalone).
 func (s *Service) WriteAudit(ctx context.Context, in AuditInput) error {
 	if in.Action == "" {
-		return fmt.Errorf("connect: audit action is required")
+		return errors.New("connect: audit action is required")
 	}
 	return writeAudit(ctx, s.db, in)
 }

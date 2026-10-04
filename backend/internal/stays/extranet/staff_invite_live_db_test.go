@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/url"
 	"os"
 	"strings"
@@ -224,7 +225,7 @@ func TestLiveDB_AcceptStaffInviteBindsToEmailAndIsSingleUse(t *testing.T) {
 	testsupport.CleanupUser(t, pool, invitee)
 
 	// A forwarded link is useless to anyone else: wrong email, right token.
-	if err := f.svc.AcceptStaffInvite(ctx, invitee, "someone-else@test.test", token); err != ErrInviteNotValid {
+	if err := f.svc.AcceptStaffInvite(ctx, invitee, "someone-else@test.test", token); !errors.Is(err, ErrInviteNotValid) {
 		t.Errorf("accept with mismatched email = %v, want ErrInviteNotValid", err)
 	}
 
@@ -251,7 +252,7 @@ func TestLiveDB_AcceptStaffInviteBindsToEmailAndIsSingleUse(t *testing.T) {
 	}
 
 	// Replaying the same token must not resurrect the grant if it were later revoked.
-	if err := f.svc.AcceptStaffInvite(ctx, invitee, email, token); err != ErrInviteNotValid {
+	if err := f.svc.AcceptStaffInvite(ctx, invitee, email, token); !errors.Is(err, ErrInviteNotValid) {
 		t.Errorf("second accept of the same token = %v, want ErrInviteNotValid", err)
 	}
 }
@@ -280,7 +281,7 @@ func TestLiveDB_AcceptStaffInviteRejectsAnExpiredInvite(t *testing.T) {
 	}
 	testsupport.CleanupUser(t, pool, invitee)
 
-	if err := f.svc.AcceptStaffInvite(ctx, invitee, email, token); err != ErrInviteNotValid {
+	if err := f.svc.AcceptStaffInvite(ctx, invitee, email, token); !errors.Is(err, ErrInviteNotValid) {
 		t.Errorf("accept of an expired invite = %v, want ErrInviteNotValid", err)
 	}
 }
@@ -313,7 +314,7 @@ func TestLiveDB_InviteRequiresOwnerOrManager(t *testing.T) {
 	}
 	testsupport.CleanupUser(t, pool, stranger)
 
-	if _, err := f.svc.InviteStaffByEmail(ctx, stranger, f.property, "", "nobody@stranger-test.test", "READ_ONLY"); err != ErrForbidden {
+	if _, err := f.svc.InviteStaffByEmail(ctx, stranger, f.property, "", "nobody@stranger-test.test", "READ_ONLY"); !errors.Is(err, ErrForbidden) {
 		t.Errorf("invite by a non-staff caller = %v, want ErrForbidden", err)
 	}
 }

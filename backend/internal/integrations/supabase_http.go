@@ -21,7 +21,7 @@ var ErrTokenInvalid = errors.New("token rejected by auth backend")
 
 func (c *SupabaseRestClient) buildRequest(method, path string, query map[string]string, body any) (*http.Request, error) {
 	if !c.Enabled() {
-		return nil, fmt.Errorf("supabase REST is not configured")
+		return nil, errors.New("supabase REST is not configured")
 	}
 	u, err := url.Parse(strings.TrimRight(c.baseURL, "/") + path)
 	if err != nil {
@@ -46,7 +46,7 @@ func (c *SupabaseRestClient) buildRequest(method, path string, query map[string]
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", c.apiKey)
+	req.Header.Set("Apikey", c.apiKey)
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	return req, nil
@@ -129,14 +129,14 @@ func (c *SupabaseRestClient) AuthUser(accessToken string) (map[string]any, error
 		return c.verifyLocalJWT(accessToken)
 	}
 	if strings.TrimSpace(c.baseURL) == "" {
-		return nil, fmt.Errorf("supabase URL is not configured")
+		return nil, errors.New("supabase URL is not configured")
 	}
 	u := strings.TrimRight(c.baseURL, "/") + "/auth/v1/user"
 	req, err := http.NewRequest(http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", c.apiKey)
+	req.Header.Set("Apikey", c.apiKey)
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(accessToken))
 	resp, err := c.http.Do(req)
 	if err != nil {

@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"log"
 	"net/http"
@@ -14,6 +11,10 @@ import (
 	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/insurance/claims"
 	"spotlight/backend/internal/insurance/gateway"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ClaimSync is the slice of the claims service the webhook engine needs to apply
@@ -57,8 +58,8 @@ func (s *Service) SignatureHeaderFor(provider string) string {
 
 // Sentinel errors.
 var (
-	ErrUnknownProvider = fmt.Errorf("webhooks: unknown provider")
-	ErrBadSignature    = fmt.Errorf("webhooks: signature verification failed")
+	ErrUnknownProvider = errors.New("webhooks: unknown provider")
+	ErrBadSignature    = errors.New("webhooks: signature verification failed")
 )
 
 // Outcome describes how an inbound webhook was handled (for the HTTP response;
@@ -88,7 +89,7 @@ func (s *Service) Ingest(ctx context.Context, provider string, payload []byte, s
 		return nil, ErrBadSignature
 	}
 	if ev.ExternalEventID == "" {
-		return nil, fmt.Errorf("webhooks: missing external_event_id")
+		return nil, errors.New("webhooks: missing external_event_id")
 	}
 
 	// Idempotency: record (provider, external_event_id). Duplicate → drop.

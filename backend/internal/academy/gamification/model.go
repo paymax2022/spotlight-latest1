@@ -57,6 +57,7 @@ type UserBadge struct {
 // read surface. progress is capped at the criteria target; completed = reached it.
 type ChallengeView struct {
 	Challenge
+
 	Progress  int  `json:"progress"`
 	Completed bool `json:"completed"`
 }

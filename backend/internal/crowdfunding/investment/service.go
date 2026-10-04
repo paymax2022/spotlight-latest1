@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -438,7 +439,7 @@ func computeUnitsOrPct(model InvestmentModel, amountKobo, targetKobo int64, proj
 // formatNaira renders kobo as a ₦ amount with thousands separators.
 func formatNaira(kobo int64) string {
 	naira := kobo / 100
-	s := fmt.Sprintf("%d", naira)
+	s := strconv.FormatInt(naira, 10)
 	n := len(s)
 	if n <= 3 {
 		return "₦" + s

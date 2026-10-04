@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"strings"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ErrAccountUnavailable is returned when the lockout gate refuses a step-up.
@@ -94,7 +95,7 @@ func (b *otpAuthBridge) gate(email string) (*platformUser, error) {
 		return nil, fmt.Errorf("%w: platform user not found", ErrAccountUnavailable)
 	}
 	if err := b.svc.validateLoginStatus(user); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrAccountUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ErrAccountUnavailable, err)
 	}
 	return user, nil
 }

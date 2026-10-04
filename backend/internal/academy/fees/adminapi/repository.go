@@ -223,10 +223,7 @@ func (r *Repository) CollectionsOverview(ctx context.Context, schoolID string) (
 	if err != nil {
 		return CollectionsOverview{}, err
 	}
-	c.OutstandingKobo = c.BilledKobo - c.CollectedKobo
-	if c.OutstandingKobo < 0 {
-		c.OutstandingKobo = 0
-	}
+	c.OutstandingKobo = max(c.BilledKobo-c.CollectedKobo, 0)
 	return c, nil
 }
 

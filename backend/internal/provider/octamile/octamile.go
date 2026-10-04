@@ -207,6 +207,7 @@ func (e envelope) OK() bool { return e.Success }
 
 type quoteResponse struct {
 	envelope
+
 	Quote struct {
 		Reference      string         `json:"reference"`
 		PremiumKobo    int64          `json:"premium"`
@@ -221,6 +222,7 @@ type quoteResponse struct {
 
 type policyResponse struct {
 	envelope
+
 	Policy struct {
 		Reference      string `json:"reference"`
 		PlanCode       string `json:"plan_code"`
@@ -257,6 +259,7 @@ func (p policyResponse) toPolicy(aggregator string) gateway.Policy {
 
 type claimResponse struct {
 	envelope
+
 	Claim struct {
 		Reference          string `json:"reference"`
 		PolicyReference    string `json:"policy_reference"`

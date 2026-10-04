@@ -13,6 +13,7 @@ import (
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
+
 	// referrals is retained ONLY for the RegisterMarketplace signature: router.go
 	// still passes referralRewardsSvc, but the escrow settle/refund emit was removed
 	// in the listings-and-connect pivot (ADR-023), so the param is now a no-op.

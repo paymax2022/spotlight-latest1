@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"spotlight/backend/go-common/dbutil"
 	"time"
@@ -66,7 +67,7 @@ func (r *Repository) AdminGetWithdrawal(ctx context.Context, id string) (*AdminW
 	           JOIN crypto_addresses addr ON addr.id = w.address_id
 	           WHERE w.id=$1`
 	w, err := scanAdminWithdrawal(r.db.QueryRow(ctx, q, id))
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return w, err
@@ -96,7 +97,7 @@ func (r *Repository) AdminTransitionWithdrawal(
 		RETURNING user_id, asset_id`
 	var ownerID, assetID string
 	if err := tx.QueryRow(ctx, upd, id, to, failureReason, from).Scan(&ownerID, &assetID); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrInvalidTransition
 		}
 		return nil, err
@@ -296,7 +297,7 @@ func (r *Repository) AdminGetAddress(ctx context.Context, id string) (*AdminAddr
 	var a AdminAddress
 	if err := r.db.QueryRow(ctx, q, id).Scan(&a.ID, &a.UserID, &a.AssetID, &a.Symbol, &a.Label,
 		&a.Network, &a.Address, &a.IsActive, &a.VerifiedAt, &a.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrAddressNotFound
 		}
 		return nil, err
@@ -318,7 +319,7 @@ func (r *Repository) AdminDecideAddress(ctx context.Context, id string, approve 
 		RETURNING id`
 	var got string
 	if err := r.db.QueryRow(ctx, q, id, approve).Scan(&got); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrAddressNotFound
 		}
 		return nil, err

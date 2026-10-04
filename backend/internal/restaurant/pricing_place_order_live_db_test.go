@@ -279,7 +279,7 @@ func TestLiveDB_OrderCartIsSanityBounded(t *testing.T) {
 	}
 	// Many in-bound lines that still add up past the aggregate ceiling.
 	var manyLines []OrderItemInput
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		manyLines = append(manyLines, OrderItemInput{MenuItemID: f.itemID, Quantity: maxLineQuantity})
 	}
 	_, err = f.svc.PlaceOrder(ctx, f.restID, f.customer, PlaceOrderRequest{

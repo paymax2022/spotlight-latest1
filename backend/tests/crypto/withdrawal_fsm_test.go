@@ -181,10 +181,7 @@ func TestWithdrawalFSM_EveryNonTerminalStateHasFailedAsAnEscapeHatch(t *testing.
 // Source: backend/internal/crypto/service_ext.go:328-336 (unexported).
 
 func networkFeeUnitsMirror(units int64) int64 {
-	fee := units / 2000
-	if fee < 1 {
-		fee = 1
-	}
+	fee := max(units/2000, 1)
 	return fee
 }
 

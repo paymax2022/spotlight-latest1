@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -159,13 +160,15 @@ func (r *Repository) transition(ctx context.Context, id string, to Status, from 
 	setSQL := "status = $1, updated_at = now()"
 	args := []any{string(to)}
 	i := 2
+	var setSQLSb162 strings.Builder
 	for _, col := range setterOrder {
 		if v, ok := setters[col]; ok {
-			setSQL += ", " + col + " = $" + strconv.Itoa(i)
+			setSQLSb162.WriteString(", " + col + " = $" + strconv.Itoa(i))
 			args = append(args, v)
 			i++
 		}
 	}
+	setSQL += setSQLSb162.String()
 	args = append(args, id)
 	if _, err := tx.Exec(ctx, `UPDATE business_profiles SET `+setSQL+` WHERE id = $`+strconv.Itoa(i), args...); err != nil {
 		if dbutil.IsUniqueViolation(err) {
@@ -207,13 +210,15 @@ func (r *Repository) updateFields(ctx context.Context, id, actor, event string, 
 	setSQL := "updated_at = now()"
 	args := []any{}
 	i := 1
+	var setSQLSb210 strings.Builder
 	for _, col := range setterOrder {
 		if v, ok := setters[col]; ok {
-			setSQL += ", " + col + " = $" + strconv.Itoa(i)
+			setSQLSb210.WriteString(", " + col + " = $" + strconv.Itoa(i))
 			args = append(args, v)
 			i++
 		}
 	}
+	setSQL += setSQLSb210.String()
 	args = append(args, id)
 	if _, err := tx.Exec(ctx, `UPDATE business_profiles SET `+setSQL+` WHERE id = $`+strconv.Itoa(i), args...); err != nil {
 		return err

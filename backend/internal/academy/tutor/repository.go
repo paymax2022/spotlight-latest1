@@ -6,11 +6,12 @@ import (
 	"errors"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/go-common/dbutil"
 )
 
 // Repository is the pgx data-access layer for the academy tutor marketplace. Every query

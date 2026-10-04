@@ -9,8 +9,10 @@ package property
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -76,10 +78,8 @@ func (s *Service) GetContext(ctx context.Context, userID string) (*ContextRespon
 		if name != "" && e.Name == "" {
 			e.Name = name
 		}
-		for _, r := range e.Roles {
-			if r == role {
-				return
-			}
+		if slices.Contains(e.Roles, role) {
+			return
 		}
 		e.Roles = append(e.Roles, role)
 	}
@@ -204,7 +204,7 @@ func (s *Service) SwitchContext(ctx context.Context, userID, contextType, contex
 		return nil, fmt.Errorf("property: invalid context_type %q", contextType)
 	}
 	if contextID == "" {
-		return nil, fmt.Errorf("property: context_id required")
+		return nil, errors.New("property: context_id required")
 	}
 
 	// Membership check against the aggregated context (reuses the same derivation
@@ -406,10 +406,7 @@ func computeRentScore(onTimeRate float64, comparable int, oldest *time.Time) int
 		months := int(time.Since(*oldest).Hours() / (24 * 30))
 		tenure = min((months/6)*2, 10)
 	}
-	score := max(base+tenure, 0)
-	if score > 100 {
-		score = 100
-	}
+	score := min(max(base+tenure, 0), 100)
 	return score
 }
 

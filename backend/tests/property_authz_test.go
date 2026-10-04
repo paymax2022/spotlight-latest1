@@ -44,6 +44,7 @@ import (
 
 type denyAllRBAC struct {
 	services.RBACService
+
 	asked []string
 }
 
@@ -54,6 +55,7 @@ func (d *denyAllRBAC) CheckPermission(userID, permission, scopeType, scopeID str
 
 type allowAllRBAC struct {
 	services.RBACService
+
 	asked []string
 }
 

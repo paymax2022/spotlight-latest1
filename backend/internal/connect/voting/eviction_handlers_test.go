@@ -16,7 +16,7 @@ import (
 func TestEvictionHandlersParameterBinding(t *testing.T) {
 	tests := []struct {
 		name        string
-		request     interface{}
+		request     any
 		expectError bool
 		errorField  string
 	}{
@@ -82,7 +82,7 @@ func TestEvictionHandlersParameterBinding(t *testing.T) {
 				t.Fatalf("failed to marshal request: %v", err)
 			}
 
-			req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
+			req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 
 			w := httptest.NewRecorder()
@@ -116,8 +116,8 @@ func TestEvictionHandlersParameterBinding(t *testing.T) {
 func TestEvictionResponseTypes(t *testing.T) {
 	tests := []struct {
 		name     string
-		response interface{}
-		validate func(interface{}) bool
+		response any
+		validate func(any) bool
 	}{
 		{
 			name: "eviction response",
@@ -127,7 +127,7 @@ func TestEvictionResponseTypes(t *testing.T) {
 				EvictionRank: 50,
 				EvictionID:   "eviction-1",
 			},
-			validate: func(r interface{}) bool {
+			validate: func(r any) bool {
 				er, ok := r.(EvictionResponse)
 				return ok && er.ContestantID == "contestant-1" && er.VoteCount == 100
 			},
@@ -139,7 +139,7 @@ func TestEvictionResponseTypes(t *testing.T) {
 				Message:      "Contestant saved",
 				SaveRecordID: "save-1",
 			},
-			validate: func(r interface{}) bool {
+			validate: func(r any) bool {
 				sr, ok := r.(SaveResponse)
 				return ok && sr.Success && sr.SaveRecordID == "save-1"
 			},

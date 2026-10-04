@@ -164,7 +164,7 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 		return nil, ErrWithdrawBadAmount
 	}
 	if s.ledger == nil {
-		return nil, fmt.Errorf("restaurant: withdrawals require a ledger (WithLedger not wired)")
+		return nil, errors.New("restaurant: withdrawals require a ledger (WithLedger not wired)")
 	}
 	if s.tiers == nil {
 		// Fail-closed: a money path with no tier gate must refuse to move money.
@@ -338,7 +338,7 @@ func (s *Service) disburse(ctx context.Context, req WithdrawalDisburseRequest) (
 // settle leg is idempotent on the :settle key, so a duplicate webhook is a no-op.
 func (s *Service) MarkWithdrawalPaid(ctx context.Context, withdrawalID, providerRef, _ string) (*Withdrawal, error) {
 	if s.ledger == nil {
-		return nil, fmt.Errorf("restaurant: withdrawals require a ledger (WithLedger not wired)")
+		return nil, errors.New("restaurant: withdrawals require a ledger (WithLedger not wired)")
 	}
 	suspenseAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountFailedTransferSusp)
 	if err != nil {
@@ -417,7 +417,7 @@ func (s *Service) MarkWithdrawalPaid(ctx context.Context, withdrawalID, provider
 // returned). A duplicate failure webhook is a no-op.
 func (s *Service) MarkWithdrawalFailed(ctx context.Context, withdrawalID, reason, _ string) (*Withdrawal, error) {
 	if s.ledger == nil {
-		return nil, fmt.Errorf("restaurant: withdrawals require a ledger (WithLedger not wired)")
+		return nil, errors.New("restaurant: withdrawals require a ledger (WithLedger not wired)")
 	}
 	suspenseAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountFailedTransferSusp)
 	if err != nil {

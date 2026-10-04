@@ -298,7 +298,7 @@ func (s *Service) CancelMover(ctx context.Context, jobID, userID, reason string)
 		return codedErr(http.StatusForbidden, CodeForbidden, "not your job")
 	}
 	if !canTransitionMover(m.Status, "cancelled") {
-		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot cancel from status %s", m.Status))
+		return codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from status "+m.Status)
 	}
 	if err := s.moverSetStatus(ctx, jobID, m.Status, "cancelled"); err != nil {
 		return err

@@ -2,6 +2,7 @@ package preconsult
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
 	"strconv"
@@ -96,7 +97,7 @@ func (h *Handler) PresignAttachment(c *gin.Context) {
 	}
 	res, err := h.svc.PresignAttachment(c.Request.Context(), id, c.Param("appointmentId"), req.Kind, req.FileName, req.ContentType)
 	if err != nil {
-		if err == ErrUploadsNotConfigured {
+		if errors.Is(err, ErrUploadsNotConfigured) {
 			ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
 			return
 		}

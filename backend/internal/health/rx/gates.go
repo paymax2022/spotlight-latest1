@@ -177,10 +177,10 @@ func (s *Service) AuthorizeRefills(ctx context.Context, prescriberID, rxID strin
 	var owner, state string
 	if err := tx.QueryRow(ctx, `SELECT prescriber_id, state FROM health_prescriptions WHERE id=$1 FOR UPDATE`, rxID).
 		Scan(&owner, &state); err != nil {
-		return nil, fmt.Errorf("rx: not found")
+		return nil, errors.New("rx: not found")
 	}
 	if prescriberID != owner {
-		return nil, fmt.Errorf("rx: only the prescriber may authorize refills")
+		return nil, errors.New("rx: only the prescriber may authorize refills")
 	}
 	if st := State(state); st == StateDispensed || st == StateFulfilled {
 		return nil, ErrRefillsLocked
@@ -216,13 +216,13 @@ func (s *Service) DispenseRefill(ctx context.Context, pharmacistID, rxID string)
 	                  EXISTS (SELECT 1 FROM health_prescription_items i WHERE i.prescription_id=health_prescriptions.id AND i.is_pom)
 	           FROM health_prescriptions WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, q, rxID).Scan(&state, &verifiedBy, &refillsUsed, &refillsAuthorized, &hasPOM); err != nil {
-		return nil, fmt.Errorf("rx: not found")
+		return nil, errors.New("rx: not found")
 	}
 	if st := State(state); st != StateDispensed && st != StateFulfilled {
 		return nil, ErrNotYetDispensed
 	}
 	if hasPOM && verifiedBy == nil {
-		return nil, fmt.Errorf("rx: POM items require pharmacist verification before dispense (HL-3)")
+		return nil, errors.New("rx: POM items require pharmacist verification before dispense (HL-3)")
 	}
 	if !canRefill(refillsUsed, refillsAuthorized) {
 		return nil, ErrRefillsExhausted

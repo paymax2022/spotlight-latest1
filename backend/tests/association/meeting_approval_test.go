@@ -17,6 +17,7 @@ package association_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,8 @@ import (
 	"spotlight/backend/internal/testsupport"
 )
 
-func ptrString(s string) *string { return &s }
+//go:fix inline
+func ptrString(s string) *string { return new(s) }
 
 // meetingDraft builds a valid proposal starting in the future.
 func meetingDraft(title string) association.MeetingRequest {
@@ -37,7 +39,7 @@ func meetingDraft(title string) association.MeetingRequest {
 		Title:    title,
 		Mode:     "PHYSICAL",
 		StartsAt: time.Now().Add(72 * time.Hour).UTC().Format(time.RFC3339),
-		Location: ptrString("Community Hall"),
+		Location: new("Community Hall"),
 	}
 }
 
@@ -56,12 +58,7 @@ func meetingTitles(t *testing.T, ctx context.Context, svc *association.Service, 
 }
 
 func containsTitle(list []string, want string) bool {
-	for _, v := range list {
-		if v == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, want)
 }
 
 // orgWithAdminAndMember publishes an organisation and returns the founder (an

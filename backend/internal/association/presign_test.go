@@ -113,7 +113,7 @@ func TestPresignLogoKeyIsScopedToTheCaller(t *testing.T) {
 	if !strings.HasSuffix(res.Data.ObjectKey, ".png") {
 		t.Errorf("objectKey = %q; extension must be normalised to lowercase .png", res.Data.ObjectKey)
 	}
-	if res.Data.Method != "PUT" || res.Data.UploadURL == "" {
+	if res.Data.Method != http.MethodPut || res.Data.UploadURL == "" {
 		t.Errorf("got method=%q url=%q; want a PUT url", res.Data.Method, res.Data.UploadURL)
 	}
 	if res.Data.ContentType != "image/png" {

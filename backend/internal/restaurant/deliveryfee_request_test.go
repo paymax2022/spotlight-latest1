@@ -2,12 +2,13 @@ package restaurant
 
 import "testing"
 
-func f64(v float64) *float64 { return &v }
+//go:fix inline
+func f64(v float64) *float64 { return new(v) }
 
 // PlaceOrderRequest.DeliveryCoords normalizes flat vs nested coordinate inputs.
 func TestDeliveryCoords_Normalization(t *testing.T) {
 	// Flat fields present → used directly.
-	if lat, lng, ok := (PlaceOrderRequest{DeliveryLat: f64(6.5), DeliveryLng: f64(3.4)}).DeliveryCoords(); !ok || lat != 6.5 || lng != 3.4 {
+	if lat, lng, ok := (PlaceOrderRequest{DeliveryLat: new(6.5), DeliveryLng: new(3.4)}).DeliveryCoords(); !ok || lat != 6.5 || lng != 3.4 {
 		t.Fatalf("flat coords: got (%v,%v,%v)", lat, lng, ok)
 	}
 
@@ -28,7 +29,7 @@ func TestDeliveryCoords_Normalization(t *testing.T) {
 	}
 
 	// Only one flat field present → not a complete pair → fall back.
-	if _, _, ok := (PlaceOrderRequest{DeliveryLat: f64(6.5)}).DeliveryCoords(); ok {
+	if _, _, ok := (PlaceOrderRequest{DeliveryLat: new(6.5)}).DeliveryCoords(); ok {
 		t.Fatal("partial flat coords should report ok=false")
 	}
 }

@@ -109,7 +109,7 @@ var ErrSignupDisabled = errors.New("signups are disabled")
 func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, error) {
 	// Only when the client actually sent it — see domain.RegisterRequest.
 	if strings.TrimSpace(in.ConfirmPassword) != "" && in.Password != in.ConfirmPassword {
-		return nil, fmt.Errorf("password confirmation mismatch")
+		return nil, errors.New("password confirmation mismatch")
 	}
 
 	// full_name is what the on_auth_user_created trigger (handle_new_user) copies
@@ -168,7 +168,7 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", s.supabase.APIKey())
+	req.Header.Set("Apikey", s.supabase.APIKey())
 	req.Header.Set("Authorization", "Bearer "+s.supabase.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := gotrueHTTPClient.Do(req)
@@ -298,7 +298,7 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 	if email == "" {
 		// Same error the wrong-password path returns, deliberately: a distinct
 		// "no such account" would leak which phone numbers are registered.
-		return nil, fmt.Errorf("invalid credentials")
+		return nil, errors.New("invalid credentials")
 	}
 	var user *platformUser
 	// fail reports err with whatever identity was resolved before the failure,
@@ -342,7 +342,7 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 		// credential verdict.
 		return nil, fail(fmt.Errorf("%w: build token request: %w", ErrAuthUnavailable, err))
 	}
-	req.Header.Set("apikey", s.supabase.APIKey())
+	req.Header.Set("Apikey", s.supabase.APIKey())
 	req.Header.Set("Authorization", "Bearer "+s.supabase.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := gotrueHTTPClient.Do(req)
@@ -456,7 +456,7 @@ func (s *authService) RequestPasswordReset(email string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("apikey", s.supabase.APIKey())
+	req.Header.Set("Apikey", s.supabase.APIKey())
 	req.Header.Set("Authorization", "Bearer "+s.supabase.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := gotrueHTTPClient.Do(req)
@@ -484,7 +484,7 @@ func (s *authService) RequestPasswordReset(email string) error {
 
 func (s *authService) ChangePassword(accessToken, currentPassword, newPassword string) error {
 	if strings.TrimSpace(accessToken) == "" || len(currentPassword) < 8 || len(newPassword) < 8 {
-		return fmt.Errorf("invalid password change payload")
+		return errors.New("invalid password change payload")
 	}
 	authUser, err := s.supabase.AuthUser(accessToken)
 	if err != nil {
@@ -542,7 +542,7 @@ var profileMetadataAdminKeys = map[string]bool{
 
 func (s *authService) CompleteProfile(userID string, profileType string, metadata map[string]any) error {
 	if strings.TrimSpace(userID) == "" || strings.TrimSpace(profileType) == "" {
-		return fmt.Errorf("user and profile type are required")
+		return errors.New("user and profile type are required")
 	}
 	if !allowedProfileTypes[profileType] {
 		return errors.New("invalid profile type")
@@ -604,10 +604,10 @@ func (s *authService) findPlatformUserByEmail(email string) (*platformUser, erro
 func (s *authService) validateLoginStatus(u *platformUser) error {
 	now := time.Now().UTC()
 	if u.DeletedAt != nil {
-		return fmt.Errorf("account unavailable")
+		return errors.New("account unavailable")
 	}
 	if u.Status == "suspended" || u.Status == "deleted" {
-		return fmt.Errorf("account unavailable")
+		return errors.New("account unavailable")
 	}
 	// A nil LockedUntil means "no expiry" (see UnlockUser, which clears it to nil
 	// as part of unlocking), not "not locked" — an indefinite manual lock (e.g.
@@ -615,7 +615,7 @@ func (s *authService) validateLoginStatus(u *platformUser) error {
 	// ever setting LockedUntil) must still refuse. Only a LockedUntil that has
 	// actually passed lets an auto-lockout (which always sets it) self-expire.
 	if u.Status == "locked" && (u.LockedUntil == nil || u.LockedUntil.After(now)) {
-		return fmt.Errorf("account locked")
+		return errors.New("account locked")
 	}
 	return nil
 }

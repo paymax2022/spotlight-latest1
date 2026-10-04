@@ -30,6 +30,7 @@ package ledger_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -160,7 +161,7 @@ func TestLiveDB_LedgerConservationSurvivesPosting(t *testing.T) {
 	}
 
 	// Replaying the same key must be a no-op, not a second half-journal.
-	if err := svc.PostJournal(ctx, journal); err != nil && err != ledger.ErrDuplicate {
+	if err := svc.PostJournal(ctx, journal); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		t.Fatalf("replay posting: %v", err)
 	}
 

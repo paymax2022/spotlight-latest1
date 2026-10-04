@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"spotlight/backend/internal/health/triage"
 	"time"
@@ -64,8 +65,8 @@ func (r *repository) getProfile(ctx context.Context, userID, profileID string) (
 	var p Profile
 	if err := r.db.QueryRow(ctx, q, profileID, userID).Scan(&p.ID, &p.UserID, &p.Kind, &p.Name,
 		&p.DOB, &p.Sex, &p.IsPregnant, &p.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("core: profile not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("core: profile not found")
 		}
 		return nil, err
 	}
@@ -106,8 +107,8 @@ func (r *repository) getSession(ctx context.Context, userID, sessionID string) (
 		&s.ID, &s.UserID, &s.ProfileID, &s.State, &s.Language, &s.Channel, &s.ConsentID,
 		&s.DispositionLevel, &s.DispositionCode, &s.EngineRef, &s.RedFlag,
 		&s.StartedAt, &s.AssessedAt, &s.ClosedAt, &s.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("core: session not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("core: session not found")
 		}
 		return nil, err
 	}
@@ -228,7 +229,7 @@ func (r *repository) latestAssessment(ctx context.Context, sessionID string) (*A
 	var conds, payload []byte
 	if err := r.db.QueryRow(ctx, q, sessionID).Scan(&a.ID, &a.SessionID, &conds, &a.DispositionLevel,
 		&a.DispositionCode, &payload, &a.RedFlagTriggered, &a.RuleID, &a.Source, &a.CreatedAt); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil // no assessment yet — not an error
 		}
 		return nil, err

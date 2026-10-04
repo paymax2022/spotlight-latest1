@@ -312,7 +312,7 @@ func buildMockExamResult(attempt *MockExamAttempt) MockExamResultResponse {
 		result.TotalTime = int(attempt.SubmittedAt.Sub(attempt.StartedAt).Seconds())
 	}
 
-	var performance map[string]interface{}
+	var performance map[string]any
 	if attempt.Performance != nil {
 		json.Unmarshal(attempt.Performance, &performance)
 	}

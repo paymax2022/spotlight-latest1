@@ -64,7 +64,7 @@ func seedAdminQueryFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 		pool.Exec(bg, `DELETE FROM health_providers WHERE id=$1`, labID)
 	})
 	svc = healthlab.NewService(pool, nil, nil, nil, nil, nil, nil, nil)
-	return
+	return svc, labID, orderID
 }
 
 // TestLiveDB_AdminListOrders_FilterByLabProviderIDDoesNotErrorOnUUID locks the

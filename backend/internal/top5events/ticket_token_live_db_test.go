@@ -14,6 +14,7 @@ package top5events_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -167,7 +168,7 @@ func TestLiveDB_TicketToken_NonOwnerForbidden(t *testing.T) {
 	ticketID := seedIssuedTicket(t, ctx, pool, cred, owner)
 
 	_, err := svc.TicketToken(ctx, stranger, ticketID)
-	if err != top5events.ErrForbidden {
+	if !errors.Is(err, top5events.ErrForbidden) {
 		t.Fatalf("got err=%v, want ErrForbidden for a non-owner caller", err)
 	}
 }
@@ -180,7 +181,7 @@ func TestLiveDB_TicketToken_UnknownTicketNotFound(t *testing.T) {
 	owner := seedTicketTokenUser(t, ctx, pool)
 
 	_, err := svc.TicketToken(ctx, owner, uuid.New().String())
-	if err != top5events.ErrNotFound {
+	if !errors.Is(err, top5events.ErrNotFound) {
 		t.Fatalf("got err=%v, want ErrNotFound for an unknown ticket id", err)
 	}
 }

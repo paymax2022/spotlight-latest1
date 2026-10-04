@@ -12,16 +12,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/wallet"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -79,13 +80,13 @@ func NewService(db *pgxpool.Pool, led *ledger.Service, w *wallet.Service, aml AM
 // limits + insufficient funds (NL-1: no negative balance, no advance).
 func (s *Service) Spray(ctx context.Context, fromUserID, toUserID, contextRef, idemKey string, amountKobo int64) (*Spray, error) {
 	if fromUserID == "" || toUserID == "" || idemKey == "" {
-		return nil, fmt.Errorf("spray: from, to and idempotency key required")
+		return nil, errors.New("spray: from, to and idempotency key required")
 	}
 	if fromUserID == toUserID {
-		return nil, fmt.Errorf("spray: cannot spray yourself")
+		return nil, errors.New("spray: cannot spray yourself")
 	}
 	if amountKobo < s.aml.MinSingleKobo {
-		return nil, fmt.Errorf("spray: amount below minimum")
+		return nil, errors.New("spray: amount below minimum")
 	}
 	if amountKobo > s.aml.MaxSingleKobo {
 		return nil, ErrAMLSingleLimit
@@ -205,7 +206,7 @@ func (s *Service) getByIdem(ctx context.Context, idemKey string) (*Spray, error)
 	if err := s.db.QueryRow(ctx, q, idemKey).Scan(
 		&sp.ID, &sp.FromUserID, &sp.ToUserID, &sp.ContextRef, &sp.AmountKobo, &sp.IdempotencyKey, &sp.CreatedAt,
 	); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, pgx.ErrNoRows
 		}
 		return nil, err
@@ -223,9 +224,9 @@ func (s *Service) log(actor, target, action, id string, meta map[string]any) {
 
 // Sentinel errors (stable for client UX + AML alerting).
 var (
-	ErrAMLSingleLimit = fmt.Errorf("spray: amount exceeds single-spray limit")
-	ErrAMLDailyLimit  = fmt.Errorf("spray: daily spray amount limit exceeded")
-	ErrAMLDailyCount  = fmt.Errorf("spray: daily spray count limit exceeded")
+	ErrAMLSingleLimit = errors.New("spray: amount exceeds single-spray limit")
+	ErrAMLDailyLimit  = errors.New("spray: daily spray amount limit exceeded")
+	ErrAMLDailyCount  = errors.New("spray: daily spray count limit exceeded")
 )
 
 // Handler exposes spray member endpoints (send + leaderboard). The sender is always

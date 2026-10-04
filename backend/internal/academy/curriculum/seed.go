@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"spotlight/backend/go-common/ptr"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/go-common/ptr"
 )
 
 // Seed installs the baseline VERSIONED curriculum data idempotently. Every insert

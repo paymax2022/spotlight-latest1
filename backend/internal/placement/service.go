@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	"spotlight/backend/internal/finance/ledger"
@@ -638,10 +639,10 @@ func (s *Service) checkEligibility(ctx context.Context, c *Campaign) error {
 		return err
 	}
 	if err := s.ext.CheckMerchant(ctx, c.MerchantID, c.ZoneCode); err != nil {
-		return fmt.Errorf("%w: %v", ErrIneligible, err)
+		return fmt.Errorf("%w: %w", ErrIneligible, err)
 	}
 	if err := s.ext.CheckSubject(ctx, c.MerchantID, c.SubjectType, c.SubjectID); err != nil {
-		return fmt.Errorf("%w: %v", ErrIneligible, err)
+		return fmt.Errorf("%w: %w", ErrIneligible, err)
 	}
 	return nil
 }
@@ -681,9 +682,7 @@ func (s *Service) writeAudit(ctx context.Context, campaignID, actorID, action st
 	_ = s.repo.InsertAudit(ctx, campaignID, actorID, action, before, after, nil)
 	if s.audit != nil {
 		detail := map[string]any{"campaign_id": campaignID}
-		for k, v := range after {
-			detail[k] = v
-		}
+		maps.Copy(detail, after)
 		s.audit.Audit(ctx, actorID, action, detail)
 	}
 }

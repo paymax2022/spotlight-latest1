@@ -46,7 +46,7 @@ func TestSetBuilder_SkipsNilFieldsAndNumbersPlaceholders(t *testing.T) {
 	var absent *string // nil ⇒ "leave this column alone"
 
 	b := newSetBuilder()
-	b.set("name", name2ptr(name))
+	b.set("name", new(name))
 	b.set("code", absent)
 	b.setOrNull("amount_kobo", nil, true) // explicit clear
 	b.set("priority", &priority)
@@ -79,7 +79,7 @@ func TestSetBuilder_EmptyDetectsANoOpPatch(t *testing.T) {
 	if !b.empty() {
 		t.Error("a nil field must not count as a change")
 	}
-	b.set("name", name2ptr("x"))
+	b.set("name", new("x"))
 	if b.empty() {
 		t.Error("a set field must count as a change")
 	}
@@ -101,7 +101,8 @@ func TestSetBuilder_ClearTakesPrecedenceOverAValue(t *testing.T) {
 	}
 }
 
-func name2ptr(s string) *string { return &s }
+//go:fix inline
+func name2ptr(s string) *string { return new(s) }
 
 func decodePatch(t *testing.T, body string) patchBody {
 	t.Helper()

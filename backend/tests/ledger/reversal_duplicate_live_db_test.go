@@ -16,6 +16,7 @@ package ledger_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -66,7 +67,7 @@ func TestLiveDB_PostReversal_DuplicateIsErrDuplicate_NoRedis(t *testing.T) {
 	if replayErr == nil {
 		t.Fatal("a replayed reversal posted a SECOND time — the unique index did not stop it")
 	}
-	if replayErr != ledger.ErrDuplicate {
+	if !errors.Is(replayErr, ledger.ErrDuplicate) {
 		t.Fatalf("replayed reversal returned %v, want ledger.ErrDuplicate — callers (e.g. marketplace CancelBoost/RejectBoost) that tolerate ErrDuplicate as a no-op will instead surface this as a hard failure whenever Redis is unavailable", replayErr)
 	}
 

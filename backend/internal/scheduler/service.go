@@ -3,13 +3,15 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // runCtx implements HandlerCtx for one occurrence. It carries the durable run
@@ -118,10 +120,10 @@ func (s *Service) handlerFor(jobType string) (HandlerFunc, bool) {
 // Schedule creates a durable recurring (or one-shot) job.
 func (s *Service) Schedule(ctx context.Context, j Job) (*Job, error) {
 	if j.JobType == "" {
-		return nil, fmt.Errorf("scheduler: job_type required")
+		return nil, errors.New("scheduler: job_type required")
 	}
 	if j.OwnerUserID == "" {
-		return nil, fmt.Errorf("scheduler: owner_user_id required")
+		return nil, errors.New("scheduler: owner_user_id required")
 	}
 	if j.ID == "" {
 		j.ID = uuid.New().String()
@@ -167,7 +169,7 @@ func (s *Service) Cancel(ctx context.Context, jobID string) error {
 		return fmt.Errorf("scheduler: cancel: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("scheduler: job not cancellable (missing or terminal)")
+		return errors.New("scheduler: job not cancellable (missing or terminal)")
 	}
 	return nil
 }

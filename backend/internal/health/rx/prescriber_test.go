@@ -50,8 +50,7 @@ func TestAuthorizePrescriberGate(t *testing.T) {
 func TestIssueBlocksUnauthorizedPrescriber(t *testing.T) {
 	svc := NewService(nil, nil).WithPrescriberAuthorizer(fakePrescriberAuth{ok: false})
 	_, err := svc.Issue(context.Background(), "dr1", "patient", nil, []Item{{DrugName: "Amoxicillin", Quantity: 1}})
-	var ue *UnauthorizedPrescriberError
-	if !errors.As(err, &ue) {
+	if _, ok := errors.AsType[*UnauthorizedPrescriberError](err); !ok {
 		t.Fatalf("Issue must reject an unauthorized prescriber at the boundary, got %v", err)
 	}
 }

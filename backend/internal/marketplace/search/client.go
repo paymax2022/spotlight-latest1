@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -203,7 +204,7 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (SearchResults, 
 		// emit the bare limit constant, so every page after the first pointed
 		// back at "offset=limit" and the query builder never even read cursor
 		// input, making all paging past page 1 repeat page 1 forever.
-		nextCursor = fmt.Sprintf("%d", offset+limit)
+		nextCursor = strconv.Itoa(offset + limit)
 	}
 
 	return SearchResults{

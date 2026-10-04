@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"log"
 	"net/http"
@@ -26,6 +24,9 @@ import (
 	"spotlight/backend/internal/services"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // academy_rails.go — real Paymax-rail adapters for the academy modules, replacing

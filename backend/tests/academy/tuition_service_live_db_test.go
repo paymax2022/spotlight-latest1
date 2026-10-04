@@ -16,6 +16,7 @@ package academy
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -240,7 +241,7 @@ func TestConfirmPaymentOwnershipMismatch(t *testing.T) {
 	fakeProvider.setSuccess(reference, payments[0].AmountNGN*100)
 
 	_, err = svc.ConfirmPayment(ctx, uuid.New().String(), plan.ID, payments[0].ID, reference, attackerID)
-	if err != tuition.ErrForbidden {
+	if !errors.Is(err, tuition.ErrForbidden) {
 		t.Fatalf("expected ErrForbidden, got: %v", err)
 	}
 }
@@ -271,7 +272,7 @@ func TestConfirmPaymentAmountMismatch(t *testing.T) {
 	fakeProvider.setSuccess(reference, payments[0].AmountNGN*100-1000) // short by 10 naira
 
 	_, err = svc.ConfirmPayment(ctx, uuid.New().String(), plan.ID, payments[0].ID, reference, userID)
-	if err != tuition.ErrInvalidPaymentAmount {
+	if !errors.Is(err, tuition.ErrInvalidPaymentAmount) {
 		t.Fatalf("expected ErrInvalidPaymentAmount, got: %v", err)
 	}
 }
@@ -301,7 +302,7 @@ func TestConfirmPaymentUnconfirmedCharge(t *testing.T) {
 	fakeProvider.setFailed(reference)
 
 	_, err = svc.ConfirmPayment(ctx, uuid.New().String(), plan.ID, payments[0].ID, reference, userID)
-	if err != tuition.ErrPaymentNotConfirmed {
+	if !errors.Is(err, tuition.ErrPaymentNotConfirmed) {
 		t.Fatalf("expected ErrPaymentNotConfirmed, got: %v", err)
 	}
 }
@@ -341,7 +342,7 @@ func TestConfirmPaymentReferenceReuse(t *testing.T) {
 
 	// Replaying the SAME reference against the second installment must be rejected.
 	_, err = svc.ConfirmPayment(ctx, uuid.New().String(), plan.ID, payments[1].ID, reference, userID)
-	if err != tuition.ErrReferenceReused {
+	if !errors.Is(err, tuition.ErrReferenceReused) {
 		t.Fatalf("expected ErrReferenceReused, got: %v", err)
 	}
 }
@@ -381,7 +382,7 @@ func TestConfirmPaymentLayer1Idempotency(t *testing.T) {
 	}
 
 	_, err = svc.ConfirmPayment(ctx, idempKey, plan.ID, payments[0].ID, reference, userID)
-	if err != tuition.ErrDuplicate {
+	if !errors.Is(err, tuition.ErrDuplicate) {
 		t.Fatalf("expected ErrDuplicate on replay, got: %v", err)
 	}
 }

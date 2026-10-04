@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -110,7 +111,7 @@ type infTriageResponse struct {
 // mapped disposition + possible causes (Done=true).
 func (e *InfermedicaEngine) Triage(ctx context.Context, in triage.EngineInput) (triage.EngineResult, error) {
 	if !e.Enabled() {
-		return triage.EngineResult{}, fmt.Errorf("core: infermedica engine not configured")
+		return triage.EngineResult{}, errors.New("core: infermedica engine not configured")
 	}
 
 	body := infRequest{

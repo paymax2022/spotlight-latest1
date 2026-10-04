@@ -158,7 +158,7 @@ func TestLiveDB_CommentReportIsIdempotentAndPerViewer(t *testing.T) {
 		t.Fatalf("post: %v", err)
 	}
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if err := svc.ReportComment(ctx, comment.ID, reporter); err != nil {
 			t.Fatalf("report %d: %v — reporting twice must not be an error the user has to understand", i+1, err)
 		}

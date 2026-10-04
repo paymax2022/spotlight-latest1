@@ -15,6 +15,7 @@ package paystackcheckout
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"sync"
 	"testing"
@@ -97,7 +98,7 @@ func TestLiveDB_GetByReference_UnknownIsErrUnknownReference(t *testing.T) {
 	t.Cleanup(pool.Close)
 	repo := NewIntentStore(pool)
 
-	if _, err := repo.GetByReference(context.Background(), "foodorder:does-not-exist-"+uuid.New().String()); err != ErrUnknownReference {
+	if _, err := repo.GetByReference(context.Background(), "foodorder:does-not-exist-"+uuid.New().String()); !errors.Is(err, ErrUnknownReference) {
 		t.Fatalf("err = %v, want ErrUnknownReference", err)
 	}
 }
@@ -121,7 +122,7 @@ func TestLiveDB_ClaimForProcessing_AtomicUnderConcurrency(t *testing.T) {
 	const attempts = 20
 	results := make([]bool, attempts)
 	var wg sync.WaitGroup
-	for i := 0; i < attempts; i++ {
+	for i := range attempts {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()

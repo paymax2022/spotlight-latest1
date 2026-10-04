@@ -94,10 +94,7 @@ func (s *Service) GetUsage(ctx context.Context, userID string) (Usage, error) {
 	case cfg.DailyDebitLimitKobo == 0:
 		u.RemainingKobo = -1 // unlimited
 	default:
-		u.RemainingKobo = cfg.DailyDebitLimitKobo - used
-		if u.RemainingKobo < 0 {
-			u.RemainingKobo = 0
-		}
+		u.RemainingKobo = max(cfg.DailyDebitLimitKobo-used, 0)
 	}
 
 	// Reported so a client pre-check agrees with EnforceCheckoutDebitLimit —
@@ -110,10 +107,7 @@ func (s *Service) GetUsage(ctx context.Context, userID string) (Usage, error) {
 		}
 		u.CheckoutEnabled = true
 		u.CheckoutAllowanceKobo = CheckoutAllowanceKobo
-		u.CheckoutRemainingKobo = CheckoutAllowanceKobo - spent
-		if u.CheckoutRemainingKobo < 0 {
-			u.CheckoutRemainingKobo = 0
-		}
+		u.CheckoutRemainingKobo = max(CheckoutAllowanceKobo-spent, 0)
 	}
 	return u, nil
 }

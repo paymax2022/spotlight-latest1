@@ -292,7 +292,7 @@ func TestLiveDB_Vote_ConcurrentDuplicateVote_ResultsInOneBallot(t *testing.T) {
 	errs := make([]error, n)
 	votes := make([]*Vote, n)
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
 			defer wg.Done()
 			votes[i], errs[i] = svc.CastVote(ctx, estateID, electionID, voter, CastVoteRequest{CandidateID: candidateID})
@@ -301,7 +301,7 @@ func TestLiveDB_Vote_ConcurrentDuplicateVote_ResultsInOneBallot(t *testing.T) {
 	wg.Wait()
 
 	var successes, failures int
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if errs[i] == nil {
 			successes++
 		} else {
@@ -324,7 +324,7 @@ func TestLiveDB_Vote_ConcurrentDuplicateVote_ResultsInOneBallot(t *testing.T) {
 	}
 
 	var successVote *Vote
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if errs[i] == nil {
 			successVote = votes[i]
 		}

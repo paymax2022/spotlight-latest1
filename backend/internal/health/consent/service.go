@@ -2,6 +2,7 @@ package healthconsent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
@@ -48,10 +49,10 @@ func NewService(db *pgxpool.Pool, audit Auditor) *Service {
 // Grant creates an ACTIVE consent from grantor (the acting data subject) to grantee.
 func (s *Service) Grant(ctx context.Context, grantorID, granteeID, subjectOwnerID, scope string, expiresAt *time.Time) (*Consent, error) {
 	if grantorID == "" || granteeID == "" {
-		return nil, fmt.Errorf("consent: grantor and grantee required")
+		return nil, errors.New("consent: grantor and grantee required")
 	}
 	if !validScope(scope) {
-		return nil, fmt.Errorf("consent: invalid scope")
+		return nil, errors.New("consent: invalid scope")
 	}
 	if subjectOwnerID == "" {
 		subjectOwnerID = grantorID // default: subject consents about own records
@@ -86,7 +87,7 @@ func (s *Service) Revoke(ctx context.Context, grantorID, consentID string) error
 		return fmt.Errorf("consent: revoke: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("consent: not revocable (missing, not yours, or already revoked)")
+		return errors.New("consent: not revocable (missing, not yours, or already revoked)")
 	}
 	s.audited(grantorID, "", "health.consent.revoke", consentID,
 		map[string]any{"state": "ACTIVE"}, map[string]any{"state": "REVOKED"})

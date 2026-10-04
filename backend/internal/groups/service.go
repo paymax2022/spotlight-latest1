@@ -4,16 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
+	"slices"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"strconv"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -200,12 +202,10 @@ func (s *Service) assertRole(ctx context.Context, groupID, userID string, allowe
 	const q = `SELECT role FROM group_members WHERE group_id=$1 AND user_id=$2`
 	var role string
 	if err := s.db.QueryRow(ctx, q, groupID, userID).Scan(&role); err != nil {
-		return fmt.Errorf("groups: member not found")
+		return errors.New("groups: member not found")
 	}
-	for _, r := range allowed {
-		if MemberRole(role) == r {
-			return nil
-		}
+	if slices.Contains(allowed, MemberRole(role)) {
+		return nil
 	}
 	return fmt.Errorf("groups: insufficient role — need %v, have %s", allowed, role)
 }

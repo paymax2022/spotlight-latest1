@@ -34,7 +34,7 @@ func runConcurrentFreeVoteClaims(t *testing.T, ctx context.Context, pool *pgxpoo
 	var mu sync.Mutex
 	granted := 0
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

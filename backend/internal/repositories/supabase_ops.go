@@ -169,7 +169,7 @@ func (r *LeadSupabaseRepository) List(limit int, sessionID string) ([]domain.Lea
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
@@ -221,7 +221,7 @@ func (r *LeadSupabaseRepository) UpdateStatus(id, status string) error {
 	leadID := strings.TrimSpace(id)
 	nextStatus := strings.TrimSpace(status)
 	if leadID == "" || nextStatus == "" {
-		return fmt.Errorf("id and status are required")
+		return errors.New("id and status are required")
 	}
 
 	body, err := json.Marshal(map[string]any{
@@ -244,7 +244,7 @@ func (r *LeadSupabaseRepository) UpdateStatus(id, status string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=minimal")

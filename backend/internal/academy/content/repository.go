@@ -133,18 +133,18 @@ func (r *Repository) ListLessons(ctx context.Context, objectiveID, status string
 	args := []any{}
 	if objectiveID != "" {
 		args = append(args, objectiveID)
-		sb.WriteString(fmt.Sprintf(" AND objective_id = $%d", len(args)))
+		fmt.Fprintf(&sb, " AND objective_id = $%d", len(args))
 	}
 	if status != "" {
 		args = append(args, status)
-		sb.WriteString(fmt.Sprintf(" AND status = $%d", len(args)))
+		fmt.Fprintf(&sb, " AND status = $%d", len(args))
 	}
 	sb.WriteString(" ORDER BY updated_at DESC")
 	args = append(args, limit)
-	sb.WriteString(fmt.Sprintf(" LIMIT $%d", len(args)))
+	fmt.Fprintf(&sb, " LIMIT $%d", len(args))
 	if offset > 0 {
 		args = append(args, offset)
-		sb.WriteString(fmt.Sprintf(" OFFSET $%d", len(args)))
+		fmt.Fprintf(&sb, " OFFSET $%d", len(args))
 	}
 	rows, err := r.db.Query(ctx, sb.String(), args...)
 	if err != nil {
@@ -499,7 +499,7 @@ func (r *Repository) ListProductions(ctx context.Context, f ProductionFilter) ([
 	args := []any{}
 	add := func(clause string, v any) {
 		args = append(args, v)
-		sb.WriteString(fmt.Sprintf(" AND %s $%d", clause, len(args)))
+		fmt.Fprintf(&sb, " AND %s $%d", clause, len(args))
 	}
 	if f.Stage != "" {
 		add("stage =", f.Stage)
@@ -513,10 +513,10 @@ func (r *Repository) ListProductions(ctx context.Context, f ProductionFilter) ([
 		limit = 50
 	}
 	args = append(args, limit)
-	sb.WriteString(fmt.Sprintf(" LIMIT $%d", len(args)))
+	fmt.Fprintf(&sb, " LIMIT $%d", len(args))
 	if f.Offset > 0 {
 		args = append(args, f.Offset)
-		sb.WriteString(fmt.Sprintf(" OFFSET $%d", len(args)))
+		fmt.Fprintf(&sb, " OFFSET $%d", len(args))
 	}
 
 	rows, err := r.db.Query(ctx, sb.String(), args...)
@@ -587,11 +587,11 @@ func (r *Repository) ListLocalizations(ctx context.Context, entityType, entityID
 	args := []any{}
 	if entityType != "" {
 		args = append(args, entityType)
-		sb.WriteString(fmt.Sprintf(" AND entity_type = $%d", len(args)))
+		fmt.Fprintf(&sb, " AND entity_type = $%d", len(args))
 	}
 	if entityID != "" {
 		args = append(args, entityID)
-		sb.WriteString(fmt.Sprintf(" AND entity_id = $%d", len(args)))
+		fmt.Fprintf(&sb, " AND entity_id = $%d", len(args))
 	}
 	sb.WriteString(" ORDER BY updated_at DESC LIMIT 200")
 	rows, err := r.db.Query(ctx, sb.String(), args...)

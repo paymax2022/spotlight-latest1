@@ -9,7 +9,7 @@ import (
 // correct option is index (i % 4) so answers can be constructed deterministically.
 func stageBank(prefix string, n, passMark int) []Question {
 	qs := make([]Question, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		qs = append(qs, Question{
 			ExternalID:      prefix + "-Q" + strconv.Itoa(i),
 			Stage:           1,

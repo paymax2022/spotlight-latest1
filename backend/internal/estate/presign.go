@@ -171,10 +171,10 @@ func (h *Handler) DocumentDownloadURL(c *gin.Context) {
 
 	objectKey, fileURL, err := h.svc.ResolveDocumentForDownload(c.Request.Context(), estateID, userID, docID)
 	if err != nil {
-		switch {
-		case err == ErrDocumentForbidden:
+		switch err {
+		case ErrDocumentForbidden:
 			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
-		case err == ErrDocumentNotFound:
+		case ErrDocumentNotFound:
 			c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
 		default:
 			// roleIn failure (not an estate member) → forbidden.

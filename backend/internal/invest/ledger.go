@@ -2,6 +2,7 @@ package invest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -49,7 +50,7 @@ func (l *InvestLedger) accountID(ctx context.Context, q pgx.Tx, userID, accType,
 		const up = `INSERT INTO invest_ledger_accounts (type, currency) VALUES ($1,$2)
 			ON CONFLICT DO NOTHING RETURNING id`
 		err := q.QueryRow(ctx, up, accType, currency).Scan(&id)
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			err = q.QueryRow(ctx,
 				`SELECT id FROM invest_ledger_accounts WHERE user_id IS NULL AND type=$1 AND currency=$2`,
 				accType, currency).Scan(&id)
@@ -62,7 +63,7 @@ func (l *InvestLedger) accountID(ctx context.Context, q pgx.Tx, userID, accType,
 	const up = `INSERT INTO invest_ledger_accounts (user_id, type, currency) VALUES ($1,$2,$3)
 		ON CONFLICT DO NOTHING RETURNING id`
 	err := q.QueryRow(ctx, up, userID, accType, currency).Scan(&id)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		err = q.QueryRow(ctx,
 			`SELECT id FROM invest_ledger_accounts WHERE user_id=$1 AND type=$2 AND currency=$3`,
 			userID, accType, currency).Scan(&id)
@@ -278,10 +279,7 @@ func (l *InvestLedger) SettleBuy(ctx context.Context, userID, ref, providerRef, 
 // SettleSellToPending on fill: broker clearing → user settlement suspense
 // (net proceeds), and fee → fee income. Cash is released to available later.
 func (l *InvestLedger) SellProceedsToPending(ctx context.Context, userID, ref, providerRef, idem string, grossKobo, feeKobo int64) error {
-	net := grossKobo - feeKobo
-	if net < 0 {
-		net = 0
-	}
+	net := max(grossKobo-feeKobo, 0)
 	return l.tx(ctx, func(tx pgx.Tx) error {
 		broker, err := l.accountID(ctx, tx, "", AcctBrokerClearing, "NGN")
 		if err != nil {
@@ -354,7 +352,7 @@ func (l *InvestLedger) Transactions(ctx context.Context, userID string, limit, o
 		var id, typ, txnType, ref string
 		var providerRef *string
 		var amt int64
-		var created interface{}
+		var created any
 		if err := rows.Scan(&id, &typ, &amt, &txnType, &ref, &providerRef, &created); err != nil {
 			return nil, err
 		}
@@ -393,5 +391,5 @@ func (l *InvestLedger) tx(ctx context.Context, fn func(pgx.Tx) error) error {
 
 // Sentinel errors.
 var (
-	ErrInsufficientCash = fmt.Errorf("invest: insufficient investment cash")
+	ErrInsufficientCash = errors.New("invest: insufficient investment cash")
 )

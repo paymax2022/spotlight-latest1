@@ -3,6 +3,7 @@ package crypto
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"testing"
 )
 
@@ -58,7 +59,7 @@ func TestWrongAADFails(t *testing.T) {
 
 func TestBadKeyLength(t *testing.T) {
 	short := base64.StdEncoding.EncodeToString(make([]byte, 16))
-	if _, err := NewCipherFromBase64Key(short); err != ErrKeyLength {
+	if _, err := NewCipherFromBase64Key(short); !errors.Is(err, ErrKeyLength) {
 		t.Fatalf("want ErrKeyLength, got %v", err)
 	}
 }

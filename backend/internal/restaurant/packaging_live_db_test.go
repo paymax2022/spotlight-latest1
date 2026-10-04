@@ -290,13 +290,13 @@ func TestLiveDB_PackagingPriceRejectsNonsense(t *testing.T) {
 		t.Error("expected a negative packaging price to be rejected")
 	}
 	if _, err := f.svc.UpdateRestaurant(ctx, f.restID, f.owner, UpdateRestaurantRequest{
-		PackagingFeeKobo: ptrInt64(maxPackagingFeePerPackKobo + 1),
+		PackagingFeeKobo: new(maxPackagingFeePerPackKobo + 1),
 	}); err == nil {
 		t.Error("expected an absurd packaging price to be rejected")
 	}
 	// The ceiling itself is allowed.
 	if _, err := f.svc.UpdateRestaurant(ctx, f.restID, f.owner, UpdateRestaurantRequest{
-		PackagingFeeKobo: ptrInt64(maxPackagingFeePerPackKobo),
+		PackagingFeeKobo: new(maxPackagingFeePerPackKobo),
 	}); err != nil {
 		t.Errorf("the ceiling must be settable: %v", err)
 	}
@@ -315,4 +315,5 @@ func TestLiveDB_PackagingPriceRejectsNonsense(t *testing.T) {
 	}
 }
 
-func ptrInt64(v int64) *int64 { return &v }
+//go:fix inline
+func ptrInt64(v int64) *int64 { return new(v) }

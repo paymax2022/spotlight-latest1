@@ -47,6 +47,7 @@ import (
 	"context"
 	crand "crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -277,17 +278,17 @@ func (c *Client) authHeaders(method string) (http.Header, error) {
 	}
 	h := http.Header{}
 	h.Set("Content-Type", "application/json")
-	h.Set("api-key", c.apiKey)
+	h.Set("Api-Key", c.apiKey)
 	if method == http.MethodGet {
 		if c.publicKey == "" {
 			return nil, ErrMissingPublicKey
 		}
-		h.Set("public-key", c.publicKey)
+		h.Set("Public-Key", c.publicKey)
 	} else {
 		if c.secretKey == "" {
 			return nil, ErrMissingSecretKey
 		}
-		h.Set("secret-key", c.secretKey)
+		h.Set("Secret-Key", c.secretKey)
 	}
 	return h, nil
 }
@@ -617,7 +618,7 @@ func (c *Client) PurchaseBill(ctx context.Context, req provider.BillRequest) (*p
 // ProviderRef is the only identifier it will ever recognize.
 func (c *Client) GetBill(ctx context.Context, ref string) (*provider.Bill, error) {
 	if ref == "" {
-		return nil, fmt.Errorf("vtpass: GetBill requires a non-empty provider reference")
+		return nil, errors.New("vtpass: GetBill requires a non-empty provider reference")
 	}
 	if c.environment == EnvironmentSandbox {
 		// The TS source's sandbox requery is a stub that always answers

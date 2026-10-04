@@ -708,7 +708,7 @@ func TestLiveDB_OrderPromoUsageLimitHoldsUnderConcurrency(t *testing.T) {
 	results := make([]error, racers)
 	orders := make([]*Order, racers)
 	start := make(chan struct{})
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

@@ -61,7 +61,7 @@ func createUnconfirmedUser(t *testing.T, url, key, email string) string {
 	if err != nil {
 		t.Fatalf("build create request: %v", err)
 	}
-	req.Header.Set("apikey", key)
+	req.Header.Set("Apikey", key)
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -87,7 +87,7 @@ func createUnconfirmedUser(t *testing.T, url, key, email string) string {
 			t.Errorf("cleanup: build delete: %v", err)
 			return
 		}
-		del.Header.Set("apikey", key)
+		del.Header.Set("Apikey", key)
 		del.Header.Set("Authorization", "Bearer "+key)
 		r, err := http.DefaultClient.Do(del)
 		if err != nil {

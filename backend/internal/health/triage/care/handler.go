@@ -9,9 +9,10 @@ import (
 	"strconv"
 	"time"
 
+	"spotlight/backend/go-common/ginutil"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/go-common/ginutil"
 )
 
 // Handler exposes the PRD §6 care-loop + SC-5/SC-8 API. AuthN is the finance auth

@@ -235,7 +235,7 @@ func TestLiveDB_RentPassport_RecentPaymentsCapAndOrder(t *testing.T) {
 	dueDate := time.Now().Add(24 * time.Hour) // estate_dues_invoices.due_date is NOT NULL
 	// Payment i is created at base + i hours, so payment 24 (amount 24*1000) is
 	// the most recent and payment 0 is the oldest.
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		amount := int64((i + 1) * 1000) // distinct amounts double as an ordering fingerprint
 		createdAt := base.Add(time.Duration(i) * time.Hour)
 		seedEstatePayment(t, pool, tenant, estateID, amount, &dueDate, createdAt)

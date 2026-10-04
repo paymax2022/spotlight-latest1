@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -320,7 +321,8 @@ func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
 
 	reference := fmt.Sprintf("SPT-REG-%d-%s", time.Now().Unix(), generateShortID())
 
-	if body.Method == "WALLET" {
+	switch body.Method {
+	case "WALLET":
 		pt, err := h.store.CreatePaymentTransaction(c.Request.Context(), appID, reference, body.AmountKobo, "WALLET", idemKey)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create payment"})
@@ -347,7 +349,7 @@ func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
 			"status":        "completed",
 		}})
 
-	} else if body.Method == "PAYSTACK" {
+	case "PAYSTACK":
 		// Checkout URL only — no ledger entry until verification.
 		pt, err := h.store.CreatePaymentTransaction(c.Request.Context(), appID, reference, body.AmountKobo, "PAYSTACK", idemKey)
 		if err != nil {
@@ -370,7 +372,7 @@ func (h *RegistrationHandler) InitiatePayment(c *gin.Context) {
 			"status":           "initiated",
 			"authorizationUrl": "https://checkout.paystack.com/" + reference, // placeholder URL — real Paystack flow is not wired
 		}})
-	} else {
+	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payment method"})
 	}
 }
@@ -439,9 +441,11 @@ func generateShortID() string {
 	const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	id := ""
 	seed := time.Now().UnixNano()
+	var idSb442 strings.Builder
 	for i := 0; i < 4; i++ {
-		id += string(chars[(seed/int64(i+1))%int64(len(chars))])
+		idSb442.WriteString(string(chars[(seed/int64(i+1))%int64(len(chars))]))
 	}
+	id += idSb442.String()
 	return id
 }
 

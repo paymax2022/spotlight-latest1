@@ -1,4 +1,4 @@
-package app //nolint:testpackage // exercises unexported handler internals (outbox store + railLedger seams), same convention as the sibling webhook tests
+package app
 
 // Unit tests for the academy webhook outbox/redrive (AUD-BE-013 residual).
 // These run WITHOUT TEST_DATABASE_URL: an in-memory academyOutboxStore and a

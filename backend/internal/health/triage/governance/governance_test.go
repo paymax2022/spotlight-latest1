@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -224,7 +225,7 @@ func TestContentLifecycle_RequiresSignOffToPublish(t *testing.T) {
 	}
 
 	// Sign-off required: publish with empty reviewer must fail (SC-6).
-	if _, err := gov.transitionContent(ctx, "system", ci.ID, triage.ContentPublished, ""); err != ErrSignOffRequired {
+	if _, err := gov.transitionContent(ctx, "system", ci.ID, triage.ContentPublished, ""); !errors.Is(err, ErrSignOffRequired) {
 		t.Fatalf("expected ErrSignOffRequired, got %v", err)
 	}
 

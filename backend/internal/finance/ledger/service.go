@@ -197,8 +197,8 @@ func (s *Service) ListTransactions(ctx context.Context, userID string, limit, of
 
 // Sentinel errors.
 var (
-	ErrInsufficientFunds = fmt.Errorf("ledger: insufficient funds")
-	ErrDuplicate         = fmt.Errorf("ledger: duplicate idempotency key")
+	ErrInsufficientFunds = errors.New("ledger: insufficient funds")
+	ErrDuplicate         = errors.New("ledger: duplicate idempotency key")
 )
 
 // AdminHandler exposes the centralized, read-only admin transactions console.

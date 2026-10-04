@@ -53,7 +53,7 @@ func seedVirtualAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, s
 		ID: "va_" + uuid.NewString(), CustomerID: customer, Currency: currency,
 		Type: "virtual_account", Provider: "maplerad", Status: "active",
 		ProviderRef: providerRef,
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"account_name": "Paymax Customer", "account_number": providerRef, "bank_name": "maplerad",
 		},
 		CreatedAt: time.Now(),
@@ -164,7 +164,7 @@ func TestLiveDB_OrchCollection_ReplayCreditsOnce(t *testing.T) {
 
 	svc := collectionOnlyService(t, store)
 	body := mapleradCollection("evt_replay_"+uuid.NewString(), providerRef, "USD", 500_00)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := svc.HandleProviderEvent(ctx, "maplerad", body); err != nil {
 			t.Fatalf("delivery %d: %v", i+1, err)
 		}

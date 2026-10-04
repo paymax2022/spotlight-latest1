@@ -71,10 +71,10 @@ func (s *Service) Balances(ctx context.Context, userID string) (map[string]int64
 // purchase grant applies once). amount must be > 0.
 func (s *Service) Grant(ctx context.Context, userID, creditType, idempotencyKey string, amount int64, reason string) error {
 	if amount <= 0 {
-		return fmt.Errorf("connect: grant amount must be positive")
+		return errors.New("connect: grant amount must be positive")
 	}
 	if idempotencyKey == "" {
-		return fmt.Errorf("connect: grant requires an idempotency key")
+		return errors.New("connect: grant requires an idempotency key")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -107,10 +107,10 @@ func (s *Service) Grant(ctx context.Context, userID, creditType, idempotencyKey 
 // so simultaneous spends can neither oversell nor go negative.
 func (s *Service) Consume(ctx context.Context, userID, creditType, idempotencyKey string, amount int64, reason string) error {
 	if amount <= 0 {
-		return fmt.Errorf("connect: consume amount must be positive")
+		return errors.New("connect: consume amount must be positive")
 	}
 	if idempotencyKey == "" {
-		return fmt.Errorf("connect: consume requires an idempotency key")
+		return errors.New("connect: consume requires an idempotency key")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {

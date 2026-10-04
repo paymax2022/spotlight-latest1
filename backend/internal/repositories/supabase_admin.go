@@ -1,10 +1,10 @@
 package repositories
 
 import (
-	"fmt"
 	"net/http"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/integrations"
+	"strconv"
 	"strings"
 )
 
@@ -136,7 +136,7 @@ func (r *AuditSupabaseRepository) ListLoginActivity(filter domain.AuditFilter) (
 	if filter.Limit <= 0 || filter.Limit > 500 {
 		filter.Limit = 100
 	}
-	q := map[string]string{"select": "id,user_id,email,status,failure_reason,ip_address,user_agent,location_metadata,created_at", "order": "created_at.desc", "limit": fmt.Sprintf("%d", filter.Limit)}
+	q := map[string]string{"select": "id,user_id,email,status,failure_reason,ip_address,user_agent,location_metadata,created_at", "order": "created_at.desc", "limit": strconv.Itoa(filter.Limit)}
 	if v := strings.TrimSpace(filter.Status); v != "" {
 		q["status"] = "eq." + strings.ToLower(v)
 	}
@@ -188,7 +188,7 @@ func buildAuditQuery(filter domain.AuditFilter) map[string]string {
 	if filter.Limit <= 0 || filter.Limit > 500 {
 		filter.Limit = 100
 	}
-	q := map[string]string{"order": "created_at.desc", "limit": fmt.Sprintf("%d", filter.Limit)}
+	q := map[string]string{"order": "created_at.desc", "limit": strconv.Itoa(filter.Limit)}
 	if v := strings.TrimSpace(filter.ActorUser); v != "" {
 		q["actor_user_id"] = "eq." + v
 	}

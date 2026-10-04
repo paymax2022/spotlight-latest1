@@ -6,9 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 type mockRBAC struct{ allow bool }
@@ -101,6 +102,7 @@ func (e errRBAC) BulkAssignPermissionsToRole(string, string, []string) []service
 
 type countingRBAC struct {
 	mockRBAC
+
 	checkCalls int
 }
 
@@ -147,7 +149,7 @@ func TestRequirePermissionAllowsWhenGranted(t *testing.T) {
 
 func TestRequirePermissionReusesRequestPermissions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	rbac := &countingRBAC{mockRBAC: mockRBAC{allow: false}}
+	rbac := &countingRBAC{allow: false}
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		c.Set(AuthUserContextKey, domain.AuthenticatedUser{
@@ -173,7 +175,7 @@ func TestRequirePermissionReusesRequestPermissions(t *testing.T) {
 
 func TestRequirePermissionSuperAdminSkipsRPC(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	rbac := &countingRBAC{mockRBAC: mockRBAC{allow: false}}
+	rbac := &countingRBAC{allow: false}
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		c.Set(AuthUserContextKey, domain.AuthenticatedUser{
@@ -198,7 +200,7 @@ func TestRequirePermissionSuperAdminSkipsRPC(t *testing.T) {
 
 func TestRequirePermissionFallsBackToRPCOnMiss(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	rbac := &countingRBAC{mockRBAC: mockRBAC{allow: true}}
+	rbac := &countingRBAC{allow: true}
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		c.Set(AuthUserContextKey, domain.AuthenticatedUser{ID: "u1"})

@@ -55,10 +55,10 @@ func (s *Service) CreateSession(ctx context.Context, userID string, req CreateSe
 func (s *Service) SendMessage(ctx context.Context, sessionID, userID string, req SendMessageRequest) (*Message, *Message, error) {
 	var status string
 	if err := s.db.QueryRow(ctx, `SELECT status FROM support_sessions WHERE id=$1 AND user_id=$2`, sessionID, userID).Scan(&status); err != nil {
-		return nil, nil, fmt.Errorf("aicare: session not found")
+		return nil, nil, errors.New("aicare: session not found")
 	}
 	if status == string(SessionResolved) {
-		return nil, nil, fmt.Errorf("aicare: session is resolved — please open a new session")
+		return nil, nil, errors.New("aicare: session is resolved — please open a new session")
 	}
 
 	userMsg := &Message{
@@ -102,7 +102,7 @@ func (s *Service) Escalate(ctx context.Context, sessionID, userID string, req Es
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("aicare: session not found or already escalated/resolved")
+		return errors.New("aicare: session not found or already escalated/resolved")
 	}
 	if req.Reason != "" {
 		s.db.Exec(ctx, `INSERT INTO support_messages (id, session_id, role, content) VALUES ($1,$2,'user',$3)`,
@@ -119,7 +119,7 @@ func (s *Service) Resolve(ctx context.Context, sessionID, actorID string) error 
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("aicare: session not found or already resolved")
+		return errors.New("aicare: session not found or already resolved")
 	}
 	return nil
 }
@@ -128,7 +128,7 @@ func (s *Service) Resolve(ctx context.Context, sessionID, actorID string) error 
 func (s *Service) GetHistory(ctx context.Context, sessionID, userID string) ([]Message, error) {
 	var count int
 	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM support_sessions WHERE id=$1 AND user_id=$2`, sessionID, userID).Scan(&count); err != nil || count == 0 {
-		return nil, fmt.Errorf("aicare: session not found")
+		return nil, errors.New("aicare: session not found")
 	}
 	return s.getHistory(ctx, sessionID, 100)
 }

@@ -1,15 +1,16 @@
 package middleware
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 // fakeSessionSvc lets us control ValidateAccess for the middleware test.
@@ -23,7 +24,7 @@ func (f fakeSessionSvc) RotateRefresh(string, services.IssuedTokens, services.Lo
 }
 func (f fakeSessionSvc) ValidateAccess(string) (*domain.Session, error) {
 	if f.revoked {
-		return nil, fmt.Errorf("session revoked or expired")
+		return nil, errors.New("session revoked or expired")
 	}
 	return &domain.Session{ID: "s1"}, nil
 }

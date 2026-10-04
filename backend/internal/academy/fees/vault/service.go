@@ -2,6 +2,7 @@ package feesvault
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -169,7 +170,7 @@ func (s *Service) Contribute(ctx context.Context, userID, vaultID string, amount
 func (s *Service) fire(ctx context.Context, actorID string, v *Vault, event feesstatemachine.Event) error {
 	to, err := feesstatemachine.VaultTransition(v.Status, event)
 	if err != nil {
-		if err == feesstatemachine.ErrAlreadyInState {
+		if errors.Is(err, feesstatemachine.ErrAlreadyInState) {
 			return nil // idempotent no-op
 		}
 		return err

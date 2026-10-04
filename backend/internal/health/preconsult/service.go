@@ -103,8 +103,8 @@ const presignTTL = 10 * time.Minute
 func (s *Service) loadAppointment(ctx context.Context, appointmentID string) (patientID, providerID string, err error) {
 	const q = `SELECT patient_id::text, provider_id::text FROM health_appointments WHERE id=$1`
 	if e := s.db.QueryRow(ctx, q, appointmentID).Scan(&patientID, &providerID); e != nil {
-		if e == pgx.ErrNoRows {
-			return "", "", fmt.Errorf("preconsult: appointment not found")
+		if errors.Is(e, pgx.ErrNoRows) {
+			return "", "", errors.New("preconsult: appointment not found")
 		}
 		return "", "", e
 	}
@@ -120,12 +120,12 @@ func (s *Service) EnsureIntake(ctx context.Context, caller, appointmentID string
 		return nil, err
 	}
 	if caller != patientID {
-		return nil, fmt.Errorf("preconsult: forbidden")
+		return nil, errors.New("preconsult: forbidden")
 	}
 
 	if it, err := s.getIntakeByAppointment(ctx, appointmentID); err == nil {
 		return it, nil
-	} else if err != pgx.ErrNoRows {
+	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 
@@ -167,10 +167,10 @@ func (s *Service) SaveDraft(ctx context.Context, caller, appointmentID string, a
 		return nil, err
 	}
 	if caller != it.PatientID {
-		return nil, fmt.Errorf("preconsult: forbidden")
+		return nil, errors.New("preconsult: forbidden")
 	}
 	if it.Status == "SUBMITTED" {
-		return nil, fmt.Errorf("preconsult: intake already submitted")
+		return nil, errors.New("preconsult: intake already submitted")
 	}
 	raw, err := json.Marshal(answers)
 	if err != nil {
@@ -211,10 +211,10 @@ func (s *Service) Submit(ctx context.Context, caller, appointmentID string, answ
 		return nil, err
 	}
 	if caller != it.PatientID {
-		return nil, fmt.Errorf("preconsult: forbidden")
+		return nil, errors.New("preconsult: forbidden")
 	}
 	if it.Status == "SUBMITTED" {
-		return nil, fmt.Errorf("preconsult: intake already submitted")
+		return nil, errors.New("preconsult: intake already submitted")
 	}
 
 	sc, err := s.intake.GetActiveSchemaBySlug(ctx, SchemaSlug)
@@ -311,7 +311,7 @@ func (s *Service) GetForPatient(ctx context.Context, caller, appointmentID strin
 		return nil, err
 	}
 	if caller != it.PatientID {
-		return nil, fmt.Errorf("preconsult: forbidden")
+		return nil, errors.New("preconsult: forbidden")
 	}
 	sc, err := s.intake.GetActiveSchemaBySlug(ctx, SchemaSlug)
 	if err != nil {
@@ -343,7 +343,7 @@ func (s *Service) Prefill(ctx context.Context, caller, appointmentID string) (ma
 		return nil, err
 	}
 	if caller != patientID {
-		return nil, fmt.Errorf("preconsult: forbidden")
+		return nil, errors.New("preconsult: forbidden")
 	}
 	out := map[string]any{}
 
@@ -398,8 +398,8 @@ type SummarySection struct {
 func (s *Service) GetForDoctor(ctx context.Context, caller, appointmentID string) (*DoctorSummary, error) {
 	it, err := s.getIntakeByAppointment(ctx, appointmentID)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("preconsult: intake not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("preconsult: intake not found")
 		}
 		return nil, err
 	}
@@ -407,7 +407,7 @@ func (s *Service) GetForDoctor(ctx context.Context, caller, appointmentID string
 	// consult provider-owner join.
 	_, providerOwner, cerr := s.consult.LoadByAppointment(ctx, appointmentID)
 	if cerr != nil || !doctorAuthorized(caller, providerOwner) {
-		return nil, fmt.Errorf("preconsult: forbidden")
+		return nil, errors.New("preconsult: forbidden")
 	}
 
 	// Load the validated answers (only now that authZ passed).
@@ -460,7 +460,7 @@ func (s *Service) responseAnswers(ctx context.Context, it *Intake) (map[string]a
 	}
 	var raw []byte
 	if err := s.db.QueryRow(ctx, `SELECT answers_json FROM health_intake_responses WHERE id=$1`, *it.ResponseID).Scan(&raw); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return map[string]any{}, nil
 		}
 		return nil, err
@@ -528,7 +528,7 @@ type HealthProfile struct {
 
 func (s *Service) HealthProfile(ctx context.Context, caller string) (*HealthProfile, error) {
 	if caller == "" {
-		return nil, fmt.Errorf("preconsult: unauthenticated")
+		return nil, errors.New("preconsult: unauthenticated")
 	}
 	return s.HealthProfileFor(ctx, caller)
 }
@@ -539,7 +539,7 @@ func (s *Service) HealthProfile(ctx context.Context, caller string) (*HealthProf
 // patient's documented allergies and current medications.
 func (s *Service) HealthProfileFor(ctx context.Context, patientID string) (*HealthProfile, error) {
 	if patientID == "" {
-		return nil, fmt.Errorf("preconsult: patient required")
+		return nil, errors.New("preconsult: patient required")
 	}
 	prior, err := s.latestPriorResponse(ctx, patientID, "")
 	if err != nil {

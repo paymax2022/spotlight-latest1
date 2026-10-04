@@ -132,7 +132,7 @@ func TestEmptyRegistryIsNotTreatedAsUnreadable(t *testing.T) {
 func TestCacheBoundsRegistryReads(t *testing.T) {
 	src := &stubSource{keys: []string{"wallet"}}
 	h := New(src, Options{Enabled: true, TTL: time.Hour})
-	for i := 0; i < 25; i++ {
+	for range 25 {
 		serve(t, h, "/api/finance/wallet/balance")
 	}
 	if src.n != 1 {

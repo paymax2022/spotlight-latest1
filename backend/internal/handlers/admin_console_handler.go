@@ -5,8 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/go-common/httperr"
+
+	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -258,7 +259,7 @@ func (h *AdminConsoleHandler) GetAssetControls(c *gin.Context) {
 func (h *AdminConsoleHandler) UpdateAssetControl(c *gin.Context) {
 	assetID := c.Param("id")
 
-	var patch map[string]interface{}
+	var patch map[string]any
 	if err := c.ShouldBindJSON(&patch); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return

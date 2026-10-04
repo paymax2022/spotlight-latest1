@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"spotlight/backend/internal/finance/ledger"
@@ -146,19 +147,19 @@ func (s *Service) Swap(ctx context.Context, userID, fromAssetID, toAssetID strin
 		return nil, err
 	}
 	// sell A: escrow → wallet CREDIT (+cashKobo)
-	if err := s.led.Credit(ctx, userID, o.Reference+":sell", idemKey+":sell", escrow.ID, q.CashKobo); err != nil && err != ledger.ErrDuplicate {
+	if err := s.led.Credit(ctx, userID, o.Reference+":sell", idemKey+":sell", escrow.ID, q.CashKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 		return nil, err
 	}
 	// buy B: wallet → escrow DEBIT (−netCash)
 	netCash := q.CashKobo - q.SpreadKobo
 	if netCash > 0 {
-		if err := s.led.Debit(ctx, userID, o.Reference+":buy", idemKey+":buy", escrow.ID, netCash); err != nil && err != ledger.ErrDuplicate {
+		if err := s.led.Debit(ctx, userID, o.Reference+":buy", idemKey+":buy", escrow.ID, netCash); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 			return nil, err
 		}
 	}
 	// spread: wallet → paymax_revenue (−spreadKobo)
 	if q.SpreadKobo > 0 {
-		if err := s.led.Debit(ctx, userID, o.Reference+":spread", idemKey+":spread", revenue.ID, q.SpreadKobo); err != nil && err != ledger.ErrDuplicate {
+		if err := s.led.Debit(ctx, userID, o.Reference+":spread", idemKey+":spread", revenue.ID, q.SpreadKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 			return nil, err
 		}
 	}
@@ -334,10 +335,9 @@ func (s *Service) QuoteWithdrawal(ctx context.Context, userID, assetID, network 
 // networkFeeUnits estimates the in-asset miner fee (0.05% of the amount, floored at
 // one minor unit). Integer arithmetic only.
 func networkFeeUnits(units int64) int64 {
-	fee := units / 2000 // 0.05%
-	if fee < 1 {
-		fee = 1
-	}
+	fee := max(
+		// 0.05%
+		units/2000, 1)
 	return fee
 }
 
@@ -430,7 +430,7 @@ func (s *Service) Withdraw(ctx context.Context, userID, assetID, addressID strin
 		if rerr != nil {
 			return nil, rerr
 		}
-		if ferr := s.led.Debit(ctx, userID, w.Reference+":fee", idemKey+":fee", revenue.ID, feeKobo); ferr != nil && ferr != ledger.ErrDuplicate {
+		if ferr := s.led.Debit(ctx, userID, w.Reference+":fee", idemKey+":fee", revenue.ID, feeKobo); ferr != nil && !errors.Is(ferr, ledger.ErrDuplicate) {
 			_, _ = s.repo.TransitionWithdrawal(ctx, userID, wid, WithdrawalRequested, WithdrawalFailed,
 				userID, "fee charge failed: "+ferr.Error(), "", "", ferr.Error(), units)
 			_ = s.audit.log(ctx, userID, "crypto.withdraw.failed", "crypto_withdrawal", wid, ferr.Error(), nil, nil)

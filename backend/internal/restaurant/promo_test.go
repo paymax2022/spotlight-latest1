@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-func ptrKobo(v int64) *int64 { return &v }
+//go:fix inline
+func ptrKobo(v int64) *int64 { return new(v) }
 
 func TestComputeDiscount(t *testing.T) {
 	cases := []struct {

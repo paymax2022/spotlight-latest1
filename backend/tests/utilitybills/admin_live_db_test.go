@@ -214,9 +214,14 @@ func (f *adminFixture) cleanupBiller(t *testing.T, billerID string) {
 	})
 }
 
-func ptrI64(v int64) *int64 { return &v }
-func ptrInt(v int) *int     { return &v }
-func ptrBool(v bool) *bool  { return &v }
+//go:fix inline
+func ptrI64(v int64) *int64 { return new(v) }
+
+//go:fix inline
+func ptrInt(v int) *int { return new(v) }
+
+//go:fix inline
+func ptrBool(v bool) *bool { return new(v) }
 
 func TestLiveDB_Admin_ProviderCreateUpdateListRoundTrip(t *testing.T) {
 	f := newAdminFixture(t)
@@ -229,7 +234,7 @@ func TestLiveDB_Admin_ProviderCreateUpdateListRoundTrip(t *testing.T) {
 		AdapterCode:         "vtpass",
 		Status:              "active",
 		SupportedCategories: []string{"electricity", "airtime"},
-		Priority:            ptrInt(15),
+		Priority:            new(15),
 		HealthStatus:        "unknown",
 	})
 	if err != nil {
@@ -252,8 +257,8 @@ func TestLiveDB_Admin_ProviderCreateUpdateListRoundTrip(t *testing.T) {
 	}
 
 	updated, err := f.svc.UpdateProvider(ctx, f.actor, created.ID, utilitybills.ProviderPatch{
-		Status:   strptr("maintenance"),
-		Priority: ptrInt(42),
+		Status:   new("maintenance"),
+		Priority: new(42),
 	})
 	if err != nil {
 		t.Fatalf("UpdateProvider: %v", err)
@@ -270,7 +275,7 @@ func TestLiveDB_Admin_ProviderCreateUpdateListRoundTrip(t *testing.T) {
 	}
 
 	disabled, err := f.svc.UpdateProvider(ctx, f.actor, created.ID,
-		utilitybills.ProviderPatch{Status: strptr("disabled")})
+		utilitybills.ProviderPatch{Status: new("disabled")})
 	if err != nil {
 		t.Fatalf("disable: %v", err)
 	}
@@ -607,7 +612,7 @@ func TestLiveDB_Admin_ProductCreateUpdateListRoundTrip(t *testing.T) {
 	}
 
 	if _, err := f.svc.UpdateProduct(ctx, f.actor, created.ID,
-		utilitybills.ProductPatch{Status: strptr("disabled")}); err != nil {
+		utilitybills.ProductPatch{Status: new("disabled")}); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	found := false
@@ -740,7 +745,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	// Biller.
 	biller, err := f.svc.CreateBiller(ctx, f.actor, utilitybills.BillerInput{
 		Category: "cable_tv", Name: "Admin Cable", Code: "admin-cable-" + suffix,
-		RequiresValidation: ptrBool(true), CustomerReferenceLabel: "Smartcard number",
+		RequiresValidation: new(true), CustomerReferenceLabel: "Smartcard number",
 	})
 	if err != nil {
 		t.Fatalf("CreateBiller: %v", err)
@@ -753,7 +758,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 		t.Errorf("biller fields not persisted: %+v", biller)
 	}
 	if _, err := f.svc.UpdateBiller(ctx, f.actor, biller.ID,
-		utilitybills.BillerPatch{Status: strptr("disabled")}); err != nil {
+		utilitybills.BillerPatch{Status: new("disabled")}); err != nil {
 		t.Fatalf("UpdateBiller: %v", err)
 	}
 	f.audit.find(t, "utilitybills.biller.create")
@@ -808,7 +813,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	// Routing rule — the table with no prior Go representation at all.
 	rule, err := f.svc.CreateRoutingRule(ctx, f.actor, utilitybills.RoutingRuleInput{
 		Category: "cable_tv", ProductID: product.ID, ProviderID: prov.ID,
-		Priority: ptrInt(5), MinAmountKobo: ptrI64(100_000),
+		Priority: new(5), MinAmountKobo: ptrI64(100_000),
 	})
 	if err != nil {
 		t.Fatalf("CreateRoutingRule: %v", err)
@@ -824,7 +829,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	}
 	// Widening the rule by dropping its category scope.
 	widened, err := f.svc.UpdateRoutingRule(ctx, f.actor, rule.ID,
-		utilitybills.RoutingRulePatch{ClearCategory: true, Priority: ptrInt(9)})
+		utilitybills.RoutingRulePatch{ClearCategory: true, Priority: new(9)})
 	if err != nil {
 		t.Fatalf("UpdateRoutingRule: %v", err)
 	}
@@ -865,7 +870,7 @@ func TestLiveDB_Admin_BillerMappingRoutingRuleAndCategoryCRUD(t *testing.T) {
 	})
 
 	patched, err := f.svc.UpdateCategorySetting(ctx, f.actor, "cable_tv",
-		utilitybills.CategorySettingPatch{Enabled: ptrBool(false), DailyLimitKobo: ptrI64(7_777_777)})
+		utilitybills.CategorySettingPatch{Enabled: new(false), DailyLimitKobo: ptrI64(7_777_777)})
 	if err != nil {
 		t.Fatalf("UpdateCategorySetting: %v", err)
 	}
@@ -1303,4 +1308,5 @@ func TestLiveDB_Admin_ReverseIsAudited(t *testing.T) {
 	}
 }
 
-func strptr(s string) *string { return &s }
+//go:fix inline
+func strptr(s string) *string { return new(s) }

@@ -6,8 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/pharmacy"
+
+	"github.com/gin-gonic/gin"
 )
 
 func newTestGin() *gin.Engine {

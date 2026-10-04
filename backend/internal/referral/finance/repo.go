@@ -2,6 +2,7 @@ package finance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -58,7 +59,7 @@ func (r *Repository) QueuePayout(ctx context.Context, in PayoutRequest, requeste
 		RETURNING ` + payoutCols
 	p, err := scanPayout(r.db.QueryRow(ctx, q,
 		in.BeneficiaryID, dbutil.NullStr(in.RewardID), in.AmountKobo, currency, dbutil.NullStr(requestedBy), in.IdempotencyKey))
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		existing, e := scanPayout(r.db.QueryRow(ctx,
 			`SELECT `+payoutCols+` FROM referral_payouts WHERE idempotency_key = $1`, in.IdempotencyKey))
 		if e != nil {
@@ -75,7 +76,7 @@ func (r *Repository) QueuePayout(ctx context.Context, in PayoutRequest, requeste
 // GetPayout returns one payout by id.
 func (r *Repository) GetPayout(ctx context.Context, id string) (*Payout, error) {
 	p, err := scanPayout(r.db.QueryRow(ctx, `SELECT `+payoutCols+` FROM referral_payouts WHERE id = $1`, id))
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -126,7 +127,7 @@ func (r *Repository) MarkPayoutPaid(ctx context.Context, id, approvedBy, ledgerE
 		return fmt.Errorf("finance: mark payout paid: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("finance: payout not in a payable state")
+		return errors.New("finance: payout not in a payable state")
 	}
 	return nil
 }
@@ -142,7 +143,7 @@ func (r *Repository) RejectPayout(ctx context.Context, id, approvedBy, reason st
 		return fmt.Errorf("finance: reject payout: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("finance: payout not in a rejectable state")
+		return errors.New("finance: payout not in a rejectable state")
 	}
 	return nil
 }
@@ -164,7 +165,7 @@ func (r *Repository) KYCTier(ctx context.Context, userID string) (int, error) {
 	const q = `SELECT COALESCE(kyc_tier, 0) FROM user_profiles WHERE id = $1 AND kyc_status = 'verified'`
 	var tier int
 	err := r.db.QueryRow(ctx, q, userID).Scan(&tier)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
 	if err != nil {
@@ -359,7 +360,7 @@ func (r *Repository) SnapshotFloat(ctx context.Context, fundedKobo int64, note s
 // LatestFloat returns the most recent float snapshot (nil when none).
 func (r *Repository) LatestFloat(ctx context.Context) (*Float, error) {
 	f, err := scanFloat(r.db.QueryRow(ctx, `SELECT `+floatCols+` FROM referral_float ORDER BY as_of DESC LIMIT 1`))
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

@@ -3,6 +3,7 @@ package repositories
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -75,7 +76,7 @@ func (r *CompetitionSupabaseRepository) ListOpenMic(limit int) ([]domain.OpenMic
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
@@ -128,11 +129,11 @@ func (r *CompetitionSupabaseRepository) ListOpenMic(limit int) ([]domain.OpenMic
 
 func (r *CompetitionSupabaseRepository) CreateOpenMic(input domain.OpenMicCreateInput) (domain.OpenMicCompetition, error) {
 	if r.client == nil || !r.client.Enabled() {
-		return domain.OpenMicCompetition{}, fmt.Errorf("supabase REST is not configured")
+		return domain.OpenMicCompetition{}, errors.New("supabase REST is not configured")
 	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
-		return domain.OpenMicCompetition{}, fmt.Errorf("competition name is required")
+		return domain.OpenMicCompetition{}, errors.New("competition name is required")
 	}
 
 	slug := strings.TrimSpace(input.Slug)
@@ -184,7 +185,7 @@ func (r *CompetitionSupabaseRepository) CreateOpenMic(input domain.OpenMicCreate
 	if err != nil {
 		return domain.OpenMicCompetition{}, err
 	}
-	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Apikey", r.client.APIKey())
 	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=representation")
@@ -204,7 +205,7 @@ func (r *CompetitionSupabaseRepository) CreateOpenMic(input domain.OpenMicCreate
 		return domain.OpenMicCompetition{}, err
 	}
 	if len(rows) == 0 {
-		return domain.OpenMicCompetition{}, fmt.Errorf("open mic create failed: empty response")
+		return domain.OpenMicCompetition{}, errors.New("open mic create failed: empty response")
 	}
 	return rows[0], nil
 }

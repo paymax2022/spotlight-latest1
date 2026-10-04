@@ -146,10 +146,7 @@ func parcelFare(distanceM, durationS int, size, speed string, cfg *PricingConfig
 	mins := float64(durationS) / 60.0
 	raw := float64(cfg.BaseFareKobo) + km*float64(cfg.PerKMKobo) + mins*float64(cfg.PerMinKobo)
 	raw *= parcelSizeMultiplier(size) * parcelSpeedMultiplier(speed)
-	fare := int64(math.Round(raw))
-	if fare < cfg.MinFareKobo {
-		fare = cfg.MinFareKobo
-	}
+	fare := max(int64(math.Round(raw)), cfg.MinFareKobo)
 	return fare
 }
 
@@ -366,7 +363,7 @@ func (s *Service) CancelParcel(ctx context.Context, id, senderID, reason string)
 		return codedErr(http.StatusForbidden, CodeForbidden, "not your parcel")
 	}
 	if !canTransitionParcel(p.Status, "cancelled") {
-		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot cancel from status %s", p.Status))
+		return codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from status "+p.Status)
 	}
 	if err := s.parcelSetStatus(ctx, id, p.Status, "cancelled"); err != nil {
 		return err

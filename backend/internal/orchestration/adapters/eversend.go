@@ -10,11 +10,12 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"github.com/google/uuid"
 	"math"
 	orch "spotlight/backend/internal/orchestration"
 	"spotlight/backend/internal/provider/eversend"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // Eversend favours wholesale FX and USD/EUR inbound (spec §3). Tighter spreads,
@@ -92,7 +93,7 @@ func (e *Eversend) ExecuteTransfer(ctx context.Context, q *orch.Quote, dest orch
 }
 
 func (e *Eversend) CreateCollection(ctx context.Context, currency, accountType, customerID string) (*orch.CollectionResult, error) {
-	details := map[string]interface{}{
+	details := map[string]any{
 		"account_name": "Paymax / Customer",
 		"iban":         "GB29NWBK60161331926819",
 		"bic":          "NWBKGB2L",

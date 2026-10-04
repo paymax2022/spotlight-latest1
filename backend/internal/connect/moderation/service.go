@@ -2,6 +2,7 @@ package connectmoderation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
@@ -137,7 +138,7 @@ func (s *Service) SetConversationState(ctx context.Context, adminID, convID stri
 		return fmt.Errorf("connect: set conversation state: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("connect: conversation not found")
+		return errors.New("connect: conversation not found")
 	}
 	return s.safety.WriteAudit(ctx, connectsafety.AuditInput{
 		ActorID:    adminID,

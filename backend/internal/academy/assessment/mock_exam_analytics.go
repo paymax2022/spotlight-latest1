@@ -258,7 +258,7 @@ func (s *AnalyticsService) getSubjectPerformance(ctx context.Context, userID str
 		}
 	}
 
-	for i := 0; i < len(subjects); i++ {
+	for i := range subjects {
 		if perf, exists := subjectMap[i]; exists {
 			analytics.SubjectPerformance = append(analytics.SubjectPerformance, perf)
 		}

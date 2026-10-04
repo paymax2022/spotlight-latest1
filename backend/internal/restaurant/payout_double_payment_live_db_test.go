@@ -21,6 +21,7 @@ package restaurant
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -117,7 +118,7 @@ func TestLiveDB_PayoutRunExcludesSettlementAlreadyPaidDirectlyAtDelivery(t *test
 
 	// ProcessRun on a NetMinor=0 draft correctly refuses to disburse (existing
 	// ErrPayoutNothingDue path) rather than posting a zero-amount transfer.
-	if _, err := svc.ProcessRun(ctx, run.ID, "paydup-process-"+run.ID); err != ErrPayoutNothingDue {
+	if _, err := svc.ProcessRun(ctx, run.ID, "paydup-process-"+run.ID); !errors.Is(err, ErrPayoutNothingDue) {
 		t.Fatalf("ProcessRun on the empty run: want ErrPayoutNothingDue, got %v", err)
 	}
 

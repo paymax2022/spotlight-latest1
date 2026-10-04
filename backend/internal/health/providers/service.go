@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"slices"
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/go-common/fsm"
 	"spotlight/backend/go-common/ginutil"
@@ -78,10 +79,10 @@ func (s *Service) WithPresigner(p Presigner, bucket string) *Service {
 // CreateApplication starts onboarding in DRAFT for the acting user.
 func (s *Service) CreateApplication(ctx context.Context, ownerID, domain, providerType, displayName string) (*Application, error) {
 	if ownerID == "" {
-		return nil, fmt.Errorf("providers: owner required")
+		return nil, errors.New("providers: owner required")
 	}
 	if !validDomain(domain) || !validType(domain, providerType) {
-		return nil, fmt.Errorf("providers: invalid domain/provider_type")
+		return nil, errors.New("providers: invalid domain/provider_type")
 	}
 	a := &Application{
 		ID:           uuid.New().String(),
@@ -113,10 +114,10 @@ func (s *Service) AddCredential(ctx context.Context, ownerID, applicationID stri
 		return nil, err
 	}
 	if app.OwnerUserID != ownerID { // object-level authZ
-		return nil, fmt.Errorf("providers: forbidden")
+		return nil, errors.New("providers: forbidden")
 	}
 	if d.StorageKey == "" {
-		return nil, fmt.Errorf("providers: storage_key required")
+		return nil, errors.New("providers: storage_key required")
 	}
 	d.ID = uuid.New().String()
 	d.ApplicationID = applicationID
@@ -186,7 +187,7 @@ func (s *Service) transition(ctx context.Context, ownerID, applicationID string,
 		return nil, err
 	}
 	if app.OwnerUserID != ownerID {
-		return nil, fmt.Errorf("providers: forbidden")
+		return nil, errors.New("providers: forbidden")
 	}
 	to, err := next(app.State)
 	if err != nil {
@@ -288,10 +289,8 @@ func (s *Service) grantCapabilityRole(app *Application, adminID string) {
 	slug := "health-provider-" + app.ProviderType
 	existing, err := s.rbac.GetUserRoles(app.OwnerUserID)
 	if err == nil {
-		for _, r := range existing {
-			if r == slug {
-				return // already granted — idempotent
-			}
+		if slices.Contains(existing, slug) {
+			return // already granted — idempotent
 		}
 	}
 	roles, err := s.rbac.ListRoles()
@@ -334,7 +333,7 @@ func (s *Service) GetApplication(ctx context.Context, ownerID, applicationID str
 		return nil, err
 	}
 	if a.OwnerUserID != ownerID {
-		return nil, fmt.Errorf("providers: forbidden")
+		return nil, errors.New("providers: forbidden")
 	}
 	return a, nil
 }
@@ -368,8 +367,8 @@ func (s *Service) getApplication(ctx context.Context, id string) (*Application, 
 	           FROM health_provider_applications WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, id).Scan(&a.ID, &a.OwnerUserID, &a.Domain, &a.ProviderType,
 		&a.DisplayName, &state, &a.ReviewNote, &a.ProviderID, &a.CreatedAt, &a.UpdatedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("providers: application not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("providers: application not found")
 		}
 		return nil, err
 	}
@@ -384,8 +383,8 @@ func lockApplication(ctx context.Context, tx pgx.Tx, id string) (*Application, e
 	           FROM health_provider_applications WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, q, id).Scan(&a.ID, &a.OwnerUserID, &a.Domain, &a.ProviderType,
 		&a.DisplayName, &state, &a.ProviderID); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("providers: application not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("providers: application not found")
 		}
 		return nil, err
 	}

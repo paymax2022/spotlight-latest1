@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/integrations"
+
+	"github.com/gin-gonic/gin"
 )
 
 // RequireVerifiedIdentity shares resolveVerifiedIdentity with

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
 	"strings"
 	"testing"
@@ -215,9 +216,7 @@ func TestLive_ComputePrice(t *testing.T) {
 		{12, 4_800_000},
 	} {
 		inputs := map[string]any{}
-		for k, v := range base {
-			inputs[k] = v
-		}
+		maps.Copy(inputs, base)
 		inputs[FieldPaymentPlan] = tc.plan
 
 		q, err := c.GetQuote(ctx, gateway.QuoteRequest{Product: product, Inputs: inputs})

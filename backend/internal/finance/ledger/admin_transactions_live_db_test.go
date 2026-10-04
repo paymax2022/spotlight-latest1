@@ -41,6 +41,7 @@ package ledger_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -62,6 +63,7 @@ import (
 // CheckPermission, the only method middleware.RequirePermission calls.
 type fakeAdminTxRBAC struct {
 	services.RBACService
+
 	allow bool
 }
 
@@ -189,7 +191,7 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 	// name/email.
 	refA := fmt.Sprintf("fx:convert:%s-A", tag)
 	refB := fmt.Sprintf("arena:support:%s-B", tag)
-	refD := fmt.Sprintf("%sopaqueNoColon", tag)
+	refD := tag + "opaqueNoColon"
 	refE := uuid.NewString()
 
 	// rowA: 10 days ago, CREDIT 150000 kobo, colon-namespaced reference "fx:convert:...".
@@ -594,7 +596,7 @@ func TestAdminGetTransaction_NonUniqueReferenceCapsButReportsRealTotal(t *testin
 	sharedRef := "admtx-shared-ref-" + f.tag
 	const extraRows = 25 // > adminRelatedEntriesLimit (20), so the cap actually bites
 	var ids []string
-	for i := 0; i < extraRows; i++ {
+	for i := range extraRows {
 		var id string
 		if err := f.pool.QueryRow(ctx, `
 			INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, created_at)
@@ -633,7 +635,7 @@ func TestAdminGetTransaction_NotFound(t *testing.T) {
 	f := setupAdminTxFixture(t)
 	ctx := context.Background()
 
-	if _, err := f.svc.AdminGetTransaction(ctx, uuid.NewString()); err != ledger.ErrTransactionNotFound {
+	if _, err := f.svc.AdminGetTransaction(ctx, uuid.NewString()); !errors.Is(err, ledger.ErrTransactionNotFound) {
 		t.Fatalf("expected ErrTransactionNotFound for an unknown id, got %v", err)
 	}
 

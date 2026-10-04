@@ -36,6 +36,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
+	"strconv"
 	"strings"
 	"time"
 
@@ -454,9 +456,7 @@ func (s *Service) ValidateCustomer(ctx context.Context, in ValidateInput) (*Vali
 // always win — a client cannot override which biller it is verifying against.
 func validationParams(billerCode, providerBillerCode, customerReference string, metadata map[string]string) map[string]string {
 	params := map[string]string{}
-	for k, v := range metadata {
-		params[k] = v
-	}
+	maps.Copy(params, metadata)
 	params["billerCode"] = billerCode
 	if providerBillerCode != "" {
 		params["providerBillerCode"] = providerBillerCode
@@ -501,15 +501,15 @@ func (s *Service) priceQuote(ctx context.Context, category Category, billerID, p
 
 	biller, err = s.repo.GetBiller(ctx, billerID)
 	if err != nil {
-		return
+		return biller, product, routes, pricing, calc, service, subtype, err
 	}
 	product, err = s.repo.GetProduct(ctx, productID)
 	if err != nil {
-		return
+		return biller, product, routes, pricing, calc, service, subtype, err
 	}
 	if Category(biller.Category) != category || Category(product.Category) != category || product.BillerID != biller.ID {
 		err = fmt.Errorf("%w (biller=%s product=%s)", ErrCategoryMismatch, biller.Category, product.Category)
-		return
+		return biller, product, routes, pricing, calc, service, subtype, err
 	}
 
 	// A fixed-price product ignores any caller-supplied amount, exactly like the
@@ -522,17 +522,17 @@ func (s *Service) priceQuote(ctx context.Context, category Category, billerID, p
 	candidates, rerr := s.repo.GetRouteCandidates(ctx, product.ID)
 	if rerr != nil {
 		err = rerr
-		return
+		return biller, product, routes, pricing, calc, service, subtype, err
 	}
 	routes = FailoverOrder(candidates, category)
 	if len(routes) == 0 {
 		err = ErrNoViableRoute
-		return
+		return biller, product, routes, pricing, calc, service, subtype, err
 	}
 
 	pricing, err = CalculateUtilityPricing(product.Domain(), routes[0].Mapping.Domain(), resolvedAmount)
 	if err != nil {
-		return
+		return biller, product, routes, pricing, calc, service, subtype, err
 	}
 
 	// Commission module (best-effort, never fatal): when an active config row
@@ -545,7 +545,7 @@ func (s *Service) priceQuote(ctx context.Context, category Category, billerID, p
 			pricing = ApplyCommissionConvenienceFee(pricing, c.ConvenienceFeeKobo, true)
 		}
 	}
-	return
+	return biller, product, routes, pricing, calc, service, subtype, err
 }
 
 // QuotePayment ports quoteUtilityPayment.
@@ -1152,9 +1152,7 @@ func billOutcome(bill *provider.Bill) ProviderOutcome {
 // redirect its own purchase at a different biller or product code.
 func purchaseParams(pc purchaseContext, route Route, attemptKey string) map[string]string {
 	params := map[string]string{}
-	for k, v := range pc.Metadata {
-		params[k] = v
-	}
+	maps.Copy(params, pc.Metadata)
 	params["billerCode"] = pc.Biller.Code
 	if route.Mapping.ProviderBillerCode != "" {
 		params["providerBillerCode"] = route.Mapping.ProviderBillerCode
@@ -1919,19 +1917,19 @@ func stringMetadata(metadata map[string]any) map[string]string {
 		case string:
 			out[k] = val
 		case bool:
-			out[k] = fmt.Sprintf("%t", val)
+			out[k] = strconv.FormatBool(val)
 		case json.Number:
 			out[k] = val.String()
 		case int:
-			out[k] = fmt.Sprintf("%d", val)
+			out[k] = strconv.Itoa(val)
 		case int64:
-			out[k] = fmt.Sprintf("%d", val)
+			out[k] = strconv.FormatInt(val, 10)
 		case float64:
 			// JSON numbers decode as float64. Integral values render without a
 			// spurious ".0"; a genuinely fractional value is not a money amount here
 			// (amounts never travel through metadata) so %v is safe.
 			if val == float64(int64(val)) {
-				out[k] = fmt.Sprintf("%d", int64(val))
+				out[k] = strconv.FormatInt(int64(val), 10)
 			} else {
 				out[k] = fmt.Sprintf("%v", val)
 			}

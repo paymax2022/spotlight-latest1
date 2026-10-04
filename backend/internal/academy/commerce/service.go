@@ -8,9 +8,10 @@ import (
 	"errors"
 	"time"
 
+	"spotlight/backend/go-common/dbutil"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"spotlight/backend/go-common/dbutil"
 )
 
 // Service is the Spotlight Academy commerce domain. It owns the GUARDED purchase
@@ -397,7 +398,7 @@ func (s *Service) GenerateBatch(ctx context.Context, adminID string, req Generat
 		return nil, ErrInvalidAmount
 	}
 	out := make([]GeneratedCard, 0, req.Count)
-	for i := 0; i < req.Count; i++ {
+	for range req.Count {
 		pin, err := randomPIN(req.PinDigits)
 		if err != nil {
 			return nil, err

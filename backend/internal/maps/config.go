@@ -101,9 +101,7 @@ func LoadSurfaceConfig(path string) (SurfaceConfig, error) {
 		}
 		mergeProviderMap(cfg.Surfaces[surface], pm)
 	}
-	for k, v := range override.Caps {
-		cfg.Caps[k] = v
-	}
+	maps.Copy(cfg.Caps, override.Caps)
 	return cfg, nil
 }
 

@@ -80,10 +80,7 @@ func (s *Service) loadTowing(ctx context.Context, id string, t *towingRow) error
 func towingFare(distanceM int, cfg *PricingConfig) int64 {
 	km := float64(distanceM) / 1000.0
 	raw := float64(cfg.BaseFareKobo) + km*float64(cfg.PerKMKobo)
-	fare := int64(math.Round(raw))
-	if fare < cfg.MinFareKobo {
-		fare = cfg.MinFareKobo
-	}
+	fare := max(int64(math.Round(raw)), cfg.MinFareKobo)
 	return fare
 }
 
@@ -248,7 +245,7 @@ func (s *Service) CancelTowing(ctx context.Context, id, userID, reason string) e
 		return codedErr(http.StatusForbidden, CodeForbidden, "not your job")
 	}
 	if !canTransitionTowing(t.Status, "cancelled") {
-		return codedErr(http.StatusConflict, CodeInvalidState, fmt.Sprintf("cannot cancel from status %s", t.Status))
+		return codedErr(http.StatusConflict, CodeInvalidState, "cannot cancel from status "+t.Status)
 	}
 	if err := s.towingSetStatus(ctx, id, t.Status, "cancelled"); err != nil {
 		return err

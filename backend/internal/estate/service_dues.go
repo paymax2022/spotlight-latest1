@@ -3,6 +3,7 @@ package estate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -58,7 +59,7 @@ func (s *Service) CreateInvoice(ctx context.Context, estateID, adminID string, r
 		return nil, err
 	}
 	if req.AmountKobo <= 0 {
-		return nil, fmt.Errorf("estate: invoice amount must be positive kobo")
+		return nil, errors.New("estate: invoice amount must be positive kobo")
 	}
 	inv := &DuesInvoice{
 		ID:         uuid.New().String(),
@@ -124,7 +125,7 @@ func (s *Service) ListInvoices(ctx context.Context, estateID, userID, status str
 // verified charge amount must equal the invoice amount this function
 // independently reloads at payment time. See payDues' external-funding
 // cross-check.
-var ErrDuesExternalAmountMismatch = fmt.Errorf("estate: verified payment amount no longer matches the invoice amount")
+var ErrDuesExternalAmountMismatch = errors.New("estate: verified payment amount no longer matches the invoice amount")
 
 // resolveDuesInvoiceAmount loads and validates an invoice the same way
 // payDues does (scoped to estate + payer, not paid/waived), without moving
@@ -139,10 +140,10 @@ func (s *Service) resolveDuesInvoiceAmount(ctx context.Context, estateID, payerI
 	var status, ownerID string
 	const qInv = `SELECT amount_kobo, status, resident_id FROM estate_dues_invoices WHERE id=$1 AND estate_id=$2`
 	if err := s.db.QueryRow(ctx, qInv, invoiceID, estateID).Scan(&amount, &status, &ownerID); err != nil {
-		return 0, nil, fmt.Errorf("estate: invoice not found in this estate")
+		return 0, nil, errors.New("estate: invoice not found in this estate")
 	}
 	if ownerID != payerID {
-		return 0, nil, fmt.Errorf("estate: cannot pay another resident's invoice")
+		return 0, nil, errors.New("estate: cannot pay another resident's invoice")
 	}
 	if status == "paid" {
 		receipt, rerr := s.existingReceipt(ctx, estateID, invoiceID)
@@ -152,7 +153,7 @@ func (s *Service) resolveDuesInvoiceAmount(ctx context.Context, estateID, payerI
 		return amount, receipt, nil
 	}
 	if status == "waived" {
-		return 0, nil, fmt.Errorf("estate: invoice has been waived")
+		return 0, nil, errors.New("estate: invoice has been waived")
 	}
 	return amount, nil, nil
 }
@@ -168,7 +169,7 @@ func (s *Service) QuoteDuesInvoice(ctx context.Context, estateID, payerID, invoi
 		return 0, err
 	}
 	if alreadyPaid != nil {
-		return 0, fmt.Errorf("estate: invoice already paid")
+		return 0, errors.New("estate: invoice already paid")
 	}
 	return amount, nil
 }
@@ -277,7 +278,7 @@ func (s *Service) payDues(ctx context.Context, estateID, payerID string, req Pay
 			CreditAccountID: settle.ID,
 			Description:     "Paystack-funded estate dues payment (external payment, no wallet debit)",
 		})
-		if jerr != nil && jerr != ledger.ErrDuplicate {
+		if jerr != nil && !errors.Is(jerr, ledger.ErrDuplicate) {
 			return nil, fmt.Errorf("estate: dues external post: %w", jerr)
 		}
 	} else if err := s.ledger.Debit(ctx, payerID, ref, req.IdempotencyKey, settle.ID, amount); err != nil {
@@ -386,7 +387,7 @@ func (s *Service) existingReceipt(ctx context.Context, estateID, invoiceID strin
 		&pay.ID, &pay.EstateID, &pay.InvoiceID, &pay.PayerID, &pay.AmountKobo,
 		&pay.Method, &pay.Status, &pay.Reference, &pay.CreatedAt,
 	); err != nil {
-		return nil, fmt.Errorf("estate: invoice already paid (receipt unavailable)")
+		return nil, errors.New("estate: invoice already paid (receipt unavailable)")
 	}
 	return pay, nil
 }
@@ -447,7 +448,7 @@ func (s *Service) activeRestriction(ctx context.Context, estateID, residentID st
 		`SELECT level FROM estate_dues_restrictions WHERE estate_id=$1 AND resident_id=$2 AND active LIMIT 1`,
 		estateID, residentID,
 	).Scan(&level)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
 	return level, err

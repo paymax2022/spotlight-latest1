@@ -1119,7 +1119,7 @@ func (s *Service) feeSchedule(ctx context.Context) FeeSchedule {
 	if err != nil {
 		return s.fees
 	}
-	return FeeSchedule{CommissionBPS: fc.CommissionBPS, MinFeeKobo: fc.MinFeeKobo}
+	return FeeSchedule(fc)
 }
 
 func (st StockAsset) providerSym() string {

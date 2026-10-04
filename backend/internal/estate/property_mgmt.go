@@ -2,6 +2,7 @@ package estate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -48,7 +49,7 @@ func (s *Service) GetProperty(ctx context.Context, estateID, memberID, propertyI
 	row := s.db.QueryRow(ctx, `SELECT `+propertyCols+` FROM estate_properties WHERE id=$1 AND estate_id=$2`, propertyID, estateID)
 	p, err := scanProperty(row)
 	if err != nil {
-		return nil, fmt.Errorf("estate: property not found in this estate")
+		return nil, errors.New("estate: property not found in this estate")
 	}
 	return p, nil
 }
@@ -69,7 +70,7 @@ func (s *Service) UpdateProperty(ctx context.Context, estateID, adminID, propert
 	row := s.db.QueryRow(ctx, q, propertyID, estateID, req.UnitLabel, req.PropertyType, req.Floor, req.Block)
 	p, err := scanProperty(row)
 	if err != nil {
-		return nil, fmt.Errorf("estate: property not found in this estate")
+		return nil, errors.New("estate: property not found in this estate")
 	}
 	_ = s.audit(ctx, estateID, adminID, "PROPERTY_UPDATE", "property", propertyID, nil)
 	return p, nil
@@ -92,7 +93,7 @@ func (s *Service) assignParty(ctx context.Context, estateID, adminID, propertyID
 		return nil, err
 	}
 	if userID == "" {
-		return nil, fmt.Errorf("estate: user id is required")
+		return nil, errors.New("estate: user id is required")
 	}
 	q := `UPDATE estate_properties SET ` + column + `=$3`
 	if forceOccupancy != "" {
@@ -102,7 +103,7 @@ func (s *Service) assignParty(ctx context.Context, estateID, adminID, propertyID
 	row := s.db.QueryRow(ctx, q, propertyID, estateID, userID)
 	p, err := scanProperty(row)
 	if err != nil {
-		return nil, fmt.Errorf("estate: property not found in this estate")
+		return nil, errors.New("estate: property not found in this estate")
 	}
 	_ = s.audit(ctx, estateID, adminID, "PROPERTY_ASSIGN", "property", propertyID, map[string]any{"column": column, "user_id": userID})
 	return p, nil
@@ -121,7 +122,7 @@ func (s *Service) SetOccupancyStatus(ctx context.Context, estateID, adminID, pro
 		propertyID, estateID, status)
 	p, err := scanProperty(row)
 	if err != nil {
-		return nil, fmt.Errorf("estate: property not found in this estate")
+		return nil, errors.New("estate: property not found in this estate")
 	}
 	_ = s.audit(ctx, estateID, adminID, "PROPERTY_OCCUPANCY", "property", propertyID, map[string]any{"status": status})
 	return p, nil
@@ -137,7 +138,7 @@ func (s *Service) ArchiveProperty(ctx context.Context, estateID, adminID, proper
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("estate: property not found in this estate")
+		return errors.New("estate: property not found in this estate")
 	}
 	_ = s.audit(ctx, estateID, adminID, "PROPERTY_ARCHIVE", "property", propertyID, nil)
 	return nil
@@ -158,7 +159,7 @@ func (s *Service) RequestPropertyTransfer(ctx context.Context, estateID, request
 		return nil, err
 	}
 	if !exists {
-		return nil, fmt.Errorf("estate: property not found in this estate")
+		return nil, errors.New("estate: property not found in this estate")
 	}
 	r := &PropertyTransferRequest{
 		ID: uuid.New().String(), EstateID: estateID, PropertyID: propertyID,
@@ -228,7 +229,7 @@ func (s *Service) ReviewPropertyTransfer(ctx context.Context, estateID, adminID,
 	if err := tx.QueryRow(ctx, load, requestID, estateID).Scan(
 		&r.ID, &r.EstateID, &r.PropertyID, &r.RequestedBy, &r.ToUserID, &r.TransferType, &r.Reason, &r.Status,
 	); err != nil {
-		return nil, fmt.Errorf("estate: transfer request not found in this estate")
+		return nil, errors.New("estate: transfer request not found in this estate")
 	}
 	if r.Status != "pending" {
 		return nil, fmt.Errorf("estate: transfer request already %s", r.Status)
@@ -286,7 +287,7 @@ SELECT
 		return nil, fmt.Errorf("estate: property analytics: %w", err)
 	}
 	if a.OccupancyStatus == "" {
-		return nil, fmt.Errorf("estate: property not found in this estate")
+		return nil, errors.New("estate: property not found in this estate")
 	}
 	return a, nil
 }

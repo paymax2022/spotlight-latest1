@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"log"
 	"net/http"
@@ -30,6 +27,10 @@ import (
 	"spotlight/backend/internal/provider/octamile"
 	"spotlight/backend/internal/services"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // RegisterInsurance wires the §6–§12 Insurance / Protection core onto the finance

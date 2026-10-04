@@ -178,10 +178,10 @@ func (s *Service) GetMatches(ctx context.Context, sponsorID string) ([]CsrMatch,
 // matches start PENDING_APPROVAL and must be explicitly approved before ACTIVE.
 func (s *Service) SetupMatch(ctx context.Context, sponsorID string, in MatchSetupInput, idemKey string) (*CsrMatch, error) {
 	if idemKey == "" {
-		return nil, fmt.Errorf("csr: Idempotency-Key is required")
+		return nil, errors.New("csr: Idempotency-Key is required")
 	}
 	if in.CapKobo < 100 {
-		return nil, fmt.Errorf("csr: capKobo must be at least 100")
+		return nil, errors.New("csr: capKobo must be at least 100")
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -204,7 +204,7 @@ func (s *Service) SetupMatch(ctx context.Context, sponsorID string, in MatchSetu
 		in.CampaignID,
 	).Scan(&campaignTitle)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("csr: campaign is not available for matching")
+		return nil, errors.New("csr: campaign is not available for matching")
 	}
 	if err != nil {
 		return nil, err
@@ -226,7 +226,7 @@ func (s *Service) SetupMatch(ctx context.Context, sponsorID string, in MatchSetu
 		return nil, err
 	}
 	if committed+in.CapKobo > budget {
-		return nil, fmt.Errorf("csr: cap exceeds remaining annual budget")
+		return nil, errors.New("csr: cap exceeds remaining annual budget")
 	}
 
 	if _, err := tx.Exec(ctx,
@@ -292,11 +292,7 @@ func (s *Service) ApproveMatch(ctx context.Context, sponsorID, matchID string) (
 		return nil, fmt.Errorf("csr: cannot approve a match in %s state", current)
 	}
 
-	sql := fmt.Sprintf(`
-		UPDATE cf_csr_matches
-		SET status = 'ACTIVE', started_at = NOW(), updated_at = NOW()
-		WHERE id = $1
-		RETURNING %s`, matchSelect)
+	sql := "\n\t\tUPDATE cf_csr_matches\n\t\tSET status = 'ACTIVE', started_at = NOW(), updated_at = NOW()\n\t\tWHERE id = $1\n\t\tRETURNING " + matchSelect
 	m, err := scanMatch(tx.QueryRow(ctx, sql, matchID).Scan)
 	if err != nil {
 		return nil, err

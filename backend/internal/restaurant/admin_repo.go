@@ -2,6 +2,7 @@ package restaurant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -206,7 +207,7 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 		return fmt.Errorf("restaurant: application lookup: %w", err)
 	}
 	if !exists {
-		return fmt.Errorf("restaurant: application not found")
+		return errors.New("restaurant: application not found")
 	}
 	var target KYBStatus
 	switch decision {
@@ -245,7 +246,7 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 			return err
 		}
 	} else if decision == "needs_info" {
-		return fmt.Errorf("restaurant: no KYB submission to request more info on")
+		return errors.New("restaurant: no KYB submission to request more info on")
 	} else {
 		// No formal restaurant_kyb row exists (the common case today — see FOOD-003:
 		// the owner-facing KYB submission routes were never wired, so no restaurant

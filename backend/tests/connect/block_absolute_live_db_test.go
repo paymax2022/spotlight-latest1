@@ -395,7 +395,7 @@ func TestConnectMatchRaceExactlyOnce(t *testing.T) {
 
 	const iterations = 25
 	var missed, dup int
-	for i := 0; i < iterations; i++ {
+	for range iterations {
 		uA, pA := seedProfile(t, ctx, pool)
 		uB, pB := seedProfile(t, ctx, pool)
 		seedDatingMode(t, ctx, pool, pA)
@@ -737,7 +737,7 @@ func TestConnectRefundSafeAndSingle(t *testing.T) {
 		start := make(chan struct{})
 		var wg sync.WaitGroup
 		wg.Add(2)
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			go func() { defer wg.Done(); <-start; _, _ = svc.Refund(ctx, orderID, "admin-1", "race") }()
 		}
 		close(start)
@@ -935,7 +935,7 @@ func TestConnectCreditsNoDoubleSpend(t *testing.T) {
 	start := make(chan struct{})
 	results := make(chan error, attempts)
 	var wg sync.WaitGroup
-	for i := 0; i < attempts; i++ {
+	for i := range attempts {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()

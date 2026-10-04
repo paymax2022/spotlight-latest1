@@ -2,11 +2,12 @@ package association
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	platformWS "spotlight/backend/internal/platform/ws"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Handlers for the remaining endpoint groups. Error→HTTP via errMap.

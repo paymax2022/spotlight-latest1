@@ -13,6 +13,7 @@ package extranet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -202,7 +203,7 @@ func (s *Service) PresignPhotoUpload(ctx context.Context, userID, propertyID, mi
 	key := "stays/" + propertyID + "/" + cryptox.Token() + ext
 	url, err := s.photos.PresignPut(key, mime, photoPresignTTL)
 	if err != nil {
-		if err == r2.ErrNotConfigured {
+		if errors.Is(err, r2.ErrNotConfigured) {
 			return "", "", ErrUploadsNotConfigured
 		}
 		return "", "", err

@@ -404,7 +404,7 @@ func TestDisputeFSM_HappyPathIsLinearThenAppealable(t *testing.T) {
 		mkt.DisputeOpened, mkt.DisputeEvidenceWindow, mkt.DisputeUnderReview,
 		mkt.DisputeDecided, mkt.DisputeExecuted, mkt.DisputeClosed, mkt.DisputeAppealed,
 	}
-	for i := 0; i < len(order)-1; i++ {
+	for i := range len(order) - 1 {
 		from, to := order[i], order[i+1]
 		if !disputeTransitionsMirror[from][to] {
 			t.Errorf("%s -> %s must be legal (linear happy path)", from, to)

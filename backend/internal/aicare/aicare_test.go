@@ -178,10 +178,10 @@ func TestReplyHeaders(t *testing.T) {
 	if got := req.Header.Get("Content-Type"); got != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", got)
 	}
-	if got := req.Header.Get("x-api-key"); got != "test-key-123" {
+	if got := req.Header.Get("X-Api-Key"); got != "test-key-123" {
 		t.Errorf("x-api-key = %q, want test-key-123", got)
 	}
-	if got := req.Header.Get("anthropic-version"); got != anthropicVer {
+	if got := req.Header.Get("Anthropic-Version"); got != anthropicVer {
 		t.Errorf("anthropic-version = %q, want %q", got, anthropicVer)
 	}
 	if req.Method != http.MethodPost {

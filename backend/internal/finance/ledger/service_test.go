@@ -2,6 +2,7 @@ package ledger_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -93,7 +94,7 @@ func TestAmountsArePositive(t *testing.T) {
 
 // TestErrSentinelDistinctness verifies that error sentinels are distinct values.
 func TestErrSentinelDistinctness(t *testing.T) {
-	if ledger.ErrInsufficientFunds == ledger.ErrDuplicate {
+	if errors.Is(ledger.ErrInsufficientFunds, ledger.ErrDuplicate) {
 		t.Error("ErrInsufficientFunds and ErrDuplicate must be distinct sentinel errors")
 	}
 	if ledger.ErrInsufficientFunds == nil {

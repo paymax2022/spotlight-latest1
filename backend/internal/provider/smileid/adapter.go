@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"spotlight/backend/go-common/timeutil"
 	"spotlight/backend/internal/provider"
@@ -43,9 +44,7 @@ func (c *Client) submitJob(ctx context.Context, jobType int, req provider.KycVer
 			"job_type": jobType,
 		},
 	}
-	for k, v := range extra {
-		body[k] = v
-	}
+	maps.Copy(body, extra)
 	raw, err := c.post(ctx, "/async_job", body, nil)
 	if err != nil {
 		return provider.KycCheckResult{}, err

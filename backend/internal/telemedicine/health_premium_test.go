@@ -7,8 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/telemedicine"
+
+	"github.com/gin-gonic/gin"
 )
 
 // TestAllSpecialtyConstantsDistinct verifies all 14 specialty values are unique.
@@ -340,7 +341,7 @@ func TestToggleAvailabilityBadBody(t *testing.T) {
 func TestIdempotencyKeyHeaderFallback(t *testing.T) {
 	// We only test the request construction — not full service call.
 	// Verifies the handler reads the header when body key is empty.
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"doctor_id":    "doctor-uuid",
 		"scheduled_at": "2026-07-01T10:00:00Z",
 		// idempotency_key deliberately omitted from body

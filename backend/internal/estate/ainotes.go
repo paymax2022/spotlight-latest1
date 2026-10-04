@@ -3,6 +3,7 @@ package estate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -83,7 +84,7 @@ func parseAINoteResult(raw json.RawMessage) (summary string, actionItems, decisi
 		return "", nil, nil, fmt.Errorf("estate: AI output not in expected shape: %w", e)
 	}
 	if p.Summary == "" {
-		return "", nil, nil, fmt.Errorf("estate: AI output missing summary")
+		return "", nil, nil, errors.New("estate: AI output missing summary")
 	}
 	ai := p.ActionItems
 	if ai == nil {
@@ -137,7 +138,7 @@ func (s *Service) GenerateAINotes(ctx context.Context, estateID, adminID string,
 
 	if s.llm == nil || !s.llm.Enabled() {
 		_, _ = s.db.Exec(ctx, `UPDATE estate_ai_notes SET status='failed' WHERE id=$1`, id)
-		return nil, fmt.Errorf("estate: AI note-taking is not configured")
+		return nil, errors.New("estate: AI note-taking is not configured")
 	}
 
 	userPrompt := fmt.Sprintf("Meeting title: %s\n\nTranscript:\n%s", title, req.Transcript)
@@ -168,7 +169,7 @@ func (s *Service) GetAINote(ctx context.Context, estateID, userID, id string) (*
 	row := s.db.QueryRow(ctx, `SELECT `+aiNoteCols+` FROM estate_ai_notes WHERE id=$1 AND estate_id=$2`, id, estateID)
 	n, err := scanAINote(row)
 	if err != nil {
-		return nil, fmt.Errorf("estate: ai-note not found in this estate")
+		return nil, errors.New("estate: ai-note not found in this estate")
 	}
 	return n, nil
 }
@@ -213,7 +214,7 @@ func (s *Service) ApproveAINote(ctx context.Context, estateID, adminID, id strin
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("estate: ai-note not found or not in a completable state")
+		return errors.New("estate: ai-note not found or not in a completable state")
 	}
 	_ = s.audit(ctx, estateID, adminID, "AI_NOTES_APPROVE", "ai_note", id, nil)
 	return nil

@@ -114,8 +114,7 @@ func (h *Handler) SendMessage(c *gin.Context) {
 // respondErr maps a service error to the right HTTP status + machine code.
 // CodedError carries an explicit status/code; everything else is a 500.
 func respondErr(c *gin.Context, err error) {
-	var ce *CodedError
-	if errors.As(err, &ce) {
+	if ce, ok := errors.AsType[*CodedError](err); ok {
 		c.JSON(ce.Status, gin.H{"error": ce.Message, "code": ce.Code})
 		return
 	}

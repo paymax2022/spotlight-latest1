@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 
 	"errors"
 	"fmt"
@@ -177,7 +178,7 @@ func (s *Service) CreateElection(ctx context.Context, userID, orgIDOverride stri
 		return "", err
 	}
 	if len(in.Positions) == 0 {
-		return "", fmt.Errorf("association: election needs at least one position")
+		return "", errors.New("association: election needs at least one position")
 	}
 	requireGood := true
 	if in.RequireGoodStanding != nil {
@@ -196,10 +197,7 @@ func (s *Service) CreateElection(ctx context.Context, userID, orgIDOverride stri
 		return "", fmt.Errorf("association: create election: %w", err)
 	}
 	for i, p := range in.Positions {
-		seats := p.Seats
-		if seats < 1 {
-			seats = 1
-		}
+		seats := max(p.Seats, 1)
 		var role any
 		if p.Role != "" {
 			if !electionRoles[p.Role] {
@@ -426,7 +424,7 @@ type pgxQuerier interface {
 func checksumFor(results []CandidateResult) string {
 	rows := make([]string, 0, len(results))
 	for _, r := range results {
-		rows = append(rows, r.CandidateID+":"+fmt.Sprintf("%d", r.Votes))
+		rows = append(rows, r.CandidateID+":"+strconv.Itoa(r.Votes))
 	}
 	sort.Strings(rows)
 	h := sha256.New()

@@ -2,13 +2,15 @@ package consent
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -44,7 +46,7 @@ func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
 // the same (user, product, version, scope) is a no-op.
 func (s *Service) Grant(ctx context.Context, userID, productCode, scope string) (*Record, error) {
 	if s.db == nil {
-		return nil, fmt.Errorf("consent: nil pool")
+		return nil, errors.New("consent: nil pool")
 	}
 	if scope == "" {
 		scope = "provider_data_share"
@@ -69,7 +71,7 @@ func (s *Service) Grant(ctx context.Context, userID, productCode, scope string) 
 // any provider data-share.
 func (s *Service) HasCurrent(ctx context.Context, userID, productCode, scope string) (bool, error) {
 	if s.db == nil {
-		return false, fmt.Errorf("consent: nil pool")
+		return false, errors.New("consent: nil pool")
 	}
 	if scope == "" {
 		scope = "provider_data_share"
@@ -87,7 +89,7 @@ func (s *Service) HasCurrent(ctx context.Context, userID, productCode, scope str
 }
 
 // ErrConsentRequired is returned by callers when the NDPA gate is not satisfied.
-var ErrConsentRequired = fmt.Errorf("consent: NDPA consent required before provider data-share")
+var ErrConsentRequired = errors.New("consent: NDPA consent required before provider data-share")
 
 // Handler exposes member consent routes.
 type Handler struct{ svc *Service }

@@ -104,7 +104,7 @@ func (h *Handler) GetRateHistory(c *gin.Context) {
 	}
 	now := time.Now().UnixMilli()
 	series := make([]gin.H, 0, points)
-	for i := 0; i < points; i++ {
+	for i := range points {
 		wobble := math.Sin(float64(seed+i)/3)*0.02 + math.Cos(float64(seed+i)/7)*0.012
 		rate := math.Round(base*(1+wobble)*10000) / 10000
 		t := time.UnixMilli(now - int64(points-i)*stepMs).UTC().Format(time.RFC3339)

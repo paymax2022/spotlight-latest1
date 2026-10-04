@@ -65,7 +65,7 @@ func TestExpiredBucketsAreEvicted(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	l := newTestLimiter(5, time.Minute, &now)
 
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		l.Allow("ip-" + strconv.Itoa(i))
 	}
 	if l.Size() < 500 {
@@ -183,9 +183,8 @@ func TestConcurrentAllowIsRaceFree(t *testing.T) {
 	l := newTestLimiter(100, time.Minute, &now)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 200; i++ {
-		wg.Add(1)
-		go func() { defer wg.Done(); l.Allow("shared") }()
+	for range 200 {
+		wg.Go(func() { ; l.Allow("shared") })
 	}
 	wg.Wait()
 

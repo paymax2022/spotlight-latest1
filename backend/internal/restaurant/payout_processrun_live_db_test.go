@@ -431,7 +431,7 @@ func TestLiveDB_ProcessRunConcurrentClaimIsSingleWinner(t *testing.T) {
 	var wg sync.WaitGroup
 	results := make([]error, racers)
 	statuses := make([]string, racers)
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -445,7 +445,7 @@ func TestLiveDB_ProcessRunConcurrentClaimIsSingleWinner(t *testing.T) {
 	wg.Wait()
 
 	successes := 0
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		if results[i] == nil {
 			successes++
 			if statuses[i] != PayoutStatusPaid {

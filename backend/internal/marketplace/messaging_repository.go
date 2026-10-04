@@ -3,9 +3,10 @@ package marketplace
 import (
 	"context"
 	"errors"
-	"github.com/jackc/pgx/v5"
 	"spotlight/backend/go-common/dbutil"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // messaging_repository.go is the pgx data layer for the ADR-023 listings-and-connect

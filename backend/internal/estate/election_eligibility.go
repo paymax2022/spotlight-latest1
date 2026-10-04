@@ -2,6 +2,7 @@ package estate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -93,7 +94,7 @@ func (s *Service) loadEligibilityRules(ctx context.Context, electionID string) (
 	r := EligibilityRules{ElectionID: electionID}
 	const q = `SELECT require_kyc, require_payment, resident_types FROM election_eligibility_rules WHERE election_id=$1`
 	err := s.db.QueryRow(ctx, q, electionID).Scan(&r.RequireKYC, &r.RequirePayment, &r.ResidentTypes)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return r, nil
 	}
 	return r, err
@@ -110,7 +111,7 @@ func (s *Service) SetEligibilityRules(ctx context.Context, estateID, adminID, el
 		return nil, err
 	}
 	if !exists {
-		return nil, fmt.Errorf("estate: election not found in this estate")
+		return nil, errors.New("estate: election not found in this estate")
 	}
 	types := req.ResidentTypes
 	if types == nil {
@@ -157,7 +158,7 @@ func (s *Service) voterType(ctx context.Context, estateID, residentID string) (s
 		LEFT JOIN resident_profiles rp ON rp.resident_id = er.id
 		WHERE er.estate_id=$1 AND er.user_id=$2 LIMIT 1`
 	err := s.db.QueryRow(ctx, q, estateID, residentID).Scan(&t)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
 	return t, err

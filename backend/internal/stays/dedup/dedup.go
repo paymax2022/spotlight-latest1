@@ -99,7 +99,7 @@ func (s *Service) EnqueueConflicts(ctx context.Context, offers []gateway.Propert
 	if s.db == nil {
 		return nil
 	}
-	for i := 0; i < len(offers); i++ {
+	for i := range offers {
 		for j := i + 1; j < len(offers); j++ {
 			a, b := offers[i], offers[j]
 			if a.Rail == b.Rail {
@@ -190,7 +190,7 @@ func normalize(s string) string {
 
 func tokens(s string) map[string]struct{} {
 	m := map[string]struct{}{}
-	for _, t := range strings.Fields(normalize(s)) {
+	for t := range strings.FieldsSeq(normalize(s)) {
 		m[t] = struct{}{}
 	}
 	return m

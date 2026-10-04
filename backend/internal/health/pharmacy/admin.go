@@ -2,6 +2,7 @@ package healthpharmacy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -173,7 +174,7 @@ func (s *Service) AdminRecallProduct(ctx context.Context, adminID, productID str
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("pharmacy: product not found")
+		return errors.New("pharmacy: product not found")
 	}
 	s.audited(adminID, "", "health.pharmacy.product.recall", productID,
 		map[string]any{"active": true}, map[string]any{"active": false})

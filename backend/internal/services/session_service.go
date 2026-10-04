@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"math"
 	"net/http"
 	"spotlight/backend/internal/config"
@@ -17,6 +15,9 @@ import (
 	"spotlight/backend/internal/integrations"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Session = domain.Session
@@ -107,7 +108,7 @@ func HashToken(token string) string {
 
 func (s *sessionService) IssueSession(userID string, tokens IssuedTokens, lc LoginContext) (string, error) {
 	if strings.TrimSpace(userID) == "" || strings.TrimSpace(tokens.RefreshToken) == "" {
-		return "", fmt.Errorf("user and refresh token required")
+		return "", errors.New("user and refresh token required")
 	}
 	expiresIn := tokens.ExpiresIn
 	if expiresIn <= 0 {
@@ -136,7 +137,7 @@ func (s *sessionService) IssueSession(userID string, tokens IssuedTokens, lc Log
 
 func (s *sessionService) RotateRefresh(oldRefreshToken string, tokens IssuedTokens, lc LoginContext) (*Session, error) {
 	if strings.TrimSpace(oldRefreshToken) == "" || strings.TrimSpace(tokens.RefreshToken) == "" {
-		return nil, fmt.Errorf("refresh tokens required")
+		return nil, errors.New("refresh tokens required")
 	}
 	oldHash := HashToken(oldRefreshToken)
 	now := time.Now().UTC()
@@ -163,7 +164,7 @@ func (s *sessionService) RotateRefresh(oldRefreshToken string, tokens IssuedToke
 		if s.audit != nil {
 			s.audit.LogAction(reused.UserID, reused.UserID, "session.token_reuse", "auth", "session_family", reused.FamilyID, nil, nil, lc.IPAddress, lc.UserAgent, "critical")
 		}
-		return nil, fmt.Errorf("refresh token reuse detected: session family revoked")
+		return nil, errors.New("refresh token reuse detected: session family revoked")
 	}
 
 	sess, err := s.store.GetByRefreshHash(oldHash)
@@ -171,10 +172,10 @@ func (s *sessionService) RotateRefresh(oldRefreshToken string, tokens IssuedToke
 		return nil, err
 	}
 	if sess == nil {
-		return nil, fmt.Errorf("session not found")
+		return nil, errors.New("session not found")
 	}
 	if !sess.Active(now) {
-		return nil, fmt.Errorf("session revoked or expired")
+		return nil, errors.New("session revoked or expired")
 	}
 
 	expiresIn := tokens.ExpiresIn
@@ -198,17 +199,17 @@ func (s *sessionService) RotateRefresh(oldRefreshToken string, tokens IssuedToke
 
 func (s *sessionService) ValidateAccess(accessToken string) (*Session, error) {
 	if strings.TrimSpace(accessToken) == "" {
-		return nil, fmt.Errorf("access token required")
+		return nil, errors.New("access token required")
 	}
 	sess, err := s.store.GetByAccessHash(HashToken(accessToken))
 	if err != nil {
 		return nil, err
 	}
 	if sess == nil {
-		return nil, fmt.Errorf("session not found")
+		return nil, errors.New("session not found")
 	}
 	if !sess.Active(time.Now().UTC()) {
-		return nil, fmt.Errorf("session revoked or expired")
+		return nil, errors.New("session revoked or expired")
 	}
 	_ = s.store.TouchLastSeen(sess.ID, time.Now().UTC())
 	return sess, nil
@@ -216,14 +217,14 @@ func (s *sessionService) ValidateAccess(accessToken string) (*Session, error) {
 
 func (s *sessionService) ListMySessions(userID string) ([]Session, error) {
 	if strings.TrimSpace(userID) == "" {
-		return nil, fmt.Errorf("user required")
+		return nil, errors.New("user required")
 	}
 	return s.store.ListActiveByUser(userID)
 }
 
 func (s *sessionService) RevokeOne(actorUserID, userID, sessionID, reason string) error {
 	if strings.TrimSpace(sessionID) == "" {
-		return fmt.Errorf("session id required")
+		return errors.New("session id required")
 	}
 	// Object-level authz: confirm the session belongs to the caller (unless the
 	// caller is acting on themselves the handler already checked perms for admin).
@@ -232,10 +233,10 @@ func (s *sessionService) RevokeOne(actorUserID, userID, sessionID, reason string
 		return err
 	}
 	if sess == nil {
-		return fmt.Errorf("session not found")
+		return errors.New("session not found")
 	}
 	if strings.TrimSpace(userID) != "" && sess.UserID != userID {
-		return fmt.Errorf("forbidden: session does not belong to user")
+		return errors.New("forbidden: session does not belong to user")
 	}
 	if err := s.store.RevokeSession(sessionID, fallbackReason(reason, "user_revoked")); err != nil {
 		return err
@@ -248,7 +249,7 @@ func (s *sessionService) RevokeOne(actorUserID, userID, sessionID, reason string
 
 func (s *sessionService) RevokeAll(actorUserID, userID, reason string) (int, error) {
 	if strings.TrimSpace(userID) == "" {
-		return 0, fmt.Errorf("user required")
+		return 0, errors.New("user required")
 	}
 	n, err := s.store.RevokeAllForUser(userID, fallbackReason(reason, "user_revoked_all"))
 	if err != nil {
@@ -277,7 +278,7 @@ func (s *sessionService) AdminForceLogout(actorUserID, userID, reason string) (i
 
 func (s *sessionService) AdminForcePasswordReset(actorUserID, userID, reason string) error {
 	if strings.TrimSpace(userID) == "" {
-		return fmt.Errorf("user required")
+		return errors.New("user required")
 	}
 	if err := s.store.SetForceFlags(userID, true, false); err != nil {
 		return err
