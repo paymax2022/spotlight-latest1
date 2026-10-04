@@ -352,7 +352,7 @@ func (s *Service) VerifyDoctor(ctx context.Context, reviewerID, doctorUserID str
 			INSERT INTO doctor_verifications
 				(user_id, status, kind, reviewer_id, reviewer, rejection_reason,
 				 decision_outcome, submitted_at, reviewed_at, decided_at)
-			VALUES ($1, $2, 'initial', $3, $5, $4, $2, now(), now())
+			VALUES ($1, $2, 'initial', $3, $5, $4, $2, now(), now(), now())
 			RETURNING id`
 		if err := s.db.QueryRow(ctx, ins, doctorUserID, req.Decision, reviewerID, reasonPtr, reviewerID).Scan(&verifID); err != nil {
 			return nil, fmt.Errorf("telemedicine: insert verification: %w", err)

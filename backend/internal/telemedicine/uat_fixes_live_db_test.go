@@ -61,7 +61,7 @@ func seedApprovedDoctor(t *testing.T, ctx context.Context, pool *pgxpool.Pool, l
 			is_available, is_online, is_hmo_verified, experience_years, rating,
 			review_count, patients_count, success_rate, education)
 		 VALUES ($1::uuid, $2::uuid, $3, 'general', $4,
-			TRUE, FALSE, 5, 4.5, 0, 90, '[]'::jsonb)`,
+			TRUE, FALSE, FALSE, 5, 4.5, 0, 0, 90, '[]'::jsonb)`,
 		doctorID, doctorUserID, "Dr UAT "+doctorID[:8], consultFeeKobo); err != nil {
 		t.Fatalf("seed doctor: %v", err)
 	}
