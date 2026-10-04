@@ -222,6 +222,7 @@ frontend-web,app/api/registration/applications/[id]/payment/initiate/route.ts,PO
 frontend-web,app/api/registration/applications/[id]/payment/verify/route.ts,GET,/api/registration/applications/:id/payment/verify
 frontend-web,app/api/registration/applications/[id]/route.ts,GET|PATCH,/api/registration/applications/:id
 frontend-web,app/api/registration/applications/[id]/status/route.ts,GET,/api/registration/applications/:id/status
+frontend-web,app/api/registration/applications/[id]/step/route.ts,PATCH,/api/registration/applications/:id/step
 frontend-web,app/api/registration/applications/[id]/submit/route.ts,POST,/api/registration/applications/:id/submit
 frontend-web,app/api/registration/applications/[id]/voting/route.ts,GET,/api/registration/applications/:id/voting
 frontend-web,app/api/registration/applications/[id]/withdraw/route.ts,POST,/api/registration/applications/:id/withdraw
@@ -434,6 +435,7 @@ frontend-web,app/api/v1/savings/[...path]/route.ts,GET|PATCH|POST|PUT,/api/v1/sa
 frontend-web,app/api/v1/social/[...path]/route.ts,GET|PATCH|POST|PUT,/api/v1/social/:path*
 frontend-web,app/api/v1/spotlight/[...path]/route.ts,DELETE|GET|PATCH|POST|PUT,/api/v1/spotlight/:path*
 frontend-web,app/api/v1/spray/[...path]/route.ts,GET|PATCH|POST|PUT,/api/v1/spray/:path*
+frontend-web,app/api/v1/spray/route.ts,POST,/api/v1/spray
 frontend-web,app/api/v1/stays/[...path]/route.ts,DELETE|GET|PATCH|POST|PUT,/api/v1/stays/:path*
 frontend-web,app/api/v1/stays/extranet/[...path]/route.ts,DELETE|GET|PATCH|POST|PUT,/api/v1/stays/extranet/:path*
 frontend-web,app/api/v1/stocks/[...path]/route.ts,DELETE|GET|PATCH|POST|PUT,/api/v1/stocks/:path*
