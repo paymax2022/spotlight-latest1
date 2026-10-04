@@ -168,8 +168,8 @@ func TestLiveDB_EscrowResolve_ReleaseRequiresMoveOutInspection(t *testing.T) {
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	repo := NewRepository(pool, led)
 
-	const depositAmount = 650_000_00 // NGN 650,000 in kobo
-	escrowID, _, _, _ := erSeedEscrowFixture(t, ctx, pool, led, depositAmount)
+	const depositAmount = 650_000_00                                           // NGN 650,000 in kobo
+	escrowID, _, _, _ := erSeedEscrowFixture(t, ctx, pool, led, depositAmount) //nolint:dogsled // tuple: only escrowID needed
 
 	// 1) WITHOUT a submitted move-out: released_to_tenant must be refused.
 	_, err := repo.ResolveEscrow(ctx, escrowID, "released_to_tenant", "tenant requested release", uuid.New().String())

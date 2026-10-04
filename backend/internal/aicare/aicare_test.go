@@ -231,7 +231,7 @@ func TestReplyEmptyContent(t *testing.T) {
 }
 
 func TestReplyMalformedJSON(t *testing.T) {
-	_, _, _, err := captureReply(t, nil, "q", `{not json`)
+	_, _, _, err := captureReply(t, nil, "q", `{not json`) //nolint:dogsled // tuple: only err asserted
 	if err == nil {
 		t.Fatal("expected decode error on malformed JSON")
 	}
