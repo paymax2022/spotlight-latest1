@@ -428,6 +428,9 @@ export interface RestaurantApplication {
   bank_name?: string;
   documents: OnboardingDoc[];
   status: OnboardingStatus;
+  /** Raw restaurants.kyb_status — absent means the owner never submitted;
+   *  'status' maps both that and 'submitted' to 'pending' (E2E-PROV-020). */
+  kyb_status?: string | null;
   submitted_at: string;
   reviewed_at?: string | null;
   reviewer_id?: string | null;
