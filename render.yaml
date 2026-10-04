@@ -32,6 +32,14 @@ services:
       - key: RUN_WORKERS_INPROCESS
         value: "false"
 
+      # PERF-061: verify JWTs locally against the GoTrue JWKS (SUPABASE_URL)
+      # instead of a per-request GET /auth/v1/user — the per-request call opens
+      # a fresh Postgres conn through GoTrue and capped authed throughput at
+      # ~50-100 req/s. Trade-off accepted by owner: GoTrue revocation (logout /
+      # password change) takes effect at access-token expiry, not immediately.
+      - key: AUTH_JWT_LOCAL_VERIFY
+        value: "true"
+
       # Database (Supabase PostgreSQL)
       - key: DATABASE_URL
         fromDatabase:
