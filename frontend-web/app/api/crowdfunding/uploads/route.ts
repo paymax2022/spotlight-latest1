@@ -30,7 +30,15 @@ export async function POST(request: Request) {
   try {
     const { user } = await requireUser(request);
 
-    const formData = await request.formData();
+    // A non-multipart POST makes formData() throw; map it to 415 rather than
+    // letting it surface as a blanket 500 (same fix as registration uploads,
+    // PR #490 / 4880430a).
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch {
+      return errorResponse('Expected multipart/form-data', 415);
+    }
     const file = formData.get('file');
     if (!(file instanceof File)) return errorResponse('file is required', 400);
 
@@ -62,9 +70,16 @@ export async function POST(request: Request) {
     // ABSOLUTE, not relative. The mobile app renders this straight into an
     // <Image>, and the submit payload only persists a cover that matches
     // ^https?:// — a relative path would be silently dropped exactly as the
-    const origin = new URL(request.url).origin;
+    // raw picker URI was. The origin comes from NEXT_PUBLIC_SITE_URL, the
+    // convention every sibling route uses (contestants share, vote-page,
+    // forgot-password): new URL(request.url).origin yields
+    // http://0.0.0.0:PORT on Railway because the server binds the wildcard
+    // address, and the Host / X-Forwarded-Host headers are not trusted
+    // anywhere in this codebase (no allow-list exists to validate them
+    // against), so neither is a safe source for a persisted URL.
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
     const fileKeyParam = Buffer.from(objectKey, 'utf8').toString('base64url');
-    const url = `${origin}/api/crowdfunding/uploads/${fileKeyParam}`;
+    const url = `${siteUrl}/api/crowdfunding/uploads/${fileKeyParam}`;
 
     return successResponse({
       success: true,
