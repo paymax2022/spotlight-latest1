@@ -230,8 +230,8 @@ jobs:
             echo "  CONNECT OK — credentials accepted, database reachable"
           else
             echo "  CONNECT FAILED (exit $rc)"
-            echo "$out" | grep -oiE "password authentication failed[^\"]*|too many authentication failures[^\"]*|timeout|timed out|Connection refused|no route to host|could not translate host|Name or service|sslmode|self.signed|certificate" | head -3 | sed 's/^/    /'
-            echo "$out" | grep -oE "SQLSTATE [A-Z0-9]{5}|\(28P01\)|\(XX000\)|\(08006\)|\(08001\)" | head -2 | sed 's/^/    /'
+            echo "$out" | grep -oiE "password authentication failed[^\"]*|too many authentication failures[^\"]*|timeout|timed out|Connection refused|no route to host|could not translate host|Name or service|sslmode|self.signed|certificate" | head -3 | sed 's/^/    /' || true
+            echo "$out" | grep -oE "SQLSTATE [A-Z0-9]{5}|\(28P01\)|\(XX000\)|\(08006\)|\(08001\)" | head -2 | sed 's/^/    /' || true
           fi
           # WHY the password fails, told apart without printing it:
           #   - a literal [YOUR-PASSWORD] paste   -> placeholder fingerprint
@@ -299,7 +299,7 @@ jobs:
           out="$(PGCONNECT_TIMEOUT=10 psql "$CAND" -w -c 'select 1' 2>&1)" && rc=0 || rc=$?
           if [ "$rc" -ne 0 ]; then
             echo "  candidate REJECTED — SUPABASE_DB_PASSWORD itself fails auth:"
-            echo "$out" | grep -oiE "password authentication failed[^\"]*|too many authentication failures[^\"]*|timeout|could not translate" | head -2 | sed 's/^/    /'
+            echo "$out" | grep -oiE "password authentication failed[^\"]*|too many authentication failures[^\"]*|timeout|could not translate" | head -2 | sed 's/^/    /' || true
             exit 0
           fi
           echo "  candidate verified — SUPABASE_DB_PASSWORD connects cleanly"
