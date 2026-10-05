@@ -83,6 +83,11 @@ export async function POST(request: Request) {
         409,
       );
     }
+    // startRegistrationDraft throws plain Errors for client-caused failures —
+    // an unresolvable contestSlug is a 404, not a 500.
+    if (error instanceof Error && error.message.startsWith('Contest not found')) {
+      return errorResponse('Contest not found', 404);
+    }
     return handleApiError(error, 'Failed to create registration draft');
   }
 }
