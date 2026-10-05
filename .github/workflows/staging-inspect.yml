@@ -226,7 +226,29 @@ jobs:
             echo "$out" | grep -oiE "password authentication failed[^\"]*|too many authentication failures[^\"]*|timeout|timed out|Connection refused|no route to host|could not translate host|Name or service|sslmode|self.signed|certificate" | head -3 | sed 's/^/    /'
             echo "$out" | grep -oE "SQLSTATE [A-Z0-9]{5}|\(28P01\)|\(XX000\)|\(08006\)|\(08001\)" | head -2 | sed 's/^/    /'
           fi
-          unset DSN
+          # WHY the password fails, told apart without printing it:
+          #   - a literal [YOUR-PASSWORD] paste   -> placeholder fingerprint
+          #   - an API key where a DB password belongs -> starts eyJ / sbp_ / sk_
+          #   - raw @ # / : ? & % splitting the DSN -> parse reports a different
+          #     host:port than the pooler, or a mangled password length
+          #   - a DIFFERENT project's password    -> length/sha only; the owner
+          #     compares the digest against the intended value off-channel.
+          # sha256 prefix(12) + length identify a secret without exposing it.
+          DSN_CHECK="$DSN" node -e '
+            const crypto = require("crypto");
+            const dsn = process.env.DSN_CHECK;
+            let u;
+            try { u = new URL(dsn.match(/^[a-z][a-z0-9+.-]*:\/\//i) ? dsn : "postgres://" + dsn); }
+            catch { console.log("  dsn: UNPARSEABLE as a URL — that alone can be the bug"); process.exit(0); }
+            const pass = decodeURIComponent(u.password);
+            console.log(`  parsed: user=${decodeURIComponent(u.username)} host=${u.hostname}:${u.port || "(none)"}`);
+            console.log(`  password: length=${pass.length} sha256[0:12]=${crypto.createHash("sha256").update(pass).digest("hex").slice(0,12)}`);
+            if (/^\[?(your[-_ ]?password|password)\]?$/i.test(pass)) console.log("  !! password is a PLACEHOLDER, not a real one");
+            if (/^(eyJ|sbp_|sk_|service_role|anon)/i.test(pass)) console.log("  !! password looks like an API KEY, not the DB password");
+            if (pass.length === 0) console.log("  !! password is EMPTY in the DSN");
+            if (/[:@#?&%]/.test(u.password)) console.log("  !! password contains UNENCODED reserved chars — URL-encode it (or reset to letters+digits)");
+          '
+          unset DSN DSN_CHECK
 
       - name: frontend-web supabase host (host only)
         run: |
