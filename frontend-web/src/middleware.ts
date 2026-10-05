@@ -58,6 +58,29 @@ function corsHeaders(origin: string): Headers {
   return h;
 }
 
+// ── Cache policy for /api/* ──────────────────────────────────────────────────
+// Most route handlers emit NO Cache-Control of their own, so a shared cache
+// (CDN edge, corporate proxy) is free to store whatever it wants. For
+// credentialed requests the payload is personalized (wallet, profile, admin
+// reports), so we pin `no-store` centrally here. Anonymous GETs are left
+// untouched on purpose — public surfaces (contests list, banners) legitimately
+// benefit from CDN caching. A route that already sets an explicit
+// Cache-Control (streams, signed uploads) keeps its own decision.
+//
+// "Credentialed" = any of the three auth carriers this app accepts:
+//   - Authorization: Bearer <supabase JWT>   (src/lib/auth/request.ts)
+//   - x-admin-key                             (src/server/admin/auth.ts)
+//   - a Supabase session cookie — sb-<ref>-auth-token, incl. chunked `.0/.1`
+//     and other sb-*token variants (browser same-origin fetches)
+const CREDENTIAL_COOKIE = /(?:^|;\s*)sb-[^=;]*token[^=;]*=/i;
+
+function isCredentialedApiRequest(request: NextRequest): boolean {
+  if (request.headers.get('authorization')) return true;
+  if (request.headers.get('x-admin-key')) return true;
+  const cookie = request.headers.get('cookie');
+  return !!cookie && CREDENTIAL_COOKIE.test(cookie);
+}
+
 function handleApiCors(request: NextRequest): NextResponse {
   const origin = request.headers.get('origin') ?? '';
   const headers = corsHeaders(origin);
@@ -68,6 +91,9 @@ function handleApiCors(request: NextRequest): NextResponse {
   // Actual request: let it through to the route handler, attaching CORS headers.
   const res = NextResponse.next({ request });
   headers.forEach((value, key) => res.headers.set(key, value));
+  if (isCredentialedApiRequest(request)) {
+    res.headers.set('Cache-Control', 'no-store');
+  }
   return res;
 }
 
