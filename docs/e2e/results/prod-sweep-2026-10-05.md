@@ -14,6 +14,10 @@ tier-0, zero wallet). Full per-agent tables: `/tmp/e2e-prod/agent-*.md`.
 | 4 | Feature flags off in prod | env vars unset on Railway services | uniform 503s: wallet, KYC, disputes, connect, social/groups/events/creators/p2p/spray, restaurant, transport, stays, FX, crowdfunding, referrals, utility, realtor, association, AI-care support, telemedicine/pharmacy/vet/lab | Flip per-module `FEATURE_*` envs when product is ready (SEC-052 connect wallet-fund must stay OFF) |
 | 5 | Mailgun not configured | env missing on frontend-web | `POST /api/contact`, `POST /api/sponsor-meetings` → 502 | Set `MAILGUN_*` envs |
 | 6 | Academy apply 500s | `academy_interest_areas` table missing on prod DB (migrations exist in repo: `20261218000000`, `20261219000000`) | `GET /api/academy/application` → 500 fresh user; `POST /api/academy/apply` → 500 on any non-empty `areas_of_interest` | `supabase db push` to prod project `nmseefdlliejmdbxiytej` |
+| 7 | **`/api/v1/wallet/fund` (SEC-052 free-money mint) is LIVE on the stale build** | flag-gated mount (`FEATURE_CONNECT_WALLET_FUND_ENABLED`, default off) shipped after the deployed commit | probe reached `walletSvc.Credit` and only 500'd on the dead pgx — minting activates the moment the DB cred is fixed | **Deploy the new build BEFORE/alongside the DATABASE_URL fix — never fix the DB first on this build** |
+| 8 | Login rate-limit IP keying | stale build trusts client `X-Forwarded-For` (spoofable); HEAD keys via `TRUSTED_PROXY_CIDRS` which defaults to GCP-LB ranges — Railway edge isn't in it, so all BFF traffic shares one bucket (explains mass 429s during sweep) | spoofed XFF got fresh budget on prod; agents hit shared 429s | Set `TRUSTED_PROXY_CIDRS` to the frontend service's egress (Railway private net) on the backend env after redeploy |
+| 9 | R2 storage unconfigured in prod | `R2_BUCKET`/keys unset on frontend-web | registration upload previews return `signedPreviewUrl == previewUrl` → ephemeral local-fs storage (uploads die on every redeploy) | Set `R2_*` envs |
+| 10 | `/api/admin/settings` 200 to any authed user + `/api/admin/dashboard` 500 (not 403) for regular user | stale build predates `assertAdminPermission` gates (present in HEAD) | security-agent probes with regular-user token | Closed by redeploy — re-verify post-deploy |
 
 ## Code fixes in this PR
 
@@ -24,6 +28,10 @@ tier-0, zero wallet). Full per-agent tables: `/tmp/e2e-prod/agent-*.md`.
 | `POST /api/contestants/:id/share` recorded events against bogus `shareLinkId`s (insert errors swallowed) | no existence check, insert error ignored | `share.service.ts`: verify link exists → `ApiError 404`; propagate insert error |
 | `POST /api/registration/uploads` → 500 on non-multipart body | `request.formData()` throws uncaught | 415 `Expected multipart/form-data` |
 | `POST /api/stem/school-join-requests` → 500 on bogus schoolId | FK violation (23503) unmapped | `persistence.ts`: 23503 → `ApiError('School not found', 400)` |
+| `POST /api/v1/visitor/codes/event` skipped the residency check — any authed user could mint up to 500 active gate codes for ANY estateId | missing `getResidentContext` that sibling `/codes` + `/codes/import` enforce; estateId trusted from body | residency required; body estateId must equal resident's estate; inserts use server-side `ctx.estateId` |
+| `POST /api/v2/votes/paid/initiate` → 500 on bogus `contestant_id` | no existence check — FK violation surfaced as bare 500 | `paid-vote.service.ts`: 404 when contestant missing or mismatched to contest |
+| `POST /api/votes/free` → 500 on non-UUID contestId/contestantId | no format validation before `.eq()` | route: UUID regex → 400 |
+| `GET /api/v1/estate/notifications/unread-count` → 404 | route missing (visitor twin existed) | added route (uses `read_at IS NULL` per estate schema) |
 
 ## Verified NOT bugs (agent reports triaged)
 
