@@ -168,6 +168,46 @@ jobs:
             console.log("  " + shape("PAYSTACK_SECRET_KEY"));
           '
 
+      # Hostnames ONLY for the services the backend points at — a hostname is
+      # not a credential (same justification as the GO_BACKEND_URL print above)
+      # and it is the single field that answers "is prod pointed at the prod or
+      # the staging Supabase project", which cannot be determined from the repo
+      # or from HTTP probes. userinfo (the DB password) and path are dropped.
+      - name: backend upstream hosts (SUPABASE_URL / DATABASE_URL / REDIS_URL — hosts only)
+        run: |
+          set -uo pipefail
+          railway variable list --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > be2.json || true
+          node -e '
+            let v; try { v = JSON.parse(require("fs").readFileSync("be2.json","utf8")); }
+            catch { console.error("Unparseable - refusing to print."); process.exit(1); }
+            const hostOnly = (name) => {
+              const raw = v[name];
+              if (raw === undefined || String(raw).length === 0) return name + " -> NOT SET";
+              let s = String(raw);
+              // normalise postgresql:// / postgres:// / rediss?:// / plain URLs
+              if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = "https://" + s;
+              try {
+                const u = new URL(s);
+                return name + " -> " + u.hostname + (u.port ? ":" + u.port : "");
+              } catch { return name + " -> set but unparseable (value not printed)"; }
+            };
+            for (const n of ["SUPABASE_URL","DATABASE_URL","REDIS_URL","SUPABASE_DB_URL","DIRECT_URL","SUPABASE_DIRECT_URL"]) {
+              console.log("  " + hostOnly(n));
+            }
+            // Cross-check the frontends the same way: NEXT_PUBLIC_SUPABASE_URL
+            // should name the same project as the backend SUPABASE_URL.
+          '
+      - name: frontend-web supabase host (host only)
+        run: |
+          set -uo pipefail
+          node -e '
+            let v; try { v = JSON.parse(require("fs").readFileSync("fw.json","utf8")); }
+            catch { console.log("  (fw.json missing/unparseable)"); process.exit(0); }
+            try { console.log("  NEXT_PUBLIC_SUPABASE_URL -> " + new URL(String(v.NEXT_PUBLIC_SUPABASE_URL)).hostname); }
+            catch { console.log("  NEXT_PUBLIC_SUPABASE_URL: unset or unparseable"); }
+          '
+
       # Deployment STATE first. `railway redeploy` returns once a build is
       # TRIGGERED, not once it succeeds, so a job can go green while the build
       # that followed it failed - leaving the previous image serving. That
