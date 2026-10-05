@@ -30,6 +30,9 @@ export async function GET(
 ) {
   try {
     const { id } = await context.params;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      return errorResponse('Contest not found', 404);
+    }
     const supabase = createAdminClient();
 
     const { data: contest, error } = await supabase
