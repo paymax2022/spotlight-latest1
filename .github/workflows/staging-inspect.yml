@@ -34,6 +34,10 @@ on:
         description: 'Mint a throwaway confirmed user and call the module endpoints THROUGH frontend-web with a real Bearer, exactly as the APK does (status + shape only; user deleted afterwards)'
         type: boolean
         default: false
+      fix_database_url:
+        description: 'PRODUCTION ONLY: verify SUPABASE_DB_PASSWORD against the pooler and rewrite backend DATABASE_URL with it if the check passes'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -46,7 +50,10 @@ jobs:
   inspect:
     name: inspect staging (read-only)
     runs-on: ubuntu-latest
-    environment: staging
+    # Tracks the inspected environment so SUPABASE_DB_PASSWORD resolves from the
+    # `production` environment when that is the target. Inspecting production
+    # therefore also answers to the Production environment's required reviewers.
+    environment: ${{ inputs.environment }}
     env:
       # Same Railway project for both; only the environment and token differ.
       RAILWAY_TOKEN: ${{ inputs.environment == 'production' && secrets.RAILWAY_TOKEN_PRODUCTION || secrets.RAILWAY_TOKEN_STAGING }}
@@ -249,6 +256,49 @@ jobs:
             if (/[:@#?&%]/.test(u.password)) console.log("  !! password contains UNENCODED reserved chars — URL-encode it (or reset to letters+digits)");
           '
           unset DSN DSN_CHECK
+
+      # Remediation for the 28P01 above. SUPABASE_DB_PASSWORD only resolves when
+      # this job runs in the `production` environment (the input selects it), so
+      # a staging inspection can never touch the prod password. The candidate
+      # DSN keeps the EXISTING variable's scheme/user/host/port/db and swaps only
+      # the password — if the secret rejects too, nothing is written and the
+      # report says which side is wrong. --stdin: the value never enters a
+      # command line, a log, or this job's output.
+      - name: Fix backend DATABASE_URL from SUPABASE_DB_PASSWORD (verify-then-write)
+        if: inputs.environment == 'production'
+        env:
+          SB_DB_PW: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          FIX_DB: ${{ inputs.fix_database_url }}
+        run: |
+          set -uo pipefail
+          [ -n "${SB_DB_PW:-}" ] || { echo "  SUPABASE_DB_PASSWORD not visible in this environment — nothing to do"; exit 0; }
+          railway variable list --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > be-dsn2.json || true
+          CAND="$(SB_DB_PW="$SB_DB_PW" node -e '
+            const v = JSON.parse(require("fs").readFileSync("be-dsn2.json","utf8"));
+            const raw = String(v.DATABASE_URL ?? "");
+            if (!raw) { process.exit(3); }
+            const u = new URL(raw.match(/^[a-z][a-z0-9+.-]*:\/\//i) ? raw : "postgres://" + raw);
+            u.password = process.env.SB_DB_PW;   // setter percent-encodes; do NOT pre-encode
+            if (!u.pathname || u.pathname === "/") u.pathname = "/postgres";
+            process.stdout.write(u.toString());
+          ')" || { echo "  DATABASE_URL missing/unparseable — cannot rebuild"; exit 1; }
+          rm -f be-dsn2.json
+          out="$(PGCONNECT_TIMEOUT=10 psql "$CAND" -w -c 'select 1' 2>&1)" && rc=0 || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "  candidate REJECTED — SUPABASE_DB_PASSWORD itself fails auth:"
+            echo "$out" | grep -oiE "password authentication failed[^\"]*|too many authentication failures[^\"]*|timeout|could not translate" | head -2 | sed 's/^/    /'
+            exit 0
+          fi
+          echo "  candidate verified — SUPABASE_DB_PASSWORD connects cleanly"
+          if [ "$FIX_DB" = "true" ]; then
+            printf '%s' "$CAND" | railway variable set DATABASE_URL --stdin \
+              --service backend --environment "$ENVIRONMENT" --project "$PROJECT" \
+              && echo "  DATABASE_URL rewritten on backend — Railway will redeploy"
+          else
+            echo "  fix_database_url=false — verified only, variable left as-is"
+          fi
+          unset SB_DB_PW CAND
 
       - name: frontend-web supabase host (host only)
         run: |
