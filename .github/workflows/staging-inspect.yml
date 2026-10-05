@@ -203,6 +203,31 @@ jobs:
             // Cross-check the frontends the same way: NEXT_PUBLIC_SUPABASE_URL
             // should name the same project as the backend SUPABASE_URL.
           '
+
+      # Separates "wrong password" (SQLSTATE 28P01) from "pooler circuit breaker"
+      # (XX000) — the two need opposite fixes and the host print above cannot
+      # tell them apart. The DSN VALUE is never printed, never masked-into-logs:
+      # it lives only in a shell variable feeding psql, and only the error class
+      # comes back. The same check covers "backend can't reach it at all" —
+      # a refused/timeout signature here points at network, not auth.
+      - name: DATABASE_URL live connection test (error class only)
+        run: |
+          set -uo pipefail
+          railway variable list --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > be-dsn.json || true
+          DSN="$(node -e 'try{const v=JSON.parse(require("fs").readFileSync("be-dsn.json","utf8"));process.stdout.write(String(v.DATABASE_URL??""))}catch{}')"
+          rm -f be-dsn.json
+          if [ -z "$DSN" ]; then echo "  DATABASE_URL not set on backend"; exit 0; fi
+          out="$(PGCONNECT_TIMEOUT=10 psql "$DSN" -w -c 'select 1' 2>&1)" && rc=0 || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "  CONNECT OK — credentials accepted, database reachable"
+          else
+            echo "  CONNECT FAILED (exit $rc)"
+            echo "$out" | grep -oiE "password authentication failed[^\"]*|too many authentication failures[^\"]*|timeout|timed out|Connection refused|no route to host|could not translate host|Name or service|sslmode|self.signed|certificate" | head -3 | sed 's/^/    /'
+            echo "$out" | grep -oE "SQLSTATE [A-Z0-9]{5}|\(28P01\)|\(XX000\)|\(08006\)|\(08001\)" | head -2 | sed 's/^/    /'
+          fi
+          unset DSN
+
       - name: frontend-web supabase host (host only)
         run: |
           set -uo pipefail
