@@ -35,3 +35,8 @@ export const POST = forward;
 export const PUT = forward;
 export const PATCH = forward;
 export const DELETE = forward;
+// HEAD is explicit, not an alias of GET, but it rides the same forward(): the
+// helper derives the upstream method from request.method, so HEAD reaches Gin
+// as HEAD and returns headers only. Without an export Next answered HEAD 404
+// on otherwise-live routes, which HEAD-based uptime monitors read as "API down".
+export const HEAD = forward;

@@ -68,3 +68,38 @@ export async function GET(request: Request, ctx: { params: Promise<{ path: strin
     return handleApiError(err);
   }
 }
+
+// HEAD must NOT reuse GET: that handler opens a long-lived SSE stream upstream,
+// so an uptime probe would hang until the client gave up. A real HEAD fetch
+// returns as soon as Go sends its status line — headers only, no stream.
+export async function HEAD(request: Request, ctx: { params: Promise<{ path: string[] }> }) {
+  try {
+    await requireRequestUser(request);
+    const { path } = await ctx.params;
+    const sub = (path ?? []).join('/');
+    const url = new URL(request.url);
+    const targetUrl = `${GO_BACKEND_URL}/api/v1/realtime/${sub}${url.search}`;
+
+    const headers: Record<string, string> = {
+      ...clientIpHeaders(request),
+    };
+    const auth =
+      request.headers.get('Authorization') || request.headers.get('authorization');
+    if (auth) headers.Authorization = auth;
+
+    // Bounded, unlike the SSE GET: a probe must answer even if upstream stalls.
+    // 20s mirrors PROXY_TIMEOUT_MS in src/lib/go-backend.ts.
+    const goResp = await fetch(targetUrl, {
+      method: 'HEAD',
+      headers,
+      signal: AbortSignal.timeout(20_000),
+    });
+
+    return new Response(null, {
+      status: goResp.status,
+      headers: { 'Content-Type': goResp.headers.get('Content-Type') ?? 'application/json' },
+    });
+  } catch (err) {
+    return handleApiError(err);
+  }
+}

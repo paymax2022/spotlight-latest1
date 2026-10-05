@@ -35,3 +35,4 @@ export async function POST(request: Request, ctx: Ctx)   { const { path } = awai
 export async function PUT(request: Request, ctx: Ctx)    { const { path } = await ctx.params; return forward(request, path); }
 export async function PATCH(request: Request, ctx: Ctx)  { const { path } = await ctx.params; return forward(request, path); }
 export async function DELETE(request: Request, ctx: Ctx) { const { path } = await ctx.params; return forward(request, path); }
+export async function HEAD(request: Request, ctx: Ctx)   { const { path } = await ctx.params; return forward(request, path); }

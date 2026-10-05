@@ -56,3 +56,6 @@ export const POST = forward;
 export const PUT = forward;
 export const PATCH = forward;
 export const DELETE = forward;
+// Same reasoning as app/api/v1/[...path]: request.method drives the upstream
+// call, so HEAD forwards as HEAD — without it this catch-all 404'd every probe.
+export const HEAD = forward;
