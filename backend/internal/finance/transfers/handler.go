@@ -283,6 +283,10 @@ func (h *Handler) DeleteBeneficiary(c *gin.Context) {
 
 // PinStatus handles GET /finance/transfers/pin/status.
 func (h *Handler) PinStatus(c *gin.Context) {
+	if !h.walletEnabled {
+		unavailable(c, "wallet transfers")
+		return
+	}
 	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
@@ -298,6 +302,10 @@ func (h *Handler) PinStatus(c *gin.Context) {
 
 // SetPin handles POST /finance/transfers/pin.
 func (h *Handler) SetPin(c *gin.Context) {
+	if !h.walletEnabled {
+		unavailable(c, "wallet transfers")
+		return
+	}
 	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
@@ -317,6 +325,10 @@ func (h *Handler) SetPin(c *gin.Context) {
 
 // VerifyPin handles POST /finance/transfers/pin/verify.
 func (h *Handler) VerifyPin(c *gin.Context) {
+	if !h.walletEnabled {
+		unavailable(c, "wallet transfers")
+		return
+	}
 	userID := ginutil.UserID(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})

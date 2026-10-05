@@ -40,8 +40,8 @@ import { createClient } from '@/lib/supabase/server';
 
 function makeVoteBody(overrides: Record<string, unknown> = {}) {
   return {
-    contestId: 'contest-001',
-    contestantId: 'contestant-abc',
+    contestId: '9165275e-dfbb-410a-b875-810e881884f1',
+    contestantId: '3743fa89-6676-4883-b8ce-15d3fc88ceeb',
     voteCount: 1,
     ...overrides,
   };
