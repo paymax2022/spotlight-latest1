@@ -32,11 +32,12 @@ function isProtected(pathname: string): boolean {
 // The mobile app runs on its own origin (Expo web :8081, devices, prod web) and
 // calls these API routes cross-origin, so we must answer the preflight and echo
 // an allowed Origin. We reflect the request Origin only if it's allow-listed:
-// any localhost/127.0.0.1 port (dev) plus anything in CORS_ALLOWED_ORIGINS
+// any localhost/127.0.0.1 port (dev only — never reflected in production) plus
+// anything in CORS_ALLOWED_ORIGINS
 // (comma-separated, for staging/prod web origins). Never a bare '*' with creds.
 function isAllowedOrigin(origin: string): boolean {
   if (!origin) return false;
-  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  if (process.env.NODE_ENV !== 'production' && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
   const allow = (process.env.CORS_ALLOWED_ORIGINS ?? '')
     .split(',')
     .map((o) => o.trim())
