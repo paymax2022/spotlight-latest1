@@ -247,15 +247,27 @@ jobs:
             let u;
             try { u = new URL(dsn.match(/^[a-z][a-z0-9+.-]*:\/\//i) ? dsn : "postgres://" + dsn); }
             catch { console.log("  dsn: UNPARSEABLE as a URL — that alone can be the bug"); process.exit(0); }
-            const pass = decodeURIComponent(u.password);
-            console.log(`  parsed: user=${decodeURIComponent(u.username)} host=${u.hostname}:${u.port || "(none)"}`);
+            const safeDecode = (s) => { try { return decodeURIComponent(s); } catch { return null; } };
+            let pass = safeDecode(u.password);
+            const user = safeDecode(u.username) ?? u.username;
+            console.log(`  parsed: user=${user} host=${u.hostname}:${u.port || "(none)"}`);
+            if (pass === null) {
+              // Malformed %XX in the stored password — psql/pgx send the raw
+              // bytes to the server, so what the dashboard thinks the password
+              // is and what arrives differ. This alone explains a 28P01.
+              console.log("  !! password contains MALFORMED percent-encoding — the stored DSN sends different bytes than intended");
+              pass = u.password;
+            }
             console.log(`  password: length=${pass.length} sha256[0:12]=${crypto.createHash("sha256").update(pass).digest("hex").slice(0,12)}`);
             if (/^\[?(your[-_ ]?password|password)\]?$/i.test(pass)) console.log("  !! password is a PLACEHOLDER, not a real one");
             if (/^(eyJ|sbp_|sk_|service_role|anon)/i.test(pass)) console.log("  !! password looks like an API KEY, not the DB password");
             if (pass.length === 0) console.log("  !! password is EMPTY in the DSN");
             if (/[:@#?&%]/.test(u.password)) console.log("  !! password contains UNENCODED reserved chars — URL-encode it (or reset to letters+digits)");
-          '
+          ' || echo "  (fingerprint script failed — non-fatal)"
           unset DSN DSN_CHECK
+          # Diagnostic step: never fail the job over a failed probe — the fix
+          # step after this one must still get its turn.
+          exit 0
 
       # Remediation for the 28P01 above. SUPABASE_DB_PASSWORD only resolves when
       # this job runs in the `production` environment (the input selects it), so
