@@ -60,8 +60,12 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json()) as CastFreeVoteRequest & { captchaToken?: string };
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!body.contestId) return errorResponse('contestId is required', 400);
     if (!body.contestantId) return errorResponse('contestantId is required', 400);
+    if (!UUID_RE.test(body.contestId) || !UUID_RE.test(body.contestantId)) {
+      return errorResponse('contestId and contestantId must be valid UUIDs', 400);
+    }
 
     // --- CAPTCHA verification (when required by contest settings) ---
     if (body.captchaToken) {

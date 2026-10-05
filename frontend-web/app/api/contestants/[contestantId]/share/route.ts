@@ -19,9 +19,16 @@ export async function GET(
     const supabase = createAdminClient();
     const { data: contestant } = await supabase
       .from('contestants')
-      .select('id, name, stage_name, photo_url, contests(name, slug)')
+      .select('id, contest_id, name, stage_name, photo_url, contests(name, slug)')
       .eq('id', contestantId)
       .maybeSingle();
+
+    if (!contestant || (contestant as any).contest_id !== contestId) {
+      return Response.json(
+        { success: false, error: 'Contestant not found' },
+        { status: 404 },
+      );
+    }
 
     const contestantName =
       (contestant as any)?.name ||

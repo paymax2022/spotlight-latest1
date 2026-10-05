@@ -48,7 +48,12 @@ export async function POST(request: Request) {
   try {
     const { user } = await requireUser(request);
 
-    const formData = await request.formData();
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch {
+      return errorResponse('Expected multipart/form-data', 415);
+    }
     const file = formData.get('file');
 
     if (!(file instanceof File)) {
