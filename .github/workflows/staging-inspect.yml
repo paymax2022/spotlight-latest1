@@ -189,7 +189,12 @@ jobs:
               if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = "https://" + s;
               try {
                 const u = new URL(s);
-                return name + " -> " + u.hostname + (u.port ? ":" + u.port : "");
+                // Pooler DSNs share one host across projects — the project ref
+                // lives in the USERNAME (postgres.<ref>). Print user@host; the
+                // username is an identifier, not a credential — the password
+                // (u.password) is never touched.
+                const user = u.username ? decodeURIComponent(u.username) + "@" : "";
+                return name + " -> " + user + u.hostname + (u.port ? ":" + u.port : "");
               } catch { return name + " -> set but unparseable (value not printed)"; }
             };
             for (const n of ["SUPABASE_URL","DATABASE_URL","REDIS_URL","SUPABASE_DB_URL","DIRECT_URL","SUPABASE_DIRECT_URL"]) {
