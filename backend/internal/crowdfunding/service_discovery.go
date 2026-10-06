@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/go-common/strutil"
@@ -111,6 +112,9 @@ func (s *Service) GetDetail(ctx context.Context, id, viewerID string) (map[strin
 	sql := fmt.Sprintf(`SELECT %s FROM campaigns c WHERE c.id = $1 AND c.deleted_at IS NULL`, selectCols)
 	r, err := scanRow(s.db.QueryRow(ctx, sql, id).Scan)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrCampaignNotFound
+		}
 		return nil, err
 	}
 	publiclyVisible := r.pausedAt == nil &&
