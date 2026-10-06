@@ -276,6 +276,21 @@ func (r *Repository) GetBiller(ctx context.Context, id string) (*BillerRow, erro
 	return b, nil
 }
 
+// GetBillerByCode loads one ACTIVE biller by its public code (the slug shown in
+// the billers list, e.g. 'vtpass-eko-electric'). Powers the member-facing
+// ?biller=<code> products filter — clients hold codes, not uuids.
+func (r *Repository) GetBillerByCode(ctx context.Context, code string) (*BillerRow, error) {
+	b, err := scanBiller(r.db.QueryRow(ctx,
+		`SELECT `+billerCols+` FROM public.utility_billers WHERE code = $1 AND status = 'active'`, code))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("%w: utility biller code %s", ErrNotFound, code)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("utilitybills: get biller by code: %w", err)
+	}
+	return b, nil
+}
+
 // ListBillers returns active billers, optionally filtered by category. Mirrors
 // service.ts's listBillers (status='active', ordered by name).
 func (r *Repository) ListBillers(ctx context.Context, category string) ([]BillerRow, error) {

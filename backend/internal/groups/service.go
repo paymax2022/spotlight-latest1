@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -26,6 +27,19 @@ const (
 // without WithTiers — see the comment on that method for why this fails
 // closed instead of treating a nil gate as "unlimited."
 var ErrTierGateUnwired = errors.New("groups: money path requires a tier gate (WithTiers not wired)")
+
+// ErrGroupNotFound is returned by Get when the group does not exist, the id is
+// not a uuid, OR the caller is a non-member of a private group. The three cases
+// deliberately share one sentinel: the groups_select RLS policy (migration
+// 20260616230000) makes private groups invisible to non-members, and the pgx
+// path bypasses RLS, so the service enforces the same rule — answering 404
+// rather than 403 keeps a non-member from learning that a private group id
+// exists at all.
+var ErrGroupNotFound = errors.New("groups: group not found")
+
+// ErrPlanNotFound is returned by PayDues when the plan id is unknown or belongs
+// to a different group — a client error (404), not a server fault.
+var ErrPlanNotFound = errors.New("groups: subscription plan not found")
 
 // tierLimiter is the minimal seam the dues money-path depends on for the
 // fail-closed KYC-tier / daily-spend gate. *tiers.Service satisfies it in
@@ -96,20 +110,41 @@ func (s *Service) Create(ctx context.Context, creatorID string, req CreateGroupR
 	return g, tx.Commit(ctx)
 }
 
-// Get fetches a single group.
-func (s *Service) Get(ctx context.Context, id string) (*Group, error) {
+// Get fetches a single group for a specific caller, enforcing the same
+// visibility rule as the groups_select RLS policy the pgx pool bypasses:
+// public groups are readable by any authenticated user; private groups only by
+// members. Non-members and nonexistent ids both return ErrGroupNotFound so a
+// caller cannot probe which private group ids exist (IDOR, prod sweep F-7.3).
+func (s *Service) Get(ctx context.Context, id, userID string) (*Group, error) {
+	// A malformed uuid can never name a group; saying "not found" up front also
+	// keeps the driver error text off the wire.
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, ErrGroupNotFound
+	}
 	const q = `
 		SELECT g.id, g.name, g.description, g.created_by, g.avatar_url, g.is_public,
-		       COUNT(gm.user_id), g.created_at
+		       COUNT(gm.user_id), g.created_at,
+		       EXISTS(SELECT 1 FROM group_members m WHERE m.group_id = g.id AND m.user_id = $2)
 		FROM groups g
 		LEFT JOIN group_members gm ON gm.group_id = g.id
 		WHERE g.id = $1
 		GROUP BY g.id`
 	g := &Group{}
-	return g, s.db.QueryRow(ctx, q, id).Scan(
+	var isMember bool
+	err := s.db.QueryRow(ctx, q, id, userID).Scan(
 		&g.ID, &g.Name, &g.Description, &g.CreatedBy, &g.AvatarURL, &g.IsPublic,
-		&g.MemberCount, &g.CreatedAt,
+		&g.MemberCount, &g.CreatedAt, &isMember,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrGroupNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("groups: get: %w", err)
+	}
+	if !g.IsPublic && !isMember {
+		return nil, ErrGroupNotFound
+	}
+	return g, nil
 }
 
 // List returns groups a user belongs to.
@@ -156,7 +191,10 @@ func (s *Service) PayDues(ctx context.Context, groupID, memberID string, req Pay
 	var plan SubscriptionPlan
 	const qPlan = `SELECT id, group_id, amount_kobo FROM subscription_plans WHERE id=$1 AND group_id=$2`
 	if err := s.db.QueryRow(ctx, qPlan, req.PlanID, groupID).Scan(&plan.ID, &plan.GroupID, &plan.AmountKobo); err != nil {
-		return nil, fmt.Errorf("groups: plan not found: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrPlanNotFound
+		}
+		return nil, fmt.Errorf("groups: load plan: %w", err)
 	}
 
 	var groupWalletID string
@@ -245,9 +283,13 @@ func (h *Handler) List(c *gin.Context) {
 }
 
 func (h *Handler) Get(c *gin.Context) {
-	g, err := h.svc.Get(c.Request.Context(), c.Param("id"))
+	g, err := h.svc.Get(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{keyError: "group not found"})
+		if errors.Is(err, ErrGroupNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{keyError: "group not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, g)
@@ -276,6 +318,17 @@ func (h *Handler) PayDues(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
+	// The Idempotency-Key HEADER is the platform convention for money mutations
+	// (ginutil.IdempotencyKey, also accepted verbatim through the BFF proxy);
+	// the body's idempotency_key field stays supported for clients that already
+	// send it there. The key remains required either way — iron rule #1.
+	if req.IdempotencyKey == "" {
+		req.IdempotencyKey = ginutil.IdempotencyKey(c)
+	}
+	if req.IdempotencyKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "Idempotency-Key required"})
+		return
+	}
 	payment, err := h.svc.PayDues(c.Request.Context(), c.Param("id"), memberID, req)
 	if err != nil {
 		c.JSON(payDuesErrMap.Code(err), gin.H{keyError: httperr.Msg(c, payDuesErrMap.Code(err), err)})
@@ -287,6 +340,7 @@ func (h *Handler) PayDues(c *gin.Context) {
 // payDuesErrMap maps PayDues' fail-closed tier-gate refusals to their HTTP
 // status, mirroring restaurant's escrowErrStatus for the same errors.
 var payDuesErrMap = httperr.New(http.StatusInternalServerError,
+	httperr.R(http.StatusNotFound, ErrPlanNotFound),
 	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
 	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
 )
@@ -355,7 +409,10 @@ type CreateGroupRequest struct {
 }
 
 // PayDuesRequest is the body for POST /groups/:id/dues.
+// IdempotencyKey is intentionally NOT binding:"required": callers may supply it
+// via the Idempotency-Key header instead (the platform convention), and the
+// handler performs the presence check after the header fallback — see PayDues.
 type PayDuesRequest struct {
 	PlanID         string `json:"plan_id" binding:"required"`
-	IdempotencyKey string `json:"idempotency_key" binding:"required"`
+	IdempotencyKey string `json:"idempotency_key"`
 }

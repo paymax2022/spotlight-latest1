@@ -711,6 +711,21 @@ export async function listProducts(input: { category?: UtilityCategory; billerId
   return (data ?? []) as UtilityProductRow[];
 }
 
+// getBillerByCode resolves the public biller slug (`?biller=<code>`) to its row.
+// Returns null for an unknown/inactive code — the caller answers with an empty
+// product list, same as filtering by a biller_id that does not exist.
+export async function getBillerByCode(code: string): Promise<UtilityBillerRow | null> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from('utility_billers')
+    .select('*')
+    .eq('code', code)
+    .eq('status', 'active')
+    .maybeSingle();
+  if (error) throw new ApiError('Failed to fetch utility biller.', 500);
+  return (data ?? null) as UtilityBillerRow | null;
+}
+
 async function getBiller(id: string) {
   const supabase = createAdminClient();
   const { data, error } = await supabase.from('utility_billers').select('*').eq('id', id).maybeSingle();
@@ -751,6 +766,17 @@ async function getRouteCandidates(product: UtilityProductRow): Promise<UtilityRo
   }));
 }
 
+// toProvider503 turns an adapter throw into a clean 503. The adapters throw
+// plain Errors for every failure mode — missing VTPASS_* credentials, transport
+// errors, upstream non-2xx — and none of them are member-correctable, so the
+// route used to surface them as unhandled 500s (prod sweep BUG-1). The client
+// gets a generic message; the detail stays in the server log.
+function providerCallFailed(err: unknown): never {
+  if (err instanceof ApiError) throw err;
+  console.error('[utility] provider call failed:', err);
+  throw new ApiError('Bill provider could not verify this customer right now. Please try again later.', 503);
+}
+
 export async function validateUtilityCustomer(input: {
   category: UtilityCategory;
   billerId: string;
@@ -758,7 +784,9 @@ export async function validateUtilityCustomer(input: {
   customerReference: string;
   metadata?: Record<string, unknown>;
 }) {
-  const biller = await getBiller(input.billerId);
+  const billerId = assertString(input.billerId, 'biller_id');
+  const customerReference = assertString(input.customerReference, 'customer_reference');
+  const biller = await getBiller(billerId);
   if (biller.category !== input.category) throw new ApiError('Biller does not support this category.', 400);
 
   // Resolve a route. If no product was supplied, fall back to the biller's first
@@ -781,13 +809,18 @@ export async function validateUtilityCustomer(input: {
     // for testing. (serviceID is derived from the biller code, e.g.
     if (process.env.VTPASS_ENVIRONMENT === 'sandbox' && biller.requires_validation) {
       const adapter = getUtilityAdapter('vtpass');
-      const result = await adapter.validateCustomer({
-        category: input.category,
-        billerCode: biller.code,
-        providerBillerCode: biller.code.replace(/^vtpass-/, ''),
-        customerReference: input.customerReference,
-        metadata: input.metadata,
-      });
+      let result: UtilityValidationResult;
+      try {
+        result = await adapter.validateCustomer({
+          category: input.category,
+          billerCode: biller.code,
+          providerBillerCode: biller.code.replace(/^vtpass-/, ''),
+          customerReference,
+          metadata: input.metadata,
+        });
+      } catch (err) {
+        providerCallFailed(err);
+      }
       return { valid: result.valid, customer_name: result.customerName, message: result.message };
     }
     return {
@@ -798,13 +831,18 @@ export async function validateUtilityCustomer(input: {
   }
 
   const adapter = getUtilityAdapter(selected.provider.adapter_code);
-  const result = await adapter.validateCustomer({
-    category: input.category,
-    billerCode: biller.code,
-    providerBillerCode: selected.mapping.provider_biller_code,
-    customerReference: input.customerReference,
-    metadata: input.metadata,
-  });
+  let result: UtilityValidationResult;
+  try {
+    result = await adapter.validateCustomer({
+      category: input.category,
+      billerCode: biller.code,
+      providerBillerCode: selected.mapping.provider_biller_code,
+      customerReference,
+      metadata: input.metadata,
+    });
+  } catch (err) {
+    providerCallFailed(err);
+  }
 
   return {
     valid: result.valid,
@@ -898,15 +936,22 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
   );
   await assertCategoryAvailableForPayment(userId, category, pricing.retailAmountKobo);
   const adapter = getUtilityAdapter(route.provider.adapter_code);
-  const validation: UtilityValidationResult = biller.requires_validation
-    ? await adapter.validateCustomer({
+  let validation: UtilityValidationResult = { valid: true };
+  if (biller.requires_validation) {
+    // Same unmapped-throw class as /validate: a provider outage is a retryable
+    // 503, not a 500 — and still pre-debit, so nothing is owed back.
+    try {
+      validation = await adapter.validateCustomer({
         category,
         billerCode: biller.code,
         providerBillerCode: route.mapping.provider_biller_code,
         customerReference,
         metadata: input.metadata,
-      })
-    : { valid: true };
+      });
+    } catch (err) {
+      providerCallFailed(err);
+    }
+  }
 
   if (!validation.valid) throw new ApiError(validation.message || 'Customer validation failed.', 400);
 
