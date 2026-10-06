@@ -152,7 +152,17 @@ export async function proxyToGoBackend(
   // the proxied response. NextResponse is the same response type the JSON error
   // helpers return, which the middleware is already proven to decorate.
   const responseBody = await upstream.text();
-  return new NextResponse(responseBody, {
+  // Null-body statuses (101/204/205/304) may not carry a body — the Fetch
+  // Response constructor THROWS TypeError on one, even an empty string, so a
+  // successful upstream 204 (mark-read, prefs writes, deletes: Gin answers
+  // `c.Status(204)` all over) surfaced to callers as a 500. Forward them with
+  // a null body so the status reaches the client intact.
+  const nullBodyStatus =
+    upstream.status === 101 ||
+    upstream.status === 204 ||
+    upstream.status === 205 ||
+    upstream.status === 304;
+  return new NextResponse(nullBodyStatus ? null : responseBody, {
     status: upstream.status,
     headers: { 'Content-Type': 'application/json' },
   });
