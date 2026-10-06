@@ -681,8 +681,16 @@ jobs:
           q "CREATE TABLE IF NOT EXISTS public.bridge_idempotency_keys (key text PRIMARY KEY, response jsonb NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now());" | head -c 300; echo
           q "CREATE TABLE IF NOT EXISTS public.bridge_outbox (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), event_type text NOT NULL, payload jsonb NOT NULL, status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','failed')), attempts integer NOT NULL DEFAULT 0, last_error text, created_at timestamptz NOT NULL DEFAULT now(), processed_at timestamptz);" | head -c 300; echo
           q "CREATE INDEX IF NOT EXISTS idx_bridge_outbox_pending ON public.bridge_outbox (status, created_at) WHERE status = 'pending';" | head -c 300; echo
+          # otp_codes + otp_rate_limits — verbatim from migration
+          # 20270193000000_otp_codes.sql (additive, RLS deny-by-default).
+          q "CREATE TABLE IF NOT EXISTS public.otp_codes (key TEXT PRIMARY KEY, code_hash TEXT NOT NULL, purpose TEXT NOT NULL, attempts INT NOT NULL DEFAULT 0 CHECK (attempts >= 0), created_at TIMESTAMPTZ NOT NULL DEFAULT now(), expires_at TIMESTAMPTZ NOT NULL);" | head -c 300; echo
+          q "CREATE INDEX IF NOT EXISTS otp_codes_expires_idx ON public.otp_codes (expires_at);" | head -c 300; echo
+          q "CREATE TABLE IF NOT EXISTS public.otp_rate_limits (key TEXT PRIMARY KEY, count INT NOT NULL DEFAULT 0 CHECK (count >= 0), window_start TIMESTAMPTZ NOT NULL DEFAULT now(), expires_at TIMESTAMPTZ NOT NULL);" | head -c 300; echo
+          q "CREATE INDEX IF NOT EXISTS otp_rate_limits_expires_idx ON public.otp_rate_limits (expires_at);" | head -c 300; echo
+          q "ALTER TABLE public.otp_codes ENABLE ROW LEVEL SECURITY;" | head -c 300; echo
+          q "ALTER TABLE public.otp_rate_limits ENABLE ROW LEVEL SECURITY;" | head -c 300; echo
           echo "--- re-check ---"
-          q "select to_regclass('public.bridge_idempotency_keys') as bik, to_regclass('public.bridge_outbox') as bo" | head -c 300; echo
+          q "select to_regclass('public.bridge_idempotency_keys') as bik, to_regclass('public.bridge_outbox') as bo, to_regclass('public.otp_codes') as oc, to_regclass('public.otp_rate_limits') as orl" | head -c 400; echo
 
       # Copies staging variables into production per service. Runs inside a
       # production-scoped job (input environment=production) but reads staging
