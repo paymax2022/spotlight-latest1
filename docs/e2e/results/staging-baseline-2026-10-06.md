@@ -206,3 +206,42 @@ register) + `otp_codes` DDL via Management API.
 4. **~170 migrations** on prod Supabase (issue #493) — `otp_codes` gets applied via targeted DDL; full catch-up still needed (restaurant-discovery 500 may be a missing column — watch after deploy)
 5. **`REDIS_URL`** on prod backend (idempotency/locks/queues degraded)
 6. Rotate `ADMIN_API_KEY` to a prod-only value (currently staging's after the partial copy)
+
+---
+
+## FINAL — 2026-10-06 ~11:10Z: prod E2E green
+
+After the `ecf0e0d8` deploy (all 3 services) + flag parity + targeted schema
+repairs, the full prod battery passes:
+
+| Check | Result |
+|---|---|
+| `POST /api/auth/register` | 200 `needsVerification` — **OTP path live** (Brevo creds + `otp_codes` + flag; bypasses the GoTrue mailer quota) |
+| `POST /api/auth/resend-otp` | 200 generic |
+| `POST /api/auth/otp-verify` wrong code | `invalid code` (enforced) |
+| login before verify | `email_not_confirmed` (enforced) |
+| `POST /api/auth/login` | 200 + JWT |
+| restaurant list ×4 sorts | **200** (was 500 — missing `restaurant_likes`/`featured_campaign`/`restaurant_promos` + discovery columns) |
+| `/restaurant/mine`, associations, marketplace, contests | all 200 |
+| `POST /api/v2/votes/free` + same-key replay | 200 + **cached response** (`totalFreeVotesUsed` stays 1) — dedup live |
+| `wallet/balance` | 404 — deliberate: `FEATURE_WALLET_ENABLED` off (no live Paystack key) |
+| schema: otp_codes, bridge_*, restaurant_*, featured_campaign, close_expired_contests() | all present |
+| `kycVerify` | true (KYC provider creds now on prod backend) |
+
+### Applied to prod Supabase (Management API, additive-only)
+
+`otp_codes` + `otp_rate_limits` (RLS), `restaurant_likes`, `placement_zone`,
+`featured_campaign`, `restaurant_promos` + `restaurant_promo_redemptions`
+(RLS), `restaurants` discovery columns (`rating`, `cuisine`,
+`min_order_kobo`, `packaging_fee_kobo`, `prep_time_minutes`, `geo_lat/lng`,
+`listing_review_status`), `close_expired_contests()`.
+
+### Residual gaps (classified)
+
+- **Deliberate off:** wallet/bank-transfers (no live `PAYSTACK_SECRET_KEY`/`MONNIFY_SECRET_KEY`), maps/transport (no `MAPS_GOOGLE_KEY` on backend)
+- **Config debt:** prod `PAYSTACK_*` on frontend-web = staging TEST keys; `ADMIN_API_KEY` = staging's (rotate to prod-only); staging third-party creds (ALPACA/DOJAH/BREVO/EVERSEND/INSURANCE/TERMIL/MAPLERAD) copied to prod — works, but prod should get its own accounts
+- **Schema drift:** ~160 migrations still unapplied; paths exercised here are repaired, other modules may 42P01/42703 until issue #493 is done properly
+- **Infra:** `REDIS_URL` unset on prod backend (idempotency cache/locks/queues degraded — DB-level dedup proved working regardless)
+- **Staging:** `SUPABASE_STAGING_DB_PASSWORD` fails 28P01 server-side — owner must supply current password
+- **Data:** prod `restaurants` list is empty (no data, not a defect); throwaway user `dee50fea*` could not be deleted (prefix-only ID — remove via Supabase dashboard by email if still present)
+- **Email delivery:** OTP sends via Brevo fire-and-forget; delivery not verifiable from here — owner should confirm inbox receipt
