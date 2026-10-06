@@ -488,17 +488,10 @@ func (s *Service) SellerReviews(ctx context.Context, sellerID string, limit, off
 	return s.repo.ListRevieweeDealReviews(ctx, sellerID, limit, offset)
 }
 
-// VerifyID marks the caller's verified_id_badge (§ trust_scores: permanent once true).
-// The real ID document check delegates to the existing SmileID/Dojah adapter; here we
-// record the badge grant. Idempotent (upsert).
-func (s *Service) VerifyID(ctx context.Context, userID string) error {
-	return s.repo.SetVerifiedBadge(ctx, userID, false)
-}
-
-// VerifyBusiness marks the caller's verified_business_badge (permanent).
-func (s *Service) VerifyBusiness(ctx context.Context, userID string) error {
-	return s.repo.SetVerifiedBadge(ctx, userID, true)
-}
+// Self-serve verification submission lives in verification.go
+// (SubmitIDVerification / SubmitBusinessVerification). The badge grant itself
+// moved behind admin review — see ReviewKYC in service_admin.go, the ONLY
+// path that calls repo.SetVerifiedBadge now.
 
 // CreateOffer places a pending offer on a listing.
 func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, offerKobo int64, message string) (*Offer, error) {

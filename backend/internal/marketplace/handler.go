@@ -709,30 +709,44 @@ func (h *Handler) SellerReviews(c *gin.Context) {
 	respond(c, http.StatusOK, rs)
 }
 
-// VerifyID POST /verification/id
+// VerifyID POST /verification/id — files a PENDING verification request
+// (contract: 202 {status:"pending"}). The badge is granted only on admin
+// approval (ReviewKYC); this endpoint NEVER sets it.
 func (h *Handler) VerifyID(c *gin.Context) {
 	uid, ok := requireUser(c)
 	if !ok {
 		return
 	}
-	if err := h.svc.VerifyID(c.Request.Context(), uid); err != nil {
+	var in VerificationIDInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, fieldErr(CodeValidation, err.Error(), ""))
+		return
+	}
+	req, err := h.svc.SubmitIDVerification(c.Request.Context(), uid, in)
+	if err != nil {
 		fail(c, err)
 		return
 	}
-	respond(c, http.StatusOK, gin.H{"verified_id_badge": true})
+	respond(c, http.StatusAccepted, gin.H{"status": VerificationStatusPending, "request_id": req.ID})
 }
 
-// VerifyBusiness POST /verification/business
+// VerifyBusiness POST /verification/business — same pending-review contract.
 func (h *Handler) VerifyBusiness(c *gin.Context) {
 	uid, ok := requireUser(c)
 	if !ok {
 		return
 	}
-	if err := h.svc.VerifyBusiness(c.Request.Context(), uid); err != nil {
+	var in VerificationBusinessInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, fieldErr(CodeValidation, err.Error(), ""))
+		return
+	}
+	req, err := h.svc.SubmitBusinessVerification(c.Request.Context(), uid, in)
+	if err != nil {
 		fail(c, err)
 		return
 	}
-	respond(c, http.StatusOK, gin.H{"verified_business_badge": true})
+	respond(c, http.StatusAccepted, gin.H{"status": VerificationStatusPending, "request_id": req.ID})
 }
 
 // idempotency implements the §5 `idem:{key}` 24h replay cache. On the first
