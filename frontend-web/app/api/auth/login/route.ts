@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAnonClient, createServiceClient, formatUser } from '../_supabase';
+import { forwardRateLimitHeaders } from '../_headers';
 import { clientIpHeaders } from '@/src/lib/rate-limit/client-ip';
 
 /**
@@ -75,10 +76,12 @@ export async function POST(request: Request) {
       // Otherwise pass Go's status through. It answers 401 with a DELIBERATELY
       // generic message so a wrong password and an unknown account are
       // indistinguishable; do not enrich it here.
-      return NextResponse.json(
+      const passthru = NextResponse.json(
         { error: payload?.error ?? 'Invalid credentials' },
         { status: upstream.status === 400 ? 401 : upstream.status },
       );
+      forwardRateLimitHeaders(upstream, passthru);
+      return passthru;
     }
 
     // Second factor. With FEATURE_OTP_LOGIN_MFA_ENABLED on, Go answers 200 with
