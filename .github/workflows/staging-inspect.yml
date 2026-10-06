@@ -306,14 +306,14 @@ jobs:
       # the password — if the secret rejects too, nothing is written and the
       # report says which side is wrong. --stdin: the value never enters a
       # command line, a log, or this job's output.
-      - name: Fix backend DATABASE_URL from SUPABASE_DB_PASSWORD (verify-then-write)
-        if: inputs.environment == 'production'
+      - name: Fix backend DATABASE_URL from SUPABASE(_STAGING)_DB_PASSWORD (verify-then-write)
+        if: inputs.environment == 'production' || inputs.environment == 'staging'
         env:
-          SB_DB_PW: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SB_DB_PW: ${{ inputs.environment == 'production' && secrets.SUPABASE_DB_PASSWORD || secrets.SUPABASE_STAGING_DB_PASSWORD }}
           FIX_DB: ${{ inputs.fix_database_url }}
         run: |
           set -uo pipefail
-          [ -n "${SB_DB_PW:-}" ] || { echo "  SUPABASE_DB_PASSWORD not visible in this environment — nothing to do"; exit 0; }
+          [ -n "${SB_DB_PW:-}" ] || { echo "  SUPABASE(_STAGING)_DB_PASSWORD not visible in this environment — nothing to do"; exit 0; }
           railway variable list --service backend --environment "$ENVIRONMENT" \
             --project "$PROJECT" --json > be-dsn2.json || true
           CAND="$(SB_DB_PW="$SB_DB_PW" node -e '
