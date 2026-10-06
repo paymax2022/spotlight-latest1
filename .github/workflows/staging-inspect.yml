@@ -817,6 +817,56 @@ jobs:
           probe "/api/finance/wallet/balance"
           probe "/api/registration/contests"
           probe "/api/v1/contests?limit=2"
+          echo "  --- free-vote smoke (seeded contestant + voting_settings, cleaned up after) ---"
+          CONTEST_ID="$(node -e '
+            fetch(process.env.WEB_BASE+"/api/v1/contests?limit=10").then(r=>r.json()).then(j=>{
+              const c=(j||[]).find(x=>x.isLive)||(j||[])[0];
+              process.stdout.write(c?c.id:"");}).catch(()=>process.stdout.write(""));')"
+          echo "  contest: ${CONTEST_ID:-none-found}"
+          CTID=""
+          VS_OK=""
+          if [ -n "$CONTEST_ID" ]; then
+            CTID="$(node -e '
+              const [url,key,cid]=[process.env.SB_URL,process.env.SB_KEY,process.argv[1]];
+              fetch(url+"/rest/v1/contestants",{method:"POST",headers:{apikey:key,Authorization:"Bearer "+key,"Content-Type":"application/json",Prefer:"return=representation"},
+                body:JSON.stringify({name:"Diag Vote Smoke",contest_id:cid,status:"approved",is_active:true,category:"diagnostic"})})
+                .then(r=>r.json()).then(j=>process.stdout.write((j&&j[0]&&j[0].id)||"")).catch(()=>process.stdout.write(""));' "$CONTEST_ID")"
+            VS_PRE="$(node -e '
+              const [url,key,cid]=[process.env.SB_URL,process.env.SB_KEY,process.argv[1]];
+              fetch(url+"/rest/v1/voting_settings?contest_id=eq."+cid+"&select=id",{headers:{apikey:key,Authorization:"Bearer "+key}})
+                .then(r=>r.json()).then(j=>process.stdout.write(j&&j.length?"yes":"no")).catch(()=>process.stdout.write("unknown"));' "$CONTEST_ID")"
+            if [ "$VS_PRE" = "no" ]; then
+              VS_OK="$(node -e '
+                const [url,key,cid]=[process.env.SB_URL,process.env.SB_KEY,process.argv[1]];
+                fetch(url+"/rest/v1/voting_settings",{method:"POST",headers:{apikey:key,Authorization:"Bearer "+key,"Content-Type":"application/json",Prefer:"return=representation"},
+                  body:JSON.stringify({contest_id:cid,voting_enabled:true,status:"active",voting_type:"free",free_voting_enabled:true,free_votes_per_day:3,require_login_for_free_vote:true,allow_anonymous_free_vote:false})})
+                  .then(r=>process.stdout.write(String(r.status))).catch(()=>process.stdout.write(""));' "$CONTEST_ID")"
+            fi
+            echo "  seeded: contestant=${CTID:0:8}… voting_settings_pre=$VS_PRE seed_http=${VS_OK:-skipped}"
+          fi
+          export VS_PRE
+          IDEM="diag-vote-$(date +%s)"
+          if [ -n "$CTID" ]; then
+            VOTE_OUT="$(curl -s -o /tmp/vb -w "%{http_code} %{time_total}s" --max-time 45 -X POST "$WEB_BASE/api/v2/votes/free" \
+              -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -H "X-Idempotency-Key: $IDEM" \
+              -d "{\"contestId\":\"$CONTEST_ID\",\"contestantId\":\"$CTID\",\"voteQuantity\":1}")"
+            printf "  %-62s -> %s  %s\n" "POST /api/v2/votes/free" "$VOTE_OUT" "$(head -c 220 /tmp/vb | tr '\n' ' ')"
+            VOTE2_OUT="$(curl -s -o /tmp/vb2 -w "%{http_code} %{time_total}s" --max-time 45 -X POST "$WEB_BASE/api/v2/votes/free" \
+              -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -H "X-Idempotency-Key: $IDEM" \
+              -d "{\"contestId\":\"$CONTEST_ID\",\"contestantId\":\"$CTID\",\"voteQuantity\":1}")"
+            printf "  %-62s -> %s  %s\n" "POST /api/v2/votes/free (same idem-key)" "$VOTE2_OUT" "$(head -c 220 /tmp/vb2 | tr '\n' ' ')"
+            node -e '
+              const [url,key,cid,ctid]=[process.env.SB_URL,process.env.SB_KEY,process.argv[1],process.argv[2]];
+              const h={apikey:key,Authorization:"Bearer "+key};
+              Promise.all([
+                fetch(url+"/rest/v1/votes?contestant_id=eq."+ctid,{method:"DELETE",headers:h}),
+                fetch(url+"/rest/v1/voter_daily_limits?contest_id=eq."+cid,{method:"DELETE",headers:h}),
+                fetch(url+"/rest/v1/vote_totals?contest_id=eq."+cid,{method:"DELETE",headers:h}),
+                fetch(url+"/rest/v1/contestants?id=eq."+ctid,{method:"DELETE",headers:h}),
+                (process.env.VS_PRE==="no"?fetch(url+"/rest/v1/voting_settings?contest_id=eq."+cid,{method:"DELETE",headers:h}):Promise.resolve({status:"kept"})),
+              ]).then(rs=>console.log("  vote smoke cleanup: "+rs.map(r=>r.status).join(","))).catch(e=>console.log("  cleanup partial:",e.message));
+            ' "$CONTEST_ID" "$CTID"
+          fi
           echo "  --- cleanup ---"
           node -e '
             const [url,key,id]=[process.env.SB_URL,process.env.SB_KEY,process.argv[1]];
