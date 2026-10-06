@@ -59,12 +59,6 @@ export async function POST(request: Request, context: { params: { slug: string }
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {
       return errorResponse('Authentication required', 401);
     }
-    const message =
-      (error instanceof Error ? error.message : undefined) ||
-      (typeof error === 'object' && error && 'message' in error && typeof (error as any).message === 'string'
-        ? (error as any).message
-        : undefined) ||
-      'Failed to apply for open mic contest';
-    return handleApiError(new Error(message), message);
+    return handleApiError(error, 'Failed to apply for open mic contest');
   }
 }

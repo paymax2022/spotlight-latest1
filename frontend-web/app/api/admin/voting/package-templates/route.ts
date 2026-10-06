@@ -53,7 +53,10 @@ export async function GET(request: Request) {
     if (activeOnly) query = query.eq('is_active', true);
 
     const { data, error } = await query;
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/package-templates GET]', error.message);
+      return errorResponse('Failed to load vote package templates', 500);
+    }
 
     return successResponse({ success: true, templates: (data ?? []).map(toClient) });
   } catch (error) {
@@ -95,7 +98,10 @@ export async function POST(request: Request) {
       .select(SELECT)
       .single();
 
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/package-templates POST]', error.message);
+      return errorResponse('Failed to create vote package template', 500);
+    }
 
     await appendAuditLog({
       actorId: identity.actorId,
@@ -153,7 +159,10 @@ export async function PATCH(request: Request) {
       .select(SELECT)
       .single();
 
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/package-templates PATCH]', error.message);
+      return errorResponse('Failed to update vote package template', 500);
+    }
     if (!data) return errorResponse('Template not found', 404);
 
     await appendAuditLog({
@@ -182,7 +191,10 @@ export async function DELETE(request: Request) {
     // ON DELETE SET NULL. A contest that is selling votes keeps selling them.
     const supabase = createAdminClient();
     const { error } = await supabase.from('vote_package_templates').delete().eq('id', id);
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/package-templates DELETE]', error.message);
+      return errorResponse('Failed to delete vote package template', 500);
+    }
 
     await appendAuditLog({
       actorId: identity.actorId,

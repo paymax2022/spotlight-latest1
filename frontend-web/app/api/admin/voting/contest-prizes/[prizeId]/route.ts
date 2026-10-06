@@ -23,7 +23,10 @@ export async function PATCH(request: Request, ctx: RouteContext) {
       .eq('id', prizeId)
       .maybeSingle();
 
-    if (fetchError) return errorResponse(`Failed to load prize: ${fetchError.message}`, 500);
+    if (fetchError) {
+      console.error('[admin/voting/contest-prizes PATCH]', fetchError.message);
+      return errorResponse('Failed to load prize', 500);
+    }
     if (!existing) return errorResponse('Prize not found', 404);
 
     const updates: Record<string, unknown> = {};
@@ -55,7 +58,10 @@ export async function PATCH(request: Request, ctx: RouteContext) {
       .select('*')
       .single();
 
-    if (updateError) return errorResponse(`Failed to update prize: ${updateError.message}`, 500);
+    if (updateError) {
+      console.error('[admin/voting/contest-prizes PATCH] update:', updateError.message);
+      return errorResponse('Failed to update prize', 500);
+    }
 
     return successResponse({ success: true, prize: mapPrizeRow(updated) });
   } catch (error) {
@@ -76,11 +82,17 @@ export async function DELETE(request: Request, ctx: RouteContext) {
       .eq('id', prizeId)
       .maybeSingle();
 
-    if (fetchError) return errorResponse(`Failed to load prize: ${fetchError.message}`, 500);
+    if (fetchError) {
+      console.error('[admin/voting/contest-prizes DELETE]', fetchError.message);
+      return errorResponse('Failed to load prize', 500);
+    }
     if (!existing) return errorResponse('Prize not found', 404);
 
     const { error: deleteError } = await supabase.from('voting_contest_prizes').delete().eq('id', prizeId);
-    if (deleteError) return errorResponse(`Failed to delete prize: ${deleteError.message}`, 500);
+    if (deleteError) {
+      console.error('[admin/voting/contest-prizes DELETE]', deleteError.message);
+      return errorResponse('Failed to delete prize', 500);
+    }
 
     return successResponse({ success: true });
   } catch (error) {

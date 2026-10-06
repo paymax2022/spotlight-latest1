@@ -91,7 +91,10 @@ export async function POST(request: Request) {
       .select('*')
       .single();
 
-    if (planErr || !plan) return errorResponse(planErr?.message ?? 'Failed to create plan', 500);
+    if (planErr || !plan) {
+      console.error('[admin/academy/installments] plan insert failed', planErr);
+      return errorResponse('Failed to create plan', 500);
+    }
 
     const amt   = Math.round((body.totalAmountNgn / body.installmentsCount) * 100) / 100;
     const start = new Date(body.startDate || Date.now());
@@ -107,7 +110,10 @@ export async function POST(request: Request) {
     }));
 
     const { error: payErr } = await supabase.from('academy_installment_payments').insert(payments);
-    if (payErr) return errorResponse(payErr.message, 500);
+    if (payErr) {
+      console.error('[admin/academy/installments] payments insert failed', payErr);
+      return errorResponse('Failed to create installment payments', 500);
+    }
 
     return successResponse({ success: true, plan }, 201);
   } catch (error) {

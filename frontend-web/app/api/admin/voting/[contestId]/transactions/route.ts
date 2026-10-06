@@ -28,7 +28,10 @@ export async function GET(
     if (search) query = query.ilike('payment_reference', `%${search}%`);
 
     const { data, error, count } = await query;
-    if (error) return Response.json({ success: false, error: error.message }, { status: 500 });
+    if (error) {
+      console.error('[admin/voting/transactions GET]', error.message);
+      return Response.json({ success: false, error: 'Failed to load transactions' }, { status: 500 });
+    }
 
     return successResponse({ success: true, transactions: data ?? [], total: count ?? 0 });
   } catch (error) {

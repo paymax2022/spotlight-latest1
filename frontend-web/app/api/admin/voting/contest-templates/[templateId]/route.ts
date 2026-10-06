@@ -18,7 +18,10 @@ export async function GET(request: Request, ctx: RouteContext) {
       .eq('id', templateId)
       .maybeSingle();
 
-    if (error) return errorResponse(`Failed to load template: ${error.message}`, 500);
+    if (error) {
+      console.error('[admin/voting/contest-templates GET]', error.message);
+      return errorResponse('Failed to load template', 500);
+    }
     if (!template) return errorResponse('Template not found', 404);
 
     const [{ data: slotRows, error: slotsError }, { data: overlayRows, error: overlaysError }] =
@@ -31,8 +34,14 @@ export async function GET(request: Request, ctx: RouteContext) {
           .order('z_index', { ascending: true }),
       ]);
 
-    if (slotsError) return errorResponse(`Failed to load template slots: ${slotsError.message}`, 500);
-    if (overlaysError) return errorResponse(`Failed to load template overlays: ${overlaysError.message}`, 500);
+    if (slotsError) {
+      console.error('[admin/voting/contest-templates GET] slots:', slotsError.message);
+      return errorResponse('Failed to load template slots', 500);
+    }
+    if (overlaysError) {
+      console.error('[admin/voting/contest-templates GET] overlays:', overlaysError.message);
+      return errorResponse('Failed to load template overlays', 500);
+    }
 
     return successResponse({
       success: true,
@@ -65,7 +74,10 @@ export async function PATCH(request: Request, ctx: RouteContext) {
       .eq('id', templateId)
       .maybeSingle();
 
-    if (fetchError) return errorResponse(`Failed to load template: ${fetchError.message}`, 500);
+    if (fetchError) {
+      console.error('[admin/voting/contest-templates PATCH]', fetchError.message);
+      return errorResponse('Failed to load template', 500);
+    }
     if (!existing) return errorResponse('Template not found', 404);
 
     const updates: Record<string, unknown> = {};
@@ -113,7 +125,10 @@ export async function PATCH(request: Request, ctx: RouteContext) {
       .select('*')
       .single();
 
-    if (updateError) return errorResponse(`Failed to update template: ${updateError.message}`, 500);
+    if (updateError) {
+      console.error('[admin/voting/contest-templates PATCH] update:', updateError.message);
+      return errorResponse('Failed to update template', 500);
+    }
 
     return successResponse({ success: true, template: mapTemplateRow(updated) });
   } catch (error) {
@@ -137,7 +152,10 @@ export async function DELETE(request: Request, ctx: RouteContext) {
       .eq('id', templateId)
       .maybeSingle();
 
-    if (fetchError) return errorResponse(`Failed to load template: ${fetchError.message}`, 500);
+    if (fetchError) {
+      console.error('[admin/voting/contest-templates DELETE]', fetchError.message);
+      return errorResponse('Failed to load template', 500);
+    }
     if (!existing) return errorResponse('Template not found', 404);
 
     if ((existing as any).status === 'active') {
@@ -145,7 +163,10 @@ export async function DELETE(request: Request, ctx: RouteContext) {
     }
 
     const { error: deleteError } = await supabase.from('contest_templates').delete().eq('id', templateId);
-    if (deleteError) return errorResponse(`Failed to delete template: ${deleteError.message}`, 500);
+    if (deleteError) {
+      console.error('[admin/voting/contest-templates DELETE]', deleteError.message);
+      return errorResponse('Failed to delete template', 500);
+    }
 
     return successResponse({ success: true });
   } catch (error) {

@@ -1,4 +1,4 @@
-import { errorResponse, successResponse } from '@/src/lib/api/responses';
+import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { buildRegistrationSteps } from '@/src/features/registration/config';
 import { getRegistrationDraft, saveRegistrationStep } from '@/src/server/registration/supabase-store';
 import { requireUser } from '@/src/lib/auth/server';
@@ -106,7 +106,6 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
       message: error instanceof Error ? error.message : 'Unknown error',
       stack: error instanceof Error ? error.stack : undefined,
     });
-    const detail = error instanceof Error ? error.message : 'Unknown error';
-    return errorResponse(`Failed to save registration step: ${detail}`, 500);
+    return handleApiError(error, 'Failed to save registration step');
   }
 }

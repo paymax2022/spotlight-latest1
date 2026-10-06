@@ -47,7 +47,10 @@ export async function POST(request: Request) {
       status: 'upcoming',
     }).select('*').single();
 
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/rounds POST]', error.message);
+      return errorResponse('Failed to create round', 500);
+    }
 
     await appendAuditLog({ actorId: identity.actorId, actorRole: identity.role, action: 'voting_round_created',
       entityType: 'voting_round', entityId: (data as any).id, contestId: body.contestId, newValue: body });
@@ -77,7 +80,10 @@ export async function PATCH(request: Request) {
     }
 
     const { data, error } = await supabase.from('voting_rounds').update(updates).eq('id', body.id).select('*').single();
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/rounds PATCH]', error.message);
+      return errorResponse('Failed to update round', 500);
+    }
 
     await appendAuditLog({ actorId: identity.actorId, actorRole: identity.role, action: 'voting_round_updated',
       entityType: 'voting_round', entityId: body.id, newValue: updates });
