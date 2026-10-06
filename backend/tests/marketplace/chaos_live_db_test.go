@@ -15,9 +15,11 @@ package marketplace_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	mkt "spotlight/backend/internal/marketplace"
@@ -173,6 +175,9 @@ func verifiedIDBadge(t *testing.T, ctx context.Context, pool *pgxpool.Pool, user
 	if err := pool.QueryRow(ctx,
 		`SELECT COALESCE(verified_id_badge,false) FROM mkt_trust_scores WHERE user_id=$1::uuid`, userID,
 	).Scan(&badge); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false // no trust row yet — badge starts false
+		}
 		t.Fatalf("read trust_scores: %v", err)
 	}
 	return badge
