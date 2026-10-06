@@ -411,9 +411,27 @@ jobs:
           # Redeploy re-runs the build pipeline on the same commit, and the
           # build reads the freshly-set rootDirectory. Verify with the domain
           # probes below — a reused image would still serve Gin.
+          # If the latest deployment is in a terminal state (e.g. REMOVED),
+          # `railway redeploy` fails — fall back to a fresh deploymentTrigger.
           for SVC in frontend-web frontend-admin; do
-            railway redeploy --service "$SVC" --environment "$ENVIRONMENT" --project "$PROJECT" --yes \
-              && echo "  redeploy triggered: $SVC" || echo "  redeploy failed: $SVC"
+            if railway redeploy --service "$SVC" --environment "$ENVIRONMENT" --project "$PROJECT" --yes; then
+              echo "  redeploy triggered: $SVC"
+            else
+              SID="$(grep -E "^${SVC} " ids.txt | awk '{print $2}')"
+              echo "  redeploy failed, trying deploymentTriggerCreate for $SVC ($SID)"
+              RESP="$(node -e '
+                const body = JSON.stringify({
+                  query: "mutation($i:DeploymentTriggerInput!){ deploymentTriggerCreate(input:$i){ id } }",
+                  variables: { i: { projectId: process.env.PROJECT, environmentId: process.argv[1], serviceId: process.argv[2] } },
+                });
+                fetch("https://backboard.railway.app/graphql/v2", {
+                  method: "POST",
+                  headers: { "Project-Access-Token": process.env.RAILWAY_TOKEN, "content-type": "application/json" },
+                  body,
+                }).then(r => r.text()).then(t => process.stdout.write(t.slice(0, 400)));
+              ' "$(grep -E "^${SVC} " ids.txt | sed -E 's/.*env=//')" "$SID")"
+              echo "    $RESP" | head -c 400; echo
+            fi
           done
           rm -f ids.txt ids2.txt
 
