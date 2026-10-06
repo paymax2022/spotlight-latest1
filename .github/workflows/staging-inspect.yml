@@ -506,6 +506,10 @@ jobs:
             const anySeed = ["ARENA_SIGNING_SEED_THEORY","ARENA_SIGNING_SEED_PRACTICAL","ARENA_SIGNING_SEED_FIRSTAID"].some(present);
             if (!anySeed) force.FEATURE_ARENA_ENABLED = "no ARENA_SIGNING_SEED_* on target";
             if (!present("MAPS_GOOGLE_KEY")) force.FEATURE_MAPS_ENABLED = "MAPS_GOOGLE_KEY missing on target";
+            // finance_routes.go:2000 — FEATURE_TRANSPORT_ENABLED in prod
+            // log.Fatalf's when no real MapService is wired (MockMaps would
+            // fabricate fares). Transport follows maps.
+            if (!present("MAPS_GOOGLE_KEY")) force.FEATURE_TRANSPORT_ENABLED = "transport requires a real MapService (needs MAPS_GOOGLE_KEY)";
             if (!present("BREVO_API_KEY") || !present("OTP_PEPPER") || !present("BREVO_OTP_TEMPLATE_ID"))
               force.FEATURE_OTP_EMAIL_ENABLED = "Brevo/OTP creds missing on target";
             const rows = fs.readFileSync("flags.env","utf8").split("\n").filter(Boolean)
@@ -542,6 +546,21 @@ jobs:
           done < flags.env
           rm -f flags.env
           echo "  applied $COUNT FEATURE_* flags to backend ($ENVIRONMENT)"
+          # finance_routes.go:1080 — FEATURE_ASSOCIATIONS_ENABLED log.Fatalf's
+          # outside development when ASSOC_CARD_SIGNING_SECRET is unset. The
+          # secret is self-generated HMAC material (not a vendor credential):
+          # provision a fresh random one on the target if absent.
+          if ! railway variable list --service backend --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --json 2>/dev/null | node -e '
+              let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{
+                let v; try{v=JSON.parse(d)}catch{process.exit(1)}
+                process.exit(v.ASSOC_CARD_SIGNING_SECRET ? 0 : 1); });'; then
+            openssl rand -hex 32 | railway variable set ASSOC_CARD_SIGNING_SECRET --stdin \
+              --service backend --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP \
+              && echo "  generated ASSOC_CARD_SIGNING_SECRET on backend ($ENVIRONMENT)"
+          else
+            echo "  ASSOC_CARD_SIGNING_SECRET already set"
+          fi
           if railway redeploy --service backend --environment "$ENVIRONMENT" --project "$PROJECT" --yes; then
             echo "  single redeploy triggered to pick up the new vars"
           else
