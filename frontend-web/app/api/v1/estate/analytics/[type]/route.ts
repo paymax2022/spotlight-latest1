@@ -11,12 +11,14 @@ export async function GET(request: Request, context: { params: Promise<{ type: s
   try {
     const user = await requireRequestUser(request);
     const { type } = await context.params;
-    if (!isAnalyticsType(type)) throw new ApiError('Unknown analytics type', 400);
 
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
     if (ctx.role !== 'estate_admin') throw new ApiError('Only an estate admin can view analytics', 403);
+    // Type validation runs AFTER the residency/admin gate so non-members get a
+    // uniform 403 instead of a 400/403 oracle on which types are valid.
+    if (!isAnalyticsType(type)) throw new ApiError('Unknown analytics type', 400);
 
     const url = new URL(request.url);
     const from = url.searchParams.get('from') ?? undefined;

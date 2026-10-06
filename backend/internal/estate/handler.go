@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -15,6 +16,21 @@ import (
 )
 
 const keyError = "error"
+
+// isMembershipErr reports whether err is an estate-membership/authorization
+// failure from assertResident/assertEstateAdmin/assertRoles. Those errors
+// predate sentinel values, so they are matched by message — anything else is a
+// data/infra error and keeps the caller's non-403 status mapping.
+func isMembershipErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	m := err.Error()
+	return strings.HasPrefix(m, "estate: not a member") ||
+		strings.HasPrefix(m, "estate: insufficient role") ||
+		strings.HasPrefix(m, "estate: this account has been deleted") ||
+		strings.HasPrefix(m, "estate: this account is banned")
+}
 
 // atoiDefault parses s as an int, returning def on empty/invalid input.
 func atoiDefault(s string, def int) int {
@@ -131,9 +147,13 @@ func (h *Handler) CastVote(c *gin.Context) {
 }
 
 func (h *Handler) GetResults(c *gin.Context) {
-	results, err := h.svc.GetResults(c.Request.Context(), c.Param("id"), c.Param("electionId"))
+	results, err := h.svc.GetResults(c.Request.Context(), c.Param("id"), c.Param("electionId"), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		code := http.StatusBadRequest
+		if isMembershipErr(err) {
+			code = http.StatusForbidden
+		}
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": results})
@@ -170,18 +190,26 @@ func (h *Handler) SetEligibilityRules(c *gin.Context) {
 
 // ListGates — Block 28: Security gate / guard app
 func (h *Handler) ListGates(c *gin.Context) {
-	gates, err := h.svc.ListGates(c.Request.Context(), c.Param("id"))
+	gates, err := h.svc.ListGates(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		code := http.StatusInternalServerError
+		if isMembershipErr(err) {
+			code = http.StatusForbidden
+		}
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gates})
 }
 
 func (h *Handler) GetExpectedVisitors(c *gin.Context) {
-	visitors, err := h.svc.GetExpectedVisitors(c.Request.Context(), c.Param("id"))
+	visitors, err := h.svc.GetExpectedVisitors(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		code := http.StatusInternalServerError
+		if isMembershipErr(err) {
+			code = http.StatusForbidden
+		}
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": visitors})
@@ -189,11 +217,15 @@ func (h *Handler) GetExpectedVisitors(c *gin.Context) {
 
 func (h *Handler) LookupCode(c *gin.Context) {
 	payload, err := h.svc.LookupCode(
-		c.Request.Context(), c.Param("id"),
+		c.Request.Context(), c.Param("id"), ginutil.UserID(c),
 		c.Query("numeric_code"), c.Query("qr_code"),
 	)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+		code := http.StatusNotFound
+		if isMembershipErr(err) {
+			code = http.StatusForbidden
+		}
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
 		return
 	}
 	c.JSON(http.StatusOK, payload)
@@ -244,7 +276,11 @@ func (h *Handler) SubmitIncident(c *gin.Context) {
 	}
 	rep, err := h.svc.SubmitIncidentReport(c.Request.Context(), c.Param("id"), guardID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		code := http.StatusInternalServerError
+		if isMembershipErr(err) {
+			code = http.StatusForbidden
+		}
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, rep)
@@ -259,7 +295,11 @@ func (h *Handler) HandoverShift(c *gin.Context) {
 	}
 	shift, err := h.svc.HandoverShift(c.Request.Context(), c.Param("id"), guardID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		code := http.StatusInternalServerError
+		if isMembershipErr(err) {
+			code = http.StatusForbidden
+		}
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
 		return
 	}
 	c.JSON(http.StatusCreated, shift)
@@ -274,7 +314,11 @@ func (h *Handler) SyncOfflineLogs(c *gin.Context) {
 	}
 	synced, err := h.svc.SyncOfflineLogs(c.Request.Context(), c.Param("id"), guardID, req.Logs)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		code := http.StatusInternalServerError
+		if isMembershipErr(err) {
+			code = http.StatusForbidden
+		}
+		c.JSON(code, gin.H{keyError: httperr.Msg(c, code, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"synced": synced})

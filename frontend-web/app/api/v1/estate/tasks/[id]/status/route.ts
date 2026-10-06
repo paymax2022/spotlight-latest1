@@ -4,6 +4,9 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext, resolveNames } from '@/src/server/estate/resident';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+
 const COLS = 'id, estate_id, title, description, assignee_id, created_by, due_date, priority, status, created_at';
 
 // Body: { status }.
@@ -14,6 +17,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
+    // Reject malformed ids before the query (Postgres 22P02 → 500 otherwise).
+    if (!UUID_RE.test(id)) throw new ApiError('Invalid task ID', 400);
     const body = await request.json().catch(() => null);
     if (!body) throw new ApiError('Invalid JSON body', 400);
     const status = String(body?.status ?? '');

@@ -4,6 +4,9 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext, mapElection } from '@/src/server/elections/elections.service';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+
 // Publish results (estate admin, after close).
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
@@ -13,6 +16,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx || ctx.role !== 'estate_admin') throw new ApiError('Only an estate admin can publish results', 403);
+    // Reject malformed ids before the query (Postgres 22P02 → 500 otherwise).
+    if (!UUID_RE.test(id)) throw new ApiError('Invalid election ID', 400);
 
     const { data: election } = await supabase
       .from('elections')

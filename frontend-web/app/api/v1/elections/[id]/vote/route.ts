@@ -4,6 +4,9 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext, isWithinWindow, MAIN_POSITION_SUFFIX } from '@/src/server/elections/elections.service';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+
 // Cast a vote. Body: { positionId, candidateId }.
 // Single-position schema: positionId is accepted for contract parity but the
 // vote is unique per (election, voter). Idempotency-Key header is honoured by
@@ -16,6 +19,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('You are not eligible to vote in this election', 403);
+    // Reject malformed ids before the query (Postgres 22P02 → 500 otherwise).
+    if (!UUID_RE.test(id)) throw new ApiError('Invalid election ID', 400);
 
     const body = await request.json().catch(() => null);
     if (!body) throw new ApiError('Invalid JSON body', 400);

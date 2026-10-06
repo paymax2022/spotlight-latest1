@@ -268,7 +268,12 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 }
 
 // GetResults returns the tally for a closed/tallied election.
-func (s *Service) GetResults(ctx context.Context, estateID, electionID string) ([]Candidate, error) {
+// ESTATE-AUTHZ: caller must be a resident/member — results are estate-private
+// (previously unauthenticated: any authed user could read any estate's tally).
+func (s *Service) GetResults(ctx context.Context, estateID, electionID, userID string) ([]Candidate, error) {
+	if err := s.assertResident(ctx, estateID, userID); err != nil {
+		return nil, err
+	}
 	var status string
 	if err := s.db.QueryRow(ctx, `SELECT status FROM elections WHERE id=$1 AND estate_id=$2`, electionID, estateID).Scan(&status); err != nil {
 		return nil, errors.New("estate: election not found")
@@ -300,7 +305,11 @@ func (s *Service) GetResults(ctx context.Context, estateID, electionID string) (
 
 // ListGates — Block 28: Security gate / guard app
 // ListGates returns all active gates for an estate.
-func (s *Service) ListGates(ctx context.Context, estateID string) ([]Gate, error) {
+// ESTATE-AUTHZ: member-only — the gate layout is estate security posture.
+func (s *Service) ListGates(ctx context.Context, estateID, userID string) ([]Gate, error) {
+	if err := s.assertResident(ctx, estateID, userID); err != nil {
+		return nil, err
+	}
 	const q = `SELECT id, estate_id, name, gate_type, active, created_at FROM estate_gates WHERE estate_id=$1 AND active=TRUE ORDER BY name`
 	rows, err := s.db.Query(ctx, q, estateID)
 	if err != nil {
@@ -320,7 +329,18 @@ func (s *Service) ListGates(ctx context.Context, estateID string) ([]Gate, error
 
 // LookupCode resolves a numeric or QR code to an access code record.
 // Returns blacklisted status and whether entry is allowed.
-func (s *Service) LookupCode(ctx context.Context, estateID, numericCode, qrCode string) (*CheckinPayload, error) {
+// ESTATE-AUTHZ: member-only — this resolves visitor PII (name/phone/plate) plus
+// the issuing resident's unit; the numeric code space is small enough to brute
+// force, so it must not be callable cross-estate (previously unauthenticated).
+func (s *Service) LookupCode(ctx context.Context, estateID, userID, numericCode, qrCode string) (*CheckinPayload, error) {
+	if err := s.assertResident(ctx, estateID, userID); err != nil {
+		return nil, err
+	}
+	return s.lookupCode(ctx, estateID, numericCode, qrCode)
+}
+
+// lookupCode is the ungated inner query — callers must authorize first.
+func (s *Service) lookupCode(ctx context.Context, estateID, numericCode, qrCode string) (*CheckinPayload, error) {
 	var c AccessCode
 	var residentUnit string
 
@@ -366,8 +386,13 @@ func (s *Service) LookupCode(ctx context.Context, estateID, numericCode, qrCode 
 }
 
 // CheckInVisitor records a gate arrival and increments used_count.
+// ESTATE-AUTHZ: member-only — was callable by any authed user, letting them
+// consume someone else's visitor codes and forge gate events.
 func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, req GuardCheckinRequest) (*CheckinPayload, error) {
-	payload, err := s.LookupCode(ctx, estateID, req.NumericCode, req.QRCode)
+	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+		return nil, err
+	}
+	payload, err := s.lookupCode(ctx, estateID, req.NumericCode, req.QRCode)
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +441,11 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 }
 
 // CheckOutVisitor records a gate departure.
+// ESTATE-AUTHZ: member-only (was callable by any authed user).
 func (s *Service) CheckOutVisitor(ctx context.Context, estateID, guardID, codeID, gateID string) error {
+	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+		return err
+	}
 	var cnt int
 	if err := s.db.QueryRow(ctx,
 		`SELECT COUNT(*) FROM visitor_access_codes WHERE id=$1 AND estate_id=$2`, codeID, estateID,
@@ -432,7 +461,12 @@ func (s *Service) CheckOutVisitor(ctx context.Context, estateID, guardID, codeID
 }
 
 // SubmitIncidentReport saves a guard incident report.
+// ESTATE-AUTHZ: member-only (was callable by any authed user — forged incident
+// reports into any estate's security log).
 func (s *Service) SubmitIncidentReport(ctx context.Context, estateID, guardID string, req SubmitIncidentRequest) (*IncidentReport, error) {
+	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+		return nil, err
+	}
 	rep := &IncidentReport{
 		ID: uuid.New().String(), EstateID: estateID, GuardID: guardID,
 		GateID: req.GateID, IncidentType: req.IncidentType,
@@ -445,7 +479,11 @@ func (s *Service) SubmitIncidentReport(ctx context.Context, estateID, guardID st
 }
 
 // HandoverShift closes the current shift and optionally starts the next.
+// ESTATE-AUTHZ: member-only (was callable by any authed user — forged shifts).
 func (s *Service) HandoverShift(ctx context.Context, estateID, guardID string, req HandoverRequest) (*GuardShift, error) {
+	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+		return nil, err
+	}
 	_, _ = s.db.Exec(ctx,
 		`UPDATE guard_shifts SET ended_at=NOW(), handover_notes=$1, relieved_by=$2
 		WHERE estate_id=$3 AND guard_id=$4 AND ended_at IS NULL`,
@@ -463,7 +501,13 @@ func (s *Service) HandoverShift(ctx context.Context, estateID, guardID string, r
 }
 
 // GetExpectedVisitors returns access codes valid within the next 4 hours.
-func (s *Service) GetExpectedVisitors(ctx context.Context, estateID string) ([]AccessCode, error) {
+// ESTATE-AUTHZ: member-only — this is a bulk PII + credential feed (visitor
+// names/phones/plates and the numeric entry codes); previously any authed user
+// could pull it for any estate id.
+func (s *Service) GetExpectedVisitors(ctx context.Context, estateID, userID string) ([]AccessCode, error) {
+	if err := s.assertResident(ctx, estateID, userID); err != nil {
+		return nil, err
+	}
 	const q = `SELECT id, estate_id, issued_by, visitor_name, COALESCE(visitor_phone,''), COALESCE(vehicle_plate,''),
 		COALESCE(purpose,''), code_type, numeric_code, qr_code::TEXT, valid_from, valid_until,
 		used_count, max_uses, status, blacklisted, created_at
@@ -490,7 +534,11 @@ func (s *Service) GetExpectedVisitors(ctx context.Context, estateID string) ([]A
 }
 
 // SyncOfflineLogs bulk-inserts offline gate events (idempotent via client_id UNIQUE).
+// ESTATE-AUTHZ: member-only (was callable by any authed user — forged logs).
 func (s *Service) SyncOfflineLogs(ctx context.Context, estateID, guardID string, logs []OfflineLogEntry) (int, error) {
+	if err := s.assertResident(ctx, estateID, guardID); err != nil {
+		return 0, err
+	}
 	synced := 0
 	for _, l := range logs {
 		payloadJSON, _ := json.Marshal(l.Payload)
