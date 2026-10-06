@@ -785,7 +785,7 @@ func (s *Service) GetSaved(ctx context.Context, userID string) ([]CampaignSummar
 		       c.deadline, c.verified, c.featured, c.trending, c.urgent, c.location, c.creator_id::text
 		FROM cf_saved_campaigns s
 		JOIN campaigns c ON c.id = s.campaign_id
-		WHERE s.user_id = $1
+		WHERE s.user_id = $1 AND c.deleted_at IS NULL
 		ORDER BY s.created_at DESC
 		LIMIT 100`
 	return s.scanSummaries(ctx, q, userID, true)
@@ -804,7 +804,7 @@ func (s *Service) GetRecentlyViewed(ctx context.Context, userID string) ([]Campa
 		       c.deadline, c.verified, c.featured, c.trending, c.urgent, c.location, c.creator_id::text
 		FROM cf_recently_viewed v
 		JOIN campaigns c ON c.id = v.campaign_id
-		WHERE v.user_id = $1
+		WHERE v.user_id = $1 AND c.deleted_at IS NULL
 		ORDER BY v.viewed_at DESC
 		LIMIT 50`
 	return s.scanSummaries(ctx, q, userID, false)
