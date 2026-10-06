@@ -64,6 +64,52 @@ func TestEscrowErrStatus(t *testing.T) {
 			err:    errors.New("restaurant: order escrow tier gate: tiers: enforce limit (fail closed): no rows in result set"),
 			wantOK: false,
 		},
+		// --- pricing rejections (probe B4): a refused cart is never a 500 ---
+		{
+			name:     "closed restaurant, wrapped as priceOrder returns it",
+			err:      fmt.Errorf("%w (%s)", ErrRestaurantClosed, "rest-1"),
+			wantCode: http.StatusUnprocessableEntity, wantOK: true,
+		},
+		{
+			name:     "restaurant not found, wrapped as priceOrder returns it",
+			err:      fmt.Errorf("%w (%s)", ErrRestaurantNotFound, "rest-1"),
+			wantCode: http.StatusNotFound, wantOK: true,
+		},
+		{
+			name:     "menu item not found",
+			err:      fmt.Errorf("%w (%s in restaurant %s)", ErrMenuItemNotFound, "item-1", "rest-1"),
+			wantCode: http.StatusNotFound, wantOK: true,
+		},
+		{
+			name:     "menu item unavailable (86'd)",
+			err:      fmt.Errorf("%w (%s)", ErrMenuItemUnavailable, "Probe Rice"),
+			wantCode: http.StatusUnprocessableEntity, wantOK: true,
+		},
+		{
+			name:     "cart under the house minimum",
+			err:      fmt.Errorf("%w: cart subtotal %d kobo, restaurant minimum %d kobo", ErrBelowMinOrder, 500, 2000),
+			wantCode: http.StatusUnprocessableEntity, wantOK: true,
+		},
+		{
+			name:     "malformed line (quantity cap)",
+			err:      fmt.Errorf("%w: quantity %d for '%s' exceeds the per-line maximum of %d", ErrOrderInvalid, 99, "Rice", 20),
+			wantCode: http.StatusBadRequest, wantOK: true,
+		},
+		{
+			name:     "bad scheduled slot (lead window)",
+			err:      fmt.Errorf("%w: a scheduled slot must be at least %v in the future", ErrScheduledSlotInvalid, scheduledMinLead),
+			wantCode: http.StatusBadRequest, wantOK: true,
+		},
+		{
+			name:     "scheduled slot while closed reuses the closed sentinel",
+			err:      fmt.Errorf("%w at the requested slot", ErrRestaurantClosed),
+			wantCode: http.StatusUnprocessableEntity, wantOK: true,
+		},
+		{
+			name:     "external amount mismatch is a conflict",
+			err:      ErrExternalAmountMismatch,
+			wantCode: http.StatusConflict, wantOK: true,
+		},
 	}
 
 	for _, tc := range cases {

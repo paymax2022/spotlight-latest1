@@ -355,6 +355,11 @@ func (s *Service) LikeRestaurant(ctx context.Context, callerUserID, restaurantID
 		if dbutil.IsUniqueViolation(err) {
 			return nil // already liked — idempotent, not an error
 		}
+		// The FK is the only existence check this path runs — a like on a restaurant
+		// that never existed used to surface as a raw 500 (probe B1).
+		if dbutil.IsForeignKeyViolation(err) {
+			return ErrRestaurantNotFound
+		}
 		return err
 	}
 	return nil

@@ -113,6 +113,10 @@ func (h *Handler) GetRestaurant(c *gin.Context) {
 func (h *Handler) LikeRestaurant(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if err := h.svc.LikeRestaurant(c.Request.Context(), userID, c.Param("id")); err != nil {
+		if errors.Is(err, ErrRestaurantNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
