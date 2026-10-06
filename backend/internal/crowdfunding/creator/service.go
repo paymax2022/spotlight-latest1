@@ -91,10 +91,14 @@ func contributionStatus(raw string, refundRequested bool) string {
 }
 
 // creatorDisplayName resolves a user's display name, falling back gracefully.
+// The fallback is "Anonymous", never the login email — this name is rendered
+// on public campaign cards, and the old email fallback published a credential
+// for every creator/backer without a profile name (same convention as the
+// contributor-name fix).
 func (s *Service) creatorDisplayName(ctx context.Context, userID string) string {
 	var full *string
 	_ = s.db.QueryRow(ctx,
-		`SELECT COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), email) FROM public.platform_users WHERE id = $1`, userID,
+		`SELECT COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), 'Anonymous') FROM public.platform_users WHERE id = $1`, userID,
 	).Scan(&full)
 	if full != nil && *full != "" {
 		return *full
@@ -106,14 +110,37 @@ func (s *Service) creatorDisplayName(ctx context.Context, userID string) string 
 // append-only contributions table. The contributions table has no anonymity
 // column, so every contributor is treated as named (displayName resolved from
 // auth.users meta) with anonymous=false.
-func (s *Service) GetContributors(ctx context.Context, campaignID string) ([]Contributor, error) {
+//
+// Visibility mirrors the campaign detail gate: anyone may list backers only
+// while the campaign is publicly live — ACTIVE or COMPLETED (a finished
+// fundraiser's page stays linkable) and not owner-paused. Pre-review,
+// REJECTED, FROZEN, paused and soft-deleted campaigns answer to their creator
+// alone; a hidden campaign's backers are backer PII and must not be listable
+// by anyone holding the id. Non-owner reads of a hidden campaign return the
+// same ErrNotFound as an absent id, so the error never confirms existence.
+func (s *Service) GetContributors(ctx context.Context, campaignID, viewerID string) ([]Contributor, error) {
 	if _, err := uuid.Parse(campaignID); err != nil {
 		return nil, ErrNotFound
 	}
-	// This list is public to any signed-in member. The email fallback the old
-	// projection used meant a backer with no name set had their EMAIL published
-	// beside their donation — a PII leak, not a display nicety. A backer with
-	// no name is "Anonymous", full stop.
+	var creatorID, reviewStatus string
+	var pausedAt *time.Time
+	err := s.db.QueryRow(ctx,
+		`SELECT creator_id::text, review_status, paused_at FROM campaigns WHERE id = $1 AND deleted_at IS NULL`,
+		campaignID).Scan(&creatorID, &reviewStatus, &pausedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	publiclyVisible := pausedAt == nil && (reviewStatus == "ACTIVE" || reviewStatus == "COMPLETED")
+	if !publiclyVisible && creatorID != viewerID {
+		return nil, ErrNotFound
+	}
+
+	// This list is public to any signed-in member, so a backer with no name
+	// set is "Anonymous" — the email fallback the old projection used would
+	// have published their login beside their donation.
 	const q = `
 		SELECT co.id::text, co.contributor_id::text, co.amount_kobo, co.created_at,
 		       COALESCE(NULLIF(btrim(u.first_name || ' ' || u.last_name), ''), 'Anonymous')
@@ -456,7 +483,7 @@ func (s *Service) GetMyCampaigns(ctx context.Context, userID, status string) ([]
 func (s *Service) GetCreatorContributions(ctx context.Context, userID string) ([]CreatorContribution, error) {
 	const q = `
 		SELECT co.id::text, COALESCE(c.title,''), co.amount_kobo, co.created_at,
-		       COALESCE(NULLIF(btrim(u.first_name || ' ' || u.last_name), ''), u.email, 'Anonymous')
+		       COALESCE(NULLIF(btrim(u.first_name || ' ' || u.last_name), ''), 'Anonymous')
 		FROM contributions co
 		JOIN campaigns c ON c.id = co.campaign_id
 		LEFT JOIN public.platform_users u ON u.id = co.contributor_id

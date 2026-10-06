@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -85,6 +86,9 @@ func (s *GiftingStore) GetCatalogItem(ctx context.Context, itemID string) (*Gift
 }
 
 // Recipient represents a potential gift recipient.
+// Email is ALWAYS the masked form ("a***@domain") — this endpoint lists the
+// newest 50 platform users, so a raw email here is an enumerable PII feed,
+// not a directory feature.
 type Recipient struct {
 	UserID   string `json:"userId"`
 	Email    string `json:"email"`
@@ -105,6 +109,17 @@ func (s *GiftingStore) UserExists(ctx context.Context, userID string) (bool, err
 	return exists, nil
 }
 
+// maskRecipientEmail masks the local part of an email for list surfaces:
+// "amara.obi@gmail.com" → "a***@gmail.com". A value without an @ is fully
+// masked — the label stays non-empty either way so clients can render it.
+func maskRecipientEmail(email string) string {
+	at := strings.IndexByte(email, '@')
+	if at <= 0 {
+		return "***"
+	}
+	return email[:1] + "***" + email[at:]
+}
+
 // GetRecipients retrieves user's saved gift recipients.
 // Reads platform_users, not auth.users: this pool runs as service_role, which
 // Supabase never grants auth-schema access to, and platform_users.id mirrors
@@ -114,6 +129,9 @@ func (s *GiftingStore) UserExists(ctx context.Context, userID string) (bool, err
 // No SELECT DISTINCT: platform_users.id is unique so it can never dedupe
 // anything, and Postgres rejects ORDER BY expressions outside the select
 // list under DISTINCT — the previous query therefore failed on every call.
+// Emails are masked in Go (maskRecipientEmail) — the query returns the raw
+// column so the masking decision lives next to this code, not inside SQL
+// every reader has to re-audit.
 func (s *GiftingStore) GetRecipients(ctx context.Context, senderUserID string) ([]Recipient, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT
@@ -137,6 +155,7 @@ func (s *GiftingStore) GetRecipients(ctx context.Context, senderUserID string) (
 		if err := rows.Scan(&r.UserID, &r.Email, &r.Name, &r.Nickname); err != nil {
 			return nil, fmt.Errorf("scan recipient: %w", err)
 		}
+		r.Email = maskRecipientEmail(r.Email)
 		recipients = append(recipients, r)
 	}
 

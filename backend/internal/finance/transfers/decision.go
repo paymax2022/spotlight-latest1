@@ -50,6 +50,11 @@ var (
 	ErrPinCurrentRequired = errors.New("transfers: current transaction PIN is required to change it")
 	// ErrProviderUnavailable — no disbursement provider configured / all failed (502).
 	ErrProviderUnavailable = errors.New("transfers: no disbursement provider available")
+	// ErrIdempotencyKeyConflict — the caller's Idempotency-Key is already used
+	// by ANOTHER account's transfer (409). Replay lookups are scoped to the
+	// caller, so a foreign key cannot replay a stranger's transfer back; the
+	// surviving unique-violation on insert is the durable proof of the clash.
+	ErrIdempotencyKeyConflict = errors.New("transfers: idempotency key already used by another transfer")
 )
 
 // errMap maps a money-path error to its acceptance-gate HTTP status (locked by
@@ -59,7 +64,7 @@ var errMap = httperr.New(http.StatusInternalServerError, // 500 — fail closed
 	httperr.R(http.StatusPaymentRequired, ledger.ErrInsufficientFunds),                                    // 402
 	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),                 // 403
 	httperr.R(http.StatusNotFound, ErrRecipientNotFound, ErrInvalidAccount),                               // 404
-	httperr.R(http.StatusConflict, ErrAmbiguousRecipient),                                                 // 409 — refuse, do not guess
+	httperr.R(http.StatusConflict, ErrAmbiguousRecipient, ErrIdempotencyKeyConflict),                      // 409 — refuse, do not guess
 	httperr.R(http.StatusBadRequest, ErrMissingIdempotencyKey, ErrInvalidAmount, ErrInvalidAccountNumber), // 400
 	httperr.R(http.StatusForbidden, ErrPinNotSet, ErrPinInvalid),                                          // 403
 	httperr.R(http.StatusBadRequest, ErrPinCurrentRequired),                                               // 400 — malformed request, NOT a failed guess
@@ -92,6 +97,8 @@ func ErrorCode(err error) string {
 		return "invalid_account_number"
 	case errors.Is(err, ErrMissingIdempotencyKey):
 		return "idempotency_key_required"
+	case errors.Is(err, ErrIdempotencyKeyConflict):
+		return "idempotency_key_conflict"
 	case errors.Is(err, ErrInvalidAmount):
 		return "invalid_amount"
 	case errors.Is(err, ErrPinNotSet):
