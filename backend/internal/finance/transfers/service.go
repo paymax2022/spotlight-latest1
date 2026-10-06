@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/strutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
@@ -206,14 +207,18 @@ func (p walletPreflight) run(ctx context.Context, senderID string, req WalletTra
 }
 
 // findWalletTransferByKey returns the transfer previously recorded under this
-// idempotency key, or (nil, nil) when the key is new.
+// idempotency key BY THIS SENDER, or (nil, nil) when the key is new for them.
+// The lookup is scoped to the caller: replaying on key alone would hand any
+// caller another user's completed transfer — sender, recipient and amount —
+// on a guessed key. A foreign key colliding on insert is instead the durable
+// signal of a cross-user clash, mapped to ErrIdempotencyKeyConflict there.
 // A lookup failure is deliberately read as "new key" rather than surfaced: it
 // preserves the prior behaviour, and wallet_transfers.idempotency_key is UNIQUE,
 // so a genuine duplicate still cannot insert a second time.
-func (s *Service) findWalletTransferByKey(ctx context.Context, key string) (*WalletTransfer, error) {
+func (s *Service) findWalletTransferByKey(ctx context.Context, senderID, key string) (*WalletTransfer, error) {
 	var existingID string
-	const checkDup = `SELECT id FROM wallet_transfers WHERE idempotency_key = $1 LIMIT 1`
-	_ = s.db.QueryRow(ctx, checkDup, key).Scan(&existingID)
+	const checkDup = `SELECT id FROM wallet_transfers WHERE idempotency_key = $1 AND sender_id = $2 LIMIT 1`
+	_ = s.db.QueryRow(ctx, checkDup, key, senderID).Scan(&existingID)
 	if existingID == "" {
 		return nil, nil
 	}
@@ -224,7 +229,10 @@ func (s *Service) findWalletTransferByKey(ctx context.Context, key string) (*Wal
 // the transfer_wallet_atomic() Supabase RPC (mirrors block-10 logic).
 func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, req WalletTransferRequest) (*WalletTransfer, error) {
 	prior, recipient, err := walletPreflight{
-		findReplay:  s.findWalletTransferByKey,
+		// Caller-scoped replay: only THIS sender's key short-circuits.
+		findReplay: func(ctx context.Context, key string) (*WalletTransfer, error) {
+			return s.findWalletTransferByKey(ctx, senderID, key)
+		},
 		resolve:     s.ResolvePaymaxUser,
 		enforceTier: s.tiers.EnforceWalletDebitLimit,
 	}.run(ctx, senderID, req)
@@ -274,14 +282,27 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 	}
 
 	const insertEntry = `INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key) VALUES ($1, $2, $3, $4, $5)`
+	// A 23505 on any leg means the caller's key (or a leg of it) is already
+	// claimed — with the replay lookup caller-scoped, that can only be another
+	// user's transfer carrying the same key. Report it as a conflict rather
+	// than a server fault.
 	if _, err := tx.Exec(ctx, insertEntry, senderAcc.ID, "DEBIT", total, reference, req.IdempotencyKey+":debit"); err != nil {
+		if dbutil.IsUniqueViolation(err) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return nil, fmt.Errorf("transfers: debit sender: %w", err)
 	}
 	if _, err := tx.Exec(ctx, insertEntry, recipientAcc.ID, "CREDIT", req.AmountKobo, reference, req.IdempotencyKey+":credit"); err != nil {
+		if dbutil.IsUniqueViolation(err) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return nil, fmt.Errorf("transfers: credit recipient: %w", err)
 	}
 	if fee > 0 {
 		if _, err := tx.Exec(ctx, insertEntry, revenueAcc.ID, "CREDIT", fee, reference, req.IdempotencyKey+":fee"); err != nil {
+			if dbutil.IsUniqueViolation(err) {
+				return nil, ErrIdempotencyKeyConflict
+			}
 			return nil, fmt.Errorf("transfers: credit fee: %w", err)
 		}
 	}
@@ -301,6 +322,9 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 	}
 	if err := tx.QueryRow(ctx, insertTx, senderID, recipient.UserID, req.AmountKobo, fee, reference, req.IdempotencyKey).
 		Scan(&wt.ID, &wt.CreatedAt); err != nil {
+		if dbutil.IsUniqueViolation(err) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return nil, fmt.Errorf("transfers: insert wallet_transfers: %w", err)
 	}
 
@@ -334,10 +358,14 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 		return nil, ErrProviderUnavailable
 	}
 
-	// Idempotency replay: same key already processed → return prior result.
+	// Idempotency replay — CALLER-SCOPED: only this user's prior transfer
+	// under the key short-circuits. Replaying on key alone would hand the
+	// caller another user's bank transfer (account number, name, amount) on a
+	// guessed key; a foreign key instead falls through and the unique
+	// constraint on insert reports the clash as ErrIdempotencyKeyConflict.
 	var existingID string
-	const checkDup = `SELECT id FROM bank_transfers WHERE idempotency_key = $1 LIMIT 1`
-	_ = s.db.QueryRow(ctx, checkDup, req.IdempotencyKey).Scan(&existingID)
+	const checkDup = `SELECT id FROM bank_transfers WHERE idempotency_key = $1 AND user_id = $2 LIMIT 1`
+	_ = s.db.QueryRow(ctx, checkDup, req.IdempotencyKey, userID).Scan(&existingID)
 	if existingID != "" {
 		bt, err := s.getBankTransfer(ctx, existingID)
 		if err != nil {
@@ -400,10 +428,18 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 	}
 
 	const insertEntry = `INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key) VALUES ($1, $2, $3, $4, $5)`
+	// 23505 on a leg or the row below = another user's transfer already claims
+	// this key (the replay lookup above is caller-scoped) → 409, not 500.
 	if _, err := tx.Exec(ctx, insertEntry, userAcc.ID, "DEBIT", total, reference, LegKey(req.IdempotencyKey, "debit")); err != nil {
+		if dbutil.IsUniqueViolation(err) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return nil, fmt.Errorf("bank_transfer: debit user: %w", err)
 	}
 	if _, err := tx.Exec(ctx, insertEntry, suspenseAcc.ID, "CREDIT", total, reference, LegKey(req.IdempotencyKey, "suspense")); err != nil {
+		if dbutil.IsUniqueViolation(err) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return nil, fmt.Errorf("bank_transfer: credit suspense: %w", err)
 	}
 
@@ -436,6 +472,9 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 		userID, req.AmountKobo, fee, req.BankCode, bankName, last4, accountName,
 		"pending", reference, req.IdempotencyKey, bt.Provider,
 	).Scan(&bt.ID, &bt.CreatedAt); err != nil {
+		if dbutil.IsUniqueViolation(err) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return nil, fmt.Errorf("bank_transfer: insert: %w", err)
 	}
 
@@ -523,10 +562,12 @@ func (s *Service) InitiateBankToBank(ctx context.Context, userID string, req Ban
 		return nil, ErrProviderUnavailable
 	}
 
-	// Idempotency replay.
+	// Idempotency replay — caller-scoped (same rule as the wallet→bank rail):
+	// a key another user owns must never replay their transfer back; it falls
+	// through and the unique constraint on insert reports the 409 clash.
 	var existingID string
-	const checkDup = `SELECT id FROM bank_transfers WHERE idempotency_key = $1 LIMIT 1`
-	_ = s.db.QueryRow(ctx, checkDup, req.IdempotencyKey).Scan(&existingID)
+	const checkDup = `SELECT id FROM bank_transfers WHERE idempotency_key = $1 AND user_id = $2 LIMIT 1`
+	_ = s.db.QueryRow(ctx, checkDup, req.IdempotencyKey, userID).Scan(&existingID)
 	if existingID != "" {
 		bt, err := s.getBankTransfer(ctx, existingID)
 		if err != nil {
@@ -585,6 +626,9 @@ func (s *Service) InitiateBankToBank(ctx context.Context, userID string, req Ban
 		userID, req.AmountKobo, fee, req.BankCode, bankName, last4, accountName,
 		"pending", reference, req.IdempotencyKey, bt.Provider, fundingRef,
 	).Scan(&bt.ID, &bt.CreatedAt); err != nil {
+		if dbutil.IsUniqueViolation(err) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return nil, fmt.Errorf("bank_to_bank: insert: %w", err)
 	}
 	s.audit(ctx, userID, "transfer.bank_to_bank.awaiting_funding", bt.ID, fundingRef)
