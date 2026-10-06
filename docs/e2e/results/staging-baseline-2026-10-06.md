@@ -158,3 +158,51 @@ Frontend on commit `bda0ef5c`, serving Next.js correctly.
 - `REDIS_URL` for idempotency/locks/queues
 - Supabase project: email provider enabled, signup allowed, migrations
   current
+
+---
+
+## Update — 2026-10-06 ~10:30Z (post flag-sync + deploy)
+
+### Newly confirmed root causes
+
+| # | Symptom | Cause | Class |
+|---|---------|-------|-------|
+| F6 | `/api/finance/restaurant` list → 500 while `/mine` → 200 | Supabase session-mode pooler `pool_size:15` exhausted — `EMAXCONNSESSION` in boot log; pgx pool default `max(4,NumCPU)` × concurrent pools × deploy overlap | infra/config |
+| F7 | prod register → 400 | **GoTrue `over_email_send_rate_limit`** (confirmed by direct `/signup` probe — Supabase default mailer hourly quota). NOT the per-IP signup budget | external (owner SMTP) |
+| F8 | `/api/finance/associations` → 503 | `FEATURE_ASSOCIATION_ENABLED` (singular) missing on **frontend-web** — separate BFF flag map from backend | config (repaired) |
+| F9 | prod backend boot fatal | `APP_ENV=production` makes `Config.Validate()` fatal: blind staging→prod flag copy enabled wallet/bank/kyc/arena/maps without creds → healthcheck-fail loop | repaired (dependency-aware sync) |
+| F10 | second hidden boot fatal | `[association] ASSOC_CARD_SIGNING_SECRET required when APP_ENV=production` (log.Fatalf) | repaired (generated) |
+
+### Repairs applied (all verified in run logs)
+
+- Backend: 49 `FEATURE_*` synced, 6 cred-starved flags forced OFF (wallet, bank transfers, kyc-verify, arena, maps, transport, otp-email), `APP_ENV=production`, `ASSOC_CARD_SIGNING_SECRET` generated, `DB_POOL_MAX_CONNS=4` (pooler headroom).
+- Frontend-web: 45 flags synced with the same force-off map; `VOTES_BRIDGE_ENABLED=true` staged (activates with the `ecf0e0d8` deploy carrying the kyc-gate fix).
+- `ADMIN_API_KEY` re-paired prod-backend → prod-frontend-admin.
+- Var writes use `--skip-deploys` + one explicit redeploy — the earlier per-write redeploy storm is documented cause of the 9 failed/superseded deploys.
+
+### Incident: `copy_staging_to_prod` partial apply (cancelled mid-run)
+
+A sibling run copied staging→prod vars verbatim (no `--skip-deploys`):
+frontend-web + frontend-admin completed, backend reached ~7 vars before
+cancel. Consequences on prod now:
+
+- `PAYSTACK_PUBLIC_KEY`/`PAYSTACK_SECRET_KEY` = **TEST keys** on prod (checkout runs test-mode until owner supplies live keys — decide deliberately)
+- staging third-party creds on prod frontends (ALPACA/INSURANCE/TERMIL subset on web; `ADMIN_API_KEY` staging pair on admin+backend — functionally consistent, should be rotated to a prod-only secret)
+- `VOTES_BRIDGE_ENABLED=true` landed before the kyc-gate deploy (safe window: flag only activates on redeploy, which is the `ecf0e0d8` deploy)
+- Supabase-identity vars correctly skipped (no cross-DB pollution)
+
+### Deploy pipeline
+
+`ci.yml` workflow_dispatch on `prod` branch (`DEPLOY` confirm, Production
+env approved) is deploying all three services at `ecf0e0d8`
+(kyc-gate fix). After it lands: prod E2E probe (vote dedup, associations,
+register) + `otp_codes` DDL via Management API.
+
+### Remaining owner-side blockers
+
+1. **SMTP/Brevo creds** — prod register is GoTrue-mailer-quota-bound (`over_email_send_rate_limit`); custom SMTP or Brevo+OTP path (all pieces now staged: table DDL ready, flag flip needs creds) is the only durable fix
+2. **Live Paystack keys** — staging TEST keys are on prod right now
+3. **Staging `DATABASE_URL` password** — stored `SUPABASE_STAGING_DB_PASSWORD` fails `28P01` server-side (rotation?); supply current
+4. **~170 migrations** on prod Supabase (issue #493) — `otp_codes` gets applied via targeted DDL; full catch-up still needed (restaurant-discovery 500 may be a missing column — watch after deploy)
+5. **`REDIS_URL`** on prod backend (idempotency/locks/queues degraded)
+6. Rotate `ADMIN_API_KEY` to a prod-only value (currently staging's after the partial copy)
