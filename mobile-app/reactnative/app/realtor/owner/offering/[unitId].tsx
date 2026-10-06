@@ -27,7 +27,7 @@ export default function OfferingModeScreen() {
 
   const toggle = (mode: string) => setModes((ms) => ms.map((m) => (m.mode === mode ? { ...m, enabled: !m.enabled } : m)));
   const setNaira = (mode: string, field: 'price' | 'nightlyPrice' | 'cautionDeposit', naira: string) =>
-    setModes((ms) => ms.map((m) => (m.mode === mode ? { ...m, [field]: (Number(naira.replace(/[^0-9.]/g, '')) || 0) * 100 } : m)));
+    setModes((ms) => ms.map((m) => (m.mode === mode ? { ...m, [field]: Math.round((Number(naira.replace(/[^0-9.]/g, '')) || 0) * 100) } : m)));
 
   const submit = async () => {
     await save.mutateAsync(modes);

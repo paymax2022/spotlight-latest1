@@ -42,7 +42,8 @@ export default function VendorJobDetailScreen() {
   const meta = MAINT_STATUS_META[r.status];
 
   const doQuote = async () => {
-    const kobo = (Number(amount.replace(/[^0-9.]/g, '')) || 0) * 100;
+    // Rounded: 19.99 * 100 is 1998.9999999999998 as a float, and kobo is an integer.
+    const kobo = Math.round((Number(amount.replace(/[^0-9.]/g, '')) || 0) * 100);
     if (kobo <= 0) return setError('Enter a quote amount.');
     setError(undefined);
     await submitQuote.mutateAsync({ requestId: r.id, amount: kobo, note: note.trim() });
