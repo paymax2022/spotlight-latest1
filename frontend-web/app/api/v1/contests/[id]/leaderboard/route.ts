@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
-import { handleApiError } from '@/src/lib/api/responses';
+import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 // E2E-X-026: bridge-owned getLeaderboard — totals.service's version embeds
 // contestant_share_links with no FK (PGRST200 → swallowed → permanently []).
 import { getLeaderboard } from '@/src/server/voting-bridge/leaderboard.service';
 import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
 import { createAdminClient } from '@/lib/supabase/server';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Compute rankChange direction.
@@ -28,6 +30,12 @@ export async function GET(
 ) {
   try {
     const { id: contestId } = await context.params;
+    // Match the sibling contestants/vote-packages routes: non-UUID ids can
+    // never match — reject before the visibility/totals queries instead of
+    // silently returning [] via swallowed PostgREST errors.
+    if (!UUID_RE.test(contestId)) {
+      return errorResponse('Invalid contest ID', 400);
+    }
     const supabase = createAdminClient();
 
     // Respect admin visibility: when the leaderboard is hidden for the contest

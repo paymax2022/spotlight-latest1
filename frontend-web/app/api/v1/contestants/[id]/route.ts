@@ -2,12 +2,19 @@ import { NextResponse } from 'next/server';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { createAdminClient } from '@/lib/supabase/server';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id: contestantId } = await context.params;
+    // contestants.id is uuid — reject a malformed value before the query so it
+    // doesn't surface as a Postgres 22P02 → 500.
+    if (!UUID_RE.test(contestantId)) {
+      return errorResponse('Invalid contestant ID', 400);
+    }
     const supabase = createAdminClient();
 
     // Read the contestant from the `contestants` roster — the table
