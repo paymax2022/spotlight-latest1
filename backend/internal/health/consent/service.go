@@ -57,6 +57,12 @@ func (s *Service) Grant(ctx context.Context, grantorID, granteeID, subjectOwnerI
 	if subjectOwnerID == "" {
 		subjectOwnerID = grantorID // default: subject consents about own records
 	}
+	// Only the data subject may consent over their own records. A caller-
+	// supplied subject_owner_id naming someone else minted a self-forged grant
+	// that HasActiveGrant honoured — an IDOR over PHI (wave-6 prod probe).
+	if subjectOwnerID != grantorID {
+		return nil, errors.New("consent: only the data subject may grant over their own records")
+	}
 	c := &Consent{
 		ID:             uuid.New().String(),
 		GrantorID:      grantorID,
@@ -94,17 +100,24 @@ func (s *Service) Revoke(ctx context.Context, grantorID, consentID string) error
 	return nil
 }
 
+// hasActiveGrantQuery fetches the grantee's grants over this subject; the
+// canonical active-grant rule (grantActive) is applied in Go — one source of
+// truth for active/scope/expiry, shared with the unit tests. Most-recent first
+// so a fresh grant is preferred; a revoked/expired/narrower grant is skipped.
+// `grantor_id = subject_owner_id` is the defense-in-depth twin of the Grant
+// guard: a row can only confer access when the SUBJECT granted it, so forged
+// grants (grantor ≠ subject — e.g. rows minted before the Grant guard, or via
+// direct SQL) are invisible to every consent-gated read.
+const hasActiveGrantQuery = `SELECT id, scope, state, expires_at FROM health_consents
+	           WHERE grantee_id=$1 AND subject_owner_id=$2
+	             AND grantor_id = subject_owner_id
+	           ORDER BY granted_at DESC`
+
 // HasActiveGrant returns true when granteeID currently holds an ACTIVE, unexpired
 // consent over subjectOwnerID's data for the given scope (or ALL). This is the
 // HL-8 cross-vertical read gate used by the records service.
 func (s *Service) HasActiveGrant(ctx context.Context, granteeID, subjectOwnerID, scope string) (string, bool, error) {
-	// Fetch the grantee's grants over this subject and apply the canonical
-	// active-grant rule (grantActive) in Go — one source of truth for
-	// active/scope/expiry, shared with the unit tests. Most-recent first so a fresh
-	// grant is preferred; a revoked/expired/narrower grant is skipped.
-	const q = `SELECT id, scope, state, expires_at FROM health_consents
-	           WHERE grantee_id=$1 AND subject_owner_id=$2 ORDER BY granted_at DESC`
-	rows, err := s.db.Query(ctx, q, granteeID, subjectOwnerID)
+	rows, err := s.db.Query(ctx, hasActiveGrantQuery, granteeID, subjectOwnerID)
 	if err != nil {
 		return "", false, nil // fail closed, not an error
 	}
