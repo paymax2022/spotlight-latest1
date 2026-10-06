@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	mkt "spotlight/backend/internal/marketplace"
@@ -115,33 +116,54 @@ func TestLiveDB_BoostOnRejectedListing_AutoRefundsSeller(t *testing.T) {
 	}
 }
 
-// TestLiveDB_VerifyID_IsIdempotentUpsertOnly executes the badge-permanence
-// guarantee against the database: VerifyID is an upsert that only ever SETS, so a
-// retried call after a provider timeout must not toggle an existing badge off.
-// The structural sibling of this test proves it by reading service.go and noting
-// no revoke method exists. That reasoning is sound but cannot catch a regression
-// in the repository's SQL — an UPSERT written as an overwrite would satisfy the
-// structural argument and still clear the badge. This runs it.
-func TestLiveDB_VerifyID_IsIdempotentUpsertOnly(t *testing.T) {
+// TestLiveDB_VerifyID_BadgeRequiresAdminReview executes the P0 trust-badge
+// forgery fix end-to-end: a self-serve verification POST must file a PENDING
+// request (mkt_verification_requests) — the badge is granted ONLY by the admin
+// ReviewKYC decision, never synchronously. It also locks the two invariants the
+// queue depends on: one open request per kind, and badge permanence once granted.
+func TestLiveDB_VerifyID_BadgeRequiresAdminReview(t *testing.T) {
 	svc, pool := liveMktService(t)
 	ctx := context.Background()
 
-	user := seedTrustedSeller(t, ctx, pool)
+	user := uuid.New().String()              // no trust row: badge must start false
+	admin := seedTrustedSeller(t, ctx, pool) // any actor id; ReviewKYC only audits it
 
-	if err := svc.VerifyID(ctx, user); err != nil {
-		t.Fatalf("first VerifyID: %v", err)
+	// 1. Self-serve submit files a PENDING request — badge must NOT be set.
+	if _, err := svc.SubmitIDVerification(ctx, user, mkt.VerificationIDInput{
+		IDType: "nin", DocumentURL: "marketplace/" + user + "/doc.jpg",
+	}); err != nil {
+		t.Fatalf("submit id verification: %v", err)
 	}
-	first := verifiedIDBadge(t, ctx, pool, user)
-	if !first {
-		t.Fatal("verified_id_badge is false after VerifyID — the badge was never set")
+	if verifiedIDBadge(t, ctx, pool, user) {
+		t.Fatal("verified_id_badge became true from a self-serve submit — the badge must wait for admin review")
 	}
 
-	// The retry a KYC provider outage produces.
-	if err := svc.VerifyID(ctx, user); err != nil {
-		t.Fatalf("second VerifyID must be idempotent, got: %v", err)
+	// 2. A second submit while one is pending is refused (one open request per kind).
+	if _, err := svc.SubmitIDVerification(ctx, user, mkt.VerificationIDInput{
+		IDType: "bvn", DocumentURL: "marketplace/" + user + "/doc2.jpg",
+	}); err == nil {
+		t.Fatal("a second pending ID request must be refused")
+	}
+
+	// 3. Admin approval grants the badge — the ONLY granting path left.
+	if _, err := svc.ReviewKYC(ctx, admin, "admin", user, mkt.KycReviewInput{
+		Decision: "approve", ReasonCode: "docs_verified",
+	}); err != nil {
+		t.Fatalf("admin approve: %v", err)
 	}
 	if !verifiedIDBadge(t, ctx, pool, user) {
-		t.Error("verified_id_badge flipped to false on the second call — VerifyID is a toggle, not an upsert")
+		t.Fatal("verified_id_badge is false after admin approval — the review path must grant it")
+	}
+
+	// 4. Permanence: a later reject decision (nothing pending now) must not
+	// clear an already-granted badge.
+	if _, err := svc.ReviewKYC(ctx, admin, "admin", user, mkt.KycReviewInput{
+		Decision: "reject", ReasonCode: "spot_check",
+	}); err != nil {
+		t.Fatalf("admin reject: %v", err)
+	}
+	if !verifiedIDBadge(t, ctx, pool, user) {
+		t.Error("verified_id_badge flipped to false — badges are permanent once granted")
 	}
 }
 

@@ -106,6 +106,26 @@ func pageParams(c *gin.Context) (limit, offset int) {
 	return
 }
 
+// maxMarketIDLen bounds the free-form market_id key. 'NG' today; generous
+// headroom for future ISO-ish market codes without allowing unbounded input.
+const maxMarketIDLen = 32
+
+// validMarketIDParam reports whether a market_id query value is safe to send
+// to Postgres: non-empty, bounded, and free of control bytes. An embedded NUL
+// or other control char otherwise reaches the wire as-is and Postgres answers
+// "invalid byte sequence for encoding UTF8" — a 500 for a client bug.
+func validMarketIDParam(s string) bool {
+	if s == "" || len(s) > maxMarketIDLen {
+		return false
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 // requireUser aborts with 401 when unauthenticated; returns the uid otherwise.
 func requireUser(c *gin.Context) (string, bool) {
 	uid := ginutil.UserID(c)
@@ -397,7 +417,15 @@ func (h *Handler) Search(c *gin.Context) {
 
 // Categories GET /categories
 func (h *Handler) Categories(c *gin.Context) {
-	cats, err := h.svc.ListCategories(c.Request.Context(), c.DefaultQuery("market_id", DefaultMarketID))
+	// market_id is a free-form TEXT key: validate it here rather than letting a
+	// malformed value (e.g. an embedded NUL byte) reach Postgres, where it
+	// surfaced as a 500 instead of a caller-correctable 400.
+	marketID := c.DefaultQuery("market_id", DefaultMarketID)
+	if !validMarketIDParam(marketID) {
+		fail(c, fieldErr(CodeValidation, "market_id is invalid", "market_id"))
+		return
+	}
+	cats, err := h.svc.ListCategories(c.Request.Context(), marketID)
 	if err != nil {
 		fail(c, err)
 		return
@@ -407,6 +435,12 @@ func (h *Handler) Categories(c *gin.Context) {
 
 // GetCategory GET /categories/:id
 func (h *Handler) GetCategory(c *gin.Context) {
+	// A non-UUID :id could never identify a row — report not-found rather than
+	// letting the "invalid input syntax for type uuid" surface as a 500.
+	if _, err := uuid.Parse(c.Param("id")); err != nil {
+		fail(c, ErrNotFoundCoded("category"))
+		return
+	}
 	cat, err := h.svc.GetCategory(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		fail(c, err)
@@ -709,30 +743,44 @@ func (h *Handler) SellerReviews(c *gin.Context) {
 	respond(c, http.StatusOK, rs)
 }
 
-// VerifyID POST /verification/id
+// VerifyID POST /verification/id — files a PENDING verification request
+// (contract: 202 {status:"pending"}). The badge is granted only on admin
+// approval (ReviewKYC); this endpoint NEVER sets it.
 func (h *Handler) VerifyID(c *gin.Context) {
 	uid, ok := requireUser(c)
 	if !ok {
 		return
 	}
-	if err := h.svc.VerifyID(c.Request.Context(), uid); err != nil {
+	var in VerificationIDInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, fieldErr(CodeValidation, err.Error(), ""))
+		return
+	}
+	req, err := h.svc.SubmitIDVerification(c.Request.Context(), uid, in)
+	if err != nil {
 		fail(c, err)
 		return
 	}
-	respond(c, http.StatusOK, gin.H{"verified_id_badge": true})
+	respond(c, http.StatusAccepted, gin.H{"status": VerificationStatusPending, "request_id": req.ID})
 }
 
-// VerifyBusiness POST /verification/business
+// VerifyBusiness POST /verification/business — same pending-review contract.
 func (h *Handler) VerifyBusiness(c *gin.Context) {
 	uid, ok := requireUser(c)
 	if !ok {
 		return
 	}
-	if err := h.svc.VerifyBusiness(c.Request.Context(), uid); err != nil {
+	var in VerificationBusinessInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, fieldErr(CodeValidation, err.Error(), ""))
+		return
+	}
+	req, err := h.svc.SubmitBusinessVerification(c.Request.Context(), uid, in)
+	if err != nil {
 		fail(c, err)
 		return
 	}
-	respond(c, http.StatusOK, gin.H{"verified_business_badge": true})
+	respond(c, http.StatusAccepted, gin.H{"status": VerificationStatusPending, "request_id": req.ID})
 }
 
 // idempotency implements the §5 `idem:{key}` 24h replay cache. On the first
