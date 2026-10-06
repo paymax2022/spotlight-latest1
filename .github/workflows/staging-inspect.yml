@@ -1238,7 +1238,7 @@ jobs:
           # behaviour. A missing table makes checkAndClaimIdempotencyKey fail
           # OPEN (vote double-counts) and disables the OTP register path.
           echo "  --- schema presence (PostgREST 200=exists, 404/PGRST205=missing) ---"
-          for t in bridge_idempotency_keys bridge_outbox otp_codes votes vote_totals voter_daily_limits voting_settings user_profiles ledger_accounts ledger_entries; do
+          for t in bridge_idempotency_keys bridge_outbox otp_codes votes vote_totals voter_daily_limits voting_settings user_profiles ledger_accounts ledger_entries restaurants restaurant_likes restaurant_promos featured_campaign; do
             code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
               -H "apikey: $SB_KEY" -H "Authorization: Bearer $SB_KEY" \
               "$SB_URL/rest/v1/$t?limit=0")
