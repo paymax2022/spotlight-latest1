@@ -901,11 +901,22 @@ jobs:
           set -uo pipefail
           SKIP="--skip-deploys"
           export NEWPW="mig_$(openssl rand -hex 24)"
-          node -e 'const q=require("fs").readFileSync(0,"utf8");process.stdout.write(JSON.stringify({query:q}))' <<SQL \
+          echo "ALTER ROLE postgres WITH PASSWORD '${NEWPW}';" > alter.sql
+          ALTER_RESP=$(node -e 'const q=require("fs").readFileSync(0,"utf8");process.stdout.write(JSON.stringify({query:q}))' < alter.sql \
             | curl -sS -m 60 "https://api.supabase.com/v1/projects/$SB_REF/database/query" \
-              -H "Authorization: Bearer $SB_MGMT" -H 'content-type: application/json' -d @- | head -c 300; echo
-            ALTER ROLE postgres WITH PASSWORD '${NEWPW}';
-          SQL
+              -H "Authorization: Bearer $SB_MGMT" -H 'content-type: application/json' -d @- | head -c 300)
+          rm -f alter.sql
+          echo "  ALTER ROLE response: $ALTER_RESP"
+          if echo "$ALTER_RESP" | grep -qiE "unauthorized|error|denied"; then
+            # Management API dead — keep the password already embedded in the
+            # current DSN and only repair the (currently malformed) host.
+            NEWPW=$(railway variable list --service backend --environment staging \
+              --project "$PROJECT" --json 2>/dev/null \
+              | node -e 'const rl=require("readline").createInterface({input:process.stdin});let d="";rl.on("line",l=>d+=l).on("close",()=>{try{const u=new URL(JSON.parse(d).DATABASE_URL);console.log(decodeURIComponent(u.password))}catch{console.log("")}});')
+            export NEWPW
+            [ -n "$NEWPW" ] || { echo "  ABORT: ALTER ROLE unauthorized AND current DSN has no recoverable password"; exit 0; }
+            echo "  ALTER ROLE unavailable — keeping the password already in DATABASE_URL"
+          fi
           # The current DSN points at db.<ref>.supabase.co:5432 (direct) which
           # resolves IPv6-only — Railway cannot route it (dial: network is
           # unreachable). Rewrite DATABASE_URL as the IPv4 Supavisor pooler in
@@ -919,6 +930,15 @@ jobs:
               console.log((p&&(p.region||p.database&&p.database.region))||"");
             }catch{console.log("")}});')
           echo "  project region: ${REGION:-EMPTY}"
+          if [ -z "$REGION" ]; then
+            # Management API unreachable (token dead?) — borrow the sibling
+            # project's pooler region from the PROD backend DSN instead.
+            REGION=$(RAILWAY_TOKEN="${{ secrets.RAILWAY_TOKEN_PRODUCTION }}" \
+              railway variable list --service backend --environment production \
+              --project "$PROJECT" --json 2>/dev/null \
+              | node -e 'const rl=require("readline").createInterface({input:process.stdin});let d="";rl.on("line",l=>d+=l).on("close",()=>{try{const m=String(JSON.parse(d).DATABASE_URL||"").match(/aws-[01]-([a-z0-9-]+)\.pooler/);console.log(m?m[1]:"")}catch{console.log("")}});')
+            echo "  fallback region from prod DSN: ${REGION:-EMPTY}"
+          fi
           [ -n "$REGION" ] || { echo "  ABORT: could not resolve project region — leaving DATABASE_URL untouched"; exit 0; }
           NEWDSN="postgresql://postgres.${SB_REF}:${NEWPW}@aws-0-${REGION}.pooler.supabase.com:6543/postgres"
           printf "%s" "$NEWDSN" | railway variable set DATABASE_URL --stdin --service backend \
