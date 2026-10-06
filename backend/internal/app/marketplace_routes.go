@@ -261,6 +261,12 @@ func RegisterMarketplace(
 	}
 
 	base := r.Group("/v1/marketplace")
+	// Shape-gate every uuid-typed route param (:id/:mediaId/:categoryId) once,
+	// up front — a malformed id answers 404 instead of letting Postgres's
+	// "invalid input syntax for type uuid" escape as a 500. Runs before auth on
+	// member/admin routes too, which is safe: the route shape is public
+	// knowledge and a non-uuid can never match a row.
+	base.Use(marketplace.UUIDParams())
 
 	// ── Escrow webhooks REMOVED (ADR-023 listings-and-connect pivot) ──
 	// The two inbound webhooks (POST /webhooks/logistics/delivery-confirmed and
