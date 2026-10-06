@@ -801,6 +801,11 @@ jobs:
             local body; body="$(head -c 220 /tmp/body | tr '\n' ' ' | sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt>#g')"
             printf "  %-62s -> %s  %s\n" "$path" "$out" "$body"
           }
+          echo "  --- real login through the BFF (POST /api/auth/login) ---"
+          LOGIN_OUT="$(curl -s -o /tmp/lb -w "%{http_code} %{time_total}s" --max-time 45 -X POST "$WEB_BASE/api/auth/login" \
+            -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\"}")"
+          LOGIN_BODY="$(head -c 220 /tmp/lb | tr '\n' ' ' | sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt>#g')"
+          printf "  %-62s -> %s  %s\n" "/api/auth/login (POST)" "$LOGIN_OUT" "$LOGIN_BODY"
           echo "  --- through frontend-web, with Bearer (as the APK) ---"
           probe "/api/finance/restaurant?limit=20&offset=0"
           probe "/api/finance/restaurant?featured=1&sort=likes&limit=10&offset=0"
@@ -810,6 +815,8 @@ jobs:
           probe "/api/finance/associations"
           probe "/api/v1/marketplace/my-listings"
           probe "/api/finance/wallet/balance"
+          probe "/api/registration/contests"
+          probe "/api/v1/contests?limit=2"
           echo "  --- cleanup ---"
           node -e '
             const [url,key,id]=[process.env.SB_URL,process.env.SB_KEY,process.argv[1]];
