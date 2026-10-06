@@ -159,6 +159,8 @@ type walletPreflight struct {
 	// findReplay returns the transfer already recorded under this idempotency
 	// key, or (nil, nil) when the key is new.
 	findReplay func(ctx context.Context, key string) (*WalletTransfer, error)
+	// verifyPIN is the transaction-PIN second factor — fail-closed.
+	verifyPIN func(ctx context.Context, userID, pin string) error
 	// resolve turns the recipient phone into an account.
 	resolve func(ctx context.Context, phone string) (*WalletTransferResolveResponse, error)
 	// enforceTier applies the fail-closed tier / daily-limit guard.
@@ -188,6 +190,15 @@ func (p walletPreflight) run(ctx context.Context, senderID string, req WalletTra
 	}
 	if prior != nil {
 		return prior, nil, nil
+	}
+
+	// Transaction PIN (second factor) — fail-closed, before recipient
+	// resolution and before any money movement. WAL-002: this rail ran with
+	// no PIN check at all, so a Bearer token alone could drain a funded
+	// wallet; the bank-transfer rails and the BFF pin-guard both verify the
+	// PIN before resolving the counterparty, so this rail now matches them.
+	if err := p.verifyPIN(ctx, senderID, req.PIN); err != nil {
+		return nil, nil, err
 	}
 
 	recipient, err := p.resolve(ctx, req.RecipientPhone)
@@ -225,6 +236,7 @@ func (s *Service) findWalletTransferByKey(ctx context.Context, key string) (*Wal
 func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, req WalletTransferRequest) (*WalletTransfer, error) {
 	prior, recipient, err := walletPreflight{
 		findReplay:  s.findWalletTransferByKey,
+		verifyPIN:   s.pins.Verify,
 		resolve:     s.ResolvePaymaxUser,
 		enforceTier: s.tiers.EnforceWalletDebitLimit,
 	}.run(ctx, senderID, req)
@@ -1011,6 +1023,11 @@ type WalletTransferRequest struct {
 	RecipientPhone string `json:"recipient_phone" binding:"required"`
 	AmountKobo     int64  `json:"amount_kobo" binding:"required,min=100"`
 	Narration      string `json:"narration"`
+	// Transaction PIN — the second factor every money movement requires. Not
+	// binding-required because an absent PIN must fail closed via pins.Verify
+	// (missing/invalid both surface as a typed PIN error, same as the bank
+	// rails), not as a generic binding 400.
+	PIN string `json:"pin"`
 	// Not binding-required: the Idempotency-Key header supplies it for header-only
 	// callers, and the handlers merge the header before validating non-empty.
 	IdempotencyKey string `json:"idempotency_key"`
