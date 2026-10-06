@@ -478,6 +478,46 @@ jobs:
               names.map(k => k + "\t" + String(v[k])).join("\n") + "\n");
             console.log("  staging backend FEATURE_* count: " + names.length);'
           rm -f stg-be.json
+          # Dependency-aware promotion: config.Validate() is FATAL under
+          # APP_ENV=production — a flag whose backing credential is absent on
+          # the target aborts boot and the healthcheck fails (observed: 9
+          # consecutive FAILED backend redeploys). Force such flags OFF on the
+          # target instead of copying staging's value.
+          railway variable list --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > tgt-be.json || echo '{}' > tgt-be.json
+          node -e '
+            const fs = require("fs");
+            const tgt = JSON.parse(fs.readFileSync("tgt-be.json","utf8"));
+            const present = (k) => {
+              const v = String(tgt[k] ?? "");
+              return v.length > 0 && !/xxxx|change_me|changeme|your_|your-|placeholder|todo/i.test(v);
+            };
+            const force = {};  // flag -> reason
+            const paystack = present("PAYSTACK_SECRET_KEY");
+            if (!paystack) {
+              force.FEATURE_WALLET_ENABLED = "PAYSTACK_SECRET_KEY missing on target";
+              force.FEATURE_BANK_TRANSFERS_ENABLED = "PAYSTACK_SECRET_KEY missing on target";
+            }
+            if (!present("MONNIFY_SECRET_KEY")) force.FEATURE_BANK_TRANSFERS_ENABLED = "MONNIFY_SECRET_KEY missing on target";
+            if (!present("MAPLERAD_SECRET_KEY")) force.FEATURE_MAPLERAD_ENABLED = "MAPLERAD_SECRET_KEY missing on target";
+            const anyKyc = present("DOJAH_SECRET_KEY") || present("DOJAH_APP_ID") ||
+              (present("SMILE_ID_PARTNER_ID") && present("SMILE_ID_API_KEY")) || present("YOUVERIFY_TOKEN");
+            if (!anyKyc || !present("KYC_PII_ENC_KEY")) force.FEATURE_KYC_VERIFY_ENABLED = "no KYC provider + KYC_PII_ENC_KEY on target";
+            const anySeed = ["ARENA_SIGNING_SEED_THEORY","ARENA_SIGNING_SEED_PRACTICAL","ARENA_SIGNING_SEED_FIRSTAID"].some(present);
+            if (!anySeed) force.FEATURE_ARENA_ENABLED = "no ARENA_SIGNING_SEED_* on target";
+            if (!present("MAPS_GOOGLE_KEY")) force.FEATURE_MAPS_ENABLED = "MAPS_GOOGLE_KEY missing on target";
+            if (!present("BREVO_API_KEY") || !present("OTP_PEPPER") || !present("BREVO_OTP_TEMPLATE_ID"))
+              force.FEATURE_OTP_EMAIL_ENABLED = "Brevo/OTP creds missing on target";
+            const rows = fs.readFileSync("flags.env","utf8").split("\n").filter(Boolean)
+              .map(l => l.split("\t"));
+            const out = rows.map(([k,v]) => {
+              if (force[k] && v === "true") { console.log("  FORCE OFF " + k + " — " + force[k]); return [k,"false"]; }
+              return [k,v];
+            });
+            // Also ensure forced-off flags exist on target even if staging lacks them.
+            for (const k of Object.keys(force)) if (!rows.some(r => r[0] === k)) out.push([k,"false"]);
+            fs.writeFileSync("flags.env", out.map(r => r.join("\t")).join("\n") + "\n");'
+          rm -f tgt-be.json
           # APP_ENV is the target's own name — never copied across environments.
           # --skip-deploys on every set: 48+ sets each triggering a redeploy
           # queue a storm of superseding builds that all fail, leaving the OLD
