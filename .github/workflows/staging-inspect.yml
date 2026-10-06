@@ -479,8 +479,13 @@ jobs:
             console.log("  staging backend FEATURE_* count: " + names.length);'
           rm -f stg-be.json
           # APP_ENV is the target's own name — never copied across environments.
+          # --skip-deploys on every set: 48+ sets each triggering a redeploy
+          # queue a storm of superseding builds that all fail, leaving the OLD
+          # container live. One explicit `railway redeploy` at the end instead.
+          SKIP="--skip-deploys"
+          railway variable set --help 2>&1 | grep -q "skip-deploys" || SKIP=""
           railway variable set APP_ENV="$ENVIRONMENT" \
-            --service backend --environment "$ENVIRONMENT" --project "$PROJECT" \
+            --service backend --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP \
             && echo "  APP_ENV=$ENVIRONMENT set on backend"
           COUNT=0
           while IFS=$'\t' read -r NAME VAL; do
@@ -489,7 +494,7 @@ jobs:
             # a credential can never travel through this path.
             case "$VAL" in true|false) ;; *) echo "  skip $NAME (non-boolean value)"; continue;; esac
             if railway variable set "$NAME"="$VAL" \
-              --service backend --environment "$ENVIRONMENT" --project "$PROJECT" >/dev/null; then
+              --service backend --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP >/dev/null; then
               COUNT=$((COUNT+1))
             else
               echo "  failed to set $NAME"
@@ -497,6 +502,11 @@ jobs:
           done < flags.env
           rm -f flags.env
           echo "  applied $COUNT FEATURE_* flags to backend ($ENVIRONMENT)"
+          if railway redeploy --service backend --environment "$ENVIRONMENT" --project "$PROJECT" --yes; then
+            echo "  single redeploy triggered to pick up the new vars"
+          else
+            echo "  WARN: backend redeploy trigger failed"
+          fi
 
       - name: "Diag: GoTrue auth config (read-only; signup policy + rate budgets)"
         if: inputs.fix_env_parity
