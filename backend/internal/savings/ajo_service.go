@@ -348,12 +348,16 @@ func (s *AjoService) markDefault(ctx context.Context, circleID, userID string) {
 }
 
 func (s *AjoService) getCircle(ctx context.Context, circleID string) (*Circle, error) {
-	const q = `SELECT id, creator_user_id, name, contribution_kobo, interval_secs, state, current_cycle, total_cycles, cycle_job_id
+	// created_at/updated_at ride along — the circle detail read serialised
+	// zero times while the list read showed real ones.
+	const q = `SELECT id, creator_user_id, name, contribution_kobo, interval_secs, state, current_cycle, total_cycles, cycle_job_id,
+	                  created_at, updated_at
 	           FROM ajo_circles WHERE id=$1`
 	var c Circle
 	var state string
 	if err := s.db.QueryRow(ctx, q, circleID).Scan(&c.ID, &c.CreatorUserID, &c.Name,
-		&c.ContributionKobo, &c.IntervalSecs, &state, &c.CurrentCycle, &c.TotalCycles, &c.CycleJobID); err != nil {
+		&c.ContributionKobo, &c.IntervalSecs, &state, &c.CurrentCycle, &c.TotalCycles, &c.CycleJobID,
+		&c.CreatedAt, &c.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}

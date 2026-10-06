@@ -352,6 +352,17 @@ func (s *VaultService) EnableAutoSave(ctx context.Context, ownerID, vaultID stri
 	if s.sched == nil {
 		return "", errors.New("savings: scheduler unavailable")
 	}
+	// Re-enabling REPLACES the schedule: every Schedule() call inserts a new
+	// durable job, so without cancelling the prior one a member who edited
+	// their autosave had BOTH jobs running — the orphaned one kept debiting at
+	// the old amount/cadence and was no longer reachable via autosave_job_id.
+	if v.AutoSaveJobID != nil && *v.AutoSaveJobID != "" {
+		if err := s.sched.Cancel(ctx, *v.AutoSaveJobID); err != nil {
+			// Best-effort: an already-terminal job is fine to leave; anything
+			// worse is logged, not hidden.
+			log.Printf("[savings] autosave replace: cancel prior job %s: %v", *v.AutoSaveJobID, err)
+		}
+	}
 	job, err := s.sched.Schedule(ctx, scheduler.Job{
 		JobType:      AutoSaveJobType,
 		OwnerUserID:  ownerID,
@@ -425,12 +436,16 @@ func (s *VaultService) ListVaults(ctx context.Context, ownerID string) ([]Vault,
 }
 
 func (s *VaultService) getVault(ctx context.Context, vaultID string) (*Vault, error) {
-	const q = `SELECT id, owner_user_id, name, kind, state, target_kobo, config_version, matures_at, autosave_job_id
+	// created_at/updated_at ride along — without them the single-vault detail
+	// read serialised zero times while the list read showed real ones.
+	const q = `SELECT id, owner_user_id, name, kind, state, target_kobo, config_version, matures_at, autosave_job_id,
+	                  created_at, updated_at
 	           FROM savings_vaults WHERE id=$1`
 	var v Vault
 	var kind, state string
 	if err := s.db.QueryRow(ctx, q, vaultID).Scan(&v.ID, &v.OwnerUserID, &v.Name, &kind,
-		&state, &v.TargetKobo, &v.ConfigVersion, &v.MaturesAt, &v.AutoSaveJobID); err != nil {
+		&state, &v.TargetKobo, &v.ConfigVersion, &v.MaturesAt, &v.AutoSaveJobID,
+		&v.CreatedAt, &v.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}

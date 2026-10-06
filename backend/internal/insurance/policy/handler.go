@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"spotlight/backend/go-common/ginutil"
 )
@@ -62,6 +63,19 @@ func mapErr(c *gin.Context, err error) {
 	}
 }
 
+// uuidParamOK gates a :id path parameter that must be a UUID. The backing
+// columns are uuid-typed, so a malformed id reached Postgres as an
+// invalid-input-syntax error and leaked out of mapErr's default branch as a
+// 500 — a client typo looked like a server fault. A malformed id can never
+// name a real row, so it maps to the same not_found a missing row returns.
+func uuidParamOK(c *gin.Context) bool {
+	if _, err := uuid.Parse(c.Param("id")); err != nil {
+		mapErr(c, ErrNotFound)
+		return false
+	}
+	return true
+}
+
 // CreateQuote (member): POST /quotes {product_code, sum_insured_kobo, inputs}
 func (h *Handler) CreateQuote(c *gin.Context) {
 	uid, ok := ginutil.RequireUser(c)
@@ -87,6 +101,9 @@ func (h *Handler) CreateQuote(c *gin.Context) {
 
 // GetQuote (member): GET /quotes/:id
 func (h *Handler) GetQuote(c *gin.Context) {
+	if !uuidParamOK(c) {
+		return
+	}
 	qr, err := h.svc.GetQuote(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
@@ -112,6 +129,12 @@ func (h *Handler) Bind(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	if _, err := uuid.Parse(body.QuoteID); err != nil {
+		// Same gate as the :id path params — a malformed quote id hit the
+		// uuid-typed column and 500'd.
+		mapErr(c, ErrNotFound)
 		return
 	}
 	p, err := h.svc.BindFromQuote(c.Request.Context(), uid, body.QuoteID, idemKey)
@@ -142,6 +165,9 @@ func (h *Handler) List(c *gin.Context) {
 
 // Get (member): GET /policies/:id
 func (h *Handler) Get(c *gin.Context) {
+	if !uuidParamOK(c) {
+		return
+	}
 	p, err := h.svc.GetPolicy(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
@@ -152,6 +178,9 @@ func (h *Handler) Get(c *gin.Context) {
 
 // Certificate (member): GET /policies/:id/certificate — signed URL.
 func (h *Handler) Certificate(c *gin.Context) {
+	if !uuidParamOK(c) {
+		return
+	}
 	ref, err := h.svc.CertificateRef(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
@@ -168,6 +197,9 @@ func (h *Handler) Certificate(c *gin.Context) {
 
 // Cancel (member): POST /policies/:id/cancel {reason}
 func (h *Handler) Cancel(c *gin.Context) {
+	if !uuidParamOK(c) {
+		return
+	}
 	var body struct {
 		Reason string `json:"reason"`
 	}
@@ -182,6 +214,9 @@ func (h *Handler) Cancel(c *gin.Context) {
 
 // AddBeneficiary (member): POST /policies/:id/beneficiaries
 func (h *Handler) AddBeneficiary(c *gin.Context) {
+	if !uuidParamOK(c) {
+		return
+	}
 	var body struct {
 		FullName     string  `json:"full_name" binding:"required"`
 		Relationship string  `json:"relationship" binding:"required"`
@@ -207,6 +242,9 @@ func (h *Handler) AddBeneficiary(c *gin.Context) {
 
 // ListBeneficiaries (member): GET /policies/:id/beneficiaries
 func (h *Handler) ListBeneficiaries(c *gin.Context) {
+	if !uuidParamOK(c) {
+		return
+	}
 	bs, err := h.svc.ListBeneficiaries(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
