@@ -10,7 +10,7 @@
  *   POST   /api/v1/transfers/bank (bank transfer initiation)
  */
 import { api } from '@/api/client';
-import { generateIdempotencyKey } from '@/utils/idempotency';
+import { withIntentKey } from '@/utils/intentKey';
 import type { Beneficiary, BankTransferResult } from '@/types/wallet';
 
 type ApiRecord = Record<string, unknown>;
@@ -84,8 +84,10 @@ export interface InitiateBankTransferPayload {
 export async function initiateBankTransfer(
   payload: InitiateBankTransferPayload,
 ): Promise<BankTransferResult> {
-  const idempotencyKey = generateIdempotencyKey();
-  const response = await api.post(
+  // Keyed on the intent, not the attempt: a retry after a timeout must reach
+  // the server as the same transfer, not a second one.
+  const { pin, ...intent } = payload;
+  const response = await withIntentKey('transfer:bank', intent, (idempotencyKey) => api.post(
     '/api/v1/transfers/bank',
     {
       bank_code:        payload.bankCode,
@@ -93,10 +95,10 @@ export async function initiateBankTransfer(
       amount_kobo:      payload.amountKobo,
       narration:        payload.narration?.slice(0, 100),
       save_beneficiary: payload.saveBeneficiary ?? false,
-      pin:              payload.pin,
+      pin,
     },
     { headers: { 'Idempotency-Key': idempotencyKey } },
-  );
+  ));
   const data = (response.data?.data ?? response.data) as ApiRecord;
   const transfer = (data?.transfer ?? data) as ApiRecord;
   return {
