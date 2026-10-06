@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -136,6 +137,13 @@ var ErrOptionsUnavailable = errors.New("catalog: field options unavailable")
 // ErrNoSuchField means the product has no such field, or it carries no remote
 // option list.
 var ErrNoSuchField = errors.New("catalog: unknown field or field has no remote options")
+
+// ErrNotFound means no ACTIVE catalog row matches the requested product code.
+// It is a SENTINEL so a handler can map it to 404 without string matching —
+// anything else (a dead pool, a missing column, a timeout) must keep its real
+// status, otherwise a catalog outage looks like an empty catalog and every
+// /products/* route reports a healthy 404 while dead.
+var ErrNotFound = errors.New("catalog: product not found")
 
 // FieldOptions serves the list behind a schema field's options_url.
 // The client names a PRODUCT and a FIELD, never a URL: the URL is read from our
@@ -271,14 +279,15 @@ func hasSchemaFields(schema map[string]any) bool {
 	return len(fields) > 0
 }
 
-// Get returns a single active product by code.
+// Get returns a single active product by code. A missing code returns
+// ErrNotFound (wrapped with the code); a failed query returns the real error.
 func (s *Service) Get(ctx context.Context, productCode string) (*Product, error) {
 	rows, err := s.list(ctx, listFilter{code: productCode, onlyActive: true})
 	if err != nil {
 		return nil, err
 	}
 	if len(rows) == 0 {
-		return nil, fmt.Errorf("catalog: product %q not found", productCode)
+		return nil, fmt.Errorf("%w: %q", ErrNotFound, productCode)
 	}
 	return &rows[0], nil
 }
@@ -443,7 +452,13 @@ func (s *Service) FormSchema(ctx context.Context, productCode string) (map[strin
 		WHERE code = $1 AND active = true
 		LIMIT 1`, productCode).Scan(&raw, &source)
 	if err != nil {
-		return nil, false, fmt.Errorf("catalog: product %q not found", productCode)
+		// Only an empty result is "not found". A query failure (missing column,
+		// dead pool, timeout) is a real error and must surface as one — folding
+		// it into 404 is what made a dead catalog look healthy.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, false, fmt.Errorf("%w: %q", ErrNotFound, productCode)
+		}
+		return nil, false, fmt.Errorf("catalog: form schema for %q: %w", productCode, err)
 	}
 	schema := decodeStoredSchema(raw)
 	if schema == nil {

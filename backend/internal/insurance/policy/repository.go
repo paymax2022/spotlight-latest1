@@ -8,6 +8,7 @@ import (
 	"spotlight/backend/internal/insurance/gateway"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -57,11 +58,14 @@ func (r *Repository) Create(ctx context.Context, p *Policy) (*Policy, error) {
 }
 
 // Get returns a policy by id (no ownership filter; callers enforce object-level
-// authZ in the service).
+// authZ in the service). A missing id returns ErrNotFound.
 func (r *Repository) Get(ctx context.Context, id string) (*Policy, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+policyCols+` FROM public.insurance_policy WHERE id = $1`, id)
 	p, err := scanPolicy(row)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
 		return nil, err
 	}
 	return p, nil
@@ -225,6 +229,10 @@ func (r *Repository) ListBeneficiaries(ctx context.Context, policyID string) ([]
 // Sentinel errors.
 var (
 	ErrConflict = errors.New("policy: version conflict (concurrent transition)")
+	// ErrNotFound is returned by row lookups that hit no record. Normalising
+	// pgx.ErrNoRows into a domain sentinel is what lets the handler return 404
+	// instead of leaking a raw driver error as a 500.
+	ErrNotFound = errors.New("policy: not found")
 )
 
 // insertQuote persists an ephemeral, TTL-bounded quote and returns its id. The
@@ -276,6 +284,9 @@ func (r *Repository) getQuote(ctx context.Context, quoteID string) (*QuoteResult
 		&qr.PremiumKobo, &qr.SumInsuredKobo, &qr.Currency, &qr.CommissionKobo, &terms, &inputs, &qr.ExpiresAt,
 	)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", ErrNotFound
+		}
 		return nil, "", err
 	}
 	_ = json.Unmarshal(terms, &qr.Terms)

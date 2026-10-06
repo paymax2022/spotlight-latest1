@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"spotlight/backend/go-common/httperr"
+	"spotlight/backend/internal/insurance/catalog"
 	"spotlight/backend/internal/insurance/gateway"
 	"strconv"
 
@@ -27,6 +28,10 @@ func NewHandler(svc *Service, signRef func(ref string) (string, error)) *Handler
 // mapErr maps service sentinel errors to HTTP responses.
 func mapErr(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, ErrNotFound), errors.Is(err, catalog.ErrNotFound):
+		// Missing policy/quote id — or, on the quote path, a product code the
+		// catalog does not carry. Without this branch both leaked as 500s.
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 	case errors.Is(err, ErrForbidden):
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 	case errors.Is(err, ErrConsentRequired):

@@ -137,7 +137,13 @@ func (h *Handler) GetProduct(c *gin.Context) {
 	}
 	p, err := h.svc.Get(c.Request.Context(), c.Param(keyCode))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{keyError: gin.H{keyCode: keyNotFound, keyMessage: keyProductNotFound}})
+		// Only ErrNotFound is a 404. A dead catalog query is a 500 — masking it
+		// as "not found" made a broken table look like an empty product code.
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{keyError: gin.H{keyCode: keyNotFound, keyMessage: keyProductNotFound}})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": p})
@@ -158,7 +164,11 @@ func (h *Handler) GetProductSchema(c *gin.Context) {
 	code := c.Param(keyCode)
 	schema, available, err := h.svc.FormSchema(c.Request.Context(), code)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{keyError: gin.H{keyCode: keyNotFound, keyMessage: keyProductNotFound}})
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{keyError: gin.H{keyCode: keyNotFound, keyMessage: keyProductNotFound}})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	if schema == nil {
@@ -192,6 +202,9 @@ func (h *Handler) GetFieldOptions(c *gin.Context) {
 
 	opts, err := h.svc.FieldOptions(c.Request.Context(), code, field, c.Query("query"))
 	switch {
+	case errors.Is(err, ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{keyError: gin.H{keyCode: keyNotFound, keyMessage: keyProductNotFound}})
+		return
 	case errors.Is(err, ErrNoSuchField):
 		// The form asked for a list this field does not have. A 404 here is about
 		// the FIELD, so say so rather than letting it read as a missing product.
