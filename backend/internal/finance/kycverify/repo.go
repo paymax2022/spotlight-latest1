@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -48,8 +49,14 @@ func (r *Repository) CreateSession(ctx context.Context, userID string, targetTie
 	return &s, nil
 }
 
-// GetSession returns a session by id, or ErrNotFound.
+// GetSession returns a session by id, or ErrNotFound. A malformed (non-UUID) id
+// is rejected up front as ErrInvalidRequest — verification_session.id is uuid,
+// so a bad shape would otherwise hit Postgres "invalid input syntax" → 500 on
+// every caller (member session read, check submissions, admin case resolve).
 func (r *Repository) GetSession(ctx context.Context, id string) (*Session, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, ErrInvalidRequest
+	}
 	const q = `
 		SELECT id, user_id::text, target_tier, status, created_at, updated_at
 		FROM verification_session WHERE id = $1`

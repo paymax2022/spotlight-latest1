@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // MemberHandler exposes the mobile-aligned member discovery surface
@@ -112,6 +113,13 @@ func (h *MemberHandler) Swipe(c *gin.Context) {
 	var req SwipeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	// UUID-shape gate: connect_profiles.id is uuid, so a malformed targetId can
+	// never resolve. Reject it here as not-found (the same answer a well-formed
+	// but nonexistent id gets) rather than letting Postgres error → 500.
+	if _, uerr := uuid.Parse(req.TargetID); uerr != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "target profile not found"})
 		return
 	}
 	matched, matchID, err := h.svc.Swipe(c.Request.Context(), uid, req.TargetID, req.Direction, h.liker)

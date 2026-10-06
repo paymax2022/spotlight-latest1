@@ -746,6 +746,13 @@ type connectLikeRecorderAdapter struct{ svc *connectmatching.Service }
 func (a *connectLikeRecorderAdapter) Like(ctx context.Context, fromUserID, toProfileID, kind string) (connectdiscovery.SwipeResult, error) {
 	res, err := a.svc.Like(ctx, fromUserID, toProfileID, kind)
 	if err != nil {
+		// Translate the matcher's not-found sentinel into the discovery domain's
+		// own — they are different packages, so errors.Is across them needs this
+		// seam (a raw passthrough would land on the 500 default in
+		// mapDiscoveryError).
+		if errors.Is(err, connectmatching.ErrTargetNotFound) {
+			return connectdiscovery.SwipeResult{}, connectdiscovery.ErrTargetNotFound
+		}
 		return connectdiscovery.SwipeResult{}, err
 	}
 	return connectdiscovery.SwipeResult{Matched: res.Matched, MatchID: res.MatchID}, nil
