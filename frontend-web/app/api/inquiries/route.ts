@@ -17,7 +17,8 @@ function hasBasicEmail(value: unknown) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as InquiryPayload;
+    const body = (await request.json().catch(() => null)) as InquiryPayload;
+    if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
 
     if (!isNonEmptyString(body.serviceName) || !isNonEmptyString(body.formType)) {
       return NextResponse.json(

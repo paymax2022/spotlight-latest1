@@ -64,7 +64,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     if (!name) return errorResponse('name is required', 400);
@@ -114,7 +115,8 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.id) return errorResponse('id is required', 400);
 
     const updates: Record<string, unknown> = {};

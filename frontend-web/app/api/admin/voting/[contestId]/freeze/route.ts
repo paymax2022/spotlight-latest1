@@ -13,7 +13,8 @@ export async function POST(
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
     const { contestId } = await context.params;
-    const body = (await request.json()) as { action: 'freeze' | 'unfreeze'; snapshotLabel?: string };
+    const body = (await request.json().catch(() => null)) as { action: 'freeze' | 'unfreeze'; snapshotLabel?: string };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.action) return errorResponse('action is required', 400);
 

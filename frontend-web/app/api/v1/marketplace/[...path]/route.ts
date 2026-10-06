@@ -29,3 +29,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ path: stri
 export async function PUT(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path, true); }
 export async function PATCH(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path, true); }
 export async function DELETE(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path, true); }
+// HEAD is a read like GET — same no-hard-auth policy (public endpoints stay
+// browsable, Authorization still forwarded when present); proxyToGoBackend
+// derives the upstream method from request.method, so it goes out as HEAD.
+export async function HEAD(request: Request, ctx: { params: Promise<{ path: string[] }> }) { const { path } = await ctx.params; return forward(request, path, false); }

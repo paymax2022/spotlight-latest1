@@ -12,7 +12,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const { id } = await context.params;
     const supabase = createAdminClient();
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const validityEnd = body?.validityEnd;
     if (!validityEnd) throw new ApiError('validityEnd is required', 400);
 

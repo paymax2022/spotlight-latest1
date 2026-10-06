@@ -90,7 +90,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     await assertAdminPermission(request, PERMISSION);
-    const body = (await request.json()) as AreaBody;
+    const body = (await request.json().catch(() => null)) as AreaBody;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const label = String(body.label ?? '').trim();
     if (!label) return errorResponse('Label is required', 400);
 
@@ -131,7 +132,8 @@ export async function POST(request: Request) {
 export async function PUT(request: Request) {
   try {
     await assertAdminPermission(request, PERMISSION);
-    const body = (await request.json()) as AreaBody;
+    const body = (await request.json().catch(() => null)) as AreaBody;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const id = String(body.id ?? '').trim();
     if (!id) return errorResponse('id is required', 400);
 

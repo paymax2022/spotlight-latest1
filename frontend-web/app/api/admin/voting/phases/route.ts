@@ -32,7 +32,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.contestId) return errorResponse('contestId is required', 400);
     if (!body.phaseKey) return errorResponse('phaseKey is required', 400);
     if (!body.phaseLabel) return errorResponse('phaseLabel is required', 400);

@@ -8,7 +8,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   if (unavailable) return unavailable;
   try {
     const identity = await requireUtilitySupport(request);
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const status = body.status === 'rejected' ? 'rejected' : body.status === 'resolved' ? 'resolved' : null;
     const resolutionNote = typeof body.resolution_note === 'string'
       ? body.resolution_note.trim()

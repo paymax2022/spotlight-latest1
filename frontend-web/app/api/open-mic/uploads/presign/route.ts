@@ -21,12 +21,13 @@ function isSubmissionWindowOpen(contest: Awaited<ReturnType<typeof getContestByS
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       contestSlug?: string;
       fileName?: string;
       fileSize?: number;
       contentType?: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const contestSlug = String(body.contestSlug || '').trim();
     const fileName = sanitizeObjectFileName(String(body.fileName || ''));
     const contentType = String(body.contentType || '').toLowerCase();

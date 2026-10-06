@@ -24,7 +24,8 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     const contestant = await getContestant(params.id);
     if (!contestant) return errorResponse('Contestant not found', 404);
 
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const action = typeof body.action === 'string' ? body.action : null;
 
     // Shortcut actions

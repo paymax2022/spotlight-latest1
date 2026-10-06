@@ -58,7 +58,8 @@ export async function POST(request: Request) {
     const ip = getRequestIp(request);
     const ua = request.headers.get('user-agent') ?? 'unknown';
 
-    const body = (await request.json()) as WalletVoteBody;
+    const body = (await request.json().catch(() => null)) as WalletVoteBody;
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.contestId) return errorResponse('contestId is required', 400);
     if (!body.contestantId) return errorResponse('contestantId is required', 400);

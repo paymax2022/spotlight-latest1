@@ -46,3 +46,8 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ path: st
   const { path } = await ctx.params;
   return forward(request, path);
 }
+
+export async function HEAD(request: Request, ctx: { params: Promise<{ path: string[] }> }) {
+  const { path } = await ctx.params;
+  return forward(request, path);
+}

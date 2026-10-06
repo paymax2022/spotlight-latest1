@@ -210,7 +210,8 @@ const MAX_INTEREST_AREAS_PER_APPLICATION = 2;
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = (await request.json().catch(() => null)) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const supabase = createAdminClient();
 
     const paymentPreference = body.payment_preference === 'one_off' ? 'one_off' : 'installment';

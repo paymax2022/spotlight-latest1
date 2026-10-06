@@ -31,7 +31,8 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   const params = await ctx.params;
   try {
     const identity = await assertAdminPermission(request, 'applications:review');
-    const body = (await request.json()) as AcademyReviewUpdateInput;
+    const body = (await request.json().catch(() => null)) as AcademyReviewUpdateInput;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const supabase = createAdminClient();
     const updated = await updateAcademyApplicationReview(
       supabase,

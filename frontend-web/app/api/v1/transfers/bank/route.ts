@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     const idempotencyKey = (request.headers.get('Idempotency-Key') ?? '').trim();
     if (!idempotencyKey) throw new ApiError('Idempotency-Key header is required', 400);
 
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       bank_code?: unknown;
       bank_name?: unknown;
       account_number?: unknown;
@@ -36,6 +36,7 @@ export async function POST(request: Request) {
       save_beneficiary?: unknown;
       pin?: unknown;
     };
+    if (!body) throw new ApiError('Invalid JSON body', 400);
 
     const bankCode         = String(body.bank_code ?? '').trim();
     const accountNumber    = String(body.account_number ?? '').trim().replace(/\D/g, '');

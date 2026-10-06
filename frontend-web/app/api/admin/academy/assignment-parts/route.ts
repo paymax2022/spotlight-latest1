@@ -36,7 +36,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     await assertAdminPermission(request, 'applications:review');
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = (await request.json().catch(() => null)) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     const assignmentId = String(body.assignment_id ?? '').trim();
     const title = String(body.title ?? '').trim();
@@ -114,7 +115,8 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'applications:review');
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = (await request.json().catch(() => null)) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const supabase = createAdminClient();
 
     if (body.partSubmissionId) {

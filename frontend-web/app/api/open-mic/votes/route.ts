@@ -7,7 +7,7 @@ export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
 
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       contestId?: string;
       submissionId?: string;
       voterName?: string;
@@ -15,6 +15,7 @@ export async function POST(request: Request) {
       votes?: number;
       paymentReference?: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.contestId)    return errorResponse('contestId is required', 400);
     if (!body.submissionId) return errorResponse('submissionId is required', 400);

@@ -17,7 +17,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('You are not eligible to vote in this election', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const candidateId = String(body?.candidateId ?? '');
     if (!candidateId) throw new ApiError('candidateId is required', 400);
 

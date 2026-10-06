@@ -15,11 +15,12 @@ import { ensureEnrollment } from '@/src/server/services/academy';
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       planId: string;
       paymentId: string;
       reference: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.planId || !body.paymentId || !body.reference) {
       return errorResponse('planId, paymentId, and reference are required', 400);

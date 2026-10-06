@@ -23,12 +23,13 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     await assertAdminPermission(request, 'programs:manage');
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       slug?: unknown;
       label?: unknown;
       description?: unknown;
       sortOrder?: unknown;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     const label = typeof body.label === 'string' ? body.label.trim() : '';
     if (!label) return errorResponse('Category label is required.', 400);

@@ -51,11 +51,12 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'programs:manage');
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       applicationId: string; batchId?: string;
       totalAmountNgn: number; installmentsCount: number;
       frequency: string; startDate: string; notes?: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.applicationId)                             return errorResponse('applicationId required', 400);
     if (!body.totalAmountNgn || body.totalAmountNgn <= 0) return errorResponse('totalAmountNgn required', 400);

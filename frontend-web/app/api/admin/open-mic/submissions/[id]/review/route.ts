@@ -8,7 +8,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const params = await context.params;
   try {
     const identity = await assertOpenMicScoreAdmin(request);
-    const body = (await request.json()) as OpenMicSubmissionReviewInput;
+    const body = (await request.json().catch(() => null)) as OpenMicSubmissionReviewInput;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.status) return errorResponse('status is required', 400);
     const submission = await reviewSubmission(params.id, body, identity.actorId);
     addAuditEvent({

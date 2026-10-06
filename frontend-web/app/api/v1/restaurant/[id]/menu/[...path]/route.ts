@@ -43,3 +43,7 @@ export async function GET(request: Request, ctx: Ctx) {
   const { id, path } = await ctx.params;
   return forward(request, id, path);
 }
+export async function HEAD(request: Request, ctx: Ctx) {
+  const { id, path } = await ctx.params;
+  return forward(request, id, path);
+}

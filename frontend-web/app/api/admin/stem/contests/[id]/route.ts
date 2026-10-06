@@ -24,7 +24,8 @@ export async function PATCH(
 ) {
   try {
     const identity = await assertStemAdmin(request);
-    const body = (await request.json()) as Partial<StemContest>;
+    const body = (await request.json().catch(() => null)) as Partial<StemContest>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const contest = await updateContest(context.params.id, body, identity.actorId);
     addAuditEvent({
       adminUser: identity.actorId || 'admin',

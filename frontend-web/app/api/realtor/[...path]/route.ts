@@ -20,3 +20,4 @@ export const POST = forward;
 export const PUT = forward;
 export const PATCH = forward;
 export const DELETE = forward;
+export const HEAD = forward;

@@ -9,7 +9,8 @@ export async function POST(request: Request) {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const token: string = String(body?.token ?? '').trim();
     const platform: string = String(body?.platform ?? '').trim();
 

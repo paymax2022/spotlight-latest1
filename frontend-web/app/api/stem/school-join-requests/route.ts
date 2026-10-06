@@ -14,7 +14,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       schoolId?: string;
       studentUserId?: string;
       fullName?: string;
@@ -28,6 +28,7 @@ export async function POST(request: Request) {
       mentorName?: string;
       note?: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.schoolId) return errorResponse('schoolId is required', 400);
     if (!body.fullName) return errorResponse('fullName is required', 400);

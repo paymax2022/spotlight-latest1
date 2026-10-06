@@ -13,7 +13,11 @@ export async function GET(request: Request, context: { params: { slug: string } 
       return errorResponse('Beat download is locked for this contest', 403);
     }
 
-    return NextResponse.redirect(new URL(contest.beat.downloadUrl, request.url), 302);
+    // Public-facing redirect — a relative configured downloadUrl must resolve
+    // on the public site origin, not request.url (http://0.0.0.0:PORT on
+    // Railway/cPanel). Absolute URLs ignore the base either way.
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
+    return NextResponse.redirect(new URL(contest.beat.downloadUrl, siteUrl), 302);
   } catch (error) {
     return handleApiError(error, 'Failed to download beat');
   }
@@ -22,12 +26,13 @@ export async function GET(request: Request, context: { params: { slug: string } 
 export async function POST(request: Request, context: { params: { slug: string } }) {
   try {
     const user = await requireRequestUser(request);
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       artistName?: string;
       artistEmail?: string;
       termsAccepted?: boolean;
       paidAccessConfirmed?: boolean;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.artistName?.trim()) return errorResponse('artistName is required', 400);
     if (!body.termsAccepted) return errorResponse('Beat usage terms must be accepted', 400);
 
