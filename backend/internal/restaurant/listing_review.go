@@ -224,9 +224,11 @@ func (s *Service) RateOrder(ctx context.Context, orderID, raterID string, req Ra
 func (s *Service) recomputeRestaurantRating(ctx context.Context, restaurantID string) {
 	var avg float64
 	// Hidden (moderated-away) reviews are excluded so a suppressed fake review can't
-	// skew the average.
+	// skew the average. The zero-review default is 0 (unrated), matching the value a
+	// restaurant is created with — the old 5.0 fabricated a perfect score on stores
+	// with no visible reviews at all (a hidden-only store "improved" to 5★).
 	_ = s.db.QueryRow(ctx,
-		`SELECT COALESCE(AVG(restaurant_stars),5.0) FROM restaurant_ratings WHERE restaurant_id=$1 AND moderation_status <> 'hidden'`,
+		`SELECT COALESCE(AVG(restaurant_stars),0) FROM restaurant_ratings WHERE restaurant_id=$1 AND moderation_status <> 'hidden'`,
 		restaurantID).Scan(&avg)
 	_, _ = s.db.Exec(ctx, `UPDATE restaurants SET rating=$1, updated_at=NOW() WHERE id=$2`, avg, restaurantID)
 }

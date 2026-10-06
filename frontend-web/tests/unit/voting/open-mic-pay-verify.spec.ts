@@ -128,7 +128,14 @@ import {
 import { createAdminClient } from '@/lib/supabase/server';
 import { makeSupabaseMock } from '../golden-path/_fixtures';
 
-const VALID_BODY = { reference: 'om-vote-abc', contestId: 'c1', submissionId: 's1', votes: 10 };
+// contests.id / competition_entries.id are uuid columns; the route shape-checks
+// resolved ids before any store read, so fixtures must be real uuids.
+const VALID_BODY = {
+  reference: 'om-vote-abc',
+  contestId: '11111111-1111-1111-1111-111111111111',
+  submissionId: '22222222-2222-2222-2222-222222222222',
+  votes: 10,
+};
 
 describe('POST /api/open-mic/votes/pay/verify (route)', () => {
   beforeEach(() => {
@@ -147,6 +154,78 @@ describe('POST /api/open-mic/votes/pay/verify (route)', () => {
     });
     const res = await postVerify(req);
     expect(res.status).toBe(400);
+  });
+
+  // Malformed-id gate: non-uuid ids fed into the uuid contest/entry columns
+  // surfaced as a Postgres 22P02 → 500 on prod. The route must refuse with a
+  // 400 before the first store read (no intent → body ids are authoritative).
+  it('returns 400 on a non-uuid contestId (no intent)', async () => {
+    const { mock } = makeSupabaseMock();
+    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+    const req = makeRequest('/api/open-mic/votes/pay/verify', {
+      body: { ...VALID_BODY, contestId: 'bogus' },
+    });
+    const res = await postVerify(req);
+    expect(res.status).toBe(400);
+    expect(vi.mocked(getContestById)).not.toHaveBeenCalled();
+    expect(vi.mocked(verifyPaystackPayment)).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 on a non-uuid submissionId (no intent)', async () => {
+    const { mock } = makeSupabaseMock();
+    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+    const req = makeRequest('/api/open-mic/votes/pay/verify', {
+      body: { ...VALID_BODY, submissionId: 'bogus' },
+    });
+    const res = await postVerify(req);
+    expect(res.status).toBe(400);
+    expect(vi.mocked(getContestById)).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 on fractional votes', async () => {
+    const { mock } = makeSupabaseMock();
+    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+    const req = makeRequest('/api/open-mic/votes/pay/verify', {
+      body: { ...VALID_BODY, votes: 1.5 },
+    });
+    const res = await postVerify(req);
+    expect(res.status).toBe(400);
+    expect(vi.mocked(castVote)).not.toHaveBeenCalled();
+  });
+
+  // The intent's frozen ids are authoritative: malformed body ids don't 400 a
+  // verify whose reference has a recorded intent with valid uuids.
+  it('lets a recorded intent override malformed body ids', async () => {
+    const { mock, maybySingle } = makeSupabaseMock();
+    maybySingle.mockResolvedValueOnce({ data: null, error: null });
+    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+    vi.mocked(getOpenMicVoteIntentByReference).mockResolvedValue({
+      reference: 'om-vote-abc',
+      contest_id: '33333333-3333-3333-3333-333333333333',
+      submission_id: '44444444-4444-4444-4444-444444444444',
+      voter_user_id: 'user-1',
+      votes: 7,
+      amount_kobo: 350_000,
+      stage_name: null,
+      status: 'pending',
+    } as any);
+    vi.mocked(verifyPaystackPayment).mockResolvedValue({
+      success: true,
+      amountKobo: 350_000,
+    } as any);
+    vi.mocked(castVote).mockResolvedValue({ voteCount: 42 } as any);
+
+    const req = makeRequest('/api/open-mic/votes/pay/verify', {
+      body: { reference: 'om-vote-abc', contestId: 'bogus', submissionId: 'bogus', votes: 1 },
+    });
+    const res = await postVerify(req);
+    expect(res.status).toBe(200);
+    expect(vi.mocked(castVote)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contestId: '33333333-3333-3333-3333-333333333333',
+        submissionId: '44444444-4444-4444-4444-444444444444',
+      }),
+    );
   });
 
   it('returns 401 when unauthenticated', async () => {
@@ -278,8 +357,8 @@ describe('POST /api/open-mic/votes/pay/verify (route)', () => {
     vi.mocked(createAdminClient).mockReturnValue(mock as any);
     vi.mocked(getOpenMicVoteIntentByReference).mockResolvedValue({
       reference: 'om-vote-abc',
-      contest_id: 'c-intent',
-      submission_id: 's-intent',
+      contest_id: '33333333-3333-3333-3333-333333333333',
+      submission_id: '44444444-4444-4444-4444-444444444444',
       voter_user_id: 'user-1',
       votes: 7,
       amount_kobo: 350_000,
@@ -294,15 +373,15 @@ describe('POST /api/open-mic/votes/pay/verify (route)', () => {
 
     // Client lies about the params — the intent's frozen values must win.
     const req = makeRequest('/api/open-mic/votes/pay/verify', {
-      body: { reference: 'om-vote-abc', contestId: 'c1', submissionId: 's1', votes: 10 },
+      body: { reference: 'om-vote-abc', contestId: VALID_BODY.contestId, submissionId: VALID_BODY.submissionId, votes: 10 },
     });
     const res = await postVerify(req);
 
     expect(res.status).toBe(200);
     expect(vi.mocked(castVote)).toHaveBeenCalledWith(
       expect.objectContaining({
-        contestId: 'c-intent',
-        submissionId: 's-intent',
+        contestId: '33333333-3333-3333-3333-333333333333',
+        submissionId: '44444444-4444-4444-4444-444444444444',
         votes: 7,
       }),
     );
@@ -312,8 +391,8 @@ describe('POST /api/open-mic/votes/pay/verify (route)', () => {
   it('rejects a reference initiated by a different user', async () => {
     vi.mocked(getOpenMicVoteIntentByReference).mockResolvedValue({
       reference: 'om-vote-abc',
-      contest_id: 'c1',
-      submission_id: 's1',
+      contest_id: VALID_BODY.contestId,
+      submission_id: VALID_BODY.submissionId,
       voter_user_id: 'someone-else',
       votes: 10,
       amount_kobo: 500_000,
@@ -335,8 +414,8 @@ describe('POST /api/open-mic/votes/pay/verify (route)', () => {
     vi.mocked(createAdminClient).mockReturnValue(mock as any);
     vi.mocked(getOpenMicVoteIntentByReference).mockResolvedValue({
       reference: 'om-vote-abc',
-      contest_id: 'c1',
-      submission_id: 's1',
+      contest_id: VALID_BODY.contestId,
+      submission_id: VALID_BODY.submissionId,
       voter_user_id: 'user-1',
       votes: 10,
       amount_kobo: 500_000,

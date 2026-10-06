@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -74,6 +75,16 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (*Profile, erro
 // already documents this exact mismatch for the older admin console, which
 // works around it by checking both values).
 func (s *Service) Initiate(ctx context.Context, userID string, req InitiateRequest) (*Profile, error) {
+	// The UPDATE below writes DocumentType straight into
+	// user_profiles.document_type, which is bound by the
+	// user_profiles_document_type_check CHECK constraint
+	// (supabase/migrations/20260613000000_kyc_fields.sql). Validate BEFORE
+	// opening the tx: an out-of-enum value rejected by the CHECK surfaces to
+	// the caller as an opaque 500 — and did exactly that on
+	// /api/v1/kyc/tier2+3, whose handler passed 'government_id'/'liveness'.
+	if req.DocumentType != nil && !allowedDocumentTypes[*req.DocumentType] {
+		return nil, ErrInvalidDocumentType
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("kyc: begin tx: %w", err)
@@ -300,6 +311,23 @@ const (
 	StatusVerified  Status = "verified"
 	StatusFailed    Status = "failed"
 )
+
+// ErrInvalidDocumentType — InitiateRequest.DocumentType outside the
+// user_profiles_document_type_check enum (BVN/NIN/PASSPORT/DRIVERS_LICENSE —
+// 20260613000000_kyc_fields.sql). Callers map it to 400; the alternative was an
+// opaque 500 CHECK-constraint violation at the UPDATE.
+var ErrInvalidDocumentType = errors.New("kyc: document_type outside the allowed set")
+
+// allowedDocumentTypes mirrors user_profiles_document_type_check. Keep in sync
+// with the migration; widening the set requires a (non-additive) constraint
+// change, so tier-2/3 submissions deliberately send nil — document_ref carries
+// the uploaded artifact URI instead.
+var allowedDocumentTypes = map[string]bool{
+	"BVN":             true,
+	"NIN":             true,
+	"PASSPORT":        true,
+	"DRIVERS_LICENSE": true,
+}
 
 // Tier is the verified access level (0–3).
 type Tier int

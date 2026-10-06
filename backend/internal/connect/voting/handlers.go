@@ -130,6 +130,10 @@ func (h *Handler) PaidVote(c *gin.Context) {
 func (h *Handler) Results(c *gin.Context) {
 	out, err := h.svc.Results(c.Request.Context(), c.Param("id"))
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "contest not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
@@ -214,6 +218,10 @@ func (h *Handler) UnlikeContestant(c *gin.Context) {
 	}
 	e, err := h.svc.UnlikeContestant(c.Request.Context(), c.Param("id"), uid)
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "contestant not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unlike contestant"})
 		return
 	}
@@ -265,6 +273,10 @@ func (h *Handler) ResolveShare(c *gin.Context) {
 func (h *Handler) GetStages(c *gin.Context) {
 	stages, err := h.svc.GetStages(c.Request.Context(), c.Param("id"))
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "contest not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}

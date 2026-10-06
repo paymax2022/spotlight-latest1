@@ -24,6 +24,13 @@ type SavedCart = {
   activePackageId: string | null;
 };
 
+// snake_case twins some clients post — camelCase wins when both arrive.
+type SavedCartWire = SavedCart & {
+  restaurant_id?: string | null;
+  restaurant_name?: string | null;
+  active_package_id?: string | null;
+};
+
 // restaurants.id is a UUID PK; food_carts.restaurant_id is TEXT, so shape-check
 // here — a non-UUID value can never resolve to a row.
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -59,22 +66,30 @@ export async function POST(request: Request) {
   if (!featureFlags.restaurant()) return errorResponse('Restaurant delivery is not available.', 503);
   try {
     const user = await requireRequestUser(request);
-    const body = (await request.json().catch(() => null)) as Partial<SavedCart> | null;
+    const body = (await request.json().catch(() => null)) as Partial<SavedCartWire> | null;
     if (!body || typeof body !== 'object') return errorResponse('Invalid cart payload.', 400);
     if (body.packages !== undefined && !Array.isArray(body.packages)) {
       return errorResponse('`packages` must be an array.', 400);
     }
+
+    // Normalize: accept both camelCase (canonical, what the RN client sends)
+    // and snake_case wire fields. Previously a snake_case `restaurant_id` was
+    // silently dropped — the cart saved with restaurantId:null and the
+    // customer's cart lost its store on every sync.
+    const rawId = body.restaurantId ?? body.restaurant_id;
+    const rawName = body.restaurantName ?? body.restaurant_name;
+    const rawActive = body.activePackageId ?? body.active_package_id;
 
     // Existence check (P2): the cart used to accept ANY restaurantId — including
     // ids of restaurants that never existed — and persisted it. A cart pinned to
     // a phantom restaurant can only fail later at checkout, so refuse it here.
     // Empty/whitespace means "no restaurant selected" and normalizes to null.
     let restaurantId: string | null = null;
-    if (body.restaurantId !== undefined && body.restaurantId !== null) {
-      if (typeof body.restaurantId !== 'string') {
+    if (rawId !== undefined && rawId !== null) {
+      if (typeof rawId !== 'string') {
         return errorResponse('`restaurantId` must be a string.', 422);
       }
-      const trimmed = body.restaurantId.trim();
+      const trimmed = rawId.trim();
       if (trimmed !== '') {
         if (!UUID_RE.test(trimmed)) {
           return errorResponse('`restaurantId` must be a valid restaurant id.', 422);
@@ -100,9 +115,9 @@ export async function POST(request: Request) {
         {
           customer_id: user.id,
           restaurant_id: restaurantId,
-          restaurant_name: body.restaurantName ?? null,
+          restaurant_name: rawName ?? null,
           packages: body.packages ?? [],
-          active_package_id: body.activePackageId ?? null,
+          active_package_id: rawActive ?? null,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'customer_id' }, // one active cart per customer (UNIQUE)

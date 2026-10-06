@@ -36,7 +36,10 @@ import { createClient } from '@/lib/supabase/server';
 
 function makeInitiateBody(overrides: Record<string, unknown> = {}) {
   return {
-    contestId: 'contest-001',
+    // uuid-shaped: the route shape-checks contestId before calling the service
+    // (voting_settings.contest_id is a uuid column — malformed ids 500 on
+    // Postgres 22P02).
+    contestId: '99999999-9999-4999-8999-999999999999',
     contestantId: 'contestant-abc',
     voterEmail: 'voter@example.com',
     voterName: 'Test Voter',
@@ -93,6 +96,19 @@ describe('POST /api/v2/votes/paid/initiate', () => {
 
     expect(res.status).toBe(400);
     expect(body.error).toMatch(/contestId/i);
+    expect(vi.mocked(initiatePaidVote)).not.toHaveBeenCalled();
+  });
+
+  // Malformed-id gate: non-uuid contestId fed into the uuid
+  // voting_settings.contest_id column surfaced as 22P02 → 500 on prod.
+  it('returns 400 on a non-uuid contestId, before calling initiatePaidVote()', async () => {
+    const res = await initiatePost(
+      makeRequest('/api/v2/votes/paid/initiate', { body: makeInitiateBody({ contestId: 'bogus' }) }) as any,
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/uuid/i);
     expect(vi.mocked(initiatePaidVote)).not.toHaveBeenCalled();
   });
 

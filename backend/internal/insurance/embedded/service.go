@@ -349,8 +349,12 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // Trigger (member/internal): POST /embedded/events
 // body: {source_event_id, event_type, user_id?, sum_insured_kobo?, inputs?}
-// For the member-authenticated variant the caller's user_id is used unless an
-// admin override is supplied.
+// The policyholder is ALWAYS the authenticated caller. The body once accepted a
+// user_id override "for admins", but this route is mounted on the member group
+// only — there was no admin check, so any member could trigger an embedded bind
+// against ANOTHER user's wallet (the debit in Handle charges ev.UserID). The
+// override is now refused outright; platform emit points call Handle()
+// in-process and never needed the HTTP override.
 func (h *Handler) Trigger(c *gin.Context) {
 	var body struct {
 		SourceEventID  string         `json:"source_event_id" binding:"required"`
@@ -363,12 +367,13 @@ func (h *Handler) Trigger(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	uid := body.UserID
-	if uid == "" {
-		uid = ginutil.UserID(c)
-	}
+	uid := ginutil.UserID(c)
 	if uid == "" {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: "user_id required"})
+		return
+	}
+	if body.UserID != "" && body.UserID != uid {
+		c.JSON(http.StatusForbidden, gin.H{keyError: "cannot trigger embedded events for another user"})
 		return
 	}
 	res, err := h.svc.Handle(c.Request.Context(), EmbeddedEvent{

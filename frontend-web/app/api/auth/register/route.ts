@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { forwardRateLimitHeaders } from '../_headers';
 import { clientIpHeaders } from '@/src/lib/rate-limit/client-ip';
 
 /**
@@ -66,10 +67,12 @@ export async function POST(request: Request) {
     if (!upstream.ok) {
       // Go answers deliberately generically so a taken address is not
       // distinguishable from a rejected one. Do not enrich it here.
-      return NextResponse.json(
+      const res = NextResponse.json(
         { error: payload?.error ?? 'Registration failed' },
         { status: upstream.status },
       );
+      forwardRateLimitHeaders(upstream, res);
+      return res;
     }
 
     return NextResponse.json({

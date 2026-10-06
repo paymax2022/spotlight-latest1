@@ -54,3 +54,11 @@ export async function HEAD(request: Request, ctx: { params: Promise<{ path: stri
   const { path } = await ctx.params;
   return forward(request, path);
 }
+
+// DELETE is required — Go mounts DELETE /records/:subjectId (NDPA right-to-
+// erasure). Without this export Next answered 405 and the erasure endpoint was
+// unreachable through the proxy.
+export async function DELETE(request: Request, ctx: { params: Promise<{ path: string[] }> }) {
+  const { path } = await ctx.params;
+  return forward(request, path);
+}

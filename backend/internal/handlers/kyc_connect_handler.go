@@ -162,6 +162,10 @@ func (h *KYCConnectHandler) submitTier(c *gin.Context, targetTier int, req kyc.I
 
 	profile, err := h.kycSvc.Initiate(c.Request.Context(), userID, req)
 	if err != nil {
+		if errors.Is(err, kyc.ErrInvalidDocumentType) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported document type"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to submit kyc"})
 		return
 	}
@@ -359,10 +363,14 @@ func (h *KYCConnectHandler) SubmitTier2(c *gin.Context) {
 		return
 	}
 
-	docType := "government_id"
+	// DocumentType is left nil: the uploaded photo-ID URI is not one of the
+	// user_profiles_document_type_check enum values (BVN/NIN/PASSPORT/
+	// DRIVERS_LICENSE — 20260613000000_kyc_fields.sql). Passing a label like
+	// 'government_id' violated that CHECK and 500'd every tier-2 submit. The
+	// artifact reference lives in document_ref; the pending profile's
+	// kyc_requested_tier already tells reviewers what is being sought.
 	req := kyc.InitiateRequest{
 		RequestedTier: 2,
-		DocumentType:  &docType,
 		DocumentRef:   &body.IdDocumentUri,
 	}
 
@@ -396,10 +404,10 @@ func (h *KYCConnectHandler) SubmitTier3(c *gin.Context) {
 		return
 	}
 
-	docType := "liveness"
+	// Same as SubmitTier2: 'liveness' is not a document_type enum value —
+	// nil DocumentType + the artifact URI in document_ref.
 	req := kyc.InitiateRequest{
 		RequestedTier: 3,
-		DocumentType:  &docType,
 		DocumentRef:   &body.LivenessUri,
 	}
 

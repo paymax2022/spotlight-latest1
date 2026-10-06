@@ -46,6 +46,7 @@ func TestSQLStateFamily(t *testing.T) {
 		fn   func(error) bool
 	}{
 		{"23514", dbutil.IsCheckViolation},
+		{"23503", dbutil.IsForeignKeyViolation},
 	}
 	for _, tc := range cases {
 		if !tc.fn(pgErr(tc.code)) {

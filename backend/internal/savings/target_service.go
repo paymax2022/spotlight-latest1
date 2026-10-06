@@ -270,12 +270,15 @@ func (s *TargetService) isMember(ctx context.Context, targetID, userID string) (
 }
 
 func (s *TargetService) get(ctx context.Context, targetID string) (*GroupTarget, error) {
-	const q = `SELECT id, creator_user_id, name, target_kobo, withdrawal_rule, target_date, state
+	// created_at/updated_at ride along — the target detail read serialised
+	// zero times while the list read showed real ones.
+	const q = `SELECT id, creator_user_id, name, target_kobo, withdrawal_rule, target_date, state,
+	                  created_at, updated_at
 	           FROM group_targets WHERE id=$1`
 	var t GroupTarget
 	var rule, state string
 	if err := s.db.QueryRow(ctx, q, targetID).Scan(&t.ID, &t.CreatorUserID, &t.Name,
-		&t.TargetKobo, &rule, &t.TargetDate, &state); err != nil {
+		&t.TargetKobo, &rule, &t.TargetDate, &state, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}

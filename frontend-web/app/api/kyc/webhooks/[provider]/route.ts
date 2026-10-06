@@ -30,7 +30,16 @@ async function forward(request: Request, provider: string) {
       body: rawBody,
     });
     const responseBody = await upstream.text();
-    return new Response(responseBody, {
+    // Null-body statuses (101/204/205/304) may not carry a body — the Fetch
+    // Response constructor THROWS TypeError on one, even an empty string, so an
+    // upstream 204 would surface to the provider as a 500 (and trigger retries).
+    // Forward them with a null body so the status reaches the caller intact.
+    const nullBodyStatus =
+      upstream.status === 101 ||
+      upstream.status === 204 ||
+      upstream.status === 205 ||
+      upstream.status === 304;
+    return new Response(nullBodyStatus ? null : responseBody, {
       status: upstream.status,
       headers: { 'Content-Type': 'application/json' },
     });

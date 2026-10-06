@@ -390,7 +390,10 @@ func (s *sqlStore) SaveQuote(ctx context.Context, q *Quote) error {
 }
 
 func (s *sqlStore) Transactions(ctx context.Context, customer string) ([]TxView, error) {
-	var out []TxView
+	// [] not nil: an empty history must marshal as data:[] like the other list
+	// endpoints (ListNotifications does the same) — null breaks clients that
+	// iterate the field.
+	out := make([]TxView, 0)
 
 	cr, err := s.db.Query(ctx, `SELECT id, reference, status, source_currency, source_minor, dest_currency, dest_minor, rate, all_in_rate, provider, corridor, rail, provider_ref, created_at FROM orch_conversions WHERE customer_id=$1`, customer)
 	if err != nil {

@@ -4,6 +4,11 @@ import { getContestById } from '@/src/server/openmic/persistence';
 import { createOpenMicVoteIntent } from '@/src/server/payments/openmic-vote-intents';
 import { randomUUID } from 'node:crypto';
 
+// contests.id / competition_entries.id are uuid columns — a malformed id fed
+// into .eq() surfaces as a Postgres 22P02 inside getContestById/the intent
+// insert and 500s, so shape-check before touching the store.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -23,7 +28,13 @@ export async function POST(request: Request) {
 
     if (!body.contestId)    return errorResponse('contestId is required', 400);
     if (!body.submissionId) return errorResponse('submissionId is required', 400);
-    if (!body.votes || body.votes <= 0) return errorResponse('votes must be > 0', 400);
+    if (!UUID_RE.test(body.contestId))    return errorResponse('contestId must be a valid UUID', 400);
+    if (!UUID_RE.test(body.submissionId)) return errorResponse('submissionId must be a valid UUID', 400);
+    // Fractional/unsafe-integer votes would mint a non-integer amount_kobo and
+    // fail the integer votes column downstream — refuse at the boundary.
+    if (!body.votes || !Number.isInteger(body.votes) || body.votes <= 0 || body.votes > Number.MAX_SAFE_INTEGER) {
+      return errorResponse('votes must be a positive integer', 400);
+    }
 
     const contest = await getContestById(body.contestId);
     const votePriceNgn = contest?.votingConfig?.votePrice ?? 0;
