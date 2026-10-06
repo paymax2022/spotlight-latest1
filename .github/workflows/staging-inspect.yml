@@ -38,6 +38,10 @@ on:
         description: 'PRODUCTION ONLY: verify SUPABASE_DB_PASSWORD against the pooler and rewrite backend DATABASE_URL with it if the check passes'
         type: boolean
         default: false
+      fix_staging_frontends:
+        description: 'STAGING ONLY: set rootDirectory=frontend-web / frontend-admin on the two UI services (they currently build the repo-root Dockerfile = Go backend) and redeploy'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -329,6 +333,46 @@ jobs:
             echo "  fix_database_url=false — verified only, variable left as-is"
           fi
           unset SB_DB_PW CAND
+
+      # STAGING-ONLY remediation for the misdeployed UI services: with
+      # rootDirectory unset they build the repo-root Dockerfile (the Go
+      # backend), which is why every page route 404s in text/plain while
+      # /readyz answers with Go JSON. Prod services already carry the correct
+      # root directories — this replicates that on staging. GraphQL errors are
+      # printed verbatim; they carry no secrets.
+      - name: Fix staging frontend services (rootDirectory + redeploy)
+        if: inputs.environment == 'staging' && inputs.fix_staging_frontends
+        run: |
+          set -uo pipefail
+          API=https://backboard.railway.app/graphql/v2
+          gql() { curl -sS -m 30 "$API" -H "Authorization: Bearer $RAILWAY_TOKEN" \
+            -H 'content-type: application/json' -d "$1"; }
+          IDS="$(gql '{"query":"{ project(id: \"'"$PROJECT"'\") { environments { edges { node { id name } } } services { edges { node { id name } } } } }"}')"
+          echo "$IDS" | node -e '
+            let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{
+              const j=JSON.parse(d);
+              if (j.errors) { console.log("  project query errors:", JSON.stringify(j.errors)); process.exit(1); }
+              const env=j.data.project.environments.edges.map(e=>e.node).find(n=>n.name==="'"$ENVIRONMENT"'");
+              const svcs=j.data.project.services.edges.map(e=>e.node);
+              const want=["frontend-web","frontend-admin"];
+              for (const w of want) {
+                const s=svcs.find(n=>n.name===w);
+                console.log((env&&s)?`${w} ${s.id} env=${env.id}`:`MISSING ${w} or env`);
+              }
+            });' > ids.txt
+          cat ids.txt | sed 's/^/    /'
+          grep -q "MISSING" ids.txt && { echo "  could not resolve service/env ids"; exit 1; }
+          while read -r SVC SID REST; do
+            EID="${REST#env=}"
+            echo "  -> $SVC ($SID) rootDirectory=$SVC (env $EID)"
+            RESP="$(gql '{"query":"mutation($s:String!,$e:String!){ serviceInstanceUpdate(serviceId:$s, environmentId:$e, input:{ rootDirectory: \"'"$SVC"'\" }) }","variables":{"s":"'"$SID"'","e":"'"$EID"'"}')"
+            echo "    $RESP" | head -c 400; echo
+          done < ids.txt
+          for SVC in frontend-web frontend-admin; do
+            railway redeploy --service "$SVC" --environment "$ENVIRONMENT" --project "$PROJECT" --yes \
+              && echo "  redeploy triggered: $SVC" || echo "  redeploy failed: $SVC"
+          done
+          rm -f ids.txt
 
       - name: frontend-web supabase host (host only)
         run: |
