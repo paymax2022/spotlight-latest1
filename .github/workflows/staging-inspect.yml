@@ -550,17 +550,16 @@ jobs:
           # outside development when ASSOC_CARD_SIGNING_SECRET is unset. The
           # secret is self-generated HMAC material (not a vendor credential):
           # provision a fresh random one on the target if absent.
-          if ! railway variable list --service backend --environment "$ENVIRONMENT" \
-              --project "$PROJECT" --json 2>/dev/null | node -e '
-              let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{
-                let v; try{v=JSON.parse(d)}catch{process.exit(1)}
-                process.exit(v.ASSOC_CARD_SIGNING_SECRET ? 0 : 1); });'; then
+          railway variable list --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > assoc-check.json 2>/dev/null || echo '{}' > assoc-check.json
+          if node -e 'const v=JSON.parse(require("fs").readFileSync("assoc-check.json","utf8")); process.exit(v.ASSOC_CARD_SIGNING_SECRET ? 1 : 0)'; then
             openssl rand -hex 32 | railway variable set ASSOC_CARD_SIGNING_SECRET --stdin \
               --service backend --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP \
               && echo "  generated ASSOC_CARD_SIGNING_SECRET on backend ($ENVIRONMENT)"
           else
             echo "  ASSOC_CARD_SIGNING_SECRET already set"
           fi
+          rm -f assoc-check.json
           if railway redeploy --service backend --environment "$ENVIRONMENT" --project "$PROJECT" --yes; then
             echo "  single redeploy triggered to pick up the new vars"
           else
