@@ -408,23 +408,13 @@ jobs:
             ' "$SID" "$EID" "$SVC")"
             echo "    $RESP" | head -c 400; echo
           done < ids.txt
-          # Fresh build needed, not an image reuse: deploymentTriggerCreate
-          # re-runs the build pipeline so the new rootDirectory takes effect.
-          while read -r SVC SID REST; do
-            EID="${REST#env=}"
-            TRESP="$(node -e '
-              const body = JSON.stringify({
-                query: "mutation($p:String!,$e:String!,$s:String!){ deploymentTriggerCreate(input:{ projectId:$p, environmentId:$e, serviceId:$s, branch:\"main\" }) }",
-                variables: { p: process.argv[1], e: process.argv[2], s: process.argv[3] },
-              });
-              fetch("https://backboard.railway.app/graphql/v2", {
-                method: "POST",
-                headers: { "Project-Access-Token": process.env.RAILWAY_TOKEN, "content-type": "application/json" },
-                body,
-              }).then(r => r.text()).then(t => process.stdout.write(t.slice(0, 400)));
-            ' "$PROJECT" "$EID" "$SID")"
-            echo "    trigger $SVC: $TRESP" | head -c 450; echo
-          done < ids.txt
+          # Redeploy re-runs the build pipeline on the same commit, and the
+          # build reads the freshly-set rootDirectory. Verify with the domain
+          # probes below — a reused image would still serve Gin.
+          for SVC in frontend-web frontend-admin; do
+            railway redeploy --service "$SVC" --environment "$ENVIRONMENT" --project "$PROJECT" --yes \
+              && echo "  redeploy triggered: $SVC" || echo "  redeploy failed: $SVC"
+          done
           rm -f ids.txt ids2.txt
 
       - name: frontend-web supabase host (host only)
