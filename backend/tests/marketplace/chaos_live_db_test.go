@@ -18,6 +18,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -126,8 +127,17 @@ func TestLiveDB_VerifyID_BadgeRequiresAdminReview(t *testing.T) {
 	svc, pool := liveMktService(t)
 	ctx := context.Background()
 
-	user := seedLedgerCapableSeller(t, ctx, pool) // ReviewKYC resolves platform_users — a bare UUID ends as NOT_FOUND
-	admin := seedTrustedSeller(t, ctx, pool)      // any actor id; ReviewKYC only audits it
+	// ReviewKYC resolves platform_users via the auth.users insert trigger, so
+	// the member must be a real auth user — but NO mkt_trust_scores row, since
+	// the badge must start false.
+	user := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO auth.users (id, email) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING`,
+		user, user+"@seed.test"); err != nil {
+		t.Fatalf("seed auth user: %v", err)
+	}
+	testsupport.CleanupUser(t, pool, user)
+	admin := seedTrustedSeller(t, ctx, pool) // any actor id; ReviewKYC only audits it
 
 	// 1. Self-serve submit files a PENDING request — badge must NOT be set.
 	if _, err := svc.SubmitIDVerification(ctx, user, mkt.VerificationIDInput{
