@@ -70,35 +70,55 @@ Frontend on commit `bda0ef5c`, serving Next.js correctly.
 | `POST /api/auth/register` | **intermittent 400** — see F1 |
 | Login unverified / resend-otp | 403 `email_not_confirmed` / 200 — correct |
 
-### Findings
+### Findings (updated 10:00Z — all root causes now confirmed by direct evidence)
 
-- **F1 — register intermittently 400 (environment/config).**
-  `RegisterUser` calls GoTrue `/auth/v1/signup` when OTP is not operational
-  (needs `FEATURE_OTP_EMAIL_ENABLED` + pgx pool + `OTP_PEPPER` + `BREVO_*`).
-  Any GoTrue ≥400 becomes one generic 400. Observed: one gmail signup
-  succeeded (user `dee50fea…` created, unverified-login gate works), then all
-  subsequent attempts — any domain, any payload shape — 400. Signature fits
-  GoTrue's built-in per-IP `sign_in_sign_ups` budget: **every prod signup
-  egresses from the same Railway IP, so all users share one ~30/hour quota.**
-  Needs backend log line `registration failed: <status>` to confirm
-  (429 = rate limit, 422/other = different cause). Inspect run 37436244003 is
-  awaiting `production` environment approval.
+- **F1 — register 400s: CONFIRMED = Supabase default-mailer quota exhausted.**
+  Direct `POST /auth/v1/signup` against prod GoTrue returns
+  `{"code":429,"error_code":"over_email_send_rate_limit","msg":"email rate
+  limit exceeded"}`. Not the per-IP signup budget — the **email-send quota**.
+  Every `/signup` sends a confirmation email through Supabase's built-in
+  mailer (no `smtp_*` configured on either project — verified via Management
+  API `/config/auth`, which returns only default mailer fields). Once the
+  hourly send budget is consumed, every registration 429s → Go maps it to
+  the generic 400. Fix paths (both need an owner-side mail credential):
+  (a) PATCH `/config/auth` with custom SMTP (Brevo/Resend/SES), or
+  (b) enable the app's OTP path (`FEATURE_OTP_EMAIL_ENABLED` + `BREVO_*` +
+  `OTP_PEPPER` + `otp_codes` migration — **missing on prod**) which sends
+  via Brevo and registers via `/admin/users`, bypassing the mailer quota.
 
-- **F2 — finance/module 404s (environment).** `/api/finance/*` unmounted and
-  associations 503 ⇒ prod pgx pool never came up ⇒ `DATABASE_URL` broken
-  (known from earlier audit — password/pooler config) or absent. This ALSO
-  disables the OTP service (requires pool), forcing register onto the
-  rate-limited `/signup` path — the two findings are linked.
+- **F2 — finance/module 404s: CONFIRMED = zero FEATURE_* flags on prod
+  backend.** Boot log: `[finance] routes registered — wallet=false
+  kycVerify=false … estate=false`. `DATABASE_URL` itself CONNECTS OK
+  (verified live). The unmounted routes were purely flag-gating, not the
+  pool. Fix attempted: flag sync from staging — but see F5.
 
-- **F3 — free-vote idempotency not enforced (confirmed app bug).**
-  Replaying `POST /api/v2/votes/free` with the same `X-Idempotency-Key`
-  returned 200 and **counted a second vote** (`totalFreeVotesUsed:2`) on prod
-  (limit 3/day). On staging the same replay returned 429 only because the
-  seeded limit was 1 — dedup did not fire there either. Replay must return the
-  cached result, not a new vote or a limit error.
+- **F3 — free-vote idempotency not enforced (confirmed; root cause =
+  bridge flag off, not missing table).** Same `X-Idempotency-Key` replay
+  counted a second vote on prod. `bridge_idempotency_keys` and
+  `bridge_outbox` exist on prod (PostgREST 200); `otp_codes` 404.
+  `VOTES_BRIDGE_ENABLED` is unset on both frontends → the route takes
+  legacy `castFreeVote`, which has no dedup. Additionally the bridge's
+  `kyc-gate.ts` queried a phantom schema (`profiles`,
+  `contestants.competition_id`, `competitions`) → every bridged vote 404'd
+  "User not found". Fixed in PR #496 (merged `ecf0e0d8`) — adapter now
+  reads `user_profiles.kyc_tier`, `contestants.contest_id`, `contests`.
+  Residual risk: `storeIdempotencyResult` fails open on unexpected DB
+  errors — replay dedup must be re-verified after the bridge flag is on.
 
-- **F4 — `REDIS_URL` unset on staging backend (env gap).** If also unset on
-  prod, idempotency/locks/queues have no shared store — likely related to F3.
+- **F4 — `REDIS_URL` unset on staging backend (env gap); prod unknown.**
+
+- **F5 — NEW: flag promotion broke prod boot (env/config, now handled).**
+  `config.Validate()` is FATAL when `APP_ENV=production`. Copying all 48
+  staging `FEATURE_*` flags enabled modules whose credentials don't exist
+  on prod → `startup aborted: config validation failed (6 problems)` →
+  healthcheck never passed → **9 consecutive FAILED backend redeploys**
+  (the old container stayed live). The sync step now force-offs flags
+  whose deps are missing on the target (wallet→PAYSTACK, bank
+  transfers→MONNIFY, maplerad, kyc_verify→provider+PII key, arena→seeds,
+  maps→MAPS_GOOGLE_KEY, otp_email→Brevo creds) and uses `--skip-deploys`
+  + one explicit redeploy. Prod wallet/kyc/maps stay OFF until the owner
+  supplies those credentials — that is a deliberate prod↔staging diff,
+  not a bug.
 
 ## Staging vs production difference matrix
 
@@ -107,8 +127,10 @@ Frontend on commit `bda0ef5c`, serving Next.js correctly.
 | App commit | `3d02cbb2` (main HEAD) | `bda0ef5c` (prod branch) | different code trains |
 | Supabase project | `wnicsubiznmishkmunsv` | `nmseefdlliejmdbxytej` | expected |
 | Frontend serving | Next.js (after repair) | Next.js | parity |
-| `DATABASE_URL`/pgx | pooler set, connects, finance routes live | finance routes unmounted → pool down | **prod broken** |
-| OTP subsystem (`FEATURE_OTP_EMAIL_ENABLED`+Brevo+pepper+pool) | flag present; register reliable ⇒ admin path | register intermittent ⇒ `/signup` path + shared-IP budget | **prod broken/unconfigured** |
+| `DATABASE_URL`/pgx | pooler set, connects, finance routes live | connects OK — routes unmounted by flags (F2), not pool | repaired |
+| FEATURE_* flags | full set (48) | was ZERO → synced minus cred-starved flags (F5) | repaired |
+| OTP subsystem (`FEATURE_OTP_EMAIL_ENABLED`+Brevo+pepper+`otp_codes`) | flag present; register reliable | off — no Brevo creds, `otp_codes` missing | **prod unconfigured** |
+| Registration mailer | default Supabase mailer (works) | default mailer, send quota exhausted → signups 429 | **prod blocked (F1)** |
 | `REDIS_URL` | NOT SET | unknown (needs approved inspect) | gap |
 | `PAYSTACK_SECRET_KEY` | set (fe+be) | earlier sweep: fe-only | partial |
 | `ADMIN_API_KEY`/`APP_ENV` | set / staging | earlier: set | likely parity |
