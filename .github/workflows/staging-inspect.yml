@@ -43,7 +43,11 @@ on:
         type: boolean
         default: false
       fix_env_parity:
-        description: 'Apply the staging->prod baseline fixes: sync FEATURE_* + APP_ENV onto backend, set VOTES_BRIDGE_ENABLED on frontend-web, apply missing bridge/otp DDL via Supabase Management API, and READ the GoTrue auth config (signup budget) for diagnosis. Values are never printed.'
+        description: 'Apply the staging->prod baseline fixes: sync FEATURE_* + APP_ENV onto backend, apply missing bridge/otp DDL via Supabase Management API, and READ the GoTrue auth config (signup budget) for diagnosis. Values are never printed.'
+        type: boolean
+        default: false
+      fix_vote_bridge:
+        description: 'Set VOTES_BRIDGE_ENABLED=true on frontend-web of the target env. ONLY after the kyc-gate schema fix is deployed there — the bridged path 404s votes without it.'
         type: boolean
         default: false
 
@@ -444,7 +448,7 @@ jobs:
       # Safe by construction: FEATURE_* are booleans, APP_ENV is set to the
       # target name literally, and no credential values are copied or printed.
       - name: "Fix: VOTES_BRIDGE_ENABLED on frontend-web"
-        if: inputs.fix_env_parity
+        if: inputs.fix_vote_bridge
         run: |
           set -uo pipefail
           # frontend-web runs the /api/v2/votes/free Next.js route; without this
