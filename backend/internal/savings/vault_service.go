@@ -335,7 +335,13 @@ func (s *VaultService) Withdraw(ctx context.Context, ownerID, vaultID string, am
 }
 
 // EnableAutoSave schedules a recurring auto-save job for the vault (NL-9 idempotent).
+// A zero amount or interval would persist a meaningless job that can never move
+// money (the runner refuses amount<=0 on every tick forever) — refuse at the
+// door instead, matching the positivity guard AjoService.CreateCircle runs.
 func (s *VaultService) EnableAutoSave(ctx context.Context, ownerID, vaultID string, amountKobo, intervalSecs int64) (string, error) {
+	if amountKobo <= 0 || intervalSecs <= 0 {
+		return "", errors.New("savings: autosave amount and interval must be positive")
+	}
 	v, err := s.getVault(ctx, vaultID)
 	if err != nil {
 		return "", err
