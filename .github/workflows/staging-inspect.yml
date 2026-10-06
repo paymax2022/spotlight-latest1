@@ -906,46 +906,26 @@ jobs:
               -H "Authorization: Bearer $SB_MGMT" -H 'content-type: application/json' -d @- | head -c 300; echo
             ALTER ROLE postgres WITH PASSWORD '${NEWPW}';
           SQL
-          # Rebuild backend DATABASE_URL with the new password — parse host/user/db
-          # from the CURRENT var, swap only the password (value never printed).
-          railway variable list --service backend --environment staging \
-            --project "$PROJECT" --json > dsn.json || { echo "  could not read backend vars"; exit 0; }
-          node -e '
-            const fs=require("fs");
-            const v=JSON.parse(fs.readFileSync("dsn.json","utf8"));
-            const pw=process.env.NEWPW;
-            for (const k of ["DATABASE_URL","DIRECT_URL","SUPABASE_DB_URL","SUPABASE_DIRECT_URL"]) {
-              const raw=v[k]; if(!raw) continue;
-              try{
-                const u=new URL(String(raw));
-                u.password=encodeURIComponent(pw);
-                fs.appendFileSync("newdsn.env", k+"\t"+u.toString()+"\n");
-              }catch{ console.log("  "+k+": unparseable — left unchanged"); }
-            }' 
-          rm -f dsn.json
-          if [ -f newdsn.env ]; then
-            while IFS=$'\t' read -r K V; do
-              printf "%s" "$V" | railway variable set "$K" --stdin --service backend \
-                --environment staging --project "$PROJECT" $SKIP >/dev/null \
-                && echo "  backend $K password rotated" || echo "  WARN: $K write failed"
-            done < newdsn.env
-            rm -f newdsn.env
-          fi
-          # Verify the new password actually authenticates (rebuild the DSN with
-          # it in node; the value is never echoed).
-          railway variable list --service backend --environment staging \
-            --project "$PROJECT" --json > dsn2.json || true
-          node -e '
-            const fs=require("fs");
-            const v=JSON.parse(fs.readFileSync("dsn2.json","utf8"));
-            if(v.DATABASE_URL){const u=new URL(v.DATABASE_URL);u.password=process.env.NEWPW;fs.writeFileSync("testdsn.txt",u.toString());}' 
-          if [ -f testdsn.txt ]; then
-            psql "$(cat testdsn.txt)" -c "select 1" >/dev/null 2>&1 \
-              && echo "  VERIFY OK: new password authenticates" \
-              || echo "  VERIFY FAILED: new password does not authenticate"
-            rm -f testdsn.txt
-          fi
-          rm -f dsn2.json
+          # The current DSN points at db.<ref>.supabase.co:5432 (direct) which
+          # resolves IPv6-only — Railway cannot route it (dial: network is
+          # unreachable). Rewrite DATABASE_URL as the IPv4 Supavisor pooler in
+          # session mode (6543) since AfterConnect runs SET ROLE.
+          REGION=$(curl -sS -m 30 "https://api.supabase.com/v1/projects/$SB_REF" \
+            -H "Authorization: Bearer $SB_MGMT" | node -e 'const rl=require("readline").createInterface({input:process.stdin});let d="";rl.on("line",l=>d+=l).on("close",()=>{try{console.log(JSON.parse(d).region||"")}catch{console.log("")}});')
+          echo "  project region: $REGION"
+          NEWDSN="postgresql://postgres.${SB_REF}:${NEWPW}@aws-0-${REGION}.pooler.supabase.com:6543/postgres"
+          printf "%s" "$NEWDSN" | railway variable set DATABASE_URL --stdin --service backend \
+            --environment staging --project "$PROJECT" $SKIP >/dev/null \
+            && echo "  backend DATABASE_URL -> session pooler (aws-0-$REGION:6543), new password" \
+            || echo "  WARN: DATABASE_URL write failed"
+          # Verify the pooler DSN actually authenticates from the runner (IPv4).
+          psql "$NEWDSN" -c "select 1" >/dev/null 2>&1 \
+            && echo "  VERIFY OK: pooler accepts new password" \
+            || echo "  VERIFY FAILED: pooler rejects new password (Supavisor may need dashboard reset)"
+          DIRECTDSN="postgresql://postgres:${NEWPW}@db.${SB_REF}.supabase.co:5432/postgres"
+          printf "%s" "$DIRECTDSN" | railway variable set DIRECT_URL --stdin --service backend \
+            --environment staging --project "$PROJECT" $SKIP >/dev/null \
+            && echo "  backend DIRECT_URL updated" || true
           echo "$NEWPW" | gh secret set SUPABASE_STAGING_DB_PASSWORD --repo "$GH_REPO" 2>/dev/null \
             && echo "  repo secret SUPABASE_STAGING_DB_PASSWORD updated" \
             || echo "  WARN: secret update failed (token may lack admin scope — owner updates it)"
