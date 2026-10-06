@@ -794,15 +794,17 @@ jobs:
           echo "--- redis service vars (names only) ---"
           railway variable list --service Redis --environment "$ENVIRONMENT" --project "$PROJECT" --json 2>/dev/null \
             | node -e 'const rl=require("readline").createInterface({input:process.stdin});let d="";rl.on("line",l=>d+=l).on("close",()=>{try{console.log("  "+Object.keys(JSON.parse(d)).join(", "))}catch{console.log("  (unparseable — Redis service may not exist)")}});'
-          # Reference vars resolve per-environment at deploy time — one var
-          # value works for every env the service is deployed into.
-          for REF in '${{Redis.REDIS_PRIVATE_URL}}' '${{Redis.REDIS_URL}}'; do
+          # Reference vars resolve per-environment at deploy time. The literal
+          # brace-brace syntax is built by concat so the Actions parser does
+          # not eat it.
+          D='$''{'
+          for REF in "${D}{Redis.REDIS_PRIVATE_URL}}" "${D}{Redis.REDIS_URL}}"; do
             if railway variable set "REDIS_URL=$REF" --service backend \
               --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP >/dev/null 2>&1; then
               echo "  backend REDIS_URL -> $REF"; break
             fi
           done
-          if railway variable set "REDIS_PRIVATE_URL=${{Redis.REDIS_PRIVATE_URL}}" --service backend \
+          if railway variable set "REDIS_PRIVATE_URL=${D}{Redis.REDIS_PRIVATE_URL}}" --service backend \
             --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP >/dev/null 2>&1; then
             echo "  backend REDIS_PRIVATE_URL -> reference"
           fi
