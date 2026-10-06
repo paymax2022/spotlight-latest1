@@ -5,11 +5,14 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { mapGateEvent } from '@/src/server/visitor/gate.service';
 import { ACCESS_CODE_COLUMNS } from '@/src/server/visitor/visitor.service';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // Record a visitor check-out.
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireRequestUser(request);
     const { id } = await context.params;
+    if (!UUID_RE.test(id)) throw new ApiError('Invalid access code ID', 400);
     const supabase = createAdminClient();
 
     const body = await request.json().catch(() => null);

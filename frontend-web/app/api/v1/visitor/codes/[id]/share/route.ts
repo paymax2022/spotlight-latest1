@@ -7,7 +7,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     await requireRequestUser(request);
     await context.params; // consume params
-    return NextResponse.json(null, { status: 204 });
+    return new NextResponse(null, { status: 204 });
   } catch (error) {
     return handleApiError(error, 'Failed to share access code');
   }
