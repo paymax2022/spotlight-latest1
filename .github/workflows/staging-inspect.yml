@@ -910,9 +910,16 @@ jobs:
           # resolves IPv6-only — Railway cannot route it (dial: network is
           # unreachable). Rewrite DATABASE_URL as the IPv4 Supavisor pooler in
           # session mode (6543) since AfterConnect runs SET ROLE.
-          REGION=$(curl -sS -m 30 "https://api.supabase.com/v1/projects/$SB_REF" \
-            -H "Authorization: Bearer $SB_MGMT" | node -e 'const rl=require("readline").createInterface({input:process.stdin});let d="";rl.on("line",l=>d+=l).on("close",()=>{try{console.log(JSON.parse(d).region||"")}catch{console.log("")}});')
-          echo "  project region: $REGION"
+          REGION=$(curl -sS -m 30 "https://api.supabase.com/v1/projects" \
+            -H "Authorization: Bearer $SB_MGMT" | SB_REF="$SB_REF" node -e '
+            const rl=require("readline").createInterface({input:process.stdin});let d="";
+            rl.on("line",l=>d+=l).on("close",()=>{try{
+              const list=JSON.parse(d);
+              const p=(Array.isArray(list)?list:[]).find(x=>x.id===process.env.SB_REF);
+              console.log((p&&(p.region||p.database&&p.database.region))||"");
+            }catch{console.log("")}});')
+          echo "  project region: ${REGION:-EMPTY}"
+          [ -n "$REGION" ] || { echo "  ABORT: could not resolve project region — leaving DATABASE_URL untouched"; exit 0; }
           NEWDSN="postgresql://postgres.${SB_REF}:${NEWPW}@aws-0-${REGION}.pooler.supabase.com:6543/postgres"
           printf "%s" "$NEWDSN" | railway variable set DATABASE_URL --stdin --service backend \
             --environment staging --project "$PROJECT" $SKIP >/dev/null \
