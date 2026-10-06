@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -25,6 +26,12 @@ var ErrNoProfile = errors.New("connect: no profile for user")
 
 // ErrSelfLike is returned when a user tries to like their own profile.
 var ErrSelfLike = errors.New("connect: cannot like your own profile")
+
+// ErrTargetNotFound is returned when the like target is not an existing profile —
+// including a malformed (non-UUID) id, which can never resolve. Exported so the
+// discovery swipe path can translate it into its own not-found sentinel rather
+// than falling through to a 500.
+var ErrTargetNotFound = errors.New("connect: target profile not found")
 
 // ErrBlocked is returned when a like/match is refused because a block exists
 // between the two users in either direction (EC-004 / safety invariant 3: block
@@ -96,6 +103,11 @@ func (s *Service) Like(ctx context.Context, fromUserID, toProfileID, kind string
 	if !ValidKind(kind) {
 		return nil, fmt.Errorf("connect: invalid like kind %q", kind)
 	}
+	// Guard the uuid columns: a malformed target id would otherwise surface as a
+	// Postgres "invalid input syntax" error → 500 instead of a clean not-found.
+	if _, err := uuid.Parse(toProfileID); err != nil {
+		return nil, ErrTargetNotFound
+	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -131,7 +143,7 @@ func (s *Service) Like(ctx context.Context, fromUserID, toProfileID, kind string
 		return nil, fmt.Errorf("connect: check target: %w", err)
 	}
 	if !exists {
-		return nil, errors.New("connect: target profile not found")
+		return nil, ErrTargetNotFound
 	}
 
 	// EC-004 / safety invariant 3: block is absolute. Refuse the like (and thus any
@@ -346,6 +358,8 @@ func (h *Handler) Like(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{keyError: "cannot like your own profile"})
 		case errors.Is(err, ErrNeedsCredits):
 			c.JSON(http.StatusPaymentRequired, gin.H{keyError: "out of super-like credits", "upsell": "pass_super5"})
+		case errors.Is(err, ErrTargetNotFound):
+			c.JSON(http.StatusNotFound, gin.H{keyError: "target profile not found"})
 		case errors.Is(err, ErrBlocked), errors.Is(err, ErrRestricted), errors.Is(err, ErrIneligibleTarget):
 			c.JSON(http.StatusForbidden, gin.H{keyError: "not allowed"})
 		default:

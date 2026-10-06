@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     );
     if (error) throw error;
 
-    return NextResponse.json(null, { status: 204 });
+    return new NextResponse(null, { status: 204 });
   } catch (error) {
     return handleApiError(error, 'Failed to register push token');
   }

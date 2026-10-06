@@ -14,7 +14,7 @@ export async function POST(request: Request) {
       .eq('user_id', user.id);
     if (error) throw error;
 
-    return NextResponse.json(null, { status: 204 });
+    return new NextResponse(null, { status: 204 });
   } catch (error) {
     return handleApiError(error, 'Failed to mark notifications as read');
   }
