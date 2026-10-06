@@ -132,7 +132,7 @@ describe('SEC-006: malformed JSON is rejected, not crashed on', () => {
       { params: Promise.resolve({ contestId: LONG_STRING }) },
     );
     expect(res).toBeInstanceOf(Response);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(400);
   });
 
   it('a NoSQL-operator-shaped object where a string is expected is treated as an opaque value, not executed', async () => {
