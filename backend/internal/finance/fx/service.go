@@ -352,7 +352,10 @@ func (s *Service) ListConversions(ctx context.Context, userID string, limit, off
 		return nil, err
 	}
 	defer rows.Close()
-	var out []FXConversion
+	// [] not nil: a user with no conversions must read as an empty list —
+	// `conversions:null` breaks clients iterating the field and diverges from
+	// the other list endpoints, which answer [].
+	out := make([]FXConversion, 0)
 	for rows.Next() {
 		var c FXConversion
 		if err := rows.Scan(
