@@ -349,7 +349,10 @@ export async function executeResultsPublish(
     .eq('id', roundId)
     .maybeSingle();
 
-  if (roundError) throw new ApiError(`Failed to load round: ${roundError.message}`, 500);
+  if (roundError) {
+    console.error('[voting/publish] failed to load round:', roundError);
+    throw new ApiError('Failed to load round', 500);
+  }
   if (!round) throw new ApiError('Voting round not found', 404);
 
   if ((round as any).status === 'results_published') {
@@ -373,7 +376,10 @@ export async function executeResultsPublish(
     .select('id, position')
     .eq('connect_contest_id', contestId);
 
-  if (prizesError) throw new ApiError(`Failed to load contest prizes: ${prizesError.message}`, 500);
+  if (prizesError) {
+    console.error('[voting/publish] failed to load contest prizes:', prizesError);
+    throw new ApiError('Failed to load contest prizes', 500);
+  }
 
   const prizeByPosition = new Map<number, string>();
   for (const row of prizeRows ?? []) {
@@ -404,7 +410,8 @@ export async function executeResultsPublish(
     if ((publishError as any).message?.includes('voting_round_not_found')) {
       throw new ApiError('Voting round not found', 404);
     }
-    throw new ApiError(`Failed to publish results: ${(publishError as any).message}`, 500);
+    console.error('[voting/publish] publish_voting_round_results failed:', publishError);
+    throw new ApiError('Failed to publish results', 500);
   }
 
   const resultRows = (insertedRows ?? []) as any[];

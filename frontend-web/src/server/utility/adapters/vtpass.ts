@@ -417,7 +417,10 @@ export const vtpassUtilityAdapter: UtilityProviderAdapter = {
       }
       return { status: 'degraded' as const, message: payload.response_description || 'Unable to confirm VTPass balance.' };
     } catch (error) {
-      return { status: 'down' as const, message: error instanceof Error ? error.message : 'VTPass health check failed.' };
+      // The adapter threw — the message can carry fetch/network internals and
+      // this result is returned verbatim in the admin health-check response.
+      console.error('[utility/vtpass] health check request failed:', error);
+      return { status: 'down' as const, message: 'VTPass health check request failed.' };
     }
   },
 };

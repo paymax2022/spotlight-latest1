@@ -123,7 +123,8 @@ export async function proposeApproval(input: ProposeApprovalInput): Promise<Prop
         return { id: row.id, status: row.status as ContestApprovalStatus, alreadyProposed: true };
       }
     }
-    throw new ApiError(`Failed to propose action: ${error.message}`, 500);
+    console.error('[voting/approvals] failed to propose action:', error);
+    throw new ApiError('Failed to propose action', 500);
   }
 
   const row = inserted as { id: string; status: string };
