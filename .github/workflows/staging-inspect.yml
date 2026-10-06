@@ -618,6 +618,22 @@ jobs:
           done < fw-flags.env
           rm -f fw-flags.env
           echo "  applied $COUNT flags to frontend-web ($ENVIRONMENT) — no redeploy (activates on next deploy)"
+          # ADMIN_API_KEY is the shared backend<->frontend-admin secret. Re-pair
+          # it from THIS env's backend value in case an earlier var copy left
+          # them divergent (value never printed).
+          railway variable list --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > be-ak.json || true
+          node -e 'try{const v=JSON.parse(require("fs").readFileSync("be-ak.json","utf8"));if(v.ADMIN_API_KEY)require("fs").writeFileSync("ak.txt",String(v.ADMIN_API_KEY))}catch{}' || true
+          rm -f be-ak.json
+          if [ -f ak.txt ]; then
+            if railway variable set ADMIN_API_KEY --stdin --service frontend-admin \
+              --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP < ak.txt >/dev/null 2>&1; then
+              echo "  frontend-admin ADMIN_API_KEY <- $ENVIRONMENT backend value"
+            else
+              echo "  WARN: ADMIN_API_KEY write failed"
+            fi
+            rm -f ak.txt
+          fi
           if railway redeploy --service backend --environment "$ENVIRONMENT" --project "$PROJECT" --yes; then
             echo "  single redeploy triggered to pick up the new vars"
           else
