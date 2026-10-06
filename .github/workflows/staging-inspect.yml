@@ -854,6 +854,19 @@ jobs:
             echo "--- Redis service logs (last 30 lines, proves instance is alive) ---"
             railway logs --deployment --service Redis --environment "$ENVIRONMENT" \
               --project "$PROJECT" --lines 30 2>&1 | tail -30 | sed 's/^/    /' || true
+            # Diagnose staging-vs-prod differences in the RESOLVED backend
+            # REDIS_URL — prints shape only (scheme/user/password-present/host/port),
+            # never the password itself.
+            echo "--- resolved backend REDIS_URL shape (staging vs production) ---"
+            for E in staging production; do
+              TOK="$STG_TOK"; [ "$E" = production ] && TOK="${{ secrets.RAILWAY_TOKEN_PRODUCTION }}"
+              RAILWAY_TOKEN="$TOK" railway variable list --service backend \
+                --environment "$E" --project "$PROJECT" --json 2>/dev/null \
+                | node -e 'const rl=require("readline").createInterface({input:process.stdin});let d="";rl.on("line",l=>d+=l).on("close",()=>{
+                  try{const u=new URL(JSON.parse(d).REDIS_URL||"");
+                    console.log(`  '"$E"': scheme=${u.protocol} user=${u.username||"-"} password=${u.password?"set":"EMPTY"} host=${u.hostname} port=${u.port||"default"}`);
+                  }catch{console.log(`  '"$E"': REDIS_URL unparseable/unset`)}});'
+            done
           else
             echo "  Redis service exposes no URL var — set REDIS_URL manually"
           fi
