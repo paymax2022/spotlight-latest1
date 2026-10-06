@@ -181,7 +181,13 @@ func (h *Handler) GetSplit(c *gin.Context) {
 }
 
 func (h *Handler) PayShare(c *gin.Context) {
-	key, _ := ginutil.RequireIdempotencyKeyOK(c)
+	// ok was previously ignored: a missing key wrote the 400 above and then
+	// STILL paid the share — a money mutation proceeding without the
+	// required Idempotency-Key.
+	key, ok := ginutil.RequireIdempotencyKeyOK(c)
+	if !ok {
+		return
+	}
 	if err := h.svc.PayShare(c.Request.Context(), ginutil.UserID(c), c.Param("shareId"), key); err != nil {
 		errMap.WriteOK(c, err)
 		return
