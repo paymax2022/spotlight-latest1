@@ -1041,7 +1041,7 @@ jobs:
           done < forceoff.txt
           rm -f be-final.json forceoff.txt
           for SVC in frontend-web frontend-admin backend; do
-            railway redeploy --service "$SVC" --environment production --project "$PROJECT" --yes \
+            RAILWAY_TOKEN="$PRD_TOK" railway redeploy --service "$SVC" --environment production --project "$PROJECT" --yes \
               && echo "  redeploy triggered (prod): $SVC" || echo "  redeploy failed (prod): $SVC"
           done
 
