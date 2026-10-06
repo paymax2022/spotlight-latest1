@@ -347,11 +347,13 @@ jobs:
           API=https://backboard.railway.app/graphql/v2
           gql() { curl -sS -m 30 "$API" -H "Authorization: Bearer $RAILWAY_TOKEN" \
             -H 'content-type: application/json' -d "$1"; }
-          IDS="$(gql '{"query":"{ project(id: \"'"$PROJECT"'\") { environments { edges { node { id name } } } services { edges { node { id name } } } } }"}')"
+          IDS="$(gql '{"query":"{ project(id: \"'"$PROJECT"'\") { environments { edges { node { id name } } } services { edges { node { id name } } } } }"}')" || true
           echo "$IDS" | node -e '
             let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{
-              const j=JSON.parse(d);
-              if (j.errors) { console.log("  project query errors:", JSON.stringify(j.errors)); process.exit(1); }
+              let j;
+              try { j=JSON.parse(d); }
+              catch { console.log("  raw API response (not JSON):", d.slice(0,300)); process.exit(0); }
+              if (j.errors) { console.log("  project query errors:", JSON.stringify(j.errors).slice(0,500)); process.exit(0); }
               const env=j.data.project.environments.edges.map(e=>e.node).find(n=>n.name==="'"$ENVIRONMENT"'");
               const svcs=j.data.project.services.edges.map(e=>e.node);
               const want=["frontend-web","frontend-admin"];
@@ -359,9 +361,9 @@ jobs:
                 const s=svcs.find(n=>n.name===w);
                 console.log((env&&s)?`${w} ${s.id} env=${env.id}`:`MISSING ${w} or env`);
               }
-            });' > ids.txt
+            });' > ids.txt || true
           cat ids.txt | sed 's/^/    /'
-          grep -q "MISSING" ids.txt && { echo "  could not resolve service/env ids"; exit 1; }
+          grep -q "MISSING\|errors:\|not JSON" ids.txt && { echo "  could not resolve service/env ids — aborting fix"; exit 0; }
           while read -r SVC SID REST; do
             EID="${REST#env=}"
             echo "  -> $SVC ($SID) rootDirectory=$SVC (env $EID)"
