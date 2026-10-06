@@ -872,4 +872,14 @@ jobs:
             const [url,key,id]=[process.env.SB_URL,process.env.SB_KEY,process.argv[1]];
             fetch(url+"/auth/v1/admin/users/"+id,{method:"DELETE",headers:{apikey:key,Authorization:"Bearer "+key}}).then(r=>console.log("  deleted throwaway user: HTTP "+r.status)).catch(e=>console.log("  delete failed: "+e.message));
           ' "$UID_"
+          # Schema drift check: the bridge dedup table and OTP store gate real
+          # behaviour. A missing table makes checkAndClaimIdempotencyKey fail
+          # OPEN (vote double-counts) and disables the OTP register path.
+          echo "  --- schema presence (PostgREST 200=exists, 404/PGRST205=missing) ---"
+          for t in bridge_idempotency_keys bridge_outbox otp_codes votes vote_totals voter_daily_limits voting_settings user_profiles ledger_accounts ledger_entries; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
+              -H "apikey: $SB_KEY" -H "Authorization: Bearer $SB_KEY" \
+              "$SB_URL/rest/v1/$t?limit=0")
+            printf "  %-28s %s\n" "$t" "$code"
+          done
           unset TOKEN SB_KEY
