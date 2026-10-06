@@ -33,8 +33,9 @@ const { store, creditedKeys, creditCalls, resetFakes } = vi.hoisted(() => {
   const store: {
     bridge_outbox: Array<Record<string, any>>;
     finance_referral_codes: Array<Record<string, any>>;
+    referral_links: Array<Record<string, any>>;
     referral_events: Array<Record<string, any>>;
-  } = { bridge_outbox: [], finance_referral_codes: [], referral_events: [] };
+  } = { bridge_outbox: [], finance_referral_codes: [], referral_links: [], referral_events: [] };
 
   const creditedKeys = new Set<string>();
   const creditCalls: Array<{ userId: string; idempotencyKey: string; amountKobo: number }> = [];
@@ -42,6 +43,7 @@ const { store, creditedKeys, creditCalls, resetFakes } = vi.hoisted(() => {
   function resetFakes() {
     store.bridge_outbox = [];
     store.finance_referral_codes = [];
+    store.referral_links = [];
     store.referral_events = [];
     creditedKeys.clear();
     creditCalls.length = 0;
