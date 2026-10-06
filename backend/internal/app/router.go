@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/handlers"
@@ -57,6 +58,21 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	}
 	r.Use(middleware.RequestID())
 	r.Use(middleware.CORSMiddleware(cfg.CORSAllowOrigins, cfg.AppEnv))
+
+	// JSON 404 for every unmatched path. Gin's default NoRoute answers
+	// "404 page not found" as text/plain, which is what every flag-off module
+	// surface (crypto/invest/learn/doctor/onboarding/…) and every mistyped path
+	// leaked through the BFF proxies — verbatim, but stamped
+	// Content-Type: application/json by proxyToGoBackend, so clients calling
+	// .json() on the 404 got a parse error instead of an envelope. One handler
+	// here uniformizes the whole dark-surface tail: same status, JSON body,
+	// same shape as the BFF's own no-route responder.
+	r.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "No API route matches " + c.Request.Method + " " + c.Request.URL.Path,
+		})
+	})
 
 	health := handlers.NewHealthHandler()
 	// Shared Redis client for idempotency fast-paths (arena ledger, etc.). nil when
