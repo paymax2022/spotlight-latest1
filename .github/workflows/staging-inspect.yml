@@ -921,10 +921,20 @@ jobs:
           probe "/api/registration/contests"
           probe "/api/v1/contests?limit=2"
           echo "  --- free-vote smoke (seeded contestant + voting_settings, cleaned up after) ---"
+          # Prefer a contest with NO existing voting_settings: seeded settings
+          # use limit=3/day, so a same-key replay returning the CACHED success
+          # proves the bridge dedup fired — a contest limited to 1/day would 429
+          # on the second vote either way and prove nothing.
           CONTEST_ID="$(node -e '
-            fetch(process.env.WEB_BASE+"/api/v1/contests?limit=10").then(r=>r.json()).then(j=>{
-              const c=(j||[]).find(x=>x.isLive)||(j||[])[0];
-              process.stdout.write(c?c.id:"");}).catch(()=>process.stdout.write(""));')"
+            const [web,url,key]=[process.env.WEB_BASE,process.env.SB_URL,process.env.SB_KEY];
+            (async()=>{
+              const j=await fetch(web+"/api/v1/contests?limit=10").then(r=>r.json()).catch(()=>[]);
+              for (const c of (j||[])) {
+                const s=await fetch(url+"/rest/v1/voting_settings?contest_id=eq."+c.id+"&select=id",{headers:{apikey:key,Authorization:"Bearer "+key}}).then(r=>r.json()).catch(()=>[1]);
+                if (Array.isArray(s) && s.length===0) { process.stdout.write(c.id); return; }
+              }
+              process.stdout.write((j&&j[0]&&j[0].id)||"");
+            })();')"
           echo "  contest: ${CONTEST_ID:-none-found}"
           CTID=""
           VS_OK=""
