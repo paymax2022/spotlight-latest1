@@ -10,12 +10,12 @@ import { USE_MOCK, formatNaira } from './constants/social.constants';
 export { formatNaira };
 
 // P2P escrow marketplace lives on a DIFFERENT backend module than Social Pay
-// (P1). Confirmed against backend/internal/app/top5_p3_routes.go
-// Register, which re-adds "/p2p/..." itself → the full path is
-// /api/finance/p2p/p2p/... "Listings"/"escrow" here map onto p2pmarket's
-// listings/orders vocabulary (checkout/confirm/dispute), not a generic
-// "/escrow/*" namespace.
-const P2P_BASE = '/api/finance/p2p/p2p';
+// (P1). RegisterP2PMarket is handed the bare finance group and p2pmarket's
+// Register adds "/p2p/..." itself (backend/internal/p2pmarket/handler.go), so
+// the full path is /api/finance/p2p/... "Listings"/"escrow" here map onto
+// p2pmarket's listings/orders vocabulary (checkout/confirm/dispute), not a
+// generic "/escrow/*" namespace.
+const P2P_BASE = '/api/finance/p2p';
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 function escrowIdempotencyKey(): string {
@@ -144,8 +144,8 @@ export async function getListing(id: string): Promise<Listing> {
 }
 
 // MISSING BACKEND ENDPOINT: no single-order GET exists (only actions:
-// confirm/dispute/rate). Falls back to the mock trade until a GET
-// /p2p/orders/:orderId read is added.
+// confirm/dispute/rate). The mock trade is dev-only; live mode fails visibly
+// until a GET /p2p/orders/:orderId read is added.
 export async function getTrade(id: string): Promise<EscrowTrade> {
   if (USE_MOCK) {
     await delay();
@@ -153,13 +153,12 @@ export async function getTrade(id: string): Promise<EscrowTrade> {
     if (!t) throw new Error('Trade not found');
     return t;
   }
-  const t = MOCK_TRADES.find((x) => x.id === id);
-  if (!t) throw new Error('Trade not found');
-  return t;
+  throw new Error('Trade details are not available yet.');
 }
 
 // MISSING BACKEND ENDPOINT: no "list my orders/trades" endpoint exists.
 export async function listTrades(): Promise<EscrowTrade[]> {
+  if (!USE_MOCK) return [];
   await delay();
   return MOCK_TRADES;
 }

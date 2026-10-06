@@ -68,9 +68,8 @@ function requireAsset(idOrSymbol: string): StockAsset {
   return asset;
 }
 
-// Single-asset reads are namespaced under /ticker/{symbol} so the symbol wildcard
-// does not collide with the /stocks/orders and /stocks/offers collections on the
-// Go ServeMux (see internal/api/server.go).
+// Single-asset reads are /stocks/:symbol[/chart|news|dividends|corporate-actions]
+// on the Go router (backend/internal/invest/handler.go) — there is no /ticker segment.
 
 export async function getStocks(): Promise<StockAsset[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_STOCKS]; }
@@ -79,18 +78,18 @@ export async function getStocks(): Promise<StockAsset[]> {
 
 export async function getStock(symbol: string): Promise<StockAsset> {
   if (USE_MOCK) { await delay(220); return requireAsset(symbol); }
-  return unwrap<StockAsset>(await api.get(`/api/v1/stocks/ticker/${symbol}`));
+  return unwrap<StockAsset>(await api.get(`/api/v1/stocks/${symbol}`));
 }
 
 /** Deterministic mock price history for the asset chart. */
 export async function getChart(symbol: string, range: ChartRange): Promise<Candle[]> {
   if (USE_MOCK) { await delay(240); return chartFor(requireAsset(symbol), range); }
-  return unwrap<Candle[]>(await api.get(`/api/v1/stocks/ticker/${symbol}/chart`, { params: { range } }));
+  return unwrap<Candle[]>(await api.get(`/api/v1/stocks/${symbol}/chart`, { params: { range } }));
 }
 
 export async function getNews(symbol: string): Promise<StockNews[]> {
   if (USE_MOCK) { await delay(240); void symbol; return [...MOCK_NEWS]; }
-  return unwrap<StockNews[]>(await api.get(`/api/v1/stocks/ticker/${symbol}/news`));
+  return unwrap<StockNews[]>(await api.get(`/api/v1/stocks/${symbol}/news`));
 }
 
 export async function getDividends(symbol: string): Promise<Dividend[]> {
@@ -98,7 +97,7 @@ export async function getDividends(symbol: string): Promise<Dividend[]> {
     await delay(220);
     return MOCK_DIVIDENDS.filter((d) => d.symbol === symbol);
   }
-  return unwrap<Dividend[]>(await api.get(`/api/v1/stocks/ticker/${symbol}/dividends`));
+  return unwrap<Dividend[]>(await api.get(`/api/v1/stocks/${symbol}/dividends`));
 }
 
 export async function getCorporateActions(symbol: string): Promise<CorporateAction[]> {
@@ -106,7 +105,7 @@ export async function getCorporateActions(symbol: string): Promise<CorporateActi
     await delay(220);
     return MOCK_CORPORATE_ACTIONS.filter((c) => c.symbol === symbol);
   }
-  return unwrap<CorporateAction[]>(await api.get(`/api/v1/stocks/ticker/${symbol}/corporate-actions`));
+  return unwrap<CorporateAction[]>(await api.get(`/api/v1/stocks/${symbol}/corporate-actions`));
 }
 
 // NOTE: there is no generic /api/v1/portfolio endpoint on the Go backend.

@@ -15,7 +15,7 @@ export default function StockSellFailedScreen() {
   }>();
   const marketClosed = p.kind === 'market_closed';
 
-  const retry = () => router.replace({ pathname: '/stocks/sell/index', params: { symbol: p.symbol } });
+  const retry = () => router.replace({ pathname: '/stocks/sell', params: { symbol: p.symbol } });
 
   return (
     <SafeAreaView style={styles.safe}>

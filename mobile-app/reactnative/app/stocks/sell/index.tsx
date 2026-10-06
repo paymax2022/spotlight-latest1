@@ -70,7 +70,7 @@ export default function StockSellEntryScreen() {
           title={`You don't own ${a.symbol}`}
           message={`Buy ${a.symbol} first — then you can sell it back to cash anytime.`}
           actionLabel={`Buy ${a.symbol}`}
-          onAction={() => router.replace({ pathname: '/stocks/buy/index', params: { symbol: a.symbol } })}
+          onAction={() => router.replace({ pathname: '/stocks/buy', params: { symbol: a.symbol } })}
         />
       </SafeAreaView>
     );

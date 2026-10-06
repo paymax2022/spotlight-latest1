@@ -370,13 +370,12 @@ export async function verifyRegistrationPayment(params: {
     return waitMock({ success: true, status: 'SUCCESSFUL', reference: params.reference }, 1500);
   }
 
-  // The backend route is POST with a JSON body ({ reference }) — see
-  // backend/internal/handlers/registration_handler.go VerifyPayment, which
-  // does `c.ShouldBindJSON`. A GET with query params (the previous shape
-  // here) fails ShouldBindJSON on every real call, so verification could
-  // never succeed against the live backend (only the mock path, which
-  // doesn't hit this branch, ever worked).
-  return regPost<VerifyRegistrationPaymentResponse>(
+  // This path is served by the Next BFF, not Go: frontend-web
+  // app/api/registration/applications/[id]/payment/verify/route.ts exports
+  // only GET and reads `reference` from the query string. A POST answers 405,
+  // which the processing screen polled through until it gave up and sent a
+  // paid applicant to payment-failed.
+  return regGet<VerifyRegistrationPaymentResponse>(
     `${REG_BASE}/applications/${params.id}/payment/verify`,
     { reference: params.reference },
   );

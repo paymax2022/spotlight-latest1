@@ -241,7 +241,7 @@ export default function PatientProfileScreen() {
               <Text style={styles.muted}>No previous prescriptions.</Text>
             ) : (
               profile.previousPrescriptions.map((p, i) => (
-                <Pressable key={p.id} style={[styles.listRow, i > 0 && styles.rowBorder]} onPress={() => router.push(`/(doctor)/prescriptions/index`)} accessibilityRole="button" accessibilityLabel={`Prescription ${p.ref}`}>
+                <Pressable key={p.id} style={[styles.listRow, i > 0 && styles.rowBorder]} onPress={() => router.push(`/(doctor)/prescriptions`)} accessibilityRole="button" accessibilityLabel={`Prescription ${p.ref}`}>
                   <ClipboardList size={16} color={Colors.primary} strokeWidth={2} />
                   <View style={styles.listBody}>
                     <Text style={styles.listTitle}>{p.ref} · {p.diagnosis}</Text>

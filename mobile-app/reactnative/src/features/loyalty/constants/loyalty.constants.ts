@@ -10,10 +10,10 @@ export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_LOYALTY_USE_MOCK, tr
 // Confirmed against backend/internal/app/top5_p2_routes.go (RegisterLoyalty
 // finance group) + backend/internal/loyalty/handler.go Register.
 export const API_BASE = '/api/finance/loyalty';
-// Points balance/catalog/redeem live one level up, directly on /api/finance
-// (see backend/internal/points/handler.go Register(member) — member there is
-// the bare finance group, not finance.Group("/loyalty")).
-export const POINTS_API_BASE = '/api/finance';
+// Points balance/history/catalog/redeem are registered by RegisterLoyalty on the
+// same finance.Group("/loyalty") member group (backend/internal/app/top5_routes.go
+// pointsHandler.Register(member)), so they sit under /api/finance/loyalty/points/*.
+export const POINTS_API_BASE = '/api/finance/loyalty';
 
 // Module-scoped colors built on the base design tokens (never hardcode hex).
 // Gold-anchored — rewards/elite accent per DESIGN-Mobile.md.

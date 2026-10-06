@@ -18,10 +18,10 @@ export default function StockBuyFailedScreen() {
   const retry = () => {
     if (marketClosed) {
       // Market order can't fill while closed — send the user back to the entry screen to switch to a limit order.
-      router.replace({ pathname: '/stocks/buy/index', params: { symbol: p.symbol } });
+      router.replace({ pathname: '/stocks/buy', params: { symbol: p.symbol } });
       return;
     }
-    router.replace({ pathname: '/stocks/buy/index', params: { symbol: p.symbol } });
+    router.replace({ pathname: '/stocks/buy', params: { symbol: p.symbol } });
   };
 
   return (
