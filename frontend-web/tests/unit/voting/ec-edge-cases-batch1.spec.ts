@@ -113,7 +113,7 @@ describe('EC-009: vote after contest close is rejected, not counted (paid path)'
     await expect(
       initiatePaidVote(
         {
-          contestId: 'contest-closed',
+          contestId: '66666666-6666-4666-8666-666666666666',
           contestantId: 'contestant-A',
           voterEmail: 'voter@example.com',
           voterName: 'Late Voter',
@@ -150,7 +150,7 @@ describe('EC-009: vote after contest close is rejected, not counted (paid path)'
     await expect(
       initiatePaidVote(
         {
-          contestId: 'contest-future',
+          contestId: '77777777-7777-4777-8777-777777777777',
           contestantId: 'contestant-A',
           voterEmail: 'voter@example.com',
           voterName: 'Early Voter',
@@ -185,7 +185,7 @@ describe('EC-009: vote after contest close is rejected, not counted (paid path)'
     await expect(
       initiatePaidVote(
         {
-          contestId: 'contest-disabled',
+          contestId: '88888888-8888-4888-8888-888888888888',
           contestantId: 'contestant-A',
           voterEmail: 'voter@example.com',
           voterName: 'Voter',

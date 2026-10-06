@@ -10,6 +10,11 @@ import { createAdminClient } from '@/lib/supabase/server';
 
 type OpenMicVerifyCached = { success: true; alreadyProcessed: true; newCount: number };
 
+// contests.id / competition_entries.id are uuid columns — a malformed id fed
+// into .eq() surfaces as a Postgres 22P02 (500) inside getContestById and
+// castVote, so shape-check the resolved ids before touching the store.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -38,6 +43,15 @@ export async function POST(request: Request) {
     const contestId = intent?.contest_id ?? body.contestId;
     const submissionId = intent?.submission_id ?? body.submissionId;
     const votes = intent?.votes ?? body.votes;
+    // Resolved ids (body, or the intent's frozen values when one exists) feed
+    // uuid columns below — refuse malformed shapes with a 400 before the
+    // first store read rather than letting PostgREST 22P02 surface as a 500.
+    if (!UUID_RE.test(contestId) || !UUID_RE.test(submissionId)) {
+      return errorResponse('contestId and submissionId must be valid UUIDs', 400);
+    }
+    if (!Number.isInteger(votes) || votes <= 0 || votes > Number.MAX_SAFE_INTEGER) {
+      return errorResponse('votes must be a positive integer', 400);
+    }
     let expectedKobo = intent?.amount_kobo ?? 0;
     if (!expectedKobo) {
       // Pre-intent in-flight reference: derive the quote server-side anyway
