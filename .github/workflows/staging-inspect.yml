@@ -1003,15 +1003,17 @@ jobs:
             if [ "$PW_SRC" = embedded ]; then PW="$EMBED"; else PW="${SB_DB_PW:-}"; fi
             [ -n "$PW" ] || continue
             EPW=$(node -e 'console.log(encodeURIComponent(process.argv[1]))' "$PW")
+            for GEN in aws-1 aws-0; do
             for REGION in eu-west-1 eu-north-1 eu-west-2 eu-central-1 us-east-1 us-east-2 ap-southeast-1 ap-south-1; do
               for PORT in 5432 6543; do
-                DSN="postgresql://postgres.${REF}:${EPW}@aws-0-${REGION}.pooler.supabase.com:${PORT}/postgres"
+                DSN="postgresql://postgres.${REF}:${EPW}@${GEN}-${REGION}.pooler.supabase.com:${PORT}/postgres"
                 if PGCONNECT_TIMEOUT=8 psql "$DSN" -w -c 'select 1' >/dev/null 2>&1; then
-                  WIN="$DSN"; WIN_META="region=$REGION port=$PORT pw=$PW_SRC"
-                  break 3
+                  WIN="$DSN"; WIN_META="gen=$GEN region=$REGION port=$PORT pw=$PW_SRC"
+                  break 4
                 fi
                 unset DSN
               done
+            done
             done
           done
           if [ -z "$WIN" ]; then
