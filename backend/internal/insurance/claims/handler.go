@@ -24,6 +24,10 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // mapErr maps service sentinel errors to HTTP responses.
 func mapErr(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, ErrNotFound):
+		// Missing claim/policy id. Without this branch a nonexistent id leaked
+		// the raw driver error as a 500 instead of a 404.
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 	case errors.Is(err, ErrForbidden):
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 	case errors.Is(err, ErrPolicyNotActive):
@@ -151,7 +155,10 @@ func (h *Handler) AdminSearch(c *gin.Context) {
 func (h *Handler) AdminGet(c *gin.Context) {
 	cl, err := h.svc.AdminGet(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		// mapErr keeps a real 404 for a missing claim but stops masking a DB
+		// failure as one — before this every error, including an outage, read
+		// as "not_found".
+		mapErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{keyData: cl})

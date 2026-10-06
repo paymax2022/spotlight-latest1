@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -192,6 +193,12 @@ func (s *Service) ListDoctors(ctx context.Context, q ListDoctorsQuery) ([]Doctor
 	return scanDoctors(rows, s.platformFeeBp)
 }
 
+// ErrDoctorNotFound marks "no doctors row" outcomes so handlers can map them to
+// 404 instead of the blanket 500 that made a bad id indistinguishable from an
+// outage (prod sweep: the doctor dashboard 500'd for a user with no profile,
+// and a booking against a non-existent doctor_id did the same).
+var ErrDoctorNotFound = errors.New("telemedicine: doctor not found")
+
 // GetDoctor returns a single doctor profile by ID.
 func (s *Service) GetDoctor(ctx context.Context, id string) (*Doctor, error) {
 	const q = `
@@ -210,7 +217,7 @@ func (s *Service) GetDoctor(ctx context.Context, id string) (*Doctor, error) {
 		return nil, err
 	}
 	if len(doctors) == 0 {
-		return nil, errors.New("telemedicine: doctor not found")
+		return nil, ErrDoctorNotFound
 	}
 	return &doctors[0], nil
 }
@@ -239,7 +246,10 @@ func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*Docto
 		`SELECT id, rating, is_online, patients_count FROM doctors WHERE user_id=$1`,
 		userID).Scan(&doctorID, &rating, &isOnline, &patientsCount)
 	if err != nil {
-		return nil, errors.New("telemedicine: doctor not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrDoctorNotFound
+		}
+		return nil, fmt.Errorf("telemedicine: load doctor profile: %w", err)
 	}
 
 	// Weekly revenue from completed appointments. Computed with the SAME integer
@@ -410,7 +420,10 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 	const qD = `SELECT id, user_id, consult_fee_kobo, is_available, name, specialty FROM doctors WHERE id=$1`
 	if err := s.db.QueryRow(ctx, qD, req.DoctorID).
 		Scan(&doctor.ID, &doctor.UserID, &doctor.ConsultFeeKobo, &doctor.IsAvailable, &doctor.Name, &doctor.Specialty); err != nil {
-		return nil, errors.New("telemedicine: doctor not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrDoctorNotFound
+		}
+		return nil, fmt.Errorf("telemedicine: load doctor: %w", err)
 	}
 	if !doctor.IsAvailable {
 		return nil, errors.New("telemedicine: doctor is not currently available")

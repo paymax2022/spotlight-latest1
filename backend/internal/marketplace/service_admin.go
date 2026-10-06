@@ -223,10 +223,25 @@ func (s *Service) ReviewKYC(ctx context.Context, adminID, adminRole, userID stri
 			return nil, err
 		}
 	}
+	// Resolve any self-serve verification requests (mkt_verification_requests)
+	// the same review covers: on approve the requested badges are granted HERE —
+	// the only path that can set them; on reject the requests close so the
+	// member may resubmit. This is what un-blocks the queue flag kyc_pending.
+	resolvedKinds, err := s.repo.ResolveVerificationRequests(ctx, userID, DefaultMarketID, in.Decision == "approve", adminID, in.ReasonCode)
+	if err != nil {
+		return nil, err
+	}
+	if in.Decision == "approve" {
+		for _, kind := range resolvedKinds {
+			if err := s.repo.SetVerifiedBadge(ctx, userID, kind == VerificationKindBusiness); err != nil {
+				return nil, err
+			}
+		}
+	}
 	_ = s.writeAudit(ctx, AuditEntry{
 		AdminID: adminID, AdminRole: adminRole, Action: "user.kyc.review",
 		TargetType: "user", TargetID: userID, ReasonCode: in.ReasonCode,
-		AfterState: map[string]any{"decision": in.Decision, "grant_tier": in.GrantTier},
+		AfterState: map[string]any{"decision": in.Decision, "grant_tier": in.GrantTier, "verification_requests": resolvedKinds},
 	})
 	return s.buildUserAdminView(ctx, userID, DefaultMarketID)
 }

@@ -93,6 +93,34 @@ func TestListMySessionsWhenFlagOn(t *testing.T) {
 	}
 }
 
+// An unauthenticated probe must get 401 BEFORE the flag is consulted —
+// answering feature_disabled first leaked session_hardening's state to anyone
+// (E2E N3). Deliberately mounts the handlers with no auth middleware so the
+// ordering inside the handler is what is under test.
+func TestSessionsRequireAuthBeforeTheFlagCheck(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewSessionHandler(&fakeSessionService{}, noopAudit{}, config.Config{FeatureSessionHardeningEnabled: false})
+	r := gin.New()
+	r.GET("/sessions", h.ListMySessions)
+	r.DELETE("/sessions/:id", h.RevokeMySession)
+	r.POST("/sessions/revoke-all", h.RevokeMyAllSessions)
+	r.POST("/admin/users/:id/force-logout", h.AdminForceLogout)
+
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/sessions"},
+		{http.MethodDelete, "/sessions/abc"},
+		{http.MethodPost, "/sessions/revoke-all"},
+		{http.MethodPost, "/admin/users/u9/force-logout"},
+	} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: expected 401 before the flag check, got %d (%s)", tc.method, tc.path, w.Code, w.Body.String())
+		}
+	}
+}
+
 func TestAdminForceLogoutWhenFlagOn(t *testing.T) {
 	r, _ := setupSessionRouter(true)
 	w := httptest.NewRecorder()

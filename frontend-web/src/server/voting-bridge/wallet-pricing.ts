@@ -48,13 +48,15 @@ export async function priceWalletVote(contestId: string, contestantId: string, v
   // Bind the contestant to the contest — pricing, the KYC gate, and the vote
   // row all key off these ids, so an unbound (contestId, contestantId) pair
   // would bill at one contest's rate while tallying a different contestant.
+  // public.contestants keys its contest on `contest_id` (there is no
+  // competition_id column — that's arena/competition_enrollments schema).
   const supabase = createAdminClient();
   const { data: contestant } = await supabase
     .from('contestants')
-    .select('competition_id')
+    .select('contest_id')
     .eq('id', contestantId)
     .maybeSingle();
-  if (!contestant || contestant.competition_id !== contestId) {
+  if (!contestant || contestant.contest_id !== contestId) {
     throw new ApiError('Contestant does not belong to this contest', 400);
   }
 

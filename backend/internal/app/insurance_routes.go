@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -349,6 +350,12 @@ type policyReaderAdapter struct {
 func (a policyReaderAdapter) PolicyForClaim(ctx context.Context, userID, policyID string) (claims.PolicyView, error) {
 	p, err := a.repo.Get(ctx, policyID)
 	if err != nil {
+		// Translate the not-found sentinel across the seam — claims cannot
+		// import policy, and without this an FNOL on a nonexistent policy
+		// surfaced as a 500 instead of a 404.
+		if errors.Is(err, policy.ErrNotFound) {
+			return claims.PolicyView{}, claims.ErrNotFound
+		}
 		return claims.PolicyView{}, err
 	}
 	if p.PolicyholderID != userID {

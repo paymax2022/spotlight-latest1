@@ -71,16 +71,22 @@ function voteRequest(body: Record<string, unknown>) {
   });
 }
 
+// Real-UUID fixtures — the route rejects non-UUID contestId/contestantId with
+// 400 before auth, so slug-shaped ids can never reach the Postgres layer.
+const CONTEST_ID = '11111111-1111-4111-8111-111111111111';
+const CONTESTANT_ID = '22222222-2222-4222-8222-222222222222';
+const CONTESTANT_ID_2 = '33333333-3333-4333-8333-333333333333';
+
 const BODY = {
-  contestId: 'contest-1',
-  contestantId: 'contestant-1',
+  contestId: CONTEST_ID,
+  contestantId: CONTESTANT_ID,
   voteCount: 50,
   idempotencyKey: 'idem-1',
 };
 
 /** The key all stores should see for BODY + a given user under QUOTE. */
 const bound = (userId: string, clientKey = 'idem-1', fp = {
-  contestId: 'contest-1', contestantId: 'contestant-1',
+  contestId: CONTEST_ID, contestantId: CONTESTANT_ID,
   voteCount: 50, costKobo: 500_000,
 }) => boundClaimKey('wallet-vote', userId, clientKey, fp);
 
@@ -127,6 +133,17 @@ describe('POST /api/v2/votes/wallet', () => {
     const res = await POST(voteRequest({ contestId: 'c' }) as never);
     expect(res.status).toBe(400);
     expect(vi.mocked(requireRequestUser)).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-UUID contestId/contestantId with 400 before any DB or auth work', async () => {
+    // A malformed id used to sail into the KYC gate / pricing queries and
+    // surface as a 500 (Postgres 22P02). It can never match a uuid column.
+    const badContestant = await POST(voteRequest({ ...BODY, contestantId: 'not-a-uuid' }) as never);
+    expect(badContestant.status).toBe(400);
+    const badContest = await POST(voteRequest({ ...BODY, contestId: 'not-a-uuid' }) as never);
+    expect(badContest.status).toBe(400);
+    expect(vi.mocked(requireRequestUser)).not.toHaveBeenCalled();
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
   it('reverses the debit and releases the claim when crediting fails', async () => {
@@ -209,10 +226,10 @@ describe('POST /api/v2/votes/wallet', () => {
   it('the same user + key with a changed payload is a distinct operation', async () => {
     vi.mocked(requireRequestUser).mockResolvedValue({ id: 'u-bound-c' } as never);
     await POST(voteRequest(BODY) as never);
-    await POST(voteRequest({ ...BODY, contestantId: 'contestant-2' }) as never);
+    await POST(voteRequest({ ...BODY, contestantId: CONTESTANT_ID_2 }) as never);
     const keys = vi.mocked(checkAndClaimIdempotencyKey).mock.calls.map((c) => c[0]);
     expect(keys[1]).toBe(bound('u-bound-c', 'idem-1', {
-      contestId: 'contest-1', contestantId: 'contestant-2',
+      contestId: CONTEST_ID, contestantId: CONTESTANT_ID_2,
       voteCount: 50, costKobo: 500_000,
     }));
     expect(keys[0]).not.toBe(keys[1]);

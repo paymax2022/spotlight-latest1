@@ -6,7 +6,12 @@
  *   DEBIT           → -amount  (money out)
  *   REVERSAL_CREDIT → -amount  (reversal of a credit: money returned)
  *   REVERSAL_DEBIT  → +amount  (reversal of a debit: money restored)
+ *
+ * The one import (ApiError) is a class, not an I/O dependency: validation
+ * failures must surface to callers as a 400, and handleApiError only maps
+ * ApiError instances — a plain Error here became a 500 on bad input.
  */
+import { ApiError } from '@/src/lib/api/responses';
 
 export type LedgerEntryType = 'CREDIT' | 'DEBIT' | 'REVERSAL_CREDIT' | 'REVERSAL_DEBIT';
 
@@ -68,10 +73,10 @@ export function computeWalletBalance(entries: Pick<LedgerEntryRow, 'type' | 'amo
  */
 export function validateAmountKobo(amount: number): void {
   if (!Number.isInteger(amount)) {
-    throw new Error(`Amount must be an integer (kobo). Got: ${amount}`);
+    throw new ApiError(`Amount must be an integer (kobo). Got: ${amount}`, 400);
   }
   if (amount <= 0) {
-    throw new Error(`Amount must be positive (kobo). Got: ${amount}`);
+    throw new ApiError(`Amount must be positive (kobo). Got: ${amount}`, 400);
   }
 }
 

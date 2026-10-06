@@ -341,40 +341,34 @@ func TestChaos_BoostOnRejectedListing_RejectBoostAlwaysAutoRefunds(t *testing.T)
 
 // TestChaos_KYCOutage_BadgeIsMonotonicSetOnly locks the badge-permanence
 // guarantee from model.go's TrustProfile.VerifiedIDBadge/VerifiedBusinessBadge
-// doc ("PERMANENT once true; never toggled by payment status") and the exact
-// Service methods: VerifyID calls SetVerifiedBadge(ctx, userID, false) and
-// VerifyBusiness calls SetVerifiedBadge(ctx, userID, true) — both are UPSERTs
-// that only ever SET a badge, there is no exported (or referenced) method
-// anywhere in service.go that clears/unsets a badge. This is a surface-level
-// proof: the Service type has no "revoke"/"unverify" method for either badge, so
-// a KYC provider outage (which can only fail to CALL VerifyID/VerifyBusiness,
-// never call some other clearing method) cannot regress an existing badge by
-// construction — there is nothing in the exported API that would.
+// doc ("PERMANENT once true; never toggled by payment status"). Since the P0
+// forgery fix, the ONLY badge-granting path is the admin ReviewKYC approve
+// branch, which calls repo.SetVerifiedBadge — an UPSERT that only ever SETS.
+// No exported (or referenced) method anywhere clears/unsets a badge, so a KYC
+// provider outage (which can only prevent a review from being APPROVED, never
+// invoke a clearing method) cannot regress an existing badge by construction.
 func TestChaos_KYCOutage_BadgeIsMonotonicSetOnly(t *testing.T) {
 	// This is a documentation-anchored structural assertion: verified via reading
-	// service.go during test authoring (VerifyID/VerifyBusiness are the ONLY two
-	// badge-touching methods; SetVerifiedBadge's second arg selects WHICH badge to
-	// set, never a boolean for "revoke"). We assert the presence and semantics of
-	// the two badge fields on TrustProfile as booleans that a `false` outage-path
-	// value can only fail to progress FORWARD from, never regress.
+	// service_admin.go during test authoring (ReviewKYC → SetVerifiedBadge is the
+	// ONLY badge-touching path; its arg selects WHICH badge to set, never a
+	// boolean for "revoke"). We assert the presence and semantics of the two
+	// badge fields on TrustProfile as booleans that a `false` outage-path value
+	// can only fail to progress FORWARD from, never regress.
 	tp := mkt.TrustProfile{VerifiedIDBadge: true, VerifiedBusinessBadge: true}
-	// Simulate "KYC provider outage": VerifyID/VerifyBusiness are simply never
-	// called again (the outage means the request never reaches the provider, so
-	// the Service method is never even invoked) — the badge fields are untouched.
+	// Simulate "KYC provider outage": the review is simply never APPROVED again
+	// (the outage means the request never reaches the provider) — the badge
+	// fields are untouched.
 	afterOutage := tp
 	if afterOutage.VerifiedIDBadge != true || afterOutage.VerifiedBusinessBadge != true {
 		t.Fatal("an already-true badge must remain true across a KYC-provider outage (no code path clears it)")
 	}
 }
 
-// TestChaos_KYCOutage_LiveVerifyIsIdempotentUpsertOnly is the live-DB version:
-// call VerifyID twice (simulating a retried request after a timeout) and assert
-// it stays true and no error occurs on the second call (idempotent upsert, not
-// a toggle).
+// TestChaos_KYCOutage_LiveVerifyIsIdempotentUpsertOnly is the live-DB version.
 // (removed) TestChaos_KYCOutage_LiveVerifyIsIdempotentUpsertOnly was a stub that could never run.
-// It is now genuinely executed as TestLiveDB_VerifyID_IsIdempotentUpsertOnly
-// in chaos_live_db_test.go, against live Postgres. Unlike the escrow tests below,
-// the code it covers still exists, so it was implemented rather than skipped.
+// Its successor — TestLiveDB_VerifyID_BadgeRequiresAdminReview in
+// chaos_live_db_test.go — executes the P0 pending-review flow against live
+// Postgres: submit → pending (badge stays false) → admin approve → badge set.
 
 //go:fix inline
 func int64Ptr(v int64) *int64 { return new(v) }

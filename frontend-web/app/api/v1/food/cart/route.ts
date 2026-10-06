@@ -24,6 +24,10 @@ type SavedCart = {
   activePackageId: string | null;
 };
 
+// restaurants.id is a UUID PK; food_carts.restaurant_id is TEXT, so shape-check
+// here — a non-UUID value can never resolve to a row.
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
 export async function GET(request: Request) {
   if (!featureFlags.restaurant()) return errorResponse('Restaurant delivery is not available.', 503);
   try {
@@ -61,13 +65,41 @@ export async function POST(request: Request) {
       return errorResponse('`packages` must be an array.', 400);
     }
 
+    // Existence check (P2): the cart used to accept ANY restaurantId — including
+    // ids of restaurants that never existed — and persisted it. A cart pinned to
+    // a phantom restaurant can only fail later at checkout, so refuse it here.
+    // Empty/whitespace means "no restaurant selected" and normalizes to null.
+    let restaurantId: string | null = null;
+    if (body.restaurantId !== undefined && body.restaurantId !== null) {
+      if (typeof body.restaurantId !== 'string') {
+        return errorResponse('`restaurantId` must be a string.', 422);
+      }
+      const trimmed = body.restaurantId.trim();
+      if (trimmed !== '') {
+        if (!UUID_RE.test(trimmed)) {
+          return errorResponse('`restaurantId` must be a valid restaurant id.', 422);
+        }
+        restaurantId = trimmed;
+      }
+    }
+
     const supabase = createAdminClient();
+    if (restaurantId !== null) {
+      const { data: restaurant, error: restaurantError } = await supabase
+        .from('restaurants')
+        .select('id')
+        .eq('id', restaurantId)
+        .maybeSingle();
+      if (restaurantError) throw restaurantError;
+      if (!restaurant) return errorResponse('Restaurant not found.', 404);
+    }
+
     const { error } = await supabase
       .from('food_carts')
       .upsert(
         {
           customer_id: user.id,
-          restaurant_id: body.restaurantId ?? null,
+          restaurant_id: restaurantId,
           restaurant_name: body.restaurantName ?? null,
           packages: body.packages ?? [],
           active_package_id: body.activePackageId ?? null,

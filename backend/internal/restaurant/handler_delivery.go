@@ -1,6 +1,7 @@
 package restaurant
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -146,7 +147,13 @@ func (h *Handler) ListOrders(c *gin.Context) {
 	role := c.DefaultQuery("role", "customer")
 	orders, err := h.svc.ListOrders(c.Request.Context(), userID, role)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		// Only an unrecognised ?role= is a client error; a query/store failure
+		// is 500 — folding it into 400 reported an outage as the caller's fault.
+		if errors.Is(err, ErrInvalidOrderRole) {
+			c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"orders": orders})

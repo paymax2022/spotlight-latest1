@@ -633,7 +633,7 @@ func TestLiveDB_Admin_ProductCreateUpdateListRoundTrip(t *testing.T) {
 	if !found {
 		t.Error("a DISABLED product is missing from the admin list")
 	}
-	memberRows, err := f.svc.ListProducts(ctx, "electricity", billerID)
+	memberRows, err := f.svc.ListProducts(ctx, "electricity", billerID, "")
 	if err != nil {
 		t.Fatalf("member ListProducts: %v", err)
 	}

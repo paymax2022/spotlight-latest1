@@ -23,10 +23,17 @@ export async function forwardGoOwnedPaystackEvent(
   rawBody: string,
   signature: string,
 ): Promise<WebhookHandleResult> {
-  let event: { event?: string; data?: { reference?: string } };
+  let event: { event?: string; data?: { reference?: string } } | null;
   try {
     event = JSON.parse(rawBody);
   } catch {
+    return { processed: false, duplicate: false };
+  }
+
+  // JSON.parse('null') SUCCEEDS — a literal null body used to sail through the
+  // try and TypeError on `event.data` here, outside it, which the dispatcher
+  // surfaced as a retryable 500. A non-object payload is not an event.
+  if (event === null || typeof event !== 'object') {
     return { processed: false, duplicate: false };
   }
 

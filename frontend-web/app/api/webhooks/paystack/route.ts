@@ -1,3 +1,4 @@
+import { verifyPaystackWebhookSignature } from '@/src/server/voting/payment/paystack';
 import { handlePaystackWebhook } from '@/src/server/voting/payment/webhook';
 import { handleWalletTopupWebhook } from '@/src/server/wallet/webhook';
 import { handleDvaTransferWebhook } from '@/src/server/virtual-accounts/webhook';
@@ -16,6 +17,52 @@ import { forwardGoOwnedPaystackEvent } from './go-forward';
 export async function POST(request: Request) {
   const signature = request.headers.get('x-paystack-signature') || '';
   const rawBody = await request.text();
+
+  // 1. The HMAC is verified over the raw body BEFORE any handler dispatches or
+  //    go-forward relays. Until now each handler verified independently — which
+  //    meant forwardGoOwnedPaystackEvent sent Go-owned references (feespay:/
+  //    foodorder:/rideorder:/duespay:) to the internal Go receiver with only
+  //    the prefix as the claim signal. A junk-signed payload carrying one of
+  //    those prefixes was forwarded, rejected there, and surfaced here as a
+  //    500: a 500-vs-200 differential that leaked which prefixes Go owns, plus
+  //    an unauthenticated internal-forward primitive. A bad signature is now a
+  //    uniform 401 no matter what the body claims.
+  let signatureValid = false;
+  try {
+    signatureValid = verifyPaystackWebhookSignature(rawBody, signature);
+  } catch (err) {
+    // No PAYSTACK_SECRET_KEY — nothing downstream can verify either, so the
+    // delivery is unprocessable server-side rather than a client error.
+    console.error('[webhook] paystack signature verification unavailable:', err);
+    return Response.json(
+      { received: false, processed: false, error: 'signature verification unavailable' },
+      { status: 500 },
+    );
+  }
+  if (!signatureValid) {
+    return Response.json(
+      { received: false, processed: false, error: 'invalid signature' },
+      { status: 401 },
+    );
+  }
+
+  // 2. Malformed bodies are refused before dispatch. JSON.parse('null')
+  //    SUCCEEDS and then TypeErrors on property access inside the handlers
+  //    (go-forward.ts hit exactly that on a literal `null` body), surfacing as
+  //    a retryable 500 — Paystack would redeliver the garbage forever. Only a
+  //    non-null object can be an event; anything else is a 400.
+  let event: unknown;
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    event = null;
+  }
+  if (event === null || typeof event !== 'object') {
+    return Response.json(
+      { received: false, processed: false, error: 'malformed body' },
+      { status: 400 },
+    );
+  }
 
   const results = await Promise.allSettled([
     handlePaystackWebhook(rawBody, signature),

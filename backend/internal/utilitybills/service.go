@@ -76,6 +76,13 @@ var (
 	ErrNotDisputable = errors.New("utilitybills: transaction is not eligible for a dispute")
 	// ErrProviderUnavailable — no adapter is configured for the routed provider.
 	ErrProviderUnavailable = errors.New("utilitybills: no configured adapter for this provider")
+	// ErrProviderCallFailed — the routed provider's adapter exists but the call
+	// itself failed (missing credentials, transport error, upstream refusal).
+	// Distinct from ErrProviderUnavailable: the route was configured, the call
+	// just could not complete. Maps to 503 like the other upstream-failure
+	// sentinels — the member cannot fix this, and an unmapped 500 paged for a
+	// code bug that is really a provider outage (prod sweep BUG-1).
+	ErrProviderCallFailed = errors.New("utilitybills: provider call failed")
 )
 
 // Event payload keys for the settle/recovery paths — hoisted because goconst
@@ -321,7 +328,21 @@ func (s *Service) ListBillers(ctx context.Context, category string) ([]BillerRow
 }
 
 // ListProducts returns active products filtered by category and/or biller.
-func (s *Service) ListProducts(ctx context.Context, category, billerID string) ([]ProductRow, error) {
+// billerCode is the public-facing slug form of the same filter (`?biller=`):
+// resolved to an id here. An unknown code yields an EMPTY list rather than an
+// error — identical to filtering by a biller_id that does not exist, so callers
+// cannot distinguish "unknown code" from "biller has no products".
+func (s *Service) ListProducts(ctx context.Context, category, billerID, billerCode string) ([]ProductRow, error) {
+	if billerID == "" && billerCode != "" {
+		biller, err := s.repo.GetBillerByCode(ctx, billerCode)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return []ProductRow{}, nil
+			}
+			return nil, err
+		}
+		billerID = biller.ID
+	}
 	return s.repo.ListProducts(ctx, category, billerID)
 }
 
@@ -411,7 +432,7 @@ func (s *Service) ValidateCustomer(ctx context.Context, in ValidateInput) (*Vali
 					Params:            validationParams(biller.Code, strings.TrimPrefix(biller.Code, "vtpass-"), customerReference, in.Metadata),
 				})
 				if verr != nil {
-					return nil, fmt.Errorf("utilitybills: sandbox validate: %w", verr)
+					return nil, fmt.Errorf("%w: %w", ErrProviderCallFailed, verr)
 				}
 				return &ValidationResult{Valid: res.Valid, CustomerName: res.CustomerName, Message: res.Message}, nil
 			}
@@ -446,7 +467,7 @@ func (s *Service) ValidateCustomer(ctx context.Context, in ValidateInput) (*Vali
 		Params:            validationParams(biller.Code, selected.Mapping.ProviderBillerCode, customerReference, in.Metadata),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("utilitybills: validate customer: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrProviderCallFailed, err)
 	}
 	return &ValidationResult{Valid: res.Valid, CustomerName: res.CustomerName, Message: res.Message}, nil
 }
@@ -682,7 +703,9 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 				Params:            validationParams(biller.Code, routes[0].Mapping.ProviderBillerCode, customerReference, stringMetadata(in.Metadata)),
 			})
 			if verr != nil {
-				return nil, fmt.Errorf("utilitybills: validate customer: %w", verr)
+				// Pre-debit failure: nothing was sent or was refused upstream, so
+				// 503 lets the member retry. A raw error here used to 500.
+				return nil, fmt.Errorf("%w: %w", ErrProviderCallFailed, verr)
 			}
 			if !res.Valid {
 				msg := res.Message

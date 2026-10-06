@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -69,10 +70,19 @@ func (r *Repository) GetByIdempotencyKey(ctx context.Context, key string) (*Clai
 }
 
 // Get returns a claim by id (no ownership filter; callers enforce object-level
-// authZ in the service).
+// authZ in the service). A missing id returns ErrNotFound — normalising
+// pgx.ErrNoRows here is what lets the handler answer 404 instead of leaking a
+// raw driver error as a 500.
 func (r *Repository) Get(ctx context.Context, id string) (*Claim, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+claimCols+` FROM public.insurance_claim WHERE id = $1`, id)
-	return scanClaim(row)
+	c, err := scanClaim(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return c, nil
 }
 
 // GetByProviderRef returns a claim by (provider, provider_claim_ref) — used by

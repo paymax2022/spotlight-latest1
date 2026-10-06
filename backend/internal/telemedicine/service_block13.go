@@ -30,7 +30,7 @@ func (s *Service) GetAvailability(ctx context.Context, doctorID string) ([]Slot,
 		return nil, err
 	}
 	if !exists {
-		return nil, errors.New("telemedicine: doctor not found")
+		return nil, ErrDoctorNotFound
 	}
 
 	rows, err := s.db.Query(ctx, `
