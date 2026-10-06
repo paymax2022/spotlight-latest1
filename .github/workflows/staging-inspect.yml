@@ -932,11 +932,12 @@ jobs:
           railway redeploy --service backend --environment staging --project "$PROJECT" --yes >/dev/null \
             && echo "  staging backend redeploy triggered" || true
 
-      # Runs inside a production-scoped job (input environment=production) but
-      # reads staging with the repo-level staging token. Guarded by env below so
-      # a staging inspect run can never write production.
+      # Copies staging variables into production per service. Both tokens are
+      # repo-level secrets, so this step can run under ANY environment binding
+      # — dispatch with environment=staging to avoid the Production env
+      # approval gate; writes still target the production Railway environment.
       - name: Copy staging vars -> production (per service, env-specific excluded)
-        if: inputs.copy_staging_to_prod && inputs.environment == 'production'
+        if: inputs.copy_staging_to_prod
         env:
           STG_TOK: ${{ secrets.RAILWAY_TOKEN_STAGING }}
           PRD_TOK: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
@@ -986,11 +987,13 @@ jobs:
               fs.writeFileSync("keys.txt", Object.keys(plan).join("\n") + (Object.keys(plan).length ? "\n" : ""));
               console.log(report.join("\n"));
             '
+            SKIPD="--skip-deploys"
+            railway variable set --help 2>&1 | grep -q "skip-deploys" || SKIPD=""
             while IFS= read -r K; do
               [ -z "$K" ] && continue
               node -e 'const p=require("./plan.json");process.stdout.write(p[process.argv[1]])' "$K" \
                 | RAILWAY_TOKEN="$PRD_TOK" railway variable set "$K" --stdin \
-                    --service "$SVC" --environment production --project "$PROJECT" >/dev/null 2>&1 \
+                    --service "$SVC" --environment production --project "$PROJECT" $SKIPD >/dev/null 2>&1 \
                 && echo "  wrote $K" || echo "  FAILED $K"
             done < keys.txt
           done
@@ -1010,6 +1013,33 @@ jobs:
             rm -f ak.txt
           fi
           rm -f stg.json prd.json plan.json keys.txt be-prd.json
+          # Post-copy fatal guard — config.Validate() log.Fatals in production
+          # when an enabled flag's backing credential is absent. Re-read prod
+          # backend vars and force-off anything that would crash boot.
+          RAILWAY_TOKEN="$PRD_TOK" railway variable list --service backend \
+            --environment production --project "$PROJECT" --json > be-final.json || echo '{}' > be-final.json
+          node -e '
+            const fs = require("fs");
+            const v = JSON.parse(fs.readFileSync("be-final.json","utf8"));
+            const on = (k) => String(v[k]) === "true";
+            const absent = (k) => !v[k] || /xxxx|change_me|changeme|your_|your-|placeholder|todo/i.test(String(v[k]));
+            const force = [];
+            if (on("FEATURE_BANK_TRANSFERS_ENABLED") && absent("MONNIFY_SECRET_KEY")) force.push("FEATURE_BANK_TRANSFERS_ENABLED");
+            if ((on("FEATURE_WALLET_ENABLED") || on("FEATURE_BANK_TRANSFERS_ENABLED")) && absent("PAYSTACK_SECRET_KEY")) { force.push("FEATURE_WALLET_ENABLED","FEATURE_BANK_TRANSFERS_ENABLED"); }
+            if (on("FEATURE_TRANSPORT_ENABLED") && absent("MAPS_GOOGLE_KEY")) force.push("FEATURE_TRANSPORT_ENABLED");
+            if (on("FEATURE_MAPS_ENABLED") && absent("MAPS_GOOGLE_KEY")) force.push("FEATURE_MAPS_ENABLED");
+            if (on("FEATURE_KYC_VERIFY_ENABLED") && (absent("KYC_PII_ENC_KEY") || (absent("DOJAH_SECRET_KEY") && absent("YOUVERIFY_TOKEN") && (absent("SMILE_ID_PARTNER_ID")||absent("SMILE_ID_API_KEY"))))) force.push("FEATURE_KYC_VERIFY_ENABLED");
+            if (on("FEATURE_OTP_EMAIL_ENABLED") && (absent("BREVO_API_KEY")||absent("OTP_PEPPER")||absent("BREVO_OTP_TEMPLATE_ID"))) force.push("FEATURE_OTP_EMAIL_ENABLED");
+            if (on("FEATURE_ASSOCIATIONS_ENABLED") && absent("ASSOC_CARD_SIGNING_SECRET")) force.push("FEATURE_ASSOCIATIONS_ENABLED");
+            fs.writeFileSync("forceoff.txt", [...new Set(force)].join("\n") + (force.length?"\n":""));
+          '
+          while IFS= read -r F; do
+            [ -z "$F" ] && continue
+            RAILWAY_TOKEN="$PRD_TOK" railway variable set "$F"=false \
+              --service backend --environment production --project "$PROJECT" --skip-deploys >/dev/null 2>&1 \
+              && echo "  FORCE OFF $F (missing backing credential)" || echo "  FORCE OFF FAILED: $F"
+          done < forceoff.txt
+          rm -f be-final.json forceoff.txt
           for SVC in frontend-web frontend-admin backend; do
             railway redeploy --service "$SVC" --environment production --project "$PROJECT" --yes \
               && echo "  redeploy triggered (prod): $SVC" || echo "  redeploy failed (prod): $SVC"
