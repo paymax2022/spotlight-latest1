@@ -143,12 +143,45 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 	}
 }
 
+// ErrPetMissingIdem is returned when CreatePet is invoked without an
+// Idempotency-Key. The HTTP handler rejects the missing key first (400); this
+// is the same defence-in-depth placeOrder's ErrOrderMissingIdem provides —
+// a direct service caller with an empty key would otherwise hit the replay
+// lookup with ” and silently receive a previous ”-keyed row.
+var ErrPetMissingIdem = errors.New("vet: idempotency key required")
+
+// petByIdem returns the caller's pet created under idemKey, or (nil, nil) when
+// no such pet exists. Scoped to ownerID — keys are client-chosen, so resolving
+// one to another owner's row would let a caller read a stranger's pet by
+// replaying their key (mirrors restaurant findOrderByIdempotencyKey).
+func (s *Service) petByIdem(ctx context.Context, ownerID, idemKey string) (*Pet, error) {
+	var p Pet
+	const q = `SELECT id, owner_user_id, name, species, breed, sex, birth_date::text, weight_kg, notes,
+	                  COALESCE(idempotency_key,''), created_at
+	           FROM pets WHERE owner_user_id=$1 AND idempotency_key=$2`
+	err := s.db.QueryRow(ctx, q, ownerID, idemKey).Scan(
+		&p.ID, &p.OwnerUserID, &p.Name, &p.Species, &p.Breed, &p.Sex,
+		&p.BirthDate, &p.WeightKg, &p.Notes, &p.IdempotencyKey, &p.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
 // CreatePet writes an owner-scoped pet profile. The owner is the data-subject
 // anchor (object-level authZ). A PET record is seeded in the shared vault (HL-8 —
 // consent-gated, access-logged there); the vault is never reimplemented.
+// Replay-safe on p.IdempotencyKey (required, HL-9 convention): a retried create
+// returns the original pet — previously a replay silently inserted a second row.
 func (s *Service) CreatePet(ctx context.Context, ownerID string, p Pet) (*Pet, error) {
 	if ownerID == "" {
 		return nil, errors.New("vet: unauthenticated")
+	}
+	if strings.TrimSpace(p.IdempotencyKey) == "" {
+		return nil, ErrPetMissingIdem
 	}
 	if strings.TrimSpace(p.Name) == "" {
 		return nil, errors.New("vet: pet name required")
@@ -156,14 +189,38 @@ func (s *Service) CreatePet(ctx context.Context, ownerID string, p Pet) (*Pet, e
 	if strings.TrimSpace(p.Species) == "" {
 		return nil, errors.New("vet: pet species required")
 	}
+	// Replay: return the original pet for this (owner, key) — no second row and
+	// no second vault seed. Runs before the insert so a settled replay never
+	// re-validates against a world that already contains its own result.
+	existing, err := s.petByIdem(ctx, ownerID, p.IdempotencyKey)
+	if err != nil {
+		return nil, fmt.Errorf("vet: resolve pet idempotency key: %w", err)
+	}
+	if existing != nil {
+		return existing, nil
+	}
 	p.ID = uuid.New().String()
 	p.OwnerUserID = ownerID
 	p.CreatedAt = time.Now()
 	const ins = `
-		INSERT INTO pets (id, owner_user_id, name, species, breed, sex, birth_date, weight_kg, notes)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`
-	if _, err := s.db.Exec(ctx, ins, p.ID, p.OwnerUserID, p.Name, p.Species, p.Breed, p.Sex, p.BirthDate, p.WeightKg, p.Notes); err != nil {
+		INSERT INTO pets (id, owner_user_id, name, species, breed, sex, birth_date, weight_kg, notes, idempotency_key)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		ON CONFLICT (owner_user_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
+	tag, err := s.db.Exec(ctx, ins, p.ID, p.OwnerUserID, p.Name, p.Species, p.Breed, p.Sex, p.BirthDate, p.WeightKg, p.Notes, p.IdempotencyKey)
+	if err != nil {
 		return nil, fmt.Errorf("vet: insert pet: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Concurrent first-attempts on the same key: the index let exactly one
+		// insert win — return the canonical row the winner wrote.
+		won, rerr := s.petByIdem(ctx, ownerID, p.IdempotencyKey)
+		if rerr != nil {
+			return nil, fmt.Errorf("vet: resolve pet idempotency key after conflict: %w", rerr)
+		}
+		if won == nil {
+			return nil, errors.New("vet: pet idempotency conflict but no original row")
+		}
+		return won, nil
 	}
 	// Seed the pet's vault record (REUSE records, subject_type=PET). Best-effort:
 	// the pet exists regardless; vault failure must not orphan the profile.
@@ -188,7 +245,8 @@ func (s *Service) ListPets(ctx context.Context, ownerID string) ([]Pet, error) {
 	// made this query fail with "cannot scan date (OID 1082) in binary format
 	// into **string" — which ListPets's caller (below) turns into an opaque
 	// 401, not a 500, making it look like an auth failure.
-	const q = `SELECT id, owner_user_id, name, species, breed, sex, birth_date::text, weight_kg, notes, created_at
+	const q = `SELECT id, owner_user_id, name, species, breed, sex, birth_date::text, weight_kg, notes,
+	                  COALESCE(idempotency_key,''), created_at
 	           FROM pets WHERE owner_user_id=$1 ORDER BY created_at DESC`
 	rows, err := s.db.Query(ctx, q, ownerID)
 	if err != nil {
@@ -198,7 +256,7 @@ func (s *Service) ListPets(ctx context.Context, ownerID string) ([]Pet, error) {
 	var out []Pet
 	for rows.Next() {
 		var p Pet
-		if err := rows.Scan(&p.ID, &p.OwnerUserID, &p.Name, &p.Species, &p.Breed, &p.Sex, &p.BirthDate, &p.WeightKg, &p.Notes, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.OwnerUserID, &p.Name, &p.Species, &p.Breed, &p.Sex, &p.BirthDate, &p.WeightKg, &p.Notes, &p.IdempotencyKey, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -1172,16 +1230,20 @@ func validVisit(v VisitType) bool {
 // pets). Clinical pet history lives in the shared records vault under
 // subject_type='PET' with pet_ref=<pet id> (REUSE — never a parallel store).
 type Pet struct {
-	ID          string    `json:"id"`
-	OwnerUserID string    `json:"owner_user_id"`
-	Name        string    `json:"name"`
-	Species     string    `json:"species"` // e.g. DOG, CAT
-	Breed       string    `json:"breed"`
-	Sex         string    `json:"sex"`
-	BirthDate   *string   `json:"birth_date,omitempty"`
-	WeightKg    *float64  `json:"weight_kg,omitempty"`
-	Notes       string    `json:"notes"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string   `json:"id"`
+	OwnerUserID string   `json:"owner_user_id"`
+	Name        string   `json:"name"`
+	Species     string   `json:"species"` // e.g. DOG, CAT
+	Breed       string   `json:"breed"`
+	Sex         string   `json:"sex"`
+	BirthDate   *string  `json:"birth_date,omitempty"`
+	WeightKg    *float64 `json:"weight_kg,omitempty"`
+	Notes       string   `json:"notes"`
+	// IdempotencyKey is the create-time Idempotency-Key stored on the row
+	// (pets.idempotency_key — see the pets_owner_idem_key_ux index). It rides on
+	// the response so a replayed create returns byte-identical output.
+	IdempotencyKey string    `json:"idempotency_key,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // VetResult is a discoverable, verified (VCN) vet returned by map/list discovery.

@@ -108,6 +108,13 @@ func (h *Handler) GetDoctorDashboard(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	dash, err := h.svc.GetDoctorDashboard(c.Request.Context(), userID)
 	if err != nil {
+		// A caller with no doctor profile gets 404 — there is no dashboard for
+		// them. Before this, the not-found path returned a bare error that the
+		// blanket 500 mapping surfaced as a server outage.
+		if errors.Is(err, ErrDoctorNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
@@ -130,8 +137,14 @@ func (h *Handler) BookAppointment(c *gin.Context) {
 		// A stale client quote is a conflict, not a server fault: no money moved,
 		// and the fix is to re-read the doctor's booking quote — not to retry the
 		// same amount (ADR-044).
-		if errors.Is(err, ErrQuoteMismatch) {
+		switch {
+		case errors.Is(err, ErrQuoteMismatch):
 			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+			return
+		case errors.Is(err, ErrDoctorNotFound):
+			// A doctor_id that resolves to nothing is a client error (404), not a
+			// server fault — previously indistinguishable from a real outage.
+			c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
