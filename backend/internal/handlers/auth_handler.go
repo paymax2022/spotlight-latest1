@@ -215,17 +215,30 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// Attribution never blocks signup: the account exists, and a referral credit is
-	// not worth failing a registration over. Idempotent on referred_user_id, so a
-	// retry is safe.
-	if h.attributeReferral != nil && res.UserID != "" {
-		if err := h.attributeReferral(c.Request.Context(), res.UserID, in.ReferralCode); err != nil {
-			log.Printf("[auth] register: referral attribution failed for %s: %v", res.UserID, err)
+	// A decoy result means the address already has an account (the service
+	// detected GoTrue's email_exists answer). The response below must stay
+	// indistinguishable from a fresh unverified signup — any difference is an
+	// account-existence oracle — so it is rendered by the same code. Only the
+	// side effects differ: no referral attribution against a fabricated user id,
+	// and an honest audit action instead of "register.success". The verification
+	// code still goes out — the message claims one was emailed, and a real owner
+	// who forgot they registered can redeem it to get in.
+	if res.AlreadyExisted {
+		h.audit.LogAction("", "", "register.duplicate", "auth", "user", "", nil,
+			map[string]any{"email": in.Email, "userType": in.UserTypeOrDefault()}, c.ClientIP(), c.Request.UserAgent(), "medium")
+	} else {
+		// Attribution never blocks signup: the account exists, and a referral credit is
+		// not worth failing a registration over. Idempotent on referred_user_id, so a
+		// retry is safe.
+		if h.attributeReferral != nil && res.UserID != "" {
+			if err := h.attributeReferral(c.Request.Context(), res.UserID, in.ReferralCode); err != nil {
+				log.Printf("[auth] register: referral attribution failed for %s: %v", res.UserID, err)
+			}
 		}
-	}
 
-	h.audit.LogAction(res.UserID, res.UserID, "register.success", "auth", "user", res.UserID, nil,
-		map[string]any{"email": in.Email, "userType": in.UserTypeOrDefault()}, c.ClientIP(), c.Request.UserAgent(), "info")
+		h.audit.LogAction(res.UserID, res.UserID, "register.success", "auth", "user", res.UserID, nil,
+			map[string]any{"email": in.Email, "userType": in.UserTypeOrDefault()}, c.ClientIP(), c.Request.UserAgent(), "info")
+	}
 
 	needsVerification := res.NeedsVerification()
 	message := "Registration successful. Enter the code we emailed you to verify your account."
@@ -575,6 +588,14 @@ func (h *AuthHandler) CompleteProfile(c *gin.Context) {
 		return
 	}
 	if err := h.auth.CompleteProfile(c.Request.Context(), u.ID, in.ProfileType, in.Metadata); err != nil {
+		// ErrProfileStoreFailed wraps the raw PostgREST error body — table,
+		// column and constraint names, which must never reach a client. The
+		// detail goes to the log; the client gets a generic failure.
+		if errors.Is(err, services.ErrProfileStoreFailed) {
+			log.Printf("[auth] complete-profile: profile write failed for %s: %v", u.ID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal server error"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
@@ -605,12 +626,14 @@ func (h *SessionHandler) featureGuard(c *gin.Context) bool {
 
 // ListMySessions handles GET /api/auth/sessions — list the caller's own active sessions.
 func (h *SessionHandler) ListMySessions(c *gin.Context) {
-	if !h.featureGuard(c) {
-		return
-	}
+	// Auth BEFORE the flag check: answering feature_disabled first let an
+	// unauthenticated probe learn whether session hardening is enabled.
 	u, ok := middleware.GetAuthenticatedUser(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
+		return
+	}
+	if !h.featureGuard(c) {
 		return
 	}
 	list, err := h.sessions.ListMySessions(u.ID)
@@ -636,12 +659,12 @@ func (h *SessionHandler) ListMySessions(c *gin.Context) {
 
 // RevokeMySession handles DELETE /api/auth/sessions/:id — revoke one of the caller's own sessions.
 func (h *SessionHandler) RevokeMySession(c *gin.Context) {
-	if !h.featureGuard(c) {
-		return
-	}
 	u, ok := middleware.GetAuthenticatedUser(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
+		return
+	}
+	if !h.featureGuard(c) {
 		return
 	}
 	id := strings.TrimSpace(c.Param("id"))
@@ -654,12 +677,12 @@ func (h *SessionHandler) RevokeMySession(c *gin.Context) {
 
 // RevokeMyAllSessions handles POST /api/auth/sessions/revoke-all — revoke all of the caller's sessions.
 func (h *SessionHandler) RevokeMyAllSessions(c *gin.Context) {
-	if !h.featureGuard(c) {
-		return
-	}
 	u, ok := middleware.GetAuthenticatedUser(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
+		return
+	}
+	if !h.featureGuard(c) {
 		return
 	}
 	n, err := h.sessions.RevokeAll(u.ID, u.ID, "self_revoke_all")
@@ -672,10 +695,14 @@ func (h *SessionHandler) RevokeMyAllSessions(c *gin.Context) {
 
 // AdminForceLogout handles POST /api/admin/users/:id/force-logout — admin revokes all of a user's sessions.
 func (h *SessionHandler) AdminForceLogout(c *gin.Context) {
+	actor, ok := middleware.GetAuthenticatedUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
+		return
+	}
 	if !h.featureGuard(c) {
 		return
 	}
-	actor, _ := middleware.GetAuthenticatedUser(c)
 	target := strings.TrimSpace(c.Param("id"))
 	if target == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "user id required"})
@@ -691,10 +718,14 @@ func (h *SessionHandler) AdminForceLogout(c *gin.Context) {
 
 // AdminForcePasswordReset handles POST /api/admin/users/:id/force-password-reset — admin forces a reset + revoke.
 func (h *SessionHandler) AdminForcePasswordReset(c *gin.Context) {
+	actor, ok := middleware.GetAuthenticatedUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
+		return
+	}
 	if !h.featureGuard(c) {
 		return
 	}
-	actor, _ := middleware.GetAuthenticatedUser(c)
 	target := strings.TrimSpace(c.Param("id"))
 	if target == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "user id required"})

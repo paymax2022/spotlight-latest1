@@ -235,6 +235,101 @@ func TestRegisterDoesNotReadTheSignupPolicyOnTheSignupPath(t *testing.T) {
 	}
 }
 
+// THE enumeration regression: the admin endpoint answers a taken address with
+// 422/email_exists. Returning that as an error re-opened the account-existence
+// oracle the supabase-js path never had — GoTrue's own /signup obfuscates a
+// duplicate into an ordinary 200. RegisterUser must convert the definitive
+// signal into a decoy success result instead.
+func TestRegisterReturnsADecoyForATakenAddress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/auth/v1/settings" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"disable_signup":false,"mailer_autoconfirm":false}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"code":422,"error_code":"email_exists","msg":"A user with this email address has already been registered"}`))
+	}))
+	defer srv.Close()
+
+	svc := NewAuthService(
+		integrations.NewSupabaseRestClient(srv.URL, "service-role-key"),
+		nil,
+		config.Config{FeatureOTPEmailEnabled: true},
+	)
+	SetOTPOperational(svc, true)
+
+	res, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
+		Email: "taken@example.com", Password: "correct-horse-battery",
+	})
+	if err != nil {
+		t.Fatalf("RegisterUser: %v — a taken address must not surface as an error", err)
+	}
+	if !res.AlreadyExisted {
+		t.Fatal("AlreadyExisted = false — the handler would attribute a referral to a fabricated id")
+	}
+	if !res.NeedsVerification() {
+		t.Error("decoy carries no session — NeedsVerification must be true so the client is sent to the code screen")
+	}
+	if res.UserID == "" {
+		t.Error("decoy user.id is empty — a fresh-signup body carries a uuid, so an empty id is itself a tell")
+	}
+}
+
+// Only the definitive "address taken" answers become decoys. A 422 for any
+// other reason must stay an error — answering it as a fake success would send
+// the caller to a verify screen for an account that does not exist.
+func TestRegisterStillFailsForOtherUpstreamErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/auth/v1/settings" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"disable_signup":false,"mailer_autoconfirm":false}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"code":422,"error_code":"validation_failed","msg":"Password should be at least 8 characters"}`))
+	}))
+	defer srv.Close()
+
+	svc := NewAuthService(
+		integrations.NewSupabaseRestClient(srv.URL, "service-role-key"),
+		nil,
+		config.Config{FeatureOTPEmailEnabled: true},
+	)
+	SetOTPOperational(svc, true)
+
+	res, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
+		Email: "new@example.com", Password: "correct-horse-battery",
+	})
+	if err == nil {
+		t.Fatalf("expected an error for a non-duplicate rejection, got decoy/success %+v", res)
+	}
+}
+
+// /signup carries no /settings preflight — a project that closed signups is
+// reported by GoTrue's error_code instead. It must map to ErrSignupDisabled so
+// the handler answers 403, not the generic 400.
+func TestRegisterMapsUpstreamSignupDisabled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"code":403,"error_code":"signup_disabled","msg":"Signups not allowed for this instance"}`))
+	}))
+	defer srv.Close()
+
+	svc := NewAuthService(
+		integrations.NewSupabaseRestClient(srv.URL, "service-role-key"),
+		nil,
+		config.Config{FeatureOTPEmailEnabled: false},
+	)
+
+	_, err := svc.RegisterUser(t.Context(), domain.RegisterRequest{
+		Email: "new@example.com", Password: "correct-horse-battery",
+	})
+	if !errors.Is(err, ErrSignupDisabled) {
+		t.Fatalf("error = %v, want ErrSignupDisabled", err)
+	}
+}
+
 // THE regression for a flag-vs-wiring mismatch: RegisterUser must branch on
 // whether an OTP issuer is actually wired — the same condition the register
 // HANDLER branches on — not on cfg.FeatureOTPEmailEnabled alone. Branching on
