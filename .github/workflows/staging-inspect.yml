@@ -721,6 +721,25 @@ jobs:
           q "CREATE INDEX IF NOT EXISTS restaurant_promo_redemptions_promo_idx ON public.restaurant_promo_redemptions (promo_id);" | head -c 300; echo
           q "ALTER TABLE public.restaurant_promos ENABLE ROW LEVEL SECURITY;" | head -c 300; echo
           q "ALTER TABLE public.restaurant_promo_redemptions ENABLE ROW LEVEL SECURITY;" | head -c 300; echo
+          # restaurants column reconciliation — prod schema predates the
+          # discovery columns (42703 would 500 the same way 42P01 did).
+          # Final-state defaults (packaging_fee default is 20000 per
+          # 20261211000100). ADD COLUMN IF NOT EXISTS only.
+          q "ALTER TABLE public.restaurants ADD COLUMN IF NOT EXISTS rating NUMERIC(2,1) NOT NULL DEFAULT 5.0;" | head -c 300; echo
+          q "ALTER TABLE public.restaurants ADD COLUMN IF NOT EXISTS cuisine TEXT;" | head -c 300; echo
+          q "ALTER TABLE public.restaurants ADD COLUMN IF NOT EXISTS min_order_kobo BIGINT NOT NULL DEFAULT 0 CHECK (min_order_kobo >= 0);" | head -c 300; echo
+          q "ALTER TABLE public.restaurants ADD COLUMN IF NOT EXISTS packaging_fee_kobo BIGINT NOT NULL DEFAULT 20000;" | head -c 300; echo
+          q "ALTER TABLE public.restaurants ADD COLUMN IF NOT EXISTS prep_time_minutes INT NOT NULL DEFAULT 15 CHECK (prep_time_minutes BETWEEN 0 AND 240);" | head -c 300; echo
+          q "ALTER TABLE public.restaurants ADD COLUMN IF NOT EXISTS geo_lat NUMERIC(9,6);" | head -c 300; echo
+          q "ALTER TABLE public.restaurants ADD COLUMN IF NOT EXISTS geo_lng NUMERIC(9,6);" | head -c 300; echo
+          q "ALTER TABLE public.restaurants ADD COLUMN IF NOT EXISTS listing_review_status TEXT NOT NULL DEFAULT 'DRAFT';" | head -c 300; echo
+          # close_expired_contests() — prod sweep logs 42883. Collapsed
+          # one-liner of 20261227000000 (identical semantics).
+          q "CREATE OR REPLACE FUNCTION public.close_expired_contests() RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS \$f\$ DECLARE closed integer; BEGIN WITH expired AS (UPDATE public.contests SET status = 'ended', updated_at = now() WHERE status IN ('active','upcoming') AND COALESCE(voting_end_date, end_date) IS NOT NULL AND COALESCE(voting_end_date, end_date) < now() RETURNING 1) SELECT count(*)::integer INTO closed FROM expired; RETURN closed; END; \$f\$;" | head -c 300; echo
+          q "REVOKE ALL ON FUNCTION public.close_expired_contests() FROM PUBLIC;" | head -c 300; echo
+          q "GRANT EXECUTE ON FUNCTION public.close_expired_contests() TO service_role;" | head -c 300; echo
+          echo "--- restaurants columns present (names only) ---"
+          q "select string_agg(column_name, ',' order by column_name) from information_schema.columns where table_schema='public' and table_name='restaurants'" | head -c 1200; echo
           echo "--- re-check ---"
           q "select to_regclass('public.bridge_idempotency_keys') as bik, to_regclass('public.otp_codes') as oc, to_regclass('public.restaurant_likes') as rl, to_regclass('public.featured_campaign') as fc, to_regclass('public.restaurant_promos') as rp" | head -c 400; echo
 
