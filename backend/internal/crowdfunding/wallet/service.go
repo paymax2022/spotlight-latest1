@@ -108,6 +108,9 @@ var ErrCampaignNotFound = errors.New("crowdfunding/wallet: campaign not found")
 // to the approximation only when no ledger is wired (s.ledger == nil) — a wired
 // payout path must never trust it as a gate.
 func (s *Service) GetWallet(ctx context.Context, campaignID string) (*CampaignWalletSummary, error) {
+	if _, err := uuid.Parse(campaignID); err != nil {
+		return nil, ErrCampaignNotFound
+	}
 	var (
 		title     string
 		creatorID string
@@ -182,6 +185,9 @@ type rawEntry struct {
 // The projection is ordered oldest→newest so the running balance accumulates,
 // then returned newest-first for the client feed.
 func (s *Service) GetLedger(ctx context.Context, campaignID string) ([]LedgerEntry, error) {
+	if _, err := uuid.Parse(campaignID); err != nil {
+		return nil, ErrCampaignNotFound
+	}
 	// Verify the campaign exists so a bad id is a 404, not an empty list.
 	var exists bool
 	if err := s.db.QueryRow(ctx, `SELECT TRUE FROM campaigns WHERE id = $1`, campaignID).Scan(&exists); err != nil {

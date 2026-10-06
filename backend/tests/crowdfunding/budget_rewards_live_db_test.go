@@ -41,7 +41,7 @@ func TestLiveDB_BudgetLinesPersistInOrder(t *testing.T) {
 		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM campaigns WHERE id=$1`, campaignID)
 	})
 
-	detail, err := svc.GetDetail(ctx, campaignID)
+	detail, err := svc.GetDetail(ctx, campaignID, creator)
 	if err != nil {
 		t.Fatalf("detail: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestLiveDB_RewardTierClaimedIsCountedNotDeclared(t *testing.T) {
 		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM campaigns WHERE id=$1`, campaignID)
 	})
 
-	detail, _ := svc.GetDetail(ctx, campaignID)
+	detail, _ := svc.GetDetail(ctx, campaignID, creator)
 	tiers, _ := detail["rewardTiers"].([]map[string]any)
 	if len(tiers) != 2 {
 		t.Fatalf("detail carries %d tiers, want 2", len(tiers))
@@ -113,7 +113,7 @@ func TestLiveDB_RewardTierClaimedIsCountedNotDeclared(t *testing.T) {
 		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM cf_reward_backers WHERE id=$1`, backerID)
 	})
 
-	detail2, _ := svc.GetDetail(ctx, campaignID)
+	detail2, _ := svc.GetDetail(ctx, campaignID, creator)
 	tiers2, _ := detail2["rewardTiers"].([]map[string]any)
 	if tiers2[1]["claimed"] != 1 {
 		t.Errorf("claimed = %v after one real backer, want 1", tiers2[1]["claimed"])

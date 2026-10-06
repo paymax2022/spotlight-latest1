@@ -36,7 +36,7 @@ func TestLiveDB_BeneficiaryIsStoredAndSurfaced(t *testing.T) {
 		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM campaigns WHERE id=$1`, campaignID)
 	})
 
-	detail, err := svc.GetDetail(ctx, campaignID)
+	detail, err := svc.GetDetail(ctx, campaignID, creator)
 	if err != nil {
 		t.Fatalf("detail: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestLiveDB_BeneficiaryOptionalAndPartial(t *testing.T) {
 		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM campaigns WHERE id=$1`, campaignID)
 	})
 
-	detail, _ := svc.GetDetail(ctx, campaignID)
+	detail, _ := svc.GetDetail(ctx, campaignID, creator)
 	if detail["beneficiary"] != nil {
 		t.Errorf("beneficiary = %v with none supplied, want nil", detail["beneficiary"])
 	}
