@@ -120,6 +120,24 @@ jobs:
             console.log("    " + shape("PAYSTACK_SECRET_KEY", (s) => s.length > 20));
           '
 
+      # NEXT_PUBLIC_SUPABASE_ANON_KEY is publishable by design — it ships to every
+      # browser and mobile client and is bound by RLS, so printing it leaks nothing.
+      # The mobile production build needs this exact value for eas.json.
+      - name: frontend-web publishable Supabase key (PUBLIC value — safe to print)
+        if: inputs.environment == 'production'
+        run: |
+          set -uo pipefail
+          railway variable list --service frontend-web --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > fw-pub.json || true
+          node -e '
+            const v = JSON.parse(require("fs").readFileSync("fw-pub.json","utf8"));
+            const k = String(v.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+            if (!/^(eyJ|sb_publishable_)/.test(k)) { console.log("  publishable key NOT SET or unexpected shape"); process.exit(0); }
+            console.log("  NEXT_PUBLIC_SUPABASE_ANON_KEY (public, publishable):");
+            console.log("    " + k);
+          ' || echo "  (could not read publishable key)"
+          rm -f fw-pub.json
+
       - name: backend APP_PORT (name + value; a port is not a secret)
         run: |
           set -uo pipefail
