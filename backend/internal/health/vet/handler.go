@@ -31,20 +31,37 @@ func NewHandler(svc *Service, isAdmin func(c *gin.Context) bool) *Handler {
 }
 
 // CreatePet — POST /pets  (owner; seeds vault PET record, HL-8)
+// Requires Idempotency-Key (header, or the body's idempotency_key fallback like
+// Book): a replay returns the original pet rather than writing a duplicate.
 func (h *Handler) CreatePet(c *gin.Context) {
 	id := ginutil.UserID(c)
 	if id == "" {
 		ginutil.FailOK(c, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	var p Pet
-	if err := c.ShouldBindJSON(&p); err != nil {
+	var req struct {
+		Pet
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
-	out, err := h.svc.CreatePet(c.Request.Context(), id, p)
+	// Header wins; the body field is the module's established alternate spelling
+	// (same convention as Book). Missing either is a client error — a mutation
+	// that cannot dedupe itself must not run (HL-9 convention).
+	req.Pet.IdempotencyKey = strutil.FirstNonEmpty(ginutil.IdempotencyKey(c), req.IdempotencyKey)
+	if req.Pet.IdempotencyKey == "" {
+		ginutil.FailOK(c, http.StatusBadRequest, "Idempotency-Key required")
+		return
+	}
+	out, err := h.svc.CreatePet(c.Request.Context(), id, req.Pet)
 	if err != nil {
-		ginutil.FailOK(c, http.StatusUnprocessableEntity, err.Error())
+		status := http.StatusUnprocessableEntity
+		if errors.Is(err, ErrPetMissingIdem) {
+			status = http.StatusBadRequest
+		}
+		ginutil.FailOK(c, status, err.Error())
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "pet": out})
