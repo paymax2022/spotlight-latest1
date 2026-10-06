@@ -420,6 +420,9 @@ func (s *Service) RecordCampaignEvent(ctx context.Context, campaignID, eventType
 	if strings.TrimSpace(campaignID) == "" {
 		return ErrInvalidEvent
 	}
+	if _, err := uuid.Parse(campaignID); err != nil {
+		return ErrCampaignNotFound
+	}
 
 	// A NULL actor is an anonymous viewer; an empty string would violate the FK.
 	var actor any

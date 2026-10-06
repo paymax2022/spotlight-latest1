@@ -95,7 +95,7 @@ func (h *Handler) SaveCampaign(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	res, err := h.svc.ToggleSave(c.Request.Context(), userID, c.Param("id"), true)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -106,7 +106,7 @@ func (h *Handler) UnsaveCampaign(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	res, err := h.svc.ToggleSave(c.Request.Context(), userID, c.Param("id"), false)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -181,7 +181,7 @@ func (h *Handler) GetCampaignAnalytics(c *gin.Context) {
 func (h *Handler) GetMilestones(c *gin.Context) {
 	items, err := h.svc.GetMilestones(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})

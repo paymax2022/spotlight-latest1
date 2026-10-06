@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -106,6 +107,9 @@ func (s *Service) creatorDisplayName(ctx context.Context, userID string) string 
 // column, so every contributor is treated as named (displayName resolved from
 // auth.users meta) with anonymous=false.
 func (s *Service) GetContributors(ctx context.Context, campaignID string) ([]Contributor, error) {
+	if _, err := uuid.Parse(campaignID); err != nil {
+		return nil, ErrNotFound
+	}
 	// This list is public to any signed-in member. The email fallback the old
 	// projection used meant a backer with no name set had their EMAIL published
 	// beside their donation — a PII leak, not a display nicety. A backer with
@@ -196,6 +200,9 @@ func (s *Service) ListContributions(ctx context.Context, userID, status string) 
 // a 500, which fails closed too but reports a server fault for what is really
 // an unauthenticated read.
 func (s *Service) GetContribution(ctx context.Context, id, contributorID string) (*Contribution, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, ErrNotFound
+	}
 	const q = `
 		SELECT co.id::text, COALESCE(co.idempotency_key,''), co.campaign_id::text,
 		       COALESCE(c.title,''), c.cover_url, co.amount_kobo, co.status, co.created_at,
@@ -298,6 +305,9 @@ func scanContribution(scan func(dest ...any) error) (Contribution, error) {
 // ErrNotFound — the same answer as one that does not exist — and an empty
 // callerID (auth context missing) matches nothing, so it fails closed.
 func (s *Service) RequestRefund(ctx context.Context, contributionID, callerID, reason string) (map[string]any, error) {
+	if _, err := uuid.Parse(contributionID); err != nil {
+		return nil, ErrNotFound
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -544,6 +554,9 @@ func (s *Service) GetCreatorNotifications(ctx context.Context, userID string) ([
 // from the append-only contributions table; views/shares are deterministic from
 // the id; trafficSources is a reasonable fixed breakdown scaled to views.
 func (s *Service) GetCampaignAnalytics(ctx context.Context, campaignID, viewerID string) (*CampaignAnalytics, error) {
+	if _, err := uuid.Parse(campaignID); err != nil {
+		return nil, ErrNotFound
+	}
 	// The route lives under /creator/ and the payload is the owner's own funnel
 	// — daily raised, traffic sources, conversion. Before this check it was
 	// readable by ANY authenticated caller who knew the campaign id.
@@ -695,6 +708,9 @@ func (s *Service) GetCampaignAnalytics(ctx context.Context, campaignID, viewerID
 
 // GetMilestones returns a campaign's milestones ordered by sort_order.
 func (s *Service) GetMilestones(ctx context.Context, campaignID string) ([]CampaignMilestone, error) {
+	if _, err := uuid.Parse(campaignID); err != nil {
+		return nil, ErrNotFound
+	}
 	const q = `
 		SELECT id::text, title, target_kobo, status, due_at, evidence_count
 		FROM cf_campaign_milestones
@@ -858,6 +874,9 @@ func (s *Service) scanSummaries(ctx context.Context, q, userID string, saved boo
 
 // ToggleSave saves or unsaves a campaign for the caller.
 func (s *Service) ToggleSave(ctx context.Context, userID, campaignID string, saved bool) (map[string]any, error) {
+	if _, err := uuid.Parse(campaignID); err != nil {
+		return nil, ErrNotFound
+	}
 	if saved {
 		if _, err := s.db.Exec(ctx,
 			`INSERT INTO cf_saved_campaigns (user_id, campaign_id) VALUES ($1, $2)
