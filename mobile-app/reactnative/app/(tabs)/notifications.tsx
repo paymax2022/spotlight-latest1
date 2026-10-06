@@ -7,6 +7,7 @@ import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
+import { isMocklessEnvironment } from '@/config/mockPolicy';
 
 interface Notif {
   id: string; title: string; body: string;
@@ -14,7 +15,9 @@ interface Notif {
   time: string; read: boolean; group: 'Today' | 'Earlier';
 }
 
-const NOTIFS: Notif[] = [
+// Sample rows for local development only. There is no notifications feed behind
+// this tab yet, so a deployed build shows the empty state, never invented alerts.
+const SAMPLE_NOTIFS: Notif[] = [
   { id:'1', title:'₦350,000 Credit Alert', body:'Salary received from ACME Corp', icon:'ArrowDownLeft', iconColor:Colors.teal, bgColor:Colors.iconBgTeal, time:'8:00 AM', read:false, group:'Today' },
   { id:'2', title:'Airtime Purchase',       body:'₦500 airtime for 09012345678',  icon:'Smartphone',  iconColor:Colors.primary, bgColor:Colors.iconBgPurple, time:'9:41 AM', read:false, group:'Today' },
   { id:'3', title:'Spotlight Contest',      body:'New voting round is now live!', icon:'BarChart3',    iconColor:Colors.secondary, bgColor:Colors.iconBgBlue, time:'11:00 AM', read:true, group:'Today' },
@@ -22,6 +25,8 @@ const NOTIFS: Notif[] = [
   { id:'5', title:'Bill Payment Successful',body:'EKEDC electricity — ₦7,500',   icon:'Zap',         iconColor:'#EAB308', bgColor:'rgba(234,179,8,0.10)', time:'2 Jun', read:true, group:'Earlier' },
   { id:'6', title:'New Feature: FX Exchange',body:'Send money to 40+ countries',  icon:'Globe',       iconColor:Colors.secondary, bgColor:Colors.iconBgBlue, time:'1 Jun', read:true, group:'Earlier' },
 ];
+
+const NOTIFS: Notif[] = isMocklessEnvironment() ? [] : SAMPLE_NOTIFS;
 
 function NotifItem({ n }: { n: Notif }) {
   const IconComp = (Icons as unknown as Record<string, Icons.LucideIcon>)[n.icon] ?? Icons.Bell;
@@ -50,8 +55,18 @@ export default function NotificationsScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.title}>Notifications</Text>
-        <Text style={styles.unreadCount}>{NOTIFS.filter((n) => !n.read).length} unread</Text>
+        {NOTIFS.length > 0 && (
+          <Text style={styles.unreadCount}>{NOTIFS.filter((n) => !n.read).length} unread</Text>
+        )}
       </View>
+
+      {NOTIFS.length === 0 && (
+        <View style={styles.empty}>
+          <Icons.Bell size={32} color={Colors.outline} strokeWidth={1.6} />
+          <Text style={styles.emptyTitle}>No notifications yet</Text>
+          <Text style={styles.emptyBody}>Alerts about your account will show up here.</Text>
+        </View>
+      )}
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: Platform.OS === 'ios' ? 100 : 80 }}>
         {[{ label: 'Today', items: todayNotifs }, { label: 'Earlier', items: earlierNotifs }].map(({ label, items }) => (
@@ -92,4 +107,7 @@ const styles = StyleSheet.create({
   notifBody: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginBottom: 4 },
   time:   { ...Typography.caption, color: Colors.outline },
   divider:{ height: 1, backgroundColor: Colors.surfaceContainerHigh },
+  empty:  { alignItems: 'center', paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.xl, gap: Spacing.sm },
+  emptyTitle: { ...Typography.labelMd, color: Colors.onSurface },
+  emptyBody:  { ...Typography.labelSm, color: Colors.onSurfaceVariant, textAlign: 'center' },
 });

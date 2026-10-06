@@ -130,6 +130,7 @@ export async function getBlackPerks(): Promise<BlackPerk[]> {
 // members (partner settlement is admin-only — AdminPartnerSettlement). Falls
 // back to the mock offers list.
 export async function getPartnerOffers(): Promise<PartnerOffer[]> {
+  if (!USE_MOCK) return [];
   await delay();
   return MOCK_OFFERS;
 }
@@ -139,6 +140,8 @@ export async function getPartnerOffers(): Promise<PartnerOffer[]> {
 // self-upgrade. Kept as a mock-only stub until a self-serve upgrade endpoint
 // (or an admin-triggered enrolment flow) ships.
 export async function upgradeToBlack(): Promise<{ ok: boolean; memberSinceISO: string }> {
+  // Reporting success here told a member they were on Black when nothing changed.
+  if (!USE_MOCK) throw new Error('Paymax Black upgrades are by invitation for now.');
   await delay();
   return { ok: true, memberSinceISO: new Date().toISOString() };
 }

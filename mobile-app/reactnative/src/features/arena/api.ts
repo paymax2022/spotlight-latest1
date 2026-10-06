@@ -32,6 +32,7 @@ import {
   mockExamAssignment,
 } from './quiz.stages.mock';
 import { USE_MOCK } from './constants';
+import { isMocklessEnvironment } from '@/config/mockPolicy';
 import {
   mockCompetition,
   mockCompetitions,
@@ -45,6 +46,14 @@ const BASE = '/api/arena';
 
 /** Unwrap the common { data } envelope used across the backend. */
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
+
+// A failed live read may fall back to mock data on a developer machine only. In
+// a deployed build it rethrows, so a 5xx, a timeout or a 401 surfaces as an
+// error instead of invented competitions, leaderboards and prize pots.
+function liveFailure<T>(error: unknown, devFallback: () => T): T {
+  if (isMocklessEnvironment()) throw error;
+  return devFallback();
+}
 
 /**
  * Fresh Idempotency-Key per money/engagement mutation. Uses crypto.randomUUID
@@ -70,10 +79,10 @@ export async function listCompetitions(): Promise<Competition[]> {
     const raw = unwrap<{ competitions?: Competition[] } | Competition[]>(
       await api.get(`${BASE}/competitions`),
     );
-    const list = Array.isArray(raw) ? raw : raw.competitions ?? [];
-    if (list.length > 0) return list;
-  } catch { /* backend unavailable in dev */ }
-  return mockCompetitions();
+    return Array.isArray(raw) ? raw : raw.competitions ?? [];
+  } catch (e) {
+    return liveFailure(e, mockCompetitions);
+  }
 }
 
 /** GET /competitions/{id} — a single competition. */
@@ -81,8 +90,8 @@ export async function getCompetition(id: string): Promise<Competition> {
   if (USE_MOCK) return mockCompetition(id);
   try {
     return unwrap<Competition>(await api.get(`${BASE}/competitions/${id}`));
-  } catch {
-    return mockCompetition(id);
+  } catch (e) {
+    return liveFailure(e, () => mockCompetition(id));
   }
 }
 
@@ -93,10 +102,10 @@ export async function getMeritLeaderboard(id: string): Promise<MeritLeaderboardE
     const raw = unwrap<{ entries?: MeritLeaderboardEntry[] } | MeritLeaderboardEntry[]>(
       await api.get(`${BASE}/competitions/${id}/leaderboard/merit`),
     );
-    const list = Array.isArray(raw) ? raw : raw.entries ?? [];
-    if (list.length > 0) return list;
-  } catch { /* backend unavailable in dev */ }
-  return mockMeritLeaderboard();
+    return Array.isArray(raw) ? raw : raw.entries ?? [];
+  } catch (e) {
+    return liveFailure(e, mockMeritLeaderboard);
+  }
 }
 
 /** GET /competitions/{id}/pot — derived prize-pot transparency snapshot (S9). */
@@ -104,8 +113,8 @@ export async function getPot(id: string): Promise<PotSnapshot> {
   if (USE_MOCK) return mockPot();
   try {
     return unwrap<PotSnapshot>(await api.get(`${BASE}/competitions/${id}/pot`));
-  } catch {
-    return mockPot();
+  } catch (e) {
+    return liveFailure(e, mockPot);
   }
 }
 
@@ -257,9 +266,12 @@ export async function getPlayAlongStage(
       }),
     );
     if (raw && Array.isArray(raw.questions) && raw.questions.length > 0) return raw;
-  } catch {
+  } catch (e) {
     /* backend unavailable in dev — use the mock bank below */
+    if (isMocklessEnvironment()) throw e;
   }
+  // Mock question ids would be scored against the live attempt endpoint.
+  if (isMocklessEnvironment()) throw new Error('No questions are available for this stage yet.');
   return mockPlayAlongStage(stage);
 }
 
@@ -270,10 +282,11 @@ export async function getStatePride(competitionId: string): Promise<StateStandin
     const raw = unwrap<{ states?: StateStanding[] } | StateStanding[]>(
       await api.get(`${BASE}/competitions/${competitionId}/leaderboard/state`),
     );
-    const list = Array.isArray(raw) ? raw : raw.states ?? [];
-    if (list.length > 0) return list;
-  } catch { /* backend unavailable in dev */ }
-  return mockStatePride();
+    return Array.isArray(raw) ? raw : raw.states ?? [];
+  } catch (e) {
+    // No state-leaderboard route exists on the backend yet: empty, not invented.
+    return isMocklessEnvironment() ? [] : liveFailure(e, mockStatePride);
+  }
 }
 
 /** Public driver profile — merit standing + People's Champion tally (S4). */
@@ -286,8 +299,10 @@ export async function getDriverProfile(
     return unwrap<{ merit: MeritLeaderboardEntry | null; peoplesChampion: PeoplesChampionTally | null }>(
       await api.get(`${BASE}/competitions/${competitionId}/drivers/${contestantId}`),
     );
-  } catch {
-    return mockDriverProfile(contestantId);
+  } catch (e) {
+    // No driver-profile route exists on the backend yet: empty, not invented.
+    if (isMocklessEnvironment()) return { merit: null, peoplesChampion: null };
+    return liveFailure(e, () => mockDriverProfile(contestantId));
   }
 }
 
