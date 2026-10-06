@@ -19,6 +19,7 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
+	"spotlight/backend/internal/provider"
 )
 
 const keyInvalidRequestBody = "invalid request body"
@@ -94,7 +95,12 @@ func writeErr(c *gin.Context, err error) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: httperr.Msg(c, http.StatusUnprocessableEntity, err), keyCode: "insufficient_funds"})
 	case errors.Is(err, ErrNoViableRoute),
 		errors.Is(err, ErrCategoryUnavailable),
-		errors.Is(err, ErrProviderUnavailable):
+		errors.Is(err, ErrProviderUnavailable),
+		errors.Is(err, ErrProviderCallFailed),
+		// A provider REFUSAL means nothing happened upstream — safe to retry,
+		// so 503 not 500 (VTPass credential/transport failures reach this via
+		// the adapter's pre-flight auth guards).
+		errors.Is(err, provider.ErrProviderRefused):
 		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
 	case errors.Is(err, ErrBindInFlight):
 		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), keyCode: "purchase_in_flight"})
@@ -128,9 +134,13 @@ func (h *Handler) ListBillers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"billers": billers})
 }
 
-// ListProducts handles GET /api/finance/utilitybills/products?category=&biller_id=
+// ListProducts handles GET /api/finance/utilitybills/products?category=&biller_id=&biller=
+// `biller` is the biller CODE (slug, e.g. 'vtpass-eko-electric') — the same
+// identifier the billers list exposes — and is resolved to an id server-side.
+// `biller_id` wins when both are sent; an unknown code yields an empty list,
+// matching the filter-miss semantics of a nonexistent biller_id.
 func (h *Handler) ListProducts(c *gin.Context) {
-	products, err := h.svc.ListProducts(c.Request.Context(), c.Query("category"), c.Query("biller_id"))
+	products, err := h.svc.ListProducts(c.Request.Context(), c.Query("category"), c.Query("biller_id"), c.Query("biller"))
 	if err != nil {
 		writeErr(c, err)
 		return
