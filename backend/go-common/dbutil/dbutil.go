@@ -45,6 +45,13 @@ func IsCheckViolation(err error) bool {
 	return SQLState(err) == "23514"
 }
 
+// IsForeignKeyViolation reports SQLSTATE 23503 — foreign_key_violation. Use it
+// to translate "insert whose parent row does not exist" into a 404-ish domain
+// error instead of a raw 500 (e.g. liking a restaurant that was never created).
+func IsForeignKeyViolation(err error) bool {
+	return SQLState(err) == "23503"
+}
+
 // NullStr maps "" to nil so optional text/varchar columns store SQL NULL.
 func NullStr(s string) any {
 	if s == "" {

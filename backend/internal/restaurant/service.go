@@ -97,6 +97,27 @@ var ErrOrderMissingIdem = errors.New("restaurant: Idempotency-Key required to pl
 // reverse the external charge — see PlaceOrderPaystackFunded's doc comment.
 var ErrExternalAmountMismatch = errors.New("restaurant: verified payment amount no longer matches the order total")
 
+// Order-rejection sentinels. priceOrder refuses carts with plain, client-facing
+// reasons — a closed or nonexistent restaurant, an item that is gone or 86'd, a
+// cart under the house minimum, a bad scheduled slot, a malformed line. Until
+// they carried sentinels every one of them fell through to the handler's
+// default 500, so a customer ordering from a closed store saw "internal server
+// error" instead of "restaurant closed" — the wave-5 prod probe (B4) read that
+// as broken order placement when placement was in fact correctly refusing.
+// Each sentinel wraps via %w at the produce site so errors.Is still resolves
+// the HTTP status while the message keeps the specifics (which id, which item,
+// what minimum). escrowErrStatus maps them: not-found → 404, state rejections
+// (closed / unavailable / under-minimum) → 422, malformed input → 400.
+var (
+	ErrRestaurantNotFound   = errors.New("restaurant: not found")
+	ErrRestaurantClosed     = errors.New("restaurant: currently closed")
+	ErrMenuItemNotFound     = errors.New("restaurant: menu item not found")
+	ErrMenuItemUnavailable  = errors.New("restaurant: menu item not available")
+	ErrBelowMinOrder        = errors.New("restaurant: below minimum order")
+	ErrOrderInvalid         = errors.New("restaurant: invalid order")
+	ErrScheduledSlotInvalid = errors.New("restaurant: invalid scheduled slot")
+)
+
 // Service manages restaurants, menus, and orders.
 type Service struct {
 	db            *pgxpool.Pool
@@ -406,7 +427,7 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		restaurantMap[rid] = true
 	}
 	if len(restaurantMap) == 0 {
-		return nil, errors.New("restaurant: no valid restaurants in order")
+		return nil, fmt.Errorf("%w: no valid restaurants in order", ErrOrderInvalid)
 	}
 
 	// For multi-restaurant orders, use the first one as the "primary" for backward compat
@@ -435,7 +456,7 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		`SELECT is_open, owner_id, geo_lat, geo_lng, COALESCE(service_fee_bp,0), COALESCE(surge_bp,0), COALESCE(packaging_fee_kobo,0) FROM restaurants WHERE id=$1`,
 		primaryRestaurantID).
 		Scan(&isOpen, &ownerID, &rLat, &rLng, &pricingCfg.ServiceFeeBp, &pricingCfg.SurgeBp, &packagingFeePerPackKobo); err != nil {
-		return nil, errors.New("restaurant: primary restaurant not found")
+		return nil, fmt.Errorf("%w (%s)", ErrRestaurantNotFound, primaryRestaurantID)
 	}
 
 	// A scheduled order books a FUTURE slot, so it is gated on that slot falling inside
@@ -450,7 +471,7 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	// the kitchen is open when the slot arrives is settled by ActivateScheduledOrders,
 	// which releases it into the live queue or auto-cancels AND REFUNDS it (SG-002).
 	if !isOpen && scheduledFor == nil {
-		return nil, errors.New("restaurant: primary restaurant is currently closed")
+		return nil, fmt.Errorf("%w (%s)", ErrRestaurantClosed, primaryRestaurantID)
 	}
 
 	// Verify secondary restaurants (if multi-restaurant) are also open — same rule.
@@ -460,10 +481,10 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		}
 		var secondOpen bool
 		if err := s.db.QueryRow(ctx, `SELECT is_open FROM restaurants WHERE id=$1`, rid).Scan(&secondOpen); err != nil {
-			return nil, fmt.Errorf("restaurant: restaurant %s not found", rid)
+			return nil, fmt.Errorf("%w (%s)", ErrRestaurantNotFound, rid)
 		}
 		if !secondOpen && scheduledFor == nil {
-			return nil, fmt.Errorf("restaurant: restaurant %s is currently closed", rid)
+			return nil, fmt.Errorf("%w (%s)", ErrRestaurantClosed, rid)
 		}
 	}
 
@@ -474,17 +495,17 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		var mi MenuItem
 		const qMI = `SELECT id, restaurant_id, name, price_kobo, is_available FROM menu_items WHERE id=$1 AND restaurant_id=$2`
 		if err := s.db.QueryRow(ctx, qMI, input.MenuItemID, restID).Scan(&mi.ID, &mi.RestaurantID, &mi.Name, &mi.PriceKobo, &mi.IsAvailable); err != nil {
-			return nil, fmt.Errorf("restaurant: menu item %s not found in restaurant %s", input.MenuItemID, restID)
+			return nil, fmt.Errorf("%w (%s in restaurant %s)", ErrMenuItemNotFound, input.MenuItemID, restID)
 		}
 		if !mi.IsAvailable {
-			return nil, fmt.Errorf("restaurant: menu item '%s' is not available", mi.Name)
+			return nil, fmt.Errorf("%w (%s)", ErrMenuItemUnavailable, mi.Name)
 		}
 		// Sanity-bound the line before it is multiplied. Quantity was only bounded below
 		// (>= 1), and the pricing that follows multiplies before it divides — see
 		// maxLineQuantity. order_items.quantity is a Postgres INT, but that constraint
 		// only fires on the INSERT, long after the escrow debit is posted.
 		if input.Quantity > maxLineQuantity {
-			return nil, fmt.Errorf("restaurant: quantity %d for '%s' exceeds the per-line maximum of %d", input.Quantity, mi.Name, maxLineQuantity)
+			return nil, fmt.Errorf("%w: quantity %d for '%s' exceeds the per-line maximum of %d", ErrOrderInvalid, input.Quantity, mi.Name, maxLineQuantity)
 		}
 
 		// Chosen modifiers price the line. resolveLineModifiers is fail-closed against
@@ -533,14 +554,14 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	// here so every derived amount (surge, service fee, percentage discount, total) is
 	// computed on a subtotal that is known to be safe.
 	if subtotal > maxOrderSubtotalKobo {
-		return nil, fmt.Errorf("restaurant: cart subtotal %d kobo exceeds the maximum order value of %d kobo", subtotal, maxOrderSubtotalKobo)
+		return nil, fmt.Errorf("%w: cart subtotal %d kobo exceeds the maximum order value of %d kobo", ErrOrderInvalid, subtotal, maxOrderSubtotalKobo)
 	}
 
 	// Min-order gate (CT-007): an undersized cart is rejected BEFORE escrow —
 	// no money moves for an order the restaurant would refuse.
 	var minOrderKobo int64
 	if err := s.db.QueryRow(ctx, `SELECT COALESCE(min_order_kobo,0) FROM restaurants WHERE id=$1`, restaurantID).Scan(&minOrderKobo); err == nil && minOrderKobo > 0 && subtotal < minOrderKobo {
-		return nil, fmt.Errorf("restaurant: cart subtotal %d kobo is below the restaurant's minimum order of %d kobo", subtotal, minOrderKobo)
+		return nil, fmt.Errorf("%w: cart subtotal %d kobo, restaurant minimum %d kobo", ErrBelowMinOrder, subtotal, minOrderKobo)
 	}
 
 	// Delivery fee: distance-based when BOTH the restaurant pin AND the delivery
@@ -583,7 +604,7 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	//     amounts up front and keeps `total` far from int64 overflow.
 	tipKobo := max(req.TipKobo, 0)
 	if tipKobo > itemsKobo+deliveryKobo {
-		return nil, fmt.Errorf("restaurant: tip of %d kobo exceeds the order value of %d kobo", tipKobo, itemsKobo+deliveryKobo)
+		return nil, fmt.Errorf("%w: tip of %d kobo exceeds the order value of %d kobo", ErrOrderInvalid, tipKobo, itemsKobo+deliveryKobo)
 	}
 
 	// Promo discount. `grossKobo` is the value the 80/10/10 percentages price (surged

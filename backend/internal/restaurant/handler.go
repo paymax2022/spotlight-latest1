@@ -101,11 +101,15 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 	c.JSON(http.StatusCreated, order)
 }
 
-// escrowErrStatus maps the fail-closed money-path refusals a wallet-escrowing order
-// placement can return to their HTTP status. It reports ok=false for anything else so
-// each caller keeps its own default (PlaceOrder → 500, group finalize → statusCodeFor).
-// Mirrors withdrawalErrStatus (handler_withdrawal.go) — the two money paths in this
-// module must answer the same refusal with the same code.
+// escrowErrStatus maps the fail-closed refusals order placement can return —
+// the money-path tier/fund gates AND the pricing rejections priceOrder raises
+// before any money moves (closed/not-found restaurant, unavailable item,
+// under-minimum cart, bad slot, malformed line). Without the second group
+// every cart refusal 500'd (prod probe B4): a rejection is never a server
+// fault. It reports ok=false for anything else so each caller keeps its own
+// default (PlaceOrder → 500, group finalize → statusCodeFor).
+// Mirrors withdrawalErrStatus (handler_withdrawal.go) — the two money paths in
+// this module must answer the same refusal with the same code.
 func escrowErrStatus(err error) (int, bool) {
 	switch {
 	case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
@@ -119,6 +123,19 @@ func escrowErrStatus(err error) (int, bool) {
 		// Server misconfiguration, not the caller's fault, and retryable once wired.
 		return http.StatusServiceUnavailable, true
 	case errors.Is(err, ErrOrderMissingIdem):
+		return http.StatusBadRequest, true
+	case errors.Is(err, ErrExternalAmountMismatch):
+		// The verified charge no longer matches the recomputed total — the caller
+		// must refund the external payment and retry. Conflict, not a fault.
+		return http.StatusConflict, true
+	case errors.Is(err, ErrRestaurantNotFound), errors.Is(err, ErrMenuItemNotFound):
+		return http.StatusNotFound, true
+	case errors.Is(err, ErrRestaurantClosed), errors.Is(err, ErrMenuItemUnavailable),
+		errors.Is(err, ErrBelowMinOrder):
+		// State-dependent refusals: well-formed request the restaurant cannot
+		// fulfil right now. 422 lets the client surface the reason.
+		return http.StatusUnprocessableEntity, true
+	case errors.Is(err, ErrOrderInvalid), errors.Is(err, ErrScheduledSlotInvalid):
 		return http.StatusBadRequest, true
 	}
 	return 0, false
