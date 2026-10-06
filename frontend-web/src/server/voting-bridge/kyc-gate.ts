@@ -4,13 +4,18 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/server';
+import { ApiError } from '@/src/lib/api/responses';
 
-export class KycGateError extends Error {
+// ApiError, not bare Error — routes that let this reach handleApiError were
+// returning 500 for a deliberate 404/403 gate because the handler only reads
+// `.status` on ApiError instances. `statusCode` is kept because bridge.ts's
+// statusOf() reads it first.
+export class KycGateError extends ApiError {
   constructor(
     message: string,
     public statusCode: number = 403
   ) {
-    super(message);
+    super(message, statusCode);
     this.name = 'KycGateError';
   }
 }

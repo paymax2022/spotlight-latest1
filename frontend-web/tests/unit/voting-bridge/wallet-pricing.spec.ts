@@ -30,21 +30,25 @@ const SETTINGS = {
 
 /**
  * Table-aware supabase stub. `contestants` answers a membership row for
- * 'contestant-1' → 'contest-1'; `vote_packages` answers the pricing row:
- * ₦1000 / 10 votes = ₦100 per vote.
+ * 'contestant-1' → 'contest-1' (keyed on the real `contest_id` column);
+ * `vote_packages` answers the pricing row: ₦1000 / 10 votes = ₦100 per vote.
  */
 function stubDb(opts: {
   packageRow?: { amount: number; votes: number } | null;
-  contestantRow?: { competition_id: string } | null;
+  contestantRow?: { contest_id: string } | null;
 } = {}) {
   const packageRow = 'packageRow' in opts ? opts.packageRow : { amount: 1000, votes: 10 };
-  const contestantRow = 'contestantRow' in opts ? opts.contestantRow : { competition_id: 'contest-1' };
+  const contestantRow = 'contestantRow' in opts ? opts.contestantRow : { contest_id: 'contest-1' };
+  const selectedColumns: Record<string, string> = {};
 
   const from = vi.fn((table: string) => {
     if (table === 'contestants') {
       const maybeSingle = vi.fn(async () => ({ data: contestantRow }));
       const eq = vi.fn(() => ({ maybeSingle }));
-      const select = vi.fn(() => ({ eq }));
+      const select = vi.fn((cols: string) => {
+        selectedColumns.contestants = cols;
+        return { eq };
+      });
       return { select };
     }
     // vote_packages: select → eq → eq → order → limit → maybeSingle
@@ -57,6 +61,7 @@ function stubDb(opts: {
     return { select };
   });
   vi.mocked(createAdminClient).mockReturnValue({ from } as never);
+  return { selectedColumns };
 }
 
 beforeEach(() => {
@@ -81,10 +86,19 @@ describe('priceWalletVote', () => {
   });
 
   it('rejects a contestant that does not belong to the contest', async () => {
-    stubDb({ contestantRow: { competition_id: 'other-contest' } });
+    stubDb({ contestantRow: { contest_id: 'other-contest' } });
     await expect(priceWalletVote('contest-1', 'contestant-9', 10)).rejects.toThrowError(/belong/i);
     stubDb({ contestantRow: null });
     await expect(priceWalletVote('contest-1', 'ghost', 10)).rejects.toThrowError(/belong/i);
+  });
+
+  it('reads contestants by the real contest_id column, not competition_id', async () => {
+    // Regression for the prod bug where `competition_id` was selected — that
+    // column does not exist on public.contestants, so EVERY valid
+    // (contest, contestant) pair was rejected as "does not belong".
+    const { selectedColumns } = stubDb();
+    await priceWalletVote('contest-1', 'contestant-1', 10);
+    expect(selectedColumns.contestants).toBe('contest_id');
   });
 
   it('fails closed when paid voting is off', async () => {
