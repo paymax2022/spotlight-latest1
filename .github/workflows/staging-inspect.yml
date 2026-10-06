@@ -563,6 +563,61 @@ jobs:
             echo "  ASSOC_CARD_SIGNING_SECRET already set"
           fi
           rm -f assoc-check.json
+          # frontend-web carries its OWN FEATURE_* gate map
+          # (src/lib/feature-flags.ts ~40 flags, incl. FEATURE_ASSOCIATION_ENABLED
+          # singular — the BFF route 503s without it). Sync staging→target with
+          # --skip-deploys; they activate on the next deploy, so a stale build
+          # never runs new flags (e.g. VOTES_BRIDGE_ENABLED only activates once
+          # the kyc-gate fix is serving). The same force-off map as the backend
+          # keeps the BFF honest about missing credentials.
+          RAILWAY_TOKEN="$RAILWAY_TOKEN_STG" railway variable list \
+            --service frontend-web --environment staging --project "$PROJECT" \
+            --json > stg-fw.json || { echo "  could not read staging frontend-web vars"; exit 0; }
+          railway variable list --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > tgt-creds.json || echo '{}' > tgt-creds.json
+          node -e '
+            const fs = require("fs");
+            const stg = JSON.parse(fs.readFileSync("stg-fw.json","utf8"));
+            const tgt = JSON.parse(fs.readFileSync("tgt-creds.json","utf8"));
+            const present = (k) => {
+              const v = String(tgt[k] ?? "");
+              return v.length > 0 && !/xxxx|change_me|changeme|your_|your-|placeholder|todo/i.test(v);
+            };
+            const force = {};
+            if (!present("PAYSTACK_SECRET_KEY")) {
+              force.FEATURE_WALLET_ENABLED = 1; force.FEATURE_BANK_TRANSFERS_ENABLED = 1;
+            }
+            if (!present("MONNIFY_SECRET_KEY")) force.FEATURE_BANK_TRANSFERS_ENABLED = 1;
+            if (!present("MAPLERAD_SECRET_KEY")) force.FEATURE_MAPLERAD_ENABLED = 1;
+            if (!present("KYC_PII_ENC_KEY")) { force.FEATURE_KYC_VERIFY_ENABLED = 1; force.FEATURE_KYC_ENABLED = 1; }
+            if (!present("ARENA_SIGNING_SEED_THEORY") && !present("ARENA_SIGNING_SEED_PRACTICAL") && !present("ARENA_SIGNING_SEED_FIRSTAID"))
+              force.FEATURE_ARENA_ENABLED = 1;
+            if (!present("MAPS_GOOGLE_KEY")) { force.FEATURE_MAPS_ENABLED = 1; force.FEATURE_TRANSPORT_ENABLED = 1; }
+            if (!present("BREVO_API_KEY") || !present("OTP_PEPPER") || !present("BREVO_OTP_TEMPLATE_ID"))
+              force.FEATURE_OTP_EMAIL_ENABLED = 1;
+            const names = Object.keys(stg).filter(k =>
+              /^(FEATURE_[A-Z0-9_]+|VOTES_BRIDGE_ENABLED)$/.test(k));
+            const out = names.map(k => {
+              const v = String(stg[k]);
+              if (force[k] && v === "true") { console.log("  FORCE OFF fw " + k); return [k,"false"]; }
+              return [k,v];
+            });
+            fs.writeFileSync("fw-flags.env", out.map(r => r.join("\t")).join("\n") + "\n");
+            console.log("  staging frontend-web flag count: " + names.length);'
+          rm -f stg-fw.json tgt-creds.json
+          COUNT=0
+          while IFS=$'\t' read -r NAME VAL; do
+            [ -z "$NAME" ] && continue
+            case "$VAL" in true|false) ;; *) echo "  skip fw $NAME (non-boolean)"; continue;; esac
+            if railway variable set "$NAME"="$VAL" \
+              --service frontend-web --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP >/dev/null; then
+              COUNT=$((COUNT+1))
+            else
+              echo "  failed to set fw $NAME"
+            fi
+          done < fw-flags.env
+          rm -f fw-flags.env
+          echo "  applied $COUNT flags to frontend-web ($ENVIRONMENT) — no redeploy (activates on next deploy)"
           if railway redeploy --service backend --environment "$ENVIRONMENT" --project "$PROJECT" --yes; then
             echo "  single redeploy triggered to pick up the new vars"
           else
