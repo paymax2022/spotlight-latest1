@@ -1205,7 +1205,7 @@ jobs:
       - name: Deployment status per service
         run: |
           set -uo pipefail
-          for svc in frontend-web backend frontend-admin; do
+          for svc in frontend-web backend frontend-admin Redis; do
             echo "--- $svc ---"
             railway deployment list --service "$svc" --environment "$ENVIRONMENT" \
               --project "$PROJECT" --limit 5 --json 2>/dev/null \
