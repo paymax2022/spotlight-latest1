@@ -16,7 +16,10 @@ import { callGo, goErrorMessage } from '../_otp';
  */
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    // Malformed JSON must not reach the catch-all, which would answer 500 with
+    // the parser's message. Same pattern as ../login: null falls into the
+    // field checks and a clean 400.
+    const body = await request.json().catch(() => null);
     const { email, otp } = body ?? {};
 
     if (!email || !otp) {

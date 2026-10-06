@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { authHeaders } from '@/src/lib/auth/client';
@@ -64,7 +64,7 @@ function KnownRow({ label, value }: { label: string; value: string }) {
 
 const SCHEDULES: Record<string, string> = { weekdays: 'Mon–Fri', weekends: 'Sat–Sun', accelerated: 'Intensive' };
 
-export default function AcademyApplyPage({ embedded = false }: { embedded?: boolean }) {
+function AcademyApplyPageInner({ embedded = false }: { embedded?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -713,5 +713,16 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
     <main style={{ minHeight: '80vh', background: 'linear-gradient(160deg,#0d0d1a 0%,#14102b 60%,#0d0d1a 100%)', padding: '40px 16px' }}>
       {content}
     </main>
+  );
+}
+
+// useSearchParams requires a Suspense boundary or the route falls out of
+// prerendering and is SSR'd on every request. `embedded` passes through —
+// app/apply/[slug] mounts this component directly.
+export default function AcademyApplyPage({ embedded = false }: { embedded?: boolean }) {
+  return (
+    <Suspense fallback={null}>
+      <AcademyApplyPageInner embedded={embedded} />
+    </Suspense>
   );
 }

@@ -11,7 +11,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     const user = await requireUtilityUser(request);
     const limited = utilityRateLimit(request, 'dispute', user.id, 10, 60_000);
     if (limited) return limited;
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
     if (!reason) return errorResponse('reason is required.', 400);
     return successResponse({ success: true, dispute: await createUtilityDispute(user.id, params.id, reason) }, 201);

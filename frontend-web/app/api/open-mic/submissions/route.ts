@@ -21,7 +21,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
-    const body = (await request.json()) as any;
+    const body = (await request.json().catch(() => null)) as any;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.contestSlug) return errorResponse('contestSlug is required', 400);
     if (!body.stageName) return errorResponse('stageName is required', 400);
     for (const key of ['country', 'state', 'lga']) {

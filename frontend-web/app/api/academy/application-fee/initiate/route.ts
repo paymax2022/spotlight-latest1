@@ -21,11 +21,12 @@ export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
 
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       email?: string;
       full_name?: string;
       batch_id?: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     // Session-derived email wins over the request body — the account is the
     // source of truth, same rule as POST /api/academy/apply.

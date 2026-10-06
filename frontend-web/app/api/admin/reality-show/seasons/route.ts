@@ -14,7 +14,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'programs:manage');
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.seasonName || typeof body.seasonName !== 'string') {
       return errorResponse('seasonName is required', 400);
     }

@@ -46,7 +46,8 @@ export async function POST(request: Request) {
     const idemKey = request.headers.get('Idempotency-Key');
     if (!idemKey) throw new ApiError('Idempotency-Key header is required', 400);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const facilityId = String(body?.facilityId ?? '');
     const startsAt = body?.startsAt ? new Date(body.startsAt) : null;
     const endsAt = body?.endsAt ? new Date(body.endsAt) : null;

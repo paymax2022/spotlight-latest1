@@ -92,7 +92,8 @@ export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
 
-    const formData = await request.formData();
+    const formData = await request.formData().catch(() => null);
+    if (!formData) return errorResponse('Expected multipart/form-data', 415);
     const name = formData.get('name');
     const connectContestId = formData.get('connectContestId');
     const file = formData.get('file');

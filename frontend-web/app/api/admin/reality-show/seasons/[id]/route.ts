@@ -30,7 +30,8 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     const season = await getSeason(params.id);
     if (!season) return errorResponse('Season not found', 404);
 
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const patch: Record<string, unknown> = {};
     const allowed = [
       'seasonName', 'seasonNumber', 'currentPhase', 'status',

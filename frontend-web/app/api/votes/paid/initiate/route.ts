@@ -18,7 +18,8 @@ async function tryGetUserId(request: Request): Promise<string | undefined> {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as InitiatePaidVoteRequest;
+    const body = (await request.json().catch(() => null)) as InitiatePaidVoteRequest;
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.contestId) return errorResponse('contestId is required', 400);
     if (!body.contestantId) return errorResponse('contestantId is required', 400);

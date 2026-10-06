@@ -1,4 +1,4 @@
-import { handleApiError, successResponse } from '@/src/lib/api/responses';
+import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { getOrCreateShareLink, buildShareMessages, recordShareEvent } from '@/src/server/voting/share.service';
 import { createAdminClient } from '@/lib/supabase/server';
 
@@ -51,11 +51,12 @@ export async function POST(
   context: { params: Promise<{ contestantId: string }> },
 ) {
   try {
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       shareLinkId: string;
       channel?: string;
       eventType?: 'click' | 'share';
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.shareLinkId) {
       return Response.json({ success: false, error: 'shareLinkId is required' }, { status: 400 });

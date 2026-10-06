@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 type Status = 'verifying' | 'success' | 'already_processed' | 'failed' | 'missing_params';
 
-export default function VoteCallbackPage() {
+function VoteCallbackPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [status, setStatus] = useState<Status>('verifying');
@@ -141,5 +141,15 @@ export default function VoteCallbackPage() {
         )}
       </div>
     </main>
+  );
+}
+
+// useSearchParams requires a Suspense boundary or the route falls out of
+// prerendering and is SSR'd on every request.
+export default function VoteCallbackPage() {
+  return (
+    <Suspense fallback={null}>
+      <VoteCallbackPageInner />
+    </Suspense>
   );
 }

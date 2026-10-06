@@ -13,7 +13,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   const params = await ctx.params;
   try {
     const identity = await assertAdminPermission(request, 'applications:review');
-    const body = (await request.json()) as RegistrationReviewInput;
+    const body = (await request.json().catch(() => null)) as RegistrationReviewInput;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body?.status) {
       return errorResponse('status is required', 400);
     }

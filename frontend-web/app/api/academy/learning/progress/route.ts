@@ -7,7 +7,8 @@ import { resolveLearner } from '@/src/server/services/academy';
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
-    const body = (await request.json()) as { lessonId?: string; completed?: boolean };
+    const body = (await request.json().catch(() => null)) as { lessonId?: string; completed?: boolean };
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.lessonId) return errorResponse('lessonId is required', 400);
 
     const supabase = createAdminClient();

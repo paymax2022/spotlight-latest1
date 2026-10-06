@@ -5,7 +5,8 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 export async function POST(request: Request, context: { params: { slug: string } }) {
   try {
     const user = await requireRequestUser(request);
-    const body = (await request.json()) as any;
+    const body = (await request.json().catch(() => null)) as any;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const contest = await getContestBySlug(context.params.slug);
     if (!contest) return errorResponse('Contest not found', 404);
 

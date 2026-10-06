@@ -32,11 +32,12 @@ function isProtected(pathname: string): boolean {
 // The mobile app runs on its own origin (Expo web :8081, devices, prod web) and
 // calls these API routes cross-origin, so we must answer the preflight and echo
 // an allowed Origin. We reflect the request Origin only if it's allow-listed:
-// any localhost/127.0.0.1 port (dev) plus anything in CORS_ALLOWED_ORIGINS
+// any localhost/127.0.0.1 port (dev only — never reflected in production) plus
+// anything in CORS_ALLOWED_ORIGINS
 // (comma-separated, for staging/prod web origins). Never a bare '*' with creds.
 function isAllowedOrigin(origin: string): boolean {
   if (!origin) return false;
-  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  if (process.env.NODE_ENV !== 'production' && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
   const allow = (process.env.CORS_ALLOWED_ORIGINS ?? '')
     .split(',')
     .map((o) => o.trim())
@@ -57,6 +58,29 @@ function corsHeaders(origin: string): Headers {
   return h;
 }
 
+// ── Cache policy for /api/* ──────────────────────────────────────────────────
+// Most route handlers emit NO Cache-Control of their own, so a shared cache
+// (CDN edge, corporate proxy) is free to store whatever it wants. For
+// credentialed requests the payload is personalized (wallet, profile, admin
+// reports), so we pin `no-store` centrally here. Anonymous GETs are left
+// untouched on purpose — public surfaces (contests list, banners) legitimately
+// benefit from CDN caching. A route that already sets an explicit
+// Cache-Control (streams, signed uploads) keeps its own decision.
+//
+// "Credentialed" = any of the three auth carriers this app accepts:
+//   - Authorization: Bearer <supabase JWT>   (src/lib/auth/request.ts)
+//   - x-admin-key                             (src/server/admin/auth.ts)
+//   - a Supabase session cookie — sb-<ref>-auth-token, incl. chunked `.0/.1`
+//     and other sb-*token variants (browser same-origin fetches)
+const CREDENTIAL_COOKIE = /(?:^|;\s*)sb-[^=;]*token[^=;]*=/i;
+
+function isCredentialedApiRequest(request: NextRequest): boolean {
+  if (request.headers.get('authorization')) return true;
+  if (request.headers.get('x-admin-key')) return true;
+  const cookie = request.headers.get('cookie');
+  return !!cookie && CREDENTIAL_COOKIE.test(cookie);
+}
+
 function handleApiCors(request: NextRequest): NextResponse {
   const origin = request.headers.get('origin') ?? '';
   const headers = corsHeaders(origin);
@@ -67,6 +91,9 @@ function handleApiCors(request: NextRequest): NextResponse {
   // Actual request: let it through to the route handler, attaching CORS headers.
   const res = NextResponse.next({ request });
   headers.forEach((value, key) => res.headers.set(key, value));
+  if (isCredentialedApiRequest(request)) {
+    res.headers.set('Cache-Control', 'no-store');
+  }
   return res;
 }
 

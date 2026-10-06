@@ -33,12 +33,13 @@ export async function GET(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'applications:review');
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       submissionId?: string;
       score?: number;
       grade?: string;
       feedback?: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.submissionId) return errorResponse('submissionId is required', 400);
     if (body.score === undefined || body.score === null) {

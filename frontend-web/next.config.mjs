@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { withSentryConfig } from '@sentry/nextjs/config';
 import { imageHosts } from './image-hosts.config.mjs';
+import { buildSecurityHeaders } from './security-headers.config.mjs';
 
 // Anchors the standalone trace to this app. Next otherwise infers the workspace
 // root by walking up to the highest directory containing a lockfile — which here
@@ -11,69 +12,12 @@ import { imageHosts } from './image-hosts.config.mjs';
 // expects it at .next/standalone/server.js and would fail to boot.
 const appDir = path.dirname(fileURLToPath(import.meta.url));
 
-/**
- * E2E-SEC-057 (security.md F5): baseline hardening headers on EVERY response.
- * headers() decorates route-handler output too, so /api/* is covered.
- *
- * Content-Security-Policy is deliberately shipped REPORT-ONLY: this app loads
- * third-party origins that differ between environments (Supabase URL is
- * env-driven — 127.0.0.1:54321 locally, *.supabase.co in prod), Paystack inline
- * checkout injects scripts + iframes (js.paystack.co / checkout.paystack.com),
- * uploads PUT to *.r2.cloudflarestorage.com, photos flow through Cloudinary,
- * and Sentry posts to *.ingest.sentry.io. An enforcing CSP can't be proven
- * safe from code inspection alone, so we emit the intended policy in
- * Report-Only mode; harvest violations in the wild, then promote the header
- * name to Content-Security-Policy when the report stream is clean.
- *
- * X-Frame-Options is SAMEORIGIN, not DENY: nothing in this app renders an
- * iframe today (verified — no <iframe>/<frame> usage), but SAMEORIGIN still
- * blocks third-party clickjacking while leaving same-origin embedding working.
- * frame-ancestors in the CSP carries the same policy for modern browsers.
- */
-const isDev = process.env.NODE_ENV !== 'production';
-
-function supabaseOrigins() {
-  try {
-    const url = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL);
-    const ws = `${url.protocol === 'https:' ? 'wss' : 'ws'}://${url.host}`;
-    return [url.origin, ws];
-  } catch {
-    return [];
-  }
-}
-
-function buildReportOnlyCsp() {
-  return [
-    "default-src 'self'",
-    // 'unsafe-inline' is required by Next's inline bootstrap scripts (no nonce
-    // pipeline); 'unsafe-eval' only in dev for React/webpack HMR.
-    `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''} https://js.paystack.co`,
-    "style-src 'self' 'unsafe-inline'",
-    // Remote images come from many hosts (R2, Cloudinary, editorial CDN hosts)
-    // — an allowlist can't be complete, so https: is the pragmatic bound.
-    "img-src 'self' data: blob: https:",
-    "font-src 'self' data: https:",
-    `connect-src 'self' ${supabaseOrigins().join(' ')} https://*.supabase.co wss://*.supabase.co https://api.paystack.co https://js.paystack.co https://*.r2.cloudflarestorage.com https://res.cloudinary.com https://api.cloudinary.com https://*.ingest.sentry.io https://*.ingest.de.sentry.io http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*`,
-    // Paystack inline checkout renders its payment frame from these origins.
-    "frame-src 'self' https://checkout.paystack.com https://*.paystack.co",
-    "media-src 'self' https: blob:",
-    "object-src 'none'",
-    "base-uri 'self'",
-    "form-action 'self'",
-    "frame-ancestors 'self'",
-    "worker-src 'self' blob:",
-  ].join('; ');
-}
-
-const securityHeaders = [
-  { key: 'X-Content-Type-Options', value: 'nosniff' },
-  { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-  // camera/mic: unused anywhere in the app. geolocation=self: the restaurant
-  // checkout reads navigator.geolocation to prefill the delivery address.
-  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(self)' },
-  { key: 'Content-Security-Policy-Report-Only', value: buildReportOnlyCsp() },
-];
+// E2E-SEC-057 (security.md F5): baseline hardening headers on EVERY response —
+// X-Content-Type-Options, X-Frame-Options, HSTS, Referrer-Policy,
+// Permissions-Policy, and a REPORT-ONLY CSP. The policy lives in
+// security-headers.config.mjs (see that file for the full rationale) so it can
+// be unit-tested without importing the withSentryConfig toolchain below.
+const securityHeaders = buildSecurityHeaders();
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {

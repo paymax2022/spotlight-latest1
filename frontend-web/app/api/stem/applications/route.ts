@@ -30,7 +30,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const { user } = await requireUser(request);
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       contestSlug?: string;
       track?: StemParticipationTrack;
       applicantType?: StemApplicantType;
@@ -41,6 +41,7 @@ export async function POST(request: Request) {
       applicantEmail?: string;
       applicantPhone?: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.contestSlug) return errorResponse('contestSlug is required', 400);
     if (!body.track) return errorResponse('track is required', 400);

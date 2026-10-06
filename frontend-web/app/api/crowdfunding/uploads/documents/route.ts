@@ -34,7 +34,15 @@ export async function POST(request: Request) {
   try {
     const { user } = await requireUser(request);
 
-    const formData = await request.formData();
+    // A non-multipart POST makes formData() throw; map it to 415 rather than
+    // letting it surface as a blanket 500 (same fix as registration uploads,
+    // PR #490 / 4880430a).
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch {
+      return errorResponse('Expected multipart/form-data', 415);
+    }
     const file = formData.get('file');
     if (!(file instanceof File)) return errorResponse('file is required', 400);
 
@@ -73,9 +81,14 @@ export async function POST(request: Request) {
     // `crowdfunding/covers/` keys and correctly 404s a document key — pointing
     // here at it would have produced an upload that succeeds and then cannot be
     // opened, which is exactly what the first version of this did.
-    const origin = new URL(request.url).origin;
+    //
+    // The origin comes from NEXT_PUBLIC_SITE_URL (the convention every sibling
+    // route uses): new URL(request.url).origin yields http://0.0.0.0:PORT on
+    // Railway, and Host / X-Forwarded-Host are not trusted anywhere in this
+    // codebase, so neither is a safe source for a persisted URL.
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
     const fileKeyParam = Buffer.from(objectKey, 'utf8').toString('base64url');
-    const url = `${origin}/api/crowdfunding/uploads/documents/${fileKeyParam}`;
+    const url = `${siteUrl}/api/crowdfunding/uploads/documents/${fileKeyParam}`;
 
     return successResponse({
       success: true,
