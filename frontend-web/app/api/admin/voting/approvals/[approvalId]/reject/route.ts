@@ -14,7 +14,8 @@ export async function POST(
     const identity = await assertAdminPermission(request, 'votes:sensitive:approve');
     const { approvalId } = await context.params;
 
-    const body = (await request.json()) as { note?: string };
+    const body = (await request.json().catch(() => null)) as { note?: string };
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body?.note || body.note.trim().length < 5) {
       return errorResponse('A note of at least 5 characters is required', 400);
     }

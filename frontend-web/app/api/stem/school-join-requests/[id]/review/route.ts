@@ -8,10 +8,11 @@ export async function POST(
 ) {
   try {
     const { actorId } = await assertStemAdmin(request);
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       status?: 'approved' | 'rejected';
       note?: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.status) return errorResponse('status is required', 400);
 

@@ -1,4 +1,4 @@
-import { handleApiError, successResponse } from '@/src/lib/api/responses';
+import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { addAuditEvent } from '@/src/server/admin/audit';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 // ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047): registration/store is
@@ -54,7 +54,8 @@ function mapStemStatus(action: BulkActionPayload['action']) {
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'applications:review');
-    const body = (await request.json()) as BulkActionPayload;
+    const body = (await request.json().catch(() => null)) as BulkActionPayload;
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!Array.isArray(body?.applicationIds) || body.applicationIds.length === 0) {
       return successResponse({ success: false, error: 'applicationIds are required.' }, 400);

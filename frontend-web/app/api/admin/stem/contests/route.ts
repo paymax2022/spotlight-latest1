@@ -26,7 +26,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const identity = await assertStemAdmin(request);
-    const body = (await request.json()) as Partial<StemContest>;
+    const body = (await request.json().catch(() => null)) as Partial<StemContest>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     const created = await createContest(body, identity.actorId);
     if (!created.success) {

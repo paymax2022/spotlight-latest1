@@ -16,11 +16,12 @@ import { resolveLearner } from '@/src/server/services/academy';
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       partId?: string;
       submissionLink?: string;
       submissionText?: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.partId) return errorResponse('partId is required', 400);
 

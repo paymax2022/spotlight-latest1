@@ -28,7 +28,8 @@ import { appendAuditLog } from '@/src/server/voting/audit.service';
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     const contestId = typeof body.contestId === 'string' ? body.contestId.trim() : '';
     if (!contestId) return errorResponse('contestId is required', 400);

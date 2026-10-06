@@ -20,7 +20,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const params = await context.params;
   try {
     const identity = await assertOpenMicAdmin(request);
-    const body = (await request.json()) as Partial<OpenMicContest>;
+    const body = (await request.json().catch(() => null)) as Partial<OpenMicContest>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const contest = await updateContest(params.id, body, identity.actorId);
     addAuditEvent({
       adminUser: identity.actorId || 'admin',

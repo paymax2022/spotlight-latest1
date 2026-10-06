@@ -13,7 +13,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const response = String(body?.response ?? '');
     if (!['yes', 'no', 'maybe'].includes(response)) throw new ApiError('Invalid RSVP response', 400);
 

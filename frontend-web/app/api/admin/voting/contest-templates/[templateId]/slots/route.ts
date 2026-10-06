@@ -90,7 +90,8 @@ export async function PUT(request: Request, ctx: RouteContext) {
   try {
     await assertAdminPermission(request, 'votes:manage');
     const { templateId } = await ctx.params;
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     const validated = validateSlots(body?.slots);
     if (!validated.ok) return errorResponse(validated.error, 400);

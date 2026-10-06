@@ -22,7 +22,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const eventName = String(body?.eventName ?? '').trim();
     const guestCount = Math.max(1, Math.min(Number(body?.guestCount ?? 1), 500));
     const validFrom: string = body?.validFrom;

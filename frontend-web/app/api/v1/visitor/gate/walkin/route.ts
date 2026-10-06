@@ -12,7 +12,8 @@ export async function POST(request: Request) {
     const guard = await getGuardContext(supabase, user.id);
     if (!guard) throw new ApiError('No active gate session', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const visitorName: string = String(body?.visitorName ?? '').trim();
     const unitLabel: string = String(body?.unitLabel ?? '').trim();
     const gateId: string = body?.gateId ?? guard.gateId;

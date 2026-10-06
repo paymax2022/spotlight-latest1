@@ -73,7 +73,8 @@ export async function legacyUtilityPurchase(request: Request, input: {
     const limited = utilityRateLimit(request, `legacy-${input.category}-pay`, user.id, 10, 60_000);
     if (limited) return limited;
 
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const key = idempotencyKey(request, body);
     if (!key) return errorResponse('Idempotency-Key header is required for utility payments.', 400);
 
@@ -113,7 +114,8 @@ export async function legacyUtilityValidation(request: Request, input: {
     const limited = utilityRateLimit(request, `legacy-${input.category}-validate`, user.id, 40, 60_000);
     if (limited) return limited;
 
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const biller = await getBillerByCode(input.category, input.billerCode(body));
     const productId = input.productId ? await input.productId(body, biller.id) : await getFirstProductId(biller.id);
     const result = await validateUtilityCustomer({

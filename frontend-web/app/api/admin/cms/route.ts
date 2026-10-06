@@ -1,4 +1,4 @@
-import { handleApiError, listResponse, successResponse } from '@/src/lib/api/responses';
+import { errorResponse, handleApiError, listResponse, successResponse } from '@/src/lib/api/responses';
 import { addAuditEvent } from '@/src/server/admin/audit';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createCmsPage, listCmsPages } from '@/src/server/admin/cms';
@@ -25,7 +25,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'content:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const page = createCmsPage(body, identity.actorId);
     addAuditEvent({
       adminUser: identity.actorId || 'admin',

@@ -42,7 +42,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     if (!draft) return errorResponse('Application not found', 404);
     if (draft.userId !== user.id) return errorResponse('Forbidden', 403);
 
-    const body = (await request.json()) as { method?: string; email?: string; inline?: boolean };
+    const body = (await request.json().catch(() => null)) as { method?: string; email?: string; inline?: boolean };
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const method = String(body.method || '').toUpperCase();
     if (method !== 'PAYSTACK') {
       return errorResponse(
@@ -106,7 +107,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
         `/api/registration/applications/${params.id}/payment/callback` +
         `?reference=${encodeURIComponent(paymentReference)}` +
         (returnOrigin ? `&return=${encodeURIComponent(returnOrigin)}` : '');
-      const callbackUrl = new URL(callbackPath, request.url).toString();
+      // Paystack hands this URL to the payer's browser — build it on the public
+      // site origin, not request.url (http://0.0.0.0:PORT on Railway/cPanel).
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
+      const callbackUrl = new URL(callbackPath, siteUrl).toString();
 
       authorizationUrl = await initializePaystackPayment({
         reference: paymentReference,

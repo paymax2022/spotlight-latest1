@@ -23,7 +23,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ro
   try {
     await assertAdminPermission(request, 'roles:manage');
     const supabase = createAdminClient();
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
 
     const {
       facilitiesCreate,

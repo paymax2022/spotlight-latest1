@@ -19,7 +19,8 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   const params = await ctx.params;
   try {
     const identity = await assertAdminPermission(request, 'content:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const current = listCmsPages().find((entry) => entry.id === params.id);
     if (!current) return errorResponse('Page not found', 404);
     const page = updateCmsPage(params.id, body, identity.actorId);

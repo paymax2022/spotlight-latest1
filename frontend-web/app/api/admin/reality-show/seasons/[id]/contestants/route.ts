@@ -19,7 +19,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     const identity = await assertAdminPermission(request, 'programs:manage');
     if (!(await getSeason(params.id))) return errorResponse('Season not found', 404);
 
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.displayName || typeof body.displayName !== 'string') {
       return errorResponse('displayName is required', 400);
     }

@@ -25,7 +25,8 @@ export async function POST(request: NextRequest) {
 
     const { user, error: authError } = await validateRequest(request);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     const { transactionId, paymentReference } = body;
 
     if (!paymentReference) {
@@ -149,14 +150,18 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Redirect to success page (for webhook or browser callback)
+    // Redirect to success page (for webhook or browser callback). The redirect
+    // target is a public URL — build it on the public site origin, not
+    // request.url (http://0.0.0.0:PORT on Railway/cPanel).
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
     return NextResponse.redirect(
-      new URL(`/voting/success?transactionId=${transactionId}`, request.url)
+      new URL(`/voting/success?transactionId=${transactionId}`, siteUrl)
     );
   } catch (error) {
     console.error('[API] /api/v2/votes/paid/verify GET error:', error);
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
     return NextResponse.redirect(
-      new URL('/voting/error', request.url)
+      new URL('/voting/error', siteUrl)
     );
   }
 }

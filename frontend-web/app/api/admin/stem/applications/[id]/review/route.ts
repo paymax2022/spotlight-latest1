@@ -10,7 +10,8 @@ export async function POST(
 ) {
   try {
     const identity = await assertStemScoreAdmin(request);
-    const body = (await request.json()) as StemAdminApplicationReviewInput;
+    const body = (await request.json().catch(() => null)) as StemAdminApplicationReviewInput;
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.status) {
       return errorResponse('status is required', 400);

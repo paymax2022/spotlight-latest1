@@ -31,12 +31,13 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const { user } = await requireUser(request);
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       contestSlug?: string;
       userId?: string;
       role?: 'public_user' | 'contestant' | 'parent_guardian' | 'school_representative' | 'admin' | 'super_admin';
       accountData?: Record<string, unknown>;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body?.contestSlug) {
       return errorResponse('contestSlug is required', 400);

@@ -55,7 +55,8 @@ export async function PATCH(request: Request, ctx: RouteContext) {
   try {
     await assertAdminPermission(request, 'votes:manage');
     const { templateId } = await ctx.params;
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     const supabase = createAdminClient();
     const { data: existing, error: fetchError } = await supabase
