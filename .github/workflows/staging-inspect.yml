@@ -796,17 +796,26 @@ jobs:
             | node -e 'const rl=require("readline").createInterface({input:process.stdin});let d="";rl.on("line",l=>d+=l).on("close",()=>{try{console.log("  "+Object.keys(JSON.parse(d)).join(", "))}catch{console.log("  (unparseable — Redis service may not exist)")}});'
           # Reference vars resolve per-environment at deploy time. The literal
           # brace-brace syntax is built by concat so the Actions parser does
-          # not eat it.
+          # not eat it. Pick a source var that the Redis service ACTUALLY
+          # exposes (REDIS_PRIVATE_URL is not always present).
           D='$''{'
-          for REF in "${D}{Redis.REDIS_PRIVATE_URL}}" "${D}{Redis.REDIS_URL}}"; do
-            if railway variable set "REDIS_URL=$REF" --service backend \
-              --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP >/dev/null 2>&1; then
-              echo "  backend REDIS_URL -> $REF"; break
-            fi
-          done
-          if railway variable set "REDIS_PRIVATE_URL=${D}{Redis.REDIS_PRIVATE_URL}}" --service backend \
-            --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP >/dev/null 2>&1; then
-            echo "  backend REDIS_PRIVATE_URL -> reference"
+          railway variable list --service Redis --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json 2>/dev/null > redisvars.json || echo '{}' > redisvars.json
+          SRC=$(node -e 'const v=JSON.parse(require("fs").readFileSync("redisvars.json","utf8"));
+            for (const k of ["REDIS_PRIVATE_URL","REDIS_URL","REDIS_PUBLIC_URL"]) if(v[k]){console.log(k);process.exit(0)}
+            console.log("")')
+          rm -f redisvars.json
+          echo "  redis source var: ${SRC:-none}"
+          if [ -n "$SRC" ]; then
+            REF="${D}{Redis.${SRC}}}"
+            railway variable set "REDIS_URL=$REF" --service backend \
+              --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP >/dev/null 2>&1 \
+              && echo "  backend REDIS_URL -> $REF" || echo "  WARN: REDIS_URL set failed"
+            railway redeploy --service backend --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --yes >/dev/null \
+              && echo "  backend redeploy triggered" || true
+          else
+            echo "  Redis service exposes no URL var — set REDIS_URL manually"
           fi
 
       - name: "Fix: MAPS_GOOGLE_KEY staging->target backend + enable maps/transport"
