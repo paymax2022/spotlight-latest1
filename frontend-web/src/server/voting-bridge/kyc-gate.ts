@@ -22,8 +22,11 @@ export async function assertKycTier(userId: string, contestantId: string) {
   const supabase = createAdminClient();
 
   try {
+    // user_profiles is the table the on_auth_user_created trigger populates —
+    // `profiles` is the enterprise RBAC table, a different store that a normal
+    // signup never writes to, so it 404'd every real voter.
     const { data: user, error: userErr } = await supabase
-      .from('profiles')
+      .from('user_profiles')
       .select('kyc_tier')
       .eq('id', userId)
       .single();
@@ -34,7 +37,7 @@ export async function assertKycTier(userId: string, contestantId: string) {
 
     const { data: contestant, error: contestErr } = await supabase
       .from('contestants')
-      .select('competition_id')
+      .select('contest_id')
       .eq('id', contestantId)
       .single();
 
@@ -42,10 +45,13 @@ export async function assertKycTier(userId: string, contestantId: string) {
       throw new KycGateError('Contestant not found', 404);
     }
 
+    // No required_kyc_tier column exists on contests yet — a missing column
+    // errors the select, which is tolerated exactly like a missing row: the
+    // requirement is tier 0 until the schema grows one.
     const { data: competition, error: compErr } = await supabase
-      .from('competitions')
+      .from('contests')
       .select('required_kyc_tier')
-      .eq('id', contestant.competition_id)
+      .eq('id', contestant.contest_id)
       .single();
 
     if (compErr || !competition) {
@@ -81,7 +87,7 @@ export async function getUserKycTier(userId: string): Promise<number> {
 
   try {
     const { data, error } = await supabase
-      .from('profiles')
+      .from('user_profiles')
       .select('kyc_tier')
       .eq('id', userId)
       .single();
@@ -106,7 +112,7 @@ export async function getContestKycRequirement(contestantId: string): Promise<nu
   try {
     const { data: contestant, error: contestErr } = await supabase
       .from('contestants')
-      .select('competition_id')
+      .select('contest_id')
       .eq('id', contestantId)
       .single();
 
@@ -115,9 +121,9 @@ export async function getContestKycRequirement(contestantId: string): Promise<nu
     }
 
     const { data: competition, error: compErr } = await supabase
-      .from('competitions')
+      .from('contests')
       .select('required_kyc_tier')
-      .eq('id', contestant.competition_id)
+      .eq('id', contestant.contest_id)
       .single();
 
     if (compErr || !competition) {
