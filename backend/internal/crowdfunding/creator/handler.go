@@ -16,6 +16,7 @@ type Handler struct{ svc *Service }
 
 var errMap = httperr.New(http.StatusInternalServerError,
 	httperr.R(http.StatusNotFound, ErrNotFound),
+	httperr.R(http.StatusForbidden, ErrNotOwner),
 )
 
 // NewHandler constructs a creator Handler.
@@ -168,7 +169,7 @@ func (h *Handler) GetCreatorNotifications(c *gin.Context) {
 
 // GetCampaignAnalytics — GET /creator/campaigns/:id/analytics.
 func (h *Handler) GetCampaignAnalytics(c *gin.Context) {
-	item, err := h.svc.GetCampaignAnalytics(c.Request.Context(), c.Param("id"))
+	item, err := h.svc.GetCampaignAnalytics(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
 		errMap.Write(c, err)
 		return

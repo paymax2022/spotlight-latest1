@@ -106,9 +106,13 @@ func (s *Service) creatorDisplayName(ctx context.Context, userID string) string 
 // column, so every contributor is treated as named (displayName resolved from
 // auth.users meta) with anonymous=false.
 func (s *Service) GetContributors(ctx context.Context, campaignID string) ([]Contributor, error) {
+	// This list is public to any signed-in member. The email fallback the old
+	// projection used meant a backer with no name set had their EMAIL published
+	// beside their donation — a PII leak, not a display nicety. A backer with
+	// no name is "Anonymous", full stop.
 	const q = `
 		SELECT co.id::text, co.contributor_id::text, co.amount_kobo, co.created_at,
-		       COALESCE(NULLIF(btrim(u.first_name || ' ' || u.last_name), ''), u.email, 'Anonymous')
+		       COALESCE(NULLIF(btrim(u.first_name || ' ' || u.last_name), ''), 'Anonymous')
 		FROM contributions co
 		LEFT JOIN public.platform_users u ON u.id = co.contributor_id
 		WHERE co.campaign_id = $1 AND co.status IN ('escrowed','released')
@@ -539,14 +543,21 @@ func (s *Service) GetCreatorNotifications(ctx context.Context, userID string) ([
 // GetCampaignAnalytics returns analytics for a campaign. dailyRaised is grouped
 // from the append-only contributions table; views/shares are deterministic from
 // the id; trafficSources is a reasonable fixed breakdown scaled to views.
-func (s *Service) GetCampaignAnalytics(ctx context.Context, campaignID string) (*CampaignAnalytics, error) {
-	// Confirm the campaign exists (404 vs empty analytics).
-	var exists bool
-	if err := s.db.QueryRow(ctx, `SELECT TRUE FROM campaigns WHERE id = $1`, campaignID).Scan(&exists); err != nil {
+func (s *Service) GetCampaignAnalytics(ctx context.Context, campaignID, viewerID string) (*CampaignAnalytics, error) {
+	// The route lives under /creator/ and the payload is the owner's own funnel
+	// — daily raised, traffic sources, conversion. Before this check it was
+	// readable by ANY authenticated caller who knew the campaign id.
+	var creatorID string
+	if err := s.db.QueryRow(ctx,
+		`SELECT creator_id::text FROM campaigns WHERE id = $1 AND deleted_at IS NULL`, campaignID,
+	).Scan(&creatorID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	if creatorID != viewerID {
+		return nil, ErrNotOwner
 	}
 
 	// Daily raised over the last 30 days.
