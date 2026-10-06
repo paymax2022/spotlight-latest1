@@ -58,6 +58,14 @@ func NewRouterWithContext(ctx context.Context, cfg config.Config) *gin.Engine {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.CORSMiddleware(cfg.CORSAllowOrigins, cfg.AppEnv))
 
+	// JSON 404 for unmatched paths. Gin's default NoRoute answers the plain
+	// text "404 page not found"; the BFF catch-all proxies forward that body
+	// verbatim under a forced Content-Type: application/json, so every typo'd
+	// or decommissioned /api/* route returned a body that was not parseable
+	// JSON while claiming to be. Handler errors already use the {"error": ...}
+	// envelope — this brings "no route" onto the same shape.
+	r.NoRoute(noRouteJSON)
+
 	health := handlers.NewHealthHandler()
 	// Shared Redis client for idempotency fast-paths (arena ledger, etc.). nil when
 	// REDIS_URL is unset or the connection fails — callers fall back to DB-unique

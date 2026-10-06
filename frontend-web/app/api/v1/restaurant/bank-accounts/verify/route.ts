@@ -1,65 +1,22 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { featureFlags } from '@/src/lib/feature-flags';
+import { requireRequestUser } from '@/src/lib/auth/request';
+import { proxyToGoBackend } from '@/src/lib/go-backend';
+import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
-export async function POST(request: NextRequest) {
+// Proxy: POST /api/v1/restaurant/bank-accounts/verify
+//      → Go POST /api/finance/restaurant/bank-accounts/verify.
+//
+// The previous implementation was dead both ways: it read the `access_token`
+// COOKIE (the Bearer header every sibling route and both clients send was
+// ignored → 401) and forwarded to `${NEXT_PUBLIC_API_URL}/api/v1/restaurant/…`
+// — an upstream prefix Go does not mount (its group lives under /api/finance),
+// so even a request that carried a cookie-token 404'd upstream. Body passes
+// through verbatim; Go binds/validates AddBankAccountRequest
+// (bank_code, account_number, account_name, bank_name) itself.
+export async function POST(request: Request) {
+  if (!featureFlags.restaurant()) return errorResponse('Restaurant delivery is not available.', 503);
   try {
-    const body = await request.json().catch(() => null);
-    if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
-    const { bank_code, account_number, bank_name } = body;
-
-    if (!bank_code || !account_number) {
-      return NextResponse.json(
-        { error: 'Missing bank_code or account_number' },
-        { status: 400 }
-      );
-    }
-
-    if (account_number.length !== 10 || !/^\d+$/.test(account_number)) {
-      return NextResponse.json(
-        { error: 'Account number must be 10 digits' },
-        { status: 400 }
-      );
-    }
-
-    const token = request.cookies.get('access_token')?.value;
-    if (!token) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    const response = await fetch(
-      `${backendUrl}/api/v1/restaurant/bank-accounts/verify`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          bank_code,
-          account_number,
-          bank_name,
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: 'Verification failed' }));
-      return NextResponse.json(
-        errorData,
-        { status: response.status }
-      );
-    }
-
-    const data = await response.json();
-    return NextResponse.json(data, { status: 200 });
-  } catch (error) {
-    console.error('Bank account verification error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
+    await requireRequestUser(request);
+    return proxyToGoBackend(request, '/api/finance/restaurant/bank-accounts/verify', { method: 'POST' });
+  } catch (err) { return handleApiError(err); }
 }

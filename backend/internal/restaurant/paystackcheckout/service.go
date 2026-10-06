@@ -617,6 +617,13 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "promo_invalid", keyMessage: httperr.Msg(c, http.StatusUnprocessableEntity, err)})
 	case errors.Is(err, restaurant.ErrInvalidModifierSelection):
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_modifier_selection", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
+	case errors.Is(err, restaurant.ErrRestaurantNotFound), errors.Is(err, restaurant.ErrMenuItemNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", keyMessage: httperr.Msg(c, http.StatusNotFound, err)})
+	case errors.Is(err, restaurant.ErrRestaurantClosed), errors.Is(err, restaurant.ErrMenuItemUnavailable),
+		errors.Is(err, restaurant.ErrBelowMinOrder):
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "order_rejected", keyMessage: httperr.Msg(c, http.StatusUnprocessableEntity, err)})
+	case errors.Is(err, restaurant.ErrOrderInvalid), errors.Is(err, restaurant.ErrScheduledSlotInvalid):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_order", keyMessage: httperr.Msg(c, http.StatusBadRequest, err)})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", keyMessage: httperr.Msg(c, http.StatusInternalServerError, err)})
 	}

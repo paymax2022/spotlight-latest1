@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -116,13 +117,42 @@ func (s *Service) GetContest(ctx context.Context, id string) (*Contest, error) {
 	return c, nil
 }
 
-// Results returns the live tally for a contest.
+// notFoundIfBadUUID refuses a malformed id before it reaches a Postgres uuid
+// comparison — the driver error would otherwise surface as a bare 500. A
+// malformed id can never name the resource, so the answer is the same
+// not-found a well-formed-but-absent id gets (groups.Get / discovery.Swipe
+// use the same convention).
+func notFoundIfBadUUID(id string) error {
+	if _, err := uuid.Parse(id); err != nil {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Results returns the live tally for a contest. A contest that does not exist
+// (or whose id is malformed) is a 404 — the same answer GetContest/ListRoster
+// give — not an empty 200 that implies a real contest with zero votes.
 func (s *Service) Results(ctx context.Context, contestID string) ([]ResultRow, error) {
+	if err := notFoundIfBadUUID(contestID); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.GetContest(ctx, contestID); err != nil {
+		return nil, ErrNotFound
+	}
 	return s.repo.Results(ctx, contestID)
 }
 
-// GetStages retrieves all stages for a contest.
+// GetStages retrieves all stages for a contest. Unlike Results it must NOT
+// existence-check against connect_contests: contest_stages.contest_id
+// references the legacy public.contests plane, and the contests→connect_contests
+// mirror deliberately skips unrepresentable rows (bridge migration
+// 20261223000000) — a legacy contest can own stages without ever having a
+// connect_contests row. Only the uuid-shape gate applies here; a well-formed
+// but unknown id keeps the pre-existing empty-list answer.
 func (s *Service) GetStages(ctx context.Context, contestID string) ([]ContestStage, error) {
+	if err := notFoundIfBadUUID(contestID); err != nil {
+		return nil, err
+	}
 	return s.repo.GetStages(ctx, contestID)
 }
 
@@ -388,8 +418,17 @@ func (s *Service) GetContestant(ctx context.Context, contestantID, viewerID stri
 // LikedByMe=true) so the client can render the result of its own action
 // without a second round trip.
 func (s *Service) LikeContestant(ctx context.Context, contestantID, userID string) (*RosterEntry, error) {
-	if _, err := s.repo.GetRosterEntry(ctx, contestantID, ""); err != nil {
+	if err := notFoundIfBadUUID(contestantID); err != nil {
 		return nil, err
+	}
+	// A nil entry is a contestant that does not exist — refuse it here rather
+	// than letting the like INSERT hit the FK and surface as a 500.
+	e, err := s.repo.GetRosterEntry(ctx, contestantID, "")
+	if err != nil {
+		return nil, err
+	}
+	if e == nil {
+		return nil, ErrNotFound
 	}
 	if err := s.repo.LikeContestant(ctx, contestantID, userID); err != nil {
 		return nil, err
@@ -399,6 +438,11 @@ func (s *Service) LikeContestant(ctx context.Context, contestantID, userID strin
 
 // UnlikeContestant removes the caller's like, if any. Idempotent.
 func (s *Service) UnlikeContestant(ctx context.Context, contestantID, userID string) (*RosterEntry, error) {
+	// Malformed uuid must refuse before the DELETE's uuid comparison can
+	// error → 500; a well-formed but absent id already 404s via GetContestant.
+	if err := notFoundIfBadUUID(contestantID); err != nil {
+		return nil, err
+	}
 	if err := s.repo.UnlikeContestant(ctx, contestantID, userID); err != nil {
 		return nil, err
 	}
@@ -422,8 +466,15 @@ type ShareResult struct {
 // ShareContestant records a share action and returns the token to build a
 // link from, plus the contestant's fresh share count.
 func (s *Service) ShareContestant(ctx context.Context, contestantID, sharerID string) (*ShareResult, error) {
-	if _, err := s.repo.GetRosterEntry(ctx, contestantID, ""); err != nil {
+	if err := notFoundIfBadUUID(contestantID); err != nil {
 		return nil, err
+	}
+	e0, err := s.repo.GetRosterEntry(ctx, contestantID, "")
+	if err != nil {
+		return nil, err
+	}
+	if e0 == nil {
+		return nil, ErrNotFound
 	}
 	token, err := s.repo.CreateShare(ctx, contestantID, sharerID)
 	if err != nil {
@@ -485,8 +536,16 @@ func (s *Service) MyVotes(ctx context.Context, voterID, contestID string, paidOn
 // nobody, so nobody passes the check — which is the right answer rather than a
 // list everybody can read.
 func (s *Service) Supporters(ctx context.Context, callerID, contestantID string) ([]Supporter, error) {
+	if err := notFoundIfBadUUID(contestantID); err != nil {
+		return nil, err
+	}
 	ownerID, contestID, err := s.repo.ContestantOwner(ctx, contestantID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// No such contestant — not-found, same as the other contestant
+			// reads, not a 500 from a raw driver error.
+			return nil, ErrNotFound
+		}
 		return nil, err
 	}
 	if callerID == "" || ownerID == "" || ownerID != callerID {

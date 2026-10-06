@@ -2,7 +2,6 @@ package restaurant
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -21,13 +20,13 @@ const (
 // the restaurant is closed is rejected up front). Pure (no DB).
 func validateScheduledFor(now, slot time.Time, hours []BusinessHour, loc *time.Location) error {
 	if !slot.After(now.Add(scheduledMinLead)) {
-		return fmt.Errorf("restaurant: a scheduled slot must be at least %v in the future", scheduledMinLead)
+		return fmt.Errorf("%w: a scheduled slot must be at least %v in the future", ErrScheduledSlotInvalid, scheduledMinLead)
 	}
 	if slot.After(now.Add(scheduledHorizon)) {
-		return fmt.Errorf("restaurant: a scheduled slot may be at most %v out", scheduledHorizon)
+		return fmt.Errorf("%w: a scheduled slot may be at most %v out", ErrScheduledSlotInvalid, scheduledHorizon)
 	}
 	if len(hours) > 0 && !isOpenAt(hours, slot, loc) {
-		return errors.New("restaurant: the restaurant is closed at the requested slot")
+		return fmt.Errorf("%w at the requested slot", ErrRestaurantClosed)
 	}
 	return nil
 }

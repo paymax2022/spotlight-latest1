@@ -2,9 +2,11 @@ package restaurant
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -206,8 +208,18 @@ func (h *Handler) GetGroupOrder(c *gin.Context) {
 func (h *Handler) FinalizeGroupOrder(c *gin.Context) {
 	host := ginutil.UserID(c)
 	var req PlaceOrderRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	// ShouldBindJSON cannot be used here: PlaceOrderRequest.Items carries
+	// binding:"required,min=1", yet finalize IGNORES body items — the group cart
+	// supplies them (req.Items is replaced wholesale in the service). The tag made
+	// finalize impossible without a dummy non-empty items array the client had no
+	// way to know to send. Decode plainly and enforce the one field that is still
+	// genuinely required below.
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		return
+	}
+	if strings.TrimSpace(req.DeliveryAddress) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "delivery_address is required"})
 		return
 	}
 	if hk := ginutil.IdempotencyKey(c); hk != "" {

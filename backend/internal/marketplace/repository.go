@@ -32,23 +32,31 @@ type Repository struct {
 // NewRepository constructs the marketplace repository.
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
+// listingCols must stay a comma-separated list of BARE column names — no
+// expressions. It is fed through prefixCols (splits on commas to alias each
+// column) by the saved-items join read, so an expression containing a comma
+// (e.g. COALESCE(lga, ”) AS lga) is mangled into invalid SQL — that was the
+// live GET /saved-items 500 (l.COALESCE(lga, l.”) AS lga). NULL handling for
+// the nullable lga column lives in the scanners below instead.
 const listingCols = `id, market_id, seller_id, category_id, title, description,
 	price_kobo, currency, condition, attrs, status, quality_score, escrow_eligible,
-	state, COALESCE(lga, '') AS lga, moderation_reason_code, view_count, save_count,
+	state, lga, moderation_reason_code, view_count, save_count,
 	created_at, updated_at, expires_at, sold_at`
 
 func scanListing(row pgx.Row) (*Listing, error) {
 	var l Listing
 	var status string
 	var attrsRaw []byte
+	var lga *string // nullable column — see listingCols comment
 	if err := row.Scan(
 		&l.ID, &l.MarketID, &l.SellerID, &l.CategoryID, &l.Title, &l.Description,
 		&l.PriceKobo, &l.Currency, &l.Condition, &attrsRaw, &status, &l.QualityScore, &l.EscrowEligible,
-		&l.State, &l.LGA, &l.ModerationReasonCode, &l.ViewCount, &l.SaveCount,
+		&l.State, &lga, &l.ModerationReasonCode, &l.ViewCount, &l.SaveCount,
 		&l.CreatedAt, &l.UpdatedAt, &l.ExpiresAt, &l.SoldAt,
 	); err != nil {
 		return nil, err
 	}
+	l.LGA = dbutil.DerefString(lga)
 	l.Status = ListingStatus(status)
 	if len(attrsRaw) > 0 {
 		_ = json.Unmarshal(attrsRaw, &l.Attrs)

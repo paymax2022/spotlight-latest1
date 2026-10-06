@@ -79,6 +79,32 @@ func respond(c *gin.Context, status int, data any) {
 	c.JSON(status, gin.H{"data": data})
 }
 
+// UUIDParams is route middleware: every marketplace route param that names a
+// Postgres uuid column (:id, :mediaId, :categoryId — the complete set across
+// /v1/marketplace today) gets a shape check before the handler runs. A
+// malformed value can never identify a row, so we answer 404 NOT_FOUND up
+// front instead of letting the driver's "invalid input syntax for type uuid"
+// surface as a 500 — the residual per-route class prod sweeps kept finding
+// (GET /listings/not-a-uuid was the live instance). Mounted once on the
+// /v1/marketplace group so public, member and admin routes share it; param
+// names outside the set are untouched, so a future non-uuid param (e.g.
+// :token) is unaffected.
+func UUIDParams() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		for _, p := range c.Params {
+			switch p.Key {
+			case "id", "mediaId", "categoryId":
+				if _, err := uuid.Parse(p.Value); err != nil {
+					fail(c, ErrNotFoundCoded("resource"))
+					c.Abort()
+					return
+				}
+			}
+		}
+		c.Next()
+	}
+}
+
 // fail maps any error to the frozen uniform error shape
 // {"error":{code,message,field,request_id}}. A replayError replays the original
 // cached 2xx body (§3: 409 IDEMPOTENCY_KEY_REPLAY returns the original response).

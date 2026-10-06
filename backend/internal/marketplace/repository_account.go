@@ -401,15 +401,17 @@ func scanSavedItemJoin(rows pgx.Rows, it *SavedItem) (*Listing, error) {
 	var l Listing
 	var lstatus string
 	var attrsRaw []byte
+	var lga *string // nullable column — same scan shape as scanListing
 	if err := rows.Scan(
 		&it.ID, &it.UserID, &it.ListingID, &it.SavedPriceKobo, &it.CreatedAt,
 		&l.ID, &l.MarketID, &l.SellerID, &l.CategoryID, &l.Title, &l.Description,
 		&l.PriceKobo, &l.Currency, &l.Condition, &attrsRaw, &lstatus, &l.QualityScore, &l.EscrowEligible,
-		&l.State, &l.LGA, &l.ModerationReasonCode, &l.ViewCount, &l.SaveCount,
+		&l.State, &lga, &l.ModerationReasonCode, &l.ViewCount, &l.SaveCount,
 		&l.CreatedAt, &l.UpdatedAt, &l.ExpiresAt, &l.SoldAt,
 	); err != nil {
 		return nil, err
 	}
+	l.LGA = dbutil.DerefString(lga)
 	l.Status = ListingStatus(lstatus)
 	if len(attrsRaw) > 0 {
 		_ = json.Unmarshal(attrsRaw, &l.Attrs)

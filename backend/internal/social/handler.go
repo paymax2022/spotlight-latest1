@@ -183,7 +183,7 @@ func (h *Handler) GetSplit(c *gin.Context) {
 func (h *Handler) PayShare(c *gin.Context) {
 	// ok was previously ignored: a missing key wrote the 400 above and then
 	// STILL paid the share — a money mutation proceeding without the
-	// required Idempotency-Key.
+	// required Idempotency-Key (iron rule #1).
 	key, ok := ginutil.RequireIdempotencyKeyOK(c)
 	if !ok {
 		return
@@ -197,7 +197,9 @@ func (h *Handler) PayShare(c *gin.Context) {
 
 func (h *Handler) CreatePool(c *gin.Context) {
 	var req struct {
-		Title         string  `json:"title"`
+		// A pool with no title is an unlabeled money pot — require it rather
+		// than persisting an unnamed OPEN pool nobody can identify.
+		Title         string  `json:"title" binding:"required"`
 		BeneficiaryID *string `json:"beneficiary_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
