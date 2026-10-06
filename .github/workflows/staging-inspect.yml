@@ -506,9 +506,8 @@ jobs:
             const anySeed = ["ARENA_SIGNING_SEED_THEORY","ARENA_SIGNING_SEED_PRACTICAL","ARENA_SIGNING_SEED_FIRSTAID"].some(present);
             if (!anySeed) force.FEATURE_ARENA_ENABLED = "no ARENA_SIGNING_SEED_* on target";
             if (!present("MAPS_GOOGLE_KEY")) force.FEATURE_MAPS_ENABLED = "MAPS_GOOGLE_KEY missing on target";
-            // finance_routes.go:2000 — FEATURE_TRANSPORT_ENABLED in prod
-            // log.Fatalf's when no real MapService is wired (MockMaps would
-            // fabricate fares). Transport follows maps.
+            // finance_routes.go:2000: FEATURE_TRANSPORT_ENABLED fatals in prod
+            // when no real MapService is wired (MockMaps fabricates fares).
             if (!present("MAPS_GOOGLE_KEY")) force.FEATURE_TRANSPORT_ENABLED = "transport requires a real MapService (needs MAPS_GOOGLE_KEY)";
             if (!present("BREVO_API_KEY") || !present("OTP_PEPPER") || !present("BREVO_OTP_TEMPLATE_ID"))
               force.FEATURE_OTP_EMAIL_ENABLED = "Brevo/OTP creds missing on target";
