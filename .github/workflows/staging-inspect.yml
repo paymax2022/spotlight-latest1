@@ -50,6 +50,10 @@ on:
         description: 'Set VOTES_BRIDGE_ENABLED=true on frontend-web of the target env. ONLY after the kyc-gate schema fix is deployed there — the bridged path 404s votes without it.'
         type: boolean
         default: false
+      copy_staging_to_prod:
+        description: 'COPY staging service variables -> production, per service. Excludes Railway built-ins, anything Supabase/DB-related (prod keeps its own), ports/env names; rewrites staging railway domains to prod domains; forces *_USE_MOCK=false. Values never printed; Paystack key MODE (test/live) is reported.'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -608,6 +612,90 @@ jobs:
           q "CREATE INDEX IF NOT EXISTS idx_bridge_outbox_pending ON public.bridge_outbox (status, created_at) WHERE status = 'pending';" | head -c 300; echo
           echo "--- re-check ---"
           q "select to_regclass('public.bridge_idempotency_keys') as bik, to_regclass('public.bridge_outbox') as bo" | head -c 300; echo
+
+      # Copies staging variables into production per service. Runs inside a
+      # production-scoped job (input environment=production) but reads staging
+      # with the repo-level staging token. Guarded by env below so a staging
+      # inspect run can never write production.
+      - name: Copy staging vars -> production (per service, env-specific excluded)
+        if: inputs.copy_staging_to_prod && inputs.environment == 'production'
+        env:
+          STG_TOK: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          PRD_TOK: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+        run: |
+          set -uo pipefail
+          for SVC in frontend-web frontend-admin backend; do
+            echo "=== $SVC: staging -> production ==="
+            RAILWAY_TOKEN="$STG_TOK" railway variable list --service "$SVC" \
+              --environment staging --project "$PROJECT" --json > stg.json \
+              || { echo "  could not read staging vars for $SVC"; continue; }
+            RAILWAY_TOKEN="$PRD_TOK" railway variable list --service "$SVC" \
+              --environment production --project "$PROJECT" --json > prd.json \
+              || { echo "  could not read production vars for $SVC"; continue; }
+            node -e '
+              const fs = require("fs");
+              const stg = JSON.parse(fs.readFileSync("stg.json", "utf8"));
+              const prd = JSON.parse(fs.readFileSync("prd.json", "utf8"));
+              // Prod owns these — never overwritten by staging values.
+              const SKIP_NAME = /^RAILWAY_|SUPABASE|^DATABASE_URL$|^DIRECT_URL$|^PG[A-Z_]*$|^POSTGRES|^PORT$|^APP_PORT$|^APP_ENV$|^NODE_ENV$/;
+              const DOMAIN_MAP = {
+                "frontend-web-staging-ec46.up.railway.app": "frontend-web-production-9259.up.railway.app",
+                "backend-staging-d9bb.up.railway.app": "backend-production-1b33d.up.railway.app",
+                "frontend-admin-staging-ade6.up.railway.app": "frontend-admin-production-5b0c.up.railway.app",
+              };
+              const jwtIss = (s) => {
+                try {
+                  const p = JSON.parse(Buffer.from(String(s).split(".")[1], "base64url").toString());
+                  return p.iss || "";
+                } catch { return ""; }
+              };
+              const plan = {}, report = [];
+              for (const [k, raw] of Object.entries(stg)) {
+                const v = String(raw);
+                if (SKIP_NAME.test(k)) { report.push(`  skip ${k} (env-specific)`); continue; }
+                if (v.includes("wnicsubiznmishkmunsv") || jwtIss(v).includes("wnicsubiznmishkmunsv")) {
+                  report.push(`  skip ${k} (value references staging Supabase)`); continue;
+                }
+                let nv = v;
+                for (const [a, b] of Object.entries(DOMAIN_MAP)) nv = nv.split(a).join(b);
+                if (/_USE_MOCK$/.test(k)) nv = "false";            // never mock on prod
+                if (/ENV(IRONMENT)?$/.test(k) && nv.trim() === "staging") nv = "production";
+                if (prd[k] === nv) { report.push(`  same ${k}`); continue; }
+                plan[k] = nv;
+                report.push(`  ${k in prd ? "update" : "new"}   ${k}` + (k.startsWith("PAYSTACK_SECRET") ? ` [mode=${nv.startsWith("sk_live") ? "LIVE" : nv.startsWith("sk_test") ? "TEST" : "?"}]` : k.startsWith("PAYSTACK_PUBLIC") ? ` [mode=${nv.startsWith("pk_live") ? "LIVE" : nv.startsWith("pk_test") ? "TEST" : "?"}]` : ""));
+              }
+              fs.writeFileSync("plan.json", JSON.stringify(plan));
+              fs.writeFileSync("keys.txt", Object.keys(plan).join("\n") + (Object.keys(plan).length ? "\n" : ""));
+              console.log(report.join("\n"));
+            '
+            while IFS= read -r K; do
+              [ -z "$K" ] && continue
+              node -e 'const p=require("./plan.json");process.stdout.write(p[process.argv[1]])' "$K" \
+                | RAILWAY_TOKEN="$PRD_TOK" railway variable set "$K" --stdin \
+                    --service "$SVC" --environment production --project "$PROJECT" >/dev/null 2>&1 \
+                && echo "  wrote $K" || echo "  FAILED $K"
+            done < keys.txt
+          done
+          # ADMIN_API_KEY is a shared backend<->admin secret; prod must use the
+          # PRODUCTION backend value, not staging's.
+          RAILWAY_TOKEN="$PRD_TOK" railway variable list --service backend \
+            --environment production --project "$PROJECT" --json > be-prd.json || true
+          node -e '
+            const fs=require("fs");
+            try { const v=JSON.parse(fs.readFileSync("be-prd.json","utf8"));
+              if (v.ADMIN_API_KEY) fs.writeFileSync("ak.txt", String(v.ADMIN_API_KEY)); } catch {}
+          '
+          if [ -f ak.txt ]; then
+            RAILWAY_TOKEN="$PRD_TOK" railway variable set ADMIN_API_KEY --stdin \
+              --service frontend-admin --environment production --project "$PROJECT" < ak.txt >/dev/null 2>&1 \
+              && echo "frontend-admin ADMIN_API_KEY <- prod backend value" || echo "ADMIN_API_KEY write failed"
+            rm -f ak.txt
+          fi
+          rm -f stg.json prd.json plan.json keys.txt be-prd.json
+          for SVC in frontend-web frontend-admin backend; do
+            railway redeploy --service "$SVC" --environment production --project "$PROJECT" --yes \
+              && echo "  redeploy triggered (prod): $SVC" || echo "  redeploy failed (prod): $SVC"
+          done
 
       - name: frontend-web supabase host (host only)
         run: |
