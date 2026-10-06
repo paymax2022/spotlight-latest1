@@ -97,7 +97,7 @@ func TestLiveDB_MilestonesArePersistedAndOrdered(t *testing.T) {
 
 	// And the detail payload carries them — the Milestones screen reads that and
 	// nothing else.
-	detail, err := svc.GetDetail(ctx, campaignID)
+	detail, err := svc.GetDetail(ctx, campaignID, creator)
 	if err != nil {
 		t.Fatalf("detail: %v", err)
 	}
