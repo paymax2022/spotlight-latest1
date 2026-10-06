@@ -85,4 +85,15 @@ describe('forwardGoOwnedPaystackEvent', () => {
     expect(res).toEqual({ processed: false, duplicate: false });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it.each(['null', '5', '"text"', 'true'])(
+    'treats the parseable non-object payload %s as irrelevant, never a TypeError',
+    async (raw) => {
+      // JSON.parse('null') succeeds — the old code then TypeError'd on
+      // `event.data` OUTSIDE the try, which the dispatcher surfaced as a 500.
+      const res = await forwardGoOwnedPaystackEvent(raw, SIG);
+      expect(res).toEqual({ processed: false, duplicate: false });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 });
