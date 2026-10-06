@@ -179,6 +179,13 @@ func (s *Service) loadOrderItemModifiers(ctx context.Context, orderItemID string
 	return out, rows.Err()
 }
 
+// ErrInvalidOrderRole marks an unrecognised ?role= value. It is the ONLY
+// client-error outcome of ListOrders: everything else is a store failure that
+// must surface as 500, not the 400 the handler used to blanket-map — that made a
+// missing-column outage read as "bad role" on a perfectly valid request
+// (prod sweep: GET /orders?role=customer → 400).
+var ErrInvalidOrderRole = errors.New("restaurant: invalid order role")
+
 // ListOrders returns orders scoped by role relative to the authenticated user:
 //
 //	customer   → orders the user placed
@@ -204,7 +211,7 @@ func (s *Service) ListOrders(ctx context.Context, userID, role string) ([]Order,
 		            COALESCE(dispatch_status,'none'), delivery_code, pickup_code, promo_id::text, promo_funder, created_at
 		     FROM orders WHERE rider_id=$1 ORDER BY created_at DESC`
 	default:
-		return nil, fmt.Errorf("restaurant: invalid role %q (want customer|restaurant|rider)", role)
+		return nil, fmt.Errorf("%w: %q (want customer|restaurant|rider)", ErrInvalidOrderRole, role)
 	}
 	rows, err := s.db.Query(ctx, q, userID)
 	if err != nil {
