@@ -18,7 +18,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -127,8 +126,8 @@ func TestLiveDB_VerifyID_BadgeRequiresAdminReview(t *testing.T) {
 	svc, pool := liveMktService(t)
 	ctx := context.Background()
 
-	user := uuid.New().String()              // no trust row: badge must start false
-	admin := seedTrustedSeller(t, ctx, pool) // any actor id; ReviewKYC only audits it
+	user := seedLedgerCapableSeller(t, ctx, pool) // ReviewKYC resolves platform_users — a bare UUID ends as NOT_FOUND
+	admin := seedTrustedSeller(t, ctx, pool)      // any actor id; ReviewKYC only audits it
 
 	// 1. Self-serve submit files a PENDING request — badge must NOT be set.
 	if _, err := svc.SubmitIDVerification(ctx, user, mkt.VerificationIDInput{
