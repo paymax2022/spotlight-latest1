@@ -10,7 +10,10 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient();
   const { error } = await supabase.auth.setSession({ access_token, refresh_token });
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 401 });
+    // Generic message on purpose, consistent with the login route's policy —
+    // never pass the upstream GoTrue text through verbatim.
+    console.warn('[auth/recovery-session] setSession rejected:', error.message);
+    return NextResponse.json({ error: 'Invalid recovery session' }, { status: 401 });
   }
   return new NextResponse(null, { status: 204 });
 }

@@ -24,7 +24,7 @@ export async function GET(request: Request) {
 
     if (error) {
       console.error('[admin/academy/assignment-parts] list failed', error);
-      return errorResponse(error.message, 500);
+      return errorResponse('Failed to load assignment parts', 500);
     }
     return successResponse({ success: true, parts: data ?? [] });
   } catch (error) {
@@ -103,7 +103,7 @@ export async function POST(request: Request) {
         return errorResponse(`Part ${partNumber} already exists on this assignment`, 409);
       }
       console.error('[admin/academy/assignment-parts] create failed', error);
-      return errorResponse(error.message, 500);
+      return errorResponse('Failed to create assignment part', 500);
     }
     return successResponse({ success: true, part: data }, 201);
   } catch (error) {
@@ -154,7 +154,7 @@ export async function PATCH(request: Request) {
 
       if (error) {
         console.error('[admin/academy/assignment-parts] grade failed', error);
-        return errorResponse(error.message, 500);
+        return errorResponse('Failed to grade part submission', 500);
       }
       return successResponse({ success: true, partSubmissionId: id, score });
     }
@@ -192,7 +192,7 @@ export async function PATCH(request: Request) {
 
     if (error) {
       console.error('[admin/academy/assignment-parts] update failed', error);
-      return errorResponse(error.message, 500);
+      return errorResponse('Failed to update assignment part', 500);
     }
     return successResponse({ success: true, part: data });
   } catch (error) {
@@ -219,7 +219,7 @@ export async function DELETE(request: Request) {
     const { error } = await supabase.from('academy_assignment_parts').delete().eq('id', id);
     if (error) {
       console.error('[admin/academy/assignment-parts] delete failed', error);
-      return errorResponse(error.message, 500);
+      return errorResponse('Failed to delete assignment part', 500);
     }
     return successResponse({ success: true, deletedSubmissions: count ?? 0 });
   } catch (error) {

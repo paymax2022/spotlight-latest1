@@ -57,7 +57,10 @@ export async function POST(request: Request) {
       .select('*')
       .single();
 
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/phases POST]', error.message);
+      return errorResponse('Failed to save voting phase', 500);
+    }
 
     await appendAuditLog({
       actorId: identity.actorId,
@@ -90,7 +93,10 @@ export async function DELETE(request: Request) {
       .eq('contest_id', contestId)
       .eq('phase_key', phaseKey);
 
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/phases DELETE]', error.message);
+      return errorResponse('Failed to delete voting phase', 500);
+    }
 
     await appendAuditLog({
       actorId: identity.actorId,

@@ -38,7 +38,7 @@ function optionalTimestamp(value: unknown): string | null {
 async function syncContestVotingState(
   supabase: ReturnType<typeof createAdminClient>,
   body: Record<string, unknown>,
-): Promise<string | null> {
+): Promise<boolean> {
   const paidVotingEnabled = Boolean(body.paidVotingEnabled ?? false);
   const parsed = Number(body.pricePerVoteNgn);
   const price = paidVotingEnabled && Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -65,7 +65,11 @@ async function syncContestVotingState(
     })
     .eq('id', body.contestId as string);
 
-  return error ? error.message : null;
+  // Never hand the PostgREST message to the client — it carries schema and
+  // SQLSTATE text. Log it server-side; the caller only needs to know the
+  // contest update failed.
+  if (error) console.error('[admin/voting/settings] contest sync failed:', error.message);
+  return Boolean(error);
 }
 
 export async function GET(request: Request) {
@@ -195,11 +199,14 @@ export async function POST(request: Request) {
       .select('*')
       .single();
 
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/settings POST]', error.message);
+      return errorResponse('Failed to save voting settings', 500);
+    }
 
-    const syncError = await syncContestVotingState(supabase, body);
-    if (syncError) {
-      return errorResponse(`Settings saved, but the contest could not be updated: ${syncError}`, 500);
+    const syncFailed = await syncContestVotingState(supabase, body);
+    if (syncFailed) {
+      return errorResponse('Settings saved, but the contest could not be updated', 500);
     }
 
     await appendAuditLog({

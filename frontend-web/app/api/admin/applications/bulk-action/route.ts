@@ -96,10 +96,13 @@ export async function POST(request: Request) {
 
         results.push({ id: applicationId, success: true });
       } catch (error) {
+        // Never put error.message in the results payload — service/store
+        // failures carry PostgREST internals. Log it server-side instead.
+        console.error(`[admin/applications/bulk-action] ${body.action} failed for ${applicationId}:`, error);
         results.push({
           id: applicationId,
           success: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: 'Failed',
         });
       }
     }

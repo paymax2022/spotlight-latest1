@@ -151,6 +151,9 @@ describe('WAL-013: payments-finance stats', () => {
     const body = await res.json();
 
     expect(body.stats.totalBalanceKobo).toBe(0);
-    expect(body.stats.error).toBe('function admin_payments_finance_stats does not exist');
+    // The section error is a fixed label — the raw PostgREST message is logged
+    // server-side, never shipped to the client.
+    expect(body.stats.error).toBe('unavailable');
+    expect(JSON.stringify(body)).not.toContain('function admin_payments_finance_stats');
   });
 });

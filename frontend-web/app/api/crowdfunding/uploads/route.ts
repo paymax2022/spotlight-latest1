@@ -1,6 +1,6 @@
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { errorResponse, successResponse } from '@/src/lib/api/responses';
+import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireUser } from '@/src/lib/auth/server';
 import { createR2UploadUrl, hasR2Config } from '@/src/lib/storage/r2';
 import { saveLocalUpload } from '@/src/lib/storage/local-uploads';
@@ -89,10 +89,9 @@ export async function POST(request: Request) {
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {
       return errorResponse('Authentication required', 401);
     }
-    // Surface the real reason so a misconfig is diagnosable rather than a
-    // blanket "Upload failed".
+    // Log the real reason server-side so a misconfig is diagnosable, but
+    // never echo internals to the client.
     console.error('[crowdfunding/uploads] upload failed:', error);
-    const detail = error instanceof Error ? error.message : 'Unknown error';
-    return errorResponse(`Upload failed: ${detail}`, 500);
+    return handleApiError(error, 'Upload failed');
   }
 }

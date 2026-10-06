@@ -45,8 +45,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
       message: error instanceof Error ? error.message : 'Unknown error',
       stack: error instanceof Error ? error.stack : undefined,
     });
-    const detail = error instanceof Error ? error.message : 'Unknown error';
-    return errorResponse(`Failed to load registration application: ${detail}`, 500);
+    return handleApiError(error, 'Failed to load registration application');
   }
 }
 
@@ -121,7 +120,6 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
       message: error instanceof Error ? error.message : 'Unknown error',
       stack: error instanceof Error ? error.stack : undefined,
     });
-    const detail = error instanceof Error ? error.message : 'Unknown error';
-    return errorResponse(`Failed to save registration step: ${detail}`, 500);
+    return handleApiError(error, 'Failed to save registration step');
   }
 }

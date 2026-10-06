@@ -81,7 +81,10 @@ export async function POST(request: Request) {
       .select('*')
       .single();
 
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/packages POST]', error.message);
+      return errorResponse('Failed to create vote package', 500);
+    }
 
     await appendAuditLog({
       actorId: identity.actorId,
@@ -129,7 +132,10 @@ export async function PATCH(request: Request) {
       .select('*')
       .single();
 
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/packages PATCH]', error.message);
+      return errorResponse('Failed to update vote package', 500);
+    }
 
     await appendAuditLog({
       actorId: identity.actorId,

@@ -84,7 +84,10 @@ describe('voting settings -> contest sync', () => {
     const res = await POST(save({ paidVotingEnabled: true, pricePerVoteNgn: 150 }));
 
     expect(res.status).toBe(500);
-    expect(JSON.stringify(await res.json())).toContain('permission denied');
+    const body = JSON.stringify(await res.json());
+    expect(body).toContain('the contest could not be updated');
+    // PostgREST internals are logged server-side, never echoed to the admin.
+    expect(body).not.toContain('permission denied');
   });
 
   it('still accepts a blank voting window (the empty-string timestamp trap)', async () => {
