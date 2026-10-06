@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 const keyData = "data"
@@ -41,6 +42,18 @@ func mapErr(c *gin.Context, err error) {
 	}
 }
 
+// uuidParamOK gates a :id path parameter that must be a UUID — the claim /
+// policy columns are uuid-typed, so a malformed id used to hit Postgres as an
+// invalid-input-syntax error and surface as a 500. A malformed id can never
+// name a real row, so it returns the same not_found a missing row does.
+func uuidParamOK(c *gin.Context) bool {
+	if _, err := uuid.Parse(c.Param("id")); err != nil {
+		mapErr(c, ErrNotFound)
+		return false
+	}
+	return true
+}
+
 // SubmitFNOL (member): POST /claims — Idempotency-Key header REQUIRED.
 // body: {policy_id, loss_event_at, claimed_amount_kobo, description, inputs}
 func (h *Handler) SubmitFNOL(c *gin.Context) {
@@ -66,6 +79,12 @@ func (h *Handler) SubmitFNOL(c *gin.Context) {
 	}
 	if body.LossEventAt.IsZero() {
 		body.LossEventAt = time.Now().UTC()
+	}
+	if _, err := uuid.Parse(body.PolicyID); err != nil {
+		// A malformed policy_id reached the uuid-typed insurance_policy.id
+		// column and 500'd — same gate as the :id path params.
+		mapErr(c, ErrNotFound)
+		return
 	}
 	cl, err := h.svc.SubmitFNOL(c.Request.Context(), uid, FNOLInput{
 		PolicyID:          body.PolicyID,
@@ -101,6 +120,9 @@ func (h *Handler) List(c *gin.Context) {
 
 // Get (member): GET /claims/:id
 func (h *Handler) Get(c *gin.Context) {
+	if !uuidParamOK(c) {
+		return
+	}
 	cl, err := h.svc.GetClaim(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
@@ -112,6 +134,9 @@ func (h *Handler) Get(c *gin.Context) {
 // AddEvidence (member): POST /claims/:id/evidence
 // body: {file_name, content_type, storage_ref}
 func (h *Handler) AddEvidence(c *gin.Context) {
+	if !uuidParamOK(c) {
+		return
+	}
 	var body struct {
 		FileName    string `json:"file_name" binding:"required"`
 		ContentType string `json:"content_type"`
@@ -131,6 +156,9 @@ func (h *Handler) AddEvidence(c *gin.Context) {
 
 // ListEvidence (member): GET /claims/:id/evidence
 func (h *Handler) ListEvidence(c *gin.Context) {
+	if !uuidParamOK(c) {
+		return
+	}
 	evs, err := h.svc.ListEvidence(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		mapErr(c, err)
@@ -143,7 +171,17 @@ func (h *Handler) ListEvidence(c *gin.Context) {
 func (h *Handler) AdminSearch(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	cs, err := h.svc.SearchAdmin(c.Request.Context(), c.Query("state"), c.Query("policy_id"), limit, offset)
+	policyID := c.Query("policy_id")
+	if policyID != "" {
+		// policy_id filters on a uuid-typed column — a malformed value 500'd
+		// the whole search. As a filter (not a resource id) it is a client
+		// input error, so 400 rather than 404.
+		if _, err := uuid.Parse(policyID); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "policy_id must be a UUID"})
+			return
+		}
+	}
+	cs, err := h.svc.SearchAdmin(c.Request.Context(), c.Query("state"), policyID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
@@ -153,6 +191,9 @@ func (h *Handler) AdminSearch(c *gin.Context) {
 
 // AdminGet (admin): GET /claims/:id
 func (h *Handler) AdminGet(c *gin.Context) {
+	if !uuidParamOK(c) {
+		return
+	}
 	cl, err := h.svc.AdminGet(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		// mapErr keeps a real 404 for a missing claim but stops masking a DB
@@ -178,6 +219,10 @@ func (h *Handler) AdminDecision(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		mapErr(c, ErrNotFound)
+		return
+	}
 	var (
 		cl  *Claim
 		err error
