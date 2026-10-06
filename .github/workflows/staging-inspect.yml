@@ -815,6 +815,39 @@ jobs:
             railway variable set "REDIS_URL=$REF" --service backend \
               --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP >/dev/null 2>&1 \
               && echo "  backend REDIS_URL -> $REF" || echo "  WARN: REDIS_URL set failed"
+            # The Redis service is project-level — each environment needs its
+            # OWN deployed instance. If this env has none (or the latest is
+            # terminal), `railway redeploy` fails; fall back to
+            # deploymentTriggerCreate via GraphQL (Project-Access-Token auth).
+            if railway redeploy --service Redis --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --yes >/dev/null 2>&1; then
+              echo "  Redis service redeployed in $ENVIRONMENT"
+            else
+              echo "  Redis redeploy failed — triggering fresh deployment via GraphQL"
+              EID=$(curl -sS -m 30 https://backboard.railway.app/graphql/v2 \
+                -H "Project-Access-Token: $RAILWAY_TOKEN" -H 'content-type: application/json' \
+                -d '{"query":"{ projectToken { environmentId } }"}' \
+                | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).data.projectToken.environmentId)}catch{console.log("")}})')
+              SID=$(curl -sS -m 30 https://backboard.railway.app/graphql/v2 \
+                -H "Project-Access-Token: $RAILWAY_TOKEN" -H 'content-type: application/json' \
+                -d "{\"query\":\"{ project(id: \\\"$PROJECT\\\") { services { edges { node { id name } } } } }\"}" \
+                | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const s=JSON.parse(d).data.project.services.edges.map(e=>e.node).find(n=>/^redis$/i.test(n.name));console.log(s?s.id:"")}catch{console.log("")}})')
+              if [ -n "$EID" ] && [ -n "$SID" ]; then
+                node -e '
+                  const body = JSON.stringify({
+                    query: "mutation($i:DeploymentTriggerCreateInput!){ deploymentTriggerCreate(input:$i){ id } }",
+                    variables: { i: { projectId: process.env.PROJECT, environmentId: process.argv[1], serviceId: process.argv[2] } },
+                  });
+                  fetch("https://backboard.railway.app/graphql/v2", {
+                    method: "POST",
+                    headers: { "Project-Access-Token": process.env.RAILWAY_TOKEN, "content-type": "application/json" },
+                    body,
+                  }).then(r => r.text()).then(t => console.log("  deploy trigger:", t.slice(0, 300)));
+                ' "$EID" "$SID"
+              else
+                echo "  could not resolve env/service ids for Redis deploy trigger"
+              fi
+            fi
             railway redeploy --service backend --environment "$ENVIRONMENT" \
               --project "$PROJECT" --yes >/dev/null \
               && echo "  backend redeploy triggered" || true
