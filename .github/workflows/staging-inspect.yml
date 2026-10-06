@@ -340,13 +340,21 @@ jobs:
       # /readyz answers with Go JSON. Prod services already carry the correct
       # root directories — this replicates that on staging. GraphQL errors are
       # printed verbatim; they carry no secrets.
+      #
+      # Project tokens must authenticate via the `Project-Access-Token` header
+      # (NOT `Authorization: Bearer` — that yields "Not Authorized" on every
+      # query). The token is also scoped to ONE environment, so
+      # `projectToken { projectId environmentId }` resolves the environment id
+      # directly without an account-level `project` query.
       - name: Fix staging frontend services (rootDirectory + redeploy)
         if: inputs.environment == 'staging' && inputs.fix_staging_frontends
         run: |
           set -uo pipefail
           API=https://backboard.railway.app/graphql/v2
-          gql() { curl -sS -m 30 "$API" -H "Authorization: Bearer $RAILWAY_TOKEN" \
+          gql() { curl -sS -m 30 "$API" -H "Project-Access-Token: $RAILWAY_TOKEN" \
             -H 'content-type: application/json' -d "$1"; }
+          echo "--- projectToken scope ---"
+          gql '{"query":"{ projectToken { projectId environmentId } }"}' | head -c 400; echo
           IDS="$(gql '{"query":"{ project(id: \"'"$PROJECT"'\") { environments { edges { node { id name } } } services { edges { node { id name } } } } }"}')" || true
           echo "$IDS" | node -e '
             let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{
@@ -363,7 +371,27 @@ jobs:
               }
             });' > ids.txt || true
           cat ids.txt | sed 's/^/    /'
-          grep -q "MISSING\|errors:\|not JSON" ids.txt && { echo "  could not resolve service/env ids — aborting fix"; exit 0; }
+          if grep -q "MISSING\|errors:\|not JSON" ids.txt; then
+            echo "  project query failed — falling back to deployments listing for service ids"
+            EID="$(gql '{"query":"{ projectToken { environmentId } }"}' \
+              | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).data.projectToken.environmentId)}catch{console.log("")}})')"
+            echo "    token environmentId: ${EID:-unresolved}"
+            [ -n "$EID" ] && gql "{\"query\":\"{ deployments(first: 30, input: { projectId: \\\"$PROJECT\\\", environmentId: \\\"$EID\\\" }) { edges { node { id serviceId service { id name } } } } }\"}" \
+              | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{
+                  let j; try{j=JSON.parse(d)}catch{console.log("  deployments resp not JSON:",d.slice(0,300));process.exit(0)}
+                  if (j.errors){console.log("  deployments errors:",JSON.stringify(j.errors).slice(0,400));process.exit(0)}
+                  const seen={};
+                  for (const e of j.data.deployments.edges){
+                    const n=e.node; const name=n.service?n.service.name:"?"; const sid=n.serviceId||(n.service&&n.service.id);
+                    if (["frontend-web","frontend-admin"].includes(name) && sid && !seen[name]){seen[name]=1;console.log(`${name} ${sid}`)}
+                  }}' > ids2.txt || true
+            cat ids2.txt | sed 's/^/    /'
+            [ -n "$EID" ] && while read -r SVC SID; do
+              [ -n "$SVC" ] && [ -n "$SID" ] && echo "$SVC $SID env=$EID" >> ids.fixed.txt
+            done < ids2.txt
+            [ -f ids.fixed.txt ] && mv ids.fixed.txt ids.txt
+          fi
+          grep -q "env=" ids.txt || { echo "  could not resolve service/env ids — aborting fix"; exit 0; }
           while read -r SVC SID REST; do
             EID="${REST#env=}"
             echo "  -> $SVC ($SID) rootDirectory=$SVC (env $EID)"
