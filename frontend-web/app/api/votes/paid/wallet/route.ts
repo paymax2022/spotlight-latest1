@@ -27,6 +27,8 @@ import { appendAuditLog } from '@/src/server/voting/audit.service';
 import { createAdminClient } from '@/lib/supabase/server';
 import { randomUUID } from 'node:crypto';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 interface WalletVoteBody {
   contestantId?: string;
   contestId?: string;
@@ -66,6 +68,12 @@ export async function POST(request: Request) {
     if (!body.packageId) return errorResponse('packageId is required', 400);
     if (!body.voterEmail) return errorResponse('voterEmail is required', 400);
     if (!body.voterName) return errorResponse('voterName is required', 400);
+    // Non-UUID ids can never satisfy the uuid columns the queries below hit
+    // (voting_settings.contest_id / vote_packages.id) — reject so they surface
+    // as 400, not a Postgres 22P02 → 500.
+    if (!UUID_RE.test(body.contestId)) return errorResponse('contestId must be a valid UUID', 400);
+    if (!UUID_RE.test(body.contestantId)) return errorResponse('contestantId must be a valid UUID', 400);
+    if (!UUID_RE.test(body.packageId)) return errorResponse('packageId must be a valid UUID', 400);
 
     // Confirm voting is open for this contest
     const settings = await getVotingSettings(body.contestId);
