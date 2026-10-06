@@ -92,15 +92,31 @@ type Recipient struct {
 	Nickname string `json:"nickname"`
 }
 
+// UserExists reports whether userID names a real platform user — checked
+// before a money path resolves the recipient's wallet so a bogus id answers
+// 404 instead of surfacing a ledger write error as a 500.
+func (s *GiftingStore) UserExists(ctx context.Context, userID string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM platform_users WHERE id = $1)`, userID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("user exists: %w", err)
+	}
+	return exists, nil
+}
+
 // GetRecipients retrieves user's saved gift recipients.
 // Reads platform_users, not auth.users: this pool runs as service_role, which
 // Supabase never grants auth-schema access to, and platform_users.id mirrors
 // auth.users.id 1:1. The name join also had to move off "profiles" — that
 // table has no name/nickname column, only user_profiles does (via full_name);
 // there is no nickname anywhere in the schema, so it is always empty.
+// No SELECT DISTINCT: platform_users.id is unique so it can never dedupe
+// anything, and Postgres rejects ORDER BY expressions outside the select
+// list under DISTINCT — the previous query therefore failed on every call.
 func (s *GiftingStore) GetRecipients(ctx context.Context, senderUserID string) ([]Recipient, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT DISTINCT
+		SELECT
 			u.id as user_id, u.email,
 			COALESCE(p.full_name, '') as name,
 			'' as nickname
