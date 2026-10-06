@@ -6,11 +6,15 @@ import { buildAccountPrefill } from '@/src/features/registration/account-prefill
 import type { RegistrationStepKey } from '@/src/features/registration/types';
 import { requireUser } from '@/src/lib/auth/server';
 
+// registrations.id is uuid — a malformed id makes getRegistrationDraft throw a
+// Postgres 22P02 which lands as a 500 instead of a clean 400.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;
   try {
     // Validate param
-    if (!params?.id || typeof params.id !== 'string') {
+    if (!params?.id || typeof params.id !== 'string' || !UUID_RE.test(params.id)) {
       return errorResponse('Invalid application ID', 400);
     }
 
@@ -53,7 +57,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   const params = await ctx.params;
   try {
     // Validate param
-    if (!params?.id || typeof params.id !== 'string') {
+    if (!params?.id || typeof params.id !== 'string' || !UUID_RE.test(params.id)) {
       return errorResponse('Invalid application ID', 400);
     }
 

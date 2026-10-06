@@ -306,12 +306,20 @@ async function resolveAnyContest(slugOrId: string): Promise<ContestRegistrationD
   const inMemory = getRegistrationContestBySlug(slugOrId) || resolveContestRegistration(slugOrId);
   if (inMemory) return inMemory;
 
-  const bySlug = await getPersistedContestBySlug(slugOrId);
-  if (bySlug) return bySlug;
+  // listPersistedContests() THROWS on a read failure (e.g. a prod column drift
+  // on contests). An unreadable catalog cannot confirm any slug, so the
+  // contest is unresolvable — the caller maps that to 404. Swallowing it here
+  // (with a log) is what stops a bogus slug from surfacing as a 500.
+  try {
+    const bySlug = await getPersistedContestBySlug(slugOrId);
+    if (bySlug) return bySlug;
 
-  if (UUID_RE.test(slugOrId)) {
-    const byId = await getPersistedContestById(slugOrId);
-    if (byId) return byId;
+    if (UUID_RE.test(slugOrId)) {
+      const byId = await getPersistedContestById(slugOrId);
+      if (byId) return byId;
+    }
+  } catch (error) {
+    console.warn('[registration] persisted contest lookup failed; treating as unresolvable:', error);
   }
 
   return null;

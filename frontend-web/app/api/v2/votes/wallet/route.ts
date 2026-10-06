@@ -9,6 +9,8 @@ import { creditWalletVotes, markVotePurchaseReversed } from '@/src/server/voting
 import { checkRateLimit } from '@/src/lib/voting/rate-limit';
 import { getRequestIp } from '@/src/lib/rate-limit/client-ip';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // Calls the Go vote-bridge debit endpoint then credits votes via the legacy service.
 // This route is the wallet-paid equivalent of the Paystack paid-vote flow.
 async function goVoteDebit(
@@ -78,6 +80,14 @@ export async function POST(request: Request) {
   const { contestId, contestantId, voteCount, costKobo, idempotencyKey } = body;
   if (!contestId || !contestantId || !voteCount || !idempotencyKey) {
     return errorResponse('contestId, contestantId, voteCount, and idempotencyKey are required', 400);
+  }
+  // Non-UUID ids can never satisfy the contestants/contests equality checks
+  // downstream — reject before the KYC gate and pricing queries hit Postgres.
+  if (typeof contestId !== 'string' || !UUID_RE.test(contestId)) {
+    return errorResponse('Invalid contestId', 400);
+  }
+  if (typeof contestantId !== 'string' || !UUID_RE.test(contestantId)) {
+    return errorResponse('Invalid contestantId', 400);
   }
 
   try {

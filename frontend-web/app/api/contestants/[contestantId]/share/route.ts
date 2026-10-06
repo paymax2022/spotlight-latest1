@@ -2,6 +2,8 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { getOrCreateShareLink, buildShareMessages, recordShareEvent } from '@/src/server/voting/share.service';
 import { createAdminClient } from '@/lib/supabase/server';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ contestantId: string }> },
@@ -12,6 +14,11 @@ export async function GET(
     const contestId = searchParams.get('contestId');
     if (!contestId) {
       return Response.json({ success: false, error: 'contestId is required' }, { status: 400 });
+    }
+    // Non-UUID ids can never match — reject before the query so a malformed id
+    // doesn't surface as a Postgres 22P02 → 500.
+    if (!UUID_RE.test(contestId) || !UUID_RE.test(contestantId)) {
+      return Response.json({ success: false, error: 'Invalid contest or contestant ID' }, { status: 400 });
     }
 
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
@@ -60,6 +67,11 @@ export async function POST(
 
     if (!body.shareLinkId) {
       return Response.json({ success: false, error: 'shareLinkId is required' }, { status: 400 });
+    }
+    // contestant_share_links.id is uuid — a malformed value makes the existence
+    // check in recordShareEvent throw a Postgres 22P02 that lands as a 500.
+    if (!UUID_RE.test(body.shareLinkId)) {
+      return Response.json({ success: false, error: 'Invalid shareLinkId' }, { status: 400 });
     }
 
     const ip =
