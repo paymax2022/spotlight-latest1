@@ -38,6 +38,22 @@ on:
         description: 'Comma-separated auth user IDs to delete via GoTrue admin (leftover diag/test accounts). Deleted with the target-backend service-role key; runs inside the probe job (requires auth_probe=true).'
         type: string
         default: ''
+      fix_redis:
+        description: 'Provision a Railway Redis plugin in the project env and point backend REDIS_URL at it via reference var'
+        type: boolean
+        default: false
+      fix_maps:
+        description: 'Copy MAPS_GOOGLE_KEY staging->target backend (never printed) and enable FEATURE_MAPS_ENABLED + FEATURE_TRANSPORT_ENABLED'
+        type: boolean
+        default: false
+      fix_migrations:
+        description: 'Apply unapplied supabase/migrations to the target project via Management API query endpoint, in order, recording supabase_migrations.schema_migrations'
+        type: boolean
+        default: false
+      fix_staging_db_password:
+        description: 'STAGING ONLY: ALTER ROLE postgres PASSWORD on the staging project, rewrite staging backend DATABASE_URL/DIRECT_URL, update the SUPABASE_STAGING_DB_PASSWORD repo secret'
+        type: boolean
+        default: false
       fix_database_url:
         description: 'PRODUCTION ONLY: verify SUPABASE_DB_PASSWORD against the pooler and rewrite backend DATABASE_URL with it if the check passes'
         type: boolean
@@ -85,6 +101,10 @@ jobs:
 
       - name: Install Railway CLI
         run: npm install --global @railway/cli@5.40.1
+
+      - name: Checkout repo (migrations)
+        if: inputs.fix_migrations
+        uses: actions/checkout@v4
 
       - name: Public domains
         run: |
@@ -747,10 +767,192 @@ jobs:
           echo "--- re-check ---"
           q "select to_regclass('public.bridge_idempotency_keys') as bik, to_regclass('public.otp_codes') as oc, to_regclass('public.restaurant_likes') as rl, to_regclass('public.featured_campaign') as fc, to_regclass('public.restaurant_promos') as rp" | head -c 400; echo
 
-      # Copies staging variables into production per service. Runs inside a
-      # production-scoped job (input environment=production) but reads staging
-      # with the repo-level staging token. Guarded by env below so a staging
-      # inspect run can never write production.
+      - name: "Fix: provision Railway Redis + wire backend REDIS_URL"
+        if: inputs.fix_redis
+        env:
+          STG_TOK: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: |
+          set -uo pipefail
+          SKIP="--skip-deploys"
+          railway service --help 2>/dev/null | head -5 || true
+          echo "--- existing services ---"
+          railway status --environment "$ENVIRONMENT" --project "$PROJECT" --json 2>/dev/null | node -e '
+            const rl=require("readline").createInterface({input:process.stdin});let d="";
+            rl.on("line",l=>d+=l).on("close",()=>{try{const j=JSON.parse(d);
+              const svcs=j?.services?.edges?.map(e=>e?.node?.name)||j?.services||[];
+              console.log("  services: "+JSON.stringify(svcs));}catch{console.log("  (status unparseable)")}});' || true
+          # Create the Redis plugin if absent. railway add is interactive in some
+          # versions — feed it non-interactively via --database.
+          if railway service list --environment "$ENVIRONMENT" --project "$PROJECT" --json 2>/dev/null | grep -qi redis; then
+            echo "  Redis service already exists"
+          else
+            echo "  creating Redis plugin..."
+            railway add --database redis --environment "$ENVIRONMENT" --project "$PROJECT" 2>&1 | tail -5 \
+              || railway add -d redis --environment "$ENVIRONMENT" --project "$PROJECT" 2>&1 | tail -5 \
+              || echo "  railway add failed (may need owner to add Redis in dashboard)"
+          fi
+          echo "--- redis service vars (names only) ---"
+          railway variable list --service Redis --environment "$ENVIRONMENT" --project "$PROJECT" --json 2>/dev/null \
+            | node -e 'const rl=require("readline").createInterface({input:process.stdin});let d="";rl.on("line",l=>d+=l).on("close",()=>{try{console.log("  "+Object.keys(JSON.parse(d)).join(", "))}catch{console.log("  (unparseable — Redis service may not exist)")}});'
+          # Reference vars resolve per-environment at deploy time — one var
+          # value works for every env the service is deployed into.
+          for REF in '${{Redis.REDIS_PRIVATE_URL}}' '${{Redis.REDIS_URL}}'; do
+            if railway variable set "REDIS_URL=$REF" --service backend \
+              --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP >/dev/null 2>&1; then
+              echo "  backend REDIS_URL -> $REF"; break
+            fi
+          done
+          if railway variable set "REDIS_PRIVATE_URL=${{Redis.REDIS_PRIVATE_URL}}" --service backend \
+            --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP >/dev/null 2>&1; then
+            echo "  backend REDIS_PRIVATE_URL -> reference"
+          fi
+
+      - name: "Fix: MAPS_GOOGLE_KEY staging->target backend + enable maps/transport"
+        if: inputs.fix_maps
+        env:
+          STG_TOK: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: |
+          set -uo pipefail
+          SKIP="--skip-deploys"
+          RAILWAY_TOKEN="$STG_TOK" railway variable list --service backend \
+            --environment staging --project "$PROJECT" --json > stg-be.json \
+            || { echo "  could not read staging backend vars"; exit 0; }
+          node -e 'const v=JSON.parse(require("fs").readFileSync("stg-be.json","utf8"));if(v.MAPS_GOOGLE_KEY)require("fs").writeFileSync("mk.txt",String(v.MAPS_GOOGLE_KEY))'
+          rm -f stg-be.json
+          if [ -f mk.txt ]; then
+            railway variable set MAPS_GOOGLE_KEY --stdin --service backend \
+              --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP < mk.txt \
+              && echo "  MAPS_GOOGLE_KEY copied staging->$ENVIRONMENT backend (never printed)" \
+              || echo "  WARN: MAPS_GOOGLE_KEY write failed"
+            rm -f mk.txt
+            for f in FEATURE_MAPS_ENABLED FEATURE_TRANSPORT_ENABLED; do
+              railway variable set "$f=true" --service backend \
+                --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP >/dev/null \
+                && echo "  backend $f=true"
+              railway variable set "$f=true" --service frontend-web \
+                --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP >/dev/null \
+                && echo "  frontend-web $f=true"
+            done
+            railway redeploy --service backend --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --yes >/dev/null \
+              && echo "  backend redeploy triggered" || echo "  WARN: redeploy failed"
+          else
+            echo "  staging backend has no MAPS_GOOGLE_KEY — nothing to copy"
+          fi
+
+      - name: "Fix: apply unapplied migrations to target project"
+        if: inputs.fix_migrations
+        env:
+          SB_MGMT: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SB_REF: ${{ inputs.environment == 'production' && secrets.SUPABASE_PROJECT_ID || secrets.SUPABASE_STAGING_PROJECT_ID }}
+        run: |
+          set -uo pipefail
+          [ -n "$SB_MGMT" ] && [ -n "$SB_REF" ] || { echo "  mgmt token/ref missing"; exit 0; }
+          ls supabase/migrations/*.sql | sort > /tmp/allmigs.txt
+          wc -l /tmp/allmigs.txt | sed 's/^/  repo files: /'
+          # Query helper that survives multi-statement SQL (heredoc + node JSON).
+          q() {
+            node -e 'const q=require("fs").readFileSync(0,"utf8");process.stdout.write(JSON.stringify({query:q}))' \
+              | curl -sS -m 120 "https://api.supabase.com/v1/projects/$SB_REF/database/query" \
+                -H "Authorization: Bearer $SB_MGMT" -H 'content-type: application/json' -d @-
+          }
+          # Migration bookkeeping table — create if the project was never
+          # managed by supabase CLI (prod may lack it).
+          echo "create schema if not exists supabase_migrations; create table if not exists supabase_migrations.schema_migrations(version text primary key, statements text[], name text)" | q > /dev/null 2>&1 || true
+          echo "--- applied versions on target ---"
+          echo "select string_agg(version, ',' order by version) as applied from supabase_migrations.schema_migrations" | q > /tmp/applied.json 2>/dev/null || echo "[]" > /tmp/applied.json
+          node -e 'try{const r=JSON.parse(require("fs").readFileSync("/tmp/applied.json","utf8"));const s=r[0]&&r[0].applied||"";require("fs").writeFileSync("/tmp/applied.txt",s)}catch(e){require("fs").writeFileSync("/tmp/applied.txt","")}'
+          APPLIED_N=$(tr ',' '\n' < /tmp/applied.txt | grep -c . || true)
+          echo "  applied on target: $APPLIED_N"
+          node - <<'NODE'
+            const fs=require("fs");
+            const applied=new Set((fs.readFileSync("/tmp/applied.txt","utf8")||"").split(",").filter(Boolean));
+            const pending=fs.readFileSync("/tmp/allmigs.txt","utf8").split("\n").filter(Boolean)
+              .filter(f=>!applied.has(f.split("/").pop().split("_")[0]));
+            fs.writeFileSync("/tmp/pending.txt",pending.join("\n")+"\n");
+            console.log("  pending: "+pending.length);
+          NODE
+          OK=0; FAIL=0
+          while IFS= read -r F; do
+            [ -z "$F" ] && continue
+            V=$(basename "$F" | cut -d_ -f1)
+            RESP=$(cat "$F" | q 2>/dev/null | head -c 400)
+            if echo "$RESP" | grep -qE '"message"|error|Error'; then
+              echo "  FAIL $V $(basename "$F"): $(echo "$RESP" | head -c 160)"
+              FAIL=$((FAIL+1))
+            else
+              echo "insert into supabase_migrations.schema_migrations(version,statements,name) values('$V',null,'$(basename "$F" .sql)') on conflict (version) do nothing" | q >/dev/null 2>&1 || true
+              echo "  OK   $V"
+              OK=$((OK+1))
+            fi
+          done < /tmp/pending.txt
+          echo "  === migration apply: $OK ok, $FAIL failed ==="
+
+      - name: "Fix: staging DB password reset + DSN rewrite + repo secret"
+        if: inputs.fix_staging_db_password && inputs.environment == 'staging'
+        env:
+          SB_MGMT: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SB_REF: ${{ secrets.SUPABASE_STAGING_PROJECT_ID }}
+          GH_REPO: ${{ github.repository }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          set -uo pipefail
+          SKIP="--skip-deploys"
+          export NEWPW="mig_$(openssl rand -hex 24)"
+          node -e 'const q=require("fs").readFileSync(0,"utf8");process.stdout.write(JSON.stringify({query:q}))' <<SQL \
+            | curl -sS -m 60 "https://api.supabase.com/v1/projects/$SB_REF/database/query" \
+              -H "Authorization: Bearer $SB_MGMT" -H 'content-type: application/json' -d @- | head -c 300; echo
+            ALTER ROLE postgres WITH PASSWORD '${NEWPW}';
+          SQL
+          # Rebuild backend DATABASE_URL with the new password — parse host/user/db
+          # from the CURRENT var, swap only the password (value never printed).
+          railway variable list --service backend --environment staging \
+            --project "$PROJECT" --json > dsn.json || { echo "  could not read backend vars"; exit 0; }
+          node -e '
+            const fs=require("fs");
+            const v=JSON.parse(fs.readFileSync("dsn.json","utf8"));
+            const pw=process.env.NEWPW;
+            for (const k of ["DATABASE_URL","DIRECT_URL","SUPABASE_DB_URL","SUPABASE_DIRECT_URL"]) {
+              const raw=v[k]; if(!raw) continue;
+              try{
+                const u=new URL(String(raw));
+                u.password=encodeURIComponent(pw);
+                fs.appendFileSync("newdsn.env", k+"\t"+u.toString()+"\n");
+              }catch{ console.log("  "+k+": unparseable — left unchanged"); }
+            }' 
+          rm -f dsn.json
+          if [ -f newdsn.env ]; then
+            while IFS=$'\t' read -r K V; do
+              printf "%s" "$V" | railway variable set "$K" --stdin --service backend \
+                --environment staging --project "$PROJECT" $SKIP >/dev/null \
+                && echo "  backend $K password rotated" || echo "  WARN: $K write failed"
+            done < newdsn.env
+            rm -f newdsn.env
+          fi
+          # Verify the new password actually authenticates (rebuild the DSN with
+          # it in node; the value is never echoed).
+          railway variable list --service backend --environment staging \
+            --project "$PROJECT" --json > dsn2.json || true
+          node -e '
+            const fs=require("fs");
+            const v=JSON.parse(fs.readFileSync("dsn2.json","utf8"));
+            if(v.DATABASE_URL){const u=new URL(v.DATABASE_URL);u.password=process.env.NEWPW;fs.writeFileSync("testdsn.txt",u.toString());}' 
+          if [ -f testdsn.txt ]; then
+            psql "$(cat testdsn.txt)" -c "select 1" >/dev/null 2>&1 \
+              && echo "  VERIFY OK: new password authenticates" \
+              || echo "  VERIFY FAILED: new password does not authenticate"
+            rm -f testdsn.txt
+          fi
+          rm -f dsn2.json
+          echo "$NEWPW" | gh secret set SUPABASE_STAGING_DB_PASSWORD --repo "$GH_REPO" 2>/dev/null \
+            && echo "  repo secret SUPABASE_STAGING_DB_PASSWORD updated" \
+            || echo "  WARN: secret update failed (token may lack admin scope — owner updates it)"
+          railway redeploy --service backend --environment staging --project "$PROJECT" --yes >/dev/null \
+            && echo "  staging backend redeploy triggered" || true
+
+      # Runs inside a production-scoped job (input environment=production) but
+      # reads staging with the repo-level staging token. Guarded by env below so
+      # a staging inspect run can never write production.
       - name: Copy staging vars -> production (per service, env-specific excluded)
         if: inputs.copy_staging_to_prod && inputs.environment == 'production'
         env:
