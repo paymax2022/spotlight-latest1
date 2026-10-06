@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -76,6 +77,14 @@ func (r *Repository) InsertProfile(ctx context.Context, userID string, entityTyp
 }
 
 func (r *Repository) GetProfile(ctx context.Context, id string) (*BusinessProfile, error) {
+	// UUID-shape gate: business_profiles.id is uuid — a malformed id can never
+	// resolve, so answer ErrNotFound (the same as a missing row) instead of
+	// letting Postgres's 22P02 syntax error surface as a 500 through every
+	// :id entry point (GetOne/status/certificate/submit/pay-fee/admin) — this
+	// repository method is the funnel they all reach (E2E wave-6 prod probe).
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, ErrNotFound
+	}
 	p, err := scanProfile(r.db.QueryRow(ctx, `SELECT `+profileCols+` FROM business_profiles WHERE id = $1`, id))
 	if err != nil {
 		return nil, err

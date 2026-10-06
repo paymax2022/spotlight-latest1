@@ -1,7 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { featureFlags } from '@/src/lib/feature-flags';
 
 export async function POST(request: NextRequest) {
   try {
+    // Flag gate FIRST — the whole /api/v1/doctor/* module is unmounted in Go
+    // when FEATURE_DOCTOR_ENABLED is off. Answering validation errors here
+    // while every sibling 404s leaks that this leaf exists (error-shape
+    // enumeration) and invites traffic against a dead upstream.
+    if (!featureFlags.doctor()) {
+      return NextResponse.json(
+        { error: 'This service is not available.' },
+        { status: 503 }
+      );
+    }
     const body = await request.json().catch(() => null);
     if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     const { bank_code, account_number, bank_name } = body;

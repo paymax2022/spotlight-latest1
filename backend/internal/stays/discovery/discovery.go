@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/ginutil"
@@ -421,6 +422,13 @@ func (h *Handler) RemoveSavedGuest(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
+	// UUID-shape gate: stays_saved_guests.id is uuid — a malformed id can never
+	// match a row, so answer not-found rather than letting Postgres's 22P02
+	// syntax error surface as a 500 (E2E wave-6 prod probe).
+	if _, err := uuid.Parse(id); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{keyError: "saved guest not found"})
+		return
+	}
 	if _, err := h.db.Exec(c.Request.Context(),
 		`DELETE FROM public.stays_saved_guests WHERE user_id=$1 AND id=$2`, uid, id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})

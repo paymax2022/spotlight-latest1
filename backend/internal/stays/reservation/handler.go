@@ -86,6 +86,8 @@ func (h *Handler) enrich(ctx context.Context, res *Reservation) reservationView 
 // mapErr maps service sentinel errors to HTTP responses (PRD §28 error taxonomy).
 func mapErr(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "reservation not found"})
 	case errors.Is(err, ErrForbidden):
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 	case errors.Is(err, ErrConsentRequired):

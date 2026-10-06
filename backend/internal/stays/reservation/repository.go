@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -170,10 +171,21 @@ func (r *Repository) setIdempotencyKey(ctx context.Context, id, key string, expe
 	return nil
 }
 
-// Get returns a reservation by id.
+// Get returns a reservation by id. ErrNotFound for a missing row AND for a
+// malformed (non-UUID) id — stays_reservation.id is uuid, so a malformed value
+// can never resolve; answering not-found here keeps Postgres's 22P02 syntax
+// error from surfacing as a 500 through every caller of this funnel
+// (member GET/voucher/cancel/modify all reach svc.Get → repo.Get).
 func (r *Repository) Get(ctx context.Context, id string) (*Reservation, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, ErrNotFound
+	}
 	row := r.db.QueryRow(ctx, `SELECT `+resCols+` FROM public.stays_reservation WHERE id = $1`, id)
-	return scanReservation(row)
+	res, err := scanReservation(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return res, err
 }
 
 // ListByUser returns the caller's reservations newest-first.

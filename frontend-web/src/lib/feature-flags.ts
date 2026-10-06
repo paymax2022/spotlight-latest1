@@ -139,6 +139,13 @@ export const featureFlags = {
   /** P3 Lane G — Telemedicine: doctors, appointments, prescriptions */
   telemedicine: () => envFlag('FEATURE_TELEMEDICINE_ENABLED'),
 
+  /** Provider-facing doctor console (/api/v1/doctor/*) — MIRRORS the Go
+   * backend's FEATURE_DOCTOR_ENABLED, which unmounts the whole surface when
+   * off. BFF leaf routes under that prefix must check this or they answer
+   * validation errors on a dark module (error-shape oracle) while every
+   * sibling path correctly 404s upstream. */
+  doctor: () => envFlag('FEATURE_DOCTOR_ENABLED'),
+
   /** Transport — ride-hailing: drivers, trips, fare settlement */
   transport: () => envFlag('FEATURE_TRANSPORT_ENABLED'),
 
