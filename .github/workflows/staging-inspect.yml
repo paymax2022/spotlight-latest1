@@ -421,7 +421,7 @@ jobs:
               echo "  redeploy failed, trying deploymentTriggerCreate for $SVC ($SID)"
               RESP="$(node -e '
                 const body = JSON.stringify({
-                  query: "mutation($i:DeploymentTriggerInput!){ deploymentTriggerCreate(input:$i){ id } }",
+                  query: "mutation($i:DeploymentTriggerCreateInput!){ deploymentTriggerCreate(input:$i){ id } }",
                   variables: { i: { projectId: process.env.PROJECT, environmentId: process.argv[1], serviceId: process.argv[2] } },
                 });
                 fetch("https://backboard.railway.app/graphql/v2", {
