@@ -33,7 +33,7 @@ export async function GET(request: Request) {
       .find((r) => r.error)?.error;
     if (firstError) {
       console.error('[admin/academy/curriculum] load failed', firstError);
-      return errorResponse(firstError.message, 500);
+      return errorResponse('Failed to load curriculum', 500);
     }
 
     return successResponse({
@@ -117,7 +117,7 @@ export async function POST(request: Request) {
 
         if (error) {
           console.error('[admin/academy/curriculum] assignment insert failed', error);
-          return errorResponse(error.message, 500);
+          return errorResponse('Failed to create assignment', 500);
         }
         return successResponse({ success: true, assignment: data });
       }

@@ -56,7 +56,7 @@ describe('SEC-008: /api/votes/free rate limiter throttles past 30 req/min per IP
     const statuses: number[] = [];
     for (let i = 0; i < 31; i++) {
       const req = makeRequest('/api/votes/free', {
-        body: { contestId: 'contest-001', contestantId: 'contestant-abc' },
+        body: { contestId: '00000000-0000-4000-8000-000000000001', contestantId: '00000000-0000-4000-8000-000000000002' },
         ip,
       });
       const res = await POST(req);
@@ -73,13 +73,13 @@ describe('SEC-008: /api/votes/free rate limiter throttles past 30 req/min per IP
 
     for (let i = 0; i < 31; i++) {
       await POST(makeRequest('/api/votes/free', {
-        body: { contestId: 'contest-001', contestantId: 'contestant-abc' },
+        body: { contestId: '00000000-0000-4000-8000-000000000001', contestantId: '00000000-0000-4000-8000-000000000002' },
         ip: hotIp,
       }));
     }
 
     const res = await POST(makeRequest('/api/votes/free', {
-      body: { contestId: 'contest-001', contestantId: 'contestant-abc' },
+      body: { contestId: '00000000-0000-4000-8000-000000000001', contestantId: '00000000-0000-4000-8000-000000000002' },
       ip: coldIp,
     }));
     expect(res.status).toBe(200);

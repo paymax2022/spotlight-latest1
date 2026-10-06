@@ -93,7 +93,12 @@ export async function initiateUtilityPaystackPayment(input: {
     metadata: input.metadata ?? {},
   });
 
-  if (insertError) throw new ApiError(`Failed to create Paystack utility intent: ${insertError.message}`, 500);
+  if (insertError) {
+    // ApiError's message reaches the client — log the PostgREST detail
+    // server-side, never embed it.
+    console.error('[utility/paystack] intent insert failed:', insertError.message);
+    throw new ApiError('Failed to create Paystack utility intent', 500);
+  }
 
   const authorizationUrl = await initializePaystackPayment({
     reference: paymentReference,

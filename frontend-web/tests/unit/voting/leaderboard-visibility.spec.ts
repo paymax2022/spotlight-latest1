@@ -80,10 +80,10 @@ function entry(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 function ctx() {
-  return { params: Promise.resolve({ contestId: 'contest-1' }) };
+  return { params: Promise.resolve({ contestId: '00000000-0000-4000-8000-000000000001' }) };
 }
 function request() {
-  return new Request('http://localhost/api/leaderboard/contest-1', { method: 'GET' });
+  return new Request('http://localhost/api/leaderboard/00000000-0000-4000-8000-000000000001', { method: 'GET' });
 }
 
 describe('GET /api/leaderboard/[contestId] — phase-aware visibility (D-005)', () => {

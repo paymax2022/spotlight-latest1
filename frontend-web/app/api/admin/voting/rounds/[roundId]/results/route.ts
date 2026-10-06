@@ -22,7 +22,10 @@ export async function GET(request: Request, ctx: RouteContext) {
       .eq('round_id', roundId)
       .order('rank', { ascending: true });
 
-    if (error) return errorResponse(`Failed to load results: ${error.message}`, 500);
+    if (error) {
+      console.error('[admin/voting/rounds/results GET]', error.message);
+      return errorResponse('Failed to load results', 500);
+    }
 
     if (!rows || rows.length === 0) {
       return successResponse({ success: true, results: [], published: false });

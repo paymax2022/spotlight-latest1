@@ -355,6 +355,7 @@ describe('initiatePaidVote (real logic, mocked Supabase) — PV-012 currency/pri
           error: null,
         },
       ],
+      contestants: [{ data: { id: 'contestant-A' }, error: null }],
       vote_transactions: [{ data: { id: 'tx-usd-1' }, error: null }],
     });
     vi.mocked(createAdminClient).mockReturnValue(client);
@@ -414,6 +415,7 @@ describe('initiatePaidVote (real logic, mocked Supabase) — PV-012 currency/pri
           error: null,
         },
       ],
+      contestants: [{ data: { id: 'contestant-A' }, error: null }],
       vote_transactions: [{ data: { id: 'tx-outage-1' }, error: null }],
     });
     vi.mocked(createAdminClient).mockReturnValue(outageClient);
@@ -448,6 +450,7 @@ describe('initiatePaidVote (real logic, mocked Supabase) — PV-012 currency/pri
           error: null,
         },
       ],
+      contestants: [{ data: { id: 'contestant-A' }, error: null }],
       vote_transactions: [{ data: { id: 'tx-outage-2' }, error: null }],
     });
     vi.mocked(createAdminClient).mockReturnValue(retryClient);

@@ -18,8 +18,7 @@ export async function POST(
 
     let checkerNote: string | undefined;
     try {
-      const body = (await request.json().catch(() => null)) as { note?: string };
-      if (!body) return errorResponse('Invalid JSON body', 400);
+      const body = (await request.json().catch(() => null)) as { note?: string } | null;
       checkerNote = body?.note;
     } catch {
       // No body / empty body is fine — checkerNote is optional on approve.

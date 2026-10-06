@@ -132,6 +132,7 @@ export async function POST(request: Request) {
       message: 'Login successful',
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err?.message ?? 'Login failed' }, { status: 500 });
+    console.error('[auth/login]', err);
+    return NextResponse.json({ error: 'Login failed' }, { status: 500 });
   }
 }

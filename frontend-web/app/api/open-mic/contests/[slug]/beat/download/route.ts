@@ -57,9 +57,6 @@ export async function POST(request: Request, context: { params: { slug: string }
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {
       return errorResponse('Authentication required', 401);
     }
-    const message = error instanceof Error ? error.message : 'Failed to log beat download';
-    if (/paid entry|payment/i.test(message)) return errorResponse(message, 400);
-    if (/locked|not yet approved|window/i.test(message)) return errorResponse(message, 403);
-    return handleApiError(new Error(message), message);
+    return handleApiError(error, 'Failed to log beat download');
   }
 }

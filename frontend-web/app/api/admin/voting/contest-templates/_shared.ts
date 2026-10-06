@@ -95,7 +95,10 @@ export async function hasContestantSlot(templateId: string): Promise<boolean> {
     .limit(1);
 
   if (error) {
-    throw new ApiError(`Failed to check template slots: ${error.message}`, 500);
+    // ApiError's message IS the client-facing text — a PostgREST message here
+    // would reach the response body verbatim.
+    console.error('[admin/voting/contest-templates] slot check failed:', error.message);
+    throw new ApiError('Failed to check template slots', 500);
   }
   return Boolean(data && data.length > 0);
 }

@@ -95,7 +95,10 @@ export async function publishContestToVotingPlane(
 
   if (findErr) {
     console.error('[publish-to-voting] slug lookup failed', { slug: def.slug, error: findErr.message });
-    return { published: false, reason: 'failed', detail: findErr.message };
+    // No PostgREST text in `detail` — the caller embeds this object verbatim in
+    // the admin response body, and findErr.message carries SQLSTATE/schema
+    // internals. reason:'failed' plus the server log is enough.
+    return { published: false, reason: 'failed' };
   }
 
   if (existing) {
@@ -122,7 +125,7 @@ export async function publishContestToVotingPlane(
     const { error } = await supabase.from('contests').update(safeUpdate).eq('id', id);
     if (error) {
       console.error('[publish-to-voting] update failed', { slug: def.slug, error: error.message });
-      return { published: false, reason: 'failed', detail: error.message };
+      return { published: false, reason: 'failed' };
     }
     return { published: true, contestId: id, created: false };
   }
@@ -130,7 +133,7 @@ export async function publishContestToVotingPlane(
   const { data, error } = await supabase.from('contests').insert(payload).select('id').single();
   if (error || !data) {
     console.error('[publish-to-voting] insert failed', { slug: def.slug, error: error?.message });
-    return { published: false, reason: 'failed', detail: error?.message };
+    return { published: false, reason: 'failed' };
   }
   return { published: true, contestId: (data as { id: string }).id, created: true };
 }

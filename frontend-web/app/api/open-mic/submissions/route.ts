@@ -82,12 +82,6 @@ export async function POST(request: Request) {
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {
       return errorResponse('Authentication required', 401);
     }
-    const message =
-      (error instanceof Error ? error.message : undefined) ||
-      (typeof error === 'object' && error && 'message' in error && typeof (error as any).message === 'string'
-        ? (error as any).message
-        : undefined) ||
-      'Failed to create song submission';
-    return handleApiError(new Error(message), message);
+    return handleApiError(error, 'Failed to create song submission');
   }
 }

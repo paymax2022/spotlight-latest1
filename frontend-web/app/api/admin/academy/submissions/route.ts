@@ -21,7 +21,7 @@ export async function GET(request: Request) {
     const { data, error } = await query.order('submitted_at', { ascending: false }).limit(200);
     if (error) {
       console.error('[admin/academy/submissions] list failed', error);
-      return errorResponse(error.message, 500);
+      return errorResponse('Failed to load submissions', 500);
     }
 
     return successResponse({ success: true, submissions: data ?? [] });
@@ -82,7 +82,7 @@ export async function PATCH(request: Request) {
 
     if (error) {
       console.error('[admin/academy/submissions] grade failed', error);
-      return errorResponse(error.message, 500);
+      return errorResponse('Failed to grade submission', 500);
     }
 
     return successResponse({ success: true, submissionId: body.submissionId, score });

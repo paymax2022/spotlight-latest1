@@ -29,7 +29,10 @@ export async function POST(request: Request, ctx: RouteContext) {
       .eq('id', roundId)
       .maybeSingle();
 
-    if (roundError) return errorResponse(`Failed to load round: ${roundError.message}`, 500);
+    if (roundError) {
+      console.error('[admin/voting/publish-results] round lookup:', roundError.message);
+      return errorResponse('Failed to load round', 500);
+    }
     if (!round) return errorResponse('Voting round not found', 404);
 
     if ((round as any).status === 'results_published') {

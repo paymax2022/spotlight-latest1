@@ -21,7 +21,10 @@ export async function GET(request: Request) {
       .eq('connect_contest_id', connectContestId)
       .order('position', { ascending: true });
 
-    if (error) return errorResponse(`Failed to load prizes: ${error.message}`, 500);
+    if (error) {
+      console.error('[admin/voting/contest-prizes GET]', error.message);
+      return errorResponse('Failed to load prizes', 500);
+    }
 
     return successResponse({ success: true, prizes: (data ?? []).map(mapPrizeRow) });
   } catch (error) {
@@ -86,7 +89,8 @@ export async function POST(request: Request) {
       if ((error as any).code === UNIQUE_VIOLATION) {
         return errorResponse(`A prize already exists for position ${body.position} on this contest`, 409);
       }
-      return errorResponse(`Failed to create prize: ${error.message}`, 500);
+      console.error('[admin/voting/contest-prizes POST]', error.message);
+      return errorResponse('Failed to create prize', 500);
     }
 
     return successResponse({ success: true, prize: mapPrizeRow(inserted) }, 201);
