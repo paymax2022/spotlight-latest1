@@ -6,6 +6,7 @@
 // Fail-closed: any fetch/lookup failure returns generic Spotlight OG tags
 // instead of breaking the page render.
 
+import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { createAdminClient } from '@/lib/supabase/server';
@@ -126,6 +127,9 @@ export async function generateMetadata({
   }
 }
 
+// The child page calls useSearchParams(); without a Suspense boundary the route
+// is excluded from prerendering and SSR'd on every request. The page file is a
+// protected Spotlight module, so the boundary lives here in the layout instead.
 export default function VoteContestantLayout({ children }: { children: ReactNode }) {
-  return <>{children}</>;
+  return <Suspense fallback={null}>{children}</Suspense>;
 }

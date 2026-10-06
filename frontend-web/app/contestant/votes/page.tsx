@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { Suspense, useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { authHeaders } from '@/src/lib/auth/client';
 import ShareToolkit from '@/components/voting/ShareToolkit';
@@ -26,7 +26,7 @@ interface TimelineEntry {
   total: number;
 }
 
-export default function ContestantVotesPage() {
+function ContestantVotesPageInner() {
   const searchParams = useSearchParams();
   const contestId = searchParams?.get('contestId') ?? '';
 
@@ -154,5 +154,15 @@ export default function ContestantVotesPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// useSearchParams requires a Suspense boundary or the route falls out of
+// prerendering and is SSR'd on every request.
+export default function ContestantVotesPage() {
+  return (
+    <Suspense fallback={null}>
+      <ContestantVotesPageInner />
+    </Suspense>
   );
 }
