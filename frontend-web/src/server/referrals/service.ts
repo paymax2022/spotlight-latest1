@@ -58,13 +58,49 @@ function escapeLikePattern(value: string): string {
 export async function getOrCreateCode(userId: string): Promise<string> {
   const supabase = createAdminClient();
 
-  const { data: existing } = await supabase
-    .from('finance_referral_codes')
-    .select('code')
-    .eq('user_id', userId)
-    .maybeSingle();
+  // E2E-FIN-044 counterpart: the Go engine's GetOrCreateLink adopts an OLDER
+  // finance_referral_codes row into referral_links — first-minted wins. Mirror
+  // it from this side: read BOTH code tables, and when the referral_links row
+  // is the older (or only) one its code is canonical — converge
+  // finance_referral_codes onto it so every surface (this endpoint, the Go
+  // dashboard, and the code resolvers) shows ONE code. Without this a user who
+  // touched the Go surface first got a second, divergent code minted here.
+  const [{ data: legacyData }, { data: linkData }] = await Promise.all([
+    supabase
+      .from('finance_referral_codes')
+      .select('code, created_at')
+      .eq('user_id', userId)
+      .maybeSingle(),
+    supabase
+      .from('referral_links')
+      .select('code, created_at')
+      .eq('referrer_id', userId)
+      .maybeSingle(),
+  ]);
+  const legacy = legacyData as { code: string; created_at: string } | null;
+  const link = linkData as { code: string; created_at: string } | null;
 
-  if (existing) return (existing as { code: string }).code;
+  if (link && (!legacy || new Date(link.created_at).getTime() < new Date(legacy.created_at).getTime())) {
+    if (legacy) {
+      // Best-effort convergence (a unique-code collision on the legacy table
+      // leaves the row untouched — the canonical code is returned regardless;
+      // and when the codes already match this update is a harmless no-op).
+      await supabase
+        .from('finance_referral_codes')
+        .update({ code: link.code })
+        .eq('user_id', userId);
+    } else {
+      // Backfill the legacy row so finance_referral_codes-only readers resolve
+      // this code too. ignoreDuplicates: a racing mint wins the insert and the
+      // canonical code is returned unchanged.
+      await supabase
+        .from('finance_referral_codes')
+        .upsert({ user_id: userId, code: link.code }, { onConflict: 'user_id', ignoreDuplicates: true });
+    }
+    return link.code;
+  }
+
+  if (legacy) return legacy.code;
 
   // Generate a unique code — retry on collision (extremely unlikely)
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -121,12 +157,23 @@ export async function getReferralSummary(userId: string): Promise<ReferralSummar
 
 export async function resolveCodeToReferrer(code: string): Promise<string | null> {
   const supabase = createAdminClient();
-  // REF-008: match case-INSENSITIVELY. Rows in finance_referral_codes may be
-  // stored in whatever case they were generated in before generateCode()
-  // above and its Go counterpart were unified onto one uppercase-only
-  // (and any typed in a different case than stored) permanently
-  // unresolvable. Mirrors the Go side's `WHERE UPPER(code) = UPPER($1)`.
   const normalized = code.trim();
+  if (!normalized) return null;
+  // REF-002 parity with the Go resolver (referrals.RewardService.resolveCode):
+  // the rewards engine's referral_links codes are checked FIRST (exact case —
+  // its generators only mint uppercase), then the legacy finance_referral_codes
+  // seed case-insensitively (REF-008: rows stored before the uppercase-only
+  // unification, and any typed in a different case than stored, were otherwise
+  // permanently unresolvable). A link-only code used to be invisible here —
+  // signups attributed to the house and outbox rewards skipped with
+  // code_not_found even though the code was real.
+  const { data: linkData } = await supabase
+    .from('referral_links')
+    .select('referrer_id')
+    .eq('code', normalized)
+    .maybeSingle();
+  const link = linkData as { referrer_id?: string } | null;
+  if (link?.referrer_id) return link.referrer_id;
   const { data } = await supabase
     .from('finance_referral_codes')
     .select('user_id')

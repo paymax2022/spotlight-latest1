@@ -1006,13 +1006,34 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
   let ownedVersion = (inserted as UtilityTransactionRow).updated_at;
 
   if (paymentSource === 'wallet') {
-    await debitWallet(userId, {
-      amountKobo: pricing.retailAmountKobo,
-      reference: receipt,
-      idempotencyKey: `utility:${transactionId}:DEBIT`,
-      description: `Utility payment ${receipt}`,
-      metadata: { utility_transaction_id: transactionId, category, biller: biller.code },
-    });
+    try {
+      await debitWallet(userId, {
+        amountKobo: pricing.retailAmountKobo,
+        reference: receipt,
+        idempotencyKey: `utility:${transactionId}:DEBIT`,
+        description: `Utility payment ${receipt}`,
+        metadata: { utility_transaction_id: transactionId, category, biller: biller.code },
+      });
+    } catch (debitError) {
+      // Go-plane parity (backend/internal/utilitybills PayUtility → markFailed):
+      // a wallet debit that refuses BEFORE anything reached a provider leaves no
+      // money outstanding, so close the row 'failed' NOW instead of leaving a
+      // phantom 'initiated' for the 10-minute stuck sweep — which also made a
+      // same-key replay report already_processed + 'initiated' for a payment
+      // that had definitively failed. settleFailedUtilityTransaction's CAS
+      // claim no-ops if a racing recovery/admin already owns the row, and its
+      // ledger-leg probe still reverses the debit when it posted ambiguously.
+      // Best-effort: a settle failure must never mask the real debit error the
+      // caller is owed.
+      const reason = debitError instanceof Error ? debitError.message : 'Wallet debit failed.';
+      try {
+        await settleFailedUtilityTransaction(inserted as UtilityTransactionRow, reason, { authoritative: true });
+      } catch (settleError) {
+        console.error('[utility] settle after wallet-debit failure threw:', settleError);
+      }
+      await addEvent(transactionId, 'wallet_debit_failed', reason);
+      throw debitError;
+    }
 
     const { data: debited } = await supabase.from('utility_transactions')
       .update({ status: 'wallet_debited', updated_at: new Date().toISOString() })
