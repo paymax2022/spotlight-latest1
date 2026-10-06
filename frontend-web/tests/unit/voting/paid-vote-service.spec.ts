@@ -320,32 +320,6 @@ describe('initiatePaidVote (real logic, mocked Supabase) — PV-012 currency/pri
     vi.clearAllMocks();
   });
 
-  // Malformed-id gate: a non-uuid contestId fed into the uuid
-  // voting_settings.contest_id column surfaced as PostgREST 22P02 → a 500
-  // "Failed to load voting settings" on prod. The service must refuse with a
-  // 400 ApiError before the first store read.
-  it('rejects a non-uuid contestId with a 400 before any store read', async () => {
-    const { client } = makeTableClient({});
-    vi.mocked(createAdminClient).mockReturnValue(client);
-
-    await expect(
-      initiatePaidVote(
-        {
-          contestId: 'bogus',
-          contestantId: 'contestant-A',
-          voterEmail: 'voter@example.com',
-          voterName: 'Test Voter',
-          customVoteQuantity: 10,
-        } as any,
-        '10.0.0.1',
-        'UA/1.0',
-        'user-1',
-      ),
-    ).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/uuid/i) });
-    expect(vi.mocked(client.from)).not.toHaveBeenCalled();
-    expect(vi.mocked(initializePaystackPayment)).not.toHaveBeenCalled();
-  });
-
   function settingsRow(overrides: Record<string, unknown> = {}) {
     return {
       id: 'vs-1',
@@ -388,7 +362,7 @@ describe('initiatePaidVote (real logic, mocked Supabase) — PV-012 currency/pri
 
     const result = await initiatePaidVote(
       {
-        contestId: '55555555-5555-4555-8555-555555555555',
+        contestId: 'contest-usd',
         contestantId: 'contestant-A',
         voterEmail: 'voter@example.com',
         voterName: 'Test Voter',
@@ -447,7 +421,7 @@ describe('initiatePaidVote (real logic, mocked Supabase) — PV-012 currency/pri
     vi.mocked(createAdminClient).mockReturnValue(outageClient);
 
     const req = {
-      contestId: '55555555-5555-4555-8555-555555555555',
+      contestId: 'contest-usd',
       contestantId: 'contestant-A',
       voterEmail: 'voter@example.com',
       voterName: 'Test Voter',

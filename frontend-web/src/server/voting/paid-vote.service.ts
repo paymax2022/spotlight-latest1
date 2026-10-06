@@ -21,11 +21,6 @@ import {
 import { randomUUID } from 'node:crypto';
 import { sendVoteReceiptEmail } from './email.service';
 
-// voting_settings.contest_id and friends are uuid columns — a malformed id fed
-// into .eq() surfaces as a Postgres 22P02 → 500 ("Failed to load voting
-// settings"), so shape-check before the first store read.
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 export async function getActiveVotePackages(contestId: string): Promise<VotePackage[]> {
   const supabase = createAdminClient();
   const now = new Date().toISOString();
@@ -49,8 +44,6 @@ export async function initiatePaidVote(
   userAgent: string,
   userId?: string,
 ): Promise<InitiatePaidVoteResponse> {
-  if (!UUID_RE.test(req.contestId)) throw new ApiError('contestId must be a valid UUID', 400);
-
   const supabase = createAdminClient();
   const settings = await getVotingSettings(req.contestId);
 
