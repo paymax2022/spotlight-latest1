@@ -58,6 +58,10 @@ on:
         description: 'PRODUCTION ONLY: verify SUPABASE_DB_PASSWORD against the pooler and rewrite backend DATABASE_URL with it if the check passes'
         type: boolean
         default: false
+      fix_staging_dsn:
+        description: 'STAGING ONLY: repair a malformed DATABASE_URL (e.g. empty region in aws-0-.pooler.supabase.com) by psql-probing candidate pooler regions/ports with the embedded DSN password + SUPABASE_STAGING_DB_PASSWORD; writes only a verified-working DSN'
+        type: boolean
+        default: false
       fix_staging_frontends:
         description: 'STAGING ONLY: set rootDirectory=frontend-web / frontend-admin on the two UI services (they currently build the repo-root Dockerfile = Go backend) and redeploy'
         type: boolean
@@ -967,6 +971,64 @@ jobs:
             || echo "  WARN: secret update failed (token may lack admin scope — owner updates it)"
           railway redeploy --service backend --environment staging --project "$PROJECT" --yes >/dev/null \
             && echo "  staging backend redeploy triggered" || true
+
+      # STAGING-ONLY DSN repair for the case where a previous rewrite left a
+      # malformed host (observed: aws-0-.pooler.supabase.com — empty region,
+      # DNS "could not translate"). The mgmt-API path above cannot run while
+      # SUPABASE_ACCESS_TOKEN is dead, so this probes candidate Supavisor
+      # pooler regions/ports directly with psql. Both plausible passwords are
+      # tried: the one embedded in the current DSN and the repo secret. Only a
+      # combination that actually authenticates is written. Values never
+      # printed — only region/port/password-source.
+      - name: "Fix: repair malformed staging DATABASE_URL (probe regions, verify-then-write)"
+        if: inputs.fix_staging_dsn && inputs.environment == 'staging'
+        env:
+          SB_DB_PW: ${{ secrets.SUPABASE_STAGING_DB_PASSWORD }}
+        run: |
+          set -uo pipefail
+          railway variable list --service backend --environment staging \
+            --project "$PROJECT" --json > be-cur.json || { echo "  cannot read staging backend vars"; exit 0; }
+          REF=$(node -e 'const v=JSON.parse(require("fs").readFileSync("be-cur.json","utf8"));
+            const s=String(v.SUPABASE_URL||"");
+            const m=s.match(/https?:\/\/([a-z0-9]+)\.supabase\.co/i);
+            console.log(m?m[1]:"")')
+          [ -n "$REF" ] || { echo "  ABORT: could not derive project ref from SUPABASE_URL"; exit 0; }
+          echo "  staging project ref derived from SUPABASE_URL"
+          # Candidate passwords: embedded in current DSN, then repo secret.
+          EMBED=$(node -e 'const v=JSON.parse(require("fs").readFileSync("be-cur.json","utf8"));
+            try{const u=new URL(String(v.DATABASE_URL||""));console.log(decodeURIComponent(u.password))}catch{console.log("")}')
+          rm -f be-cur.json
+          WIN=""
+          for PW_SRC in embedded secret; do
+            if [ "$PW_SRC" = embedded ]; then PW="$EMBED"; else PW="${SB_DB_PW:-}"; fi
+            [ -n "$PW" ] || continue
+            EPW=$(node -e 'console.log(encodeURIComponent(process.argv[1]))' "$PW")
+            for REGION in eu-west-1 eu-north-1 eu-west-2 eu-central-1 us-east-1 us-east-2 ap-southeast-1 ap-south-1; do
+              for PORT in 5432 6543; do
+                DSN="postgresql://postgres.${REF}:${EPW}@aws-0-${REGION}.pooler.supabase.com:${PORT}/postgres"
+                if PGCONNECT_TIMEOUT=8 psql "$DSN" -w -c 'select 1' >/dev/null 2>&1; then
+                  WIN="$DSN"; WIN_META="region=$REGION port=$PORT pw=$PW_SRC"
+                  break 3
+                fi
+                unset DSN
+              done
+            done
+          done
+          if [ -z "$WIN" ]; then
+            echo "  ABORT: no candidate DSN authenticated — neither embedded password nor repo secret works on any probed pooler"
+            unset EMBED SB_DB_PW
+            exit 0
+          fi
+          echo "  verified working DSN: $WIN_META"
+          printf '%s' "$WIN" | railway variable set DATABASE_URL --stdin \
+            --service backend --environment staging --project "$PROJECT" \
+            --skip-deploys >/dev/null \
+            && echo "  backend DATABASE_URL repaired (verified before write)" \
+            || echo "  WARN: DATABASE_URL write failed"
+          railway redeploy --service backend --environment staging \
+            --project "$PROJECT" --yes >/dev/null \
+            && echo "  staging backend redeploy triggered" || true
+          unset WIN EMBED SB_DB_PW
 
       # Copies staging variables into production per service. Both tokens are
       # repo-level secrets, so this step can run under ANY environment binding
