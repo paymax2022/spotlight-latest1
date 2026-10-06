@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/internal/domain"
+	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/otp"
 	"spotlight/backend/internal/services"
 )
@@ -22,6 +25,7 @@ type stubAuthService struct {
 	loginOut  map[string]any
 	loginErr  error
 	logoutErr error
+	cpErr     error
 
 	mu            sync.Mutex
 	registerCalls int
@@ -64,7 +68,7 @@ func (s *stubAuthService) ChangePassword(context.Context, string, string, string
 	return nil
 }
 func (s *stubAuthService) CompleteProfile(context.Context, string, string, map[string]any) error {
-	return nil
+	return s.cpErr
 }
 
 // noopAudit is declared in session_handler_test.go and reused here.
@@ -209,6 +213,70 @@ func TestRegisterDoesNotIssueWhenRegistrationFails(t *testing.T) {
 	}
 	if n := len(issuer.recorded()); n != 0 {
 		t.Errorf("a code was sent for a failed registration (%d call(s)) — that tells the caller the address is taken", n)
+	}
+}
+
+// THE oracle fix. When the address is already registered the service returns a
+// decoy result (AlreadyExisted) — the response must be indistinguishable from
+// a fresh unverified signup: same 201, same body shape, and a code still goes
+// out (the message claims one was emailed, and a real owner who forgot they
+// registered can use it to get in). Only the internal side effects differ:
+// no referral attribution against the fabricated id.
+func TestRegisterDecoyAnswersLikeAFreshSignup(t *testing.T) {
+	issuer := &recordingIssuer{}
+	auth := &stubAuthService{result: &services.RegisterResult{
+		UserID: "00000000-decoy-4000-8000-000000000000", Email: "taken@example.com", AlreadyExisted: true,
+	}}
+	gin.SetMode(gin.TestMode)
+	h := NewAuthHandler(auth, nil, noopAudit{})
+	h.WithOTPIssuer(issuer.fn())
+	var attributed []string
+	h.WithReferralAttribution(func(_ context.Context, userID, code string) error {
+		attributed = append(attributed, userID)
+		return nil
+	})
+	r := gin.New()
+	r.POST("/api/auth/register", h.Register)
+
+	w := post(t, r, "/api/auth/register", registerBody())
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 — a taken address must look like a fresh signup", w.Code)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["success"] != true || body["needsVerification"] != true {
+		t.Errorf("body = %v, want the fresh-unverified-signup shape", body)
+	}
+	if n := len(attributed); n != 0 {
+		t.Errorf("referral attributed %d times for a decoy — the user id is fabricated", n)
+	}
+	if n := len(issuer.recorded()); n != 1 {
+		t.Errorf("issuer called %d times, want 1 — the decoy promises an emailed code", n)
+	}
+}
+
+// A PostgREST write failure arrives wrapped in ErrProfileStoreFailed, whose
+// message embeds the PostgREST error body — table, column and constraint
+// names. The handler must answer a generic error; echoing it leaked schema
+// internals to any caller (E2E err-leak).
+func TestCompleteProfileSanitizesStorageErrors(t *testing.T) {
+	auth := &stubAuthService{cpErr: fmt.Errorf("%w: %s", services.ErrProfileStoreFailed,
+		`supabase REST POST profiles failed: 400: {"code":"23505","message":"duplicate key value violates unique constraint \"profiles_pkey\""}`)}
+	gin.SetMode(gin.TestMode)
+	h := NewAuthHandler(auth, nil, noopAudit{})
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set(middleware.AuthUserContextKey, domain.AuthenticatedUser{ID: "u1"})
+		c.Next()
+	})
+	r.POST("/complete-profile", h.CompleteProfile)
+
+	w := post(t, r, "/complete-profile", map[string]any{"profileType": "artist"})
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "profiles") || strings.Contains(w.Body.String(), "23505") {
+		t.Fatalf("response echoes PostgREST internals: %s", w.Body.String())
 	}
 }
 

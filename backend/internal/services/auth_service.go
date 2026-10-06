@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/integrations"
@@ -62,6 +64,14 @@ type RegisterResult struct {
 	// projects require — and the caller must then send the user to enter a code.
 	AccessToken  string
 	RefreshToken string
+	// AlreadyExisted marks a DECOY result: the address already has an account
+	// and GoTrue said so outright. The caller must receive exactly what a fresh
+	// unverified signup receives — a distinguishable answer is an account-
+	// existence oracle — so UserID is a fabricated uuid and the handler renders
+	// the identical body while skipping the side effects that only make sense
+	// for a real new account (referral attribution against the fake id, a
+	// "register.success" audit row).
+	AlreadyExisted bool `json:"-"`
 }
 
 // NeedsVerification reports whether the account still has to confirm an emailed
@@ -101,6 +111,24 @@ func parseSignupResponse(body []byte) *RegisterResult {
 
 // extractSignupUserID is retained for callers that only need the id.
 func extractSignupUserID(body []byte) string { return parseSignupResponse(body).UserID }
+
+// isSignupTakenError recognises GoTrue's "the email already has an account"
+// answers. /auth/v1/admin/users replies 422 with error_code "email_exists"
+// (older builds used "user_already_exists", and some only fill the msg text).
+// /auth/v1/signup never reaches here — with confirmations on it returns an
+// obfuscated user and a 200, which is the same decoy this detection restores.
+func isSignupTakenError(code string, msgs ...string) bool {
+	switch strings.ToLower(code) {
+	case "email_exists", "user_already_exists":
+		return true
+	}
+	for _, m := range msgs {
+		if strings.Contains(strings.ToLower(m), "already been registered") {
+			return true
+		}
+	}
+	return false
+}
 
 // ErrSignupDisabled is returned when the project has closed new sign-ups and the
 // admin creation path — which GoTrue does not gate for us — refuses on its behalf.
@@ -178,8 +206,30 @@ func (s *authService) RegisterUser(ctx context.Context, in domain.RegisterReques
 	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		// The handler does not echo this: a distinguishable "already registered"
-		// would be an account-enumeration oracle.
+		var up struct {
+			ErrorCode string `json:"error_code"`
+			Msg       string `json:"msg"`
+			Message   string `json:"message"`
+		}
+		_ = json.Unmarshal(respBody, &up)
+
+		// "This address is taken" is the one verdict the caller must never
+		// receive: a distinct status is an account-existence oracle. The
+		// supabase-js registration this endpoint replaced never leaked it —
+		// GoTrue's /signup answers a duplicate with an obfuscated user and a
+		// 200 — but the silent admin path answers 422/email_exists instead,
+		// which is exactly what re-opened the oracle. Convert the definitive
+		// signal into a decoy the handler renders like a fresh unverified
+		// signup. Every other failure keeps the generic refusal.
+		if isSignupTakenError(up.ErrorCode, up.Msg, up.Message) {
+			return &RegisterResult{UserID: uuid.NewString(), Email: email, AlreadyExisted: true}, nil
+		}
+		// A closed project is a policy fact, not a fact about this address —
+		// surface it as signup_disabled rather than the generic refusal. The
+		// admin path refuses earlier via /settings; this covers /signup.
+		if strings.EqualFold(up.ErrorCode, "signup_disabled") {
+			return nil, ErrSignupDisabled
+		}
 		return nil, fmt.Errorf("registration failed: %d", resp.StatusCode)
 	}
 
@@ -532,6 +582,12 @@ var allowedProfileTypes = map[string]bool{
 	"general_applicant": true, "general": true,
 }
 
+// ErrProfileStoreFailed wraps a PostgREST write failure from CompleteProfile.
+// The wrapped message embeds the PostgREST error body — table, column and
+// constraint names — which must never reach a client; handlers answer this
+// with a generic error and keep the detail in logs.
+var ErrProfileStoreFailed = errors.New("profile could not be stored")
+
 // profileMetadataAdminKeys are keys whose values only an admin path may set —
 // a caller self-asserting them is a privilege claim (E2E-SEC-060 flagged
 // program_id, which admin surfaces read back).
@@ -558,7 +614,10 @@ func (s *authService) CompleteProfile(ctx context.Context, userID string, profil
 		"metadata":         metadata,
 		"completion_score": 100,
 	}
-	return s.supabase.REST(ctx, http.MethodPost, "profiles", map[string]string{}, payload, nil)
+	if err := s.supabase.REST(ctx, http.MethodPost, "profiles", map[string]string{}, payload, nil); err != nil {
+		return fmt.Errorf("%w: %w", ErrProfileStoreFailed, err)
+	}
+	return nil
 }
 
 type platformUser struct {
