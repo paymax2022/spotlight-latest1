@@ -42,6 +42,10 @@ on:
         description: 'STAGING ONLY: set rootDirectory=frontend-web / frontend-admin on the two UI services (they currently build the repo-root Dockerfile = Go backend) and redeploy'
         type: boolean
         default: false
+      fix_env_parity:
+        description: 'Apply the staging->prod baseline fixes: sync FEATURE_* + APP_ENV onto backend, set VOTES_BRIDGE_ENABLED on frontend-web, apply missing bridge/otp DDL via Supabase Management API, and READ the GoTrue auth config (signup budget) for diagnosis. Values are never printed.'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -434,6 +438,105 @@ jobs:
             fi
           done
           rm -f ids.txt ids2.txt
+
+      # ── fix_env_parity ────────────────────────────────────────────────────
+      # Replicates the staging-proven environment onto the TARGET environment.
+      # Safe by construction: FEATURE_* are booleans, APP_ENV is set to the
+      # target name literally, and no credential values are copied or printed.
+      - name: "Fix: VOTES_BRIDGE_ENABLED on frontend-web"
+        if: inputs.fix_env_parity
+        run: |
+          set -uo pipefail
+          # frontend-web runs the /api/v2/votes/free Next.js route; without this
+          # flag bridgedCastFreeVote falls through to legacy castFreeVote, which
+          # performs NO idempotency dedup (replay = second vote counted).
+          railway variable set VOTES_BRIDGE_ENABLED=true \
+            --service frontend-web --environment "$ENVIRONMENT" --project "$PROJECT" \
+            && echo "  VOTES_BRIDGE_ENABLED=true set on frontend-web ($ENVIRONMENT) — triggers redeploy"
+
+      - name: "Fix: sync FEATURE_* + APP_ENV onto backend (from staging)"
+        if: inputs.fix_env_parity
+        env:
+          RAILWAY_TOKEN_STG: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: |
+          set -uo pipefail
+          # Read staging backend's var map with the STAGING token (project tokens
+          # are environment-scoped), then write the same FEATURE_* set onto the
+          # TARGET backend with this run's token. When the target IS staging the
+          # loop is a no-op (values identical), which is fine.
+          RAILWAY_TOKEN="$RAILWAY_TOKEN_STG" railway variable list \
+            --service backend --environment staging --project "$PROJECT" \
+            --json > stg-be.json || { echo "  could not read staging backend vars"; exit 0; }
+          node -e '
+            const v = JSON.parse(require("fs").readFileSync("stg-be.json","utf8"));
+            const names = Object.keys(v).filter(k => /^FEATURE_[A-Z0-9_]+$/.test(k));
+            require("fs").writeFileSync("flags.env",
+              names.map(k => k + "\t" + String(v[k])).join("\n") + "\n");
+            console.log("  staging backend FEATURE_* count: " + names.length);'
+          rm -f stg-be.json
+          # APP_ENV is the target's own name — never copied across environments.
+          railway variable set APP_ENV="$ENVIRONMENT" \
+            --service backend --environment "$ENVIRONMENT" --project "$PROJECT" \
+            && echo "  APP_ENV=$ENVIRONMENT set on backend"
+          COUNT=0
+          while IFS=$'\t' read -r NAME VAL; do
+            [ -z "$NAME" ] && continue
+            # Booleans only: refuse to write anything that is not true/false so
+            # a credential can never travel through this path.
+            case "$VAL" in true|false) ;; *) echo "  skip $NAME (non-boolean value)"; continue;; esac
+            if railway variable set "$NAME"="$VAL" \
+              --service backend --environment "$ENVIRONMENT" --project "$PROJECT" >/dev/null; then
+              COUNT=$((COUNT+1))
+            else
+              echo "  failed to set $NAME"
+            fi
+          done < flags.env
+          rm -f flags.env
+          echo "  applied $COUNT FEATURE_* flags to backend ($ENVIRONMENT)"
+
+      - name: "Diag: GoTrue auth config (read-only; signup policy + rate budgets)"
+        if: inputs.fix_env_parity
+        env:
+          SB_MGMT: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SB_REF: ${{ inputs.environment == 'production' && secrets.SUPABASE_PROJECT_ID || secrets.SUPABASE_STAGING_PROJECT_ID }}
+        run: |
+          set -uo pipefail
+          [ -n "$SB_MGMT" ] && [ -n "$SB_REF" ] || { echo "  management token or project ref missing"; exit 0; }
+          curl -sS -m 30 "https://api.supabase.com/v1/projects/$SB_REF/config/auth" \
+            -H "Authorization: Bearer $SB_MGMT" | node -e '
+            let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{
+              let j; try{j=JSON.parse(d)}catch{console.log("  auth config response not JSON:",d.slice(0,200));process.exit(0)}
+              // Print ONLY the signup/rate/mailer-relevant fields — never secrets.
+              const keys=["disable_signup","external_email_enabled","mailer_autoconfirm",
+                "enable_signup","rate_limit_sign_in_sign_ups","rate_limit_email_sent",
+                "rate_limit_anonymous_users","rate_limit_token_refresh","smtp_admin_email",
+                "smtp_host","smtp_port","smtp_user","mailer_secure_email_change_enabled"];
+              const out={};
+              for (const k of Object.keys(j)) {
+                if (keys.includes(k)) out[k]=j[k];
+                else if (/rate_limit|signup|mailer|smtp/i.test(k) && !/pass|secret|key|token/i.test(k)) out[k]=j[k];
+              }
+              console.log(JSON.stringify(out,null,1).slice(0,3000));
+            });'
+
+      - name: "Fix: apply missing bridge/otp DDL via Management API"
+        if: inputs.fix_env_parity
+        env:
+          SB_MGMT: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SB_REF: ${{ inputs.environment == 'production' && secrets.SUPABASE_PROJECT_ID || secrets.SUPABASE_STAGING_PROJECT_ID }}
+        run: |
+          set -uo pipefail
+          [ -n "$SB_MGMT" ] && [ -n "$SB_REF" ] || { echo "  management token or project ref missing"; exit 0; }
+          q() { curl -sS -m 60 "https://api.supabase.com/v1/projects/$SB_REF/database/query" \
+            -H "Authorization: Bearer $SB_MGMT" -H 'content-type: application/json' -d "{\"query\":\"$1\"}"; }
+          echo "--- presence check ---"
+          q "select to_regclass('public.bridge_idempotency_keys') as bik, to_regclass('public.bridge_outbox') as bo, to_regclass('public.otp_codes') as oc" | head -c 400; echo
+          echo "--- applying DDL (IF NOT EXISTS — additive only) ---"
+          q "CREATE TABLE IF NOT EXISTS public.bridge_idempotency_keys (key text PRIMARY KEY, response jsonb NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now());" | head -c 300; echo
+          q "CREATE TABLE IF NOT EXISTS public.bridge_outbox (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), event_type text NOT NULL, payload jsonb NOT NULL, status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','failed')), attempts integer NOT NULL DEFAULT 0, last_error text, created_at timestamptz NOT NULL DEFAULT now(), processed_at timestamptz);" | head -c 300; echo
+          q "CREATE INDEX IF NOT EXISTS idx_bridge_outbox_pending ON public.bridge_outbox (status, created_at) WHERE status = 'pending';" | head -c 300; echo
+          echo "--- re-check ---"
+          q "select to_regclass('public.bridge_idempotency_keys') as bik, to_regclass('public.bridge_outbox') as bo" | head -c 300; echo
 
       - name: frontend-web supabase host (host only)
         run: |
