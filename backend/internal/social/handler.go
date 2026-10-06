@@ -181,7 +181,13 @@ func (h *Handler) GetSplit(c *gin.Context) {
 }
 
 func (h *Handler) PayShare(c *gin.Context) {
-	key, _ := ginutil.RequireIdempotencyKeyOK(c)
+	// RequireIdempotencyKeyOK writes the 400 itself when the header is missing;
+	// the ok check is what stops the money path from running anyway — a refused
+	// request must never reach PayShare (iron rule #1).
+	key, ok := ginutil.RequireIdempotencyKeyOK(c)
+	if !ok {
+		return
+	}
 	if err := h.svc.PayShare(c.Request.Context(), ginutil.UserID(c), c.Param("shareId"), key); err != nil {
 		errMap.WriteOK(c, err)
 		return
@@ -191,7 +197,9 @@ func (h *Handler) PayShare(c *gin.Context) {
 
 func (h *Handler) CreatePool(c *gin.Context) {
 	var req struct {
-		Title         string  `json:"title"`
+		// A pool with no title is an unlabeled money pot — require it rather
+		// than persisting an unnamed OPEN pool nobody can identify.
+		Title         string  `json:"title" binding:"required"`
 		BeneficiaryID *string `json:"beneficiary_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {

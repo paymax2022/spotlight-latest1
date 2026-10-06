@@ -591,10 +591,10 @@ func (s *Service) paymentByIdem(ctx context.Context, idemKey string) (*Payment, 
 }
 
 func (s *Service) getRequest(ctx context.Context, requestID string) (*Request, error) {
-	const q = `SELECT id, requester_id, payer_id, amount_kobo, note, state FROM social_requests WHERE id=$1`
+	const q = `SELECT id, requester_id, payer_id, amount_kobo, note, state, created_at, resolved_at FROM social_requests WHERE id=$1`
 	var r Request
 	var state string
-	if err := s.db.QueryRow(ctx, q, requestID).Scan(&r.ID, &r.RequesterID, &r.PayerID, &r.AmountKobo, &r.Note, &state); err != nil {
+	if err := s.db.QueryRow(ctx, q, requestID).Scan(&r.ID, &r.RequesterID, &r.PayerID, &r.AmountKobo, &r.Note, &state, &r.CreatedAt, &r.ResolvedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -605,10 +605,10 @@ func (s *Service) getRequest(ctx context.Context, requestID string) (*Request, e
 }
 
 func (s *Service) getSplit(ctx context.Context, splitID string) (*SplitBill, error) {
-	const q = `SELECT id, organiser_id, title, total_kobo, mode, state FROM split_bills WHERE id=$1`
+	const q = `SELECT id, organiser_id, title, total_kobo, mode, state, created_at, updated_at FROM split_bills WHERE id=$1`
 	var b SplitBill
 	var mode, state string
-	if err := s.db.QueryRow(ctx, q, splitID).Scan(&b.ID, &b.OrganiserID, &b.Title, &b.TotalKobo, &mode, &state); err != nil {
+	if err := s.db.QueryRow(ctx, q, splitID).Scan(&b.ID, &b.OrganiserID, &b.Title, &b.TotalKobo, &mode, &state, &b.CreatedAt, &b.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -620,10 +620,10 @@ func (s *Service) getSplit(ctx context.Context, splitID string) (*SplitBill, err
 }
 
 func (s *Service) getPool(ctx context.Context, poolID string) (*GroupPool, error) {
-	const q = `SELECT id, organiser_id, title, beneficiary_id, state FROM group_pools WHERE id=$1`
+	const q = `SELECT id, organiser_id, title, beneficiary_id, state, created_at, updated_at FROM group_pools WHERE id=$1`
 	var p GroupPool
 	var state string
-	if err := s.db.QueryRow(ctx, q, poolID).Scan(&p.ID, &p.OrganiserID, &p.Title, &p.BeneficiaryID, &state); err != nil {
+	if err := s.db.QueryRow(ctx, q, poolID).Scan(&p.ID, &p.OrganiserID, &p.Title, &p.BeneficiaryID, &state, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
