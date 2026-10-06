@@ -148,6 +148,10 @@ func (s *Service) ListTransactions(ctx context.Context, userID string, limit, of
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
+	// A negative OFFSET is a Postgres error (500) — clamp like limit instead.
+	if offset < 0 {
+		offset = 0
+	}
 	entries, err := s.ledger.ListTransactions(ctx, userID, limit, offset)
 	if err != nil {
 		return nil, err
@@ -177,6 +181,9 @@ func (s *Service) AdminGetBalance(ctx context.Context, userID string) (*BalanceR
 func (s *Service) AdminListTransactions(ctx context.Context, userID string, limit, offset int) (*TransactionsResponse, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
 	}
 	entries, err := s.ledger.ListTransactionsAcrossPots(ctx, userID, limit, offset)
 	if err != nil {

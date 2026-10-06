@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/finance/ledger"
@@ -69,6 +70,13 @@ func (h *GiftingConnectHandler) GetCatalog(c *gin.Context) {
 func (h *GiftingConnectHandler) GetProduct(c *gin.Context) {
 	id := c.Param("id")
 
+	// A non-UUID :id could never name a catalog row — report not-found rather
+	// than letting the "invalid input syntax for type uuid" surface as a 500.
+	if _, err := uuid.Parse(id); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "gift not found"})
+		return
+	}
+
 	item, err := h.store.GetCatalogItem(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load product"})
@@ -127,6 +135,17 @@ func (h *GiftingConnectHandler) QuoteGift(c *gin.Context) {
 
 	productID := c.Query("productId")
 	recipientID := c.Query("recipientId")
+
+	// Missing/empty productId is a malformed request; a non-UUID value can
+	// never name a row — without these gates both hit the uuid cast and 500.
+	if productID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "productId is required"})
+		return
+	}
+	if _, err := uuid.Parse(productID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "gift not found"})
+		return
+	}
 
 	product, err := h.store.GetCatalogItem(c.Request.Context(), productID)
 	if err != nil {
@@ -200,6 +219,24 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 	}
 	if body.RecipientID == userID {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "you cannot gift yourself"})
+		return
+	}
+	// A non-UUID recipient can never name a platform user — reject before it
+	// reaches a uuid cast.
+	if _, err := uuid.Parse(body.RecipientID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid recipient"})
+		return
+	}
+
+	// The recipient must actually exist: without this check a bogus id fell
+	// through to GetOrCreateUserWallet and surfaced as a 500.
+	exists, err := h.store.UserExists(c.Request.Context(), body.RecipientID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify recipient"})
+		return
+	}
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "recipient not found"})
 		return
 	}
 
@@ -341,6 +378,12 @@ func (h *GiftingConnectHandler) GetGiftTransaction(c *gin.Context) {
 	}
 
 	id := c.Param("id")
+
+	// Non-UUID ids can never name a gift transaction — 404, not a 500 cast error.
+	if _, err := uuid.Parse(id); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "gift not found"})
+		return
+	}
 
 	gt, err := h.store.GetGiftTransaction(c.Request.Context(), userID, id)
 	if err != nil {
