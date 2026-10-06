@@ -34,6 +34,10 @@ on:
         description: 'Mint a throwaway confirmed user and call the module endpoints THROUGH frontend-web with a real Bearer, exactly as the APK does (status + shape only; user deleted afterwards)'
         type: boolean
         default: false
+      cleanup_user_ids:
+        description: 'Comma-separated auth user IDs to delete via GoTrue admin (leftover diag/test accounts). Deleted with the target-backend service-role key; runs inside the probe job (requires auth_probe=true).'
+        type: string
+        default: ''
       fix_database_url:
         description: 'PRODUCTION ONLY: verify SUPABASE_DB_PASSWORD against the pooler and rewrite backend DATABASE_URL with it if the check passes'
         type: boolean
@@ -1284,4 +1288,16 @@ jobs:
               "$SB_URL/rest/v1/$t?limit=0")
             printf "  %-28s %s\n" "$t" "$code"
           done
+          # Delete any leftover diag/test accounts requested via input.
+          if [ -n "${{ inputs.cleanup_user_ids }}" ]; then
+            echo "  --- cleanup_user_ids ---"
+            node -e '
+              const [url,key]=[process.env.SB_URL,process.env.SB_KEY];
+              const ids=process.argv[1].split(",").map(s=>s.trim()).filter(Boolean);
+              (async()=>{for(const id of ids){
+                const r=await fetch(url+"/auth/v1/admin/users/"+id,{method:"DELETE",headers:{apikey:key,Authorization:"Bearer "+key}}).catch(e=>({status:"ERR "+e.message}));
+                console.log("  delete "+id.slice(0,8)+"…: HTTP "+r.status);
+              }})();
+            ' "${{ inputs.cleanup_user_ids }}"
+          fi
           unset TOKEN SB_KEY
