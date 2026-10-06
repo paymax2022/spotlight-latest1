@@ -96,6 +96,9 @@ func (s *Service) Create(ctx context.Context, creatorID string, req CreateGroupR
 	if _, err := tx.Exec(ctx, insertMember, g.ID, creatorID); err != nil {
 		return nil, fmt.Errorf("groups: insert owner: %w", err)
 	}
+	// The owner row above IS member #1 — reflect that in the create response so
+	// it agrees with the member_count a subsequent GET computes (was 0).
+	g.MemberCount = 1
 	// Create group ledger account, keyed to this group. Without group_id set,
 	// the account is orphaned — PayDues looks it up by group_id and would never
 	// find it, leaving every group's wallet permanently unreachable.
