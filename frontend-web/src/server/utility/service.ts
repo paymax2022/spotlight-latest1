@@ -469,7 +469,10 @@ async function recordProviderAttempt(input: {
     .select('*')
     .single();
 
-  if (error) throw new ApiError(`Failed to record provider attempt: ${error.message}`, 500);
+  if (error) {
+    console.error('[utility] failed to record provider attempt:', error);
+    throw new ApiError('Failed to record provider attempt', 500);
+  }
   return data as UtilityProviderAttemptRow;
 }
 
@@ -946,7 +949,8 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
         .maybeSingle();
       if (duplicate) return { alreadyProcessed: true, transaction: duplicate as UtilityTransactionRow };
     }
-    throw new ApiError(`Failed to create utility transaction: ${insertError.message}`, 500);
+    console.error('[utility] failed to create utility transaction:', insertError);
+    throw new ApiError('Failed to create utility transaction', 500);
   }
 
   await addEvent(transactionId, 'initiated', 'Utility payment initiated.', { pricing });
@@ -1030,10 +1034,16 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
 
       lastProviderError = result.message ?? 'Provider failed transaction.';
     } catch (error) {
-      lastProviderError = error instanceof Error ? error.message : 'Provider attempt failed.';
+      // A thrown (non-result) error can carry fetch/network internals, and
+      // lastProviderError lands in the customer-facing failure notification.
+      // Timeout text is our own authored message; everything else collapses
+      // to a fixed string with the real error kept in the server log/event.
+      console.error('[utility] provider attempt threw:', error);
+      lastProviderError = error instanceof UtilityProviderTimeoutError ? error.message : 'Provider attempt failed.';
       await addEvent(transactionId, 'provider_attempt_error', lastProviderError, {
         provider_id: candidate.provider.id,
         attempt_number: index + 1,
+        raw_error: error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -1442,7 +1452,10 @@ export async function adminCreateUtilityRow(table: AdminTable, payload: Record<s
   const supabase = createAdminClient();
   const protectedPayload = table === 'utility_providers' ? protectProviderCredentialsPayload(payload) : payload;
   const { data, error } = await supabase.from(table).insert(protectedPayload).select('*').single();
-  if (error) throw new ApiError(`Failed to create ${table} row: ${error.message}`, 400);
+  if (error) {
+    console.error(`[utility] failed to create ${table} row:`, error);
+    throw new ApiError(`Failed to create ${table} row.`, 400);
+  }
   return table === 'utility_providers' ? sanitizeProvider(data as Record<string, unknown>) : data;
 }
 
@@ -1456,7 +1469,10 @@ export async function adminUpdateUtilityRow(table: AdminTable, id: string, paylo
     .eq(keyColumn, id)
     .select('*')
     .single();
-  if (error) throw new ApiError(`Failed to update ${table} row: ${error.message}`, 400);
+  if (error) {
+    console.error(`[utility] failed to update ${table} row:`, error);
+    throw new ApiError(`Failed to update ${table} row.`, 400);
+  }
   return table === 'utility_providers' ? sanitizeProvider(data as Record<string, unknown>) : data;
 }
 
@@ -1626,11 +1642,17 @@ export async function requeryPendingUtilityTransactions(limit = 25) {
       const updated = await requeryUtilityTransaction(transaction);
       results.push({ id: transaction.id, ok: true, status: updated.status });
     } catch (error) {
+      // ApiError messages are deliberate domain text; anything else may carry
+      // adapter/fetch/PostgREST internals, so it is logged here and reported
+      // generically — this array is returned verbatim in an admin response.
+      if (!(error instanceof ApiError)) {
+        console.error('[utility] requery failed for transaction', transaction.id, error);
+      }
       results.push({
         id: transaction.id,
         ok: false,
         status: transaction.status,
-        error: error instanceof Error ? error.message : 'Unknown requery failure',
+        error: error instanceof ApiError ? error.message : 'Requery failed for this transaction.',
       });
     }
   }
@@ -1670,6 +1692,9 @@ export async function adminImportUtilityProducts(products: Record<string, unknow
     .from('utility_products')
     .upsert(rows, { onConflict: 'code' })
     .select('*');
-  if (error) throw new ApiError(`Failed to import utility products: ${error.message}`, 400);
+  if (error) {
+    console.error('[utility] failed to import utility products:', error);
+    throw new ApiError('Failed to import utility products', 400);
+  }
   return data ?? [];
 }

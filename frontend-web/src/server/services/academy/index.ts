@@ -18,7 +18,12 @@ export async function getActiveAcademySettings() {
     .limit(1)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    // Re-throwing the PostgREST error object would carry its raw message to
+    // whichever caller surfaces thrown errors — collapse it to fixed text.
+    console.error('[academy/settings] failed to load academy settings:', error);
+    throw new Error('Failed to load academy settings');
+  }
 
   return {
     registration_type: (data?.registration_type ?? 'free') as 'free' | 'paid',

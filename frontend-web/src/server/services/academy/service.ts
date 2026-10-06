@@ -360,7 +360,8 @@ export async function confirmAcademyPayment(applicationId: string, paymentRefere
       throw new ApiError('Payment reference could not be verified', 400);
     }
 
-    throw new ApiError(message, 502);
+    console.error('[academy/payment-confirm] Paystack transaction verification failed:', error);
+    throw new ApiError('Unable to verify Paystack transaction', 502);
   }
 
   if (payment.status !== 'success') {

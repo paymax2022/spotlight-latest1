@@ -46,7 +46,8 @@ export async function initializePaystackPayment(input: InitializePaymentInput): 
   const json = (await res.json()) as { status: boolean; data?: { authorization_url: string }; message?: string };
 
   if (!json.status || !json.data?.authorization_url) {
-    throw new ApiError(`Paystack initialization failed: ${json.message ?? 'unknown error'}`, 502);
+    console.error('[voting/paystack] transaction initialize failed:', json);
+    throw new ApiError('Paystack initialization failed', 502);
   }
 
   return json.data.authorization_url;
