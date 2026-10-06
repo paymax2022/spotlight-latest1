@@ -634,6 +634,17 @@ jobs:
             fi
             rm -f ak.txt
           fi
+          # Supabase session-mode pooler is capped at pool_size:15 (EMAXCONNSESSION
+          # observed in prod boot log → pgx-backed endpoints 500). Cap the pgx
+          # pool well under the ceiling so a rolling deploy (old+new pools) and
+          # PostgREST/GoTrue tenants still fit. SET ROLE requires session mode,
+          # so shrinking the pool is the fix — not switching to 6543.
+          if railway variable set DB_POOL_MAX_CONNS=4 \
+            --service backend --environment "$ENVIRONMENT" --project "$PROJECT" $SKIP >/dev/null; then
+            echo "  DB_POOL_MAX_CONNS=4 set on backend ($ENVIRONMENT)"
+          else
+            echo "  WARN: DB_POOL_MAX_CONNS set failed"
+          fi
           if railway redeploy --service backend --environment "$ENVIRONMENT" --project "$PROJECT" --yes; then
             echo "  single redeploy triggered to pick up the new vars"
           else
