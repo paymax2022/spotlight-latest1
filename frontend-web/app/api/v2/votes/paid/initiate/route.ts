@@ -50,7 +50,8 @@ export async function POST(request: NextRequest) {
       return errorResponse('Too many requests. Please slow down.', 429);
     }
 
-    const body = (await request.json()) as InitiatePaidVoteRequest;
+    const body = (await request.json().catch(() => null)) as InitiatePaidVoteRequest;
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.contestId) return errorResponse('contestId is required', 400);
     if (!body.contestantId) return errorResponse('contestantId is required', 400);

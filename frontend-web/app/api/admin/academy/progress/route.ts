@@ -26,7 +26,7 @@ export async function GET(request: Request) {
 
     if (enrolErr) {
       console.error('[admin/academy/progress] enrolments failed', enrolErr);
-      return errorResponse(enrolErr.message, 500);
+      return errorResponse('Failed to load enrolments', 500);
     }
     const enrolments = (enrolRows ?? []) as Row[];
     if (enrolments.length === 0) {
@@ -53,7 +53,7 @@ export async function GET(request: Request) {
 
     if (assignErr) {
       console.error('[admin/academy/progress] assignments failed', assignErr);
-      return errorResponse(assignErr.message, 500);
+      return errorResponse('Failed to load assignments', 500);
     }
     const assignments = (assignRows ?? []) as Row[];
     const assignmentIds = assignments.map((a) => a.id as string);
@@ -82,11 +82,11 @@ export async function GET(request: Request) {
 
     if (partsRes.error) {
       console.error('[admin/academy/progress] parts failed', partsRes.error);
-      return errorResponse(partsRes.error.message, 500);
+      return errorResponse('Failed to load assignment parts', 500);
     }
     if (subsRes.error) {
       console.error('[admin/academy/progress] submissions failed', subsRes.error);
-      return errorResponse(subsRes.error.message, 500);
+      return errorResponse('Failed to load submissions', 500);
     }
 
     const parts = (partsRes.data ?? []) as Row[];
@@ -102,7 +102,7 @@ export async function GET(request: Request) {
 
     if (partSubsRes.error) {
       console.error('[admin/academy/progress] part submissions failed', partSubsRes.error);
-      return errorResponse(partSubsRes.error.message, 500);
+      return errorResponse('Failed to load part submissions', 500);
     }
 
     const partsByAssignment = new Map<string, Row[]>();

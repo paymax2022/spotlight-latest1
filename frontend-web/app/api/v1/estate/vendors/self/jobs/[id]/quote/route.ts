@@ -26,7 +26,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const amountKobo = Number(body?.amount_kobo ?? body?.amountKobo);
     if (!Number.isInteger(amountKobo) || amountKobo < 0) {
       throw new ApiError('A valid amount_kobo (minor units) is required', 400);

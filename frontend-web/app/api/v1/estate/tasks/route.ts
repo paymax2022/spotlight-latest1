@@ -33,7 +33,8 @@ export async function POST(request: Request) {
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const title = String(body?.title ?? '').trim();
     if (!title) throw new ApiError('Task title is required', 400);
     const priority = ['low', 'medium', 'high'].includes(body?.priority) ? body.priority : 'medium';

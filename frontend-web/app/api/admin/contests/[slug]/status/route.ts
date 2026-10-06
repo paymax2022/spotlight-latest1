@@ -44,7 +44,10 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ slug: str
       .select('id, slug, name, status')
       .maybeSingle();
 
-    if (error) return errorResponse(`Failed to update contest status: ${error.message}`, 500);
+    if (error) {
+      console.error('[admin/contests/status PATCH]', error.message);
+      return errorResponse('Failed to update contest status', 500);
+    }
     // A slug that matches nothing is a 404, not a silent success — the caller
     // would otherwise believe it published something.
     if (!data) return errorResponse('Contest not found.', 404);

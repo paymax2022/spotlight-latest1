@@ -71,7 +71,12 @@ export async function initiateUtilityPaystackPayment(input: {
   const callbackPath =
     `/api/v1/utility/paystack/callback?reference=${encodeURIComponent(paymentReference)}` +
     (returnOrigin ? `&return=${encodeURIComponent(returnOrigin)}` : '');
-  const callbackUrl = new URL(callbackPath, input.request.url).toString();
+  // The callbackUrl is handed to Paystack and followed by the payer's BROWSER —
+  // a public URL, so it must be built on the public site origin. request.url is
+  // http://0.0.0.0:PORT on Railway/cPanel (the server binds the wildcard
+  // address), which Paystack would echo back as a dead redirect.
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
+  const callbackUrl = new URL(callbackPath, siteUrl).toString();
 
   const { error: insertError } = await supabase.from('utility_paystack_intents').insert({
     id: intentId,
@@ -88,7 +93,12 @@ export async function initiateUtilityPaystackPayment(input: {
     metadata: input.metadata ?? {},
   });
 
-  if (insertError) throw new ApiError(`Failed to create Paystack utility intent: ${insertError.message}`, 500);
+  if (insertError) {
+    // ApiError's message reaches the client — log the PostgREST detail
+    // server-side, never embed it.
+    console.error('[utility/paystack] intent insert failed:', insertError.message);
+    throw new ApiError('Failed to create Paystack utility intent', 500);
+  }
 
   const authorizationUrl = await initializePaystackPayment({
     reference: paymentReference,

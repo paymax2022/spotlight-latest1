@@ -35,7 +35,8 @@ export async function POST(request: Request) {
   try {
     await assertAdminPermission(request, 'programs:manage');
     const supabase = createAdminClient();
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
 
     const { name, kind, capacity, feeKobo, estateId } = body;
 

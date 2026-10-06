@@ -30,7 +30,7 @@ export async function GET(request: Request) {
 
     const ids = contests.map((c: any) => c.id);
 
-    const [{ data: settingsRows }, { data: totalsRows }] = await Promise.all([
+    const [{ data: settingsRows }, { data: totalsRows }, { data: contestantRows }] = await Promise.all([
       supabase
         .from('voting_settings')
         .select('contest_id, voting_enabled, voting_ends_at')
@@ -39,17 +39,28 @@ export async function GET(request: Request) {
         .from('vote_totals')
         .select('contest_id, total_confirmed_votes')
         .in('contest_id', ids),
+      // Roster count comes from the contestants table (contest_id FK to contests),
+      // not vote_totals — a contestant with zero votes has no vote_totals row, so
+      // counting those returned 0 for contests that have rosters. Status filter
+      // mirrors /api/v1/contests/[id]/contestants so the number matches the roster.
+      supabase
+        .from('contestants')
+        .select('contest_id')
+        .in('contest_id', ids)
+        .in('status', ['approved', 'active']),
     ]);
 
     const settingsById = new Map((settingsRows ?? []).map((s: any) => [s.contest_id, s]));
     const now = Date.now();
 
-    // Aggregate vote totals per contest
+    // Aggregate vote totals and roster size per contest
     const totalsByContest: Record<string, number> = {};
-    const countByContest: Record<string, number> = {};
     for (const t of totalsRows ?? []) {
       totalsByContest[t.contest_id] = (totalsByContest[t.contest_id] ?? 0) + (t.total_confirmed_votes ?? 0);
-      countByContest[t.contest_id] = (countByContest[t.contest_id] ?? 0) + 1;
+    }
+    const countByContest: Record<string, number> = {};
+    for (const r of contestantRows ?? []) {
+      countByContest[r.contest_id] = (countByContest[r.contest_id] ?? 0) + 1;
     }
 
     const result = contests.map((c: any) => {

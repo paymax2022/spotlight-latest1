@@ -51,10 +51,21 @@ export async function GET(
       .eq('status', 'active')
       .maybeSingle();
 
-    const { data: totals } = await supabase
-      .from('vote_totals')
-      .select('total_confirmed_votes')
-      .eq('contest_id', id);
+    const [{ data: totals }, { count: contestantCount }] = await Promise.all([
+      supabase
+        .from('vote_totals')
+        .select('total_confirmed_votes')
+        .eq('contest_id', id),
+      // Roster size comes from the contestants table (contest_id FK to contests),
+      // not vote_totals — a contestant with zero votes has no vote_totals row, so
+      // counting those returned 0 for contests that have rosters. Status filter
+      // mirrors /api/v1/contests/[id]/contestants so the number matches the roster.
+      supabase
+        .from('contestants')
+        .select('id', { count: 'exact', head: true })
+        .eq('contest_id', id)
+        .in('status', ['approved', 'active']),
+    ]);
 
     const totalVotes = (totals ?? []).reduce((s: number, t: any) => s + (t.total_confirmed_votes ?? 0), 0);
 
@@ -81,7 +92,7 @@ export async function GET(
       rules: contest.rules,
       prizePool: contest.prize_pool,
       category: contest.category ?? 'General',
-      contestantCount: (totals ?? []).length,
+      contestantCount: contestantCount ?? 0,
       totalVotes: vis.showVoteCount ? totalVotes : null,
       endsAt: endsAt ?? new Date(Date.now() + 86_400_000).toISOString(),
       isLive,

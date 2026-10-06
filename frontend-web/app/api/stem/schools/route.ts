@@ -15,7 +15,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       schoolName?: string;
       schoolType?: string;
       ownershipType?: string;
@@ -44,6 +44,7 @@ export async function POST(request: Request) {
       };
       verificationDocuments?: string[];
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.schoolName?.trim()) return errorResponse('schoolName is required', 400);
     if (!body.schoolType?.trim()) return errorResponse('schoolType is required', 400);

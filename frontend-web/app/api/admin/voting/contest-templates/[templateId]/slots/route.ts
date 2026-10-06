@@ -90,7 +90,8 @@ export async function PUT(request: Request, ctx: RouteContext) {
   try {
     await assertAdminPermission(request, 'votes:manage');
     const { templateId } = await ctx.params;
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     const validated = validateSlots(body?.slots);
     if (!validated.ok) return errorResponse(validated.error, 400);
@@ -103,7 +104,10 @@ export async function PUT(request: Request, ctx: RouteContext) {
       .eq('id', templateId)
       .maybeSingle();
 
-    if (fetchError) return errorResponse(`Failed to load template: ${fetchError.message}`, 500);
+    if (fetchError) {
+      console.error('[admin/voting/contest-templates/slots PUT]', fetchError.message);
+      return errorResponse('Failed to load template', 500);
+    }
     if (!template) return errorResponse('Template not found', 404);
 
     const hasContestantSlotInPayload = slots.some((s) => s.slotType === 'contestant');
@@ -115,7 +119,10 @@ export async function PUT(request: Request, ctx: RouteContext) {
     }
 
     const { error: deleteError } = await supabase.from('template_slots').delete().eq('template_id', templateId);
-    if (deleteError) return errorResponse(`Failed to clear existing slots: ${deleteError.message}`, 500);
+    if (deleteError) {
+      console.error('[admin/voting/contest-templates/slots PUT] clear:', deleteError.message);
+      return errorResponse('Failed to clear existing slots', 500);
+    }
 
     if (slots.length === 0) {
       return successResponse({ success: true, slots: [] });
@@ -141,7 +148,10 @@ export async function PUT(request: Request, ctx: RouteContext) {
     }));
 
     const { data: inserted, error: insertError } = await supabase.from('template_slots').insert(rows).select('*');
-    if (insertError) return errorResponse(`Failed to insert slots: ${insertError.message}`, 500);
+    if (insertError) {
+      console.error('[admin/voting/contest-templates/slots PUT] insert:', insertError.message);
+      return errorResponse('Failed to insert slots', 500);
+    }
 
     return successResponse({ success: true, slots: (inserted ?? []).map(mapSlotRow) });
   } catch (error) {

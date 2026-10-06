@@ -33,7 +33,7 @@ export async function GET(request: Request) {
       .find((r) => r.error)?.error;
     if (firstError) {
       console.error('[admin/academy/curriculum] load failed', firstError);
-      return errorResponse(firstError.message, 500);
+      return errorResponse('Failed to load curriculum', 500);
     }
 
     return successResponse({
@@ -52,7 +52,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'applications:review');
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = (await request.json().catch(() => null)) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const kind = String(body.kind ?? '');
 
     switch (kind) {
@@ -116,7 +117,7 @@ export async function POST(request: Request) {
 
         if (error) {
           console.error('[admin/academy/curriculum] assignment insert failed', error);
-          return errorResponse(error.message, 500);
+          return errorResponse('Failed to create assignment', 500);
         }
         return successResponse({ success: true, assignment: data });
       }

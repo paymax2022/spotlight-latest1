@@ -36,3 +36,4 @@ export const POST = notImplemented;
 export const PUT = notImplemented;
 export const PATCH = notImplemented;
 export const DELETE = notImplemented;
+export const HEAD = notImplemented;

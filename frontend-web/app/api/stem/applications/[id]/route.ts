@@ -28,7 +28,7 @@ export async function PATCH(
     if (!current) return errorResponse('Application not found', 404);
     if (current.applicantUserId !== user.id) return errorResponse('Forbidden', 403);
 
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       status?: StemApplicationStatus;
       categoryId?: string;
       priceCategoryId?: string;
@@ -36,6 +36,7 @@ export async function PATCH(
       projectData?: Record<string, unknown>;
       uploadData?: Record<string, unknown>;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     const application = await saveApplicationDraft(context.params.id, {
       status: body.status,

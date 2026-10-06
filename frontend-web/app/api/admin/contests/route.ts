@@ -143,8 +143,10 @@ export async function POST(request: Request) {
     // silent.
     const publish = await publishContestToVotingPlane(createAdminClient(), contest).catch(
       (err): Awaited<ReturnType<typeof publishContestToVotingPlane>> => {
+        // Log the real error server-side — String(err) carries fetch/Error
+        // internals and must not reach the response body.
         console.error('[admin/contests] publish to voting plane threw', err);
-        return { published: false, reason: 'failed', detail: String(err) };
+        return { published: false, reason: 'failed' };
       },
     );
 

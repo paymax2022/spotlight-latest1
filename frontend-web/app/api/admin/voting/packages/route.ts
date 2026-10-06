@@ -52,7 +52,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.contestId) return errorResponse('contestId is required', 400);
     if (!body.name) return errorResponse('name is required', 400);
@@ -80,7 +81,10 @@ export async function POST(request: Request) {
       .select('*')
       .single();
 
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/packages POST]', error.message);
+      return errorResponse('Failed to create vote package', 500);
+    }
 
     await appendAuditLog({
       actorId: identity.actorId,
@@ -101,7 +105,8 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.id) return errorResponse('id is required', 400);
 
     const supabase = createAdminClient();
@@ -127,7 +132,10 @@ export async function PATCH(request: Request) {
       .select('*')
       .single();
 
-    if (error) return errorResponse(error.message, 500);
+    if (error) {
+      console.error('[admin/voting/packages PATCH]', error.message);
+      return errorResponse('Failed to update vote package', 500);
+    }
 
     await appendAuditLog({
       actorId: identity.actorId,

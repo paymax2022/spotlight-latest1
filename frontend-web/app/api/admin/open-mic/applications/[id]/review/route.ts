@@ -6,12 +6,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const params = await context.params;
   try {
     await assertOpenMicAdmin(request);
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       applicationStatus?: 'pending' | 'approved' | 'rejected';
       paymentStatus?: 'not_required' | 'pending' | 'paid' | 'failed' | 'waived';
       beatDownloadStatus?: 'not_available' | 'available' | 'downloaded';
       rejectionReason?: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.applicationStatus && !body.paymentStatus && !body.beatDownloadStatus) {
       return errorResponse('At least one review field is required', 400);
     }

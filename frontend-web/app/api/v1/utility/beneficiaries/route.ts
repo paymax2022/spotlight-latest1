@@ -37,7 +37,8 @@ export async function POST(request: Request) {
 
   try {
     const user = await requireUtilityUser(request);
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json().catch(() => null) as Record<string, unknown>;
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (utilityGoProxyEnabled()) {
       // Proxy to Go backend with the request body

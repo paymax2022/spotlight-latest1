@@ -36,7 +36,8 @@ export async function POST(request: Request) {
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
     if (ctx.role !== 'estate_admin') throw new ApiError('Only an estate admin can post announcements', 403);
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const title = String(body?.title ?? '').trim();
     const text = String(body?.body ?? '').trim();
     if (!title || !text) throw new ApiError('Title and message are required', 400);

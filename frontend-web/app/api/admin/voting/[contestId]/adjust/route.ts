@@ -17,12 +17,13 @@ export async function POST(
     const identity = await assertAdminPermission(request, 'votes:sensitive:initiate');
     const { contestId } = await context.params;
 
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       contestantId: string;
       adjustmentType: AdminAdjustmentType;
       voteQuantity: number;
       reason: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.contestantId) return errorResponse('contestantId is required', 400);
     if (!body.adjustmentType) return errorResponse('adjustmentType is required', 400);

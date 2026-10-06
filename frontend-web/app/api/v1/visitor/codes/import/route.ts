@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { ApiError, handleApiError } from '@/src/lib/api/responses';
+import { ApiError, errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext, genNumericCode, toDbCodeType } from '@/src/server/visitor/visitor.service';
@@ -13,7 +13,8 @@ export async function POST(request: Request) {
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
 
-    const formData = await request.formData();
+    const formData = await request.formData().catch(() => null);
+    if (!formData) return errorResponse('Expected multipart/form-data', 415);
     const file = formData.get('file');
     if (!file || typeof file === 'string') throw new ApiError('CSV file is required', 400);
 

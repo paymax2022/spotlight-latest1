@@ -50,7 +50,16 @@ export async function GET(request: Request) {
       .eq('slug', contestSlug)
       .maybeSingle();
 
-    if (contestErr || !contest) return errorResponse('Contest not found', 404);
+    if (contestErr) {
+      // A PostgREST parse error (PGRST1xx) means the supplied slug itself was
+      // malformed — a client error. Any other query error is a real backend
+      // fault; collapsing it into "Contest not found" 404 hides outages.
+      if (/^PGRST1/.test(contestErr.code ?? '')) {
+        return errorResponse('Invalid contestSlug', 400);
+      }
+      throw contestErr;
+    }
+    if (!contest) return errorResponse('Contest not found', 404);
     const contestId = (contest as any).id;
 
     // 2. Resolve contestant on the `contestants` roster — the table votes.contestant_id
@@ -71,8 +80,10 @@ export async function GET(request: Request) {
     if (bySlug) {
       enrollment = bySlug;
     } else {
-      // Strategy (b): UUID match
-      const isUuid = /^[0-9a-f-]{36}$/i.test(contestantSlug);
+      // Strategy (b): UUID match. Canonical-UUID gate — the loose 36-char
+      // shape it replaced let non-UUID strings reach `.eq('id', …)` on a uuid
+      // column and bounce back as a swallowed Postgres 22P02 error.
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(contestantSlug);
       if (isUuid) {
         const { data: byId } = await supabase
           .from('contestants')

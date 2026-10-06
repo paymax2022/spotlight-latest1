@@ -17,10 +17,11 @@ export async function POST(request: Request) {
     requireFeature('walletBankTransfers');
     await requireRequestUser(request);
 
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       bank_code?: unknown;
       account_number?: unknown;
     };
+    if (!body) throw new ApiError('Invalid JSON body', 400);
 
     const bankCode      = String(body.bank_code ?? '').trim();
     const accountNumber = String(body.account_number ?? '').trim().replace(/\D/g, '');

@@ -12,6 +12,9 @@ export async function GET(
 ) {
   try {
     const { contestId } = await context.params;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(contestId)) {
+      return errorResponse('Invalid contest ID', 400);
+    }
     const { searchParams } = new URL(request.url);
     const roundId = searchParams.get('roundId') ?? undefined;
     const limit = Math.min(500, Number(searchParams.get('limit') ?? 50));

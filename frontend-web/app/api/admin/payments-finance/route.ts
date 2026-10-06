@@ -47,7 +47,11 @@ async function queryRows<T>(
   if (opts.order) query = query.order(opts.order, { ascending: opts.ascending ?? false });
   if (opts.limit) query = query.limit(opts.limit);
   const { data, error } = await query;
-  return { rows: (data ?? []) as T[], error: error?.message ?? null };
+  // Never hand the PostgREST message to the client — it carries schema,
+  // constraint and SQLSTATE text. Log it server-side; the console UI only
+  // needs to know the section failed.
+  if (error) console.error(`[admin/payments-finance] query on ${table} failed:`, error.message);
+  return { rows: (data ?? []) as T[], error: error ? 'unavailable' : null };
 }
 
 export async function GET(request: Request) {
@@ -106,7 +110,10 @@ export async function GET(request: Request) {
     // Same fail-loud posture for the aggregate RPC: if it errored, fall back
     // to 0s rather than silently reusing the capped client-side sums (which
     // would just reintroduce the WAL-013 undercount under a different name).
-    const statsAggError = statsAgg.error?.message ?? platformAccounts.error ?? null;
+    if (statsAgg.error) {
+      console.error('[admin/payments-finance] stats RPC failed:', statsAgg.error.message);
+    }
+    const statsAggError = statsAgg.error ? 'unavailable' : platformAccounts.error;
     const statsRow = (statsAgg.data?.[0] ?? null) as {
       total_balance_kobo: number | string | null;
       credit_volume_kobo: number | string | null;

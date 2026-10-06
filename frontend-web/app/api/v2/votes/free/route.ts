@@ -38,7 +38,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     const { contestantId, contestId, shareCode, voteQuantity, voterIdentifier } = body;
 
     if (!contestantId || !contestId) {

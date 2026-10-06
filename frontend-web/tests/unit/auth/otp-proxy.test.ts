@@ -138,13 +138,24 @@ describe('POST /api/auth/resend-otp', () => {
     expect(sent).toMatchObject({ email: 'a@b.test', purpose: 'verify_email' });
   });
 
-  it('passes a throttle through instead of quietly resending via Supabase', async () => {
-    mockGo(429, { success: false, error: 'please wait before requesting another code' });
-    const res = await post('@/app/api/auth/resend-otp/route', { email: 'a@b.test' });
+  it('answers identically whether the resend was sent or throttled — a 429 vs 200 was an enumeration oracle', async () => {
+    mockGo(200, { success: true });
+    const ok = await post('@/app/api/auth/resend-otp/route', { email: 'a@b.test' });
+    const okBody = await ok.json();
 
-    expect(res.status).toBe(429);
-    // Falling back here would send a SECOND email and report success, defeating
-    // the cooldown the user was just told about.
+    vi.resetModules(); supabaseCalls.length = 0;
+    mockGo(429, { success: false, error: 'please wait before requesting another code' });
+    const throttled = await post('@/app/api/auth/resend-otp/route', { email: 'a@b.test' });
+    const throttledBody = await throttled.json();
+
+    // An existing unverified account hits the per-address cooldown (429) while
+    // an unknown address answered 200 — differing status+body confirmed account
+    // existence to unauthenticated callers. The throttle is still enforced
+    // upstream (no second email goes out); only the response is uniform.
+    expect(throttled.status).toBe(ok.status);
+    expect(throttledBody).toEqual(okBody);
+    // And it must not quietly resend via Supabase — that would send a SECOND
+    // email and defeat the cooldown the upstream just enforced.
     expect(supabaseCalls).toEqual([]);
   });
 });
@@ -223,4 +234,32 @@ describe('POST /api/auth/forgot-password', () => {
     expect(bad.status).toBe(ok.status);
     expect(badBody).toEqual(okBody);
   });
+});
+
+describe('malformed request bodies', () => {
+  // A bare `await request.json()` let a SyntaxError reach the catch-all, which
+  // answered 500 with the parser's message ("Unexpected token 'o'...").
+  // The routes now mirror login/register: parse failure → null → the field
+  // checks answer a clean 400.
+  const routes: Array<[string, string, string]> = [
+    ['verify-otp', '@/app/api/auth/verify-otp/route', 'Email and OTP are required'],
+    ['otp-verify', '@/app/api/auth/otp-verify/route', 'Email and code are required'],
+    ['resend-otp', '@/app/api/auth/resend-otp/route', 'Email is required'],
+    ['forgot-password', '@/app/api/auth/forgot-password/route', 'Email is required'],
+    ['reset-password', '@/app/api/auth/reset-password/route', 'Password must be at least 8 characters'],
+  ];
+
+  for (const [name, mod, expected] of routes) {
+    it(`${name} answers 400, not a parser 500`, async () => {
+      const { POST } = await import(mod);
+      const res = await POST(new Request('http://localhost/x', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: 'oops{',
+      }));
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe(expected);
+    });
+  }
 });

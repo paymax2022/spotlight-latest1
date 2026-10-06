@@ -1,4 +1,4 @@
-import { errorResponse, successResponse } from '@/src/lib/api/responses';
+import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { buildRegistrationSteps } from '@/src/features/registration/config';
 import { getRegistrationDraft, saveRegistrationStep } from '@/src/server/registration/supabase-store';
 import { requireUser } from '@/src/lib/auth/server';
@@ -81,15 +81,31 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {
       return errorResponse('Authentication required', 401);
     }
-    if (error instanceof Error && error.message === 'Application not found') {
+    // supabase-store throws 'Application not found.' (trailing period) — a
+    // prefix match covers both spellings so the race between the existence
+    // check above and the save can't fall through to the 500 branch.
+    if (error instanceof Error && error.message.startsWith('Application not found')) {
       console.warn('[registration/applications/step PATCH] application not found during save:', params.id);
       return errorResponse('Application not found', 404);
+    }
+    // Input-guard errors thrown by saveRegistrationStep are client errors, not
+    // server faults — a bogus stepKey previously fell through to the generic
+    // 500 below. 422 mirrors this route's existing validation-failure mapping.
+    if (error instanceof Error && error.message === 'Invalid step key.') {
+      return errorResponse('Invalid step key', 422);
+    }
+    if (
+      error instanceof Error &&
+      (error.message === 'Step key is required' ||
+        error.message === 'Values must be a non-empty object' ||
+        error.message === 'Invalid application ID')
+    ) {
+      return errorResponse(error.message, 400);
     }
     console.error('[registration/applications/step PATCH] error for', params.id, {
       message: error instanceof Error ? error.message : 'Unknown error',
       stack: error instanceof Error ? error.stack : undefined,
     });
-    const detail = error instanceof Error ? error.message : 'Unknown error';
-    return errorResponse(`Failed to save registration step: ${detail}`, 500);
+    return handleApiError(error, 'Failed to save registration step');
   }
 }

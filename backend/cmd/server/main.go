@@ -53,7 +53,12 @@ func main() {
 		// The W3C propagator joins incoming `traceparent` headers. Wrapping at
 		// the Handler boundary (not otelgin) keeps the OTel version decoupled
 		// from the pinned gin version — otelhttp is already an indirect dep.
-		Handler:           otelhttp.NewHandler(r, "paymax-backend"),
+		// HEADAsGet is the OUTERMOST wrapper: Gin only matches the registered
+		// method, so HEAD would 404 every GET-only route. Rewriting here keeps
+		// the wire method "HEAD" for net/http's body suppression and for the
+		// otel span (request method attribute stays accurate) while Gin sees
+		// GET. See internal/app/head.go for why the request is copied.
+		Handler:           app.HEADAsGet(otelhttp.NewHandler(r, "paymax-backend")),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

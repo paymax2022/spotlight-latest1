@@ -32,6 +32,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ data: formatUser(user, profile) });
   } catch (err: any) {
-    return NextResponse.json({ error: err?.message ?? 'Failed to fetch user' }, { status: 500 });
+    console.error('[auth/me]', err);
+    return NextResponse.json({ error: 'Failed to fetch user' }, { status: 500 });
   }
 }

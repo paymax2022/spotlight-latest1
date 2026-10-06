@@ -37,7 +37,8 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'programs:manage');
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const input = parseAcademySettingsUpdateInput(body);
 
     const supabase = createAdminClient();

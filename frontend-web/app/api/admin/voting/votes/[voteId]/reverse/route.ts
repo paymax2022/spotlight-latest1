@@ -14,7 +14,8 @@ export async function POST(
   try {
     const identity = await assertAdminPermission(request, 'votes:sensitive:initiate');
     const { voteId } = await context.params;
-    const body = (await request.json()) as { reason: string };
+    const body = (await request.json().catch(() => null)) as { reason: string };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.reason || body.reason.trim().length < 5) {
       return errorResponse('A reason of at least 5 characters is required', 400);

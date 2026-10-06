@@ -15,7 +15,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body) throw new ApiError('Invalid JSON body', 400);
     const status = STATUSES.includes(body?.status) ? body.status : null;
     if (!status) throw new ApiError('A valid status is required', 400);
 

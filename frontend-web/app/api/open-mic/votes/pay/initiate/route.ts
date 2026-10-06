@@ -8,7 +8,7 @@ export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
 
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       contestId?: string;
       submissionId?: string;
       stageName?: string;
@@ -19,6 +19,7 @@ export async function POST(request: Request) {
       // the Paystack charge arbitrarily low and still be granted the votes).
       votePriceNgn?: number;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.contestId)    return errorResponse('contestId is required', 400);
     if (!body.submissionId) return errorResponse('submissionId is required', 400);

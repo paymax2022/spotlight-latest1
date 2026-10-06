@@ -51,11 +51,12 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'programs:manage');
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       applicationId: string; batchId?: string;
       totalAmountNgn: number; installmentsCount: number;
       frequency: string; startDate: string; notes?: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
 
     if (!body.applicationId)                             return errorResponse('applicationId required', 400);
     if (!body.totalAmountNgn || body.totalAmountNgn <= 0) return errorResponse('totalAmountNgn required', 400);
@@ -90,7 +91,10 @@ export async function POST(request: Request) {
       .select('*')
       .single();
 
-    if (planErr || !plan) return errorResponse(planErr?.message ?? 'Failed to create plan', 500);
+    if (planErr || !plan) {
+      console.error('[admin/academy/installments] plan insert failed', planErr);
+      return errorResponse('Failed to create plan', 500);
+    }
 
     const amt   = Math.round((body.totalAmountNgn / body.installmentsCount) * 100) / 100;
     const start = new Date(body.startDate || Date.now());
@@ -106,7 +110,10 @@ export async function POST(request: Request) {
     }));
 
     const { error: payErr } = await supabase.from('academy_installment_payments').insert(payments);
-    if (payErr) return errorResponse(payErr.message, 500);
+    if (payErr) {
+      console.error('[admin/academy/installments] payments insert failed', payErr);
+      return errorResponse('Failed to create installment payments', 500);
+    }
 
     return successResponse({ success: true, plan }, 201);
   } catch (error) {

@@ -312,7 +312,8 @@ export async function initiateWalletToBank(
     if (rpcError.message?.includes('TIER_LIMIT_EXCEEDED')) {
       throw new ApiError('Daily wallet limit for your KYC tier has been reached', 403);
     }
-    throw new ApiError(`Failed to reserve funds: ${rpcError.message}`, 500);
+    console.error('[bank-transfer] wallet_transfer_initiate failed:', rpcError);
+    throw new ApiError('Failed to reserve funds', 500);
   }
 
   const rpcRow = (rpcRows as Array<{ entry_id: string; transfer_id: string }>)[0];

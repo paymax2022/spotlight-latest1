@@ -6,12 +6,13 @@ import { getContestBySlug, recordSubmissionUploadComplete } from '@/src/server/o
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => null)) as {
       contestSlug?: string;
       submissionId?: string;
       objectKey?: string;
       fileName?: string;
     };
+    if (!body) return errorResponse('Invalid JSON body', 400);
     const contestSlug = String(body.contestSlug || '').trim();
     const submissionId = String(body.submissionId || '').trim();
     const objectKey = String(body.objectKey || '').trim();

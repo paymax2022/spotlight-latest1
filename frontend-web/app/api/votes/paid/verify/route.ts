@@ -17,7 +17,8 @@ async function tryGetUserId(request: Request): Promise<string> {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { transactionId?: string; paymentReference?: string };
+    const body = (await request.json().catch(() => null)) as { transactionId?: string; paymentReference?: string };
+    if (!body) return errorResponse('Invalid JSON body', 400);
     if (!body.transactionId) return errorResponse('transactionId is required', 400);
     if (!body.paymentReference) return errorResponse('paymentReference is required', 400);
 
