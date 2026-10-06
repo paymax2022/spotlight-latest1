@@ -352,12 +352,16 @@ func (s *Service) campaignUpdates(ctx context.Context, campaignID string) []map[
 }
 
 // creatorMeta resolves a creator's display fields. Falls back gracefully.
+// A creator with no name set is "Anonymous", never their login email — this
+// result is rendered on PUBLIC campaign cards and detail pages, so the old
+// email fallback published a credential on every campaign whose owner had
+// not filled in their profile.
 func (s *Service) creatorMeta(ctx context.Context, creatorID string) (name, typ, verification string) {
 	name, typ, verification = "Campaign creator", "INDIVIDUAL", "KYC"
 	// platform_users may lack a name; tolerate absence.
 	var full *string
 	_ = s.db.QueryRow(ctx,
-		`SELECT COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), email) FROM public.platform_users WHERE id = $1`, creatorID,
+		`SELECT COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), 'Anonymous') FROM public.platform_users WHERE id = $1`, creatorID,
 	).Scan(&full)
 	if full != nil && *full != "" {
 		name = *full

@@ -21,9 +21,12 @@ var errMap = httperr.New(http.StatusInternalServerError,
 // NewHandler constructs a creator Handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-// GetContributors — GET /campaigns/:id/contributors.
+// GetContributors — GET /campaigns/:id/contributors. Backers are public only
+// while the campaign itself is publicly visible; otherwise the creator alone
+// may list them (visibility is enforced in the service, which returns 404 so
+// a hidden campaign is indistinguishable from an absent one).
 func (h *Handler) GetContributors(c *gin.Context) {
-	items, err := h.svc.GetContributors(c.Request.Context(), c.Param("id"))
+	items, err := h.svc.GetContributors(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
 		errMap.Write(c, err)
 		return
