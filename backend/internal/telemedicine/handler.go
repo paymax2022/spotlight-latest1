@@ -128,9 +128,16 @@ func (h *Handler) BookAppointment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	// Accept Idempotency-Key from header OR body.
+	// Accept Idempotency-Key from header OR body. The body field is not
+	// binding-required (model.go) precisely so the header path is reachable;
+	// the merge below is the single presence check — a money mutation that
+	// cannot dedupe itself must not run.
 	if req.IdempotencyKey == "" {
 		req.IdempotencyKey = ginutil.IdempotencyKey(c)
+	}
+	if req.IdempotencyKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "Idempotency-Key required"})
+		return
 	}
 	appt, err := h.svc.BookAppointment(c.Request.Context(), userID, req)
 	if err != nil {

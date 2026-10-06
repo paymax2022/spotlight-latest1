@@ -214,7 +214,12 @@ type BookAppointmentRequest struct {
 	ScheduledAt      time.Time `json:"scheduled_at" binding:"required"`
 	ConsultationType string    `json:"consultation_type"`
 	Notes            string    `json:"notes"`
-	IdempotencyKey   string    `json:"idempotency_key" binding:"required"`
+	// IdempotencyKey is intentionally NOT binding:"required" — the handler
+	// accepts the Idempotency-Key header as the alternate spelling (iron rule:
+	// header OR body), and a binding-required tag would 400 header-only
+	// callers before the fallback could run. Presence is enforced in
+	// BookAppointment after the merge.
+	IdempotencyKey string `json:"idempotency_key"`
 	// ExpectedTotalKobo is the total the client quoted the patient, taken from the
 	// doctor's `booking` quote. The card rail charges that amount at the PSP before
 	// this server escrows anything, so a stale quote would put the charged and
