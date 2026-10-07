@@ -3,6 +3,7 @@ package roles
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -25,7 +26,7 @@ var allowedKeys = map[string]map[string]keyType{
 		"companyName": tString, "cacNumber": tString, "website": tString, "projectSummary": tString,
 	},
 	RoleEstateManager: {
-		"organisationName": tString, "estatesManaged": tCount, "authorityLetterKey": tString,
+		"organisationName": tString, "estatesManaged": tCount,
 	},
 }
 
@@ -75,8 +76,8 @@ func ValidateDetails(role string, details map[string]any) error {
 			}
 		case tCount:
 			f, ok := asNumber(v)
-			if !ok || f < 0 {
-				return bad("%s must be a non-negative number", k)
+			if !ok || f < 0 || f != math.Trunc(f) {
+				return bad("%s must be a non-negative whole number", k)
 			}
 		}
 	}

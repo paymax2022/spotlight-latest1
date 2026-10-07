@@ -68,6 +68,7 @@ var (
 	ErrBadTransition  = errors.New("property roles: invalid verification transition")
 	ErrForeignKey     = errors.New("property roles: storage key outside caller prefix")
 	ErrDetailsInvalid = errors.New("property roles: invalid details")
+	ErrSelfReview     = errors.New("property roles: reviewers cannot review their own profile")
 	ErrReasonRequired = errors.New("property roles: a reason is required")
 )
 

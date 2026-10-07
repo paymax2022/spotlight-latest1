@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -109,6 +110,23 @@ func (s *Service) Update(ctx context.Context, userID, role string, displayName *
 	})
 }
 
+// validDocumentKey accepts only plain object keys under the caller's prefix:
+// no traversal, escapes, backslashes, control characters or empty segments.
+func validDocumentKey(prefix, key string) bool {
+	if len(key) > 512 || !strings.HasPrefix(key, prefix) || len(key) == len(prefix) {
+		return false
+	}
+	if strings.Contains(key, "..") || strings.ContainsAny(key, "%\\") || strings.Contains(key, "//") || strings.HasSuffix(key, "/") {
+		return false
+	}
+	for _, r := range key {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 func sameValue(a, b any) bool { return fmt.Sprint(a) == fmt.Sprint(b) }
 
 func (s *Service) AddDocument(ctx context.Context, userID, role, kind, storageKey string) (*Profile, error) {
@@ -119,7 +137,7 @@ func (s *Service) AddDocument(ctx context.Context, userID, role, kind, storageKe
 		return nil, fmt.Errorf("%w: unknown document kind %q", ErrDetailsInvalid, kind)
 	}
 	prefix := DocumentKeyPrefix(userID, role)
-	if !strings.HasPrefix(storageKey, prefix) || len(storageKey) == len(prefix) || strings.Contains(storageKey, "..") {
+	if !validDocumentKey(prefix, storageKey) {
 		return nil, ErrForeignKey
 	}
 	return s.repo.inTx(ctx, func(tx pgx.Tx) (*Profile, error) {
@@ -195,10 +213,16 @@ func (s *Service) ListByVerification(ctx context.Context, status string, limit, 
 }
 
 func (s *Service) Approve(ctx context.Context, adminID, profileID string) (*Profile, error) {
+	if _, err := uuid.Parse(profileID); err != nil {
+		return nil, ErrNotFound
+	}
 	return s.repo.inTx(ctx, func(tx pgx.Tx) (*Profile, error) {
 		cur, err := lockProfile(ctx, tx, `id = $1`, profileID)
 		if err != nil {
 			return nil, err
+		}
+		if cur.UserID == adminID {
+			return nil, ErrSelfReview
 		}
 		if cur.Status == StatusSuspended {
 			return nil, ErrSuspended
@@ -206,9 +230,20 @@ func (s *Service) Approve(ctx context.Context, adminID, profileID string) (*Prof
 		if cur.VerificationStatus != VerPending {
 			return nil, ErrBadTransition
 		}
+		// Required details/documents can be removed while pending; re-check under the lock.
+		if missing := MissingForSubmit(cur.Role, cur.Details); len(missing) > 0 {
+			return nil, &IncompleteError{Missing: missing}
+		}
+		var docs int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.property_role_documents WHERE profile_id=$1`, cur.ID).Scan(&docs); err != nil {
+			return nil, fmt.Errorf("count documents: %w", err)
+		}
+		if docs == 0 {
+			return nil, ErrNoDocument
+		}
 		if _, err := tx.Exec(ctx, `UPDATE public.property_role_profiles
 			SET verification_status='verified', status='active', rejection_reason=NULL,
-			    verified_at = COALESCE(verified_at, now()), verified_by=$2, updated_at=now() WHERE id=$1`,
+			    verified_at = now(), verified_by=$2, updated_at=now() WHERE id=$1`,
 			cur.ID, adminID); err != nil {
 			return nil, fmt.Errorf("approve: %w", err)
 		}
@@ -224,10 +259,16 @@ func (s *Service) Reject(ctx context.Context, adminID, profileID, reason string)
 	if reason == "" {
 		return nil, ErrReasonRequired
 	}
+	if _, err := uuid.Parse(profileID); err != nil {
+		return nil, ErrNotFound
+	}
 	return s.repo.inTx(ctx, func(tx pgx.Tx) (*Profile, error) {
 		cur, err := lockProfile(ctx, tx, `id = $1`, profileID)
 		if err != nil {
 			return nil, err
+		}
+		if cur.UserID == adminID {
+			return nil, ErrSelfReview
 		}
 		if cur.Status == StatusSuspended {
 			return nil, ErrSuspended
@@ -249,6 +290,9 @@ func (s *Service) Reject(ctx context.Context, adminID, profileID, reason string)
 
 func (s *Service) Suspend(ctx context.Context, adminID, profileID, reason string) (*Profile, error) {
 	reason = strings.TrimSpace(reason)
+	if _, err := uuid.Parse(profileID); err != nil {
+		return nil, ErrNotFound
+	}
 	return s.repo.inTx(ctx, func(tx pgx.Tx) (*Profile, error) {
 		cur, err := lockProfile(ctx, tx, `id = $1`, profileID)
 		if err != nil {

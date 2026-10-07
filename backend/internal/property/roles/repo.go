@@ -93,6 +93,7 @@ func (r *Repository) Register(ctx context.Context, userID, role, displayName str
 		return nil, fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	// xmax = 0 is true only for a freshly inserted tuple (the conflict path rewrites it).
 	var inserted bool
 	var id string
 	err = tx.QueryRow(ctx, `INSERT INTO public.property_role_profiles (user_id, role, display_name)

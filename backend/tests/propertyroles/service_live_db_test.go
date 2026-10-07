@@ -3,6 +3,7 @@ package propertyroles_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,6 +28,9 @@ func svcFixture(t *testing.T) (*roles.Service, *pgxpool.Pool, context.Context, s
 	return roles.NewService(roles.NewRepository(pool)), pool, ctx, uid
 }
 
+// adminID is a reviewer distinct from the fixture user (self-review is refused).
+const adminID = "00000000-0000-0000-0000-0000000000aa"
+
 func agentDetails() map[string]any {
 	return map[string]any{"licenceNumber": "FRCN-001", "operatingStates": []any{"Lagos"}}
 }
@@ -49,7 +53,7 @@ func verifiedAgent(t *testing.T, s *roles.Service, ctx context.Context, uid stri
 	if _, err = s.Submit(ctx, uid, roles.RoleAgent); err != nil {
 		t.Fatalf("submit: %v", err)
 	}
-	p, err = s.Approve(ctx, uid, p.ID)
+	p, err = s.Approve(ctx, adminID, p.ID)
 	if err != nil {
 		t.Fatalf("approve: %v", err)
 	}
@@ -170,7 +174,7 @@ func TestApprove_OnlyFromPendingAndNotRestamped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Approve(ctx, uid, p.ID); !errors.Is(err, roles.ErrBadTransition) {
+	if _, err = s.Approve(ctx, adminID, p.ID); !errors.Is(err, roles.ErrBadTransition) {
 		t.Fatalf("approve from unverified: want ErrBadTransition, got %v", err)
 	}
 	p = verifiedAgent(t, s, ctx, uid)
@@ -179,14 +183,14 @@ func TestApprove_OnlyFromPendingAndNotRestamped(t *testing.T) {
 	}
 	first := *p.VerifiedAt
 	time.Sleep(20 * time.Millisecond)
-	if _, err = s.Approve(ctx, uid, p.ID); !errors.Is(err, roles.ErrBadTransition) {
+	if _, err = s.Approve(ctx, adminID, p.ID); !errors.Is(err, roles.ErrBadTransition) {
 		t.Fatalf("second approve: want ErrBadTransition, got %v", err)
 	}
 	mine, _ := s.MyRoles(ctx, uid)
 	if len(mine) != 1 || mine[0].VerifiedAt == nil || !mine[0].VerifiedAt.Equal(first) {
 		t.Fatalf("verified_at was re-stamped: %+v", mine)
 	}
-	if _, err = s.Approve(ctx, uid, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, roles.ErrNotFound) {
+	if _, err = s.Approve(ctx, adminID, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, roles.ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }
@@ -199,10 +203,10 @@ func TestReject_RequiresReason(t *testing.T) {
 	if _, err := s.Submit(ctx, uid, roles.RoleAgent); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Reject(ctx, uid, p.ID, "   "); !errors.Is(err, roles.ErrReasonRequired) {
+	if _, err := s.Reject(ctx, adminID, p.ID, "   "); !errors.Is(err, roles.ErrReasonRequired) {
 		t.Fatalf("want ErrReasonRequired, got %v", err)
 	}
-	r, err := s.Reject(ctx, uid, p.ID, "licence unreadable")
+	r, err := s.Reject(ctx, adminID, p.ID, "licence unreadable")
 	if err != nil || r.VerificationStatus != "rejected" || r.RejectionReason == nil || *r.RejectionReason != "licence unreadable" {
 		t.Fatalf("reject: %v %+v", err, r)
 	}
@@ -269,7 +273,7 @@ func TestUpdate_DisplayNameOnVerifiedKeepsVerification(t *testing.T) {
 func TestSuspended_CannotEditAndIsNotVerified(t *testing.T) {
 	s, _, ctx, uid := svcFixture(t)
 	p := verifiedAgent(t, s, ctx, uid)
-	if _, err := s.Suspend(ctx, uid, p.ID, "fraud report"); err != nil {
+	if _, err := s.Suspend(ctx, adminID, p.ID, "fraud report"); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := s.IsVerified(ctx, uid, roles.RoleAgent); ok || err != nil {
@@ -285,7 +289,7 @@ func TestSuspended_CannotEditAndIsNotVerified(t *testing.T) {
 	if _, err := s.Submit(ctx, uid, roles.RoleAgent); !errors.Is(err, roles.ErrSuspended) {
 		t.Fatalf("submit: want ErrSuspended, got %v", err)
 	}
-	if _, err := s.Suspend(ctx, uid, p.ID, "again"); !errors.Is(err, roles.ErrBadTransition) {
+	if _, err := s.Suspend(ctx, adminID, p.ID, "again"); !errors.Is(err, roles.ErrBadTransition) {
 		t.Fatalf("double suspend: want ErrBadTransition, got %v", err)
 	}
 }
@@ -306,12 +310,12 @@ func TestIsVerified_FalseForDraftPendingRejectedSuspended_TrueOnlyForVerifiedAct
 	_, _ = s.AddDocument(ctx, uid, roles.RoleAgent, "agent_licence", doc(uid))
 	_, _ = s.Submit(ctx, uid, roles.RoleAgent)
 	check("pending", false)
-	_, _ = s.Reject(ctx, uid, p.ID, "no")
+	_, _ = s.Reject(ctx, adminID, p.ID, "no")
 	check("rejected", false)
 	_, _ = s.Submit(ctx, uid, roles.RoleAgent)
-	_, _ = s.Approve(ctx, uid, p.ID)
+	_, _ = s.Approve(ctx, adminID, p.ID)
 	check("verified", true)
-	_, _ = s.Suspend(ctx, uid, p.ID, "x")
+	_, _ = s.Suspend(ctx, adminID, p.ID, "x")
 	check("suspended", false)
 	if ok, err := s.IsVerified(ctx, uid, "not-a-role"); ok || err == nil {
 		t.Fatalf("invalid role must be (false, err), got (%v, %v)", ok, err)
@@ -326,14 +330,14 @@ func TestIsVerified_FalseForDraftPendingRejectedSuspended_TrueOnlyForVerifiedAct
 func TestEvents_WrittenForEveryTransition(t *testing.T) {
 	s, pool, ctx, uid := svcFixture(t)
 	p := verifiedAgent(t, s, ctx, uid)
-	_, _ = s.Suspend(ctx, uid, p.ID, "r")
+	_, _ = s.Suspend(ctx, adminID, p.ID, "r")
 	for _, a := range []string{"registered", "updated", "submitted", "approved", "suspended"} {
 		if c := eventCount(t, pool, p.ID, a); c < 1 {
 			t.Errorf("no %q event", a)
 		}
 	}
 	p2 := newDevPending(t, s, ctx, uid)
-	_, _ = s.Reject(ctx, uid, p2.ID, "bad cac")
+	_, _ = s.Reject(ctx, adminID, p2.ID, "bad cac")
 	if c := eventCount(t, pool, p2.ID, "rejected"); c != 1 {
 		t.Errorf("rejected event count %d", c)
 	}
@@ -376,4 +380,150 @@ func newDevPending(t *testing.T, s *roles.Service, ctx context.Context, uid stri
 		t.Fatal(err)
 	}
 	return p
+}
+
+// ── Fix round 1 ───────────────────────────────────────────────────────────
+
+func TestMalformedProfileID_IsNotFound(t *testing.T) {
+	s, _, ctx, _ := svcFixture(t)
+	if _, err := s.Approve(ctx, adminID, "not-a-uuid"); !errors.Is(err, roles.ErrNotFound) {
+		t.Errorf("approve: want ErrNotFound, got %v", err)
+	}
+	if _, err := s.Reject(ctx, adminID, "not-a-uuid", "r"); !errors.Is(err, roles.ErrNotFound) {
+		t.Errorf("reject: want ErrNotFound, got %v", err)
+	}
+	if _, err := s.Suspend(ctx, adminID, "not-a-uuid", "r"); !errors.Is(err, roles.ErrNotFound) {
+		t.Errorf("suspend: want ErrNotFound, got %v", err)
+	}
+}
+
+func TestApprove_RefusedWhenRequiredDetailsRemovedWhilePending(t *testing.T) {
+	s, _, ctx, uid := svcFixture(t)
+	p, _ := s.Register(ctx, uid, roles.RoleAgent, fixtureName)
+	_, _ = s.Update(ctx, uid, roles.RoleAgent, nil, agentDetails())
+	_, _ = s.AddDocument(ctx, uid, roles.RoleAgent, "agent_licence", doc(uid))
+	if _, err := s.Submit(ctx, uid, roles.RoleAgent); err != nil {
+		t.Fatal(err)
+	}
+	// operatingStates is required but NOT identity-bearing, so no reset happens.
+	got, err := s.Update(ctx, uid, roles.RoleAgent, nil, map[string]any{"operatingStates": nil})
+	if err != nil || got.VerificationStatus != "pending" {
+		t.Fatalf("update: %v %+v", err, got)
+	}
+	_, err = s.Approve(ctx, adminID, p.ID)
+	var inc *roles.IncompleteError
+	if !errors.Is(err, roles.ErrIncomplete) || !errors.As(err, &inc) {
+		t.Fatalf("want IncompleteError, got %v", err)
+	}
+	mine, _ := s.MyRoles(ctx, uid)
+	if mine[0].VerificationStatus != "pending" || mine[0].VerifiedAt != nil || mine[0].Status != "draft" {
+		t.Fatalf("state changed by refused approve: %+v", mine[0])
+	}
+}
+
+func TestAddDocument_RefusesTraversalAndMalformedKeys(t *testing.T) {
+	s, _, ctx, uid := svcFixture(t)
+	if _, err := s.Register(ctx, uid, roles.RoleAgent, fixtureName); err != nil {
+		t.Fatal(err)
+	}
+	pre := roles.DocumentKeyPrefix(uid, roles.RoleAgent)
+	sibling := roles.DocumentKeyPrefix(uid+"x", roles.RoleAgent) + "k"
+	for name, k := range map[string]string{
+		"dotdot":         pre + "../../other/agent/k",
+		"sibling user":   sibling,
+		"pct dotdot":     pre + "%2e%2e/x",
+		"pct slash":      pre + "a%2Fb",
+		"empty segment":  pre + "a//b",
+		"backslash":      pre + "a\\b",
+		"control char":   pre + "a\x00b",
+		"newline":        pre + "a\nb",
+		"trailing slash": pre + "a/",
+		"513 bytes":      pre + strings.Repeat("a", 513-len(pre)),
+	} {
+		if _, err := s.AddDocument(ctx, uid, roles.RoleAgent, "agent_licence", k); !errors.Is(err, roles.ErrForeignKey) {
+			t.Errorf("%s: want ErrForeignKey, got %v", name, err)
+		}
+	}
+	p, err := s.AddDocument(ctx, uid, roles.RoleAgent, "agent_licence", pre+"2026/10/a-b_c.pdf")
+	if err != nil || len(p.Documents) != 1 {
+		t.Fatalf("valid nested key refused: %v", err)
+	}
+	if _, err := s.AddDocument(ctx, uid, roles.RoleAgent, "agent_licence", pre+strings.Repeat("a", 512-len(pre))); err != nil {
+		t.Fatalf("512-byte key must be accepted: %v", err)
+	}
+}
+
+func TestReviewByOwner_IsRefused(t *testing.T) {
+	s, _, ctx, uid := svcFixture(t)
+	p, _ := s.Register(ctx, uid, roles.RoleAgent, fixtureName)
+	_, _ = s.Update(ctx, uid, roles.RoleAgent, nil, agentDetails())
+	_, _ = s.AddDocument(ctx, uid, roles.RoleAgent, "agent_licence", doc(uid))
+	_, _ = s.Submit(ctx, uid, roles.RoleAgent)
+	if _, err := s.Approve(ctx, uid, p.ID); !errors.Is(err, roles.ErrSelfReview) {
+		t.Errorf("approve own: want ErrSelfReview, got %v", err)
+	}
+	if _, err := s.Reject(ctx, uid, p.ID, "r"); !errors.Is(err, roles.ErrSelfReview) {
+		t.Errorf("reject own: want ErrSelfReview, got %v", err)
+	}
+	mine, _ := s.MyRoles(ctx, uid)
+	if mine[0].VerificationStatus != "pending" {
+		t.Fatalf("state changed: %+v", mine[0])
+	}
+}
+
+func TestReject_FromNonPendingIsBadTransition(t *testing.T) {
+	s, _, ctx, uid := svcFixture(t)
+	p, _ := s.Register(ctx, uid, roles.RoleAgent, fixtureName)
+	if _, err := s.Reject(ctx, adminID, p.ID, "r"); !errors.Is(err, roles.ErrBadTransition) {
+		t.Fatalf("unverified: want ErrBadTransition, got %v", err)
+	}
+	p = verifiedAgent(t, s, ctx, uid)
+	if _, err := s.Reject(ctx, adminID, p.ID, "r"); !errors.Is(err, roles.ErrBadTransition) {
+		t.Fatalf("verified: want ErrBadTransition, got %v", err)
+	}
+}
+
+func TestUpdate_IdentityResetForDeveloperAndEstateManager(t *testing.T) {
+	s, _, ctx, uid := svcFixture(t)
+	cases := []struct {
+		role, kind, key string
+		details         map[string]any
+	}{
+		{roles.RoleDeveloper, "cac_certificate", "cacNumber", map[string]any{"companyName": "C", "cacNumber": "RC1"}},
+		{roles.RoleEstateManager, "authority_letter", "organisationName", map[string]any{"organisationName": "Org"}},
+	}
+	for _, c := range cases {
+		p, _ := s.Register(ctx, uid, c.role, fixtureName)
+		if _, err := s.Update(ctx, uid, c.role, nil, c.details); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.AddDocument(ctx, uid, c.role, c.kind, roles.DocumentKeyPrefix(uid, c.role)+"d"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Submit(ctx, uid, c.role); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Approve(ctx, adminID, p.ID); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Update(ctx, uid, c.role, nil, map[string]any{c.key: "CHANGED"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.VerificationStatus != "unverified" || got.Status != "draft" || got.VerifiedAt != nil {
+			t.Errorf("%s: not reset: %+v", c.role, got)
+		}
+	}
+}
+
+func TestSubmit_RefusedLeavesRowUnverified(t *testing.T) {
+	s, _, ctx, uid := svcFixture(t)
+	_, _ = s.Register(ctx, uid, roles.RoleAgent, fixtureName)
+	if _, err := s.Submit(ctx, uid, roles.RoleAgent); err == nil {
+		t.Fatal("submit of empty profile must fail")
+	}
+	mine, _ := s.MyRoles(ctx, uid)
+	if len(mine) != 1 || mine[0].VerificationStatus != "unverified" {
+		t.Fatalf("row changed by refused submit: %+v", mine)
+	}
 }

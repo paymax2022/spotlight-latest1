@@ -39,6 +39,8 @@ func TestValidateDetails_RejectsWrongTypes(t *testing.T) {
 		{RoleAgent, map[string]any{"licenceNumber": 12.0}},
 		{RoleEstateManager, map[string]any{"estatesManaged": "many"}},
 		{RoleEstateManager, map[string]any{"estatesManaged": -1.0}},
+		{RoleEstateManager, map[string]any{"estatesManaged": 4.5}},
+		{RoleEstateManager, map[string]any{"authorityLetterKey": "property-roles/u/estate_manager/k"}},
 	}
 	for _, c := range cases {
 		if err := ValidateDetails(c.role, c.d); !errors.Is(err, ErrDetailsInvalid) {
@@ -51,7 +53,7 @@ func TestValidateDetails_AcceptsValid(t *testing.T) {
 	ok := map[string]map[string]any{
 		RoleAgent:         {"licenceNumber": "FRCN-1", "operatingStates": []any{"Lagos", "Abuja"}, "agencyName": "A", "bio": "b", "specialisations": "lands"},
 		RoleDeveloper:     {"companyName": "C", "cacNumber": "RC123", "website": "https://x.test", "projectSummary": "p"},
-		RoleEstateManager: {"organisationName": "O", "estatesManaged": 4.0, "authorityLetterKey": "property-roles/u/estate_manager/k"},
+		RoleEstateManager: {"organisationName": "O", "estatesManaged": 4.0},
 	}
 	for role, d := range ok {
 		if err := ValidateDetails(role, d); err != nil {
