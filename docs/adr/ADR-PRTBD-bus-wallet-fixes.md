@@ -87,8 +87,8 @@ resumable; the summary is read back from persisted state. Sweeper
 `completed`; never-boarded tickets → `boarding_status='no_show'` once the window closed.
 
 ### 7. Migrations
-- `20271009000000_bus_ticket_deferred_settlement_and_refund_truth.sql` — additive only.
-- `20271009000100_bus_ticket_seat_unique_active_only.sql` — **USER-APPROVED EXCEPTION to
+- `20271013000000_bus_ticket_deferred_settlement_and_refund_truth.sql` — additive only.
+- `20271013000100_bus_ticket_seat_unique_active_only.sql` — **USER-APPROVED EXCEPTION to
   additive-only**: creates the partial unique index (FIRST, so there is never a window without
   seat uniqueness even on a non-transactional runner such as plain `psql -f`) and then drops
   `UNIQUE(schedule_id, seat_number)` (found by column set, not by name). A plain (non-CONCURRENT)
