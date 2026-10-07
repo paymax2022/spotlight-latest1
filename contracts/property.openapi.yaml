@@ -238,11 +238,47 @@ components:
           type: string
           description: Must start with the caller's own property-roles/{userID}/{role}/ prefix.
 
+    ApproveRoleRequest:
+      type: object
+      required: [updatedAt]
+      properties:
+        updatedAt:
+          type: string
+          format: date-time
+          description: The profile's updatedAt as the reviewer loaded it. Any later change refuses with 409 (code stale).
+
     RejectRoleRequest:
       type: object
-      required: [reason]
+      required: [reason, updatedAt]
       properties:
         reason: { type: string, minLength: 1 }
+        updatedAt:
+          type: string
+          format: date-time
+          description: The profile's updatedAt as the reviewer loaded it. Any later change refuses with 409 (code stale).
+
+    SuspendRoleRequest:
+      type: object
+      properties:
+        reason: { type: string, description: Optional; recorded on the suspension event. }
+
+    RoleDocumentUrl:
+      type: object
+      required: [url, expiresIn]
+      properties:
+        url: { type: string, description: Presigned GET URL for the document. }
+        expiresIn: { type: integer, description: Seconds until url expires (300). }
+
+    RoleUnprocessable:
+      type: object
+      required: [error, code]
+      properties:
+        error: { type: string }
+        code: { type: string, enum: [incomplete, no_document] }
+        missing:
+          type: array
+          items: { type: string }
+          description: Required detail keys that are blank or absent (code incomplete).
 
     Error:
       type: object
@@ -274,6 +310,23 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
     Conflict:
       description: Request conflicts with the current state.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RoleUnprocessable:
+      description: >
+        Required details are missing (code incomplete, with the missing keys) or
+        no document is attached (code no_document).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RoleUnprocessable' }
+    RoleSuspended:
+      description: The role profile is suspended.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ServiceUnavailable:
+      description: Document storage is not configured or unavailable.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -436,8 +489,11 @@ paths:
       operationId: updatePropertyRole
       summary: Update display name and details.
       description: >
-        Not allowed while suspended. Changing an identity-bearing field on a
-        verified or pending profile resets it to unverified.
+        Not allowed while suspended (403). Changing an identity-bearing field
+        (agent licenceNumber; developer cacNumber or companyName; estate_manager
+        organisationName) on a verified or pending profile resets it to
+        unverified. A pending or verified profile may not blank a required key
+        (422, code incomplete). A patch with no effective change writes nothing.
       security:
         - bearerAuth: []
       parameters:
@@ -460,13 +516,17 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '403': { $ref: '#/components/responses/RoleSuspended' }
+        '422': { $ref: '#/components/responses/RoleUnprocessable' }
 
   /property/roles/{role}/documents/presign:
     post:
       tags: [PropertyRoles]
       operationId: presignPropertyRoleDocument
       summary: Get a presigned PUT URL for a verification document.
+      description: >
+        Requires an existing (404 otherwise), non-suspended (403) profile for
+        the caller and role. 503 when document storage is not configured.
       security:
         - bearerAuth: []
       parameters:
@@ -488,13 +548,16 @@ paths:
               schema: { $ref: '#/components/schemas/PresignRoleDocumentResponse' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/RoleSuspended' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /property/roles/{role}/documents:
     post:
       tags: [PropertyRoles]
       operationId: recordPropertyRoleDocument
       summary: Record an uploaded verification document.
+      description: At most 10 documents per profile (409 code too_many_documents). Not allowed while suspended (403).
       security:
         - bearerAuth: []
       parameters:
@@ -517,7 +580,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '403': { $ref: '#/components/responses/RoleSuspended' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /property/roles/{role}/submit:
     post:
@@ -543,8 +607,10 @@ paths:
               schema: { $ref: '#/components/schemas/RoleProfile' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/RoleSuspended' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/RoleUnprocessable' }
 
   /property/admin/roles:
     servers:
@@ -554,7 +620,9 @@ paths:
       tags: [PropertyRolesAdmin]
       operationId: listPropertyRolesForReview
       summary: List role profiles for review.
-      description: Requires the property.roles.review permission.
+      description: >
+        Requires the property.roles.review permission. Suspended profiles are
+        excluded; ordered by updatedAt ascending (oldest change first).
       security:
         - bearerAuth: []
       parameters:
@@ -562,7 +630,17 @@ paths:
           in: query
           required: false
           schema: { $ref: '#/components/schemas/RoleVerificationStatus' }
-          description: Filter by verification status (e.g. pending).
+          description: Filter by verification status (default pending).
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Page size (values above 200 are clamped).
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Rows to skip.
       responses:
         '200':
           description: Matching role profiles.
@@ -580,7 +658,9 @@ paths:
       tags: [PropertyRolesAdmin]
       operationId: approvePropertyRole
       summary: Approve a role profile.
-      description: Requires the property.roles.review permission.
+      description: >
+        Requires the property.roles.review permission. 409 when the profile is
+        not pending or changed since the reviewer loaded it (code stale).
       security:
         - bearerAuth: []
       parameters:
@@ -589,16 +669,23 @@ paths:
           required: true
           schema: { type: string, format: uuid }
           description: Role profile id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApproveRoleRequest' }
       responses:
         '200':
           description: The updated profile.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/RoleProfile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/RoleUnprocessable' }
 
   /property/admin/roles/{id}/reject:
     servers:
@@ -608,7 +695,9 @@ paths:
       tags: [PropertyRolesAdmin]
       operationId: rejectPropertyRole
       summary: Reject a role profile.
-      description: Requires the property.roles.review permission.
+      description: >
+        Requires the property.roles.review permission. 409 when the profile is
+        not pending or changed since the reviewer loaded it (code stale).
       security:
         - bearerAuth: []
       parameters:
@@ -641,7 +730,7 @@ paths:
       tags: [PropertyRolesAdmin]
       operationId: suspendPropertyRole
       summary: Suspend a role profile.
-      description: Requires the property.roles.review permission.
+      description: Requires the property.roles.review permission. The body is optional.
       security:
         - bearerAuth: []
       parameters:
@@ -650,6 +739,11 @@ paths:
           required: true
           schema: { type: string, format: uuid }
           description: Role profile id.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SuspendRoleRequest' }
       responses:
         '200':
           description: The updated profile.
@@ -660,3 +754,40 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /property/admin/roles/{id}/documents/{docId}/url:
+    servers:
+      - url: /api
+        description: Admin routes are mounted at /api/property/admin, outside the /api/finance base.
+    get:
+      tags: [PropertyRolesAdmin]
+      operationId: getPropertyRoleDocumentUrl
+      summary: Get a short-lived URL to view a document under review.
+      description: >
+        Requires the property.roles.review permission. Returns a presigned GET
+        URL valid for 300 seconds. 404 when the document does not belong to
+        that profile; 503 when document storage is not configured.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Role profile id.
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Document id (must belong to the profile).
+      responses:
+        '200':
+          description: Presigned view URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleDocumentUrl' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }

@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Migrations are additive-only; version must be unique. Pick a version greater than every version on `origin/main`, `origin/staging` and the live `supabase_migrations.schema_migrations` (at planning time the highest known was `20270311000000`, so use `20270312000000` or later) and re-check with `scripts/ci/check-migration-versions.sh` right before merge.
+- Migrations are additive-only; version must be unique. Pick a version greater than every version on `origin/main`, `origin/staging` and the live `supabase_migrations.schema_migrations` (at planning time the highest known was `20270311000000`, so use `20270312000000` or later; final version is `20271009000000` because origin/main later claimed `20270312000000`) and re-check with `scripts/ci/check-migration-versions.sh` right before merge.
 - New tables: RLS enabled with no policy, `anon`/`authenticated` grants revoked, in the same migration. Backend pgx pool only.
 - Feature flag `FEATURE_PROPERTY_ROLES_ENABLED`, default off. Routes unregistered when off.
 - Roles are exactly `estate_manager`, `developer`, `agent`. Verification states: `unverified`, `pending`, `verified`, `rejected`. Status: `draft`, `active`, `suspended`.
