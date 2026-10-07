@@ -132,8 +132,15 @@ func (s *Service) Request(ctx context.Context, creatorID, idemKey string, req Re
 		return nil, err
 	}
 	ref := "connect:payout:" + creatorID
+	// Scope the client-supplied Idempotency-Key per (rail, caller) before it
+	// enters the global ledger keyspace: a raw key is unique per journal, so
+	// the same key arriving from another rail (or another creator) would
+	// collide on ledger_entries.idempotency_key and the debit would silently
+	// no-op — parking a payout row with no money behind it. The derived key
+	// keeps a genuine retry a no-op while a foreign claim fails closed.
+	ledgerKey := "connect:payout:" + creatorID + ":" + idemKey
 	// Money mutation — tier-checked, balanced double-entry, idempotent.
-	if err := s.wallet.Debit(ctx, creatorID, ref, idemKey, settleAcc, req.AmountKobo); err != nil {
+	if err := s.wallet.Debit(ctx, creatorID, ref, ledgerKey, settleAcc, req.AmountKobo); err != nil {
 		return nil, err
 	}
 
@@ -146,7 +153,7 @@ func (s *Service) Request(ctx context.Context, creatorID, idemKey string, req Re
 		CreatorID:      creatorID,
 		AmountKobo:     req.AmountKobo,
 		DestinationRef: dest,
-		IdempotencyKey: idemKey,
+		IdempotencyKey: ledgerKey,
 		LedgerRef:      ref,
 	})
 	if err != nil {
