@@ -1,17 +1,25 @@
 import { NextResponse } from 'next/server';
-import { ApiError, handleApiError } from '@/src/lib/api/responses';
+import { ApiError, errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getResidentContext, mapElection } from '@/src/server/elections/elections.service';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 
 // A single election (must belong to caller's estate).
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireRequestUser(request);
     const { id } = await context.params;
+    // Non-UUID ids can never match elections.id — reject before the query so a
+    // malformed id doesn't surface as a Postgres 22P02 → 500 for residents.
+    if (!UUID_RE.test(id)) return errorResponse('Invalid election ID', 400);
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
     if (!ctx) throw new ApiError('Not a resident of any estate', 403);
+    // Reject malformed ids before the query (Postgres 22P02 → 500 otherwise).
+    if (!UUID_RE.test(id)) throw new ApiError('Invalid election ID', 400);
 
     const { data: row, error } = await supabase
       .from('elections')

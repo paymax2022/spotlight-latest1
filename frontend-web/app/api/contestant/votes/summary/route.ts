@@ -5,12 +5,17 @@ import { getOrCreateShareLink } from '@/src/server/voting/share.service';
 import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
 import { createAdminClient } from '@/lib/supabase/server';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(request: Request) {
   try {
     const user = await requireRequestUser(request);
     const { searchParams } = new URL(request.url);
     const contestId = searchParams.get('contestId');
     if (!contestId) return errorResponse('contestId is required', 400);
+    // contestants.contest_id is uuid — reject a malformed value before it hits
+    // the enrollment query and surfaces as a Postgres 22P02 → swallowed → 403.
+    if (!UUID_RE.test(contestId)) return errorResponse('Invalid contest ID', 400);
 
     // Resolve contestant enrollment id for this user + contest
     const supabase = createAdminClient();

@@ -181,9 +181,9 @@ func (h *Handler) GetSplit(c *gin.Context) {
 }
 
 func (h *Handler) PayShare(c *gin.Context) {
-	// RequireIdempotencyKeyOK writes the 400 itself when the header is missing;
-	// the ok check is what stops the money path from running anyway — a refused
-	// request must never reach PayShare (iron rule #1).
+	// ok was previously ignored: a missing key wrote the 400 above and then
+	// STILL paid the share — a money mutation proceeding without the
+	// required Idempotency-Key (iron rule #1).
 	key, ok := ginutil.RequireIdempotencyKeyOK(c)
 	if !ok {
 		return

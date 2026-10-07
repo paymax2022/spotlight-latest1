@@ -101,8 +101,13 @@ func (s *Service) Send(ctx context.Context, senderID, recipientHandle, note, ide
 		return nil, err
 	}
 
-	// Replay-safe: existing payment for this key short-circuits.
-	if p, err := s.paymentByIdem(ctx, idemKey); err == nil && p != nil {
+	// Replay-safe: an existing payment for this key AND THIS SENDER
+	// short-circuits. The lookup is caller-scoped — an idempotency key another
+	// user already used must NOT replay their payment back to this caller
+	// (that would leak their sender/recipient/amount); it falls through to the
+	// insert, where the unique constraint and the ledger leg keys stop the
+	// cross-user reuse as an error instead.
+	if p, err := s.paymentByIdem(ctx, senderID, idemKey); err == nil && p != nil {
 		return p, nil
 	}
 
@@ -171,6 +176,24 @@ func (s *Service) CreateRequest(ctx context.Context, requesterID, payerHandle, n
 	return r, nil
 }
 
+// legPosted reports whether a ledger entry of entryType for amountKobo exists
+// on userID's user_wallet under reference. The ledger is the source of truth
+// for "did this payment actually move money" — the social row's state column
+// is only a claim, and a claim can outlive the legs it was supposed to cover
+// (crash or failed debit between the flip and the posting).
+func (s *Service) legPosted(ctx context.Context, userID, reference string, entryType ledger.EntryType, amountKobo int64) (bool, error) {
+	const q = `SELECT EXISTS(
+		SELECT 1 FROM ledger_entries e
+		JOIN ledger_accounts a ON a.id = e.account_id
+		WHERE a.user_id = $1 AND a.type = 'user_wallet'
+		  AND e.reference = $2 AND e.type = $3 AND e.amount_kobo = $4)`
+	var ok bool
+	if err := s.db.QueryRow(ctx, q, userID, reference, string(entryType), amountKobo).Scan(&ok); err != nil {
+		return false, fmt.Errorf("social: verify posted leg: %w", err)
+	}
+	return ok, nil
+}
+
 // PayRequest fulfils a request. Object-level authZ: ONLY the named payer may pay,
 // and only a PENDING request. The transfer is idempotent on the request id.
 func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) error {
@@ -180,6 +203,47 @@ func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) err
 	}
 	if r.PayerID != payerID {
 		return ErrForbidden // cannot pay a request not addressed to you
+	}
+	key := "req:" + requestID
+	if r.State == RequestPaid {
+		// Re-entry onto a settled row — idempotent when the ledger backs it,
+		// but a stale claim can also read PAID: a crash (or a failed debit
+		// under the old ordering) between the claim-flip and the legs left
+		// rows marked PAID with no money moved, and the old early-return
+		// answered "not payable" to every retry. The ledger decides:
+		//   requester credit posted  → genuinely paid, return nil;
+		//   payer debit only         → complete the missing credit under the
+		//                              deterministic key (idempotent no-op if
+		//                              a concurrent caller beat us to it);
+		//   no legs at all           → stale claim — revert to PENDING and pay
+		//                              through the normal path below.
+		settled, err := s.legPosted(ctx, r.RequesterID, key, ledger.EntryCredit, r.AmountKobo)
+		if err != nil {
+			return err
+		}
+		if settled {
+			return nil
+		}
+		debited, err := s.legPosted(ctx, payerID, key, ledger.EntryDebit, r.AmountKobo)
+		if err != nil {
+			return err
+		}
+		if debited {
+			escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+			if err != nil {
+				return err
+			}
+			if err := s.led.Credit(ctx, r.RequesterID, key, key+":cr", escrowAcc.ID, r.AmountKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+				return fmt.Errorf("social: pay request credit: %w", err)
+			}
+			return nil
+		}
+		if _, err := s.db.Exec(ctx,
+			`UPDATE social_requests SET state='PENDING', resolved_at=NULL WHERE id=$1 AND state='PAID'`,
+			requestID); err != nil {
+			return fmt.Errorf("social: revert stale request claim: %w", err)
+		}
+		r.State = RequestPending
 	}
 	if !canRequest(r.State, RequestPaid) {
 		return fmt.Errorf("social: request not payable (state %s)", r.State)
@@ -193,21 +257,31 @@ func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) err
 	if err := s.enforceDebitLimit(ctx, payerID, r.AmountKobo); err != nil {
 		return err
 	}
-	// Flip state guarded first, then move money keyed off the request id.
+	// Claim PENDING→PAID first (single-flight — it also preserves the
+	// pay-vs-cancel ordering), then move money keyed off the request id.
+	// A ledger failure REVERTS the claim: a failed debit must never leave a
+	// settled-looking row the payer can no longer pay.
 	const upd = `UPDATE social_requests SET state='PAID', resolved_at=now() WHERE id=$1 AND state='PENDING'`
 	ct, err := s.db.Exec(ctx, upd, requestID)
 	if err != nil || ct.RowsAffected() == 0 {
 		return errors.New("social: request state transition failed")
 	}
+	unclaim := func() {
+		_, _ = s.db.Exec(ctx,
+			`UPDATE social_requests SET state='PENDING', resolved_at=NULL WHERE id=$1 AND state='PAID'`,
+			requestID)
+	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
+		unclaim()
 		return err
 	}
-	key := "req:" + requestID
 	if err := s.led.Debit(ctx, payerID, key, key+":dr", escrowAcc.ID, r.AmountKobo); err != nil {
+		unclaim()
 		return fmt.Errorf("social: pay request debit: %w", err)
 	}
 	if err := s.led.Credit(ctx, r.RequesterID, key, key+":cr", escrowAcc.ID, r.AmountKobo); err != nil {
+		unclaim()
 		return fmt.Errorf("social: pay request credit: %w", err)
 	}
 	s.log(payerID, r.RequesterID, "social.request.pay", "social_request", requestID,
@@ -381,12 +455,57 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 	if sh.UserID != payerID {
 		return ErrForbidden
 	}
-	if sh.State == SharePaid {
-		return nil // idempotent
-	}
 	bill, err := s.getSplit(ctx, sh.SplitID)
 	if err != nil {
 		return err
+	}
+	// The ledger keys are DERIVED from the share, not the caller's
+	// Idempotency-Key (idemKey is accepted for API compatibility but the
+	// share itself is the idempotency unit — it can only ever be paid once).
+	// A retry under a NEW caller key must replay onto the same legs; keying
+	// the legs off the caller key would let one retry post a second debit.
+	key := "split:" + shareID
+	ref := "split:" + sh.SplitID
+	if sh.State == SharePaid {
+		// Re-entry onto a settled share — idempotent when the ledger backs
+		// it, but a stale claim can also read PAID: a crash (or a failed
+		// debit under the old claim-first ordering) between the flip and the
+		// legs left shares marked PAID with no money moved, and the old
+		// early-return answered nil to every retry — the share became
+		// settled-looking and unpayable. The ledger decides:
+		//   organiser credit posted → genuinely paid, return nil;
+		//   payer debit only        → complete the missing credit under the
+		//                             deterministic key (idempotent no-op if
+		//                             a concurrent caller beat us to it);
+		//   no legs at all          → stale claim — revert to PENDING and pay
+		//                             through the normal path below.
+		settled, err := s.legPosted(ctx, bill.OrganiserID, ref, ledger.EntryCredit, sh.AmountKobo)
+		if err != nil {
+			return err
+		}
+		if settled {
+			return nil
+		}
+		debited, err := s.legPosted(ctx, payerID, ref, ledger.EntryDebit, sh.AmountKobo)
+		if err != nil {
+			return err
+		}
+		if debited {
+			escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+			if err != nil {
+				return err
+			}
+			if err := s.led.Credit(ctx, bill.OrganiserID, ref, key+":cr", escrowAcc.ID, sh.AmountKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+				return fmt.Errorf("social: pay share credit: %w", err)
+			}
+			return nil
+		}
+		if _, err := s.db.Exec(ctx,
+			`UPDATE split_shares SET state='PENDING', paid_at=NULL WHERE id=$1 AND state='PAID'`,
+			shareID); err != nil {
+			return fmt.Errorf("social: revert stale share claim: %w", err)
+		}
+		sh.State = SharePending
 	}
 	if err := s.aml.Check(ctx, payerID, sh.AmountKobo); err != nil {
 		return err
@@ -396,23 +515,30 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 	if err := s.enforceDebitLimit(ctx, payerID, sh.AmountKobo); err != nil {
 		return err
 	}
+	// Claim PENDING→PAID first (single-flight), then move money. A ledger
+	// failure REVERTS the claim so a failed debit never leaves a settled-
+	// looking share the payer can no longer pay.
 	const upd = `UPDATE split_shares SET state='PAID', paid_at=now() WHERE id=$1 AND state='PENDING'`
 	ct, err := s.db.Exec(ctx, upd, shareID)
 	if err != nil || ct.RowsAffected() == 0 {
 		return errors.New("social: share transition failed")
 	}
+	unclaim := func() {
+		_, _ = s.db.Exec(ctx,
+			`UPDATE split_shares SET state='PENDING', paid_at=NULL WHERE id=$1 AND state='PAID'`,
+			shareID)
+	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
+		unclaim()
 		return err
 	}
-	key := "split:" + shareID
-	if idemKey != "" {
-		key = idemKey
-	}
-	if err := s.led.Debit(ctx, payerID, "split:"+sh.SplitID, key+":dr", escrowAcc.ID, sh.AmountKobo); err != nil {
+	if err := s.led.Debit(ctx, payerID, ref, key+":dr", escrowAcc.ID, sh.AmountKobo); err != nil {
+		unclaim()
 		return fmt.Errorf("social: pay share debit: %w", err)
 	}
-	if err := s.led.Credit(ctx, bill.OrganiserID, "split:"+sh.SplitID, key+":cr", escrowAcc.ID, sh.AmountKobo); err != nil {
+	if err := s.led.Credit(ctx, bill.OrganiserID, ref, key+":cr", escrowAcc.ID, sh.AmountKobo); err != nil {
+		unclaim()
 		return fmt.Errorf("social: pay share credit: %w", err)
 	}
 	var pending int
@@ -578,10 +704,10 @@ func (s *Service) GetPool(ctx context.Context, poolID string) (*GroupPool, error
 	return s.getPool(ctx, poolID)
 }
 
-func (s *Service) paymentByIdem(ctx context.Context, idemKey string) (*Payment, error) {
-	const q = `SELECT id, sender_id, recipient_id, amount_kobo, note, idempotency_key, created_at FROM social_payments WHERE idempotency_key=$1`
+func (s *Service) paymentByIdem(ctx context.Context, senderID, idemKey string) (*Payment, error) {
+	const q = `SELECT id, sender_id, recipient_id, amount_kobo, note, idempotency_key, created_at FROM social_payments WHERE idempotency_key=$1 AND sender_id=$2`
 	var p Payment
-	if err := s.db.QueryRow(ctx, q, idemKey).Scan(&p.ID, &p.SenderID, &p.RecipientID, &p.AmountKobo, &p.Note, &p.IdempotencyKey, &p.CreatedAt); err != nil {
+	if err := s.db.QueryRow(ctx, q, idemKey, senderID).Scan(&p.ID, &p.SenderID, &p.RecipientID, &p.AmountKobo, &p.Note, &p.IdempotencyKey, &p.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}

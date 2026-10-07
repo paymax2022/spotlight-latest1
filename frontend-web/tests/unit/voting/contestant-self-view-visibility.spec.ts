@@ -64,8 +64,11 @@ function visibility(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+// Route gates contestId as a UUID (matches the /api/v1/contests/[id]/*
+// siblings) — the fixture must be a well-formed UUID to reach the enrollment
+// lookup under test.
 function request() {
-  return new Request('http://localhost/api/contestant/votes/summary?contestId=contest-1', {
+  return new Request('http://localhost/api/contestant/votes/summary?contestId=00000000-0000-4000-8000-000000000001', {
     method: 'GET',
     headers: { authorization: 'Bearer test-token' },
   });

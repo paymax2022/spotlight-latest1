@@ -420,6 +420,9 @@ func (s *Service) RecordCampaignEvent(ctx context.Context, campaignID, eventType
 	if strings.TrimSpace(campaignID) == "" {
 		return ErrInvalidEvent
 	}
+	if _, err := uuid.Parse(campaignID); err != nil {
+		return ErrCampaignNotFound
+	}
 
 	// A NULL actor is an anonymous viewer; an empty string would violate the FK.
 	var actor any
@@ -430,8 +433,22 @@ func (s *Service) RecordCampaignEvent(ctx context.Context, campaignID, eventType
 	const q = `
 		INSERT INTO cf_campaign_events (campaign_id, event_type, source, actor_user_id, anonymous_id)
 		VALUES ($1, $2, $3, $4, $5)`
-	_, err := s.db.Exec(ctx, q, campaignID, et, NormaliseSource(source), actor, strings.TrimSpace(anonymousID))
-	return err
+	if _, err := s.db.Exec(ctx, q, campaignID, et, NormaliseSource(source), actor, strings.TrimSpace(anonymousID)); err != nil {
+		return err
+	}
+
+	// Feed the member's recently-viewed rail. cf_recently_viewed existed with a
+	// read endpoint and no writer at all — an authenticated VIEW is exactly the
+	// signal it was built for. Best-effort: a failed recency upsert must not
+	// lose the analytics event that just committed.
+	if et == "VIEW" && actor != nil {
+		_, _ = s.db.Exec(ctx, `
+			INSERT INTO cf_recently_viewed (user_id, campaign_id)
+			VALUES ($1, $2)
+			ON CONFLICT (user_id, campaign_id) DO UPDATE SET viewed_at = NOW()`,
+			userID, campaignID)
+	}
+	return nil
 }
 
 // Broadcast — a creator's one-time message to everyone who has backed their

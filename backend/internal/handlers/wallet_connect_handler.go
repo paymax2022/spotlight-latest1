@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -222,6 +223,14 @@ func (h *WalletConnectHandler) GetHistoryEntry(c *gin.Context) {
 	}
 
 	id := c.Param("id")
+
+	// A non-UUID :id could never identify a ledger entry — report not-found
+	// rather than letting the "invalid input syntax for type uuid" surface as
+	// a 500 (same convention as the other :id routes).
+	if _, err := uuid.Parse(id); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "transaction not found"})
+		return
+	}
 
 	txn, err := h.store.GetTransaction(c.Request.Context(), userID, id)
 	if err != nil {

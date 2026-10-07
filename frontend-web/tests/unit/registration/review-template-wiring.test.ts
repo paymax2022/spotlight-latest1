@@ -16,7 +16,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const registrationsRow = {
-  id: 'app-1',
+  id: '11111111-1111-4111-8111-111111111111',
   reference: 'OPENMI-000001-ABCD',
   contest_slug: 'open-mic-competition',
   status: 'under_review',
@@ -91,7 +91,7 @@ describe('AD-003/CS-004: reviewRegistrationApplication template resolution wirin
       slot,
     });
 
-    await reviewRegistrationApplication('app-1', { status: 'approved' });
+    await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'approved' });
 
     expect(resolveActiveTemplateForContest).toHaveBeenCalledWith('connect-contest-1');
     expect(processContestantPhoto).toHaveBeenCalledWith({
@@ -107,14 +107,14 @@ describe('AD-003/CS-004: reviewRegistrationApplication template resolution wirin
   it('falls back to processContestantPhotoNoTemplate exactly as before when no template resolves', async () => {
     vi.mocked(resolveActiveTemplateForContest).mockResolvedValue(null);
 
-    await reviewRegistrationApplication('app-1', { status: 'approved' });
+    await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'approved' });
 
     expect(processContestantPhotoNoTemplate).toHaveBeenCalledWith('https://cdn.test/raw-photo.jpg');
     expect(processContestantPhoto).not.toHaveBeenCalled();
   });
 
   it('does not attempt template resolution for a non-promoting status', async () => {
-    await reviewRegistrationApplication('app-1', { status: 'rejected' });
+    await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'rejected' });
 
     expect(resolveActiveTemplateForContest).not.toHaveBeenCalled();
     expect(processContestantPhoto).not.toHaveBeenCalled();

@@ -156,6 +156,10 @@ func (h *Handler) RecordCampaignEvent(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{keyError: "type must be VIEW or SHARE"})
 			return
 		}
+		if errors.Is(err, ErrCampaignNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{keyError: "campaign not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}

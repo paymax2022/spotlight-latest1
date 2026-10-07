@@ -117,10 +117,10 @@ func TestLiveDB_AnalyticsAreZeroWithoutEvents(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
 
-	campaignID, _, _ := seedCampaign(t, ctx, pool)
+	campaignID, creatorID, _ := seedCampaign(t, ctx, pool)
 	svc := creator.NewService(pool)
 
-	a, err := svc.GetCampaignAnalytics(ctx, campaignID)
+	a, err := svc.GetCampaignAnalytics(ctx, campaignID, creatorID)
 	if err != nil {
 		t.Fatalf("analytics: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestLiveDB_AnalyticsCountRecordedEvents(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
 
-	campaignID, _, _ := seedCampaign(t, ctx, pool)
+	campaignID, creatorID, _ := seedCampaign(t, ctx, pool)
 
 	for _, ev := range []struct{ typ, src string }{
 		{"VIEW", "whatsapp"}, {"VIEW", "whatsapp"}, {"VIEW", "facebook"},
@@ -157,7 +157,7 @@ func TestLiveDB_AnalyticsCountRecordedEvents(t *testing.T) {
 		}
 	}
 
-	a, err := creator.NewService(pool).GetCampaignAnalytics(ctx, campaignID)
+	a, err := creator.NewService(pool).GetCampaignAnalytics(ctx, campaignID, creatorID)
 	if err != nil {
 		t.Fatalf("analytics: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestLiveDB_ContributionAttributedToLastTouch(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
 
-	campaignID, _, trackUser := seedCampaign(t, ctx, pool)
+	campaignID, creatorID, trackUser := seedCampaign(t, ctx, pool)
 	contributorID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO auth.users (id, email, aud, role)
@@ -216,7 +216,7 @@ func TestLiveDB_ContributionAttributedToLastTouch(t *testing.T) {
 		t.Fatalf("insert contribution: %v", err)
 	}
 
-	a, err := creator.NewService(pool).GetCampaignAnalytics(ctx, campaignID)
+	a, err := creator.NewService(pool).GetCampaignAnalytics(ctx, campaignID, creatorID)
 	if err != nil {
 		t.Fatalf("analytics: %v", err)
 	}

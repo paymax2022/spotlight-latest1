@@ -41,7 +41,7 @@ import { debitWallet } from '@/src/server/wallet/service';
 import { getVotingSettings, assertVotingOpen } from '@/src/server/voting/free-vote.service';
 import { createAdminClient } from '@/lib/supabase/server';
 
-const REAL_PACKAGE = { id: 'pkg-1', votes: 100, bonus_votes: 10, amount: 500, currency: 'NGN' };
+const REAL_PACKAGE = { id: '33333333-3333-4333-8333-333333333333', votes: 100, bonus_votes: 10, amount: 500, currency: 'NGN' };
 
 function makeReq(body: Record<string, unknown>) {
   return new Request('http://localhost/api/votes/paid/wallet', {
@@ -69,9 +69,9 @@ describe('SEC-003: /api/votes/paid/wallet trusts only the server-side package ro
 
   it('ignores a client-supplied amount override and debits the SERVER package price (50,000 kobo)', async () => {
     const res = await POST(makeReq({
-      contestId: 'contest-1',
-      contestantId: 'contestant-1',
-      packageId: 'pkg-1',
+      contestId: '11111111-1111-4111-8111-111111111111',
+      contestantId: '22222222-2222-4222-8222-222222222222',
+      packageId: '33333333-3333-4333-8333-333333333333',
       voterEmail: 'a@b.com',
       voterName: 'A',
       // Tamper attempt: none of these fields exist on WalletVoteBody — a
@@ -100,9 +100,9 @@ describe('SEC-003: /api/votes/paid/wallet trusts only the server-side package ro
     vi.mocked(createAdminClient).mockReturnValue(mock as any);
 
     const res = await POST(makeReq({
-      contestId: 'contest-1',
-      contestantId: 'contestant-1',
-      packageId: 'does-not-exist',
+      contestId: '11111111-1111-4111-8111-111111111111',
+      contestantId: '22222222-2222-4222-8222-222222222222',
+      packageId: '99999999-9999-4999-8999-999999999999',
       voterEmail: 'a@b.com',
       voterName: 'A',
     }));

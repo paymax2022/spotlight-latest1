@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/go-common/strutil"
@@ -23,7 +24,8 @@ const selectCols = `
 	c.goal_kobo,
 	COALESCE((SELECT SUM(co.amount_kobo) FROM contributions co WHERE co.campaign_id = c.id AND co.status IN ('escrowed','released')), 0) AS raised_kobo,
 	c.contributor_count, c.risk_score, c.verified, c.featured, c.trending, c.urgent,
-	c.deadline, COALESCE(c.submitted_at, c.created_at), c.created_at, c.creator_id`
+	c.deadline, COALESCE(c.submitted_at, c.created_at), c.created_at, c.creator_id,
+	c.paused_at`
 
 func scanRow(scan func(dest ...any) error) (*reviewRow, error) {
 	r := &reviewRow{}
@@ -34,6 +36,7 @@ func scanRow(scan func(dest ...any) error) (*reviewRow, error) {
 		&r.goalKobo, &r.raisedKobo, &r.contributorCount, &r.riskScore,
 		&r.verified, &r.featured, &r.trending, &r.urgent,
 		&r.deadline, &r.submittedAt, &r.createdAt, &r.creatorID,
+		&r.pausedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -93,11 +96,31 @@ func (s *Service) ListCampaigns(ctx context.Context, q CampaignQuery) ([]Campaig
 // served by dedicated endpoints and stay empty here; `updates` is real, because
 // the updates timeline and the campaign page's Updates block both read it from
 // this payload and nowhere else.
-func (s *Service) GetDetail(ctx context.Context, id string) (map[string]any, error) {
-	sql := fmt.Sprintf(`SELECT %s FROM campaigns c WHERE c.id = $1`, selectCols)
+//
+// Visibility mirrors public discovery (buildDiscoveryWhere): anyone may read a
+// campaign only while it is publicly live — ACTIVE or COMPLETED (a finished
+// fundraiser's page stays linkable) and not owner-paused. Pre-review
+// (DRAFT/PENDING_REVIEW/CHANGES_REQUESTED), REJECTED, FROZEN and paused
+// campaigns answer to their creator alone: a pending submission can carry
+// beneficiary PII and must not be readable by anyone who happens to hold the
+// ID. A soft-deleted campaign is gone from every surface, creator included —
+// the row survives only to keep its contribution and ledger references
+// resolvable. Non-owner views of a hidden campaign return the same
+// ErrCampaignNotFound as an absent id, so the error never confirms existence.
+// Admin review uses AdminCampaignDetail, a separate path.
+func (s *Service) GetDetail(ctx context.Context, id, viewerID string) (map[string]any, error) {
+	sql := fmt.Sprintf(`SELECT %s FROM campaigns c WHERE c.id = $1 AND c.deleted_at IS NULL`, selectCols)
 	r, err := scanRow(s.db.QueryRow(ctx, sql, id).Scan)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrCampaignNotFound
+		}
 		return nil, err
+	}
+	publiclyVisible := r.pausedAt == nil &&
+		(r.reviewStatus == "ACTIVE" || r.reviewStatus == "COMPLETED")
+	if !publiclyVisible && r.creatorID != viewerID {
+		return nil, ErrCampaignNotFound
 	}
 	name, typ, verif := s.creatorMeta(ctx, r.creatorID)
 	sum := r.toSummary(name, typ, verif)
@@ -352,12 +375,16 @@ func (s *Service) campaignUpdates(ctx context.Context, campaignID string) []map[
 }
 
 // creatorMeta resolves a creator's display fields. Falls back gracefully.
+// A creator with no name set is "Anonymous", never their login email — this
+// result is rendered on PUBLIC campaign cards and detail pages, so the old
+// email fallback published a credential on every campaign whose owner had
+// not filled in their profile.
 func (s *Service) creatorMeta(ctx context.Context, creatorID string) (name, typ, verification string) {
 	name, typ, verification = "Campaign creator", "INDIVIDUAL", "KYC"
 	// platform_users may lack a name; tolerate absence.
 	var full *string
 	_ = s.db.QueryRow(ctx,
-		`SELECT COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), email) FROM public.platform_users WHERE id = $1`, creatorID,
+		`SELECT COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), 'Anonymous') FROM public.platform_users WHERE id = $1`, creatorID,
 	).Scan(&full)
 	if full != nil && *full != "" {
 		name = *full
@@ -713,6 +740,7 @@ type reviewRow struct {
 	deadline                                                         time.Time
 	submittedAt, createdAt                                           time.Time
 	creatorID                                                        string
+	pausedAt                                                         *time.Time
 }
 
 // SubmitCampaignRequest is the body for the full create/submit flow.

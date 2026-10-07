@@ -138,7 +138,7 @@ func (h *Handler) ListCampaigns(c *gin.Context) {
 
 // GetDetail — GET /campaigns/:id (rich detail).
 func (h *Handler) GetDetail(c *gin.Context) {
-	detail, err := h.svc.GetDetail(c.Request.Context(), c.Param("id"))
+	detail, err := h.svc.GetDetail(c.Request.Context(), c.Param("id"), ginutil.UserID(c))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{keyError: keyCampaignNotFound})
 		return

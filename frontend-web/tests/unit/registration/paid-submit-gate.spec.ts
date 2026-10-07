@@ -51,7 +51,7 @@ function makeSupabaseStub(draftRow: any, intentRow: any, captured: { inserts: an
 
 function makeDraftRow(formData: Record<string, unknown>, contestSlug = 'open-mic-competition') {
   return {
-    id: 'app-paid-1',
+    id: '33333333-3333-4333-8333-333333333333',
     reference: 'OPENMI-000001-XXXX',
     contest_slug: contestSlug,
     status: 'draft',
@@ -106,7 +106,7 @@ async function runSubmit(draftRow: any, intentRow: any) {
   }));
 
   const { submitRegistrationApplication } = await import('@/src/server/registration/supabase-store');
-  const result = await submitRegistrationApplication('app-paid-1');
+  const result = await submitRegistrationApplication('33333333-3333-4333-8333-333333333333');
   const regUpdate = captured.updates.find((u) => u.table === 'registrations');
   vi.doUnmock('@/src/features/registration/config');
   return { result, captured, regUpdate };
@@ -135,7 +135,7 @@ describe('AUD-BILL-002: paid-contest submit requires proven payment', () => {
     verifyMock.mockReset();
     const { regUpdate } = await runSubmit(
       makeDraftRow({ 'payment.paymentStatus': 'paid' }),
-      { id: 'intent-1', application_id: 'app-paid-1', amount_kobo: 200000, status: 'completed', reference: 'PAYSTACK-REF-1', idempotency_key: 'k', method: 'PAYSTACK', created_at: 'x', updated_at: 'x' },
+      { id: 'intent-1', application_id: '33333333-3333-4333-8333-333333333333', amount_kobo: 200000, status: 'completed', reference: 'PAYSTACK-REF-1', idempotency_key: 'k', method: 'PAYSTACK', created_at: 'x', updated_at: 'x' },
     );
     expect(regUpdate.vals.status).toBe('submitted');
     expect(verifyMock).not.toHaveBeenCalled();

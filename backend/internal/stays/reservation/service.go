@@ -132,6 +132,7 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 
 // Sentinel errors surfaced to handlers (mapped to HTTP codes there).
 var (
+	ErrNotFound        = errors.New("reservation: not found")
 	ErrForbidden       = errors.New("reservation: caller does not own this reservation")
 	ErrConsentRequired = consent.ErrConsentRequired
 	ErrBadState        = errors.New("reservation: illegal state transition")

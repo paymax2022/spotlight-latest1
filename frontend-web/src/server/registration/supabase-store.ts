@@ -74,9 +74,17 @@ export function makeReference(contestSlug: string) {
   return `${prefix}-${stamp}-${rand}`;
 }
 
+// UUID_RE is declared below (module-level, line ~290) — hoisting is fine
+// because this only runs at call time.
 export async function getRegistrationDraft(applicationId: string): Promise<RegistrationDraft | null> {
   if (!applicationId || typeof applicationId !== 'string') {
     throw new Error('Invalid application ID');
+  }
+  // registrations.id is uuid — a malformed id can never match. Return
+  // not-found (callers map it to 404) instead of letting Postgres 22P02
+  // surface as a 500 in every [id] route that calls this.
+  if (!UUID_RE.test(applicationId)) {
+    return null;
   }
 
   const { data, error } = await getSupabase()

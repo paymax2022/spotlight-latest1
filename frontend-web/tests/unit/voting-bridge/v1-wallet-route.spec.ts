@@ -46,17 +46,17 @@ import { incrementVoteTotals } from '@/src/server/voting/totals.service';
 import { boundClaimKey } from '@/src/server/voting-bridge/idempotency';
 import { createAdminClient } from '@/lib/supabase/server';
 
-const PKG = { id: 'pkg-1', votes: 10, bonus_votes: 2, amount: 1000, currency: 'NGN' };
+const PKG = { id: '33333333-3333-4333-8333-333333333333', votes: 10, bonus_votes: 2, amount: 1000, currency: 'NGN' };
 // 10 + 2 bonus = 12 votes; ₦1000 = 100_000 kobo.
 const FINGERPRINT = {
-  contestId: 'contest-1', contestantId: 'ct-1', packageId: 'pkg-1',
+  contestId: '11111111-1111-4111-8111-111111111111', contestantId: '22222222-2222-4222-8222-222222222222', packageId: '33333333-3333-4333-8333-333333333333',
   votes: 12, amountKobo: 100_000,
 };
 
 const BODY = {
-  contestId: 'contest-1',
-  contestantId: 'ct-1',
-  packageId: 'pkg-1',
+  contestId: '11111111-1111-4111-8111-111111111111',
+  contestantId: '22222222-2222-4222-8222-222222222222',
+  packageId: '33333333-3333-4333-8333-333333333333',
   voterEmail: 'v@x.com',
   voterName: 'Voter',
 };
@@ -137,8 +137,8 @@ const PRIOR_CREDITED = {
   total_votes_to_credit: 12,
   amount_expected: 1000,
   vote_credit_status: 'credited',
-  contest_id: 'contest-1',
-  contestant_id: 'ct-1',
+  contest_id: '11111111-1111-4111-8111-111111111111',
+  contestant_id: '22222222-2222-4222-8222-222222222222',
   voter_user_id: 'u-v1',
   votes_purchased: 10,
   bonus_votes: 2,
@@ -174,7 +174,7 @@ describe('POST /api/votes/paid/wallet', () => {
     expect(vi.mocked(debitWallet)).toHaveBeenCalledWith('u-v1',
       expect.objectContaining({ idempotencyKey: key, amountKobo: 100_000 }));
     expect(calls.votesInserts).toHaveLength(1);
-    expect(vi.mocked(incrementVoteTotals)).toHaveBeenCalledWith('contest-1', 'ct-1',
+    expect(vi.mocked(incrementVoteTotals)).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
       { paidVotes: 10, bonusVotes: 2 });
   });
 
@@ -254,7 +254,7 @@ describe('POST /api/votes/paid/wallet', () => {
       vote_quantity: 12,
     }));
     // The recorded split is preserved — bonus must not fold into paid.
-    expect(vi.mocked(incrementVoteTotals)).toHaveBeenCalledWith('contest-1', 'ct-1',
+    expect(vi.mocked(incrementVoteTotals)).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
       { paidVotes: 10, bonusVotes: 2 });
   });
 
