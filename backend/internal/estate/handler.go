@@ -231,8 +231,25 @@ func (h *Handler) LookupCode(c *gin.Context) {
 	c.JSON(http.StatusOK, payload)
 }
 
+// requireResident is the pre-body authorization check for the guard POSTs.
+// The services assert membership themselves, but they run AFTER
+// ShouldBindJSON — so a non-member got a 400 on a malformed body where a
+// member gets 403, an error-shape oracle that confirms both the route and its
+// expected payload (V7b residual). Assert FIRST; the service re-checks inside,
+// which is defense in depth, not drift — this call only fixes the ORDER.
+func (h *Handler) requireResident(c *gin.Context, userID string) bool {
+	if err := h.svc.assertResident(c.Request.Context(), c.Param("id"), userID); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{keyError: httperr.Msg(c, http.StatusForbidden, err)})
+		return false
+	}
+	return true
+}
+
 func (h *Handler) GuardCheckin(c *gin.Context) {
 	guardID := ginutil.UserID(c)
+	if !h.requireResident(c, guardID) {
+		return
+	}
 	var req GuardCheckinRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
@@ -252,6 +269,9 @@ func (h *Handler) GuardCheckin(c *gin.Context) {
 
 func (h *Handler) GuardCheckout(c *gin.Context) {
 	guardID := ginutil.UserID(c)
+	if !h.requireResident(c, guardID) {
+		return
+	}
 	var body struct {
 		CodeID string `json:"code_id" binding:"required"`
 		GateID string `json:"gate_id"`
@@ -269,6 +289,9 @@ func (h *Handler) GuardCheckout(c *gin.Context) {
 
 func (h *Handler) SubmitIncident(c *gin.Context) {
 	guardID := ginutil.UserID(c)
+	if !h.requireResident(c, guardID) {
+		return
+	}
 	var req SubmitIncidentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
@@ -288,6 +311,9 @@ func (h *Handler) SubmitIncident(c *gin.Context) {
 
 func (h *Handler) HandoverShift(c *gin.Context) {
 	guardID := ginutil.UserID(c)
+	if !h.requireResident(c, guardID) {
+		return
+	}
 	var req HandoverRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
@@ -307,6 +333,9 @@ func (h *Handler) HandoverShift(c *gin.Context) {
 
 func (h *Handler) SyncOfflineLogs(c *gin.Context) {
 	guardID := ginutil.UserID(c)
+	if !h.requireResident(c, guardID) {
+		return
+	}
 	var req SyncRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})

@@ -36,7 +36,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     const upstream = await fetch(targetUrl, { method: 'POST', headers, body });
 
     const responseBody = await upstream.text();
-    return new Response(responseBody, {
+    // Null-body statuses (101/204/205/304) may not carry a body — the Fetch
+    // Response constructor THROWS TypeError on one, so an upstream 204 would
+    // surface as a 500. Same guard as proxyToGoBackend / the kyc webhook route.
+    const nullBodyStatus =
+      upstream.status === 101 || upstream.status === 204 ||
+      upstream.status === 205 || upstream.status === 304;
+    return new Response(nullBodyStatus ? null : responseBody, {
       status: upstream.status,
       headers: { 'Content-Type': 'application/json' },
     });
