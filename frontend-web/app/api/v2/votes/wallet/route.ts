@@ -8,6 +8,7 @@ import { priceWalletVote } from '@/src/server/voting-bridge/wallet-pricing';
 import { creditWalletVotes, markVotePurchaseReversed } from '@/src/server/voting-bridge/wallet-credit';
 import { checkRateLimit } from '@/src/lib/voting/rate-limit';
 import { getRequestIp } from '@/src/lib/rate-limit/client-ip';
+import { GO_BACKEND_URL } from '@/src/lib/go-backend';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -21,7 +22,7 @@ async function goVoteDebit(
   costKobo: number,
   idempotencyKey: string,
 ): Promise<void> {
-  const goApiBase = process.env.GO_API_BASE_URL ?? 'http://localhost:8080';
+  const goApiBase = process.env.GO_API_BASE_URL ?? GO_BACKEND_URL;
   const res = await fetch(`${goApiBase}/api/finance/vote-bridge/debit`, {
     method: 'POST',
     headers: {
@@ -49,7 +50,7 @@ async function goVoteReverse(
   contestantId: string,
   idempotencyKey: string,
 ): Promise<void> {
-  const goApiBase = process.env.GO_API_BASE_URL ?? 'http://localhost:8080';
+  const goApiBase = process.env.GO_API_BASE_URL ?? GO_BACKEND_URL;
   const res = await fetch(`${goApiBase}/api/finance/vote-bridge/reverse`, {
     method: 'POST',
     headers: {
