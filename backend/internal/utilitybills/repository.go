@@ -538,9 +538,14 @@ func scanTransaction(row pgx.Row) (*TransactionRow, error) {
 // pay (the pre-check). The second is the unique constraint on idempotency_key,
 // caught as 23505 by InsertTransaction — a pre-check alone loses the race between
 // two concurrent identical requests.
-func (r *Repository) GetTransactionByIdempotencyKey(ctx context.Context, key string) (*TransactionRow, error) {
+// The lookup is CALLER-SCOPED (user_id = $2): replaying on key alone would hand
+// any caller another member's transaction — amount, token, customer reference —
+// on a guessed key. A foreign key colliding on insert is instead the durable
+// signal of a cross-member clash, mapped to ErrIdempotencyKeyConflict there
+// (same convention as finance/transfers' findWalletTransferByKey).
+func (r *Repository) GetTransactionByIdempotencyKey(ctx context.Context, userID, key string) (*TransactionRow, error) {
 	t, err := scanTransaction(r.db.QueryRow(ctx,
-		`SELECT `+transactionCols+` FROM public.utility_transactions WHERE idempotency_key = $1`, key))
+		`SELECT `+transactionCols+` FROM public.utility_transactions WHERE idempotency_key = $1 AND user_id = $2`, key, userID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil // not a failure: "nobody has used this key" is the normal path
 	}
@@ -548,6 +553,21 @@ func (r *Repository) GetTransactionByIdempotencyKey(ctx context.Context, key str
 		return nil, fmt.Errorf("utilitybills: get transaction by idempotency key: %w", err)
 	}
 	return t, nil
+}
+
+// idempotencyKeyInUse reports whether ANY row already holds this key — the
+// UNSCOPED probe used ONLY inside InsertTransaction's 23505 branch, after the
+// caller-scoped re-read missed, to tell a foreign-key clash (409) apart from a
+// collision on some other unique column. It returns no row data, so a foreign
+// row's fields can never leak through it.
+func (r *Repository) idempotencyKeyInUse(ctx context.Context, key string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM public.utility_transactions WHERE idempotency_key = $1)`, key).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("utilitybills: idempotency key probe: %w", err)
+	}
+	return exists, nil
 }
 
 // GetTransaction loads a transaction by id with NO ownership filter. Admin/
@@ -665,15 +685,55 @@ func (r *Repository) InsertTransaction(ctx context.Context, t *TransactionRow) (
 		return inserted, false, nil
 	}
 	if dbutil.IsUniqueViolation(err) {
-		existing, rerr := r.GetTransactionByIdempotencyKey(ctx, t.IdempotencyKey)
+		// Same-caller concurrent insert: the winner's row is the answer
+		// (caller-scoped re-read — a foreign row is never returned here) —
+		// but ONLY when it records the same purchase. A key replayed against
+		// different material params is idempotency-key misuse, not a retry:
+		// adopting the stored row would report a transaction this request
+		// never made (post-merge audit D4), so divergence fails closed with
+		// the same 409 sentinel a cross-member clash gets.
+		existing, rerr := r.GetTransactionByIdempotencyKey(ctx, t.UserID, t.IdempotencyKey)
 		if rerr == nil && existing != nil {
+			if !sameTransactionParams(existing, t) {
+				return nil, false, ErrIdempotencyKeyConflict
+			}
 			return existing, true, nil
+		}
+		// The caller-scoped read missed. If the key is nonetheless taken, it is
+		// held by a DIFFERENT member — a cross-user reuse, which is a 409
+		// conflict, never a replay of their row.
+		if inUse, perr := r.idempotencyKeyInUse(ctx, t.IdempotencyKey); perr == nil && inUse {
+			return nil, false, ErrIdempotencyKeyConflict
 		}
 		// The collision was on some OTHER unique column (receipt_number is the only
 		// other one). Surface it rather than pretending it was a replay.
 		return nil, false, fmt.Errorf("utilitybills: insert transaction (unique violation, not the idempotency key): %w", err)
 	}
 	return nil, false, fmt.Errorf("utilitybills: insert transaction: %w", err)
+}
+
+// sameTransactionParams compares the material params a same-caller
+// idempotency-key replay must agree on for the stored row to be THIS purchase:
+// what is being bought (category + biller + product), for whom (customer
+// reference — the meter/account the value lands on), for how much (amount and
+// retail totals), and through which rail (payment source). Anything else
+// (status, provider outcome, attempts) is outcome, not request.
+func sameTransactionParams(a, b *TransactionRow) bool {
+	return a.Category == b.Category &&
+		a.BillerID == b.BillerID &&
+		sameStrPtr(a.ProductID, b.ProductID) &&
+		a.CustomerReference == b.CustomerReference &&
+		a.AmountKobo == b.AmountKobo &&
+		a.RetailAmountKobo == b.RetailAmountKobo &&
+		a.PaymentSource == b.PaymentSource
+}
+
+// sameStrPtr compares two nullable strings by value.
+func sameStrPtr(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // ErrStatusGuard is returned by UpdateTransaction when the patch carries
@@ -818,7 +878,7 @@ func (r *Repository) ClaimForSettlement(ctx context.Context, id string, seenUpda
 		UPDATE public.utility_transactions
 		SET status = 'failed', failure_reason = $3, updated_at = now()
 		WHERE id = $1 AND updated_at = $2
-		  AND (status IN ('initiated','wallet_debited','provider_pending')
+		  AND (status IN ('initiated','wallet_debited','provider_pending','disputed')
 		       OR (status = 'failed' AND updated_at <= now() - $4::interval))
 		RETURNING `+transactionCols,
 		id, seenUpdatedAt, reason, fmt.Sprintf("%d seconds", int64(adminSettleWindow.Seconds()))))

@@ -143,18 +143,24 @@ func (r *Repository) ListUserProgress(ctx context.Context, userID string) ([]Mis
 // MarkClaimed flips a progress row to 'claimed' with the claim idempotency key,
 // only if it is currently 'completed'. Returns true when this call performed the
 // transition (so the caller knows whether to grant the reward exactly once).
+//
+// This is a bare UPDATE — deliberately never an upsert. The previous
+// INSERT ... ON CONFLICT shape guarded only the conflict arm, so a caller with
+// NO progress row (the common case) hit the plain INSERT and stamped 'claimed'
+// at progress 0 — an unearned claim that would also have minted a real
+// referral-ledger accrual for any mission carrying cash_reward_kobo. A mission
+// is claimable only once the progress pipeline has written status='completed';
+// anything else is a no-op and the service reports "mission not completed yet".
 func (r *Repository) MarkClaimed(ctx context.Context, missionID, userID, idemKey string) (bool, error) {
 	const q = `
-		INSERT INTO referral_mission_progress (mission_id, user_id, progress, status, claimed_at, claim_idempotency_key)
-		VALUES ($1, $2, 0, 'claimed', now(), $3)
-		ON CONFLICT (mission_id, user_id) DO UPDATE
-			SET status = 'claimed', claimed_at = now(), claim_idempotency_key = EXCLUDED.claim_idempotency_key, updated_at = now()
-			WHERE referral_mission_progress.status = 'completed'
+		UPDATE referral_mission_progress
+		SET status = 'claimed', claimed_at = now(), claim_idempotency_key = $3, updated_at = now()
+		WHERE mission_id = $1 AND user_id = $2 AND status = 'completed'
 		RETURNING id`
 	var id string
 	err := r.db.QueryRow(ctx, q, missionID, userID, idemKey).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil // not completed / already claimed
+		return false, nil // no row / in_progress / already claimed
 	}
 	if err != nil {
 		return false, fmt.Errorf("gamification: mark claimed: %w", err)

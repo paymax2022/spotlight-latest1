@@ -146,12 +146,15 @@ export async function initiateAdjustment(
   // Idempotency check
   const { data: existing } = await supabase
     .from('admin_adjustments')
-    .select('id, status')
+    .select('id, status, initiator_id')
     .eq('idempotency_key', input.idempotencyKey)
     .maybeSingle();
 
   if (existing) {
-    const row = existing as { id: string; status: string };
+    const row = existing as { id: string; status: string; initiator_id: string };
+    if (row.initiator_id !== input.initiatorId) {
+      throw new ApiError('Idempotency-Key conflicts with an existing adjustment.', 409);
+    }
     return {
       adjustmentId:     row.id,
       status:           row.status as InitiateAdjustmentResult['status'],
@@ -184,11 +187,14 @@ export async function initiateAdjustment(
       // Race on idempotency_key — re-fetch
       const { data: raced } = await supabase
         .from('admin_adjustments')
-        .select('id, status')
+        .select('id, status, initiator_id')
         .eq('idempotency_key', input.idempotencyKey)
         .maybeSingle();
       if (raced) {
-        const row = raced as { id: string; status: string };
+        const row = raced as { id: string; status: string; initiator_id: string };
+        if (row.initiator_id !== input.initiatorId) {
+          throw new ApiError('Idempotency-Key conflicts with an existing adjustment.', 409);
+        }
         return { adjustmentId: row.id, status: row.status as InitiateAdjustmentResult['status'], requiresApproval: false, alreadyProcessed: true };
       }
     }

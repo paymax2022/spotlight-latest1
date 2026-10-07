@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // Handler exposes the HEALTH-BUILD §6 Veterinary API. AuthN is the finance auth
@@ -130,6 +131,12 @@ func (h *Handler) UpsertService(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	// provider_id feeds the HL-2 provider-gate lookup (WHERE id=$1::uuid); an
+	// empty/malformed value must be a 400, never a driver error → 422/500.
+	if _, err := uuid.Parse(req.ProviderID); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "provider_id must be a uuid")
+		return
+	}
 	out, err := h.svc.UpsertService(c.Request.Context(), id, VetService{
 		ID: req.ID, ProviderID: req.ProviderID, Code: req.Code, Name: req.Name,
 		VisitType: VisitType(req.VisitType), PriceKobo: req.PriceKobo, Active: req.Active,
@@ -159,6 +166,12 @@ func (h *Handler) Book(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	// provider_id feeds the HL-2 provider-gate lookup (WHERE id=$1::uuid); an
+	// empty/malformed value must be a 400, never a driver error → 422/500.
+	if _, err := uuid.Parse(req.ProviderID); err != nil {
+		ginutil.FailOK(c, http.StatusBadRequest, "provider_id must be a uuid")
 		return
 	}
 	start, err := time.Parse(time.RFC3339, req.SlotStart)

@@ -506,9 +506,16 @@ func (s *IntentRepository) PutIntent(ctx context.Context, in intentRecord) (*int
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, err
 	}
-	// Conflict on idempotency_key → return the existing row (replay).
-	const sel = `SELECT ` + intentCols + ` FROM public.restaurant_order_paystack_intents WHERE idempotency_key = $1`
-	existing, err := scanIntent(s.db.QueryRow(ctx, sel, in.IdempotencyKey))
+	// Conflict on idempotency_key → return the existing row (replay) — scoped to
+	// the same customer. Keys are client-chosen, so an unscoped resolve would let
+	// any caller read a stranger's checkout intent (reference, amount, request)
+	// by replaying their key. A key that exists but belongs to someone else is a
+	// collision, not a replay.
+	const sel = `SELECT ` + intentCols + ` FROM public.restaurant_order_paystack_intents WHERE idempotency_key = $1 AND customer_id = $2`
+	existing, err := scanIntent(s.db.QueryRow(ctx, sel, in.IdempotencyKey, in.CustomerID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, errors.New("restaurant checkout: idempotency key is already used by another customer")
+	}
 	if err != nil {
 		return nil, false, err
 	}

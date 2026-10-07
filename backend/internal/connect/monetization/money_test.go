@@ -93,8 +93,8 @@ func TestPurchase_UsesServerPriceNotClient(t *testing.T) {
 	if w.gotAmount != 80000 {
 		t.Fatalf("debit amount must come from the plan (80000 kobo), got %d", w.gotAmount)
 	}
-	if w.gotKey != "idem-abc" {
-		t.Fatalf("idempotency key must flow to the ledger, got %q", w.gotKey)
+	if w.gotKey != "connect:monetization:purchase:user-1:idem-abc" {
+		t.Fatalf("namespaced idempotency key must flow to the ledger, got %q", w.gotKey)
 	}
 	if w.gotCredit != "rev-acc-1" {
 		t.Fatalf("credit side must be the revenue account, got %q", w.gotCredit)

@@ -1,12 +1,16 @@
 package association
 
 import (
+	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/finance/tiers"
@@ -28,10 +32,58 @@ var errMap = httperr.New(http.StatusInternalServerError,
 	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
 	httperr.R(http.StatusConflict, ErrElectionState),
 	httperr.R(http.StatusNotFound, ErrNoMembership, pgx.ErrNoRows),
+	// SQLSTATE classes that are always caller-caused on this module's surface.
+	// 22P02 "invalid input syntax for type uuid" on a malformed :id / :childId /
+	// ?org_id= can never identify a row → 404 (same convention as the business
+	// module's repo-level uuid gate). Any OTHER 22P02 (invalid enum value,
+	// bad literal) and 23514 CHECK violations are bad input → 400.
+	httperr.Rule{Status: http.StatusNotFound, Match: isMalformedUUID},
+	httperr.Rule{Status: http.StatusBadRequest, Match: isBadInputSQLState},
+	// The module's plain errors.New domain copy carries no sentinel — see
+	// isPlainAssocErr for why only UNWRAPPED errors are eligible.
+	httperr.Rule{Status: http.StatusNotFound, Match: isPlainAssocErr("not found")},
+	httperr.Rule{Status: http.StatusBadRequest, Match: isPlainAssocErr(
+		"required", "must be", "must not", "at least", "is full", "still has", "unknown")},
 )
 
 // statusFor resolves the HTTP status for err; tests exercise it directly.
 func statusFor(err error) int { return errMap.Code(err) }
+
+// isMalformedUUID matches Postgres 22P02 failures specifically on a uuid cast —
+// the malformed path/query id a ~20-route probe surfaced as 500. It is a 404
+// (the id can never name a row); other 22P02 shapes stay with isBadInputSQLState.
+func isMalformedUUID(err error) bool {
+	pg, ok := errors.AsType[*pgconn.PgError](err)
+	return ok && pg.Code == "22P02" && strings.Contains(pg.Message, "type uuid")
+}
+
+// isBadInputSQLState matches caller-caused driver failures the service layer
+// cannot pre-validate away: non-uuid 22P02 literals (bad enum values, malformed
+// input) and 23514 CHECK violations (a value outside a table's allowed set).
+func isBadInputSQLState(err error) bool {
+	return dbutil.SQLState(err) == "22P02" || dbutil.IsCheckViolation(err)
+}
+
+// isPlainAssocErr builds a Match predicate over this module's UNWRAPPED domain
+// errors — the errors.New("association: <reason>") / fmt.Errorf(no %w) strings
+// scattered across service_*.go that carry no sentinel. Wrapped errors are
+// excluded deliberately: a %w chain bottoms out in a driver/internal failure
+// that must keep the 500 default rather than be relabelled 4xx by a message
+// substring (e.g. "association: update organisation: dial tcp …" must stay 500).
+func isPlainAssocErr(vocab ...string) func(error) bool {
+	return func(err error) bool {
+		if err == nil || errors.Unwrap(err) != nil {
+			return false
+		}
+		msg := err.Error()
+		for _, v := range vocab {
+			if strings.Contains(msg, v) {
+				return true
+			}
+		}
+		return false
+	}
+}
 
 type Handler struct {
 	svc *Service
@@ -58,7 +110,7 @@ func (h *Handler) GetDues(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	dues, err := h.svc.GetDues(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, dues)
@@ -113,7 +165,7 @@ func (h *Handler) ListOrganisations(c *gin.Context) {
 	limit, offset := ginutil.LimitOffset(c)
 	orgs, err := h.svc.GetOrganisations(c.Request.Context(), c.Query("search"), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, orgs)
@@ -205,7 +257,7 @@ func (h *Handler) UpdatePrivacy(c *gin.Context) {
 func (h *Handler) GetActivity(c *gin.Context) {
 	entries, err := h.svc.GetActivity(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, entries)
@@ -215,7 +267,7 @@ func (h *Handler) GetActivity(c *gin.Context) {
 func (h *Handler) GetAdminAccess(c *gin.Context) {
 	access, err := h.svc.GetAdminAccess(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, access)
@@ -230,7 +282,7 @@ func (h *Handler) ListMembers(c *gin.Context) {
 	}
 	members, err := h.svc.GetDirectory(c.Request.Context(), ginutil.UserID(c), q)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, members)
@@ -250,7 +302,7 @@ func (h *Handler) GetMember(c *gin.Context) {
 func (h *Handler) ListAnnouncements(c *gin.Context) {
 	list, err := h.svc.GetAnnouncements(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, list)
@@ -260,7 +312,7 @@ func (h *Handler) ListAnnouncements(c *gin.Context) {
 func (h *Handler) ListNotifications(c *gin.Context) {
 	list, err := h.svc.GetNotifications(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, list)
@@ -270,7 +322,7 @@ func (h *Handler) ListNotifications(c *gin.Context) {
 func (h *Handler) ListMeetings(c *gin.Context) {
 	list, err := h.svc.GetMeetings(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, list)
@@ -292,7 +344,7 @@ func (h *Handler) ListTasks(c *gin.Context) {
 func (h *Handler) ListDocuments(c *gin.Context) {
 	list, err := h.svc.GetDocuments(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, list)
@@ -302,7 +354,7 @@ func (h *Handler) ListDocuments(c *gin.Context) {
 func (h *Handler) ListCommittees(c *gin.Context) {
 	list, err := h.svc.GetCommittees(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, list)
@@ -312,7 +364,7 @@ func (h *Handler) ListCommittees(c *gin.Context) {
 func (h *Handler) ListEvents(c *gin.Context) {
 	list, err := h.svc.GetEvents(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		errMap.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, list)

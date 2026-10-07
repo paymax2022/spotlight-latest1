@@ -111,11 +111,12 @@ func TestLiveDB_MakerChecker_AppealOverturn_DifferentAdminApproves(t *testing.T)
 	appellantID := seedMakercheckPlatformUser(t, ctx, pool)
 	makerID := uuid.New().String()
 	checkerID := uuid.New().String()
-	targetListingID := uuid.New().String()
 
+	// 'user' target = the appellant themself (the only 'user' appeal FileAppeal
+	// accepts — a member can only appeal a moderation action against themself).
 	a, err := svc.FileAppeal(ctx, appellantID, CreateAppealInput{
-		TargetType: "listing", TargetID: targetListingID,
-		OriginalAction: "removed_policy", OriginalReasonCode: "TEST_REASON", AppellantNote: "test appeal",
+		TargetType: "user", TargetID: appellantID,
+		OriginalAction: "suspended", OriginalReasonCode: "TEST_REASON", AppellantNote: "test appeal",
 	})
 	if err != nil {
 		t.Fatalf("file appeal: %v", err)
@@ -164,11 +165,10 @@ func TestLiveDB_MakerChecker_AppealUphold_ExecutesImmediately(t *testing.T) {
 
 	appellantID := seedMakercheckPlatformUser(t, ctx, pool)
 	makerID := uuid.New().String()
-	targetListingID := uuid.New().String()
 
 	a, err := svc.FileAppeal(ctx, appellantID, CreateAppealInput{
-		TargetType: "listing", TargetID: targetListingID,
-		OriginalAction: "removed_policy", OriginalReasonCode: "TEST_REASON", AppellantNote: "test appeal 2",
+		TargetType: "user", TargetID: appellantID,
+		OriginalAction: "suspended", OriginalReasonCode: "TEST_REASON", AppellantNote: "test appeal 2",
 	})
 	if err != nil {
 		t.Fatalf("file appeal: %v", err)

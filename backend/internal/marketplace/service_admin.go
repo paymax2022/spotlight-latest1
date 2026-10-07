@@ -6,6 +6,8 @@ import (
 	"spotlight/backend/internal/health/makercheck"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -300,11 +302,44 @@ func (s *Service) FileAppeal(ctx context.Context, appellantID string, in CreateA
 	if in.TargetID == "" {
 		return nil, fieldErr(CodeValidation, "target_id is required", colTargetId)
 	}
+	if _, err := uuid.Parse(in.TargetID); err != nil {
+		return nil, fieldErr(CodeValidation, "target_id must be a uuid", colTargetId)
+	}
 	if in.OriginalReasonCode == "" {
 		return nil, fieldErr(CodeValidation, "original_reason_code is required", "original_reason_code")
 	}
 	if in.AppellantNote == "" {
 		return nil, fieldErr(CodeValidation, "appellant_note is required", "appellant_note")
+	}
+	// Existence + standing: an appeal is filed by the member the moderation
+	// action was taken AGAINST, so the target must resolve to a real row the
+	// appellant owns (a 'user' target can only ever be the appellant themself).
+	// Without this a fabricated target_id/original_action pair creates an
+	// appeal against a listing/user the caller has no relation to.
+	switch AppealTargetType(in.TargetType) {
+	case AppealTargetListing:
+		l, err := s.repo.GetListing(ctx, in.TargetID)
+		if err != nil {
+			return nil, err
+		}
+		if l.SellerID != appellantID {
+			return nil, ErrForbidden
+		}
+	case AppealTargetBoost:
+		b, err := s.repo.GetBoost(ctx, in.TargetID)
+		if err != nil {
+			return nil, err
+		}
+		if b.SellerID != appellantID {
+			return nil, ErrForbidden
+		}
+	case AppealTargetUser:
+		if _, err := s.repo.GetPlatformUserBasics(ctx, in.TargetID); err != nil {
+			return nil, err
+		}
+		if in.TargetID != appellantID {
+			return nil, ErrForbidden
+		}
 	}
 	a, err := s.repo.InsertAppeal(ctx, DefaultMarketID, appellantID, in.TargetType, in.TargetID, in.OriginalAction, in.OriginalReasonCode, in.AppellantNote)
 	if err != nil {

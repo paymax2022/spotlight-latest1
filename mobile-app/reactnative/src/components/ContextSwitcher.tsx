@@ -1,27 +1,39 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Modal, ScrollView } from 'react-native';
-import { Building2, ChevronDown, Check, X, Store, ShieldCheck, Briefcase } from 'lucide-react-native';
+import { Building2, ChevronDown, Check, X, Store, ShieldCheck, Briefcase, BadgeCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import { useContext as usePropertyContext, useSwitchContext } from '@/features/property/hooks';
-import type { ContextType, PropertyContext } from '@/features/property/types';
+import type { ContextEntityType, ContextRole, PropertyContext } from '@/features/property/types';
 
-const TYPE_ICON: Record<ContextType, React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>> = {
+const TYPE_ICON: Record<ContextEntityType, React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>> = {
   estate:   ShieldCheck,
   property: Building2,
   agency:   Briefcase,
   org:      Store,
+  role:     BadgeCheck,
 };
 
-const TYPE_LABEL: Record<ContextType, string> = {
+const TYPE_LABEL: Record<ContextEntityType, string> = {
   estate:   'Estate',
   property: 'Property',
   agency:   'Agency',
   org:      'Organisation',
+  role:     'Professional role',
 };
+
+// Human labels for role slugs; anything unlisted shows its slug.
+const ROLE_LABEL: Partial<Record<ContextRole, string>> = {
+  estate_manager: 'Estate Manager',
+  developer:      'Property Developer',
+  agent:          'Agent',
+  estate_admin:   'Estate Admin',
+};
+
+const roleLabel = (r: ContextRole): string => ROLE_LABEL[r] ?? r;
 
 /**
  * Reusable active-context picker shown in the Property hub top bar. Lets a user
@@ -42,6 +54,8 @@ export default function ContextSwitcher() {
 
   const onSelect = (c: PropertyContext) => {
     if (switchCtx.isPending) return;
+    // Role entities are informational; the server refuses to switch into them.
+    if (c.type === 'role') return;
     switchCtx.mutate({ contextType: c.type, contextId: c.id });
     setOpen(false);
   };
@@ -76,13 +90,16 @@ export default function ContextSwitcher() {
             <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
               {contexts.map((c) => {
                 const Icon = TYPE_ICON[c.type];
-                const isActive = active?.type === c.type && active?.id === c.id;
+                const isRole = c.type === 'role';
+                const isActive = !isRole && active?.type === c.type && active?.id === c.id;
                 return (
                   <Pressable
                     key={`${c.type}:${c.id}`}
                     onPress={() => onSelect(c)}
-                    accessibilityRole="button"
-                    style={({ pressed }) => [styles.row, isActive && styles.rowActive, pressed && styles.pressed]}
+                    disabled={isRole}
+                    accessibilityRole={isRole ? 'text' : 'button'}
+                    accessibilityState={{ disabled: isRole }}
+                    style={({ pressed }) => [styles.row, isActive && styles.rowActive, isRole && styles.rowInfo, pressed && !isRole && styles.pressed]}
                   >
                     <View style={styles.rowIcon}>
                       <Icon size={18} color={Colors.primary} strokeWidth={2} />
@@ -90,7 +107,7 @@ export default function ContextSwitcher() {
                     <View style={{ flex: 1 }}>
                       <Text style={styles.rowName} numberOfLines={1}>{c.name}</Text>
                       <Text style={styles.rowMeta} numberOfLines={1}>
-                        {TYPE_LABEL[c.type]} · {c.roles.join(', ')}
+                        {TYPE_LABEL[c.type]} · {c.roles.map(roleLabel).join(', ')}
                       </Text>
                     </View>
                     {isActive ? <Check size={18} color={Colors.teal} strokeWidth={2.5} /> : null}
@@ -148,6 +165,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
   },
   rowActive: { borderColor: Colors.teal },
+  rowInfo: { backgroundColor: Colors.surfaceContainerLow },
   rowIcon: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
   rowName: { ...Typography.labelLg, color: Colors.onSurface },
   rowMeta: { ...Typography.labelSm, color: Colors.onSurfaceVariant, textTransform: 'capitalize' },

@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowDownToLine, ArrowUpFromLine } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { ArrowDownToLine, ArrowUpFromLine, Lock } from 'lucide-react-native';
+import { confirmAsync } from '@/lib/confirm';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -21,20 +23,28 @@ export default function InvestWalletScreen() {
   const withdraw = useWithdraw();
   const [mode, setMode] = useState<Mode>('deposit');
   const [amount, setAmount] = useState('');
+  const [pin, setPin] = useState('');
 
   const w = wallet.data;
   const amountKobo = nairaToKobo(amount);
   const busy = deposit.isPending || withdraw.isPending;
   const max = mode === 'withdraw' ? (w?.withdrawable_cash_kobo ?? 0) : Number.MAX_SAFE_INTEGER;
-  const invalid = amountKobo <= 0 || amountKobo > max;
+  const pinValid = /^\d{4,6}$/.test(pin);
+  const invalid = amountKobo <= 0 || amountKobo > max || (mode === 'withdraw' && !pinValid);
 
   async function submit() {
     try {
       if (mode === 'deposit') await deposit.mutateAsync(amountKobo);
-      else await withdraw.mutateAsync(amountKobo);
+      else await withdraw.mutateAsync({ amountKobo, pin });
       setAmount('');
+      setPin('');
       Alert.alert('Success', mode === 'deposit' ? 'Funds added to your invest wallet.' : 'Withdrawal to your Paymax wallet is on its way.');
     } catch (e: any) {
+      if (e?.response?.data?.code === 'pin_not_set') {
+        const ok = await confirmAsync({ title: 'Set a transaction PIN', message: 'You need a transaction PIN before you can withdraw.', confirmLabel: 'Set PIN' });
+        if (ok) router.push('/invest/security/pin');
+        return;
+      }
       Alert.alert('Could not complete', e?.response?.data?.error ?? 'Please try again.');
     }
   }
@@ -89,6 +99,25 @@ export default function InvestWalletScreen() {
             )}
           </View>
 
+          {mode === 'withdraw' && (
+            <View style={styles.pinBlock}>
+              <View style={styles.pinHeader}>
+                <Lock size={16} color={Colors.onSurfaceVariant} />
+                <Text style={styles.pinLabel}>Enter your PIN to confirm</Text>
+              </View>
+              <TextInput
+                value={pin}
+                onChangeText={(t) => setPin(t.replace(/[^0-9]/g, '').slice(0, 6))}
+                placeholder="••••"
+                placeholderTextColor={Colors.outline}
+                keyboardType="number-pad"
+                secureTextEntry
+                style={styles.pinInput}
+                maxLength={6}
+              />
+            </View>
+          )}
+
           <View style={{ paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.lg }}>
             <PrimaryButton
               label={mode === 'deposit' ? 'Add funds' : 'Withdraw'}
@@ -138,6 +167,13 @@ const styles = StyleSheet.create({
     paddingVertical: 12, borderRadius: Radius.md,
   },
   toggleActive: { backgroundColor: Colors.primary },
+  pinBlock: { paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.lg },
+  pinHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: Spacing.sm },
+  pinLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
+  pinInput: {
+    backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.lg, height: 56,
+    ...Typography.titleLg, color: Colors.onSurface, textAlign: 'center', letterSpacing: 8,
+  },
   toggleText: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   toggleTextActive: { color: Colors.onPrimary },
   amountBlock: { paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.lg, alignItems: 'center' },

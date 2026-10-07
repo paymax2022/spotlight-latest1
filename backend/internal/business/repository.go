@@ -133,10 +133,19 @@ func (r *Repository) ListByUser(ctx context.Context, userID string) ([]BusinessP
 	return out, rows.Err()
 }
 
-// HasVerified reports whether the user has at least one verified/registered business.
-func (r *Repository) HasVerified(ctx context.Context, userID string) (bool, error) {
+// HasVerified reports whether the user has at least one verified/registered
+// business. When allowSandboxSource is false (production), rows stamped
+// verification_source='cac-sandbox' do NOT count — the deterministic sandbox
+// fabricates identities, so a sandbox-verified row must never satisfy the
+// merchant-upgrade gate (w9 prod probe: POST /business/verify minted terminal
+// 'verified' rows for any fabricated RC/BN string). Static SQL — no interpolation.
+func (r *Repository) HasVerified(ctx context.Context, userID string, allowSandboxSource bool) (bool, error) {
 	var exists bool
-	const q = `SELECT EXISTS (SELECT 1 FROM business_profiles WHERE user_id = $1 AND status IN ('verified','registered'))`
+	q := `SELECT EXISTS (SELECT 1 FROM business_profiles WHERE user_id = $1 AND status IN ('verified','registered')`
+	if !allowSandboxSource {
+		q += ` AND COALESCE(verification_source,'') <> 'cac-sandbox'`
+	}
+	q += `)`
 	err := r.db.QueryRow(ctx, q, userID).Scan(&exists)
 	return exists, err
 }

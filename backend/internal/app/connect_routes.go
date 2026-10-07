@@ -404,7 +404,8 @@ func registerConnectNetworkRoutes(member, admin *gin.RouterGroup, cfg config.Con
 		log.Println("[connect-network] commission recording wired → Community/Job (earning-row only; no ledger re-post)")
 	}
 
-	connectjobs.Register(member, admin, pool, rbac, walletSvc, ledgerSvc, revenue, loyaltyPort, audit, jobsCommission)
+	connectjobs.Register(member, admin, pool, rbac, walletSvc, ledgerSvc, revenue, loyaltyPort, audit, jobsCommission,
+		&connectLedgerConfirmer{ledger: ledgerSvc}) // durable replay confirmation for fee/bounty duplicates
 	connectfeed.Register(member, admin, pool, rbac, audit)
 	connectnetprofile.Register(member, admin, pool, rbac, audit)
 	connectassess.Register(member, admin, pool, rbac, loyaltyPort, audit)
@@ -516,6 +517,10 @@ func registerConnectGrowthRoutes(member *gin.RouterGroup, admin *gin.RouterGroup
 
 	refunder := &connectRefundAdapter{ledger: ledgerSvc}
 	monSvc := connectmonetization.NewService(pool, walletSvc, revenue, audit, refunder)
+	// Durable replay confirmation: every duplicate-key sighting (Redis lock,
+	// foreign claim, true replay) is re-verified against the ledger of record
+	// before the service may treat it as "already charged".
+	monSvc.SetDebitConfirmer(&connectLedgerConfirmer{ledger: ledgerSvc})
 	// PAY-008: consumable credits (super-likes/InMail). Grant on pass purchase; read balance.
 	creditsSvc := connectcredits.NewService(pool)
 	monSvc.SetCreditGranter(creditsSvc)
@@ -577,10 +582,86 @@ func (r *revenueAdapter) RevenueAccountID(ctx context.Context) (string, error) {
 	return acc.ID, nil
 }
 
+// --- Durable replay confirmation ------------------------------------------------
+//
+// ledger.ErrDuplicate only ever says "this key is claimed" — never "your journal
+// landed". A Redis-lock fast-path duplicate carries no durable state at all, and
+// a foreign claim holds the key for a DIFFERENT journal. These helpers re-read
+// the recorded legs from the ledger of record and compare the full identity
+// (account + entry type + reference + amount per leg) before any caller treats a
+// duplicate as success.
+
+// legPosted reads the single ledger entry recorded under legKey (a fully-suffixed
+// key such as K+":debit" or K+":rev_credit") and reports whether it exists AND
+// carries the expected account/type/reference/amount.
+func legPosted(ctx context.Context, l *ledger.Service, legKey, accountID string, wantType ledger.EntryType, reference string, amountKobo int64) (bool, error) {
+	e, found, err := l.EntryByKey(ctx, legKey)
+	if err != nil || !found {
+		return false, err
+	}
+	return e.AccountID == accountID && e.Type == wantType &&
+		e.Reference == reference && e.AmountKobo == amountKobo, nil
+}
+
+// journalPosted confirms a balanced DEBIT/CREDIT pair under baseKey: both legs
+// recorded, debit leg on debitAccountID, credit leg on creditAccountID, shared
+// reference + amount. A half-written pair can never verify (postings are atomic)
+// — and a leg held by a different journal refuses the claim.
+func journalPosted(ctx context.Context, l *ledger.Service, baseKey, debitAccountID, creditAccountID, reference string, amountKobo int64) (bool, error) {
+	d, err := legPosted(ctx, l, baseKey+":debit", debitAccountID, ledger.EntryDebit, reference, amountKobo)
+	if err != nil || !d {
+		return false, err
+	}
+	return legPosted(ctx, l, baseKey+":credit", creditAccountID, ledger.EntryCredit, reference, amountKobo)
+}
+
+// reversalPosted confirms a balanced REVERSAL_DEBIT/REVERSAL_CREDIT pair under
+// baseKey — the durable proof for payout-reject and refund reversal replays.
+func reversalPosted(ctx context.Context, l *ledger.Service, baseKey, restoreAccountID, releaseAccountID, reference string, amountKobo int64) (bool, error) {
+	d, err := legPosted(ctx, l, baseKey+":rev_debit", restoreAccountID, ledger.EntryReversalDebit, reference, amountKobo)
+	if err != nil || !d {
+		return false, err
+	}
+	return legPosted(ctx, l, baseKey+":rev_credit", releaseAccountID, ledger.EntryReversalCredit, reference, amountKobo)
+}
+
+// connectLedgerConfirmer is the shared durable-replay port the Connect packages
+// consume (connectmonetization.DebitConfirmer, connectdiscovery.DebitConfirmer,
+// connectjobs.LedgerConfirmer): identity-checked reads over ledger.EntryByKey.
+//   - ConfirmDebit: DR the caller's user_wallet → CR paymax_revenue (charges).
+//   - ConfirmCredit: DR referral_reward_expense → CR the caller's user_wallet
+//     (jobs referral bounty — the mirror direction).
+type connectLedgerConfirmer struct{ ledger *ledger.Service }
+
+func (c *connectLedgerConfirmer) ConfirmDebit(ctx context.Context, userID, reference, idempotencyKey string, amountKobo int64) (bool, error) {
+	w, err := c.ledger.GetOrCreateUserWallet(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	rev, err := c.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		return false, err
+	}
+	return journalPosted(ctx, c.ledger, idempotencyKey, w.ID, rev.ID, reference, amountKobo)
+}
+
+func (c *connectLedgerConfirmer) ConfirmCredit(ctx context.Context, userID, reference, idempotencyKey string, amountKobo int64) (bool, error) {
+	w, err := c.ledger.GetOrCreateUserWallet(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	exp, err := c.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountReferralReward)
+	if err != nil {
+		return false, err
+	}
+	return journalPosted(ctx, c.ledger, idempotencyKey, exp.ID, w.ID, reference, amountKobo)
+}
+
 // connectRefundAdapter reverses a Connect purchase: a balanced double-entry
 // DR paymax_revenue → CR buyer user_wallet (the mirror of the purchase debit),
-// keyed by idempotencyKey. A duplicate key means the refund already posted, which
-// is mapped to success so the refund is SINGLE under retries/concurrency (PAY-007).
+// keyed by idempotencyKey. A duplicate key is mapped to success ONLY after the
+// durable journal under that key verifies — a foreign claim or a bare lock
+// duplicate is never a refund (PAY-007).
 type connectRefundAdapter struct{ ledger *ledger.Service }
 
 func (r *connectRefundAdapter) Refund(ctx context.Context, userID, reference, idempotencyKey string, amountKobo int64) error {
@@ -603,7 +684,16 @@ func (r *connectRefundAdapter) Refund(ctx context.Context, userID, reference, id
 		CreditAccountID: w.ID,   // …to the buyer's wallet
 	})
 	if errors.Is(err, ledger.ErrDuplicate) {
-		return nil // already refunded — idempotent success
+		// Duplicate is a REJECTION of a claimed key, not proof our refund posted —
+		// return success only when the ledger carries THIS journal, else fail loud.
+		posted, perr := journalPosted(ctx, r.ledger, idempotencyKey, rev.ID, w.ID, reference, amountKobo)
+		if perr != nil {
+			return perr
+		}
+		if posted {
+			return nil // already refunded — verified idempotent success
+		}
+		return err
 	}
 	return err
 }
@@ -687,6 +777,9 @@ func registerConnectPhase1Routes(member *gin.RouterGroup, admin *gin.RouterGroup
 		nil,       // AML boost flagger wired in production
 		connectdiscovery.NewConfigReader(pool),
 	)
+	// Durable replay confirmation for duplicate-key sightings (Redis lock,
+	// foreign claim, true replay) on the boost debit.
+	boostSvc.SetDebitConfirmer(&connectLedgerConfirmer{ledger: discLedger})
 
 	memberDiscovery := connectdiscovery.NewMemberHandler(
 		discoverySvc,
@@ -940,38 +1033,28 @@ func (s *connectSettlementAdapter) SettlementAccountID(ctx context.Context) (str
 
 // connectWalletTransferAdapter performs a wallet→wallet transfer as a single
 // balanced double-entry via the ledger: DR sender user_wallet, CR recipient
-// user_wallet, keyed by idempotencyKey. It checks the sender's available balance
-// first and posts immutable entries — it never writes a balance column.
+// user_wallet, keyed by idempotencyKey. The balance sufficiency check and the
+// journal insert run as ONE atomic, serialised unit inside ledger.Service.Debit
+// (Repository.DebitWithBalanceCheck: pg_advisory_xact_lock("wallet:"+fromUserID)
+// + in-tx balance projection + balanced pair, ON CONFLICT idempotent) — the
+// previous GetBalance-then-PostJournal shape let two concurrent transfers both
+// pass an unlocked balance check and overdraw the sender (TOCTOU). It never
+// writes a balance column.
 type connectWalletTransferAdapter struct{ ledger *ledger.Service }
 
 func (t *connectWalletTransferAdapter) Transfer(ctx context.Context, fromUserID, toUserID, reference, idempotencyKey string, amountKobo int64) error {
 	if amountKobo <= 0 {
 		return ledger.ErrInsufficientFunds
 	}
-	fromAcc, err := t.ledger.GetOrCreateUserWallet(ctx, fromUserID)
-	if err != nil {
-		return err
-	}
 	toAcc, err := t.ledger.GetOrCreateUserWallet(ctx, toUserID)
 	if err != nil {
 		return err
 	}
-	// Available-balance check on the sender (ledger projection; no balance column).
-	balance, err := t.ledger.GetBalance(ctx, fromUserID)
-	if err != nil {
-		return err
-	}
-	if balance < amountKobo {
-		return ledger.ErrInsufficientFunds
-	}
-	// Balanced double-entry, idempotent (ledger unique constraint on the key).
-	return t.ledger.PostJournal(ctx, ledger.JournalEntry{
-		Reference:       reference,
-		IdempotencyKey:  idempotencyKey,
-		AmountKobo:      amountKobo,
-		DebitAccountID:  fromAcc.ID,
-		CreditAccountID: toAcc.ID,
-	})
+	// Atomic check+debit: ledger.Service.Debit resolves the sender's wallet,
+	// takes the wallet advisory lock, re-projects the balance inside the tx and
+	// posts the balanced pair — a concurrent transfer on the same sender
+	// serialises behind the lock and sees the committed debit.
+	return t.ledger.Debit(ctx, fromUserID, reference, idempotencyKey, toAcc.ID, amountKobo)
 }
 
 // connectTierGateAdapter adapts tiers.Service.GetUserTier (returns tiers.Tier) to
@@ -1015,7 +1098,18 @@ func (r *connectPayoutReverseAdapter) ReversePayout(ctx context.Context, creator
 	idem := "connect:payout:reject:" + payoutID
 	err = r.ledger.PostReversal(ctx, creatorWallet.ID, settleAcc.ID, amountKobo, ref, idem)
 	if errors.Is(err, ledger.ErrDuplicate) {
-		return nil // already reversed — idempotent success, mirrors connectRefundAdapter
+		// Duplicate is a REJECTION of a claimed key, not proof our reversal posted —
+		// return success only when the ledger carries THIS reversal pair, else fail
+		// loud (an unverified "already reversed" would strand the payout parked in
+		// settlement while the projection marks it rejected).
+		posted, perr := reversalPosted(ctx, r.ledger, idem, creatorWallet.ID, settleAcc.ID, ref, amountKobo)
+		if perr != nil {
+			return perr
+		}
+		if posted {
+			return nil // already reversed — verified idempotent success
+		}
+		return err
 	}
 	return err
 }

@@ -3,10 +3,11 @@ import { getContestBySlug } from '@/src/server/stem/persistence';
 
 export async function GET(
   _request: Request,
-  context: { params: { slug: string } }
+  context: { params: Promise<{ slug: string }> }
 ) {
   try {
-    const contest = await getContestBySlug(context.params.slug);
+    const { slug } = await context.params;
+    const contest = await getContestBySlug(slug);
     if (!contest) return errorResponse('Contest not found', 404);
     return successResponse({ success: true, contest });
   } catch (error) {

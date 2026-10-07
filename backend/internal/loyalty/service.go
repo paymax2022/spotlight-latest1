@@ -194,7 +194,23 @@ func (s *Service) GetMembership(ctx context.Context, userID string) (*Membership
 // reward's MinTier, then debits points via points.Redeem (NL-4: no cash path), then
 // records a PENDING fulfilment for the owning module to dispatch (airtime/bill/
 // ticket-discount). The points debit and the loyalty redemption row are linked by SKU.
-func (s *Service) Redeem(ctx context.Context, userID, sku string) (*Redemption, error) {
+//
+// idemKey is the OPTIONAL client Idempotency-Key. When supplied, a replay returns
+// the original redemption — no second points debit and no duplicate PENDING
+// fulfilment row (loyalty_redemptions.idempotency_key dedupes the insert). When
+// empty the behaviour is the legacy per-call record — kept so live clients that
+// never send the header keep working (follow-up: require it like other mutations).
+func (s *Service) Redeem(ctx context.Context, userID, sku, idemKey string) (*Redemption, error) {
+	if idemKey != "" {
+		// Replay short-circuit before any fresh work: return the original row.
+		prior, err := s.redemptionByIdem(ctx, userID, idemKey)
+		if err == nil {
+			return prior, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("loyalty: redeem replay check: %w", err)
+		}
+	}
 	item, err := s.catalogItem(ctx, sku)
 	if err != nil {
 		return nil, err
@@ -211,7 +227,7 @@ func (s *Service) Redeem(ctx context.Context, userID, sku string) (*Redemption, 
 	}
 
 	// Debit points (no cash branch exists inside points.Redeem either — NL-4).
-	pr, pitem, err := s.points.Redeem(ctx, userID, sku)
+	pr, pitem, err := s.points.Redeem(ctx, userID, sku, idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -224,14 +240,42 @@ func (s *Service) Redeem(ctx context.Context, userID, sku string) (*Redemption, 
 		FulfilStatus: "PENDING",
 		CreatedAt:    time.Now(),
 	}
-	const ins = `INSERT INTO loyalty_redemptions (id, user_id, sku, kind, cost_points, fulfil_status) VALUES ($1,$2,$3,$4,$5,'PENDING')`
-	if _, err := s.db.Exec(ctx, ins, red.ID, red.UserID, red.SKU, red.Kind, red.CostPoints); err != nil {
+	// NULLIF keeps headerless calls unaffected by the partial unique index; the
+	// ON CONFLICT arm covers a same-key race that slipped past the pre-check.
+	const ins = `
+		INSERT INTO loyalty_redemptions (id, user_id, sku, kind, cost_points, fulfil_status, idempotency_key)
+		VALUES ($1,$2,$3,$4,$5,'PENDING',NULLIF($6,''))
+		ON CONFLICT (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
+	if _, err := s.db.Exec(ctx, ins, red.ID, red.UserID, red.SKU, red.Kind, red.CostPoints, idemKey); err != nil {
 		return nil, fmt.Errorf("loyalty: insert redemption: %w", err)
+	}
+	if idemKey != "" {
+		// Read back what stands under the key — either the row just written or,
+		// on a lost same-key race, the winner's row. A miss after the insert
+		// conflict would mean the points debit has no persisted redemption:
+		// fail loudly rather than return an untracked success.
+		stored, err := s.redemptionByIdem(ctx, userID, idemKey)
+		if err != nil {
+			return nil, fmt.Errorf("loyalty: redeem conflict read-back: %w", err)
+		}
+		red = stored
 	}
 	// Fulfilment is a non-cash dispatch handled by the owning module (airtime / bill
 	// / ticket-discount). It is intentionally decoupled and marked PENDING here.
 	s.log(userID, "loyalty.redeem", red.ID, map[string]any{"sku": sku, "kind": pitem.Kind, "cost": pr.CostPoints})
 	return red, nil
+}
+
+// redemptionByIdem loads the redemption recorded under a client idempotency key.
+func (s *Service) redemptionByIdem(ctx context.Context, userID, idemKey string) (*Redemption, error) {
+	const q = `SELECT id, user_id, sku, kind, cost_points, fulfil_status, created_at
+		FROM loyalty_redemptions WHERE user_id=$1 AND idempotency_key=$2`
+	var r Redemption
+	if err := s.db.QueryRow(ctx, q, userID, idemKey).Scan(
+		&r.ID, &r.UserID, &r.SKU, &r.Kind, &r.CostPoints, &r.FulfilStatus, &r.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // ListCatalog returns active rewards the member's tier can redeem.
@@ -385,7 +429,7 @@ func (h *Handler) Redeem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	red, err := h.svc.Redeem(c.Request.Context(), userID, req.SKU)
+	red, err := h.svc.Redeem(c.Request.Context(), userID, req.SKU, ginutil.IdempotencyKey(c))
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, ErrTierTooLow) {

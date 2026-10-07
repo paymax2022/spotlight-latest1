@@ -332,6 +332,7 @@ type Config struct {
 	// and realtor modules keep their own flags; this gates only the /property/*
 	// cross-module surface.
 	FeaturePropertySuiteEnabled bool
+	FeaturePropertyRolesEnabled bool
 
 	// Fractional Real Estate / Land crowd-investing module. DEFAULT OFF. Gates
 	// the /api/finance/fractionalre[/admin] surface (internal/fractionalre).
@@ -838,6 +839,7 @@ func Load() Config {
 		FeatureContestStageEvictionEnabled:       getEnvBool("FEATURE_CONTEST_STAGE_EVICTION_ENABLED", false),
 		FeatureContestantSocialEnabled:           getEnvBool("FEATURE_CONTESTANT_SOCIAL_ENABLED", false),
 		FeaturePropertySuiteEnabled:              getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
+		FeaturePropertyRolesEnabled:              getEnvBool("FEATURE_PROPERTY_ROLES_ENABLED", false),
 		FeatureFractionalREEnabled:               getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
 		FeatureCryptoEnabled:                     getEnvBool("FEATURE_CRYPTO_ENABLED", false),
 		FeatureTelemedicinePlatformFeeEnabled:    getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
@@ -970,7 +972,7 @@ func Load() Config {
 		OTPMaxVerifyPerIPPerHour: getEnvInt("OTP_MAX_VERIFY_PER_IP_PER_HOUR", 20),
 		SignupRateLimitPer5Min:   getEnvInt("AUTH_SIGNUP_RATE_LIMIT_PER_5MIN", 30),
 		AdminAppBaseURL:          getEnv("ADMIN_APP_BASE_URL", "https://admin.spotlightng.com"),
-		TermiiAPIKey:             getEnv("TERMII_API_KEY", ""),
+		TermiiAPIKey:             getEnv("TERMII_API_KEY", getEnv("TERMIL_LIVE_API_KEY", "")), // TERMIL_LIVE_API_KEY: legacy misspelled var on Railway
 		TermiiSenderID:           getEnv("TERMII_SENDER_ID", "Paymax"),
 		ExpoPushToken:            getEnv("EXPO_PUSH_TOKEN", ""),
 	}

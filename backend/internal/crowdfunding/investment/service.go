@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/timeutil"
@@ -34,6 +35,12 @@ var (
 	ErrBadRiskProfile = errors.New("investment: risk profile must be CONSERVATIVE, BALANCED or AGGRESSIVE")
 	ErrBadStep        = errors.New("investment: unknown onboarding step")
 	ErrAgreement      = errors.New("investment: risk warning and investor agreement must be accepted")
+	// ErrIdempotencyKeyConflict — the caller's Idempotency-Key is already used
+	// by ANOTHER member's subscription (409). Replay lookups are scoped to the
+	// caller, so a foreign key cannot replay a stranger's certificate back; the
+	// surviving unique-violation on insert is the durable proof of the clash
+	// (same convention as finance/transfers' ErrIdempotencyKeyConflict).
+	ErrIdempotencyKeyConflict = errors.New("investment: idempotency key already used by another subscription")
 )
 
 // Service holds the pgx pool. Money-path writes run inside transactions.
@@ -282,8 +289,15 @@ func (s *Service) Subscribe(ctx context.Context, userID string, in InvestmentSub
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Idempotency: replay returns the existing certificate, never a second insert.
-	if cert, ok, err := s.certByIdemKey(ctx, tx, idemKey); err != nil {
+	// Idempotency: replay returns the existing certificate, never a second
+	// insert. The lookup is CALLER-SCOPED (user_id): a key another member
+	// already used must NOT replay their certificate back to this caller —
+	// that would leak their offer/amount/holding. A foreign key misses here
+	// and collides at the subscriptions unique constraint below → 409. And a
+	// same-caller hit is only a true replay when the request is the SAME
+	// subscription — certByIdemKey compares the stored offer and amount
+	// against this request and conflicts on any divergence (audit D4).
+	if cert, ok, err := s.certByIdemKey(ctx, tx, userID, idemKey, in); err != nil {
 		return InvestmentCertificate{}, err
 	} else if ok {
 		return cert, nil
@@ -351,6 +365,14 @@ func (s *Service) Subscribe(ctx context.Context, userID string, in InvestmentSub
 		VALUES ($1,$2,$3,$4,$5,$6,$7,'ACTIVE',$8,$9)`,
 		subID, userID, in.OfferID, in.AmountKobo, unitsOrPct, reference, idemKey,
 		now, lockInUntil); err != nil {
+		// A 23505 here with the caller-scoped replay miss above is the durable
+		// signal of a cross-user key clash — cf_investment_subscriptions
+		// .idempotency_key is UNIQUE. Report it as a conflict rather than a
+		// server fault (the M16 convention; a same-caller race loses nothing —
+		// the retry replays the committed certificate).
+		if dbutil.IsUniqueViolation(err) {
+			return InvestmentCertificate{}, ErrIdempotencyKeyConflict
+		}
 		return InvestmentCertificate{}, err
 	}
 
@@ -387,8 +409,15 @@ func (s *Service) Subscribe(ctx context.Context, userID string, in InvestmentSub
 	return cert, nil
 }
 
-// certByIdemKey returns a prior certificate for the given idempotency key, if any.
-func (s *Service) certByIdemKey(ctx context.Context, tx pgx.Tx, idemKey string) (InvestmentCertificate, bool, error) {
+// certByIdemKey returns a prior certificate for the given idempotency key —
+// scoped to THIS user, and only when it is THE SAME subscription: a stored
+// row under this key whose offer or amount differs from the request is
+// idempotency-key misuse, so the lookup returns ErrIdempotencyKeyConflict
+// (409) rather than acking a different investment (post-merge audit D4).
+// A key another member already used returns false here and is caught by the
+// unique constraint on insert → ErrIdempotencyKeyConflict; an unscoped lookup
+// would replay a stranger's certificate on a guessed key.
+func (s *Service) certByIdemKey(ctx context.Context, tx pgx.Tx, userID, idemKey string, in InvestmentSubscriptionInput) (InvestmentCertificate, bool, error) {
 	var (
 		cert                    InvestmentCertificate
 		offerID                 string
@@ -401,7 +430,7 @@ func (s *Service) certByIdemKey(ctx context.Context, tx pgx.Tx, idemKey string) 
 		       sub.invested_at, sub.lock_in_until, o.title, o.issuer_name, o.model
 		FROM cf_investment_subscriptions sub
 		JOIN cf_investment_offers o ON o.id = sub.offer_id
-		WHERE sub.idempotency_key = $1`, idemKey).Scan(
+		WHERE sub.idempotency_key = $1 AND sub.user_id = $2`, idemKey, userID).Scan(
 		&cert.ID, &cert.AmountKobo, &cert.UnitsOrPct, &cert.Reference, &offerID,
 		&investedAt, &lockInUntil, &offerTitle, &issuerName, &model)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -409,6 +438,9 @@ func (s *Service) certByIdemKey(ctx context.Context, tx pgx.Tx, idemKey string) 
 	}
 	if err != nil {
 		return InvestmentCertificate{}, false, err
+	}
+	if offerID != in.OfferID || cert.AmountKobo != in.AmountKobo {
+		return InvestmentCertificate{}, false, ErrIdempotencyKeyConflict
 	}
 	cert.OfferTitle = offerTitle
 	cert.IssuerName = issuerName
@@ -659,6 +691,9 @@ type Handler struct {
 var errMap = httperr.New(http.StatusInternalServerError,
 	httperr.R(http.StatusBadRequest, ErrBadStep, ErrBadRiskProfile),
 	httperr.R(http.StatusNotFound, ErrOfferNotFound),
+	// 409: the caller's Idempotency-Key is already used by ANOTHER member's
+	// subscription — refuse, never replay a stranger's certificate back.
+	httperr.R(http.StatusConflict, ErrIdempotencyKeyConflict),
 	// 422: the request is well-formed but fails a business/regulatory rule.
 	httperr.R(http.StatusUnprocessableEntity, ErrNotOnboarded, ErrAnnualLimit, ErrBelowMinTicket, ErrOfferClosed, ErrAgreement),
 )
@@ -748,10 +783,22 @@ func (h *Handler) Subscribe(c *gin.Context) {
 	}
 	cert, err := h.svc.Subscribe(c.Request.Context(), ginutil.UserID(c), in, idemKey)
 	if err != nil {
-		errMap.Write(c, err)
+		writeSubscribeErr(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, cert)
+}
+
+// writeSubscribeErr maps Subscribe's domain errors onto HTTP statuses —
+// extracted so the mapping is unit-testable without a database. errMap.Write
+// carries no machine code, so the stable idempotency_key_conflict code is
+// emitted explicitly (the transfer-rail contract).
+func writeSubscribeErr(c *gin.Context, err error) {
+	if errors.Is(err, ErrIdempotencyKeyConflict) {
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), "code": "idempotency_key_conflict"})
+		return
+	}
+	errMap.Write(c, err)
 }
 
 // GetPortfolio — GET /investment/portfolio.

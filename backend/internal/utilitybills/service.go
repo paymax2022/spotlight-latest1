@@ -55,6 +55,12 @@ var (
 	// Rejected in the SERVICE, not in middleware: this repo has no shared
 	// idempotency middleware, and the rule belongs next to the money.
 	ErrIdempotencyKeyRequired = errors.New("utilitybills: Idempotency-Key header is required")
+	// ErrIdempotencyKeyConflict — the caller's Idempotency-Key is already used
+	// by ANOTHER member's transaction (409). Replay lookups are scoped to the
+	// caller, so a foreign key cannot replay a stranger's transaction back; the
+	// surviving unique-violation on insert is the durable proof of the clash
+	// (mirrors finance/transfers' ErrIdempotencyKeyConflict).
+	ErrIdempotencyKeyConflict = errors.New("utilitybills: idempotency key already used by another transaction")
 	// ErrInvalidCategory — category is not one of the six.
 	ErrInvalidCategory = errors.New("utilitybills: invalid utility category")
 	// ErrFieldRequired — a required request field was blank.
@@ -624,6 +630,32 @@ type PayResult struct {
 	Transaction      *TransactionRow `json:"transaction"`
 }
 
+// replayMatchesRequest decides whether a caller-scoped idempotency hit is the
+// SAME purchase this request describes — the pre-check equivalent of
+// sameTransactionParams (which compares two stored rows; this compares the
+// stored row against the request before pricing runs). Material params: what
+// is being bought (category + biller + product), for whom (customer
+// reference), through which rail (payment source), and — when the caller
+// priced it explicitly — for how much. A nil amountKobo can't be compared
+// (the row stores the RESOLVED amount), but category/biller/product/reference
+// still have to agree — a missing amount alone never passes a divergent
+// request.
+func replayMatchesRequest(existing *TransactionRow, category, billerID, productID, customerReference, paymentSource string, amountKobo *int64) bool {
+	if existing.Category != category ||
+		existing.BillerID != billerID ||
+		existing.CustomerReference != customerReference ||
+		existing.PaymentSource != paymentSource {
+		return false
+	}
+	if existing.ProductID == nil || *existing.ProductID != productID {
+		return false
+	}
+	if amountKobo != nil && existing.AmountKobo != *amountKobo {
+		return false
+	}
+	return true
+}
+
 const (
 	paymentSourceWallet   = "wallet"
 	paymentSourcePaystack = "paystack"
@@ -672,11 +704,20 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 		return nil, fmt.Errorf("%w: payment_source must be 'wallet' or 'paystack'", ErrFieldRequired)
 	}
 
-	// (1) Idempotency pre-check; the unique constraint at (3) is the layer that
-	// actually holds under concurrency.
-	if existing, eerr := s.repo.GetTransactionByIdempotencyKey(ctx, idempotencyKey); eerr != nil {
+	// (1) Idempotency pre-check — CALLER-SCOPED: a key another member already
+	// used must NOT replay their transaction back to this caller (it would leak
+	// their amount/token/customer reference). A foreign key misses here and
+	// instead collides at the unique constraint in (3), which maps the clash to
+	// ErrIdempotencyKeyConflict → 409. And a same-caller hit is a true replay
+	// ONLY when the request is the same purchase — replayMatchesRequest
+	// compares the material params and a divergent reuse gets the same 409
+	// (post-merge audit D4).
+	if existing, eerr := s.repo.GetTransactionByIdempotencyKey(ctx, userID, idempotencyKey); eerr != nil {
 		return nil, eerr
 	} else if existing != nil {
+		if !replayMatchesRequest(existing, string(category), billerID, productID, customerReference, paymentSource, in.AmountKobo) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return &PayResult{AlreadyProcessed: true, Transaction: existing}, nil
 	}
 
@@ -773,7 +814,17 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 	}
 	if paymentSource == paymentSourceWallet {
 		debitErr := s.wallet.Debit(ctx, userID, receipt, idempotencyKey+":debit", clearing.ID, pricing.RetailAmountKobo)
-		if debitErr != nil && !errors.Is(debitErr, ledger.ErrDuplicate) {
+		if errors.Is(debitErr, ledger.ErrDuplicate) {
+			// ErrDuplicate means the key is held by a DIFFERENT journal — verifyReplay
+			// returns nil for an identical replay, and a same-transaction retry exits
+			// at the caller-scoped replay check above before reaching the debit.
+			// Swallowing it would mark wallet_debited and run the purchase with no
+			// money moved (a cross-rail key claim could vend unpaid). Fail closed.
+			s.markFailed(ctx, transactionID, "idempotency key conflict on wallet debit")
+			s.event(ctx, transactionID, "wallet_debit_failed", "idempotency key conflict", nil)
+			return nil, ErrIdempotencyKeyConflict
+		}
+		if debitErr != nil {
 			// Money could not be taken. Nothing was sent to a provider, so there is
 			// nothing to reverse — mark the transaction failed and surface the reason
 			// (insufficient funds / tier limit) unchanged to the caller.
@@ -1229,7 +1280,19 @@ func (s *Service) autoReverse(ctx context.Context, t *TransactionRow, idempotenc
 	}
 	reference := "utility:reversal:" + t.ID
 	revErr := s.ledger.PostReversal(ctx, userWallet.ID, clearingAccountID, t.RetailAmountKobo, reference, idempotencyKey+":reversal")
-	if revErr != nil && !errors.Is(revErr, ledger.ErrDuplicate) {
+	if errors.Is(revErr, ledger.ErrDuplicate) {
+		// ErrDuplicate can be a Redis-lock TTL dup or a unique-violation swallow —
+		// neither proves OUR reversal is durable. Verify the :rev_debit leg on the
+		// member's wallet in the ledger of record before claiming 'reversed'.
+		_, posted, perr := s.ledger.EntryAmount(ctx, userWallet.ID, idempotencyKey+":reversal:rev_debit")
+		if perr != nil || !posted {
+			log.Printf("[utilitybills] CRITICAL: auto-reverse duplicate but no durable reversal leg for %s (posted=%v, err=%v)", t.ID, posted, perr)
+			s.event(ctx, t.ID, "wallet_reversal_failed", "duplicate key without durable reversal leg", nil)
+			return nil
+		}
+		revErr = nil
+	}
+	if revErr != nil {
 		// The worst case. Leave the transaction in 'failed' (NOT 'reversed') so the
 		// refund queue and any human looking at it can see the money is still out.
 		log.Printf("[utilitybills] CRITICAL: auto-reverse FAILED for %s — debited, no bill, no refund: %v", t.ID, revErr)
@@ -1517,7 +1580,18 @@ func (s *Service) postStuckReversal(ctx context.Context, t *TransactionRow) bool
 	}
 	revErr := s.ledger.PostReversal(ctx, userWallet.ID, clearing.ID, t.RetailAmountKobo,
 		"utility:reversal:"+t.ID, t.IdempotencyKey+":reversal")
-	if revErr != nil && !errors.Is(revErr, ledger.ErrDuplicate) {
+	if errors.Is(revErr, ledger.ErrDuplicate) {
+		// Same verified-adopt rule as autoReverse: a duplicate sighting is only a
+		// success if the durable :rev_debit leg exists on the member's wallet.
+		_, posted, perr := s.ledger.EntryAmount(ctx, userWallet.ID, t.IdempotencyKey+":reversal:rev_debit")
+		if perr != nil || !posted {
+			s.event(ctx, t.ID, "stuck_reversal_failed", "duplicate key without durable reversal leg", nil)
+			log.Printf("[utilitybills] CRITICAL stuck recovery reversal dup but no durable leg for %s (posted=%v, err=%v)", t.ID, posted, perr)
+			return false
+		}
+		revErr = nil
+	}
+	if revErr != nil {
 		s.event(ctx, t.ID, "stuck_reversal_failed", revErr.Error(), nil)
 		log.Printf("[utilitybills] CRITICAL stuck recovery reversal FAILED for %s — debited, no bill, no refund: %v", t.ID, revErr)
 		return false
@@ -1545,7 +1619,24 @@ func (s *Service) postPaystackRefund(ctx context.Context, t *TransactionRow) boo
 		reference = *t.ReceiptNumber
 	}
 	err := s.wallet.Credit(ctx, t.UserID, reference, "utility:"+t.ID+":PAYSTACK_REFUND", t.RetailAmountKobo)
-	if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+	if errors.Is(err, ledger.ErrDuplicate) {
+		// Verified-adopt: a duplicate sighting (Redis-lock dup or unique-violation)
+		// only counts as refunded when the durable :credit leg exists on the
+		// member's wallet. No leg → captured money is still outstanding.
+		userWallet, werr := s.ledger.GetOrCreateUserWallet(ctx, t.UserID)
+		posted := false
+		var perr error
+		if werr == nil {
+			_, posted, perr = s.ledger.EntryAmount(ctx, userWallet.ID, "utility:"+t.ID+":PAYSTACK_REFUND:credit")
+		}
+		if werr != nil || perr != nil || !posted {
+			s.event(ctx, t.ID, "paystack_refund_failed", "duplicate key without durable refund leg", nil)
+			log.Printf("[utilitybills] CRITICAL paystack refund dup but no durable leg for %s (posted=%v, werr=%v, perr=%v)", t.ID, posted, werr, perr)
+			return false
+		}
+		err = nil
+	}
+	if err != nil {
 		s.event(ctx, t.ID, "paystack_refund_failed", err.Error(), nil)
 		log.Printf("[utilitybills] CRITICAL paystack refund FAILED for %s — captured money not returned: %v", t.ID, err)
 		return false

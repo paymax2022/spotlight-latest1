@@ -141,6 +141,17 @@ func (s *Service) EntryAmount(ctx context.Context, accountID, idempotencyKey str
 	return s.repo.EntryAmount(ctx, accountID, idempotencyKey)
 }
 
+// EntryByKey returns the recorded identity (account, entry type, reference,
+// amount) of the single ledger entry posted under an EXACT idempotency_key —
+// including any leg suffix such as ":debit"/":rev_credit". This is the read
+// half of replay verification: key existence alone (Posted) never proves the
+// caller's own journal landed — a foreign claim holds the same key for a
+// different journal — so ErrDuplicate/replay confirmation must compare the
+// recorded identity, not just probe existence.
+func (s *Service) EntryByKey(ctx context.Context, idempotencyKey string) (*Entry, bool, error) {
+	return s.repo.EntryByKey(ctx, idempotencyKey)
+}
+
 // PostJournal posts a balanced entry between two existing account IDs.
 // Use for non-wallet postings such as offline-payment approval
 // (DR provider_clearing → CR settlement) where no user wallet is involved.

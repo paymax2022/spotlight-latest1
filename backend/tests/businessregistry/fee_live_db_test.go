@@ -67,10 +67,14 @@ func TestLiveDB_CACFeeDebit_FundedHappyPath(t *testing.T) {
 	tierSvc := tiers.NewService(pool)
 	wal := wallet.NewService(led, tierSvc)
 	svc := business.NewService(business.Deps{
-		Repo:     business.NewRepository(pool),
-		Ledger:   led,
-		Wallet:   wal,
-		Provider: cac.New(cac.Config{}), // empty config → deterministic sandbox
+		Repo:   business.NewRepository(pool),
+		Ledger: led,
+		Wallet: wal,
+		// Empty creds + AllowSandbox → deterministic sandbox (the test env is not
+		// production; the zero-value AllowSandbox=false now fails closed).
+		Provider: cac.New(cac.Config{AllowSandbox: true}),
+		// Sandbox-verified rows must still satisfy the gate in this test env.
+		AllowSandboxVerified: true,
 		// FeeKobo/PlatformFeeKobo zero → defaults (1_500_000 + 200_000).
 	})
 	const totalFee int64 = business.DefaultRegistrationFeeKobo + business.DefaultPlatformFeeKobo

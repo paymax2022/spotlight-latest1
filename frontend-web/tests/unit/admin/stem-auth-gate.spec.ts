@@ -40,7 +40,7 @@ import { GET as contestGet } from '../../../app/api/admin/stem/contests/[id]/rou
 import { GET as joinRequestsGet } from '../../../app/api/stem/school-join-requests/route';
 
 const req = (path: string) => new Request(`http://localhost${path}`, { method: 'GET' });
-const ctx = (id: string) => ({ params: { id } });
+const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 
 describe('STEM admin routes reject unauthenticated callers', () => {
   beforeEach(() => vi.clearAllMocks());
