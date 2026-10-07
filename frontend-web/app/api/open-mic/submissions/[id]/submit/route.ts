@@ -7,8 +7,8 @@ export async function POST(request: Request, context: { params: { id: string } }
     const user = await requireRequestUser(request);
     const submission = await getSubmissionById(context.params.id);
     if (!submission) return errorResponse('Submission not found', 404);
-    if (submission.artistUserId && submission.artistUserId !== user.id) {
-      return errorResponse('Forbidden', 403);
+    if (!submission.artistUserId || submission.artistUserId !== user.id) {
+      return errorResponse('Submission not found', 404);
     }
     return successResponse({ success: true, submission });
   } catch (error) {
