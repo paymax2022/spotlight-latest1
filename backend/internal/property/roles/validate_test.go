@@ -94,3 +94,25 @@ func TestDocumentKeyPrefix(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestValidateDetails_EstatesManagedUpperBound(t *testing.T) {
+	if err := ValidateDetails(RoleEstateManager, map[string]any{"estatesManaged": 100000.0}); err != nil {
+		t.Fatalf("100000 must pass: %v", err)
+	}
+	for _, v := range []any{100001.0, 1e12, 9.007199254740993e15} {
+		if err := ValidateDetails(RoleEstateManager, map[string]any{"estatesManaged": v}); !errors.Is(err, ErrDetailsInvalid) {
+			t.Errorf("%v: want ErrDetailsInvalid, got %v", v, err)
+		}
+	}
+}
+
+func TestIdentityKeys(t *testing.T) {
+	want := map[string][]string{
+		RoleAgent:         {"licenceNumber"},
+		RoleDeveloper:     {"cacNumber", "companyName"},
+		RoleEstateManager: {"organisationName"},
+	}
+	if !reflect.DeepEqual(identityKeys, want) {
+		t.Fatalf("identityKeys = %v, want %v", identityKeys, want)
+	}
+}

@@ -53,24 +53,31 @@ type Profile struct {
 	Details            map[string]any `json:"details"`
 	RejectionReason    *string        `json:"rejectionReason,omitempty"`
 	VerifiedAt         *time.Time     `json:"verifiedAt,omitempty"`
-	VerifiedBy         *string        `json:"verifiedBy,omitempty"`
-	CreatedAt          time.Time      `json:"createdAt"`
-	UpdatedAt          time.Time      `json:"updatedAt"`
-	Documents          []Document     `json:"documents"`
+	// VerifiedBy is the reviewing admin's id; never serialised (member responses
+	// must not reveal who reviewed them).
+	VerifiedBy *string    `json:"-"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	UpdatedAt  time.Time  `json:"updatedAt"`
+	Documents  []Document `json:"documents"`
 }
 
 var (
-	ErrInvalidRole    = errors.New("property roles: invalid role")
-	ErrNotFound       = errors.New("property roles: profile not found")
-	ErrSuspended      = errors.New("property roles: profile is suspended")
-	ErrIncomplete     = errors.New("property roles: required details missing")
-	ErrNoDocument     = errors.New("property roles: at least one document is required")
-	ErrBadTransition  = errors.New("property roles: invalid verification transition")
-	ErrForeignKey     = errors.New("property roles: storage key outside caller prefix")
-	ErrDetailsInvalid = errors.New("property roles: invalid details")
-	ErrSelfReview     = errors.New("property roles: reviewers cannot review their own profile")
-	ErrReasonRequired = errors.New("property roles: a reason is required")
+	ErrInvalidRole      = errors.New("property roles: invalid role")
+	ErrNotFound         = errors.New("property roles: profile not found")
+	ErrSuspended        = errors.New("property roles: profile is suspended")
+	ErrIncomplete       = errors.New("property roles: required details missing")
+	ErrNoDocument       = errors.New("property roles: at least one document is required")
+	ErrBadTransition    = errors.New("property roles: invalid verification transition")
+	ErrForeignKey       = errors.New("property roles: storage key outside caller prefix")
+	ErrDetailsInvalid   = errors.New("property roles: invalid details")
+	ErrSelfReview       = errors.New("property roles: reviewers cannot review their own profile")
+	ErrReasonRequired   = errors.New("property roles: a reason is required")
+	ErrStale            = errors.New("property roles: profile changed since you viewed it; reload")
+	ErrTooManyDocuments = errors.New("property roles: document limit reached")
 )
+
+// MaxDocumentsPerProfile caps attached documents per role profile.
+const MaxDocumentsPerProfile = 10
 
 // IncompleteError carries the missing field names; errors.Is(err, ErrIncomplete) holds.
 type IncompleteError struct{ Missing []string }

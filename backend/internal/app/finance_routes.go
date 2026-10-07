@@ -1407,13 +1407,25 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		RegisterEstateAdmin(finance, pool, rbac, middleware.RequireAuthContext(supabase, rbac))
 	}
 
+	// Property role registration rollout order, enforced in code: the flag only
+	// takes effect once the property_role_registration migration is applied.
+	// Probed once at boot; fail closed (no routes, no role entities in context).
+	propertyRolesReady := false
+	if cfg.FeaturePropertyRolesEnabled {
+		propertyRolesReady = rolesTablesReady(context.Background(), pool)
+		if !propertyRolesReady {
+			log.Println("[property-roles] !!! FEATURE_PROPERTY_ROLES_ENABLED is on but public.property_role_profiles " +
+				"is missing or unreachable — apply the property_role_registration migration; role routes NOT registered")
+		}
+	}
+
 	// Read-mostly cross-module glue: role context across estate/property/agency,
 	// portable rent passport, and (with realtor) the stay→gate-pass moat bridge.
 	// Owns NO money path. Auth wrapper (mapsAuth) applies RequireAuthContext and
 	// mirrors the user id into c.Set("user_id", ...), and leaves the authUser set so
 	// RequirePermission can read the caller for the screening lookup.
 	if cfg.FeaturePropertySuiteEnabled {
-		propertySvc := property.NewService(pool).WithRoles(cfg.FeaturePropertyRolesEnabled)
+		propertySvc := property.NewService(pool).WithRoles(propertyRolesReady)
 		propertyHandler := property.NewHandler(propertySvc)
 		propGroup := finance.Group("/property")
 		propGroup.Use(mapsAuth())
@@ -1437,7 +1449,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// Member: /api/finance/property/roles/*; admin: /api/property/admin/roles/*
 	// (RBAC property.roles.review). Owns NO money path. Presigned R2 uploads fail
 	// closed (503) when R2 creds are absent.
-	if cfg.FeaturePropertyRolesEnabled && pool != nil {
+	if propertyRolesReady {
 		rolesPresigner := r2.New(r2.Config{
 			AccountEndpoint: cfg.R2AccountEndpoint,
 			Bucket:          cfg.R2Bucket,
@@ -1451,7 +1463,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			middleware.RequirePermission(rbac, "property.roles.review"))
 		log.Println("[property-roles] routes registered at /api/finance/property/roles and /api/property/admin/roles")
 	} else {
-		log.Println("[property-roles] skipped: FEATURE_PROPERTY_ROLES_ENABLED off or no DB pool")
+		log.Println("[property-roles] skipped: FEATURE_PROPERTY_ROLES_ENABLED off, no DB pool, or tables missing")
 	}
 
 	// Auto-issues an estate visitor gate pass for a confirmed shortlet/hotel booking

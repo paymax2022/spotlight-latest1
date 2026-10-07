@@ -7,7 +7,11 @@ import (
 	"strings"
 )
 
-const maxDetailsBytes = 8 * 1024
+const (
+	maxDetailsBytes = 8 * 1024
+	// maxCount bounds tCount keys (estatesManaged) to a plausible value.
+	maxCount = 100000
+)
 
 type keyType int
 
@@ -36,11 +40,12 @@ var requiredKeys = map[string][]string{
 	RoleEstateManager: {"organisationName"},
 }
 
-// identityKeys reset verification when changed on a verified or pending profile.
-var identityKeys = map[string]string{
-	RoleAgent:         "licenceNumber",
-	RoleDeveloper:     "cacNumber",
-	RoleEstateManager: "organisationName",
+// identityKeys reset verification when any of them changes on a verified or
+// pending profile. displayName is deliberately not identity-bearing.
+var identityKeys = map[string][]string{
+	RoleAgent:         {"licenceNumber"},
+	RoleDeveloper:     {"cacNumber", "companyName"},
+	RoleEstateManager: {"organisationName"},
 }
 
 func bad(format string, a ...any) error {
@@ -76,8 +81,8 @@ func ValidateDetails(role string, details map[string]any) error {
 			}
 		case tCount:
 			f, ok := asNumber(v)
-			if !ok || f < 0 || f != math.Trunc(f) {
-				return bad("%s must be a non-negative whole number", k)
+			if !ok || f < 0 || f != math.Trunc(f) || f > maxCount {
+				return bad("%s must be a whole number between 0 and %d", k, maxCount)
 			}
 		}
 	}

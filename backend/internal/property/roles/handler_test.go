@@ -2,11 +2,13 @@ package roles
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -24,6 +26,10 @@ type fakeAPI struct {
 	gotLimit  int
 	gotOffset int
 	gotKey    string
+	gotAt     time.Time
+	editErr   error
+	docErr    error
+	editCalls int
 }
 
 func (f *fakeAPI) Register(_ context.Context, u, r, _ string) (*Profile, error) {
@@ -50,13 +56,24 @@ func (f *fakeAPI) ListByVerification(_ context.Context, s string, l, o int) ([]P
 	f.gotStatus, f.gotLimit, f.gotOffset = s, l, o
 	return []Profile{}, f.err
 }
-func (f *fakeAPI) Approve(_ context.Context, a, id string) (*Profile, error) {
-	f.gotAdmin = a
+func (f *fakeAPI) Approve(_ context.Context, a, id string, at time.Time) (*Profile, error) {
+	f.gotAdmin, f.gotAt = a, at
 	return &Profile{ID: id}, f.err
 }
-func (f *fakeAPI) Reject(_ context.Context, a, id, _ string) (*Profile, error) {
-	f.gotAdmin = a
+func (f *fakeAPI) Reject(_ context.Context, a, id, _ string, at time.Time) (*Profile, error) {
+	f.gotAdmin, f.gotAt = a, at
 	return &Profile{ID: id}, f.err
+}
+func (f *fakeAPI) EnsureEditable(_ context.Context, u, r string) error {
+	f.gotUser, f.gotRole = u, r
+	f.editCalls++
+	return f.editErr
+}
+func (f *fakeAPI) DocumentForReview(_ context.Context, id, docID string) (*Document, error) {
+	if f.docErr != nil {
+		return nil, f.docErr
+	}
+	return &Document{ID: docID, Kind: "id_document", StorageKey: "property-roles/" + uid + "/agent/k"}, nil
 }
 func (f *fakeAPI) Suspend(_ context.Context, a, id, _ string) (*Profile, error) {
 	f.gotAdmin = a
@@ -182,7 +199,7 @@ func TestHandler_AdminListPaging(t *testing.T) {
 func TestHandler_AdminIDFromContext(t *testing.T) {
 	f := &fakeAPI{}
 	e := newEngine(f, nil, strings.ToUpper(uid), allow)
-	if w := do(e, "POST", "/a/"+uid+"/approve", `{"adminId":"zzz"}`); w.Code != 200 || f.gotAdmin != uid {
+	if w := do(e, "POST", "/a/"+uid+"/approve", `{"adminId":"zzz","updatedAt":"2026-10-07T10:00:00.123456Z"}`); w.Code != 200 || f.gotAdmin != uid {
 		t.Fatalf("%d %q", w.Code, f.gotAdmin)
 	}
 }
@@ -231,5 +248,112 @@ func TestHandler_BodyCap(t *testing.T) {
 	big := `{"displayName":"` + strings.Repeat("a", 70*1024) + `"}`
 	if w := do(e, "POST", "/m/agent", big); w.Code != http.StatusRequestEntityTooLarge && w.Code != 400 {
 		t.Fatalf("got %d", w.Code)
+	}
+}
+
+// ── Final review fixes ────────────────────────────────────────────────────
+
+func TestHandler_ReviewRequiresUpdatedAt(t *testing.T) {
+	for _, path := range []string{"/a/" + uid + "/approve", "/a/" + uid + "/reject"} {
+		for _, body := range []string{`{"reason":"r"}`, `{"reason":"r","updatedAt":"yesterday"}`, `{"reason":"r","updatedAt":""}`, ``} {
+			f := &fakeAPI{}
+			e := newEngine(f, nil, uid, allow)
+			if w := do(e, "POST", path, body); w.Code != 400 {
+				t.Errorf("%s %q: got %d want 400", path, body, w.Code)
+			}
+			if f.gotAdmin != "" {
+				t.Errorf("%s %q: service reached without updatedAt", path, body)
+			}
+		}
+		f := &fakeAPI{}
+		e := newEngine(f, nil, uid, allow)
+		w := do(e, "POST", path, `{"reason":"r","updatedAt":"2026-10-07T10:00:00.123456Z"}`)
+		want := time.Date(2026, 10, 7, 10, 0, 0, 123456000, time.UTC)
+		if w.Code != 200 || !f.gotAt.Equal(want) {
+			t.Errorf("%s: code=%d at=%v", path, w.Code, f.gotAt)
+		}
+	}
+}
+
+func TestHandler_StaleAndTooManyDocumentsAre409(t *testing.T) {
+	e := newEngine(&fakeAPI{err: ErrStale}, nil, uid, allow)
+	w := do(e, "POST", "/a/"+uid+"/approve", `{"updatedAt":"2026-10-07T10:00:00Z"}`)
+	if w.Code != 409 || !strings.Contains(w.Body.String(), "profile changed since you viewed it; reload") {
+		t.Fatalf("stale: %d %s", w.Code, w.Body)
+	}
+	e = newEngine(&fakeAPI{err: ErrTooManyDocuments}, nil, uid, allow)
+	if w := do(e, "POST", "/m/agent/documents", `{"kind":"id_document","storageKey":"k"}`); w.Code != 409 {
+		t.Fatalf("too many documents: %d", w.Code)
+	}
+}
+
+func TestHandler_PresignRequiresEditableProfile(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		code int
+	}{{ErrNotFound, 404}, {ErrSuspended, 403}, {nil, 200}} {
+		f := &fakeAPI{editErr: c.err}
+		e := newEngine(f, configuredPresigner(), uid, allow)
+		w := do(e, "POST", "/m/agent/documents/presign", `{"kind":"id_document","contentType":"image/png"}`)
+		if w.Code != c.code {
+			t.Errorf("%v: got %d want %d", c.err, w.Code, c.code)
+		}
+		if f.editCalls != 1 || f.gotUser != uid || f.gotRole != RoleAgent {
+			t.Errorf("%v: EnsureEditable not consulted (%d, %q, %q)", c.err, f.editCalls, f.gotUser, f.gotRole)
+		}
+		if c.err != nil && strings.Contains(w.Body.String(), "uploadUrl") {
+			t.Errorf("%v: signed URL issued", c.err)
+		}
+	}
+}
+
+func TestHandler_DocumentURL(t *testing.T) {
+	path := "/a/" + uid + "/documents/" + uid + "/url"
+	e := newEngine(&fakeAPI{}, configuredPresigner(), uid, allow)
+	w := do(e, "GET", path, "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"expiresIn":300`) || !strings.Contains(w.Body.String(), `"url":"https://`) {
+		t.Fatalf("ok: %d %s", w.Code, w.Body)
+	}
+	e = newEngine(&fakeAPI{docErr: ErrNotFound}, configuredPresigner(), uid, allow)
+	if w := do(e, "GET", path, ""); w.Code != 404 || strings.Contains(w.Body.String(), "url") {
+		t.Fatalf("foreign document: %d %s", w.Code, w.Body)
+	}
+	for _, p := range []*r2.Presigner{nil, r2.New(r2.Config{})} {
+		e = newEngine(&fakeAPI{}, p, uid, allow)
+		if w := do(e, "GET", path, ""); w.Code != 503 {
+			t.Fatalf("unconfigured: %d", w.Code)
+		}
+	}
+	deny := func(c *gin.Context) { c.AbortWithStatusJSON(403, gin.H{"error": "forbidden"}) }
+	e = newEngine(&fakeAPI{}, configuredPresigner(), uid, deny)
+	if w := do(e, "GET", path, ""); w.Code != 403 {
+		t.Fatalf("permission: %d", w.Code)
+	}
+}
+
+func TestHandler_SuspendToleratesEmptyChunkedBody(t *testing.T) {
+	e := newEngine(&fakeAPI{}, nil, uid, allow)
+	req := httptest.NewRequest("POST", "/a/"+uid+"/suspend", strings.NewReader(""))
+	req.ContentLength = -1
+	req.TransferEncoding = []string{"chunked"}
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	e.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("empty chunked suspend: %d %s", w.Code, w.Body)
+	}
+	if w := do(e, "POST", "/a/"+uid+"/suspend", `{"reason":"fraud"}`); w.Code != 200 {
+		t.Fatalf("suspend with reason: %d", w.Code)
+	}
+	if w := do(e, "POST", "/a/"+uid+"/suspend", `not json`); w.Code != 400 {
+		t.Fatalf("malformed suspend body: %d", w.Code)
+	}
+}
+
+func TestProfileJSON_OmitsVerifiedBy(t *testing.T) {
+	by := uid
+	b, _ := json.Marshal(Profile{ID: "p", VerifiedBy: &by})
+	if strings.Contains(string(b), "verifiedBy") || strings.Contains(string(b), uid) {
+		t.Fatalf("verifiedBy serialised: %s", b)
 	}
 }

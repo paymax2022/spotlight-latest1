@@ -154,8 +154,39 @@ func (r *Repository) MyRoles(ctx context.Context, userID string) ([]Profile, err
 	return r.listWhere(ctx, `WHERE user_id = $1 ORDER BY created_at`, userID)
 }
 
+// ListByVerification is the admin review queue: suspended profiles are not
+// reviewable, so they are excluded (oldest change first).
 func (r *Repository) ListByVerification(ctx context.Context, status string, limit, offset int) ([]Profile, error) {
-	return r.listWhere(ctx, `WHERE verification_status = $1 ORDER BY updated_at, id LIMIT $2 OFFSET $3`, status, limit, offset)
+	return r.listWhere(ctx, `WHERE verification_status = $1 AND status <> 'suspended'
+		ORDER BY updated_at ASC, id LIMIT $2 OFFSET $3`, status, limit, offset)
+}
+
+// ProfileStatus returns the status of the caller's (user, role) profile.
+func (r *Repository) ProfileStatus(ctx context.Context, userID, role string) (string, error) {
+	var st string
+	err := r.db.QueryRow(ctx, `SELECT status FROM public.property_role_profiles WHERE user_id = $1 AND role = $2`,
+		userID, role).Scan(&st)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("profile status: %w", err)
+	}
+	return st, nil
+}
+
+// DocumentOf returns document docID only when it belongs to profileID.
+func (r *Repository) DocumentOf(ctx context.Context, profileID, docID string) (*Document, error) {
+	var d Document
+	err := r.db.QueryRow(ctx, `SELECT id::text, kind, storage_key, created_at FROM public.property_role_documents
+		WHERE id = $1 AND profile_id = $2`, docID, profileID).Scan(&d.ID, &d.Kind, &d.StorageKey, &d.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("document of: %w", err)
+	}
+	return &d, nil
 }
 
 // IsVerified is true only for verification_status='verified' AND status='active'.

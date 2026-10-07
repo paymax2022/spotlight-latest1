@@ -2,8 +2,10 @@ package roles
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -31,8 +33,11 @@ func (s *Service) Register(ctx context.Context, userID, role, displayName string
 }
 
 // Update patches display name and details (keys present in `details` are
-// merged over the stored ones; a nil value deletes a key). Changing the
+// merged over the stored ones; a nil value deletes a key). Changing any
 // identity-bearing key on a verified or pending profile resets verification.
+// A pending or verified profile may not blank a required key (draft,
+// unverified and rejected profiles may). A patch with no effective change
+// writes nothing: no event, no updated_at bump.
 func (s *Service) Update(ctx context.Context, userID, role string, displayName *string, details map[string]any) (*Profile, error) {
 	if !ValidRole(role) {
 		return nil, ErrInvalidRole
@@ -79,10 +84,22 @@ func (s *Service) Update(ctx context.Context, userID, role string, displayName *
 		if displayName != nil {
 			name = *displayName
 		}
-		idKey := identityKeys[role]
-		_, touched := details[idKey]
-		changed := touched && !sameValue(cur.Details[idKey], merged[idKey])
-		reset := changed && (cur.VerificationStatus == VerVerified || cur.VerificationStatus == VerPending)
+		if name == cur.DisplayName && sameDetails(cur.Details, merged) {
+			return cur, nil
+		}
+		live := cur.VerificationStatus == VerVerified || cur.VerificationStatus == VerPending
+		if live {
+			if missing := MissingForSubmit(role, merged); len(missing) > 0 {
+				return nil, &IncompleteError{Missing: missing}
+			}
+		}
+		var changedKeys []string
+		for _, k := range identityKeys[role] {
+			if _, touched := details[k]; touched && !sameValue(cur.Details[k], merged[k]) {
+				changedKeys = append(changedKeys, k)
+			}
+		}
+		reset := len(changedKeys) > 0 && live
 
 		if reset {
 			_, err = tx.Exec(ctx, `UPDATE public.property_role_profiles
@@ -102,7 +119,7 @@ func (s *Service) Update(ctx context.Context, userID, role string, displayName *
 		}
 		if reset {
 			if err := insertEvent(ctx, tx, cur.ID, userID, "reset_to_unverified", &ver, sp(VerUnverified),
-				sp("identity field "+idKey+" changed")); err != nil {
+				sp("identity field "+strings.Join(changedKeys, ", ")+" changed")); err != nil {
 				return nil, err
 			}
 		}
@@ -129,6 +146,13 @@ func validDocumentKey(prefix, key string) bool {
 
 func sameValue(a, b any) bool { return fmt.Sprint(a) == fmt.Sprint(b) }
 
+// sameDetails compares two details maps by canonical JSON (map keys sorted).
+func sameDetails(a, b map[string]any) bool {
+	ja, errA := json.Marshal(a)
+	jb, errB := json.Marshal(b)
+	return errA == nil && errB == nil && string(ja) == string(jb)
+}
+
 func (s *Service) AddDocument(ctx context.Context, userID, role, kind, storageKey string) (*Profile, error) {
 	if !ValidRole(role) {
 		return nil, ErrInvalidRole
@@ -148,11 +172,25 @@ func (s *Service) AddDocument(ctx context.Context, userID, role, kind, storageKe
 		if cur.Status == StatusSuspended {
 			return nil, ErrSuspended
 		}
+		var docs int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.property_role_documents WHERE profile_id=$1`, cur.ID).Scan(&docs); err != nil {
+			return nil, fmt.Errorf("count documents: %w", err)
+		}
+		if docs >= MaxDocumentsPerProfile {
+			return nil, ErrTooManyDocuments
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO public.property_role_documents (profile_id, kind, storage_key)
 			VALUES ($1, $2, $3)`, cur.ID, kind, storageKey); err != nil {
 			return nil, fmt.Errorf("insert document: %w", err)
 		}
-		return cur, nil
+		if _, err := tx.Exec(ctx, `UPDATE public.property_role_profiles SET updated_at=now() WHERE id=$1`, cur.ID); err != nil {
+			return nil, fmt.Errorf("touch profile: %w", err)
+		}
+		ver := cur.VerificationStatus
+		if err := insertEvent(ctx, tx, cur.ID, userID, "updated", &ver, &ver, sp("document_added")); err != nil {
+			return nil, err
+		}
+		return reload(ctx, tx, cur.ID)
 	})
 }
 
@@ -212,7 +250,15 @@ func (s *Service) ListByVerification(ctx context.Context, status string, limit, 
 	return s.repo.ListByVerification(ctx, status, limit, offset)
 }
 
-func (s *Service) Approve(ctx context.Context, adminID, profileID string) (*Profile, error) {
+// sameVersion compares the row's updated_at with the one the reviewer saw, at
+// the microsecond precision Postgres stores.
+func sameVersion(row, seen time.Time) bool {
+	return row.Truncate(time.Microsecond).Equal(seen.Truncate(time.Microsecond))
+}
+
+// Approve verifies a pending profile. expectedUpdatedAt is the version the
+// reviewer saw; any later change refuses with ErrStale.
+func (s *Service) Approve(ctx context.Context, adminID, profileID string, expectedUpdatedAt time.Time) (*Profile, error) {
 	if _, err := uuid.Parse(profileID); err != nil {
 		return nil, ErrNotFound
 	}
@@ -223,6 +269,9 @@ func (s *Service) Approve(ctx context.Context, adminID, profileID string) (*Prof
 		}
 		if cur.UserID == adminID {
 			return nil, ErrSelfReview
+		}
+		if !sameVersion(cur.UpdatedAt, expectedUpdatedAt) {
+			return nil, ErrStale
 		}
 		if cur.Status == StatusSuspended {
 			return nil, ErrSuspended
@@ -254,7 +303,7 @@ func (s *Service) Approve(ctx context.Context, adminID, profileID string) (*Prof
 	})
 }
 
-func (s *Service) Reject(ctx context.Context, adminID, profileID, reason string) (*Profile, error) {
+func (s *Service) Reject(ctx context.Context, adminID, profileID, reason string, expectedUpdatedAt time.Time) (*Profile, error) {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return nil, ErrReasonRequired
@@ -269,6 +318,9 @@ func (s *Service) Reject(ctx context.Context, adminID, profileID, reason string)
 		}
 		if cur.UserID == adminID {
 			return nil, ErrSelfReview
+		}
+		if !sameVersion(cur.UpdatedAt, expectedUpdatedAt) {
+			return nil, ErrStale
 		}
 		if cur.Status == StatusSuspended {
 			return nil, ErrSuspended
@@ -327,4 +379,33 @@ func (s *Service) IsVerified(ctx context.Context, userID, role string) (bool, er
 		return false, err
 	}
 	return ok, nil
+}
+
+// EnsureEditable reports whether the caller may attach documents to their
+// (user, role) profile: it must exist (ErrNotFound) and not be suspended
+// (ErrSuspended). Used before issuing an upload URL.
+func (s *Service) EnsureEditable(ctx context.Context, userID, role string) error {
+	if !ValidRole(role) {
+		return ErrInvalidRole
+	}
+	st, err := s.repo.ProfileStatus(ctx, userID, role)
+	if err != nil {
+		return err
+	}
+	if st == StatusSuspended {
+		return ErrSuspended
+	}
+	return nil
+}
+
+// DocumentForReview returns a document of profileID for an admin reviewer;
+// ErrNotFound when either id is malformed or the document is not that profile's.
+func (s *Service) DocumentForReview(ctx context.Context, profileID, docID string) (*Document, error) {
+	if _, err := uuid.Parse(profileID); err != nil {
+		return nil, ErrNotFound
+	}
+	if _, err := uuid.Parse(docID); err != nil {
+		return nil, ErrNotFound
+	}
+	return s.repo.DocumentOf(ctx, profileID, docID)
 }

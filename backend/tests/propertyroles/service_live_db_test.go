@@ -50,10 +50,10 @@ func verifiedAgent(t *testing.T, s *roles.Service, ctx context.Context, uid stri
 	if _, err = s.AddDocument(ctx, uid, roles.RoleAgent, "agent_licence", doc(uid)); err != nil {
 		t.Fatalf("doc: %v", err)
 	}
-	if _, err = s.Submit(ctx, uid, roles.RoleAgent); err != nil {
+	if p, err = s.Submit(ctx, uid, roles.RoleAgent); err != nil {
 		t.Fatalf("submit: %v", err)
 	}
-	p, err = s.Approve(ctx, adminID, p.ID)
+	p, err = s.Approve(ctx, adminID, p.ID, p.UpdatedAt)
 	if err != nil {
 		t.Fatalf("approve: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestApprove_OnlyFromPendingAndNotRestamped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Approve(ctx, adminID, p.ID); !errors.Is(err, roles.ErrBadTransition) {
+	if _, err = s.Approve(ctx, adminID, p.ID, p.UpdatedAt); !errors.Is(err, roles.ErrBadTransition) {
 		t.Fatalf("approve from unverified: want ErrBadTransition, got %v", err)
 	}
 	p = verifiedAgent(t, s, ctx, uid)
@@ -183,14 +183,14 @@ func TestApprove_OnlyFromPendingAndNotRestamped(t *testing.T) {
 	}
 	first := *p.VerifiedAt
 	time.Sleep(20 * time.Millisecond)
-	if _, err = s.Approve(ctx, adminID, p.ID); !errors.Is(err, roles.ErrBadTransition) {
+	if _, err = s.Approve(ctx, adminID, p.ID, p.UpdatedAt); !errors.Is(err, roles.ErrBadTransition) {
 		t.Fatalf("second approve: want ErrBadTransition, got %v", err)
 	}
 	mine, _ := s.MyRoles(ctx, uid)
 	if len(mine) != 1 || mine[0].VerifiedAt == nil || !mine[0].VerifiedAt.Equal(first) {
 		t.Fatalf("verified_at was re-stamped: %+v", mine)
 	}
-	if _, err = s.Approve(ctx, adminID, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, roles.ErrNotFound) {
+	if _, err = s.Approve(ctx, adminID, "00000000-0000-0000-0000-000000000000", time.Time{}); !errors.Is(err, roles.ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }
@@ -200,13 +200,14 @@ func TestReject_RequiresReason(t *testing.T) {
 	p, _ := s.Register(ctx, uid, roles.RoleAgent, fixtureName)
 	_, _ = s.Update(ctx, uid, roles.RoleAgent, nil, agentDetails())
 	_, _ = s.AddDocument(ctx, uid, roles.RoleAgent, "agent_licence", doc(uid))
-	if _, err := s.Submit(ctx, uid, roles.RoleAgent); err != nil {
+	sub, err := s.Submit(ctx, uid, roles.RoleAgent)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Reject(ctx, adminID, p.ID, "   "); !errors.Is(err, roles.ErrReasonRequired) {
+	if _, err := s.Reject(ctx, adminID, p.ID, "   ", sub.UpdatedAt); !errors.Is(err, roles.ErrReasonRequired) {
 		t.Fatalf("want ErrReasonRequired, got %v", err)
 	}
-	r, err := s.Reject(ctx, adminID, p.ID, "licence unreadable")
+	r, err := s.Reject(ctx, adminID, p.ID, "licence unreadable", sub.UpdatedAt)
 	if err != nil || r.VerificationStatus != "rejected" || r.RejectionReason == nil || *r.RejectionReason != "licence unreadable" {
 		t.Fatalf("reject: %v %+v", err, r)
 	}
@@ -308,12 +309,12 @@ func TestIsVerified_FalseForDraftPendingRejectedSuspended_TrueOnlyForVerifiedAct
 	check("draft", false)
 	_, _ = s.Update(ctx, uid, roles.RoleAgent, nil, agentDetails())
 	_, _ = s.AddDocument(ctx, uid, roles.RoleAgent, "agent_licence", doc(uid))
-	_, _ = s.Submit(ctx, uid, roles.RoleAgent)
+	sub, _ := s.Submit(ctx, uid, roles.RoleAgent)
 	check("pending", false)
-	_, _ = s.Reject(ctx, adminID, p.ID, "no")
+	_, _ = s.Reject(ctx, adminID, p.ID, "no", sub.UpdatedAt)
 	check("rejected", false)
-	_, _ = s.Submit(ctx, uid, roles.RoleAgent)
-	_, _ = s.Approve(ctx, adminID, p.ID)
+	sub, _ = s.Submit(ctx, uid, roles.RoleAgent)
+	_, _ = s.Approve(ctx, adminID, p.ID, sub.UpdatedAt)
 	check("verified", true)
 	_, _ = s.Suspend(ctx, adminID, p.ID, "x")
 	check("suspended", false)
@@ -337,7 +338,7 @@ func TestEvents_WrittenForEveryTransition(t *testing.T) {
 		}
 	}
 	p2 := newDevPending(t, s, ctx, uid)
-	_, _ = s.Reject(ctx, adminID, p2.ID, "bad cac")
+	_, _ = s.Reject(ctx, adminID, p2.ID, "bad cac", p2.UpdatedAt)
 	if c := eventCount(t, pool, p2.ID, "rejected"); c != 1 {
 		t.Errorf("rejected event count %d", c)
 	}
@@ -386,10 +387,10 @@ func newDevPending(t *testing.T, s *roles.Service, ctx context.Context, uid stri
 
 func TestMalformedProfileID_IsNotFound(t *testing.T) {
 	s, _, ctx, _ := svcFixture(t)
-	if _, err := s.Approve(ctx, adminID, "not-a-uuid"); !errors.Is(err, roles.ErrNotFound) {
+	if _, err := s.Approve(ctx, adminID, "not-a-uuid", time.Time{}); !errors.Is(err, roles.ErrNotFound) {
 		t.Errorf("approve: want ErrNotFound, got %v", err)
 	}
-	if _, err := s.Reject(ctx, adminID, "not-a-uuid", "r"); !errors.Is(err, roles.ErrNotFound) {
+	if _, err := s.Reject(ctx, adminID, "not-a-uuid", "r", time.Time{}); !errors.Is(err, roles.ErrNotFound) {
 		t.Errorf("reject: want ErrNotFound, got %v", err)
 	}
 	if _, err := s.Suspend(ctx, adminID, "not-a-uuid", "r"); !errors.Is(err, roles.ErrNotFound) {
@@ -398,19 +399,22 @@ func TestMalformedProfileID_IsNotFound(t *testing.T) {
 }
 
 func TestApprove_RefusedWhenRequiredDetailsRemovedWhilePending(t *testing.T) {
-	s, _, ctx, uid := svcFixture(t)
+	s, pool, ctx, uid := svcFixture(t)
 	p, _ := s.Register(ctx, uid, roles.RoleAgent, fixtureName)
 	_, _ = s.Update(ctx, uid, roles.RoleAgent, nil, agentDetails())
 	_, _ = s.AddDocument(ctx, uid, roles.RoleAgent, "agent_licence", doc(uid))
 	if _, err := s.Submit(ctx, uid, roles.RoleAgent); err != nil {
 		t.Fatal(err)
 	}
-	// operatingStates is required but NOT identity-bearing, so no reset happens.
-	got, err := s.Update(ctx, uid, roles.RoleAgent, nil, map[string]any{"operatingStates": nil})
-	if err != nil || got.VerificationStatus != "pending" {
-		t.Fatalf("update: %v %+v", err, got)
+	// Update can no longer blank a required key while pending (see
+	// TestUpdate_CannotBlankRequiredKeyWhenPendingOrVerified), so simulate a
+	// row that reached this state some other way: Approve still re-checks.
+	var at time.Time
+	if err := pool.QueryRow(ctx, `UPDATE public.property_role_profiles SET details = details - 'operatingStates'
+		WHERE id = $1 RETURNING updated_at`, p.ID).Scan(&at); err != nil {
+		t.Fatal(err)
 	}
-	_, err = s.Approve(ctx, adminID, p.ID)
+	_, err := s.Approve(ctx, adminID, p.ID, at)
 	var inc *roles.IncompleteError
 	if !errors.Is(err, roles.ErrIncomplete) || !errors.As(err, &inc) {
 		t.Fatalf("want IncompleteError, got %v", err)
@@ -458,11 +462,11 @@ func TestReviewByOwner_IsRefused(t *testing.T) {
 	p, _ := s.Register(ctx, uid, roles.RoleAgent, fixtureName)
 	_, _ = s.Update(ctx, uid, roles.RoleAgent, nil, agentDetails())
 	_, _ = s.AddDocument(ctx, uid, roles.RoleAgent, "agent_licence", doc(uid))
-	_, _ = s.Submit(ctx, uid, roles.RoleAgent)
-	if _, err := s.Approve(ctx, uid, p.ID); !errors.Is(err, roles.ErrSelfReview) {
+	sub, _ := s.Submit(ctx, uid, roles.RoleAgent)
+	if _, err := s.Approve(ctx, uid, p.ID, sub.UpdatedAt); !errors.Is(err, roles.ErrSelfReview) {
 		t.Errorf("approve own: want ErrSelfReview, got %v", err)
 	}
-	if _, err := s.Reject(ctx, uid, p.ID, "r"); !errors.Is(err, roles.ErrSelfReview) {
+	if _, err := s.Reject(ctx, uid, p.ID, "r", sub.UpdatedAt); !errors.Is(err, roles.ErrSelfReview) {
 		t.Errorf("reject own: want ErrSelfReview, got %v", err)
 	}
 	mine, _ := s.MyRoles(ctx, uid)
@@ -474,11 +478,11 @@ func TestReviewByOwner_IsRefused(t *testing.T) {
 func TestReject_FromNonPendingIsBadTransition(t *testing.T) {
 	s, _, ctx, uid := svcFixture(t)
 	p, _ := s.Register(ctx, uid, roles.RoleAgent, fixtureName)
-	if _, err := s.Reject(ctx, adminID, p.ID, "r"); !errors.Is(err, roles.ErrBadTransition) {
+	if _, err := s.Reject(ctx, adminID, p.ID, "r", p.UpdatedAt); !errors.Is(err, roles.ErrBadTransition) {
 		t.Fatalf("unverified: want ErrBadTransition, got %v", err)
 	}
 	p = verifiedAgent(t, s, ctx, uid)
-	if _, err := s.Reject(ctx, adminID, p.ID, "r"); !errors.Is(err, roles.ErrBadTransition) {
+	if _, err := s.Reject(ctx, adminID, p.ID, "r", p.UpdatedAt); !errors.Is(err, roles.ErrBadTransition) {
 		t.Fatalf("verified: want ErrBadTransition, got %v", err)
 	}
 }
@@ -500,10 +504,11 @@ func TestUpdate_IdentityResetForDeveloperAndEstateManager(t *testing.T) {
 		if _, err := s.AddDocument(ctx, uid, c.role, c.kind, roles.DocumentKeyPrefix(uid, c.role)+"d"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.Submit(ctx, uid, c.role); err != nil {
+		sub, err := s.Submit(ctx, uid, c.role)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.Approve(ctx, adminID, p.ID); err != nil {
+		if _, err := s.Approve(ctx, adminID, p.ID, sub.UpdatedAt); err != nil {
 			t.Fatal(err)
 		}
 		got, err := s.Update(ctx, uid, c.role, nil, map[string]any{c.key: "CHANGED"})
