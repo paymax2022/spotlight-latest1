@@ -36,11 +36,29 @@ type Store interface {
 	// the destination amount, atomically, recording the conversion and its
 	// idempotency key. Returns ErrInsufficientBalance (APIError) when short.
 	ApplyConversion(ctx context.Context, c *Conversion, sourceTotalMinor int64) error
+
+	// Two-phase conversion lifecycle (debit-FIRST, provider-second — the
+	// provider can no longer execute a conversion the customer was never
+	// charged for, and an ambiguous provider error leaves a HELD pending row
+	// instead of an unrecorded upstream spend):
+	//
+	//   HoldConversion    debit source + pending row + source-side legs (tx)
+	//   SettleConversion  credit dest + dest legs + status=settled (tx, claimed
+	//                     by the status guard — a second settle is refused)
+	//   RefundConversion  mirror the hold legs + status terminal (tx)
+	//
+	// Replays find the row by idem key and NEVER re-execute the provider.
+	HoldConversion(ctx context.Context, c *Conversion, sourceTotalMinor int64) error
+	SettleConversion(ctx context.Context, reference, providerRef string, destMinor int64) (bool, error)
+	RefundConversion(ctx context.Context, reference, status string) (refunded bool, err error)
 	ConversionByIdem(ctx context.Context, idemKey string) (*Conversion, bool, error)
 
 	// ApplyTransfer debits sourceTotalMinor of the source currency (payout leaves
 	// the platform), recording the transfer and its idempotency key.
 	ApplyTransfer(ctx context.Context, t *Transfer, sourceTotalMinor int64) error
+	// CompleteTransfer records the provider outcome on an already-debited
+	// transfer row (status + provider reference + executed rate).
+	CompleteTransfer(ctx context.Context, reference, status, providerRef string, executedRate float64) error
 	TransferByIdem(ctx context.Context, idemKey string) (*Transfer, bool, error)
 
 	SaveCollection(ctx context.Context, va *VirtualAccount) error
@@ -162,6 +180,75 @@ func (m *memStore) ApplyConversion(_ context.Context, c *Conversion, sourceTotal
 	m.conversions = append(m.conversions, c)
 	if c.IdempotencyKey != "" {
 		m.convByIdem[c.IdempotencyKey] = c
+	}
+	return nil
+}
+
+func (m *memStore) HoldConversion(_ context.Context, c *Conversion, sourceTotalMinor int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.bal(c.CustomerID, c.Source.Currency) < sourceTotalMinor {
+		return NewError(ErrInsufficientBalance, "insufficient_balance", "Insufficient balance for this conversion.")
+	}
+	m.credit(c.CustomerID, c.Source.Currency, -sourceTotalMinor)
+	m.conversions = append(m.conversions, c)
+	if c.IdempotencyKey != "" {
+		m.convByIdem[c.IdempotencyKey] = c
+	}
+	return nil
+}
+
+func (m *memStore) SettleConversion(_ context.Context, reference, providerRef string, destMinor int64) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.conversions {
+		if c.Reference != reference {
+			continue
+		}
+		if c.Status != ConvPending {
+			return false, nil // replay
+		}
+		m.credit(c.CustomerID, c.Destination.Currency, destMinor)
+		c.Status = ConvSettled
+		c.ProviderRef = providerRef
+		return true, nil
+	}
+	return false, nil
+}
+
+func (m *memStore) RefundConversion(_ context.Context, reference, status string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.conversions {
+		if c.Reference != reference {
+			continue
+		}
+		if c.Status != ConvPending {
+			return false, nil
+		}
+		sourceTotal := c.Source.AmountMinor + feeAmount(c.Fees, FeeProvider) + feeAmount(c.Fees, FeeRail)
+		m.credit(c.CustomerID, c.Source.Currency, sourceTotal)
+		c.Status = ConversionStatus(status)
+		return true, nil
+	}
+	return false, nil
+}
+
+func (m *memStore) CompleteTransfer(_ context.Context, reference, status, providerRef string, executedRate float64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, t := range m.transfers {
+		if t.Reference == reference {
+			switch t.Status {
+			case TransferPaid, TransferFailed, TransferReversed:
+				return NewError(ErrConflict, "terminal_status", "Transfer already reached a terminal state.")
+			}
+			t.Status = TransferStatus(status)
+			t.ProviderRef = providerRef
+			t.ExecutedRate = executedRate
+			t.StatusHistory = append(t.StatusHistory, StatusEvent{Status: status, At: time.Now()})
+			return nil
+		}
 	}
 	return nil
 }

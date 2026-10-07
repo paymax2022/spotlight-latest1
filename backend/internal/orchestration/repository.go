@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/jsonx"
 )
 
@@ -219,6 +220,164 @@ func (s *sqlStore) ApplyTransfer(ctx context.Context, t *Transfer, sourceTotalMi
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// HoldConversion debits the source wallet and writes a PENDING conversion row in
+// one tx — the provider runs only AFTER this commits (debit-first ordering).
+// Source-side legs mirror ApplyConversion's: DR customer_balance srcTotal,
+// CR paymax_spread, CR provider_clearing. The dest side posts at SettleConversion.
+func (s *sqlStore) HoldConversion(ctx context.Context, c *Conversion, sourceTotalMinor int64) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err = lockCustomerWallet(ctx, tx, c.CustomerID); err != nil {
+		return err
+	}
+	if err = debitCustomerWallet(ctx, tx, c.CustomerID, c.Source.Currency, sourceTotalMinor, c.Reference, c.IdempotencyKey+":src"); err != nil {
+		return err
+	}
+	spread, clearing := splitSpread(feeAmount(c.Fees, FeeSpread), sourceTotalMinor)
+	legs := []entryLeg{
+		{"customer_balance", c.Source.Currency, "DEBIT", sourceTotalMinor, ":src"},
+		{"paymax_spread", c.Source.Currency, "CREDIT", spread, ":src-spread"},
+		{"provider_clearing", c.Source.Currency, "CREDIT", clearing, ":src-clearing"},
+	}
+	if err = postLedgerLegs(ctx, tx, c.CustomerID, c.Reference, c.IdempotencyKey, legs); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO orch_conversions (id, reference, customer_id, status, source_currency, source_minor, dest_currency, dest_minor,
+			rate, all_in_rate, fees, provider, corridor, rail, provider_ref, transaction_id, idempotency_key, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+		c.ID, c.Reference, c.CustomerID, string(c.Status), c.Source.Currency, c.Source.AmountMinor, c.Destination.Currency, c.Destination.AmountMinor,
+		c.Rate, c.AllInRate, feesJSON(c.Fees), c.Route.Provider, c.Route.Corridor, string(c.Route.Rail), c.ProviderRef, c.TransactionID, c.IdempotencyKey, c.CreatedAt); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// SettleConversion credits the destination wallet and marks the held conversion
+// settled — ONE transaction, claimed by the status guard so a webhook/retry
+// settle can never double-credit dest. settled=false means the row was already
+// moved out of pending (replay).
+func (s *sqlStore) SettleConversion(ctx context.Context, reference, providerRef string, destMinor int64) (bool, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var customerID, destCur, priorStatus, idemKey string
+	var storedDest int64
+	if err := tx.QueryRow(ctx,
+		`SELECT customer_id, dest_currency, status, idempotency_key, dest_minor
+		 FROM orch_conversions WHERE reference=$1 FOR UPDATE`, reference).
+		Scan(&customerID, &destCur, &priorStatus, &idemKey, &storedDest); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if ConversionStatus(priorStatus) != ConvPending {
+		return false, nil // already settled/refunded — replay-safe
+	}
+	if destMinor <= 0 {
+		destMinor = storedDest // webhook settle carries no amount — credit the quoted dest
+	}
+
+	if err := lockCustomerWallet(ctx, tx, customerID); err != nil {
+		return false, err
+	}
+	if err := creditCustomerWallet(ctx, tx, customerID, destCur, destMinor, reference, idemKey+":dst"); err != nil {
+		return false, err
+	}
+	legs := []entryLeg{
+		{"provider_clearing", destCur, "DEBIT", destMinor, ":dst-clearing"},
+		{"customer_balance", destCur, "CREDIT", destMinor, ":dst"},
+	}
+	if err := postLedgerLegs(ctx, tx, customerID, reference, idemKey, legs); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE orch_conversions SET status=$2, provider_ref=COALESCE($3, provider_ref) WHERE reference=$1`,
+		reference, string(ConvSettled), dbutil.NullStr(providerRef)); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
+}
+
+// RefundConversion unwinds a held conversion whose provider DEFINITELY refused
+// — mirrors HoldConversion's source legs, flips status terminal. refunded=false
+// on replay or unknown reference. Called only on provable non-execution; an
+// ambiguous provider outcome keeps the row pending for reconciliation.
+func (s *sqlStore) RefundConversion(ctx context.Context, reference, status string) (bool, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var customerID, srcCur, priorStatus, idemKey string
+	var srcMinor int64
+	var feesB []byte
+	if err := tx.QueryRow(ctx,
+		`SELECT customer_id, source_currency, source_minor, fees, status, idempotency_key
+		 FROM orch_conversions WHERE reference=$1 FOR UPDATE`, reference).
+		Scan(&customerID, &srcCur, &srcMinor, &feesB, &priorStatus, &idemKey); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if ConversionStatus(priorStatus) != ConvPending {
+		return false, nil // settled or already refunded
+	}
+
+	var fees []Fee
+	_ = json.Unmarshal(feesB, &fees)
+	sourceTotal := srcMinor + feeAmount(fees, FeeProvider) + feeAmount(fees, FeeRail)
+
+	if err := lockCustomerWallet(ctx, tx, customerID); err != nil {
+		return false, err
+	}
+	if err := creditCustomerWallet(ctx, tx, customerID, srcCur, sourceTotal, reference, idemKey+":refund"); err != nil {
+		return false, err
+	}
+	spread, clearing := splitSpread(feeAmount(fees, FeeSpread), sourceTotal)
+	legs := []entryLeg{
+		{"provider_clearing", srcCur, "DEBIT", clearing, ":refund-clearing"},
+		{"paymax_spread", srcCur, "DEBIT", spread, ":refund-spread"},
+		{"customer_balance", srcCur, "CREDIT", sourceTotal, ":refund"},
+	}
+	if err := postLedgerLegs(ctx, tx, customerID, reference, idemKey, legs); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE orch_conversions SET status=$2 WHERE reference=$1`, reference, status); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
+}
+
+// CompleteTransfer records the provider outcome on the already-debited transfer
+// row (the row exists because ExecuteTransfer now debits BEFORE the provider
+// call). Status flips and the provider reference land together.
+func (s *sqlStore) CompleteTransfer(ctx context.Context, reference, status, providerRef string, executedRate float64) error {
+	// Guarded: a `failed`/`reversed` webhook may already have refunded the hold —
+	// a late provider success must not resurrect the row without re-debiting.
+	tag, err := s.db.Exec(ctx,
+		`UPDATE orch_transfers SET status=$2, provider_ref=$3, executed_rate=$4
+		 WHERE reference=$1 AND status NOT IN ('paid','failed','reversed')`,
+		reference, status, dbutil.NullStr(providerRef), executedRate)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return NewError(ErrConflict, "terminal_status", "Transfer already reached a terminal state.")
+	}
+	return nil
 }
 
 func (s *sqlStore) ConversionByIdem(ctx context.Context, key string) (*Conversion, bool, error) {

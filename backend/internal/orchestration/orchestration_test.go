@@ -2,8 +2,12 @@ package orchestration
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
+
+	"spotlight/backend/internal/provider"
 )
 
 func TestApplyRateRounding(t *testing.T) {
@@ -110,8 +114,10 @@ func TestQuoteBookConsumeExpiry(t *testing.T) {
 }
 
 type stubProvider struct {
-	name string
-	fail bool
+	name      string
+	fail      bool // definite refusal — provable non-execution, failover-safe
+	ambiguous bool // unknown outcome (timeout/5xx) — must NOT fail over
+	calls     *int
 }
 
 func (s stubProvider) Name() string               { return s.name }
@@ -120,14 +126,26 @@ func (s stubProvider) Quote(_ context.Context, src, dst string, amt int64, at Am
 	return &ProviderQuote{Provider: s.name, Corridor: Corridor(src, dst), Rail: rail, Rate: MidRate(src, dst), ProviderFee: NewMoney(25, src), RailFee: NewMoney(0, src), Reliability: 0.95, Viable: true}, nil
 }
 func (s stubProvider) ExecuteConversion(_ context.Context, q *Quote, _ string) (*ExecuteResult, error) {
+	if s.calls != nil {
+		*s.calls++
+	}
 	if s.fail {
-		return nil, NewError(ErrProviderError, "x", "boom")
+		return nil, fmt.Errorf("%w: %s refused the conversion", provider.ErrProviderRefused, s.name)
+	}
+	if s.ambiguous {
+		return nil, errors.New("dial tcp: i/o timeout")
 	}
 	return &ExecuteResult{ProviderRef: s.name + "_ref", ExecutedRate: q.AllInRate, Destination: q.Destination, Status: "settled"}, nil
 }
 func (s stubProvider) ExecuteTransfer(_ context.Context, q *Quote, _ Destination, _ string) (*ExecuteResult, error) {
+	if s.calls != nil {
+		*s.calls++
+	}
 	if s.fail {
-		return nil, NewError(ErrProviderError, "x", "boom")
+		return nil, fmt.Errorf("%w: %s refused the payout", provider.ErrProviderRefused, s.name)
+	}
+	if s.ambiguous {
+		return nil, errors.New("dial tcp: i/o timeout")
 	}
 	return &ExecuteResult{ProviderRef: s.name + "_ref", ExecutedRate: q.AllInRate, Destination: q.Destination, Status: "processing"}, nil
 }
@@ -222,6 +240,72 @@ func TestConversionFailoverToAlternative(t *testing.T) {
 	}
 	if conv.Route.Provider != "maplerad" {
 		t.Fatalf("expected failover to maplerad, got %s", conv.Route.Provider)
+	}
+}
+
+// An ambiguous provider error (timeout, reset, 5xx) must NOT fail over — the
+// request may have executed upstream. The conversion stays pending, the debit
+// stays held, and a same-key replay returns the row without re-calling any
+// provider.
+func TestConversionAmbiguousOutcomeHoldsPending(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Now()
+	evCalls, mpCalls := 0, 0
+	store := NewMemStore()
+	svc := NewService([]Provider{
+		stubProvider{name: "eversend", ambiguous: true, calls: &evCalls},
+		stubProvider{name: "maplerad", calls: &mpCalls},
+	}, store, Options{Now: func() time.Time { return clock }})
+	cust := "cus_amb"
+	const opening = int64(1_000_00)
+	_ = svc.SeedBalance(ctx, cust, "USD", opening)
+	q, _ := svc.CreateQuote(ctx, cust, "retail", QuoteRequest{Source: "USD", Destination: "NGN", Amount: 100_00, Intent: IntentConversion, Lock: true})
+
+	conv, e := svc.ExecuteConversion(ctx, cust, "amb-1", ConversionRequest{QuoteID: q.ID})
+	if e != nil {
+		t.Fatalf("ambiguous outcome must return the pending conversion, got %v", e)
+	}
+	if conv.Status != ConvPending {
+		t.Fatalf("conversion should stay pending, got %s", conv.Status)
+	}
+	if mpCalls != 0 {
+		t.Fatalf("ambiguous eversend error must NOT fail over to maplerad (calls=%d)", mpCalls)
+	}
+	// Source debit is held (not refunded — the provider may have executed).
+	usd, _ := store.Balance(ctx, cust, "USD")
+	if usd >= opening {
+		t.Fatalf("source debit should be held pending, got %d", usd)
+	}
+	if ngn, _ := store.Balance(ctx, cust, "NGN"); ngn != 0 {
+		t.Fatalf("dest must not be credited before settle, got %d", ngn)
+	}
+
+	// Replay: same idempotency key returns the held row, zero extra provider calls.
+	replay, e := svc.ExecuteConversion(ctx, cust, "amb-1", ConversionRequest{QuoteID: q.ID})
+	if e != nil || replay.Reference != conv.Reference {
+		t.Fatalf("replay should return the held row, got %v %v", replay, e)
+	}
+	if evCalls+mpCalls != 1 {
+		t.Fatalf("replay must not re-execute any provider: ev=%d mp=%d", evCalls, mpCalls)
+	}
+}
+
+// A definite refusal unwinds the debit exactly once and fails the request.
+func TestConversionRefusalRefundsExactlyOnce(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Now()
+	svc, store := allFailService(&clock)
+	cust := "cus_ref"
+	const opening = int64(1_000_00)
+	_ = svc.SeedBalance(ctx, cust, "USD", opening)
+	q, _ := svc.CreateQuote(ctx, cust, "retail", QuoteRequest{Source: "USD", Destination: "NGN", Amount: 100_00, Intent: IntentConversion, Lock: true})
+	_, e := svc.ExecuteConversion(ctx, cust, "ref-1", ConversionRequest{QuoteID: q.ID})
+	if e == nil || e.Type != ErrProviderError {
+		t.Fatalf("definite refusal should surface provider_error, got %v", e)
+	}
+	usd, _ := store.Balance(ctx, cust, "USD")
+	if usd != opening {
+		t.Fatalf("refund must restore the full debit: got %d, want %d", usd, opening)
 	}
 }
 

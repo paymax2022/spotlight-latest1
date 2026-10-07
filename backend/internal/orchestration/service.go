@@ -2,8 +2,10 @@ package orchestration
 
 import (
 	"context"
+	"errors"
 	"log"
 	"spotlight/backend/go-common/timeutil"
+	"spotlight/backend/internal/provider"
 	"strings"
 	"time"
 
@@ -339,23 +341,53 @@ func (s *Service) ExecuteConversion(ctx context.Context, customerID, idemKey str
 		return nil, NewError(ErrInsufficientBalance, "insufficient_balance", "Insufficient "+q.Source.Currency+" balance.")
 	}
 
+	// Debit FIRST, provider second (audit F1): the source wallet is charged and
+	// the pending row committed before any upstream call, so a crash or provider
+	// outage can no longer execute a conversion the customer was never charged
+	// for. A replay by idempotency key finds this row and NEVER re-executes.
+	conv := &Conversion{
+		ID: newID("cv"), Reference: "PMX-CV-" + shortRef(), CustomerID: customerID,
+		Status: ConvPending, Source: q.Source, Destination: q.Destination,
+		Rate: q.Rate, AllInRate: q.AllInRate, Fees: q.Fees,
+		Route:          Route{Provider: q.Route.Provider, Corridor: q.Route.Corridor, Rail: q.Route.Rail},
+		TransactionID:  newID("tx"),
+		IdempotencyKey: idemKey, CreatedAt: s.now(),
+	}
+	if err := s.store.HoldConversion(ctx, conv, sourceTotal); err != nil {
+		return nil, asAPIError(err)
+	}
+
 	res, prov, apiErr := s.executeWithFailover(ctx, q, nil, idemKey)
 	if apiErr != nil {
+		if apiErr.Code == codeProviderOutcomeUnknown {
+			// Ambiguous: the provider may still settle. Leave the row pending —
+			// the held debit is safe and reconciliation/webhook resolves it.
+			return conv, nil
+		}
+		// Definite refusal (provider answered NO, or refused pre-flight): unwind
+		// the hold immediately — nothing was created upstream.
+		if _, rerr := s.store.RefundConversion(ctx, conv.Reference, string(ConvFailed)); rerr != nil {
+			// Compensation failed — leave pending for manual recon rather than
+			// claiming a refund that didn't post.
+			return conv, nil
+		}
 		return nil, apiErr
 	}
 
-	conv := &Conversion{
-		ID: newID("cv"), Reference: "PMX-CV-" + shortRef(), CustomerID: customerID,
-		Status: ConvSettled, Source: q.Source, Destination: q.Destination,
-		Rate: q.Rate, AllInRate: q.AllInRate, Fees: q.Fees,
-		Route:       Route{Provider: prov, Corridor: q.Route.Corridor, Rail: q.Route.Rail},
-		ProviderRef: res.ProviderRef, TransactionID: newID("tx"),
-		IdempotencyKey: idemKey, CreatedAt: s.now(),
+	destMinor := res.Destination.AmountMinor
+	if destMinor <= 0 {
+		destMinor = q.Destination.AmountMinor
 	}
-	if err := s.store.ApplyConversion(ctx, conv, sourceTotal); err != nil {
-		return nil, asAPIError(err)
+	settled, err := s.store.SettleConversion(ctx, conv.Reference, res.ProviderRef, destMinor)
+	if err != nil || !settled {
+		// The row left pending unexpectedly (lost claim on retry, or settle tx
+		// failed) — the provider DID execute, so never refund; hold for recon.
+		return conv, nil
 	}
-	s.treasury.Reserve(prov, q.Destination.Currency, q.Destination.AmountMinor)
+	conv.Status = ConvSettled
+	conv.Route.Provider = prov
+	conv.ProviderRef = res.ProviderRef
+	s.treasury.Reserve(prov, res.Destination.Currency, res.Destination.AmountMinor)
 	s.emit(ctx, "conversion.settled", conv)
 	return conv, nil
 }
@@ -411,36 +443,71 @@ func (s *Service) ExecuteTransfer(ctx context.Context, customerID, idemKey strin
 		return nil, NewError(ErrInsufficientBalance, "insufficient_balance", "Insufficient "+q.Source.Currency+" balance.")
 	}
 
-	res, prov, apiErr := s.executeWithFailover(ctx, q, req.Destination, idemKey)
-	if apiErr != nil {
-		return nil, apiErr
-	}
-
+	// Debit FIRST, provider second (audit F1): the payout row + wallet debit
+	// commit before any upstream call. A crash between provider execution and
+	// ApplyTransfer can no longer pay a beneficiary the customer was never
+	// charged for — the row exists, held in `processing`, and a same-key replay
+	// returns it instead of re-executing the provider.
 	now := s.now()
-	status := TransferProcessing
-	if res.Status == "paid" {
-		status = TransferPaid
-	}
 	tr := &Transfer{
 		ID: newID("tr"), Reference: "PMX-TR-" + shortRef(), CustomerID: customerID,
-		Status: status, Source: q.Source, Destination: q.Destination,
-		QuotedRate: q.Rate, ExecutedRate: res.ExecutedRate, Fees: q.Fees,
-		Route:     Route{Provider: prov, Corridor: q.Route.Corridor, Rail: q.Route.Rail},
-		Narration: req.Narration, ProviderRef: res.ProviderRef, TransactionID: newID("tx"),
-		StatusHistory:  []StatusEvent{{Status: "queued", At: now}, {Status: string(status), At: now}},
+		Status: TransferProcessing, Source: q.Source, Destination: q.Destination,
+		QuotedRate: q.Rate, ExecutedRate: q.Rate, Fees: q.Fees,
+		Route:     Route{Provider: q.Route.Provider, Corridor: q.Route.Corridor, Rail: q.Route.Rail},
+		Narration: req.Narration, TransactionID: newID("tx"),
+		StatusHistory:  []StatusEvent{{Status: "queued", At: now}, {Status: string(TransferProcessing), At: now}},
 		IdempotencyKey: idemKey, CreatedAt: now,
 	}
 	if err := s.store.ApplyTransfer(ctx, tr, sourceTotal); err != nil {
 		return nil, asAPIError(err)
+	}
+
+	res, prov, apiErr := s.executeWithFailover(ctx, q, req.Destination, idemKey)
+	if apiErr != nil {
+		if apiErr.Code == codeProviderOutcomeUnknown {
+			// Ambiguous: provider may still pay out — leave held in processing;
+			// the webhook (RefundTransfer on failed/reversed) or recon resolves.
+			return tr, nil
+		}
+		// Definite refusal: unwind the debit atomically.
+		if _, rerr := s.store.RefundTransfer(ctx, tr.Reference, string(TransferFailed)); rerr != nil {
+			return tr, nil // compensation failed — hold for manual recon
+		}
+		return nil, apiErr
+	}
+
+	status := TransferProcessing
+	if res.Status == "paid" {
+		status = TransferPaid
+	}
+	tr.Status = status
+	tr.Route.Provider = prov
+	tr.ProviderRef = res.ProviderRef
+	tr.ExecutedRate = res.ExecutedRate
+	tr.StatusHistory = append(tr.StatusHistory, StatusEvent{Status: string(status), At: s.now()})
+	if err := s.store.CompleteTransfer(ctx, tr.Reference, string(status), res.ProviderRef, res.ExecutedRate); err != nil {
+		// Provider executed but the record write failed — the debit row exists
+		// and stays processing; do NOT refund (provider may have paid).
+		return tr, nil
 	}
 	s.treasury.Reserve(prov, q.Destination.Currency, q.Destination.AmountMinor)
 	s.emit(ctx, "transfer."+string(status), tr)
 	return tr, nil
 }
 
-// executeWithFailover runs the chosen provider, retrying the next-best alternative
-// on provider error within the locked tolerance (spec §5.8). Never double-spends:
-// the ledger debit happens once, after a provider success, in the caller.
+// codeProviderOutcomeUnknown marks a provider call whose outcome is AMBIGUOUS —
+// a timeout, reset connection, or 5xx after the request may already have been
+// accepted. Callers hold the debit pending; they never auto-refund and never
+// fail over (a second provider could double the spend).
+const codeProviderOutcomeUnknown = "provider_outcome_unknown"
+
+// executeWithFailover runs the chosen provider, retrying the next-best
+// alternative ONLY on provable non-execution: errors.Is(err,
+// provider.ErrProviderRefused). That sentinel wraps responses where the provider
+// answered and refused (4xx / app-level rejection) plus pre-flight refusals
+// where nothing was ever sent. Any other error — timeout, reset, 5xx — is an
+// unknown outcome: the request may have been accepted upstream, so failover
+// stops immediately and the caller leaves the hold pending.
 func (s *Service) executeWithFailover(ctx context.Context, q *Quote, dest *Destination, idemKey string) (*ExecuteResult, string, *APIError) {
 	order := []string{q.Route.Provider}
 	for _, a := range q.Alternatives {
@@ -462,7 +529,12 @@ func (s *Service) executeWithFailover(ctx context.Context, q *Quote, dest *Desti
 		if err == nil && res != nil {
 			return res, name, nil
 		}
-		lastErr = err
+		if err != nil && !errors.Is(err, provider.ErrProviderRefused) {
+			// Unknown outcome — do not spend again at provider B.
+			return nil, "", NewError(ErrProviderError, codeProviderOutcomeUnknown,
+				"Provider outcome unknown for "+name+" — held pending reconciliation.")
+		}
+		lastErr = err // definite refusal — safe to try the next provider
 	}
 	msg := "Provider execution failed."
 	if lastErr != nil {

@@ -140,7 +140,7 @@ func (c *Client) GetFXQuote(ctx context.Context, req FXQuoteRequest) (*FXQuoteRe
 		return nil, err
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: get fx quote: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: get fx quote: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	for _, e := range resp.Data {
 		if !strings.EqualFold(e.Source.Currency, req.SourceCurrency) ||
@@ -184,7 +184,7 @@ func (c *Client) CreateFXQuote(ctx context.Context, req FXQuoteRequest) (*FXQuot
 	// exchanges are not enabled for this business", "could not convert"), so the
 	// status flag — never the HTTP code — decides success.
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: create fx quote: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: create fx quote: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	if resp.Data.Reference == "" {
 		return nil, errors.New("maplerad: create fx quote: provider returned no quote reference")
@@ -240,7 +240,7 @@ func (c *Client) ConvertFX(ctx context.Context, req ConvertFXRequest) (*ConvertF
 	if !resp.Status {
 		// Includes the single-use guard: exchanging a spent or expired reference
 		// comes back as "could not find quote".
-		return nil, fmt.Errorf("maplerad: convert fx: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: convert fx: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	return &ConvertFXResponse{
 		// The exchange response carries no id of its own, so the (single-use)
@@ -272,7 +272,7 @@ func (c *Client) InitializePayment(ctx context.Context, req provider.InitializeP
 		return nil, err
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: initialize: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: initialize: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	return &provider.InitializePaymentResponse{
 		Reference:        resp.Data.Reference,
@@ -325,7 +325,7 @@ func (c *Client) InitiatePayout(ctx context.Context, req provider.PayoutRequest)
 		return nil, err
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: payout: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: payout: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	status := normalizeStatus(resp.Data.Status)
 	if status == "" {
@@ -373,7 +373,7 @@ func (c *Client) ProvisionVirtualAccount(ctx context.Context, req provider.Provi
 		return nil, err
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: provision VA: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: provision VA: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	return &provider.VirtualAccount{
 		AccountNumber: resp.Data.AccountNumber,
@@ -407,7 +407,7 @@ func (c *Client) GetVirtualAccount(ctx context.Context, customerID string) (*pro
 		return mockVirtualAccount(customerID), nil
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: get virtual account: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: get virtual account: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	return &provider.VirtualAccount{
 		AccountNumber: resp.Data.AccountNumber,
@@ -454,7 +454,7 @@ func (c *Client) CreateCustomer(ctx context.Context, req provider.CustomerReques
 		return nil, err
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: create customer: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: create customer: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	return &provider.Customer{
 		ID:        resp.Data.ID,
@@ -486,7 +486,7 @@ func (c *Client) GetCustomer(ctx context.Context, customerID string) (*provider.
 		return &provider.Customer{ID: customerID, Status: "active"}, nil
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: get customer: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: get customer: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	return &provider.Customer{
 		ID:        resp.Data.ID,
@@ -520,7 +520,7 @@ func (c *Client) ProvisionWallet(ctx context.Context, customerID, currency strin
 		return "", err
 	}
 	if !resp.Status {
-		return "", fmt.Errorf("maplerad: provision wallet: %s", resp.Message)
+		return "", fmt.Errorf("%w: maplerad: provision wallet: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	return resp.Data.ID, nil
 }
@@ -545,7 +545,7 @@ func (c *Client) GetProviderBalance(ctx context.Context, walletID string) (*prov
 		return &provider.ProviderBalance{WalletID: walletID, Currency: "NGN", AmountKobo: 0}, nil
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: get provider balance: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: get provider balance: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	currency := resp.Data.Currency
 	if currency == "" {
@@ -585,7 +585,7 @@ func (c *Client) PurchaseBill(ctx context.Context, req provider.BillRequest) (*p
 		return nil, err
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: purchase bill: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: purchase bill: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	status := normalizeStatus(resp.Data.Status)
 	if status == "" {
@@ -631,7 +631,7 @@ func (c *Client) GetBill(ctx context.Context, ref string) (*provider.Bill, error
 		return &provider.Bill{Ref: ref, Status: "PENDING"}, nil
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: get bill: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: get bill: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	return &provider.Bill{
 		Ref:         ref,
@@ -665,7 +665,7 @@ func (c *Client) ListBanks(ctx context.Context) ([]provider.Bank, error) {
 		return fallbackBanks(), nil
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: list banks: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: list banks: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	banks := make([]provider.Bank, 0, len(resp.Data))
 	for _, b := range resp.Data {
@@ -702,7 +702,7 @@ func (c *Client) ResolveAccount(ctx context.Context, bankCode, accountNumber str
 		}, nil
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: resolve account: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: resolve account: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	return &provider.AccountResolution{
 		AccountName:   resp.Data.AccountName,
@@ -735,7 +735,7 @@ func (c *Client) CreateTransferRecipient(ctx context.Context, req provider.Recip
 		return nil, err
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: create counterparty: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: create counterparty: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	return &provider.Recipient{Code: resp.Data.ID}, nil
 }
@@ -757,7 +757,7 @@ func (c *Client) GetTransferStatus(ctx context.Context, providerRef string) (*pr
 		return &provider.PayoutStatus{Status: "pending"}, nil
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: get transfer status: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: get transfer status: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	return &provider.PayoutStatus{Status: normalizeStatus(resp.Data.Status)}, nil
 }
@@ -980,7 +980,7 @@ func (c *Client) IssueCard(ctx context.Context, req provider.IssueCardRequest) (
 		return nil, err
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: issue card: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: issue card: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	out := &provider.IssuedCard{
 		ProviderCardID: resp.Data.ID,
@@ -1018,7 +1018,7 @@ func (c *Client) RevealCard(ctx context.Context, providerCardID string) (*provid
 		return synthCardSecrets(providerCardID), nil
 	}
 	if !resp.Status {
-		return nil, fmt.Errorf("maplerad: reveal card: %s", resp.Message)
+		return nil, fmt.Errorf("%w: maplerad: reveal card: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	return &provider.CardSecrets{
 		PAN:    resp.Data.PAN,
@@ -1067,7 +1067,7 @@ func (c *Client) TerminateCard(ctx context.Context, providerCardID string) error
 		return err
 	}
 	if !resp.Status {
-		return fmt.Errorf("maplerad: terminate card: %s", resp.Message)
+		return fmt.Errorf("%w: maplerad: terminate card: %s", provider.ErrProviderRefused, resp.Message)
 	}
 	return nil
 }

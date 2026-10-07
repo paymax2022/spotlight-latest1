@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"spotlight/backend/internal/provider"
 )
 
 // Client is a token-caching Eversend API client.
@@ -119,7 +121,10 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 			continue // server error — retry
 		}
 		if resp.StatusCode >= 300 {
-			return fmt.Errorf("eversend: %s %s -> %d: %s", method, path, resp.StatusCode, string(body))
+			// A 4xx means the provider SAW the request and refused it — provable
+			// non-execution, safe to fail over or refund. 5xx/transport stay
+			// unwrapped: ambiguous, the request may still complete upstream.
+			return fmt.Errorf("%w: eversend: %s %s -> %d: %s", provider.ErrProviderRefused, method, path, resp.StatusCode, string(body))
 		}
 		if out != nil {
 			return json.Unmarshal(body, out)

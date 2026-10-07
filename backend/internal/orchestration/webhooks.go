@@ -167,7 +167,21 @@ func (s *Service) HandleProviderEvent(ctx context.Context, providerName string, 
 		s.emit(ctx, "transfer."+canon, map[string]any{"reference": ref, "status": canon, "provider": providerName})
 	} else {
 		canon := canonConversionStatus(raw)
-		_ = s.store.UpdateConversionStatus(ctx, ref, canon)
+		switch ConversionStatus(canon) {
+		case ConvSettled:
+			// Money must move WITH the status: a held (pending) conversion's dest
+			// credit happens here, in one tx, replay-guarded by the status claim.
+			if _, err := s.store.SettleConversion(ctx, ref, "", 0); err != nil {
+				return err
+			}
+		case ConvFailed:
+			// Terminal non-success unwinds the source debit atomically.
+			if _, err := s.store.RefundConversion(ctx, ref, canon); err != nil {
+				return err
+			}
+		default:
+			_ = s.store.UpdateConversionStatus(ctx, ref, canon)
+		}
 		s.emit(ctx, "conversion."+canon, map[string]any{"reference": ref, "status": canon, "provider": providerName})
 	}
 	return nil
