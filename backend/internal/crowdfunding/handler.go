@@ -46,7 +46,14 @@ func (h *Handler) Get(c *gin.Context) {
 func (h *Handler) Publish(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if err := h.svc.Publish(c.Request.Context(), c.Param("id"), userID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
+		switch {
+		case errors.Is(err, ErrCampaignNotFound):
+			c.JSON(http.StatusNotFound, gin.H{keyError: httperr.Msg(c, http.StatusNotFound, err)})
+		case errors.Is(err, ErrCampaignNotPublishable):
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err)})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
+		}
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

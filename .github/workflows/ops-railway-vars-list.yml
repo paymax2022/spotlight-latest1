@@ -1,0 +1,84 @@
+name: Ops - list Railway variable names
+
+# READ-ONLY companion to ops-railway-vars: dumps the variable NAMES set on one
+# service in one environment, plus each value's length and a short sha256 prefix
+# — never the value itself. The digest is the point: hashing a candidate value
+# locally and comparing the prefix proves whether the right secret landed
+# without either side printing one (same doctrine as staging-inspect.yml after
+# the `variable list --kv` ADMIN_API_KEY leak on run 32545670584).
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Railway environment to read'
+        required: true
+        type: choice
+        options: [production, staging, development]
+      service:
+        description: 'Railway service to read'
+        required: true
+        type: choice
+        options: [backend, frontend-web, frontend-admin]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-railway-vars-list-${{ inputs.environment }}-${{ inputs.service }}
+  cancel-in-progress: true
+
+jobs:
+  list-vars:
+    name: list ${{ inputs.service }} variables (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      SERVICE: ${{ inputs.service }}
+      ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - name: Resolve the per-environment Railway token
+        env:
+          TOK_PRODUCTION: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          TOK_STAGING: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          TOK_DEVELOPMENT: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+        run: |
+          set -euo pipefail
+          case "$ENVIRONMENT" in
+            production)  tok="$TOK_PRODUCTION" ;;
+            staging)     tok="$TOK_STAGING" ;;
+            development) tok="$TOK_DEVELOPMENT" ;;
+            *) echo "::error::unknown environment $ENVIRONMENT"; exit 1 ;;
+          esac
+          if [ -z "$tok" ]; then
+            echo "::error::missing repo secret RAILWAY_TOKEN_$(printf '%s' "$ENVIRONMENT" | tr '[:lower:]' '[:upper:]')"
+            exit 1
+          fi
+          printf 'RAILWAY_TOKEN=%s\n' "$tok" >> "$GITHUB_ENV"
+          unset tok
+          echo "  token resolved for $ENVIRONMENT (value never printed)"
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      # --json ONLY, never --kv. A parse failure refuses to print the input —
+      # on --kv output it would contain every value in the clear.
+      - name: Variable names + digests (values never printed)
+        run: |
+          set -euo pipefail
+          railway variable list --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > vars.json
+          node -e '
+            const fs = require("fs"), crypto = require("crypto");
+            let vars;
+            try { vars = JSON.parse(fs.readFileSync("vars.json", "utf8")); }
+            catch { console.error("Unparseable output - refusing to print it (it would contain values)."); process.exit(1); }
+            const keys = Object.keys(vars).sort();
+            console.log(`  ${keys.length} variable(s) on ${process.env.SERVICE}/${process.env.ENVIRONMENT}:`);
+            for (const k of keys) {
+              const s = String(vars[k]);
+              const dig = crypto.createHash("sha256").update(s).digest("hex").slice(0, 8);
+              console.log(`    ${k}  (len ${s.length}, sha256 ${dig})`);
+            }
+          '
