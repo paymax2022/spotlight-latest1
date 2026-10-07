@@ -10,7 +10,8 @@ import type {
 } from './types';
 import type { ProfessionalRole } from './requirements';
 
-const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_PROPERTY_USE_MOCK, true);
+// Live endpoints exist, so an unset flag means live (mockPolicy: pass false).
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_PROPERTY_USE_MOCK, false);
 const BASE = '/api/finance/property/roles';
 const wait = (ms = 200) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -97,7 +98,8 @@ export async function submitRoleForVerification(role: ProfessionalRole): Promise
     await wait();
     const p = mockProfiles.get(role);
     if (!p) throw new Error('Role profile not found');
-    const next: RoleProfile = { ...p, verificationStatus: 'pending', status: 'active' };
+    // Like the server: submit only moves verification to pending; status is unchanged.
+    const next: RoleProfile = { ...p, verificationStatus: 'pending' };
     mockProfiles.set(role, next);
     return next;
   }

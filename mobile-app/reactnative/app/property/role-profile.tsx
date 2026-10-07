@@ -26,7 +26,7 @@ import {
   optionalFieldsFor,
   detailKindFor,
   buildDetailsPatch,
-  identityKeyFor,
+  identityChangedKeys,
   type ProfessionalRole,
 } from '@/features/property/roles/requirements';
 import { RoleUploadsUnavailableError, RoleDocumentTypeError } from '@/features/property/roles/api';
@@ -106,8 +106,16 @@ function serverMessage(err: unknown, fallback: string): string {
 const IDENTITY_LABEL: Record<string, string> = {
   licenceNumber: 'licence number',
   cacNumber: 'CAC number',
+  companyName: 'company name',
   organisationName: 'organisation name',
 };
+
+/** "a", "a and b", "a, b and c". */
+function joinLabels(keys: string[]): string {
+  const labels = keys.map((k) => IDENTITY_LABEL[k] ?? k);
+  if (labels.length <= 1) return labels.join('');
+  return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+}
 
 export default function RoleProfileScreen() {
   const params = useLocalSearchParams<{ role?: string }>();
@@ -152,19 +160,18 @@ export default function RoleProfileScreen() {
     return JSON.stringify(details) !== JSON.stringify(toDetails(role, toForm(profile.details ?? {}, keys), keys));
   }, [profile, displayName, details, keys]);
 
-  const identityChanged = useMemo(() => {
-    if (!profile) return false;
+  const changedIdentity = useMemo(() => {
+    if (!profile) return [] as string[];
     const saved = toDetails(role, toForm(profile.details ?? {}, keys), keys);
-    const k = identityKeyFor(role);
-    return JSON.stringify(saved[k]) !== JSON.stringify(details[k]);
+    return identityChangedKeys(role, saved, details);
   }, [profile, details, keys, role]);
 
   const save = async (): Promise<boolean> => {
     if (!profile || suspended || hasErrors) return false;
-    if (identityChanged && (vs === 'verified' || vs === 'pending')) {
+    if (changedIdentity.length > 0 && (vs === 'verified' || vs === 'pending')) {
       const ok = await confirmAsync({
         title: 'Reset verification?',
-        message: `Changing your ${IDENTITY_LABEL[identityKeyFor(role)]} will reset your verification. You will need to submit again for review.`,
+        message: `Changing your ${joinLabels(changedIdentity)} will reset your verification. You will need to submit again for review.`,
         confirmLabel: 'Save and reset',
         cancelLabel: 'Cancel',
         destructive: true,

@@ -7,7 +7,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import { useContext as usePropertyContext, useSwitchContext } from '@/features/property/hooks';
-import type { ContextEntityType, PropertyContext } from '@/features/property/types';
+import type { ContextEntityType, ContextRole, PropertyContext } from '@/features/property/types';
 
 const TYPE_ICON: Record<ContextEntityType, React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>> = {
   estate:   ShieldCheck,
@@ -24,6 +24,16 @@ const TYPE_LABEL: Record<ContextEntityType, string> = {
   org:      'Organisation',
   role:     'Professional role',
 };
+
+// Human labels for role slugs; anything unlisted shows its slug.
+const ROLE_LABEL: Partial<Record<ContextRole, string>> = {
+  estate_manager: 'Estate Manager',
+  developer:      'Property Developer',
+  agent:          'Agent',
+  estate_admin:   'Estate Admin',
+};
+
+const roleLabel = (r: ContextRole): string => ROLE_LABEL[r] ?? r;
 
 /**
  * Reusable active-context picker shown in the Property hub top bar. Lets a user
@@ -97,7 +107,7 @@ export default function ContextSwitcher() {
                     <View style={{ flex: 1 }}>
                       <Text style={styles.rowName} numberOfLines={1}>{c.name}</Text>
                       <Text style={styles.rowMeta} numberOfLines={1}>
-                        {TYPE_LABEL[c.type]} · {c.roles.join(', ')}
+                        {TYPE_LABEL[c.type]} · {c.roles.map(roleLabel).join(', ')}
                       </Text>
                     </View>
                     {isActive ? <Check size={18} color={Colors.teal} strokeWidth={2.5} /> : null}

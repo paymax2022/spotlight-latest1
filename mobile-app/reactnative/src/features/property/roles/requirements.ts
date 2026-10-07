@@ -49,15 +49,25 @@ export function detailKindFor(role: ProfessionalRole, key: string): DetailKind |
   return KINDS[role][key];
 }
 
-// The only key whose edit resets verification on a verified/pending profile (service.go Update).
-const IDENTITY: Record<ProfessionalRole, string> = {
-  agent: 'licenceNumber',
-  developer: 'cacNumber',
-  estate_manager: 'organisationName',
+// Keys whose edit resets verification on a verified/pending profile
+// (validate.go identityKeys). displayName is not identity-bearing.
+const IDENTITY: Record<ProfessionalRole, readonly string[]> = {
+  agent: ['licenceNumber'],
+  developer: ['cacNumber', 'companyName'],
+  estate_manager: ['organisationName'],
 };
 
-export function identityKeyFor(role: ProfessionalRole): string {
-  return IDENTITY[role];
+export function identityKeysFor(role: ProfessionalRole): string[] {
+  return [...IDENTITY[role]];
+}
+
+/** Identity keys whose value differs between the saved and the edited details. */
+export function identityChangedKeys(
+  role: ProfessionalRole,
+  saved: Record<string, unknown>,
+  next: Record<string, unknown>,
+): string[] {
+  return IDENTITY[role].filter((k) => JSON.stringify(saved[k]) !== JSON.stringify(next[k]));
 }
 
 /**

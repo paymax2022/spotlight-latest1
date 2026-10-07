@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { requiredFieldsFor, optionalFieldsFor, missingRequired, detailKindFor, identityKeyFor, PROFESSIONAL_ROLES, buildDetailsPatch } from '../requirements.ts';
+import { requiredFieldsFor, optionalFieldsFor, missingRequired, detailKindFor, identityKeysFor, identityChangedKeys, PROFESSIONAL_ROLES, buildDetailsPatch } from '../requirements.ts';
 
 test('required fields per role match the Go MissingForSubmit keys', () => {
   assert.deepEqual(requiredFieldsFor('agent'), ['licenceNumber', 'operatingStates']);
@@ -56,10 +56,27 @@ test('every required/optional key has a kind', () => {
   }
 });
 
-test('identityKeyFor is the single verification-resetting key', () => {
-  assert.equal(identityKeyFor('agent'), 'licenceNumber');
-  assert.equal(identityKeyFor('developer'), 'cacNumber');
-  assert.equal(identityKeyFor('estate_manager'), 'organisationName');
+test('identityKeysFor lists every verification-resetting key (validate.go identityKeys)', () => {
+  assert.deepEqual(identityKeysFor('agent'), ['licenceNumber']);
+  assert.deepEqual(identityKeysFor('developer'), ['cacNumber', 'companyName']);
+  assert.deepEqual(identityKeysFor('estate_manager'), ['organisationName']);
+});
+
+test('identityKeysFor returns a copy', () => {
+  const a = identityKeysFor('developer');
+  a.push('x');
+  assert.deepEqual(identityKeysFor('developer'), ['cacNumber', 'companyName']);
+});
+
+test('identityChangedKeys names only the identity keys whose value changed', () => {
+  const saved = { companyName: 'Old Ltd', cacNumber: 'RC1', website: 'a' };
+  assert.deepEqual(identityChangedKeys('developer', saved, { ...saved, website: 'b' }), []);
+  assert.deepEqual(identityChangedKeys('developer', saved, { ...saved, companyName: 'New Ltd' }), ['companyName']);
+  assert.deepEqual(
+    identityChangedKeys('developer', saved, { ...saved, companyName: 'New Ltd', cacNumber: 'RC2' }),
+    ['cacNumber', 'companyName'],
+  );
+  assert.deepEqual(identityChangedKeys('agent', { licenceNumber: 'L1' }, { licenceNumber: 'L2' }), ['licenceNumber']);
 });
 
 test('buildDetailsPatch: cleared saved optional becomes null', () => {

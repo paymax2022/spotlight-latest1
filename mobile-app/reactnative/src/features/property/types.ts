@@ -19,11 +19,17 @@ export type PropertyRole =
   | 'vendor'
   | 'resident';
 
+/** Registrable marketplace roles carried by read-only 'role' context entities. */
+export type ProfessionalContextRole = 'estate_manager' | 'developer' | 'agent';
+
+/** Any role slug a context entity may carry. */
+export type ContextRole = PropertyRole | ProfessionalContextRole;
+
 export interface PropertyContext {
   type:  ContextEntityType;
   id:    string;
   name:  string;
-  roles: PropertyRole[];
+  roles: ContextRole[];
 }
 
 export interface ActiveContextRef {
