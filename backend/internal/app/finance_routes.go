@@ -46,6 +46,7 @@ import (
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/fractionalre"
 	"spotlight/backend/internal/groups"
+	"spotlight/backend/internal/insurance/embedded"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/integrations/llm"
 	"spotlight/backend/internal/integrations/rtc"
@@ -507,8 +508,28 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			SecretAccessKey: cfg.R2SecretAccessKey,
 			Region:          cfg.R2Region,
 		})
+		// Embedded-cover member notifications ride the shared asynq
+		// notifications queue (same pattern as investNotifier/freNotifier
+		// below); nil-safe — no Redis ⇒ nil notifier ⇒ notifySafe no-ops.
+		var embeddedNotifier embedded.Notifier
+		if cfg.RedisURL != "" {
+			if aClient, qerr := queue.NewClient(cfg.RedisURL); qerr == nil {
+				notifSvc := notifications.NewService(aClient)
+				embeddedNotifier = embeddedNotifierFunc(func(ctx context.Context, userID, kind, message string) {
+					_ = notifSvc.Send(ctx, notifications.Notification{
+						UserID:   userID,
+						Event:    notifications.EventOrderStatusUpdate,
+						Title:    "Insurance cover",
+						Body:     message,
+						Data:     map[string]any{"kind": kind},
+						Channels: []notifications.Channel{notifications.ChannelPush, notifications.ChannelInApp},
+					})
+				})
+			}
+		}
 		insuranceSvcs = RegisterInsurance(finance, insuranceAdmin, pool, rbac, insurancePresigner, cfg.R2Bucket) // gateway/catalog/policy/quote/saga/consent
-		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac, cfg.LedgerServiceToken)  // claims/embedded/webhooks/reconciliation
+		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac, cfg.LedgerServiceToken,
+			auditSink, embeddedNotifier) // claims/embedded/webhooks/reconciliation + audit/notify sinks
 	}
 
 	// Member /api/finance/stays/* (auth via finance group); ops admin

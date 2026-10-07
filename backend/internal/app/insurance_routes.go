@@ -27,6 +27,7 @@ import (
 	"spotlight/backend/internal/provider/mycover"
 	"spotlight/backend/internal/provider/octamile"
 	"spotlight/backend/internal/services"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -272,7 +273,11 @@ func (c commissionRecorder) RecordCommission(ctx context.Context, policyID, prov
 //
 //	INSURANCE_MYCOVER_API_KEY / INSURANCE_MYCOVER_WEBHOOK_SECRET / INSURANCE_MYCOVER_BASE_URL
 //	INSURANCE_OCTAMILE_API_KEY / INSURANCE_OCTAMILE_WEBHOOK_SECRET / INSURANCE_OCTAMILE_BASE_URL
-func RegisterInsuranceClaims(member *gin.RouterGroup, admin *gin.RouterGroup, webhookGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, serviceToken string) {
+//
+// audit/notifier are the shared sinks the embedded saga's auditSafe/notifySafe
+// fan out to — the immutable audit service and the notifications queue,
+// injected by the orchestrator. Both are nil-safe (nil ⇒ no-op).
+func RegisterInsuranceClaims(member *gin.RouterGroup, admin *gin.RouterGroup, webhookGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, serviceToken string, audit services.AuditService, notifier embedded.Notifier) {
 	if pool == nil {
 		log.Println("[insurance-claims] nil pool — skipping insurance claims routes")
 		return
@@ -320,6 +325,12 @@ func RegisterInsuranceClaims(member *gin.RouterGroup, admin *gin.RouterGroup, we
 		// breaker — the same guards policy.Bind runs with.
 		Binds: policy.NewBindRegistry(pool),
 		Float: catalog.NewFloatService(pool),
+		// The shared immutable-audit sink + member-notification queue — every
+		// auditSafe/notifySafe in the saga was a production no-op while these
+		// sat nil. Nil-safe on both ends: a nil audit or notifier degrades to
+		// the same no-op, never a panic.
+		Auditor:  embeddedAuditSink{audit: audit},
+		Notifier: notifier,
 	})
 	embeddedHandler := embedded.NewHandler(embeddedSvc)
 
@@ -356,6 +367,35 @@ func RegisterInsuranceClaims(member *gin.RouterGroup, admin *gin.RouterGroup, we
 	}
 
 	log.Println("[insurance-claims] routes registered — claims + embedded + webhooks + reconciliation/commission live")
+}
+
+// embeddedAuditSink bridges the embedded engine's minimal Auditor slice
+// (Audit(ctx, userID, action, detail)) onto the shared immutable audit sink —
+// the same services.AuditService the wave-8 social lane and p2pmarket wire in
+// production. Actor and target are the policyholder (the saga always acts on
+// their behalf); the policy id rides in detail and is lifted into resourceID.
+type embeddedAuditSink struct{ audit services.AuditService }
+
+func (a embeddedAuditSink) Audit(_ context.Context, userID, action string, detail map[string]any) {
+	if a.audit == nil {
+		return
+	}
+	resourceID, _ := detail["policy_id"].(string)
+	severity := "info"
+	if strings.Contains(action, "fail") || strings.Contains(action, "exhausted") || strings.Contains(action, "blocked") {
+		severity = "high"
+	}
+	a.audit.LogAction(userID, userID, action, "insurance", "embedded_policy", resourceID,
+		nil, detail, "", "", severity)
+}
+
+// embeddedNotifierFunc adapts a plain func to embedded.Notifier so the
+// orchestrator can bind the notifications-queue closure at the call site
+// without the embedded package exporting a func type.
+type embeddedNotifierFunc func(ctx context.Context, userID, kind, message string)
+
+func (f embeddedNotifierFunc) Notify(ctx context.Context, userID, kind, message string) {
+	f(ctx, userID, kind, message)
 }
 
 // policyReaderAdapter adapts policy.Repository to claims.PolicyReader, enforcing
