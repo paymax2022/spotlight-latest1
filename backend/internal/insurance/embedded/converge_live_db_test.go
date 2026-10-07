@@ -79,10 +79,18 @@ func (f *fakeGateway) VerifyWebhook(_ context.Context, _ []byte, _ string) (gate
 
 func (f *fakeGateway) WebhookSignatureHeader() string { return "" }
 
-// fakeResolver maps every product code to the fake adapter.
-type fakeResolver struct{ product gateway.ProviderProduct }
+// fakeResolver maps every product code to the fake adapter. failCode, when
+// non-nil and non-empty, is the ONE code that fails resolution — used to drive
+// the unresolvable-product convergence paths.
+type fakeResolver struct {
+	product  gateway.ProviderProduct
+	failCode *string
+}
 
-func (f fakeResolver) ResolveProduct(_ context.Context, _ string) (string, gateway.ProviderProduct, bool) {
+func (f fakeResolver) ResolveProduct(_ context.Context, code string) (string, gateway.ProviderProduct, bool) {
+	if f.failCode != nil && *f.failCode != "" && code == *f.failCode {
+		return "", gateway.ProviderProduct{}, false
+	}
 	return "fakegw", f.product, true
 }
 
@@ -110,6 +118,9 @@ type liveSaga struct {
 	wal      *wallet.Service
 	repo     *policy.Repository
 	clearing *ledger.Account
+	// failCode is shared with the saga's resolver — set *failCode to a product
+	// code to make ResolveProduct fail for it (unresolvable-product tests).
+	failCode *string
 }
 
 func newLiveSaga(t *testing.T, pool *pgxpool.Pool) *liveSaga {
@@ -121,7 +132,8 @@ func newLiveSaga(t *testing.T, pool *pgxpool.Pool) *liveSaga {
 		quote: gateway.Quote{ProviderQuoteRef: "q-" + uuid.NewString(), PremiumKobo: 25_000, Currency: "NGN"},
 		bound: gateway.Policy{ProviderPolicyRef: "prov-" + uuid.NewString(), PremiumKobo: 25_000, Currency: "NGN"},
 	}
-	router := gateway.NewRouter(fakeResolver{product: gateway.ProviderProduct{Code: "fake-prod"}}, gw)
+	failCode := ""
+	router := gateway.NewRouter(fakeResolver{product: gateway.ProviderProduct{Code: "fake-prod"}, failCode: &failCode}, gw)
 	polRepo := policy.NewRepository(pool)
 	clearing, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
 	if err != nil {
@@ -135,7 +147,7 @@ func newLiveSaga(t *testing.T, pool *pgxpool.Pool) *liveSaga {
 		Ledger:     led,
 		Binds:      policy.NewBindRegistry(pool),
 	})
-	return &liveSaga{svc: svc, gw: gw, led: led, wal: wal, repo: polRepo, clearing: clearing}
+	return &liveSaga{svc: svc, gw: gw, led: led, wal: wal, repo: polRepo, clearing: clearing, failCode: &failCode}
 }
 
 // seedFundedUser creates a synthetic user with an unlimited KYC tier and a
@@ -396,5 +408,155 @@ func TestLiveDB_EmbeddedInsufficientFundsVoids(t *testing.T) {
 	}
 	if !res2.Replayed || res2.State != StateUncovered {
 		t.Fatalf("expected UNCOVERED replay, got %+v", res2)
+	}
+}
+
+// The replay-with-depleted-wallet interleave: the first attempt's premium
+// debit COMMITTED and the policy row crashed in PENDING_PAYMENT; before the
+// retry landed, the member spent the rest of the wallet. The replayed
+// wallet.Debit therefore returns ErrInsufficientFunds — but the premium leg
+// is durably posted, so the saga must read the ledger of record, treat the
+// leg as paid, and converge to ACTIVE. Voiding here is the audited defect:
+// it strands captured premium in provider_clearing forever.
+func TestLiveDB_EmbeddedReplayWithDepletedWallet(t *testing.T) {
+	pool := livePool(t)
+	ctx := t.Context()
+	s := newLiveSaga(t, pool)
+
+	u := seedFundedUser(t, ctx, pool, s.led, 25_000) // exactly the premium
+	seedProduct(t, ctx, pool, "emb.test.depleted", "transport")
+
+	src := "ev-depleted-" + uuid.NewString()
+	premiumKey := "embedded:" + src + ":premium"
+
+	// First attempt: premium debited into provider_clearing, then the crash —
+	// the row is left in PENDING_PAYMENT with no premium-tx record.
+	if err := s.wal.Debit(ctx, u, "insurance:embedded_premium:"+src, premiumKey, s.clearing.ID, 25_000); err != nil {
+		t.Fatalf("seed held premium: %v", err)
+	}
+	var policyID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO public.insurance_policy
+			(policyholder_user_id, product_code, provider, underwriter, binding_mode,
+			 state, sum_insured_kobo, premium_amount_kobo, currency, source_event_id)
+		VALUES ($1,'emb.test.depleted','fakegw','Test UW','embedded','PENDING_PAYMENT',1_000_000,25000,'NGN',$2)
+		RETURNING id`, u, src).Scan(&policyID); err != nil {
+		t.Fatalf("seed pending policy: %v", err)
+	}
+	// The wallet is now empty — a naive replayed Debit returns
+	// ErrInsufficientFunds even though the premium is already captured.
+
+	res, err := s.svc.Handle(ctx, EmbeddedEvent{SourceEventID: src, EventType: "trip.started", UserID: u})
+	if err != nil {
+		t.Fatalf("depleted-wallet replay: %v", err)
+	}
+	if res.State != StateActive || res.PolicyID != policyID {
+		t.Fatalf("expected depleted-wallet replay to converge ACTIVE, got %+v", res)
+	}
+	if got := policyState(t, ctx, pool, policyID); got != "ACTIVE" {
+		t.Fatalf("policy state = %s, want ACTIVE — a captured premium must never be voided", got)
+	}
+	if n := walletDebitCount(t, ctx, pool, u, premiumKey); n != 1 {
+		t.Fatalf("expected exactly 1 premium debit leg, got %d", n)
+	}
+	if s.gw.bindCalls != 1 {
+		t.Fatalf("expected 1 provider purchase on resume, got %d", s.gw.bindCalls)
+	}
+}
+
+// A PENDING_PAYMENT row whose product can never resolve must reverse the held
+// premium and exit PENDING_PAYMENT→PAYMENT_FAILED→VOID — never wedge on the
+// illegal PENDING_PAYMENT→VOID jump the old release path attempted (D3).
+func TestLiveDB_EmbeddedUnresolvablePendingPaymentVoids(t *testing.T) {
+	pool := livePool(t)
+	ctx := t.Context()
+	s := newLiveSaga(t, pool)
+
+	u := seedFundedUser(t, ctx, pool, s.led, 25_000)
+	src := "ev-gonepend-" + uuid.NewString()
+	premiumKey := "embedded:" + src + ":premium"
+	if err := s.wal.Debit(ctx, u, "insurance:embedded_premium:"+src, premiumKey, s.clearing.ID, 25_000); err != nil {
+		t.Fatalf("seed held premium: %v", err)
+	}
+	var policyID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO public.insurance_policy
+			(policyholder_user_id, product_code, provider, underwriter, binding_mode,
+			 state, sum_insured_kobo, premium_amount_kobo, currency, source_event_id)
+		VALUES ($1,'emb.test.gone','fakegw','Test UW','embedded','PENDING_PAYMENT',1_000_000,25000,'NGN',$2)
+		RETURNING id`, u, src).Scan(&policyID); err != nil {
+		t.Fatalf("seed pending policy: %v", err)
+	}
+	*s.failCode = "emb.test.gone" // resume's router.Resolve now fails
+
+	res, err := s.svc.Handle(ctx, EmbeddedEvent{SourceEventID: src, EventType: "trip.started", UserID: u})
+	if err != nil {
+		t.Fatalf("unresolvable resume: %v", err)
+	}
+	if res.State != StateUncovered {
+		t.Fatalf("expected UNCOVERED for an unresolvable product, got %+v", res)
+	}
+	if got := policyState(t, ctx, pool, policyID); got != "VOID" {
+		t.Fatalf("policy state = %s, want VOID via PAYMENT_FAILED", got)
+	}
+	// The held premium must be back with the member — the reversal pair is
+	// durable under the derived key.
+	walAcc, err := s.led.GetOrCreateUserWallet(ctx, u)
+	if err != nil {
+		t.Fatalf("wallet account: %v", err)
+	}
+	if _, ok, err := s.led.EntryAmount(ctx, walAcc.ID, "embedded:"+src+":reversal:rev_debit"); err != nil || !ok {
+		t.Fatalf("premium reversal missing/not durable (ok=%v err=%v)", ok, err)
+	}
+	if bal, err := s.led.GetBalance(ctx, u); err != nil || bal != 25_000 {
+		t.Fatalf("wallet balance after release = %d, want 25000 restored (err=%v)", bal, err)
+	}
+
+	// Idempotent: a second replay must converge, not wedge or double-reverse.
+	res2, err := s.svc.Handle(ctx, EmbeddedEvent{SourceEventID: src, EventType: "trip.started", UserID: u})
+	if err != nil {
+		t.Fatalf("replay of voided unresolvable: %v", err)
+	}
+	if !res2.Replayed || res2.State != StateUncovered {
+		t.Fatalf("expected UNCOVERED replay, got %+v", res2)
+	}
+	if bal, err := s.led.GetBalance(ctx, u); err != nil || bal != 25_000 {
+		t.Fatalf("wallet balance after replay = %d, want 25000 (err=%v)", bal, err)
+	}
+}
+
+// A QUOTED row whose product can never resolve must exit through QUOTED→EXPIRED
+// — QUOTED has no VOID exit in the lifecycle FSM, so the old code wedged
+// retrying an illegal transition forever (D3).
+func TestLiveDB_EmbeddedUnresolvableQuotedExpires(t *testing.T) {
+	pool := livePool(t)
+	ctx := t.Context()
+	s := newLiveSaga(t, pool)
+
+	u := seedFundedUser(t, ctx, pool, s.led, 0)
+	src := "ev-gonequoted-" + uuid.NewString()
+	var policyID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO public.insurance_policy
+			(policyholder_user_id, product_code, provider, underwriter, binding_mode,
+			 state, sum_insured_kobo, premium_amount_kobo, currency, source_event_id)
+		VALUES ($1,'emb.test.gone','fakegw','Test UW','embedded','QUOTED',1_000_000,25000,'NGN',$2)
+		RETURNING id`, u, src).Scan(&policyID); err != nil {
+		t.Fatalf("seed quoted policy: %v", err)
+	}
+	*s.failCode = "emb.test.gone"
+
+	res, err := s.svc.Handle(ctx, EmbeddedEvent{SourceEventID: src, EventType: "trip.started", UserID: u})
+	if err != nil {
+		t.Fatalf("unresolvable quoted resume: %v", err)
+	}
+	if res.State != StateUncovered {
+		t.Fatalf("expected UNCOVERED for an unresolvable QUOTED row, got %+v", res)
+	}
+	if got := policyState(t, ctx, pool, policyID); got != "EXPIRED" {
+		t.Fatalf("policy state = %s, want EXPIRED (QUOTED's only legal terminal)", got)
+	}
+	if s.gw.bindCalls != 0 {
+		t.Fatalf("bind attempted for an unresolvable product (calls=%d)", s.gw.bindCalls)
 	}
 }

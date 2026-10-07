@@ -262,10 +262,13 @@ func (s *Service) resume(ctx context.Context, ev EmbeddedEvent, p *policy.Policy
 
 	case policy.StatePaymentFailed:
 		// Mid-converge crash between PAYMENT_FAILED and VOID — finish it.
-		if err := s.advance(ctx, p, policy.StateVoid); err != nil {
-			return nil, fmt.Errorf("embedded: converge payment_failed: %w", err)
-		}
-		return &Result{State: StateUncovered, PolicyID: p.ID, Replayed: true}, nil
+		// Route through releaseAndUncover rather than a bare advance: a row can
+		// land in PAYMENT_FAILED either via the insufficient-funds path (no
+		// debit posted — the provenance lookup is a no-op) or via a failed
+		// release whose reversal died mid-flight (premium still held — the
+		// retry MUST reverse it before voiding).
+		return s.releaseAndUncover(ctx, p, idempotencyKey,
+			errors.New("resumed a failed payment"))
 
 	case policy.StateBindFailed:
 		// The auto-reverse either finished or died mid-flight — PostReversal is
@@ -331,6 +334,7 @@ func (s *Service) drive(ctx context.Context, ev EmbeddedEvent, p *policy.Policy,
 		if p.PremiumKobo > 0 {
 			debitErr := s.wallet.Debit(ctx, p.PolicyholderID, premiumRef,
 				idempotencyKey+legPremium, clearing.ID, p.PremiumKobo)
+			paid := false
 			switch {
 			case debitErr == nil || errors.Is(debitErr, ledger.ErrDuplicate):
 				// Provenance check: the balanced pair MUST be on the ledger of
@@ -343,24 +347,45 @@ func (s *Service) drive(ctx context.Context, ev EmbeddedEvent, p *policy.Policy,
 				if !posted {
 					return nil, errors.New("embedded: premium debit not durable — refusing to bind unfunded cover")
 				}
-			case errors.Is(debitErr, ledger.ErrInsufficientFunds):
-				// INSUFFICIENT_FUNDS → PAYMENT_FAILED → VOID (offer top-up).
-				// Nothing was debited, so nothing needs reversing.
-				if err := s.advance(ctx, p, policy.StatePaymentFailed); err != nil {
-					return nil, fmt.Errorf("embedded: mark payment failed: %w", err)
-				}
-				if err := s.advance(ctx, p, policy.StateVoid); err != nil {
-					return nil, fmt.Errorf("embedded: void failed-payment policy: %w", err)
-				}
-				s.auditSafe(ctx, ev.UserID, "insurance.embedded.insufficient_funds", map[string]any{
-					"policy_id": p.ID, "event": ev.EventType,
-				})
-				s.notifySafe(ctx, ev.UserID, "insurance.embedded.top_up",
-					"We couldn't bind cover for your "+ev.EventType+" — top up your wallet to enable it.")
-				return &Result{State: StateInsufficientFunds, PolicyID: p.ID, ProductCode: p.ProductCode,
-					Provider: p.Provider, Reason: "insufficient funds"}, nil
+				paid = true
 			default:
-				return nil, fmt.Errorf("embedded: premium debit: %w", debitErr)
+				// PROVENANCE BEFORE INTERPRETATION. wallet.Debit re-runs the
+				// tier gate + in-tx balance check BEFORE the idempotent insert,
+				// so on a replay whose first debit COMMITTED but whose wallet
+				// has since been spent down (or whose tier/limit state changed)
+				// ANY error — ErrInsufficientFunds, ErrDailyLimitExceeded,
+				// ErrWalletDisabled — can arrive while the premium leg is
+				// durably posted. Voiding here would strand captured premium in
+				// provider_clearing forever. The ledger of record decides: a
+				// posted leg is paid regardless of what this attempt returned.
+				posted, pErr := s.ledger.Posted(ctx, idempotencyKey+legPremium)
+				if pErr != nil {
+					return nil, fmt.Errorf("embedded: verify premium posting: %w", pErr)
+				}
+				if posted {
+					paid = true
+				} else if errors.Is(debitErr, ledger.ErrInsufficientFunds) {
+					// INSUFFICIENT_FUNDS → PAYMENT_FAILED → VOID (offer
+					// top-up). Nothing was debited, nothing needs reversing.
+					if err := s.advance(ctx, p, policy.StatePaymentFailed); err != nil {
+						return nil, fmt.Errorf("embedded: mark payment failed: %w", err)
+					}
+					if err := s.advance(ctx, p, policy.StateVoid); err != nil {
+						return nil, fmt.Errorf("embedded: void failed-payment policy: %w", err)
+					}
+					s.auditSafe(ctx, ev.UserID, "insurance.embedded.insufficient_funds", map[string]any{
+						"policy_id": p.ID, "event": ev.EventType,
+					})
+					s.notifySafe(ctx, ev.UserID, "insurance.embedded.top_up",
+						"We couldn't bind cover for your "+ev.EventType+" — top up your wallet to enable it.")
+					return &Result{State: StateInsufficientFunds, PolicyID: p.ID, ProductCode: p.ProductCode,
+						Provider: p.Provider, Reason: "insufficient funds"}, nil
+				} else {
+					return nil, fmt.Errorf("embedded: premium debit: %w", debitErr)
+				}
+			}
+			if !paid {
+				return nil, errors.New("embedded: premium leg unconfirmed — refusing to bind unfunded cover")
 			}
 			if err := s.policyRepo.InsertPremiumTx(ctx, policy.PremiumTx{
 				PolicyID:        p.ID,
@@ -510,14 +535,26 @@ func (s *Service) persistBound(ctx context.Context, ev EmbeddedEvent, p *policy.
 }
 
 // releaseAndUncover releases the held premium back to the user wallet and moves
-// the policy to VOID, returning an UNCOVERED result. Every leg is idempotent
-// (PostReversal + InsertPremiumTx are keyed), so a mid-flight crash converges
-// on retry; a reversal that cannot post leaves the row in BIND_FAILED — loud,
-// and resumable, never silently VOIDed over parked money.
+// the policy to its FSM-legal terminal state, returning an UNCOVERED result.
+// Every leg is idempotent (PostReversal + InsertPremiumTx are keyed), so a
+// mid-flight crash converges on retry; a reversal that cannot post leaves the
+// row in BIND_FAILED — loud, and resumable, never silently VOIDed over parked
+// money.
+//
+// FSM-legal exits only — VOID is reachable solely from BIND_FAILED and
+// PAYMENT_FAILED; a QUOTED row's terminal release is EXPIRED. Routing each
+// entry state explicitly is what stops an unresolvable product from wedging a
+// QUOTED/PENDING_PAYMENT row on an illegal QUOTED→VOID / PENDING_PAYMENT→VOID
+// jump that every retry would refuse forever.
 func (s *Service) releaseAndUncover(ctx context.Context, p *policy.Policy, idempotencyKey string, cause error) (*Result, error) {
-	if p.State == policy.StateBinding {
+	switch p.State {
+	case policy.StateBinding:
 		if err := s.advance(ctx, p, policy.StateBindFailed); err != nil {
 			return nil, fmt.Errorf("embedded: mark bind failed: %w", err)
+		}
+	case policy.StatePendingPayment:
+		if err := s.advance(ctx, p, policy.StatePaymentFailed); err != nil {
+			return nil, fmt.Errorf("embedded: mark payment failed: %w", err)
 		}
 	}
 
@@ -567,11 +604,24 @@ func (s *Service) releaseAndUncover(ctx context.Context, p *policy.Policy, idemp
 		}
 	}
 
-	if err := s.advance(ctx, p, policy.StateVoid); err != nil {
-		return nil, fmt.Errorf("embedded: void policy: %w", err)
+	// Terminal exit — the only FSM-legal one per state: BIND_FAILED and
+	// PAYMENT_FAILED exit to VOID; a QUOTED row (premium never moved) exits to
+	// EXPIRED. Anything else reaching here is a caller bug — refuse rather than
+	// force an illegal jump.
+	var terminal policy.State
+	switch p.State {
+	case policy.StateBindFailed, policy.StatePaymentFailed:
+		terminal = policy.StateVoid
+	case policy.StateQuoted:
+		terminal = policy.StateExpired
+	default:
+		return nil, fmt.Errorf("embedded: cannot release policy %s from state %s", p.ID, p.State)
+	}
+	if err := s.advance(ctx, p, terminal); err != nil {
+		return nil, fmt.Errorf("embedded: terminal %s transition: %w", terminal, err)
 	}
 	s.auditSafe(ctx, p.PolicyholderID, "insurance.embedded.bind_failed", map[string]any{
-		"policy_id": p.ID, "cause": cause.Error(),
+		"policy_id": p.ID, "cause": cause.Error(), "terminal_state": string(terminal),
 	})
 	s.notifySafe(ctx, p.PolicyholderID, "insurance.embedded.uncovered",
 		"We couldn't bind your cover; any held premium has been released.")
