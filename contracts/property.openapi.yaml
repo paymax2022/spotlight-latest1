@@ -219,12 +219,15 @@ components:
 
     PresignRoleDocumentResponse:
       type: object
-      required: [uploadUrl, storageKey]
+      required: [uploadUrl, storageKey, contentType, expiresIn, method]
       properties:
         uploadUrl: { type: string }
         storageKey:
           type: string
           description: Server-chosen object key, property-roles/{userID}/{role}/{random}.
+        contentType: { type: string, description: Content-Type the PUT must send. }
+        expiresIn: { type: integer, description: Seconds until uploadUrl expires. }
+        method: { type: string, enum: [PUT] }
 
     RecordRoleDocumentRequest:
       type: object

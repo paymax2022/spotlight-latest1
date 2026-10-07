@@ -67,6 +67,7 @@ import (
 	platformWS "spotlight/backend/internal/platform/ws"
 	"spotlight/backend/internal/promotions"
 	"spotlight/backend/internal/property"
+	propertyroles "spotlight/backend/internal/property/roles"
 	providerInterfaces "spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/cac"
 	"spotlight/backend/internal/provider/disbursement"
@@ -1429,6 +1430,28 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			propertyHandler.LookupRentPassport)
 
 		log.Println("[property] suite routes registered at /api/finance/property")
+	}
+
+	// --- Property role registration (estate manager / developer / agent) ---
+	// Self-serve role profiles with an admin-reviewed verification lifecycle.
+	// Member: /api/finance/property/roles/*; admin: /api/property/admin/roles/*
+	// (RBAC property.roles.review). Owns NO money path. Presigned R2 uploads fail
+	// closed (503) when R2 creds are absent.
+	if cfg.FeaturePropertyRolesEnabled && pool != nil {
+		rolesPresigner := r2.New(r2.Config{
+			AccountEndpoint: cfg.R2AccountEndpoint,
+			Bucket:          cfg.R2Bucket,
+			AccessKeyID:     cfg.R2AccessKeyID,
+			SecretAccessKey: cfg.R2SecretAccessKey,
+			Region:          cfg.R2Region,
+		})
+		rolesHandler := propertyroles.NewHandler(propertyroles.NewService(propertyroles.NewRepository(pool)), rolesPresigner)
+		propertyroles.RegisterMember(finance.Group("/property/roles", mapsAuth()), rolesHandler)
+		propertyroles.RegisterAdmin(r.Group("/api/property/admin/roles", mapsAuth()), rolesHandler,
+			middleware.RequirePermission(rbac, "property.roles.review"))
+		log.Println("[property-roles] routes registered at /api/finance/property/roles and /api/property/admin/roles")
+	} else {
+		log.Println("[property-roles] skipped: FEATURE_PROPERTY_ROLES_ENABLED off or no DB pool")
 	}
 
 	// Auto-issues an estate visitor gate pass for a confirmed shortlet/hotel booking
