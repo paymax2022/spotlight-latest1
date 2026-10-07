@@ -541,6 +541,21 @@ export async function presignDriverDocument(input: {
 }
 
 /**
+ * The backend only presigns jpeg/png/webp/pdf, and binds the Content-Type into
+ * the signature. The picker can hand back `image/jpg` or the generic
+ * `application/octet-stream`, which the backend 400s — so map to the canonical
+ * type (falling back to the file extension) before presigning and PUTting.
+ */
+export function normalizeDocMimeType(mimeType: string | undefined, fileName: string): string {
+  const m = (mimeType ?? '').toLowerCase().trim();
+  if (m === 'image/jpg' || m === 'image/pjpeg') return 'image/jpeg';
+  if (m && m !== 'application/octet-stream') return m;
+  const ext = fileName.toLowerCase().split('.').pop() ?? '';
+  const byExt: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', pdf: 'application/pdf' };
+  return byExt[ext] ?? m;
+}
+
+/**
  * Full driver-document upload: presign → PUT the picked file to R2 → submit the
  * resulting object key via uploadDriverDocument(). Returns the updated profile.
  * `file` is a PickedUpload from the shared registration filePicker (image or
@@ -552,10 +567,11 @@ export async function uploadDriverDocumentFile(input: {
   expiryDate?: string;
 }): Promise<DriverProfile> {
   const { docType, file, expiryDate } = input;
+  const mimeType = normalizeDocMimeType(file.mimeType, file.name);
   const { uploadUrl, fileUrl } = await presignDriverDocument({
     docType,
     fileName: file.name,
-    mimeType: file.mimeType,
+    mimeType,
   });
   // Live: PUT the binary to the presigned R2 URL. Mock URLs are skipped.
   if (!uploadUrl.startsWith('mock://')) {
@@ -563,7 +579,7 @@ export async function uploadDriverDocumentFile(input: {
     const res = await fetch(uploadUrl, {
       method: 'PUT',
       body: blob,
-      headers: { 'Content-Type': file.mimeType },
+      headers: { 'Content-Type': mimeType },
     });
     if (!res.ok) throw new Error(`R2 upload failed (${res.status})`);
   }
