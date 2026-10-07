@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/go-common/dbutil"
 )
 
 // WalletDebiter is the slice of the finance wallet service this package needs.
@@ -42,10 +45,21 @@ type CreditGranter interface {
 // WalletRefunder reverses a charge back to the user's wallet as a BALANCED
 // double-entry (DR paymax_revenue → CR user_wallet), keyed by idempotencyKey so a
 // retried/concurrent refund posts AT MOST ONCE (PAY-007). The implementation must
-// treat a duplicate idempotency key as success (money already returned), never as
-// an error — that is what makes the refund single. We never touch a balance column.
+// treat a duplicate idempotency key as success only after CONFIRMING the durable
+// posting under that key carries the expected journal identity — a Redis-lock or
+// foreign-claim duplicate carries no such proof. We never touch a balance column.
 type WalletRefunder interface {
 	Refund(ctx context.Context, userID, reference, idempotencyKey string, amountKobo int64) error
+}
+
+// DebitConfirmer proves — from the ledger of record, never Redis — that the
+// balanced journal under a namespaced idempotency key carries the exact identity
+// this package intended (DR the caller's user_wallet → CR paymax_revenue with the
+// given reference and amount). It exists because ErrDuplicate is a REJECTION of a
+// claimed key, not proof the caller's own journal landed: treating every
+// duplicate as success mints phantom fulfilment (the renewal extension bug).
+type DebitConfirmer interface {
+	ConfirmDebit(ctx context.Context, userID, reference, idempotencyKey string, amountKobo int64) (bool, error)
 }
 
 // Sentinel errors.
@@ -63,12 +77,13 @@ var (
 // movement is delegated to the wallet (ledger), and entitlements/orders are
 // projections recorded after a successful, idempotent debit.
 type Service struct {
-	db       *pgxpool.Pool
-	wallet   WalletDebiter
-	revenue  RevenueAccountResolver
-	audit    Auditor
-	refunder WalletRefunder
-	credits  CreditGranter // optional; set via SetCreditGranter
+	db        *pgxpool.Pool
+	wallet    WalletDebiter
+	revenue   RevenueAccountResolver
+	audit     Auditor
+	refunder  WalletRefunder
+	credits   CreditGranter  // optional; set via SetCreditGranter
+	confirmer DebitConfirmer // optional; set via SetDebitConfirmer
 	// planLookup resolves an active plan by code. Defaults to the DB query;
 	// overridable in tests so the money path runs without a live database.
 	planLookup func(ctx context.Context, code string) (*Plan, error)
@@ -148,29 +163,78 @@ func (s *Service) Purchase(ctx context.Context, userID, idemKey string, expected
 	}
 
 	ref := "connect:" + string(plan.Kind) + ":" + plan.Code
-	// Money mutation — balanced double-entry, tier-checked, idempotent.
-	if err := s.wallet.Debit(ctx, userID, ref, idemKey, revAcc, plan.PriceKobo); err != nil {
-		return nil, nil, err // ErrInsufficientFunds / ErrDuplicate / tier error bubble up
+	// Namespace the client-supplied key per (rail, purpose, caller) before it
+	// enters the GLOBAL ledger keyspace: a raw key is unique per journal, so the
+	// same key arriving from another rail (or another buyer) would collide on
+	// ledger_entries.idempotency_key and the debit would be refused as a foreign
+	// claim — or worse, silently absorb somebody else's posting. The derived key
+	// also becomes the order row's idempotency_key so the projection dedups on
+	// exactly the key the ledger already proved.
+	ledgerKey := "connect:monetization:purchase:" + userID + ":" + idemKey
+	// Deploy-mid-flight convergence: a purchase committed under the pre-namespace
+	// code posted its journal under the RAW client key. If that exact journal is
+	// durably posted, the charge already happened — record/finish the projection
+	// under that same key instead of debiting the buyer twice.
+	chargeKey := ledgerKey
+	if s.confirmer != nil {
+		ok, cerr := s.confirmer.ConfirmDebit(ctx, userID, ref, idemKey, plan.PriceKobo)
+		if cerr != nil {
+			return nil, nil, fmt.Errorf("connect: confirm legacy debit: %w", cerr)
+		}
+		if ok {
+			chargeKey = idemKey
+		}
+	}
+	if chargeKey == ledgerKey {
+		// Money mutation — balanced double-entry, tier-checked, idempotent.
+		if err := s.wallet.Debit(ctx, userID, ref, ledgerKey, revAcc, plan.PriceKobo); err != nil {
+			if !isDuplicateErr(err) {
+				return nil, nil, err // ErrInsufficientFunds / tier error bubble up
+			}
+			// A duplicate is a REJECTION of a claimed key — a stale Redis lock or
+			// a foreign journal holding it — NOT proof our debit landed. Adopt the
+			// charge only when the ledger of record carries this exact journal.
+			if s.confirmer == nil {
+				return nil, nil, err
+			}
+			ok, cerr := s.confirmer.ConfirmDebit(ctx, userID, ref, ledgerKey, plan.PriceKobo)
+			if cerr != nil {
+				return nil, nil, fmt.Errorf("connect: confirm purchase debit: %w", cerr)
+			}
+			if !ok {
+				return nil, nil, err
+			}
+		}
 	}
 
 	now := time.Now().UTC()
-	order, ent, err := s.recordPurchase(ctx, userID, plan, idemKey, ref, now)
+	order, ent, err := s.recordPurchase(ctx, userID, plan, chargeKey, ref, now)
 	if err != nil {
-		// The debit succeeded but projection failed: surface loudly. Reconciliation
-		// (admin) can detect orphaned ledger entries via the missing order row.
-		return nil, nil, fmt.Errorf("connect: record purchase after debit: %w", err)
+		if dbutil.IsUniqueViolation(err) {
+			// The debit committed but a previous attempt already recorded this
+			// projection row (crash between ledger commit and order insert):
+			// converge on the existing order — and only when it is THIS purchase
+			// (same buyer + plan + amount). Anything else under the key is a
+			// foreign claim and must fail closed.
+			order, ent, err = s.convergedPurchase(ctx, userID, plan, chargeKey)
+		}
+		if err != nil {
+			// The debit succeeded but projection failed: surface loudly. Reconciliation
+			// (admin) can detect orphaned ledger entries via the missing order row.
+			return nil, nil, fmt.Errorf("connect: record purchase after debit: %w", err)
+		}
 	}
 
 	_ = s.audit.WriteAudit(ctx, "connect.purchase", userID, "connect_order", order.ID, map[string]any{
 		"plan_code": plan.Code, "kind": string(plan.Kind), "amount_kobo": plan.PriceKobo,
-		"idempotency_key": idemKey, "ledger_ref": ref,
+		"idempotency_key": ledgerKey, "ledger_ref": ref,
 	})
 
 	// Grant consumable credits for one-off passes (super-likes/InMail). Best-effort:
 	// money + order are already committed, and the grant is idempotent (keyed by the
 	// order key), so a failure is audited for reconciliation rather than failing the
 	// (already-charged) purchase. PAY-008.
-	if err := s.grantPurchaseCredits(ctx, userID, idemKey, plan); err != nil {
+	if err := s.grantPurchaseCredits(ctx, userID, chargeKey, plan); err != nil {
 		_ = s.audit.WriteAudit(ctx, "connect.credit.grant_failed", userID, "connect_order", order.ID, map[string]any{
 			"plan_code": plan.Code, "error": err.Error(),
 		})
@@ -180,6 +244,63 @@ func (s *Service) Purchase(ctx context.Context, userID, idemKey string, expected
 
 // SetCreditGranter wires the optional consumable-credit granter (PAY-008). Nil ⇒ no-op.
 func (s *Service) SetCreditGranter(g CreditGranter) { s.credits = g }
+
+// SetDebitConfirmer wires the durable-ledger replay confirmer used whenever a
+// debit attempt reports a DUPLICATE (Redis lock, foreign claim, or true replay).
+// Nil ⇒ unconfirmed duplicates are NEVER treated as success — the caller
+// retries instead of fulfilling on phantom money.
+func (s *Service) SetDebitConfirmer(c DebitConfirmer) { s.confirmer = c }
+
+// convergedPurchase resolves the projection for a purchase whose order insert hit
+// the unique idempotency_key: returns the recorded order + its entitlement when
+// the row is provably THIS purchase (same caller, plan and amount); otherwise an
+// error so a foreign claim never surfaces as the caller's order.
+func (s *Service) convergedPurchase(ctx context.Context, userID string, plan *Plan, ledgerKey string) (*Order, *Entitlement, error) {
+	o, err := s.getOrderByIdempotencyKey(ctx, ledgerKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	if o == nil || o.UserID != userID || o.PlanCode != plan.Code || o.Kind != plan.Kind || o.AmountKobo != plan.PriceKobo {
+		return nil, nil, errors.New("connect: duplicate idempotency key held by a different order")
+	}
+	ent, err := s.getEntitlementBySourceOrder(ctx, o.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return o, ent, nil
+}
+
+// getOrderByIdempotencyKey returns the order recorded under a ledger key, or nil.
+func (s *Service) getOrderByIdempotencyKey(ctx context.Context, key string) (*Order, error) {
+	const q = `SELECT id, user_id, plan_id, plan_code, kind, amount_kobo, status, ledger_ref, created_at
+		FROM connect_orders WHERE idempotency_key = $1`
+	o := &Order{}
+	err := s.db.QueryRow(ctx, q, key).Scan(&o.ID, &o.UserID, &o.PlanID, &o.PlanCode,
+		&o.Kind, &o.AmountKobo, &o.Status, &o.LedgerRef, &o.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("connect: order by idempotency key: %w", err)
+	}
+	return o, nil
+}
+
+// getEntitlementBySourceOrder returns the entitlement a purchase projected.
+func (s *Service) getEntitlementBySourceOrder(ctx context.Context, orderID string) (*Entitlement, error) {
+	const q = `SELECT id, user_id, plan_code, kind, features, granted_at, expires_at, active
+		FROM connect_entitlements WHERE source_order = $1 ORDER BY granted_at DESC LIMIT 1`
+	e := &Entitlement{}
+	err := s.db.QueryRow(ctx, q, orderID).Scan(&e.ID, &e.UserID, &e.PlanCode, &e.Kind,
+		&e.Features, &e.GrantedAt, &e.ExpiresAt, &e.Active)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("connect: entitlement by order: %w", err)
+	}
+	return e, nil
+}
 
 // grantPurchaseCredits grants each positive numeric entitlement of a one-off PASS
 // as consumable credits of that type, keyed per (order, credit type).
@@ -203,7 +324,9 @@ func (s *Service) grantPurchaseCredits(ctx context.Context, userID, idemKey stri
 }
 
 // recordPurchase inserts the immutable order and projects the entitlement in one tx.
-func (s *Service) recordPurchase(ctx context.Context, userID string, plan *Plan, idemKey, ref string, now time.Time) (*Order, *Entitlement, error) {
+// The stored idempotency_key is the NAMESPACED ledger key (not the raw client
+// header) so the projection dedups on exactly the key the ledger proved.
+func (s *Service) recordPurchase(ctx context.Context, userID string, plan *Plan, ledgerKey, ref string, now time.Time) (*Order, *Entitlement, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -217,7 +340,7 @@ func (s *Service) recordPurchase(ctx context.Context, userID string, plan *Plan,
 		RETURNING id, user_id, plan_id, plan_code, kind, amount_kobo, status, ledger_ref, created_at`
 	o := &Order{}
 	if err := tx.QueryRow(ctx, insOrder,
-		orderID, userID, plan.ID, plan.Code, string(plan.Kind), plan.PriceKobo, idemKey, ref,
+		orderID, userID, plan.ID, plan.Code, string(plan.Kind), plan.PriceKobo, ledgerKey, ref,
 	).Scan(&o.ID, &o.UserID, &o.PlanID, &o.PlanCode, &o.Kind, &o.AmountKobo, &o.Status, &o.LedgerRef, &o.CreatedAt); err != nil {
 		return nil, nil, err
 	}
@@ -304,8 +427,38 @@ func (s *Service) Book(ctx context.Context, userID, idemKey string, req BookingR
 		return nil, fmt.Errorf("connect: resolve revenue account: %w", err)
 	}
 	ref := "connect:dateplan:" + req.Kind
-	if err := s.wallet.Debit(ctx, userID, ref, idemKey, revAcc, req.AmountKobo); err != nil {
-		return nil, err
+	// Namespaced per (rail, purpose, caller) — see Purchase: a raw client key in
+	// the global ledger keyspace would collide with another rail's or user's key.
+	ledgerKey := "connect:monetization:booking:" + userID + ":" + idemKey
+	// Deploy-mid-flight convergence (see Purchase): a booking committed under the
+	// pre-namespace raw key must not charge again.
+	chargeKey := ledgerKey
+	if s.confirmer != nil {
+		ok, cerr := s.confirmer.ConfirmDebit(ctx, userID, ref, idemKey, req.AmountKobo)
+		if cerr != nil {
+			return nil, fmt.Errorf("connect: confirm legacy booking debit: %w", cerr)
+		}
+		if ok {
+			chargeKey = idemKey
+		}
+	}
+	if chargeKey == ledgerKey {
+		if err := s.wallet.Debit(ctx, userID, ref, ledgerKey, revAcc, req.AmountKobo); err != nil {
+			if !isDuplicateErr(err) {
+				return nil, err
+			}
+			// Claimed key — not proof of our journal (see Purchase).
+			if s.confirmer == nil {
+				return nil, err
+			}
+			ok, cerr := s.confirmer.ConfirmDebit(ctx, userID, ref, ledgerKey, req.AmountKobo)
+			if cerr != nil {
+				return nil, fmt.Errorf("connect: confirm booking debit: %w", cerr)
+			}
+			if !ok {
+				return nil, err
+			}
+		}
 	}
 
 	id := uuid.New().String()
@@ -314,15 +467,41 @@ func (s *Service) Book(ctx context.Context, userID, idemKey string, req BookingR
 		VALUES ($1,$2,$3,$4, NULLIF($5,'')::uuid, $6, 'booked', $7, $8)
 		RETURNING id, user_id, kind, COALESCE(external_ref,''), COALESCE(event_id::text,''), amount_kobo, status, ledger_ref, created_at`
 	b := &Booking{}
-	if err := s.db.QueryRow(ctx, ins,
-		id, userID, req.Kind, req.ExternalRef, req.EventID, req.AmountKobo, idemKey, ref,
-	).Scan(&b.ID, &b.UserID, &b.Kind, &b.ExternalRef, &b.EventID, &b.AmountKobo, &b.Status, &b.LedgerRef, &b.CreatedAt); err != nil {
+	err = s.db.QueryRow(ctx, ins,
+		id, userID, req.Kind, req.ExternalRef, req.EventID, req.AmountKobo, chargeKey, ref,
+	).Scan(&b.ID, &b.UserID, &b.Kind, &b.ExternalRef, &b.EventID, &b.AmountKobo, &b.Status, &b.LedgerRef, &b.CreatedAt)
+	if err != nil && dbutil.IsUniqueViolation(err) {
+		// Debit committed but the row already exists — converge on it only when it
+		// is provably THIS booking (same caller + amount + kind).
+		b, err = s.getBookingByIdempotencyKey(ctx, chargeKey)
+		if err == nil && (b == nil || b.UserID != userID || b.AmountKobo != req.AmountKobo || b.Kind != req.Kind) {
+			return nil, errors.New("connect: duplicate idempotency key held by a different booking")
+		}
+	}
+	if err != nil {
 		return nil, fmt.Errorf("connect: record booking after debit: %w", err)
 	}
 
 	_ = s.audit.WriteAudit(ctx, "connect.dateplan.book", userID, "connect_date_plan_booking", b.ID, map[string]any{
-		"kind": req.Kind, "amount_kobo": req.AmountKobo, "idempotency_key": idemKey, "ledger_ref": ref,
+		"kind": req.Kind, "amount_kobo": req.AmountKobo, "idempotency_key": ledgerKey, "ledger_ref": ref,
 	})
+	return b, nil
+}
+
+// getBookingByIdempotencyKey returns the booking recorded under a ledger key, or nil.
+func (s *Service) getBookingByIdempotencyKey(ctx context.Context, key string) (*Booking, error) {
+	const q = `SELECT id, user_id, kind, COALESCE(external_ref,''), COALESCE(event_id::text,''),
+		amount_kobo, status, ledger_ref, created_at
+		FROM connect_date_plan_bookings WHERE idempotency_key = $1`
+	b := &Booking{}
+	err := s.db.QueryRow(ctx, q, key).Scan(&b.ID, &b.UserID, &b.Kind, &b.ExternalRef,
+		&b.EventID, &b.AmountKobo, &b.Status, &b.LedgerRef, &b.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("connect: booking by idempotency key: %w", err)
+	}
 	return b, nil
 }
 
@@ -355,10 +534,12 @@ func (s *Service) Refund(ctx context.Context, orderID, adminID, reason string) (
 		return nil, ErrNoRefunder
 	}
 
-	// 1) Money-movement first — reverse the charge, keyed by the order id so it is
-	//    single under retries/concurrency. Duplicate key ⇒ already refunded ⇒ nil.
-	refundKey := "connect:refund:" + o.ID
-	refundRef := "connect:refund:" + string(o.Kind) + ":" + o.PlanCode
+	// 1) Money-movement first — reverse the charge, keyed by the order id under the
+	//    monetization namespace so it is single under retries/concurrency. The
+	//    refunder treats a duplicate as success ONLY after the durable journal under
+	//    this key verifies (see connectRefundAdapter in app wiring).
+	refundKey := "connect:monetization:refund:" + o.ID
+	refundRef := "connect:monetization:refund:" + string(o.Kind) + ":" + o.PlanCode
 	if err := s.refunder.Refund(ctx, o.UserID, refundRef, refundKey, o.AmountKobo); err != nil {
 		return nil, fmt.Errorf("connect: post refund entry: %w", err)
 	}
@@ -437,9 +618,10 @@ func (s *Service) CancelSubscription(ctx context.Context, userID string, immedia
 		if expires != nil {
 			refund := proratedRefundKobo(amountKobo, granted, *expires, now)
 			if refund > 0 && s.refunder != nil {
-				// Keyed by entitlement id ⇒ the unused-time refund posts at most once.
-				if err := s.refunder.Refund(ctx, userID, "connect:prorate:subscription:"+planCode,
-					"connect:prorate:"+entID, refund); err != nil {
+				// Keyed by entitlement id under the monetization namespace ⇒ the
+				// unused-time refund posts at most once.
+				if err := s.refunder.Refund(ctx, userID, "connect:monetization:prorate:subscription:"+planCode,
+					"connect:monetization:prorate:"+entID, refund); err != nil {
 					return nil, fmt.Errorf("connect: prorated refund: %w", err)
 				}
 				res.ProratedRefundKobo = refund
@@ -521,11 +703,55 @@ func (s *Service) ProcessRenewals(ctx context.Context, now time.Time) (*RenewalR
 			rep.Skipped++ // can't renew on a dead/invalid plan — leave for admin
 			continue
 		}
-		key := "connect:renew:" + d.id + ":" + d.expires.UTC().Format(time.RFC3339)
+		key := "connect:monetization:renew:" + d.id + ":" + d.expires.UTC().Format(time.RFC3339)
+		// ledger_ref is a recon/reporting surface (`connect:renew:%` is queried
+		// downstream) — only the idempotency KEY changes namespace, not the ref.
 		ref := "connect:renew:subscription:" + d.planCode
-		derr := s.wallet.Debit(ctx, d.user, ref, key, revAcc, plan.PriceKobo)
+		charged := false
+		// Deploy-mid-flight convergence: a period charged under the pre-namespace
+		// "connect:renew:" key but never extended must not be charged twice.
+		if s.confirmer != nil {
+			legacyKey := "connect:renew:" + d.id + ":" + d.expires.UTC().Format(time.RFC3339)
+			legacyRef := "connect:renew:subscription:" + d.planCode
+			ok, cerr := s.confirmer.ConfirmDebit(ctx, d.user, legacyRef, legacyKey, plan.PriceKobo)
+			if cerr != nil {
+				return rep, fmt.Errorf("connect: confirm legacy renewal debit: %w", cerr)
+			}
+			if ok {
+				charged = true
+				key, ref = legacyKey, legacyRef
+			}
+		}
+		var derr error
+		if !charged {
+			derr = s.wallet.Debit(ctx, d.user, ref, key, revAcc, plan.PriceKobo)
+			charged = derr == nil
+		}
+		if !charged && isDuplicateErr(derr) {
+			// A duplicate is a REJECTION of a claimed key — a stale Redis lock or a
+			// foreign journal holding it — NOT proof OUR renewal debit landed.
+			// Extending the entitlement on a bare duplicate would grant paid time
+			// against phantom money. Extend only when the ledger of record carries
+			// this exact journal (wallet DEBIT → revenue CREDIT, this ref + amount).
+			if s.confirmer == nil {
+				rep.Skipped++ // no confirmer wired — fail closed, retry next run
+				continue
+			}
+			ok, cerr := s.confirmer.ConfirmDebit(ctx, d.user, ref, key, plan.PriceKobo)
+			if cerr != nil {
+				return rep, fmt.Errorf("connect: confirm renewal debit: %w", cerr)
+			}
+			if !ok {
+				rep.Skipped++
+				_ = s.audit.WriteAudit(ctx, "connect.subscription.renew_unconfirmed", d.user, "connect_entitlement", d.id, map[string]any{
+					"idempotency_key": key, "reason": "duplicate without durable posting",
+				})
+				continue
+			}
+			charged = true
+		}
 		switch {
-		case derr == nil || isDuplicateErr(derr):
+		case charged:
 			newExp := d.expires.AddDate(0, 0, *plan.IntervalDays)
 			// Guard on the old expiry so concurrent/duplicate runs never double-extend.
 			if _, err := s.db.Exec(ctx,

@@ -203,6 +203,33 @@ func (s *GiftingStore) SendGift(ctx context.Context, senderID string, recipientI
 	return &gt, nil
 }
 
+// GetGiftByIdempotencyKey returns the gift transaction recorded under this
+// derived ledger key — the convergence read after a SendGift insert hits the
+// unique idempotency_key: a retry that crashed between the ledger debit
+// commit and the row insert must be returned THIS row.
+func (s *GiftingStore) GetGiftByIdempotencyKey(ctx context.Context, idemKey string) (*GiftTransaction, error) {
+	row := s.db.QueryRow(ctx, `
+		SELECT
+			id, reference, sender_id, recipient_id, item_id, amount_kobo,
+			'NGN' as currency, COALESCE(message, '') as message, status,
+			created_at::text
+		FROM gift_transactions
+		WHERE idempotency_key = $1
+	`, idemKey)
+
+	var gt GiftTransaction
+	err := row.Scan(&gt.ID, &gt.Reference, &gt.SenderID, &gt.RecipientID,
+		&gt.ItemID, &gt.AmountKobo, &gt.Currency, &gt.Message, &gt.Status, &gt.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query gift by idempotency key: %w", err)
+	}
+	s.enrichGiftTransaction(ctx, &gt)
+	return &gt, nil
+}
+
 // GetSentGifts retrieves gifts sent by user (paginated).
 func (s *GiftingStore) GetSentGifts(ctx context.Context, userID string, limit int, offset int) ([]GiftTransaction, int64, error) {
 	var total int64

@@ -124,10 +124,11 @@ func TestLiveDB_RequestPayout_CrossUserSameKey_BothDebit(t *testing.T) {
 	}
 }
 
-// TestLiveDB_RequestPayout_TrueReplay_Rejected: re-running the SAME request
-// (same creator, key, amount) must not park a second debit — the derived-key
-// insert conflicts and the call is rejected as a duplicate.
-func TestLiveDB_RequestPayout_TrueReplay_Rejected(t *testing.T) {
+// TestLiveDB_RequestPayout_TrueReplay_Converges: re-running the SAME request
+// (same creator, key, amount) is a true retry — the ledger debit replays as a
+// verified no-op and the unique idempotency_key insert converges on the row the
+// first attempt recorded. No second debit, no second row, no error.
+func TestLiveDB_RequestPayout_TrueReplay_Converges(t *testing.T) {
 	pool := newAdminTestPool(t)
 	ctx := context.Background()
 	svc, ledgerSvc := buildAdminTestService(t, pool)
@@ -138,15 +139,29 @@ func TestLiveDB_RequestPayout_TrueReplay_Rejected(t *testing.T) {
 	rawKey := "zzrail-replay-" + uuid.NewString()
 	bal0, _ := ledgerSvc.GetBalance(ctx, creator)
 
-	if _, err := svc.Request(ctx, creator, rawKey, RequestPayoutRequest{AmountKobo: 1_000_00}); err != nil {
+	p1, err := svc.Request(ctx, creator, rawKey, RequestPayoutRequest{AmountKobo: 1_000_00})
+	if err != nil {
 		t.Fatalf("first Request: %v", err)
 	}
-	if _, err := svc.Request(ctx, creator, rawKey, RequestPayoutRequest{AmountKobo: 1_000_00}); err == nil {
-		t.Fatal("replayed Request must be rejected, not double-park the payout")
+	p2, err := svc.Request(ctx, creator, rawKey, RequestPayoutRequest{AmountKobo: 1_000_00})
+	if err != nil {
+		t.Fatalf("replayed Request must converge on the existing payout, got %v", err)
+	}
+	if p1.ID != p2.ID {
+		t.Fatalf("replay must return the SAME payout row, got %q vs %q", p1.ID, p2.ID)
 	}
 	bal1, _ := ledgerSvc.GetBalance(ctx, creator)
 	if bal0-bal1 != 1_000_00 {
 		t.Fatalf("debited %d across a replay, want exactly %d", bal0-bal1, 1_000_00)
+	}
+	var rows int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM connect_payouts WHERE idempotency_key = $1`,
+		"connect:payout:"+creator+":"+rawKey).Scan(&rows); err != nil {
+		t.Fatalf("count payout rows: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("a true replay must yield exactly ONE payout row, got %d", rows)
 	}
 }
 
