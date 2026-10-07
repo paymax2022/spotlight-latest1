@@ -85,8 +85,8 @@ func (h *Handler) fail(c *gin.Context, err error) {
 // group. Admin routes are grouped under /schools/admin on the admin base.
 //
 //	member: GET /schools/mine
-//	        GET /schools/:id/overview
-//	admin : GET  /schools/admin/overview            — platform-wide aggregate (all institutions)
+//	        GET /schools/:schoolId/overview
+//	admin : GET  /schools/admin/overview           — platform-wide aggregate (all institutions)
 //	        POST /schools/admin/institutions
 //	        GET  /schools/admin/institutions
 //	        GET  /schools/admin/licences             — all licences (admin-wide)
@@ -116,7 +116,10 @@ func RegisterAcademySchools(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 	if member != nil {
 		mg := member.Group("/schools")
 		mg.GET("/mine", h.MyInstitutions)
-		mg.GET("/:id/overview", h.MemberOverview)
+		// Must be :schoolId — every other /schools/<param> route on this shared group
+		// (fees school/student/session/feeschedule/promotion) uses it, and Gin panics
+		// at startup if two wildcard names collide on one path segment.
+		mg.GET("/:schoolId/overview", h.MemberOverview)
 	}
 
 	if admin != nil {
@@ -162,7 +165,7 @@ func (h *Handler) MemberOverview(c *gin.Context) {
 	if _, ok := h.requireUser(c); !ok {
 		return
 	}
-	out, err := h.svc.GetInstitution(c.Request.Context(), c.Param("id"))
+	out, err := h.svc.GetInstitution(c.Request.Context(), c.Param("schoolId"))
 	if err != nil {
 		h.fail(c, err)
 		return
