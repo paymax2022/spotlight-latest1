@@ -48,6 +48,8 @@ BEGIN
   ELSE
     RAISE NOTICE 'mkt_trust_scores absent — skipped';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 -- ── 2. device_push_tokens: fake probe tokens on ysf ─────────────────────────
@@ -67,6 +69,8 @@ BEGIN
   ELSE
     RAISE NOTICE 'device_push_tokens absent — skipped';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 -- ── 3. profiles: complete-profile probe rows on ysf ─────────────────────────
@@ -87,6 +91,8 @@ BEGIN
   ELSE
     RAISE NOTICE 'profiles absent — skipped';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 -- ── 4. groups: probe groups ──────────────────────────────────────────────────
@@ -110,18 +116,48 @@ BEGIN
       GET DIAGNOSTICS n = ROW_COUNT;
       RAISE NOTICE 'group_payments on probe groups deleted: %', n;
     END IF;
-    DELETE FROM public.groups
-     WHERE (id = 'a60d5b61-5ce7-45fc-9430-f8b323aa4fb0'
-            AND created_by = '00367732-a1f0-4bb0-b711-235facd82685')
-        OR (id = '4e345a66-3594-4bf6-ace2-3551a283f25c'
-            AND (name ILIKE '%delete%' OR name ILIKE '%probe%' OR name ILIKE '%e2e%'))
-        OR (id::text LIKE '1f790405%'
-            AND created_by = '648e1080-d66e-4e55-b8d8-72bc51acc3af');
-    GET DIAGNOSTICS n = ROW_COUNT;
-    RAISE NOTICE 'groups probe rows deleted: %', n;
+    -- Groups referenced by ledger_accounts cannot be deleted (FK +
+    -- immutable-ledger rule); neutralize those by renaming, delete the rest.
+    IF to_regclass('public.ledger_accounts') IS NOT NULL THEN
+      DELETE FROM public.groups g
+       WHERE ((g.id = 'a60d5b61-5ce7-45fc-9430-f8b323aa4fb0'
+               AND g.created_by = '00367732-a1f0-4bb0-b711-235facd82685')
+          OR (g.id = '4e345a66-3594-4bf6-ace2-3551a283f25c'
+               AND (g.name ILIKE '%delete%' OR g.name ILIKE '%probe%' OR g.name ILIKE '%e2e%'))
+          OR (g.id::text LIKE '1f790405%'
+               AND g.created_by = '648e1080-d66e-4e55-b8d8-72bc51acc3af'))
+         AND NOT EXISTS (SELECT 1 FROM public.ledger_accounts la
+                          WHERE la.group_id = g.id);
+      GET DIAGNOSTICS n = ROW_COUNT;
+      RAISE NOTICE 'groups probe rows deleted: %', n;
+      UPDATE public.groups g
+         SET name = '[archived probe residue]'
+       WHERE ((g.id = 'a60d5b61-5ce7-45fc-9430-f8b323aa4fb0'
+               AND g.created_by = '00367732-a1f0-4bb0-b711-235facd82685')
+          OR (g.id = '4e345a66-3594-4bf6-ace2-3551a283f25c'
+               AND (g.name ILIKE '%delete%' OR g.name ILIKE '%probe%' OR g.name ILIKE '%e2e%'))
+          OR (g.id::text LIKE '1f790405%'
+               AND g.created_by = '648e1080-d66e-4e55-b8d8-72bc51acc3af'))
+         AND EXISTS (SELECT 1 FROM public.ledger_accounts la
+                      WHERE la.group_id = g.id);
+      GET DIAGNOSTICS n = ROW_COUNT;
+      RAISE NOTICE 'groups probe rows neutralized (ledger-referenced): %', n;
+    ELSE
+      DELETE FROM public.groups
+       WHERE (id = 'a60d5b61-5ce7-45fc-9430-f8b323aa4fb0'
+              AND created_by = '00367732-a1f0-4bb0-b711-235facd82685')
+          OR (id = '4e345a66-3594-4bf6-ace2-3551a283f25c'
+              AND (name ILIKE '%delete%' OR name ILIKE '%probe%' OR name ILIKE '%e2e%'))
+          OR (id::text LIKE '1f790405%'
+              AND created_by = '648e1080-d66e-4e55-b8d8-72bc51acc3af');
+      GET DIAGNOSTICS n = ROW_COUNT;
+      RAISE NOTICE 'groups probe rows deleted: %', n;
+    END IF;
   ELSE
     RAISE NOTICE 'groups absent — skipped';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 -- ── 5. social: probe split / request / pool ─────────────────────────────────
@@ -176,6 +212,8 @@ BEGIN
   ELSE
     RAISE NOTICE 'group_pools absent — skipped';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 -- ── 6. connect: probe match + conversation + likes (ysf↔ayaa) ───────────────
@@ -226,6 +264,8 @@ BEGIN
   ELSE
     RAISE NOTICE 'connect matches/profiles absent — skipped';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 -- ── 7. savings: vault + circle + targets + orphan autosave jobs ──────────────
@@ -282,6 +322,8 @@ BEGIN
   ELSE
     RAISE NOTICE 'group_targets absent — skipped';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 -- ── 8. utility: failed/stuck probe transactions + dead paystack intents ─────
@@ -314,6 +356,8 @@ BEGIN
   ELSE
     RAISE NOTICE 'utility_paystack_intents absent — skipped';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 -- ── 9. academy_application_fee_intents: unpaid probe intents ────────────────
@@ -333,6 +377,8 @@ BEGIN
   ELSE
     RAISE NOTICE 'academy_application_fee_intents absent — skipped';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 -- ── 10. restaurant: probe group orders on the closed test store ─────────────
@@ -360,6 +406,8 @@ BEGIN
   ELSE
     RAISE NOTICE 'group_orders absent — skipped';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 -- ── 11. KYC: reset ysf's probe tier-2 submission ────────────────────────────
@@ -400,6 +448,8 @@ BEGIN
   ELSE
     RAISE NOTICE 'verification_session absent — skipped';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 -- ── 12. referrals: ysf→ayaa probe attribution ───────────────────────────────
@@ -430,6 +480,8 @@ BEGIN
   ELSE
     RAISE NOTICE 'referral_attributions absent — skipped';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 -- ── 13. crowdfunding: probe support ticket SPL-TK-3269 ──────────────────────
@@ -446,6 +498,8 @@ BEGIN
   ELSE
     RAISE NOTICE 'cf_support_tickets absent — skipped';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 -- ── 14. registration draft SMEPIT-329713-TV8MFP + its share link ────────────
@@ -473,6 +527,8 @@ BEGIN
   ELSE
     RAISE NOTICE 'contest_registration_applications absent — skipped';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 -- ── 15. probe throwaway auth account ────────────────────────────────────────
@@ -498,6 +554,8 @@ BEGIN
   EXCEPTION WHEN foreign_key_violation OR others THEN
     RAISE NOTICE 'auth.users probe account delete skipped: %', SQLERRM;
   END;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'probe cleanup section skipped: %', SQLERRM;
 END $$;
 
 COMMIT;
