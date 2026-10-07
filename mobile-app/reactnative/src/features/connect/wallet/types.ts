@@ -149,6 +149,9 @@ export interface KycStatus {
 export interface Tier1Input {
   identifier: string;           // BVN (11 digits) or NIN (11 digits)
   identifierType: 'bvn' | 'nin';
+  // NDPA/CBN data-processing consent the user explicitly gave on this screen.
+  // Required: the server refuses (403 consent_required) to run the check without it.
+  consentVersion: string;
 }
 
 export interface Tier2Input {

@@ -3,6 +3,7 @@ package dojah
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"spotlight/backend/internal/provider"
@@ -13,19 +14,19 @@ import (
 func idNumberPath(idType, idNumber string) (string, bool) {
 	switch strings.ToLower(idType) {
 	case "bvn":
-		return "/api/v1/kyc/bvn/full?bvn=" + idNumber, true
+		return "/api/v1/kyc/bvn/full?bvn=" + url.QueryEscape(idNumber), true
 	case "nin":
-		return "/api/v1/kyc/nin?nin=" + idNumber, true
+		return "/api/v1/kyc/nin?nin=" + url.QueryEscape(idNumber), true
 	case "vnin":
-		return "/api/v1/kyc/vnin?vnin=" + idNumber, true
+		return "/api/v1/kyc/vnin?vnin=" + url.QueryEscape(idNumber), true
 	case "passport":
-		return "/api/v1/kyc/passport?passport_number=" + idNumber, true
+		return "/api/v1/kyc/passport?passport_number=" + url.QueryEscape(idNumber), true
 	case "drivers_license", "dl":
-		return "/api/v1/kyc/dl?license_number=" + idNumber, true
+		return "/api/v1/kyc/dl?license_number=" + url.QueryEscape(idNumber), true
 	case "pvc":
-		return "/api/v1/kyc/pvc?vin=" + idNumber, true
+		return "/api/v1/kyc/pvc?vin=" + url.QueryEscape(idNumber), true
 	case "phone", "phone_number":
-		return "/api/v1/kyc/phone_number?phone_number=" + idNumber, true
+		return "/api/v1/kyc/phone_number?phone_number=" + url.QueryEscape(idNumber), true
 	default:
 		return "", false
 	}

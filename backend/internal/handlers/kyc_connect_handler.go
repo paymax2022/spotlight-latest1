@@ -217,7 +217,7 @@ func (h *KYCConnectHandler) SubmitTier1(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-	if len(body.Identifier) != 11 {
+	if !isElevenDigits(body.Identifier) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "enter a valid 11-digit identifier"})
 		return
 	}
@@ -288,6 +288,21 @@ func (h *KYCConnectHandler) SubmitTier1(c *gin.Context) {
 		"checkStatus": string(check.Status),
 		"message":     tier1Message(check.Status),
 	}})
+}
+
+// isElevenDigits reports whether s is exactly 11 ASCII digits — the shape of both
+// a BVN and a NIN. A length-only check let any 11 characters through to the
+// provider call.
+func isElevenDigits(s string) bool {
+	if len(s) != 11 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // tier1Message renders the real check outcome, never a fixed "submitted for
