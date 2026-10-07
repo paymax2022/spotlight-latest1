@@ -185,7 +185,18 @@ func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeI
 		// the beneficiary unpaid. Verify (and heal) the money leg before
 		// reporting success; the beneficiary is taken from the STORED row, never
 		// the replay's payee argument, so a re-resolve cannot redirect funds.
-		return s.ensureResolutionCredit(ctx, &h, to)
+		posted, err := s.ensureResolutionCredit(ctx, &h, to)
+		if err != nil {
+			return err
+		}
+		if posted {
+			// A healed credit is still a money mutation — audit it (distinct
+			// action so recon can tell a heal from a first-pass resolve).
+			hh := h
+			hh.State = to
+			s.logTransition(string(from), &hh, to, action+".credit_heal")
+		}
+		return nil
 	}
 	if !canTransition(from, to) {
 		return fmt.Errorf("escrow: illegal transition %s -> %s", from, to)
@@ -208,7 +219,7 @@ func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeI
 	}
 
 	// Money leg: credit escrow -> payee (release) or escrow -> payer (refund).
-	if err := s.ensureResolutionCredit(ctx, &h, to); err != nil {
+	if _, err := s.ensureResolutionCredit(ctx, &h, to); err != nil {
 		return err
 	}
 
@@ -223,37 +234,48 @@ func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeI
 // posts it. Called both on the fresh path (right after the state commit) and on
 // the from==to replay path (to heal a hold that committed its terminal state but
 // died before the credit). Idempotent via the "<hold idemKey>:release|refund"
-// key — a retry or a racing poster dedups to ledger.ErrDuplicate, which is
-// treated as durably applied.
-func (s *Service) ensureResolutionCredit(ctx context.Context, h *Hold, to State) error {
+// key — a retry or a racing poster dedups to ledger.ErrDuplicate. Returns
+// posted=true only when this call wrote a NEW credit (callers use it to emit
+// the audit event on the heal path; the fresh path audits regardless).
+func (s *Service) ensureResolutionCredit(ctx context.Context, h *Hold, to State) (bool, error) {
 	leg := "refund"
 	beneficiary := h.PayerID
 	if to == StateReleased {
 		leg = "release"
 		if h.PayeeID == nil || *h.PayeeID == "" {
-			return errors.New("escrow: released hold has no recorded payee — refusing to guess the beneficiary")
+			return false, errors.New("escrow: released hold has no recorded payee — refusing to guess the beneficiary")
 		}
 		beneficiary = *h.PayeeID
 	}
 	key := h.IdempotencyKey + ":" + leg
 	posted, err := s.led.Posted(ctx, key)
 	if err != nil {
-		return fmt.Errorf("escrow: verify %s credit: %w", leg, err)
+		return false, fmt.Errorf("escrow: verify %s credit: %w", leg, err)
 	}
 	if posted {
-		return nil
+		return false, nil
 	}
 	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := s.led.Credit(ctx, beneficiary, leg+":"+h.Reference, key, escrowAcc.ID, h.AmountKobo); err != nil {
 		if errors.Is(err, ledger.ErrDuplicate) {
-			return nil // a racing retry posted the same key — durable either way
+			// ErrDuplicate can also surface from the Redis idem-lock TTL window,
+			// not only a durable journal row — recheck the ledger of record
+			// before reporting the credit as applied.
+			posted, perr := s.led.Posted(ctx, key)
+			if perr != nil {
+				return false, fmt.Errorf("escrow: verify %s credit after duplicate: %w", leg, perr)
+			}
+			if !posted {
+				return false, fmt.Errorf("escrow: %s credit claimed duplicate but is not posted", leg)
+			}
+			return false, nil
 		}
-		return fmt.Errorf("escrow: %s credit: %w", leg, err)
+		return false, fmt.Errorf("escrow: %s credit: %w", leg, err)
 	}
-	return nil
+	return true, nil
 }
 
 // Get returns a hold by id (object-level authZ enforced by callers/RLS).
