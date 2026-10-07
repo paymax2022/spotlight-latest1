@@ -17,6 +17,8 @@ declare module 'axios' {
      * default so an expired session is surfaced immediately.
      */
     skipAuthRedirect?: boolean;
+    /** Internal: set once a 401 has been retried after a session refresh. */
+    _authRetried?: boolean;
   }
 }
 
@@ -37,6 +39,23 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+// One refresh shared by every request that 401s at the same moment, so a burst
+// of parallel queries on an expired token costs one refresh, not one each.
+let refreshInFlight: Promise<string | null> | null = null;
+function refreshAccessToken(): Promise<string | null> {
+  refreshInFlight ??= (async () => {
+    try {
+      const { data, error } = await createSupabaseClient().auth.refreshSession();
+      return error ? null : data.session?.access_token ?? null;
+    } catch {
+      return null;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
+
 api.interceptors.response.use(
   (r) => r,
   async (error) => {
@@ -46,7 +65,20 @@ api.interceptors.response.use(
     // able to log someone out on its own — if the session really is dead, the user's
     // next real request will 401 and take this path anyway.
     if (error?.response?.status === 401 && !error?.config?.skipAuthRedirect) {
-      try { await createSupabaseClient().auth.signOut(); } catch { /* ignore */ }
+      // An access token that expired in flight is not a dead session: refresh
+      // once and replay. A 401 means the server acted on nothing, so the replay
+      // is safe for mutations too.
+      const original = error.config;
+      if (original && !original._authRetried) {
+        const token = await refreshAccessToken();
+        if (token) {
+          original._authRetried = true;
+          original.headers.Authorization = `Bearer ${token}`;
+          return api.request(original);
+        }
+      }
+      // Local scope: the default (global) revokes the user's other devices too.
+      try { await createSupabaseClient().auth.signOut({ scope: 'local' }); } catch { /* ignore */ }
       // Come BACK here after signing in, via the shared guarded prompt. The login
       // never passed one, so an expired session cost the user their place as well
       // as their session. Routing through promptSignIn also collapses this with the

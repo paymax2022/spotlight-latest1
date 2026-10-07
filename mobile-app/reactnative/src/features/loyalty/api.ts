@@ -87,10 +87,10 @@ export async function getAccount(): Promise<LoyaltyAccount> {
   return { lifetimePoints, balancePoints, ...t, tierId };
 }
 
-// MISSING BACKEND ENDPOINT: no points-ledger history endpoint is exposed to
-// members yet (points.Handler only exposes balance/catalog/redeem). Falls back
-// to the mock ledger so the history screen still renders.
+// Not wired to GET /points/history yet. The mock ledger is dev-only; a deployed
+// build shows an empty history rather than invented point movements.
 export async function getLedger(): Promise<PointsEntry[]> {
+  if (!USE_MOCK) return [];
   await delay();
   return [...MOCK_LEDGER].reverse();
 }

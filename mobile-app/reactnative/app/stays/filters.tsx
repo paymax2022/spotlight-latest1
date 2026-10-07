@@ -74,7 +74,7 @@ export default function FiltersScreen() {
                 inputMode="decimal"
                 maxLength={13}
                 value={local.minPriceKobo != null ? String(local.minPriceKobo / 100) : ''}
-                onChangeText={(t) => { const s = sanitizeMoneyInput(t); patch({ minPriceKobo: s ? Number(s) * 100 : undefined }); }}
+                onChangeText={(t) => { const s = sanitizeMoneyInput(t); patch({ minPriceKobo: s ? Math.round(Number(s) * 100) : undefined }); }}
                 placeholder="0"
               />
             </View>
@@ -85,7 +85,7 @@ export default function FiltersScreen() {
                 inputMode="decimal"
                 maxLength={13}
                 value={local.maxPriceKobo != null ? String(local.maxPriceKobo / 100) : ''}
-                onChangeText={(t) => { const s = sanitizeMoneyInput(t); patch({ maxPriceKobo: s ? Number(s) * 100 : undefined }); }}
+                onChangeText={(t) => { const s = sanitizeMoneyInput(t); patch({ maxPriceKobo: s ? Math.round(Number(s) * 100) : undefined }); }}
                 placeholder="Any"
               />
             </View>

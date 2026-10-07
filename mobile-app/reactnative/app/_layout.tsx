@@ -24,6 +24,7 @@ import { rememberResume, toParamMap } from '@/lib/resume';
 import { useBrandFonts } from '@/lib/brandFonts';
 import { createSupabaseClient } from '@/lib/supabase';
 import { usePushNotifications } from '@/lib/push';
+import { resetUserScopedState } from '@/lib/resetUserScopedState';
 import { useVisitorPushBridge } from '@/features/visitor/hooks/useVisitorPushBridge';
 import { useElectionPushBridge } from '@/features/election/hooks/useElectionPushBridge';
 import * as Sentry from '@sentry/react-native';
@@ -124,7 +125,10 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   // session's data. The redirect to login is handled by the effect below.
   const wasSignedIn = useRef(false);
   useEffect(() => {
-    if (wasSignedIn.current && !signedIn) queryClient.clear();
+    if (wasSignedIn.current && !signedIn) {
+      queryClient.clear();
+      void resetUserScopedState();
+    }
     wasSignedIn.current = signedIn;
   }, [signedIn]);
 

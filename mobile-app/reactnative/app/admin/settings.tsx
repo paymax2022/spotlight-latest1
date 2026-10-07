@@ -24,7 +24,7 @@ const LINKS: { label: string; sublabel: string; route: string }[] = [
   { label: 'Feature Flags', sublabel: 'Toggle features', route: '/admin/flags' },
 ];
 
-const ENV = (process.env.EXPO_PUBLIC_ENV ?? 'development') as string;
+const ENV = (process.env.EXPO_PUBLIC_APP_ENV ?? 'development') as string;
 const VERSION = (process.env.EXPO_PUBLIC_APP_VERSION ?? '1.0.0') as string;
 
 export default function AdminSettingsScreen() {

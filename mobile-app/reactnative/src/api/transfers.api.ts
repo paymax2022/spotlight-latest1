@@ -6,7 +6,7 @@
  *   POST /api/v1/transfers/paymax
  */
 import { api } from '@/api/client';
-import { generateIdempotencyKey } from '@/utils/idempotency';
+import { withIntentKey } from '@/utils/intentKey';
 import type { TransferRecipient, WalletTransfer } from '@/types/wallet';
 
 type ApiRecord = Record<string, unknown>;
@@ -53,17 +53,19 @@ export interface InitiateTransferPayload {
 export async function initiateWalletTransfer(
   payload: InitiateTransferPayload,
 ): Promise<WalletTransfer> {
-  const idempotencyKey = generateIdempotencyKey();
-  const response = await api.post(
+  // Keyed on the intent, not the attempt: a retry after a timeout must reach
+  // the server as the same transfer, not a second one.
+  const { pin, ...intent } = payload;
+  const response = await withIntentKey('transfer:paymax', intent, (idempotencyKey) => api.post(
     '/api/v1/transfers/paymax',
     {
       recipient_identifier: payload.recipientIdentifier,
       amount_kobo:          payload.amountKobo,
       narration:            payload.narration?.slice(0, 100),
-      pin:                  payload.pin,
+      pin,
     },
     { headers: { 'Idempotency-Key': idempotencyKey } },
-  );
+  ));
   const data = (response.data?.data ?? response.data) as ApiRecord;
   const transfer = (data?.transfer ?? data) as ApiRecord;
   return {

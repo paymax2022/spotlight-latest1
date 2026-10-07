@@ -112,7 +112,7 @@ export default function ApplyScreen() {
           inputMode="decimal"
           maxLength={13}
           value={incomeNaira}
-          onChangeText={(t) => set({ monthlyIncome: (Number(sanitizeMoneyInput(t)) || 0) * 100 })}
+          onChangeText={(t) => set({ monthlyIncome: Math.round((Number(sanitizeMoneyInput(t)) || 0) * 100) })}
         />
 
         <SectionHeader title="Guarantor" style={styles.sectionFlush} />

@@ -355,6 +355,19 @@ export function getQueue(): QueuedMutation[] {
   return [...queue];
 }
 
+/**
+ * Drop every queued mutation, in memory and persisted. Called on sign-out:
+ * queued events are sent with whatever bearer is current, so a queue left
+ * behind is replayed as the next user.
+ */
+export async function clearOfflineQueue(): Promise<void> {
+  queue = [];
+  notify();
+  if (AsyncStorage) {
+    try { await AsyncStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+  }
+}
+
 /** Reset all in-memory + persisted state. Test-only. */
 export async function _resetForTests(): Promise<void> {
   queue = [];

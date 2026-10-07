@@ -72,6 +72,7 @@ const MOCK_EARNINGS: CreatorEarnings = {
 // backend only exposes GET /creators/:creatorId — a single storefront read).
 // Falls back to the mock directory so Discover/search still renders.
 export async function listCreators(query?: string): Promise<Creator[]> {
+  if (!USE_MOCK) return [];
   await delay();
   const q = (query ?? '').trim().toLowerCase().replace(/^@/, '');
   if (!q) return MOCK_CREATORS;
@@ -151,6 +152,7 @@ function mapContent(c: Record<string, unknown>): GatedContent {
 // MISSING BACKEND ENDPOINT: no "my content" list endpoint for a creator's own
 // catalogue exists (only single-item GET /creators/content/:contentId).
 export async function listMyContent(): Promise<GatedContent[]> {
+  if (!USE_MOCK) return [];
   await delay();
   return contentFor('cr_tope');
 }
@@ -158,6 +160,7 @@ export async function listMyContent(): Promise<GatedContent[]> {
 // MISSING BACKEND ENDPOINT: no "my subscriptions" list endpoint exists (the
 // backend only exposes mutation endpoints — Subscribe/CancelSub — no read).
 export async function listSubscriptions(): Promise<Subscription[]> {
+  if (!USE_MOCK) return [];
   await delay();
   return MOCK_SUBSCRIPTIONS;
 }
@@ -283,6 +286,8 @@ export async function requestPayout(input: PayoutInput): Promise<PayoutResult> {
 // incomplete, but there is no member-facing endpoint to complete it — KYC is
 // owned by finance/kyc and has no creators-specific wiring yet).
 export async function completePayoutKyc(legalName: string, kycRef: string): Promise<{ ok: boolean }> {
+  // Reporting success here told a creator their payout KYC was done when nothing was sent.
+  if (!USE_MOCK) throw new Error('Payout verification is not available in the app yet.');
   await delay();
   return { ok: true };
 }

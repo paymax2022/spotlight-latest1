@@ -186,6 +186,10 @@ export function usePushNotifications(enabled: boolean): void {
 
     return () => {
       responseSub.remove();
+      // Sign-out flips `enabled` off. Clearing the guard lets the next sign-in
+      // in this app process register again, so the device token is re-posted
+      // under the new user's session instead of staying mapped to the last one.
+      registered.current = false;
     };
   }, [enabled]);
 }

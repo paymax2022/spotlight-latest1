@@ -73,8 +73,10 @@ const MOCK_LEADERBOARD: SprayLeaderEntry[] = [
 
 // MISSING BACKEND ENDPOINT: no GET /spray/targets/:id exists — the spray
 // engine only exposes POST /spray (send) and GET /spray/leaderboard/:contextRef.
-// Falls back to the mock target catalogue until a targets-read endpoint ships.
+// The mock target catalogue is dev-only: a deployed build must not put an
+// invented host on the spray screen, where the next tap sends money.
 export async function getSprayTarget(id: string): Promise<SprayTarget> {
+  if (!USE_MOCK) throw new Error('This spray target is not available yet.');
   await delay();
   return MOCK_TARGETS.find((t) => t.id === id) ?? MOCK_TARGETS[0];
 }

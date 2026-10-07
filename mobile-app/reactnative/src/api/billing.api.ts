@@ -1,5 +1,6 @@
 import { createSupabaseClient } from '@/lib/supabase';
 import { api } from '@/api/client';
+import { verifyPin } from '@/features/transfers/api';
 import {
   mapNetworkFromApi,
   mapCableProviderFromApi,
@@ -97,7 +98,13 @@ async function postUtilityPayment(input: {
   amountKobo?: number;
   metadata?: Record<string, unknown>;
   idempotencyKey: string;
+  transactionPin: string;
 }): Promise<Record<string, unknown>> {
+  // /api/v1/utility/pay takes no PIN, so the bill screens only ever checked that
+  // four digits were typed: any PIN debited the wallet. Verify it against the
+  // server first — a wrong PIN rejects here and counts toward the lockout.
+  // (Binding the PIN to the debit itself is server work, tracked in #500.)
+  await verifyPin(input.transactionPin);
   const res = await api.post('/api/v1/utility/pay', {
     category: input.category,
     biller_id: input.billerId,
@@ -247,6 +254,7 @@ export async function purchaseAirtime(payload: AirtimePurchasePayload): Promise<
   const billerId = await getBillerIdByCode(payload.networkCode, 'airtime');
   const productId = await getFirstActiveProductId(billerId, 'variable');
   return postUtilityPayment({
+    transactionPin: payload.transactionPin,
     category: 'airtime',
     billerId,
     productId,
@@ -318,6 +326,7 @@ export interface DataPurchasePayload {
 export async function purchaseData(payload: DataPurchasePayload): Promise<Record<string, unknown>> {
   const billerId = await getBillerIdByCode(payload.networkCode, 'data');
   return postUtilityPayment({
+    transactionPin: payload.transactionPin,
     category: 'data',
     billerId,
     productId: payload.planId,
@@ -406,6 +415,7 @@ export async function payElectricity(payload: ElectricityPayPayload): Promise<Re
   const billerId = await getBillerIdByCode(payload.discoCode, 'electricity');
   const productId = await getFirstActiveProductId(billerId, 'variable');
   return postUtilityPayment({
+    transactionPin: payload.transactionPin,
     category: 'electricity',
     billerId,
     productId,
@@ -501,6 +511,7 @@ export interface CablePayPayload {
 export async function payCable(payload: CablePayPayload): Promise<Record<string, unknown>> {
   const billerId = await getBillerIdByCode(payload.providerCode, 'cable_tv');
   return postUtilityPayment({
+    transactionPin: payload.transactionPin,
     category: 'cable_tv',
     billerId,
     productId: payload.packageId,
@@ -593,6 +604,7 @@ export interface EducationPayPayload {
 export async function payEducation(payload: EducationPayPayload): Promise<Record<string, unknown>> {
   const billerId = await getBillerIdByCode(payload.providerCode, 'education');
   return postUtilityPayment({
+    transactionPin: payload.transactionPin,
     category: 'education',
     billerId,
     productId: payload.productId,

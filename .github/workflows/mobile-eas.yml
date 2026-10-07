@@ -58,6 +58,17 @@ jobs:
       - name: Install deps
         run: npm ci
 
+      # `eas update` bundles JS on this runner. The EXPO_PUBLIC_* values in
+      # eas.json's build profiles apply to `eas build` only, so without this step
+      # the OTA bundle has no EXPO_PUBLIC_APP_ENV: the mock policy treats it as
+      # development (mock data on money modules), the API base falls back to
+      # localhost and the Supabase client throws — on every install on the channel.
+      - name: Export the profile's public env for the OTA bundle
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.ota_only }}
+        env:
+          PROFILE: ${{ inputs.profile }}
+        run: node scripts/export-eas-profile-env.mjs "$PROFILE" >> "$GITHUB_ENV"
+
       - name: OTA update (JS only)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.ota_only }}
         run: eas update --branch ${{ inputs.profile }} --message "${{ github.sha }}" --non-interactive
