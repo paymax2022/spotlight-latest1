@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -54,13 +55,50 @@ func balanceTx(ctx context.Context, tx pgx.Tx, accountID string) (int64, error) 
 // (idempotency_key) DO NOTHING replaces the ledger service's pooled
 // ErrDuplicate-tolerance: inside an outer tx a raised 23505 would abort the
 // whole transaction, so replayed legs are made no-ops at the INSERT level
-// instead. The key is deterministic per leg and bound to this transfer's row
-// (cross-user reuse is refused at initiation by ErrIdempotencyKeyConflict), so
-// a conflict can only be the same leg replaying the same amount.
+// instead. The conflict decision is NOT trusted blind — see
+// insertLegVerifiedTx for the same-leg-vs-foreign-leg check.
 const insertEntryTx = `
 	INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
 	VALUES ($1, $2, $3, $4, $5)
 	ON CONFLICT (idempotency_key) DO NOTHING`
+
+// insertLegVerifiedTx inserts one ledger leg under its deterministic
+// idempotency key. RowsAffected==0 means the key is already claimed — and a
+// bare DO NOTHING would silently absorb ANY pre-existing row under that key:
+// a foreign leg shadowing a global key (self-collision like a base "K:settle"
+// key shared across transfers) or a caller-controlled-key pre-claim would drop
+// one side of the journal without a trace. So on conflict the existing row is
+// re-read and compared field-for-field to the intended leg:
+//
+//   - identical (account, type, amount, reference) → a true replay; no-op.
+//   - ANY mismatch → return an error so the outer transaction aborts. Fail
+//     closed: a journal that cannot post its intended leg must never commit.
+func insertLegVerifiedTx(ctx context.Context, tx pgx.Tx, accountID, entryType string, amountKobo int64, reference, key string) error {
+	tag, err := tx.Exec(ctx, insertEntryTx, accountID, entryType, amountKobo, reference, key)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+	var gotAccount, gotType, gotRef string
+	var gotAmount int64
+	if err := tx.QueryRow(ctx,
+		`SELECT account_id::text, type, amount_kobo, reference
+		   FROM ledger_entries WHERE idempotency_key=$1`, key).
+		Scan(&gotAccount, &gotType, &gotAmount, &gotRef); err != nil {
+		return fmt.Errorf("transfers: leg key %s conflict probe: %w", key, err)
+	}
+	// account_id is UUID — canonicalise both sides before comparing text.
+	if parsed, perr := uuid.Parse(accountID); perr == nil {
+		accountID = parsed.String()
+	}
+	if gotAccount != accountID || gotType != entryType || gotAmount != amountKobo || gotRef != reference {
+		return fmt.Errorf("transfers: idempotency key %s already claimed by a DIFFERENT ledger entry (account=%s type=%s amount=%d ref=%s) — refusing to absorb it",
+			key, gotAccount, gotType, gotAmount, gotRef)
+	}
+	return nil // identical leg replaying — durable no-op
+}
 
 // insertJournalLegTx posts one balanced DEBIT/CREDIT pair inside tx — the
 // in-tx counterpart of ledger.Repository.PostJournal, using its exact
@@ -71,11 +109,11 @@ func insertJournalLegTx(ctx context.Context, tx pgx.Tx, reference, baseIdempoten
 	if amountKobo <= 0 {
 		return fmt.Errorf("transfers: journal amount must be positive kobo, got %d", amountKobo)
 	}
-	if _, err := tx.Exec(ctx, insertEntryTx,
+	if err := insertLegVerifiedTx(ctx, tx,
 		debitAccountID, "DEBIT", amountKobo, reference, baseIdempotencyKey+":debit"); err != nil {
 		return fmt.Errorf("transfers: journal debit leg %s: %w", baseIdempotencyKey, err)
 	}
-	if _, err := tx.Exec(ctx, insertEntryTx,
+	if err := insertLegVerifiedTx(ctx, tx,
 		creditAccountID, "CREDIT", amountKobo, reference, baseIdempotencyKey+":credit"); err != nil {
 		return fmt.Errorf("transfers: journal credit leg %s: %w", baseIdempotencyKey, err)
 	}
@@ -91,11 +129,11 @@ func insertReversalLegTx(ctx context.Context, tx pgx.Tx, reference, baseIdempote
 	if amountKobo <= 0 {
 		return fmt.Errorf("transfers: reversal amount must be positive kobo, got %d", amountKobo)
 	}
-	if _, err := tx.Exec(ctx, insertEntryTx,
+	if err := insertLegVerifiedTx(ctx, tx,
 		restoreAccountID, "REVERSAL_DEBIT", amountKobo, reference, baseIdempotencyKey+":rev_debit"); err != nil {
 		return fmt.Errorf("transfers: reversal debit leg %s: %w", baseIdempotencyKey, err)
 	}
-	if _, err := tx.Exec(ctx, insertEntryTx,
+	if err := insertLegVerifiedTx(ctx, tx,
 		holdAccountID, "REVERSAL_CREDIT", amountKobo, reference, baseIdempotencyKey+":rev_credit"); err != nil {
 		return fmt.Errorf("transfers: reversal credit leg %s: %w", baseIdempotencyKey, err)
 	}

@@ -61,21 +61,33 @@ var (
 	// the provider; it does NOT mean the transfer failed — the in-flight leg
 	// will land it.
 	ErrPayoutLegInFlight = errors.New("transfers: a payout attempt for this transfer is already in progress")
+	// ErrPayoutAlreadyFired — the transfer is provider_initiated, meaning a
+	// payout was ALREADY fired at the provider (provider_transfer_ref is the
+	// receipt), and the provider does not report a confirmed failure. Refusing
+	// to re-fire is the only safe answer: providers do not dedupe on our
+	// reference, so a blind retry is a second real payout (409).
+	ErrPayoutAlreadyFired = errors.New("transfers: payout already fired at provider — awaiting provider outcome; refusing to re-fire")
+	// ErrPayoutAccountMissing — the stored transfer row carries no full
+	// destination account number (written before bank_transfers.account_number
+	// existed, so only last4 is on file). The payout leg fails closed on these:
+	// sending the 4-digit fragment would wedge or misroute the payout, so the
+	// row stays held for manual reconciliation (409).
+	ErrPayoutAccountMissing = errors.New("transfers: full destination account number is not on file — held for reconciliation")
 )
 
 // errMap maps a money-path error to its acceptance-gate HTTP status (locked by
 // the go-live gates). Unknown errors fall through to 500 — fail closed.
 var errMap = httperr.New(http.StatusInternalServerError, // 500 — fail closed
-	httperr.R(http.StatusUnprocessableEntity, ErrSelfTransfer),                                             // 422
-	httperr.R(http.StatusPaymentRequired, ledger.ErrInsufficientFunds),                                     // 402
-	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),                  // 403
-	httperr.R(http.StatusNotFound, ErrRecipientNotFound, ErrInvalidAccount),                                // 404
-	httperr.R(http.StatusConflict, ErrAmbiguousRecipient, ErrIdempotencyKeyConflict, ErrPayoutLegInFlight), // 409 — refuse, do not guess
-	httperr.R(http.StatusBadRequest, ErrMissingIdempotencyKey, ErrInvalidAmount, ErrInvalidAccountNumber),  // 400
-	httperr.R(http.StatusForbidden, ErrPinNotSet, ErrPinInvalid),                                           // 403
-	httperr.R(http.StatusBadRequest, ErrPinCurrentRequired),                                                // 400 — malformed request, NOT a failed guess
-	httperr.R(http.StatusForbidden, ErrPinLocked),                                                          // 403
-	httperr.R(http.StatusBadGateway, ErrProviderUnavailable),                                               // 502
+	httperr.R(http.StatusUnprocessableEntity, ErrSelfTransfer),                                                                                             // 422
+	httperr.R(http.StatusPaymentRequired, ledger.ErrInsufficientFunds),                                                                                     // 402
+	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),                                                                  // 403
+	httperr.R(http.StatusNotFound, ErrRecipientNotFound, ErrInvalidAccount),                                                                                // 404
+	httperr.R(http.StatusConflict, ErrAmbiguousRecipient, ErrIdempotencyKeyConflict, ErrPayoutLegInFlight, ErrPayoutAlreadyFired, ErrPayoutAccountMissing), // 409 — refuse, do not guess
+	httperr.R(http.StatusBadRequest, ErrMissingIdempotencyKey, ErrInvalidAmount, ErrInvalidAccountNumber),                                                  // 400
+	httperr.R(http.StatusForbidden, ErrPinNotSet, ErrPinInvalid),                                                                                           // 403
+	httperr.R(http.StatusBadRequest, ErrPinCurrentRequired),                                                                                                // 400 — malformed request, NOT a failed guess
+	httperr.R(http.StatusForbidden, ErrPinLocked),                                                                                                          // 403
+	httperr.R(http.StatusBadGateway, ErrProviderUnavailable),                                                                                               // 502
 )
 
 func HTTPStatusForError(err error) int {
@@ -107,6 +119,10 @@ func ErrorCode(err error) string {
 		return "idempotency_key_conflict"
 	case errors.Is(err, ErrPayoutLegInFlight):
 		return "payout_leg_in_flight"
+	case errors.Is(err, ErrPayoutAlreadyFired):
+		return "payout_already_fired"
+	case errors.Is(err, ErrPayoutAccountMissing):
+		return "payout_account_missing"
 	case errors.Is(err, ErrInvalidAmount):
 		return "invalid_amount"
 	case errors.Is(err, ErrPinNotSet):
