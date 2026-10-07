@@ -1066,7 +1066,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	}
 
 	if cfg.FeatureGroupsEnabled {
-		groupsSvc := groups.NewService(pool, ledgerSvc).WithTiers(tiersSvc)
+		// WithAuditor wires the shared immutable-audit sink (auditSink is a
+		// services.AuditService — it satisfies groups.Auditor's LogAction
+		// signature, same pattern social uses in top5_routes.go) so PayDues
+		// emits an audit event per the money-mutation iron rule.
+		groupsSvc := groups.NewService(pool, ledgerSvc).WithTiers(tiersSvc).WithAuditor(auditSink)
 		groupsHandler := groups.NewHandler(groupsSvc)
 		grp := finance.Group("/groups")
 		grp.POST("", groupsHandler.Create)

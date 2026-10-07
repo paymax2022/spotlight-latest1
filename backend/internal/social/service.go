@@ -106,9 +106,32 @@ func (s *Service) Send(ctx context.Context, senderID, recipientHandle, note, ide
 	// user already used must NOT replay their payment back to this caller
 	// (that would leak their sender/recipient/amount); it falls through to the
 	// insert, where the unique constraint and the ledger leg keys stop the
-	// cross-user reuse as an error instead.
-	if p, err := s.paymentByIdem(ctx, senderID, idemKey); err == nil && p != nil {
-		return p, nil
+	// cross-user reuse as an error instead. Lookup errors are returned, not
+	// swallowed (a failed read must never fall through to a second debit), and
+	// a same-key row carrying DIFFERENT material params is a 409-grade
+	// conflict, not an echo (D7).
+	reference := "p2p:" + idemKey
+	p, err := s.paymentByIdem(ctx, senderID, idemKey)
+	if err != nil {
+		return nil, fmt.Errorf("social: send replay lookup: %w", err)
+	}
+	if p != nil {
+		if p.RecipientID == recipientID && p.AmountKobo == amountKobo {
+			return p, nil
+		}
+		return nil, ErrIdempotencyKeyConflict
+	}
+
+	// Deploy-boundary convergence (D1): pre-namespacing builds posted this
+	// send's legs under the RAW caller key (debit <K>:dr, credit <K>:cr — same
+	// "p2p:<K>" reference). A crash post-legs/pre-row on the old build leaves
+	// legs-but-no-row residue that namespaced-only lookups miss, and the retry
+	// would post a SECOND debit + credit. Probe the legacy keys BEFORE the
+	// gate and converge: money already moved, so no gate may refuse it.
+	if cp, done, err := s.convergeLegacySend(ctx, senderID, recipientID, note, idemKey, amountKobo); err != nil {
+		return nil, err
+	} else if done {
+		return cp, nil
 	}
 
 	// Tier guard (fail-closed, E2E-FIN-041): a cashtag send is a wallet debit, so
@@ -133,23 +156,107 @@ func (s *Service) Send(ctx context.Context, senderID, recipientHandle, note, ide
 	if err != nil {
 		return nil, err
 	}
-	if err := s.led.Debit(ctx, senderID, "p2p:"+idemKey, journalKey+":dr", escrowAcc.ID, amountKobo); err != nil {
+	if err := s.led.Debit(ctx, senderID, reference, journalKey+":dr", escrowAcc.ID, amountKobo); err != nil {
 		return nil, fmt.Errorf("social: send debit: %w", err)
 	}
-	if err := s.led.Credit(ctx, recipientID, "p2p:"+idemKey, journalKey+":cr", escrowAcc.ID, amountKobo); err != nil {
-		return nil, fmt.Errorf("social: send credit: %w", err)
+	if err := s.led.Credit(ctx, recipientID, reference, journalKey+":cr", escrowAcc.ID, amountKobo); err != nil {
+		// D3: a crash after BOTH legs committed but before the social_payments
+		// row leaves the namespaced journal already posted — Credit returns
+		// ErrDuplicate on every retry and the payment wedges forever (money
+		// moved, no row — and the error invites a true double-pay under a
+		// fresh key). Verify the leg really landed for THIS recipient on the
+		// shared "p2p:<K>" reference, then converge to the row insert; a
+		// duplicate that does NOT back this recipient is a foreign collision —
+		// fail loudly.
+		if !errors.Is(err, ledger.ErrDuplicate) {
+			return nil, fmt.Errorf("social: send credit: %w", err)
+		}
+		posted, verr := s.legPosted(ctx, recipientID, reference, ledger.EntryCredit, amountKobo)
+		if verr != nil {
+			return nil, verr
+		}
+		if !posted {
+			return nil, fmt.Errorf("social: send credit: %w", err)
+		}
 	}
 
+	p, err = s.recordPayment(ctx, senderID, recipientID, note, idemKey, amountKobo)
+	if err != nil {
+		return nil, err
+	}
+	s.log(senderID, recipientID, "social.p2p.send", "social_payment", p.ID, nil, map[string]any{"amount_kobo": amountKobo})
+	return p, nil
+}
+
+// convergeLegacySend resolves pre-namespacing Send residue (D1): on the old
+// build the debit posted under journal key <K>:dr and the credit under <K>:cr
+// — both with the same "p2p:<K>" reference the namespaced keys still use.
+// Returns (payment, true) when legacy legs were found and converged —
+// completing a missing recipient credit under the LEGACY key and writing the
+// row — (nil, false, nil) when no legacy residue exists.
+func (s *Service) convergeLegacySend(ctx context.Context, senderID, recipientID, note, idemKey string, amountKobo int64) (*Payment, bool, error) {
+	reference := "p2p:" + idemKey
+	debitedAmt, found, err := s.walletEntryAmount(ctx, senderID, idemKey+":dr:debit", reference)
+	if err != nil {
+		return nil, false, err
+	}
+	if !found {
+		return nil, false, nil
+	}
+	if debitedAmt != amountKobo {
+		// The raw key already moved a different amount — divergent replay.
+		return nil, true, ErrIdempotencyKeyConflict
+	}
+	// Complete the recipient leg if the crash took it (tolerate ErrDuplicate —
+	// a concurrent retry may beat us — but the landed leg must be OURS).
+	if _, ok, err := s.walletEntryAmount(ctx, recipientID, idemKey+":cr:credit", reference); err != nil {
+		return nil, true, err
+	} else if !ok {
+		escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+		if err != nil {
+			return nil, true, err
+		}
+		if err := s.led.Credit(ctx, recipientID, reference, idemKey+":cr", escrowAcc.ID, amountKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+			return nil, true, fmt.Errorf("social: send converge credit: %w", err)
+		}
+		if _, ok, err := s.walletEntryAmount(ctx, recipientID, idemKey+":cr:credit", reference); err != nil {
+			return nil, true, err
+		} else if !ok {
+			return nil, true, errors.New("social: send converge credit did not land for this recipient — refusing")
+		}
+	}
+	p, err := s.recordPayment(ctx, senderID, recipientID, note, idemKey, amountKobo)
+	if err != nil {
+		return nil, true, err
+	}
+	s.log(senderID, recipientID, "social.p2p.send", "social_payment", p.ID, nil, map[string]any{"amount_kobo": amountKobo})
+	return p, true, nil
+}
+
+// recordPayment inserts the social_payments row — the replay anchor — and
+// resolves the ON CONFLICT winner caller-scoped: a conflicting row owned by a
+// different operation is ErrIdempotencyKeyConflict, not a silent success.
+func (s *Service) recordPayment(ctx context.Context, senderID, recipientID, note, idemKey string, amountKobo int64) (*Payment, error) {
 	p := &Payment{
 		ID: uuid.New().String(), SenderID: senderID, RecipientID: recipientID,
 		AmountKobo: amountKobo, Note: note, IdempotencyKey: idemKey, CreatedAt: time.Now(),
 	}
 	const ins = `INSERT INTO social_payments (id, sender_id, recipient_id, amount_kobo, note, idempotency_key)
 	             VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (idempotency_key) DO NOTHING`
-	if _, err := s.db.Exec(ctx, ins, p.ID, p.SenderID, p.RecipientID, p.AmountKobo, p.Note, p.IdempotencyKey); err != nil {
+	ct, err := s.db.Exec(ctx, ins, p.ID, p.SenderID, p.RecipientID, p.AmountKobo, p.Note, p.IdempotencyKey)
+	if err != nil {
 		return nil, fmt.Errorf("social: record payment: %w", err)
 	}
-	s.log(senderID, recipientID, "social.p2p.send", "social_payment", p.ID, nil, map[string]any{"amount_kobo": amountKobo})
+	if ct.RowsAffected() == 0 {
+		winner, err := s.paymentByIdem(ctx, senderID, idemKey)
+		if err != nil {
+			return nil, fmt.Errorf("social: send conflict lookup: %w", err)
+		}
+		if winner != nil && winner.RecipientID == recipientID && winner.AmountKobo == amountKobo {
+			return winner, nil
+		}
+		return nil, ErrIdempotencyKeyConflict
+	}
 	return p, nil
 }
 
@@ -198,6 +305,43 @@ func (s *Service) legPosted(ctx context.Context, userID, reference string, entry
 	return ok, nil
 }
 
+// walletEntryAmount returns the amount of the ledger entry carrying exactly
+// this idempotency_key AND reference on userID's user_wallet — the precise
+// per-leg probe (account + key + ref) used for deploy-boundary residue and
+// deterministic-key replay checks, where a reference-only probe could
+// false-positive on a same-amount sibling operation.
+func (s *Service) walletEntryAmount(ctx context.Context, userID, entryKey, reference string) (int64, bool, error) {
+	var amt int64
+	err := s.db.QueryRow(ctx, `SELECT e.amount_kobo FROM ledger_entries e
+		JOIN ledger_accounts a ON a.id = e.account_id
+		WHERE a.user_id = $1 AND a.type = 'user_wallet'
+		  AND e.idempotency_key = $2 AND e.reference = $3`,
+		userID, entryKey, reference).Scan(&amt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("social: wallet entry probe: %w", err)
+	}
+	return amt, true, nil
+}
+
+// creditedAmount sums the CREDIT legs posted on userID's user_wallet under
+// reference — the actual money moved for that purpose, regardless of which
+// idempotency-key convention posted it (deploy boundary: raw caller key vs
+// namespaced/deterministic key).
+func (s *Service) creditedAmount(ctx context.Context, userID, reference string) (int64, error) {
+	var amt int64
+	if err := s.db.QueryRow(ctx, `SELECT COALESCE(SUM(e.amount_kobo),0) FROM ledger_entries e
+		JOIN ledger_accounts a ON a.id = e.account_id
+		WHERE a.user_id = $1 AND a.type = 'user_wallet'
+		  AND e.reference = $2 AND e.type = 'CREDIT'`,
+		userID, reference).Scan(&amt); err != nil {
+		return 0, fmt.Errorf("social: credited amount probe: %w", err)
+	}
+	return amt, nil
+}
+
 // PayRequest fulfils a request. Object-level authZ: ONLY the named payer may pay,
 // and only a PENDING request. The transfer is idempotent on the request id.
 func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) error {
@@ -240,6 +384,9 @@ func (s *Service) PayRequest(ctx context.Context, payerID, requestID string) err
 			if err := s.led.Credit(ctx, r.RequesterID, key, key+":cr", escrowAcc.ID, r.AmountKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 				return fmt.Errorf("social: pay request credit: %w", err)
 			}
+			// A heal credit is a money mutation — it must audit (iron rule).
+			s.log(payerID, r.RequesterID, "social.request.pay.heal", "social_request", requestID,
+				nil, map[string]any{"amount_kobo": r.AmountKobo, "state": "PAID"})
 			return nil
 		}
 		if _, err := s.db.Exec(ctx,
@@ -483,18 +630,30 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 		//                             a concurrent caller beat us to it);
 		//   no legs at all          → stale claim — revert to PENDING and pay
 		//                             through the normal path below.
-		settled, err := s.legPosted(ctx, bill.OrganiserID, ref, ledger.EntryCredit, sh.AmountKobo)
+		// The probes key on the deterministic PER-SHARE ledger keys
+		// ("split:<shareID>:cr:credit" / "split:<shareID>:dr:debit"), never on
+		// (reference, amount): every share of a bill posts under the same
+		// "split:<bill>" reference, so an equal-amount SIBLING share's legs
+		// would otherwise satisfy the check and phantom-settle this share
+		// (525-D4).
+		creditedAmt, credited, err := s.walletEntryAmount(ctx, bill.OrganiserID, key+":cr:credit", ref)
 		if err != nil {
 			return err
 		}
-		if settled {
-			return nil
+		if credited {
+			if creditedAmt == sh.AmountKobo {
+				return nil
+			}
+			return fmt.Errorf("social: share %s credit leg amount %d != share amount %d — refusing to converge on a mismatched leg", shareID, creditedAmt, sh.AmountKobo)
 		}
-		debited, err := s.legPosted(ctx, payerID, ref, ledger.EntryDebit, sh.AmountKobo)
+		debitedAmt, debited, err := s.walletEntryAmount(ctx, payerID, key+":dr:debit", ref)
 		if err != nil {
 			return err
 		}
 		if debited {
+			if debitedAmt != sh.AmountKobo {
+				return fmt.Errorf("social: share %s debit leg amount %d != share amount %d — refusing to converge on a mismatched leg", shareID, debitedAmt, sh.AmountKobo)
+			}
 			escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 			if err != nil {
 				return err
@@ -502,6 +661,9 @@ func (s *Service) PayShare(ctx context.Context, payerID, shareID, idemKey string
 			if err := s.led.Credit(ctx, bill.OrganiserID, ref, key+":cr", escrowAcc.ID, sh.AmountKobo); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 				return fmt.Errorf("social: pay share credit: %w", err)
 			}
+			// A heal credit is a money mutation — it must audit (iron rule).
+			s.log(payerID, bill.OrganiserID, "social.split.pay.heal", "split_share", shareID,
+				nil, map[string]any{"amount_kobo": sh.AmountKobo, "state": "PAID"})
 			return nil
 		}
 		if _, err := s.db.Exec(ctx,
@@ -642,23 +804,9 @@ func (s *Service) ContributePool(ctx context.Context, userID, poolID string, amo
 		if existing.UserID == userID && existing.PoolID == poolID && existing.AmountKobo == amountKobo {
 			return s.PoolBalance(ctx, poolID)
 		}
-		return 0, errors.New("social: contribution replayed under a colliding idempotency key — use a fresh Idempotency-Key")
+		return 0, ErrIdempotencyKeyConflict
 	}
-	if p.State != PoolOpen {
-		return 0, errors.New("social: pool not open")
-	}
-	if err := s.aml.Check(ctx, userID, amountKobo); err != nil {
-		return 0, err
-	}
-	// Tier guard (fail-closed, E2E-FIN-041): a pool contribution is a wallet
-	// debit and runs the same EnforceWalletDebitLimit as the transfer rail.
-	if err := s.enforceDebitLimit(ctx, userID, amountKobo); err != nil {
-		return 0, err
-	}
-	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
-	if err != nil {
-		return 0, err
-	}
+	reference := "pool:contrib:" + poolID
 	// The journal key is namespaced AND pool-scoped ("social:pool:<pool>:"):
 	// a caller key can never be absorbed by a journal another rail — or
 	// another pool — already posted under the same raw key (S2). This path is
@@ -667,26 +815,74 @@ func (s *Service) ContributePool(ctx context.Context, userID, poolID string, amo
 	// here — and the ON CONFLICT row insert below would swallow the lie,
 	// leaving a phantom "contributed" state.
 	journalKey := "social:pool:" + poolID + ":" + idemKey
-	if err := s.led.Debit(ctx, userID, "pool:contrib:"+poolID, journalKey+":dr", escrowAcc.ID, amountKobo); err != nil {
-		return 0, fmt.Errorf("social: pool contribute debit: %w", err)
+
+	if p.State != PoolOpen {
+		// A contribution can lose the payout race AFTER its debit posted — the
+		// fenced insert below then refuses, leaving an orphaned escrowed debit
+		// (also reachable as pre-namespacing raw-key residue, D1). Sweep it
+		// back to the contributor rather than reporting "not open" over moved
+		// money.
+		if amt, refunded, rerr := s.refundContributionResidue(ctx, userID, poolID, reference, journalKey, idemKey); rerr != nil {
+			return 0, rerr
+		} else if refunded {
+			return 0, fmt.Errorf("social: pool not open — orphaned contribution debit of %d kobo refunded", amt)
+		}
+		return 0, errors.New("social: pool not open")
 	}
-	// Verify the debit leg posted on THIS contributor's wallet (S2): compare
-	// account + key + amount, not merely key existence. A key colliding with
-	// another user's contribution is refused — a no-op "success" would record
-	// a contribution nobody paid for.
-	wallet, err := s.led.GetOrCreateUserWallet(ctx, userID)
+
+	// Deploy-boundary convergence (D1): pre-namespacing builds posted the
+	// contribution debit under the RAW caller key (<K>:dr — the SAME
+	// "pool:contrib:<pool>" reference the namespaced key still carries). A
+	// crash post-debit/pre-row on the old build leaves a leg but no row; a
+	// namespaced-only lookup would debit AGAIN. Probe BEFORE any gate:
+	// money already moved, so no gate may refuse the convergence.
+	debitedAmt, debited, err := s.walletEntryAmount(ctx, userID, idemKey+":dr:debit", reference)
 	if err != nil {
-		return 0, fmt.Errorf("social: pool contribute wallet lookup: %w", err)
+		return 0, fmt.Errorf("social: pool contribute legacy probe: %w", err)
 	}
-	posted, ok, err := s.led.EntryAmount(ctx, wallet.ID, journalKey+":dr:debit")
-	if err != nil {
-		return 0, fmt.Errorf("social: pool contribute verify: %w", err)
+	if debited && debitedAmt != amountKobo {
+		return 0, ErrIdempotencyKeyConflict
 	}
-	if !ok || posted != amountKobo {
-		return 0, errors.New("social: contribution replayed under a colliding idempotency key — use a fresh Idempotency-Key")
+	if !debited {
+		if err := s.aml.Check(ctx, userID, amountKobo); err != nil {
+			return 0, err
+		}
+		// Tier guard (fail-closed, E2E-FIN-041): a pool contribution is a
+		// wallet debit and runs the same EnforceWalletDebitLimit as the
+		// transfer rail.
+		if err := s.enforceDebitLimit(ctx, userID, amountKobo); err != nil {
+			return 0, err
+		}
+		escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+		if err != nil {
+			return 0, err
+		}
+		if err := s.led.Debit(ctx, userID, reference, journalKey+":dr", escrowAcc.ID, amountKobo); err != nil {
+			return 0, fmt.Errorf("social: pool contribute debit: %w", err)
+		}
+		// Verify the debit leg posted on THIS contributor's wallet (S2):
+		// compare account + key + amount, not merely key existence. A key
+		// colliding with another user's contribution is refused — a no-op
+		// "success" would record a contribution nobody paid for.
+		wallet, err := s.led.GetOrCreateUserWallet(ctx, userID)
+		if err != nil {
+			return 0, fmt.Errorf("social: pool contribute wallet lookup: %w", err)
+		}
+		posted, ok, err := s.led.EntryAmount(ctx, wallet.ID, journalKey+":dr:debit")
+		if err != nil {
+			return 0, fmt.Errorf("social: pool contribute verify: %w", err)
+		}
+		if !ok || posted != amountKobo {
+			return 0, ErrIdempotencyKeyConflict
+		}
 	}
+	// The insert is FENCED on pool state (D2): a contribution in-flight across
+	// a PayoutPool claim must not land its row after the balance freeze — the
+	// contributor would be debited into escrow yet excluded from the payout.
 	const ins = `INSERT INTO pool_contributions (id, pool_id, user_id, amount_kobo, idempotency_key)
-	             VALUES ($1,$2,$3,$4,$5) ON CONFLICT (idempotency_key) DO NOTHING`
+	             SELECT $1,$2,$3,$4,$5
+	             WHERE EXISTS (SELECT 1 FROM group_pools WHERE id=$2 AND state='OPEN')
+	             ON CONFLICT (idempotency_key) DO NOTHING`
 	ct, err := s.db.Exec(ctx, ins, uuid.New().String(), poolID, userID, amountKobo, idemKey)
 	if err != nil {
 		return 0, fmt.Errorf("social: pool contribute record: %w", err)
@@ -702,10 +898,58 @@ func (s *Service) ContributePool(ctx context.Context, userID, poolID string, amo
 		if winner != nil && winner.UserID == userID && winner.PoolID == poolID && winner.AmountKobo == amountKobo {
 			return s.PoolBalance(ctx, poolID)
 		}
-		return 0, errors.New("social: contribution replayed under a colliding idempotency key — use a fresh Idempotency-Key")
+		if winner != nil {
+			return 0, ErrIdempotencyKeyConflict
+		}
+		// No row owns the key — the WHERE EXISTS fence refused: the pool paid
+		// out between the state check and this insert. The posted debit is
+		// escrowed money with nowhere to land — reverse it (the only
+		// correction primitive; ledger entries are immutable).
+		if amt, refunded, rerr := s.refundContributionResidue(ctx, userID, poolID, reference, journalKey, idemKey); rerr != nil {
+			return 0, rerr
+		} else if refunded {
+			return 0, fmt.Errorf("social: pool closed before the contribution landed — %d kobo refunded", amt)
+		}
+		return 0, errors.New("social: contribution not recorded")
 	}
 	s.log(userID, "", "social.pool.contribute", "group_pool", poolID, nil, map[string]any{"amount_kobo": amountKobo})
 	return s.PoolBalance(ctx, poolID)
+}
+
+// refundContributionResidue reverses contribution debits that can never land
+// as a pool_contributions row — a contribution that lost the payout race, or
+// deploy-boundary residue (raw-key <K>:dr legs from the pre-namespacing
+// build). The reversal is the ONLY correction primitive (ledger entries are
+// immutable): REVERSAL_DEBIT restores the contributor wallet, REVERSAL_CREDIT
+// drains the escrow park. Keyed off the pool-scoped journal key so a retry
+// no-ops. Returns the total kobo refunded.
+func (s *Service) refundContributionResidue(ctx context.Context, userID, poolID, reference, journalKey, idemKey string) (int64, bool, error) {
+	var total int64
+	for _, entryKey := range []string{journalKey + ":dr:debit", idemKey + ":dr:debit"} {
+		amt, found, err := s.walletEntryAmount(ctx, userID, entryKey, reference)
+		if err != nil {
+			return 0, false, fmt.Errorf("social: pool residue probe: %w", err)
+		}
+		if found {
+			total += amt
+		}
+	}
+	if total <= 0 {
+		return 0, false, nil
+	}
+	wallet, err := s.led.GetOrCreateUserWallet(ctx, userID)
+	if err != nil {
+		return 0, false, fmt.Errorf("social: pool refund wallet: %w", err)
+	}
+	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		return 0, false, err
+	}
+	if err := s.led.PostReversal(ctx, wallet.ID, escrowAcc.ID, total, reference, journalKey+":refund"); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+		return 0, false, fmt.Errorf("social: pool contribution refund: %w", err)
+	}
+	s.log(userID, "", "social.pool.contribute.refunded", "group_pool", poolID, nil, map[string]any{"amount_kobo": total})
+	return total, true, nil
 }
 
 // payoutAmount reconstructs the amount a pool payout moved (or should have
@@ -769,11 +1013,22 @@ func (s *Service) PayoutPool(ctx context.Context, organiserID, poolID, idemKey s
 		if paid <= 0 {
 			return nil // nothing was ever contributed — nothing owed
 		}
-		credited, err := s.legPosted(ctx, beneficiary, key, ledger.EntryCredit, paid)
+		// The drain must mirror the ACTUAL posted credit, not the recomputed
+		// row sum (525-D2): a contribution row that slipped in post-freeze on
+		// a pre-fence build inflates `paid` beyond the money that moved, and
+		// draining by it would claim more paid out than the ledger shows.
+		// Sum the CREDIT legs under the payout reference — key-convention
+		// agnostic, so a pre-deterministic-key caller-keyed credit counts too
+		// (the old build keyed this credit off the caller's Idempotency-Key).
+		moved, err := s.creditedAmount(ctx, beneficiary, key)
 		if err != nil {
 			return err
 		}
-		if !credited {
+		if moved == 0 {
+			// Credit never landed — post it under the deterministic key
+			// (ErrDuplicate no-ops if a concurrent retry beat us), then
+			// re-read: a duplicate that is NOT this payout's leg must not be
+			// treated as money moved.
 			escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 			if err != nil {
 				return err
@@ -781,13 +1036,26 @@ func (s *Service) PayoutPool(ctx context.Context, organiserID, poolID, idemKey s
 			if err := s.led.Credit(ctx, beneficiary, key, key+":cr", escrowAcc.ID, paid); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 				return fmt.Errorf("social: pool payout credit: %w", err)
 			}
+			if moved, err = s.creditedAmount(ctx, beneficiary, key); err != nil {
+				return err
+			}
+			if moved == 0 {
+				return errors.New("social: pool payout credit did not land for the beneficiary — refusing")
+			}
 		}
-		// Ensure the drain row — without it PoolBalance keeps reading
-		// positive on a paid-out pool (crash between credit and drain).
-		if _, err := s.db.Exec(ctx, drainIns, uuid.New().String(), poolID, beneficiary, -paid, "payout:"+poolID); err != nil {
+		// Ensure the drain row — for the ACTUAL credit, not the row sum.
+		// Without it PoolBalance keeps reading positive on a paid-out pool
+		// (crash between credit and drain).
+		if _, err := s.db.Exec(ctx, drainIns, uuid.New().String(), poolID, beneficiary, -moved, "payout:"+poolID); err != nil {
 			return fmt.Errorf("social: pool drain record: %w", err)
 		}
-		s.log(organiserID, beneficiary, "social.pool.payout.heal", "group_pool", poolID, nil, map[string]any{"amount_kobo": paid})
+		s.log(organiserID, beneficiary, "social.pool.payout.heal", "group_pool", poolID, nil, map[string]any{"amount_kobo": moved})
+		if moved != paid {
+			// Rows claim more (or less) than the ledger moved — a post-freeze
+			// contribution row leaked in. The drain now reflects reality; the
+			// residual PoolBalance stays visible for ops reconciliation.
+			return fmt.Errorf("social: pool %s payout moved %d kobo but contribution rows claim %d — refusing to converge silently", poolID, moved, paid)
+		}
 		return nil
 	}
 	if !canPool(p.State, PoolPaidOut) {
@@ -927,6 +1195,11 @@ func (s *Service) log(actor, target, action, resType, resID string, oldV, newV m
 var (
 	ErrForbidden = errors.New("social: forbidden")
 	ErrNotFound  = errors.New("social: not found")
+	// ErrIdempotencyKeyConflict is returned when a caller's Idempotency-Key is
+	// already bound to a DIFFERENT operation (other recipient, pool, plan or
+	// amount). Mapped to 409 at the handler — the same contract the transfer
+	// rail's ErrIdempotencyKeyConflict exposes.
+	ErrIdempotencyKeyConflict = errors.New("social: idempotency key already used by another operation")
 )
 
 // AMLConfig is versioned velocity policy for P2P sends (NL-10). Defaults are

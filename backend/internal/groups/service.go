@@ -41,6 +41,18 @@ var ErrGroupNotFound = errors.New("groups: group not found")
 // to a different group — a client error (404), not a server fault.
 var ErrPlanNotFound = errors.New("groups: subscription plan not found")
 
+// ErrIdempotencyKeyConflict is returned when a member's Idempotency-Key is
+// already bound to a DIFFERENT dues operation (other group, plan or amount).
+// Mapped to 409 at the handler — same contract as transfers and social.
+var ErrIdempotencyKeyConflict = errors.New("groups: idempotency key already used by another dues payment")
+
+// Auditor is the immutable-audit slice the groups money path needs — the same
+// shape as social.Auditor (NL-12 / iron rule: every money mutation emits an
+// audit event). nil-safe.
+type Auditor interface {
+	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
+}
+
 // tierLimiter is the minimal seam the dues money-path depends on for the
 // fail-closed KYC-tier / daily-spend gate. *tiers.Service satisfies it in
 // production; not imported directly here to avoid a package-cycle risk and to
@@ -54,6 +66,7 @@ type Service struct {
 	db     *pgxpool.Pool
 	ledger *ledger.Service
 	tiers  tierLimiter
+	audit  Auditor
 }
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
@@ -67,6 +80,24 @@ func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
 func (s *Service) WithTiers(t tierLimiter) *Service {
 	s.tiers = t
 	return s
+}
+
+// WithAuditor wires the immutable-audit sink into the dues money path. A nil
+// argument is ignored so an unwired injection can never strip the sink —
+// same convention as social's WithTiers.
+func (s *Service) WithAuditor(a Auditor) *Service {
+	if a != nil {
+		s.audit = a
+	}
+	return s
+}
+
+// log emits a module-scoped audit event; nil-safe.
+func (s *Service) log(actor, target, action, resType, resID string, oldV, newV map[string]any) {
+	if s.audit == nil {
+		return
+	}
+	s.audit.LogAction(actor, target, action, "groups", resType, resID, oldV, newV, "", "", "info")
 }
 
 // Create creates a new group and its ledger wallet account.
@@ -213,7 +244,44 @@ func (s *Service) PayDues(ctx context.Context, groupID, memberID string, req Pay
 	// after it for the same reason transfers put walletPreflight after replay:
 	// once money moved, re-running the gate can only refuse a request whose
 	// debit already posted — and that error invites a fresh-key double-pay.
-	if p, err := s.paymentByIdem(ctx, memberID, req.IdempotencyKey); err == nil && p != nil {
+	// Lookup errors are returned, not swallowed (D7): a failed read must never
+	// fall through to a second debit.
+	p, err := s.paymentByIdem(ctx, memberID, req.IdempotencyKey)
+	if err != nil {
+		return nil, fmt.Errorf("groups: pay dues replay lookup: %w", err)
+	}
+	if p != nil {
+		// A same-key row for THIS member must carry the same material params
+		// (D7): a different plan/amount/group under a reused key is a
+		// 409-grade conflict, not a silent echo of the other payment.
+		if p.GroupID == groupID && p.PlanID == req.PlanID && p.AmountKobo == plan.AmountKobo {
+			return p, nil
+		}
+		return nil, ErrIdempotencyKeyConflict
+	}
+
+	ref := "dues:" + groupID + ":" + req.PlanID
+	// Deploy-boundary convergence (525-D1): pre-namespacing builds posted the
+	// dues debit under the RAW caller key (entry <K>:debit on the member
+	// wallet — the SAME "dues:<group>:<plan>" reference the namespaced key
+	// still carries; the journal is atomic, so the group-wallet credit
+	// <K>:credit exists iff the debit does). A crash post-legs/pre-row on the
+	// old build leaves that leg but no group_payments row; a namespaced-only
+	// retry would debit AGAIN. Probe BEFORE the gate and converge: money
+	// already moved, so no gate may refuse it.
+	legacyAmt, legacyFound, err := s.memberEntryAmount(ctx, memberID, req.IdempotencyKey+":debit", ref)
+	if err != nil {
+		return nil, fmt.Errorf("groups: pay dues legacy probe: %w", err)
+	}
+	if legacyFound {
+		if legacyAmt != plan.AmountKobo {
+			return nil, ErrIdempotencyKeyConflict
+		}
+		p, err := s.recordDuesPayment(ctx, groupID, memberID, req.PlanID, plan.AmountKobo, req.IdempotencyKey)
+		if err != nil {
+			return nil, err
+		}
+		s.log(memberID, "", "groups.dues.pay", "group_payment", p.ID, nil, map[string]any{"amount_kobo": plan.AmountKobo, "plan_id": req.PlanID, "converged": true})
 		return p, nil
 	}
 
@@ -226,7 +294,6 @@ func (s *Service) PayDues(ctx context.Context, groupID, memberID string, req Pay
 		return nil, fmt.Errorf("groups: pay dues tier gate: %w", err)
 	}
 
-	ref := "dues:" + groupID + ":" + req.PlanID
 	// The ledger journal key is namespaced ("groups:dues:"): a caller key can
 	// never be absorbed by a journal posted under another rail's purpose (S2).
 	// DebitWithBalanceCheck's replay check compares only amount under the key,
@@ -251,26 +318,73 @@ func (s *Service) PayDues(ctx context.Context, groupID, memberID string, req Pay
 		return nil, fmt.Errorf("groups: pay dues verify: %w", err)
 	}
 	if !ok || posted != plan.AmountKobo {
-		return nil, errors.New("groups: dues replayed under a colliding idempotency key — use a fresh Idempotency-Key")
+		return nil, ErrIdempotencyKeyConflict
 	}
 
+	p, err = s.recordDuesPayment(ctx, groupID, memberID, req.PlanID, plan.AmountKobo, req.IdempotencyKey)
+	if err != nil {
+		return nil, err
+	}
+	s.log(memberID, "", "groups.dues.pay", "group_payment", p.ID, nil, map[string]any{"amount_kobo": plan.AmountKobo, "plan_id": req.PlanID})
+	return p, nil
+}
+
+// recordDuesPayment inserts the group_payments row — the replay anchor — and
+// resolves the ON CONFLICT winner member-scoped: a conflicting row owned by a
+// different dues operation is ErrIdempotencyKeyConflict, not silent success.
+func (s *Service) recordDuesPayment(ctx context.Context, groupID, memberID, planID string, amountKobo int64, idemKey string) (*SubscriptionPayment, error) {
 	p := &SubscriptionPayment{
 		ID:             uuid.New().String(),
 		GroupID:        groupID,
 		MemberID:       memberID,
-		PlanID:         req.PlanID,
-		AmountKobo:     plan.AmountKobo,
+		PlanID:         planID,
+		AmountKobo:     amountKobo,
 		Status:         "paid",
 		PeriodStart:    time.Now(),
 		PeriodEnd:      time.Now().AddDate(0, 1, 0),
-		IdempotencyKey: req.IdempotencyKey,
+		IdempotencyKey: idemKey,
 		CreatedAt:      time.Now(),
 	}
 	const insertPayment = `
 		INSERT INTO group_payments (id, group_id, member_id, plan_id, amount_kobo, status, period_start, period_end, idempotency_key)
-		VALUES ($1,$2,$3,$4,$5,'paid',$6,$7,$8)`
-	_, err = s.db.Exec(ctx, insertPayment, p.ID, p.GroupID, p.MemberID, p.PlanID, p.AmountKobo, p.PeriodStart, p.PeriodEnd, p.IdempotencyKey)
-	return p, err
+		VALUES ($1,$2,$3,$4,$5,'paid',$6,$7,$8)
+		ON CONFLICT (idempotency_key) DO NOTHING`
+	ct, err := s.db.Exec(ctx, insertPayment, p.ID, p.GroupID, p.MemberID, p.PlanID, p.AmountKobo, p.PeriodStart, p.PeriodEnd, p.IdempotencyKey)
+	if err != nil {
+		return nil, fmt.Errorf("groups: record dues payment: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		winner, err := s.paymentByIdem(ctx, memberID, idemKey)
+		if err != nil {
+			return nil, fmt.Errorf("groups: pay dues conflict lookup: %w", err)
+		}
+		if winner != nil && winner.GroupID == groupID && winner.PlanID == planID && winner.AmountKobo == amountKobo {
+			return winner, nil
+		}
+		return nil, ErrIdempotencyKeyConflict
+	}
+	return p, nil
+}
+
+// memberEntryAmount returns the amount of the ledger entry carrying exactly
+// this idempotency_key AND reference on memberID's user_wallet — the precise
+// per-leg probe (account + key + ref) used for deploy-boundary residue: a raw
+// caller key could otherwise match an entry posted by a DIFFERENT rail under
+// the same key (pre-namespacing every rail used raw caller keys).
+func (s *Service) memberEntryAmount(ctx context.Context, memberID, entryKey, reference string) (int64, bool, error) {
+	var amt int64
+	err := s.db.QueryRow(ctx, `SELECT e.amount_kobo FROM ledger_entries e
+		JOIN ledger_accounts a ON a.id = e.account_id
+		WHERE a.user_id = $1 AND a.type = 'user_wallet'
+		  AND e.idempotency_key = $2 AND e.reference = $3`,
+		memberID, entryKey, reference).Scan(&amt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("groups: member entry probe: %w", err)
+	}
+	return amt, true, nil
 }
 
 // paymentByIdem returns the dues payment recorded for THIS member under
@@ -396,6 +510,7 @@ func (h *Handler) PayDues(c *gin.Context) {
 var payDuesErrMap = httperr.New(http.StatusInternalServerError,
 	httperr.R(http.StatusNotFound, ErrPlanNotFound),
 	httperr.R(http.StatusForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
+	httperr.R(http.StatusConflict, ErrIdempotencyKeyConflict),
 	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
 )
 

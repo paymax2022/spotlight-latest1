@@ -34,6 +34,7 @@ var errMap = httperr.New(http.StatusBadRequest,
 	httperr.R(http.StatusForbidden, ErrForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
 	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired),
 	httperr.R(http.StatusNotFound, ErrNotFound, cashtag.ErrNotFound),
+	httperr.R(http.StatusConflict, ErrIdempotencyKeyConflict),
 	httperr.R(http.StatusTooManyRequests, ErrAMLSingleLimit, ErrAMLCountLimit, ErrAMLAmountLimit),
 )
 
