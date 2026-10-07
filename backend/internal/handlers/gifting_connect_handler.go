@@ -262,36 +262,46 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "recipient wallet unavailable"})
 		return
 	}
+	senderWallet, err := h.ledgerSvc.GetOrCreateUserWallet(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "wallet unavailable"})
+		return
+	}
 
-	// Balanced journal: DR sender wallet -> CR recipient wallet. wallet.Debit
-	// enforces the tier limit fail-closed and the balance check is TOCTOU-safe.
-	debitErr := h.walletSvc.Debit(c.Request.Context(), userID, reference, ledgerKey, recipientWallet.ID, product.AmountKobo)
-	if errors.Is(debitErr, ledger.ErrDuplicate) {
-		// The derived key embeds this sender's user id, so a claim on it can only
-		// come from this sender's own earlier attempt — e.g. a debit committed
-		// under an older reference shape before a crash. If the durable pair is
-		// provably this gift, adopt the RECORDED reference and finish the
-		// projection; a foreign or tampered claim still fails closed as 409.
-		senderWallet, werr := h.ledgerSvc.GetOrCreateUserWallet(c.Request.Context(), userID)
-		if werr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "wallet unavailable"})
-			return
-		}
-		recRef, ok, aerr := adoptLedgerReplay(c.Request.Context(), h.ledgerSvc, ledgerKey, senderWallet.ID, recipientWallet.ID, product.AmountKobo)
-		if aerr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "transaction could not be completed"})
-			return
-		}
-		if !ok {
+	// Identity-verified replay fast-path BEFORE the tier/balance gates inside
+	// wallet.Debit: the original committed debit already counted against both,
+	// so re-running them wedges a true retry (limit consumed / funds moved on).
+	// A key that already holds THIS journal skips the debit and converges on
+	// the recorded row below; a key held by a different journal is not matched
+	// and falls through to the debit, which fails closed.
+	recRef, journalHeld, aerr := adoptLedgerReplay(c.Request.Context(), h.ledgerSvc, ledgerKey, senderWallet.ID, recipientWallet.ID, product.AmountKobo)
+	if aerr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errTxnCouldNotComplete})
+		return
+	}
+	if journalHeld {
+		reference = recRef
+	} else {
+		// Balanced journal: DR sender wallet -> CR recipient wallet. wallet.Debit
+		// enforces the tier limit fail-closed and the balance check is TOCTOU-safe.
+		debitErr := h.walletSvc.Debit(c.Request.Context(), userID, reference, ledgerKey, recipientWallet.ID, product.AmountKobo)
+		if errors.Is(debitErr, ledger.ErrDuplicate) {
+			// The journal landed between the fast-path probe and the debit
+			// (a racing first attempt). Adopt it only if it is provably
+			// THIS journal; a foreign or tampered claim fails closed.
+			if ref2, ok, aerr2 := adoptLedgerReplay(c.Request.Context(), h.ledgerSvc, ledgerKey, senderWallet.ID, recipientWallet.ID, product.AmountKobo); aerr2 != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": errTxnCouldNotComplete})
+				return
+			} else if ok {
+				reference = ref2
+			} else {
+				writeMoneyError(c, debitErr)
+				return
+			}
+		} else if debitErr != nil {
 			writeMoneyError(c, debitErr)
 			return
 		}
-		reference = recRef
-		debitErr = nil
-	}
-	if debitErr != nil {
-		writeMoneyError(c, debitErr)
-		return
 	}
 
 	gt, err := h.store.SendGift(c.Request.Context(), userID, body.RecipientID, body.ProductID, body.Message, product.AmountKobo, reference, ledgerKey)

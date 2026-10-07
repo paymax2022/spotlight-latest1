@@ -238,6 +238,23 @@ func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey st
 		return fmt.Errorf("ledger: advisory lock wallet=%s: %w", walletLockKey, err)
 	}
 
+	// Identity-verified replay check BEFORE the sufficiency gate: if this key
+	// already holds committed legs, the retry must converge on the ORIGINAL
+	// outcome — identical params are a no-op success, a different journal is
+	// ErrDuplicate — regardless of the CURRENT balance. Gating the replay on
+	// balance would wedge a true retry on ErrInsufficientFunds once the
+	// debited funds had legitimately moved on (the money IS already parked).
+	matched, held, err := journalLegsMatchTx(ctx, tx, j, amountKobo)
+	if err != nil {
+		return err
+	}
+	if held {
+		if matched {
+			return nil // true replay — this journal already posted identically
+		}
+		return fmt.Errorf("%w: key %s held by a different journal", ErrDuplicate, j.IdempotencyKey)
+	}
+
 	// Sufficiency check under the lock — no interleaving debit before Commit.
 	balance, err := getBalanceTx(ctx, tx, j.DebitAccountID)
 	if err != nil {
@@ -307,6 +324,56 @@ func verifyReplay(ctx context.Context, tx pgx.Tx, idempotencyKey, accountID, ref
 			accountID, string(entryType), reference, amountKobo)
 	}
 	return nil
+}
+
+// journalLegsMatchTx reads both legs of the balanced pair under j's base
+// idempotency key from within tx. It reports (matched, held):
+//   - held=false when NEITHER leg exists — the key is unclaimed;
+//   - held=true + matched=true when BOTH legs exist and are exactly this
+//     journal (account, entry type, reference and amount on each side);
+//   - held=true + matched=false otherwise — the key is held by a different
+//     journal, or by a lone leg (a partial state the ledger's own txes can
+//     never produce, i.e. a foreign claim — fail closed either way).
+func journalLegsMatchTx(ctx context.Context, tx pgx.Tx, j JournalEntry, amountKobo int64) (bool, bool, error) {
+	debitLeg, debitFound, err := entryLegTx(ctx, tx, j.IdempotencyKey+":debit")
+	if err != nil {
+		return false, false, err
+	}
+	creditLeg, creditFound, err := entryLegTx(ctx, tx, j.IdempotencyKey+":credit")
+	if err != nil {
+		return false, false, err
+	}
+	if !debitFound && !creditFound {
+		return false, false, nil
+	}
+	matched := debitFound && creditFound &&
+		debitLeg.accountID == j.DebitAccountID && debitLeg.entryType == string(EntryDebit) &&
+		debitLeg.reference == j.Reference && debitLeg.amount == amountKobo &&
+		creditLeg.accountID == j.CreditAccountID && creditLeg.entryType == string(EntryCredit) &&
+		creditLeg.reference == j.Reference && creditLeg.amount == amountKobo
+	return matched, true, nil
+}
+
+type replayLeg struct {
+	accountID string
+	entryType string
+	reference string
+	amount    int64
+}
+
+// entryLegTx reads one ledger_entries row by idempotency key inside tx.
+func entryLegTx(ctx context.Context, tx pgx.Tx, idempotencyKey string) (*replayLeg, bool, error) {
+	var l replayLeg
+	err := tx.QueryRow(ctx,
+		`SELECT account_id::text, type, reference, amount_kobo FROM ledger_entries WHERE idempotency_key=$1`,
+		idempotencyKey).Scan(&l.accountID, &l.entryType, &l.reference, &l.amount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("ledger: read replay leg %s: %w", idempotencyKey, err)
+	}
+	return &l, true, nil
 }
 
 // PostJournal writes a balanced pair of ledger entries atomically.
