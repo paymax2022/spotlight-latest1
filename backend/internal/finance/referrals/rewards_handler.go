@@ -3,6 +3,7 @@ package referrals
 import (
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -93,6 +94,47 @@ func (h *RewardHandler) GetDashboard(c *gin.Context) {
 	c.JSON(http.StatusOK, d)
 }
 
+// parsePageParams validates ?limit/?offset from raw query values. Malformed or
+// negative input is an error (the caller turns it into a 400): before this,
+// strconv.Atoi errors were swallowed to 0 — so `limit=abc` silently returned an
+// empty page — and `offset=-1` reached SQL verbatim and 500'd on
+// `OFFSET must not be negative`. limit is clamped to [default, max]; offset
+// must be >= 0.
+func parsePageParams(limitRaw, offsetRaw string, def, max int) (int, int, error) {
+	limit, offset := def, 0
+	if limitRaw != "" {
+		v, err := strconv.Atoi(limitRaw)
+		if err != nil || v < 0 {
+			return 0, 0, fmt.Errorf("invalid limit %q", limitRaw)
+		}
+		limit = v
+	}
+	if offsetRaw != "" {
+		v, err := strconv.Atoi(offsetRaw)
+		if err != nil || v < 0 {
+			return 0, 0, fmt.Errorf("invalid offset %q", offsetRaw)
+		}
+		offset = v
+	}
+	if limit == 0 {
+		limit = def
+	}
+	if limit > max {
+		limit = max
+	}
+	return limit, offset, nil
+}
+
+// pageParams is parsePageParams + the standard 400 response.
+func pageParams(c *gin.Context, def, max int) (int, int, bool) {
+	limit, offset, err := parsePageParams(c.Query("limit"), c.Query("offset"), def, max)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
+		return 0, 0, false
+	}
+	return limit, offset, true
+}
+
 // GetReferrals handles GET /v1/referrals/me/referrals.
 func (h *RewardHandler) GetReferrals(c *gin.Context) {
 	uid := ginutil.UserID(c)
@@ -100,8 +142,10 @@ func (h *RewardHandler) GetReferrals(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{keyError: msgUnauthenticated})
 		return
 	}
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	limit, offset, ok := pageParams(c, 50, 200)
+	if !ok {
+		return
+	}
 	list, err := h.svc.ListReferrals(c.Request.Context(), uid, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
@@ -117,8 +161,10 @@ func (h *RewardHandler) GetEarnings(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{keyError: msgUnauthenticated})
 		return
 	}
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	limit, offset, ok := pageParams(c, 50, 200)
+	if !ok {
+		return
+	}
 	rewards, err := h.svc.ListEarnings(c.Request.Context(), uid, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
@@ -291,8 +337,10 @@ func (h *RewardHandler) AdminFraudAction(c *gin.Context) {
 
 // AdminLedger handles GET /v1/admin/referrals/ledger (A4), filterable.
 func (h *RewardHandler) AdminLedger(c *gin.Context) {
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	limit, offset, ok := pageParams(c, 100, 500)
+	if !ok {
+		return
+	}
 	rewards, err := h.svc.AdminListLedger(c.Request.Context(), c.Query("status"), c.Query("module"), limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
@@ -372,8 +420,10 @@ func (h *RewardHandler) AdminSetCode(c *gin.Context) {
 
 // AdminMilestonesLog handles GET /v1/admin/referrals/milestones-log (A6).
 func (h *RewardHandler) AdminMilestonesLog(c *gin.Context) {
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	limit, offset, ok := pageParams(c, 100, 500)
+	if !ok {
+		return
+	}
 	log, err := h.svc.ListMilestonesLog(c.Request.Context(), limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{keyError: httperr.Msg(c, http.StatusInternalServerError, err)})
