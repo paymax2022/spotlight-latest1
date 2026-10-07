@@ -10959,12 +10959,14 @@ paths:
       tags: [AIcare]
       security: [{ bearerAuth: [] }]
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [topic]
               properties:
-                topic: { type: string }
+                topic: { type: string, minLength: 1, maxLength: 500 }
       responses:
         '201':
           description: Session opened

@@ -1,7 +1,13 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
-import { castVote, getContestById } from '@/src/server/openmic/persistence';
+import { castVote, getContestById, getSubmissionById } from '@/src/server/openmic/persistence';
 import { createAdminClient } from '@/lib/supabase/server';
+
+// contests.id / competition_entries.id are uuid columns — a malformed id fed
+// into .eq() surfaces as a Postgres 22P02 → 500 inside getContestById and the
+// votes insert, so shape-check before touching the store (same guard as
+// open-mic/votes/pay/initiate).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(request: Request) {
   try {
@@ -19,6 +25,8 @@ export async function POST(request: Request) {
 
     if (!body.contestId)    return errorResponse('contestId is required', 400);
     if (!body.submissionId) return errorResponse('submissionId is required', 400);
+    if (!UUID_RE.test(body.contestId))    return errorResponse('contestId must be a valid UUID', 400);
+    if (!UUID_RE.test(body.submissionId)) return errorResponse('submissionId must be a valid UUID', 400);
     if (!body.source)       return errorResponse('source is required', 400);
     // Paid/bundle/bonus votes carry money — they may ONLY be cast through the
     // verified rail (/api/open-mic/votes/pay/initiate + /pay/verify, which calls
@@ -32,6 +40,10 @@ export async function POST(request: Request) {
     if (body.votes > 10000)             return errorResponse('votes exceeds maximum per request', 400);
 
     const contest = await getContestById(body.contestId);
+    // Existence is checked before castVote: an unknown (well-formed) id would
+    // otherwise sail through to the competition_entry_votes insert and surface
+    // as an FK-violation 500.
+    if (!contest) return errorResponse('Contest not found', 404);
     const freeVotesPerDay = contest?.votingConfig?.freeVotesPerDay ?? 3;
     if (freeVotesPerDay <= 0) {
       return errorResponse('Free voting is not enabled for this contest.', 403);
@@ -66,6 +78,11 @@ export async function POST(request: Request) {
         `Only ${remaining} free vote${remaining !== 1 ? 's' : ''} remaining today (limit ${freeVotesPerDay}/day).`,
         429,
       );
+    }
+
+    const existing = await getSubmissionById(body.submissionId);
+    if (!existing || existing.contestId !== body.contestId) {
+      return errorResponse('Submission not found', 404);
     }
 
     const submission = await castVote({

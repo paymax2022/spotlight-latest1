@@ -317,7 +317,14 @@ export async function POST(request: Request) {
       .eq('id', batchId)
       .maybeSingle();
 
-    if (batchError) throw batchError;
+    if (batchError) {
+      // academy_batches.id is a uuid column — a malformed batch_id makes
+      // PostgREST answer 22P02. That is bad client input (400), not a fault.
+      if (batchError.code === '22P02') {
+        return errorResponse('Invalid batch selected', 400);
+      }
+      throw batchError;
+    }
     if (!batch) return errorResponse('Invalid batch selected', 400);
 
     if (batchId) {
