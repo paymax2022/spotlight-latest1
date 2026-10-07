@@ -296,12 +296,16 @@ const ConfigurePermission = "onboarding.configure"
 // Customer routes require an authenticated session; admin routes additionally
 // require the onboarding.review / onboarding.configure RBAC permission.
 // Returns the constructed *Service so callers can inject optional collaborators
-// (e.g. SetBusinessGate). Returns nil when routes are skipped (flag off / no DB).
+// (e.g. SetBusinessGate). Returns nil when the module routes are skipped
+// (flag off / no DB).
+//
+// EXCEPTION: GET /api/v1/me/capabilities mounts whenever a DB pool exists,
+// even with the flag off. It is a READ of the caller's own profiles and
+// applications — the app shell's capability map depends on it — so gating it
+// on FEATURE_ONBOARDING_ENABLED turned "module closed" into a 404 that broke
+// the shell instead of an empty capability list. The flag still gates every
+// mutation, the catalogue, and the admin surface below.
 func Register(r *gin.Engine, d Deps) *Service {
-	if !d.Enabled {
-		log.Println("[onboarding] FEATURE_ONBOARDING_ENABLED is false — skipping routes")
-		return nil
-	}
 	if d.DB == nil {
 		log.Println("[onboarding] no database pool — skipping routes")
 		return nil
@@ -322,6 +326,16 @@ func Register(r *gin.Engine, d Deps) *Service {
 
 	v1 := r.Group("/api/v1")
 
+	// /me/capabilities — always mounted (see Register doc).
+	me := v1.Group("/me")
+	me.Use(authn())
+	me.GET("/capabilities", h.Capabilities)
+
+	if !d.Enabled {
+		log.Println("[onboarding] FEATURE_ONBOARDING_ENABLED is false — /me/capabilities mounted; module routes skipped")
+		return nil
+	}
+
 	ob := v1.Group("/onboarding")
 	ob.Use(authn())
 	{
@@ -336,11 +350,6 @@ func Register(r *gin.Engine, d Deps) *Service {
 		ob.POST("/applications/:id/resubmit", h.Resubmit)
 		ob.GET("/applications/:id", h.GetApplication)
 	}
-
-	// /me/capabilities
-	me := v1.Group("/me")
-	me.Use(authn())
-	me.GET("/capabilities", h.Capabilities)
 
 	// Admin routes use the engine-level /api/admin convention (matches the
 	// shipped rbacAdmin group + the admin frontend's adminApiBase), NOT /api/v1/admin.

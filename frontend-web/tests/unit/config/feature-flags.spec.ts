@@ -1,8 +1,10 @@
 /**
  * Feature flag contract tests.
  *
- * Every fintech module is behind a flag that defaults to false.
- * These tests lock in that invariant so a bad env var or merge mistake
+ * Every fintech module is behind a flag that defaults to false — EXCEPT
+ * tierLimits, which is an enforcement flag (not a feature mount) and defaults
+ * ON to mirror the Go backend's getEnvBool(..., true) + the fail-closed money
+ * rule. These tests lock in that invariant so a bad env var or merge mistake
  * cannot silently enable a half-built feature in production.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -44,7 +46,20 @@ describe('Feature flags', () => {
   it('votesBridge flag is OFF by default', () => expect(featureFlags.votesBridge()).toBe(false));
   it('referrals flag is OFF by default', () => expect(featureFlags.referrals()).toBe(false));
   it('fintechAdmin flag is OFF by default', () => expect(featureFlags.fintechAdmin()).toBe(false));
-  it('tierLimits flag is OFF by default', () => expect(featureFlags.tierLimits()).toBe(false));
+  it('tierLimits flag is ON by default (fail-closed enforcement, mirrors Go)', () =>
+    expect(featureFlags.tierLimits()).toBe(true));
+
+  it('tierLimits disables only on an explicit "false"/"0"/"no"', () => {
+    for (const val of ['false', '0', 'no']) {
+      process.env.FEATURE_TIER_LIMITS_ENABLED = val;
+      expect(featureFlags.tierLimits()).toBe(false);
+    }
+    // Anything else — including a typo like "ture" — stays enforced.
+    for (const val of ['true', '1', 'yes', 'ture', '']) {
+      process.env.FEATURE_TIER_LIMITS_ENABLED = val;
+      expect(featureFlags.tierLimits()).toBe(true);
+    }
+  });
 
   it('wallet flag turns ON when env var is exactly "true"', () => {
     process.env.FEATURE_WALLET_ENABLED = 'true';

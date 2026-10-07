@@ -24,6 +24,9 @@ var (
 	ErrCampaignNotAccepting = errors.New("crowdfunding: campaign is not accepting contributions")
 	ErrCampaignNotReviewed  = errors.New("crowdfunding: campaign has not passed admin review")
 	ErrCampaignDeadline     = errors.New("crowdfunding: campaign deadline has passed")
+	// ErrCampaignNotPublishable marks a publish attempted on a campaign whose
+	// review_status is not ACTIVE — i.e. one no creator action can take live.
+	ErrCampaignNotPublishable = errors.New("crowdfunding: campaign is not in a publishable state")
 )
 
 // walletDebitLimiter is the minimal seam the crowdfunding money path depends
@@ -148,14 +151,42 @@ func (s *Service) Create(ctx context.Context, creatorID string, req CreateCampai
 }
 
 // Publish activates a campaign so it can receive contributions.
+//
+// A campaign only becomes publicly live through admin review: AdminDecide sets
+// review_status='ACTIVE' AND status='active' together, and both discovery and
+// Contribute gate on review_status. Flipping the legacy `status` column alone
+// — what this used to do — acked {"ok":true} while the campaign stayed
+// invisible and unfundable (V7b residual: 200 on a DRAFT that never left
+// DRAFT). Publish is now honest about what it can do:
+//   - approved-but-drifted (review_status='ACTIVE', status<>'active') → the
+//     one real transition left here: heals the legacy column, returns nil;
+//   - already live → nil (idempotent retry);
+//   - DRAFT / PENDING_REVIEW / anything else → ErrCampaignNotPublishable, so a
+//     no-op surfaces as 409 instead of a lying ack. Creators take drafts live
+//     by submitting for review (POST /campaigns with submitForReview), not here.
 func (s *Service) Publish(ctx context.Context, campaignID, creatorID string) error {
-	const q = `UPDATE campaigns SET status='active' WHERE id=$1 AND creator_id=$2 AND status='draft'`
-	tag, err := s.db.Exec(ctx, q, campaignID, creatorID)
+	var status, reviewStatus, ownerID string
+	var deletedAt *time.Time
+	err := s.db.QueryRow(ctx,
+		`SELECT status, review_status, creator_id, deleted_at FROM campaigns WHERE id=$1`, campaignID).
+		Scan(&status, &reviewStatus, &ownerID, &deletedAt)
 	if err != nil {
-		return err
+		return ErrCampaignNotFound
 	}
-	if tag.RowsAffected() == 0 {
-		return errors.New("crowdfunding: campaign not found or already active")
+	// Not-owner and soft-deleted both report as not-found — publish must not
+	// confirm a campaign's existence to a caller who doesn't own it.
+	if deletedAt != nil || ownerID != creatorID {
+		return ErrCampaignNotFound
+	}
+	if reviewStatus != "ACTIVE" {
+		return fmt.Errorf("%w (review_status=%s)", ErrCampaignNotPublishable, reviewStatus)
+	}
+	if status == "active" {
+		return nil // already live — idempotent
+	}
+	if _, err := s.db.Exec(ctx,
+		`UPDATE campaigns SET status='active', updated_at=NOW() WHERE id=$1`, campaignID); err != nil {
+		return err
 	}
 	return nil
 }
