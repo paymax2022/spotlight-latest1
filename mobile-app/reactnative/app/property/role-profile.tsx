@@ -25,6 +25,7 @@ import {
   requiredFieldsFor,
   optionalFieldsFor,
   detailKindFor,
+  buildDetailsPatch,
   identityKeyFor,
   type ProfessionalRole,
 } from '@/features/property/roles/requirements';
@@ -171,7 +172,7 @@ export default function RoleProfileScreen() {
       if (!ok) return false;
     }
     try {
-      await update.mutateAsync({ displayName: displayName.trim(), details });
+      await update.mutateAsync({ displayName: displayName.trim(), details: buildDetailsPatch(role, profile.details ?? {}, details) });
       return true;
     } catch (err) {
       await alertAsync({ title: 'Could not save', message: serverMessage(err, 'Check your details and try again.') });

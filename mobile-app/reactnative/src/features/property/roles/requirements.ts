@@ -59,3 +59,29 @@ const IDENTITY: Record<ProfessionalRole, string> = {
 export function identityKeyFor(role: ProfessionalRole): string {
   return IDENTITY[role];
 }
+
+/**
+ * Build the PATCH `details` body. The server MERGES details over the stored
+ * ones and treats null as "delete this key". So: changed values are sent,
+ * unchanged values are omitted, a previously-saved optional key that is now
+ * blank is sent as null, and a never-saved blank optional key is omitted.
+ * Required keys are never nulled (blank required blocks Save/Submit instead).
+ */
+export function buildDetailsPatch(
+  role: ProfessionalRole,
+  saved: Record<string, unknown>,
+  form: Record<string, unknown>,
+): Record<string, unknown> {
+  const required = REQUIRED[role];
+  const out: Record<string, unknown> = {};
+  for (const k of [...REQUIRED[role], ...OPTIONAL[role]]) {
+    const next = form[k];
+    const prev = saved[k];
+    if (isBlank(next)) {
+      if (!required.includes(k) && !isBlank(prev)) out[k] = null;
+      continue;
+    }
+    if (JSON.stringify(next) !== JSON.stringify(prev)) out[k] = next;
+  }
+  return out;
+}
