@@ -219,7 +219,7 @@ export interface BankTransferResult {
 export async function initiateWalletToBank(
   input: WalletToBankInput,
 ): Promise<BankTransferResult> {
-  if (!Number.isInteger(input.amountKobo) || input.amountKobo < MIN_BANK_TRANSFER_KOBO) {
+  if (!Number.isSafeInteger(input.amountKobo) || input.amountKobo < MIN_BANK_TRANSFER_KOBO) {
     throw new ApiError(
       `Minimum bank transfer is ${MIN_BANK_TRANSFER_KOBO} kobo (₦${MIN_BANK_TRANSFER_KOBO / 100})`,
       400,

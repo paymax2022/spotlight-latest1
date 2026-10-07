@@ -206,7 +206,7 @@ export interface WalletTransferResult {
 export async function initiateWalletToWallet(
   input: WalletToWalletInput,
 ): Promise<WalletTransferResult> {
-  if (!Number.isInteger(input.amountKobo) || input.amountKobo < 100) {
+  if (!Number.isSafeInteger(input.amountKobo) || input.amountKobo < 100) {
     throw new ApiError('Minimum transfer amount is 100 kobo (₦1)', 400);
   }
 

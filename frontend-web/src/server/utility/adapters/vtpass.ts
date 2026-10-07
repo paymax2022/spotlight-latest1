@@ -195,10 +195,14 @@ function endpoint(path: string, credentials = readCredentials()) {
 
 async function vtpassFetch(path: string, method: VtpassHttpMethod, body?: Record<string, unknown>): Promise<VtpassResponse> {
   const credentials = readCredentials();
+  // A hanging VTPass request previously held the purchase open indefinitely —
+  // bound it so the caller sees an AbortError (which the service layer maps to
+  // an AMBIGUOUS/pending outcome, never a failover).
   const response = await fetch(endpoint(path, credentials), {
     method,
     headers: authHeaders(method, credentials),
     body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+    signal: AbortSignal.timeout(15_000),
   });
 
   const payload = await response.json().catch(() => ({}));
