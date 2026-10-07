@@ -55,6 +55,12 @@ var (
 	// Rejected in the SERVICE, not in middleware: this repo has no shared
 	// idempotency middleware, and the rule belongs next to the money.
 	ErrIdempotencyKeyRequired = errors.New("utilitybills: Idempotency-Key header is required")
+	// ErrIdempotencyKeyConflict — the caller's Idempotency-Key is already used
+	// by ANOTHER member's transaction (409). Replay lookups are scoped to the
+	// caller, so a foreign key cannot replay a stranger's transaction back; the
+	// surviving unique-violation on insert is the durable proof of the clash
+	// (mirrors finance/transfers' ErrIdempotencyKeyConflict).
+	ErrIdempotencyKeyConflict = errors.New("utilitybills: idempotency key already used by another transaction")
 	// ErrInvalidCategory — category is not one of the six.
 	ErrInvalidCategory = errors.New("utilitybills: invalid utility category")
 	// ErrFieldRequired — a required request field was blank.
@@ -672,9 +678,12 @@ func (s *Service) PayUtility(ctx context.Context, userID string, in PayInput, id
 		return nil, fmt.Errorf("%w: payment_source must be 'wallet' or 'paystack'", ErrFieldRequired)
 	}
 
-	// (1) Idempotency pre-check; the unique constraint at (3) is the layer that
-	// actually holds under concurrency.
-	if existing, eerr := s.repo.GetTransactionByIdempotencyKey(ctx, idempotencyKey); eerr != nil {
+	// (1) Idempotency pre-check — CALLER-SCOPED: a key another member already
+	// used must NOT replay their transaction back to this caller (it would leak
+	// their amount/token/customer reference). A foreign key misses here and
+	// instead collides at the unique constraint in (3), which maps the clash to
+	// ErrIdempotencyKeyConflict → 409.
+	if existing, eerr := s.repo.GetTransactionByIdempotencyKey(ctx, userID, idempotencyKey); eerr != nil {
 		return nil, eerr
 	} else if existing != nil {
 		return &PayResult{AlreadyProcessed: true, Transaction: existing}, nil

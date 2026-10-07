@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/timeutil"
@@ -34,6 +35,13 @@ type walletDebitLimiter interface {
 // ErrTierGateUnwired is returned when a Service has no tier gate — a nil gate
 // must fail CLOSED, never debit ungated (mirrors social.ErrTierGateUnwired).
 var ErrTierGateUnwired = errors.New("crowdfunding/wallet: money path requires a tier gate (not wired)")
+
+// ErrIdempotencyKeyConflict — the caller's Idempotency-Key is already used by
+// ANOTHER member's withdrawal request (409). Replay lookups are scoped to the
+// caller, so a foreign key cannot replay a stranger's withdrawal back; the
+// surviving unique-violation on insert is the durable proof of the clash
+// (same convention as finance/transfers' ErrIdempotencyKeyConflict).
+var ErrIdempotencyKeyConflict = errors.New("crowdfunding/wallet: idempotency key already used by another withdrawal")
 
 // Service exposes the campaign wallet, ledger projection, bank accounts, and the
 // withdrawal flow. It never stores a balance: every balance is derived from the
@@ -356,8 +364,12 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 		return nil, ErrLedgerUnavailable
 	}
 
-	// Idempotent replay: return the prior request unchanged.
-	if existing, ok, err := s.findByIdempotencyKey(ctx, idempotencyKey); err != nil {
+	// Idempotent replay: return the prior request unchanged. The lookup is
+	// CALLER-SCOPED (creator_id): a key another member already used must NOT
+	// replay their withdrawal back to this caller — that would leak their
+	// reference/amount/bank label. A foreign key misses here and collides at
+	// the cf_withdrawals unique constraint below → 409.
+	if existing, ok, err := s.findByIdempotencyKey(ctx, creatorID, idempotencyKey); err != nil {
 		return nil, err
 	} else if ok {
 		return existing, nil
@@ -420,6 +432,13 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	if _, err := tx.Exec(ctx, ins,
 		id, campaignID, creatorID, reference, in.AmountKobo, bankLabel, in.Reason, idempotencyKey, now,
 	); err != nil {
+		// A 23505 here with the caller-scoped replay miss above is the durable
+		// signal of a cross-user key clash — cf_withdrawals.idempotency_key is
+		// UNIQUE. Report it as a conflict rather than a server fault (the M16
+		// convention; a same-caller race loses nothing — the retry replays).
+		if dbutil.IsUniqueViolation(err) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return nil, fmt.Errorf("crowdfunding/wallet: insert withdrawal: %w", err)
 	}
 	if _, err := tx.Exec(ctx,
@@ -442,13 +461,18 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	}, nil
 }
 
-func (s *Service) findByIdempotencyKey(ctx context.Context, key string) (*WithdrawalResult, bool, error) {
+// findByIdempotencyKey returns the caller's own prior withdrawal under this
+// key — scoped to THIS creator. A key another member already used returns
+// (nil, false, nil) and is caught by the unique constraint on insert →
+// ErrIdempotencyKeyConflict; an unscoped lookup would replay a stranger's
+// withdrawal (leaking their reference/amount/bank label) on a guessed key.
+func (s *Service) findByIdempotencyKey(ctx context.Context, creatorID, key string) (*WithdrawalResult, bool, error) {
 	const q = `
 		SELECT id, reference, amount_kobo, bank_label, status, requested_at
-		FROM cf_withdrawals WHERE idempotency_key = $1`
+		FROM cf_withdrawals WHERE idempotency_key = $1 AND creator_id = $2`
 	var r WithdrawalResult
 	var requestedAt time.Time
-	err := s.db.QueryRow(ctx, q, key).Scan(&r.ID, &r.Reference, &r.AmountKobo, &r.BankLabel, &r.Status, &requestedAt)
+	err := s.db.QueryRow(ctx, q, key, creatorID).Scan(&r.ID, &r.Reference, &r.AmountKobo, &r.BankLabel, &r.Status, &requestedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -628,22 +652,32 @@ func (h *Handler) SubmitWithdrawal(c *gin.Context) {
 
 	res, err := h.svc.SubmitWithdrawal(c.Request.Context(), userID, campaignID, idempotencyKey, in)
 	if err != nil {
-		switch {
-		// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
-		// unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
-		case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
-			c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
-		case errors.Is(err, ErrTierGateUnwired):
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err)})
-		case errors.Is(err, ErrCampaignNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
-		case errors.Is(err, ErrLedgerUnavailable):
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err)})
-		default:
-			c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
-		}
+		writeWithdrawalErr(c, err)
 		return
 	}
 	// Object returned directly to match the client unwrap.
 	c.JSON(http.StatusCreated, res)
+}
+
+// writeWithdrawalErr maps SubmitWithdrawal's domain errors onto HTTP
+// statuses — extracted so the mapping is unit-testable without a database.
+func writeWithdrawalErr(c *gin.Context, err error) {
+	switch {
+	// Tier-limit refusals → 403 (same mapping the transfer rail uses); an
+	// unwired/degraded gate is a dependency failure → 503 (E2E-FIN-046).
+	case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+		c.JSON(http.StatusForbidden, gin.H{"error": httperr.Msg(c, http.StatusForbidden, err)})
+	case errors.Is(err, ErrTierGateUnwired):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err)})
+	case errors.Is(err, ErrCampaignNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": httperr.Msg(c, http.StatusNotFound, err)})
+	case errors.Is(err, ErrLedgerUnavailable):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": httperr.Msg(c, http.StatusServiceUnavailable, err)})
+	case errors.Is(err, ErrIdempotencyKeyConflict):
+		// 409 + stable code for a cross-member Idempotency-Key reuse (the
+		// same contract as finance/transfers' idempotency_key_conflict).
+		c.JSON(http.StatusConflict, gin.H{"error": httperr.Msg(c, http.StatusConflict, err), "code": "idempotency_key_conflict"})
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
+	}
 }

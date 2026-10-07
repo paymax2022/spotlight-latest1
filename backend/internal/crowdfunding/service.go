@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/finance/tiers"
@@ -27,6 +28,13 @@ var (
 	// ErrCampaignNotPublishable marks a publish attempted on a campaign whose
 	// review_status is not ACTIVE — i.e. one no creator action can take live.
 	ErrCampaignNotPublishable = errors.New("crowdfunding: campaign is not in a publishable state")
+	// ErrIdempotencyKeyConflict — the caller's Idempotency-Key is already used
+	// by ANOTHER member's contribution (409). Replay lookups are scoped to the
+	// caller, so a foreign key cannot replay a stranger's contribution back;
+	// the surviving unique-violation on insert (or a foreign ledger-leg key at
+	// escrow) is the durable proof of the clash — same convention as
+	// finance/transfers' ErrIdempotencyKeyConflict.
+	ErrIdempotencyKeyConflict = errors.New("crowdfunding: idempotency key already used by another contribution")
 )
 
 // walletDebitLimiter is the minimal seam the crowdfunding money path depends
@@ -244,7 +252,11 @@ func (s *Service) Contribute(ctx context.Context, campaignID, contributorID stri
 	// already happened, not re-validating current campaign state — a since-
 	// paused/frozen campaign must not turn an already-paid contribution into
 	// a fresh failure on replay.
-	if existing, ok, err := s.findContributionByIdempotencyKey(ctx, req.IdempotencyKey); err != nil {
+	// The replay lookup is CALLER-SCOPED (contributor_id): a key another member
+	// already used must NOT replay their contribution back to this caller —
+	// that would leak their campaign/amount/settlement id. A foreign key misses
+	// here and collides at the contributions unique constraint below → 409.
+	if existing, ok, err := s.findContributionByIdempotencyKey(ctx, contributorID, req.IdempotencyKey); err != nil {
 		return nil, err
 	} else if ok {
 		return existing, nil
@@ -290,7 +302,28 @@ func (s *Service) Contribute(ctx context.Context, campaignID, contributorID stri
 	ref := "campaign:" + campaignID + ":contributor:" + contributorID
 	sett, err := s.settlement.Escrow(ctx, contributorID, ref, req.IdempotencyKey, "crowdfunding", req.AmountKobo)
 	if err != nil {
+		// ledger.ErrDuplicate on the ":escrow" leg with a caller-scoped replay
+		// miss above means the key was already claimed by ANOTHER member's
+		// contribution (or another module's transaction) — a cross-user reuse.
+		// The ledger dedupe made it a no-op: no money moved for this caller.
+		if errors.Is(err, ledger.ErrDuplicate) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return nil, fmt.Errorf("crowdfunding: escrow contribution: %w", err)
+	}
+	// Escrow dedupes on the GLOBAL key namespace: on a replay it returns the
+	// EXISTING row's id but echoes THIS call's payer/module (only id, status
+	// and total_kobo are re-read). So the stored row must be checked directly —
+	// a settlement id written by a different payer or a different module must
+	// never be adopted as this contribution's (Settle() would then disburse
+	// money the contribution never escrowed). With the caller-scoped replay
+	// miss above, a mismatched stored row is a cross-user key clash → 409.
+	var settPayer, settModule string
+	if rerr := s.db.QueryRow(ctx,
+		`SELECT payer_id, module_type FROM settlements WHERE id = $1`, sett.ID,
+	).Scan(&settPayer, &settModule); rerr == nil &&
+		(settPayer != contributorID || settModule != "crowdfunding") {
+		return nil, ErrIdempotencyKeyConflict
 	}
 
 	contrib := &Contribution{
@@ -307,6 +340,13 @@ func (s *Service) Contribute(ctx context.Context, campaignID, contributorID stri
 		INSERT INTO contributions (id, campaign_id, contributor_id, amount_kobo, status, idempotency_key, settlement_id)
 		VALUES ($1,$2,$3,$4,'escrowed',$5,$6)`
 	if _, err := s.db.Exec(ctx, insertC, contrib.ID, contrib.CampaignID, contrib.ContributorID, contrib.AmountKobo, contrib.IdempotencyKey, contrib.SettlementID); err != nil {
+		// A 23505 here with the caller-scoped replay miss above is the durable
+		// signal of a cross-user key clash — contributions.idempotency_key is
+		// UNIQUE. Report it as a conflict rather than a server fault (the M16
+		// convention; a same-caller race loses nothing — the retry replays).
+		if dbutil.IsUniqueViolation(err) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return nil, fmt.Errorf("crowdfunding: insert contribution: %w", err)
 	}
 
@@ -331,13 +371,17 @@ func (s *Service) Contribute(ctx context.Context, campaignID, contributorID stri
 }
 
 // findContributionByIdempotencyKey looks up a prior contribution by its
-// idempotency key. Returns (nil, false, nil) when none exists.
-func (s *Service) findContributionByIdempotencyKey(ctx context.Context, idempotencyKey string) (*Contribution, bool, error) {
+// idempotency key — scoped to THIS contributor. A key another member already
+// used returns (nil, false, nil) here and is caught by the unique constraint
+// on insert → ErrIdempotencyKeyConflict; an unscoped lookup would replay a
+// stranger's contribution (leaking their campaign/amount/settlement id) on a
+// guessed key. Returns (nil, false, nil) when none exists.
+func (s *Service) findContributionByIdempotencyKey(ctx context.Context, contributorID, idempotencyKey string) (*Contribution, bool, error) {
 	const q = `
 		SELECT id, campaign_id, contributor_id, amount_kobo, status, idempotency_key, settlement_id, created_at
-		FROM contributions WHERE idempotency_key = $1`
+		FROM contributions WHERE idempotency_key = $1 AND contributor_id = $2`
 	c := &Contribution{}
-	err := s.db.QueryRow(ctx, q, idempotencyKey).Scan(
+	err := s.db.QueryRow(ctx, q, idempotencyKey, contributorID).Scan(
 		&c.ID, &c.CampaignID, &c.ContributorID, &c.AmountKobo, &c.Status, &c.IdempotencyKey, &c.SettlementID, &c.CreatedAt,
 	)
 	if err != nil {
