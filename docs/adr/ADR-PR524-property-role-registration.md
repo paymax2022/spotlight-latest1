@@ -1,4 +1,4 @@
-# ADR-PR — Property role registration: one generic profile table, self-serve then verified later
+# ADR-PR524 — Property role registration: one generic profile table, self-serve then verified later
 
 **Date:** 2026-10-07
 **Status:** Accepted
