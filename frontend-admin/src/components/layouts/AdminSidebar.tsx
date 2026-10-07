@@ -339,6 +339,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Swap Monitoring', href: '/admin/crypto/swaps', section: 'Crypto', permissions: ['crypto.admin'] },
   { label: 'Address Review', href: '/admin/crypto/addresses', section: 'Crypto', permissions: ['crypto.admin'] },
   { label: 'Reconciliation', href: '/admin/crypto/reconciliation', section: 'Crypto', permissions: ['crypto.admin'] },
+  { label: 'Property roles', href: '/admin/property-roles', section: 'Property Management', permissions: ['property.roles.review'] },
   { label: 'Estate Dashboard', href: '/admin/estate', section: 'Property Management', permissions: ['estate.manage', 'estate.admin'] },
   { label: 'Residents & Units', href: '/admin/estate/residents', section: 'Property Management', permissions: ['estate.manage'] },
   { label: 'Properties', href: '/admin/estate/properties', section: 'Property Management', permissions: ['estate.manage'] },

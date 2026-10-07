@@ -940,38 +940,28 @@ func (s *connectSettlementAdapter) SettlementAccountID(ctx context.Context) (str
 
 // connectWalletTransferAdapter performs a wallet→wallet transfer as a single
 // balanced double-entry via the ledger: DR sender user_wallet, CR recipient
-// user_wallet, keyed by idempotencyKey. It checks the sender's available balance
-// first and posts immutable entries — it never writes a balance column.
+// user_wallet, keyed by idempotencyKey. The balance sufficiency check and the
+// journal insert run as ONE atomic, serialised unit inside ledger.Service.Debit
+// (Repository.DebitWithBalanceCheck: pg_advisory_xact_lock("wallet:"+fromUserID)
+// + in-tx balance projection + balanced pair, ON CONFLICT idempotent) — the
+// previous GetBalance-then-PostJournal shape let two concurrent transfers both
+// pass an unlocked balance check and overdraw the sender (TOCTOU). It never
+// writes a balance column.
 type connectWalletTransferAdapter struct{ ledger *ledger.Service }
 
 func (t *connectWalletTransferAdapter) Transfer(ctx context.Context, fromUserID, toUserID, reference, idempotencyKey string, amountKobo int64) error {
 	if amountKobo <= 0 {
 		return ledger.ErrInsufficientFunds
 	}
-	fromAcc, err := t.ledger.GetOrCreateUserWallet(ctx, fromUserID)
-	if err != nil {
-		return err
-	}
 	toAcc, err := t.ledger.GetOrCreateUserWallet(ctx, toUserID)
 	if err != nil {
 		return err
 	}
-	// Available-balance check on the sender (ledger projection; no balance column).
-	balance, err := t.ledger.GetBalance(ctx, fromUserID)
-	if err != nil {
-		return err
-	}
-	if balance < amountKobo {
-		return ledger.ErrInsufficientFunds
-	}
-	// Balanced double-entry, idempotent (ledger unique constraint on the key).
-	return t.ledger.PostJournal(ctx, ledger.JournalEntry{
-		Reference:       reference,
-		IdempotencyKey:  idempotencyKey,
-		AmountKobo:      amountKobo,
-		DebitAccountID:  fromAcc.ID,
-		CreditAccountID: toAcc.ID,
-	})
+	// Atomic check+debit: ledger.Service.Debit resolves the sender's wallet,
+	// takes the wallet advisory lock, re-projects the balance inside the tx and
+	// posts the balanced pair — a concurrent transfer on the same sender
+	// serialises behind the lock and sees the committed debit.
+	return t.ledger.Debit(ctx, fromUserID, reference, idempotencyKey, toAcc.ID, amountKobo)
 }
 
 // connectTierGateAdapter adapts tiers.Service.GetUserTier (returns tiers.Tier) to

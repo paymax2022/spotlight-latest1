@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/go-common/timeutil"
@@ -33,6 +34,13 @@ func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
 
 // ErrNotFound is returned when a requested resource does not exist.
 var ErrNotFound = errors.New("csr: not found")
+
+// ErrIdempotencyKeyConflict — the caller's Idempotency-Key is already used by
+// ANOTHER sponsor's match (409). Replay lookups are scoped to the caller, so a
+// foreign key cannot replay a stranger's match back; the surviving
+// unique-violation on insert is the durable proof of the clash (same
+// convention as finance/transfers' ErrIdempotencyKeyConflict).
+var ErrIdempotencyKeyConflict = errors.New("csr: idempotency key already used by another match")
 
 // impactTags maps campaign categories to a human impact tag for the CSR UI.
 var impactTags = map[string]string{
@@ -190,8 +198,11 @@ func (s *Service) SetupMatch(ctx context.Context, sponsorID string, in MatchSetu
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Idempotency: short-circuit if a match already exists for this key.
-	if existing, ok, err := s.findByIdemKey(ctx, tx, idemKey); err != nil {
+	// Idempotency: short-circuit if a match already exists for this key AND
+	// THIS sponsor — caller-scoped, so a key another sponsor already used
+	// can't replay their match back. A foreign key misses here and collides
+	// at the cf_csr_matches unique constraint below → 409.
+	if existing, ok, err := s.findByIdemKey(ctx, tx, sponsorID, idemKey); err != nil {
 		return nil, err
 	} else if ok {
 		return existing, nil
@@ -247,6 +258,14 @@ func (s *Service) SetupMatch(ctx context.Context, sponsorID string, in MatchSetu
 		sponsorID, in.CampaignID, campaignTitle, in.Ratio, in.CapKobo, in.Visibility, in.Message, idemKey,
 	).Scan)
 	if err != nil {
+		// A 23505 here with the caller-scoped replay miss above is the durable
+		// signal of a cross-sponsor key clash — cf_csr_matches.idempotency_key
+		// is UNIQUE. Report it as a conflict rather than a server fault (the
+		// M16 convention; a same-sponsor race loses nothing — the retry
+		// replays the committed match).
+		if dbutil.IsUniqueViolation(err) {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		return nil, err
 	}
 
@@ -256,9 +275,13 @@ func (s *Service) SetupMatch(ctx context.Context, sponsorID string, in MatchSetu
 	return m, nil
 }
 
-func (s *Service) findByIdemKey(ctx context.Context, tx pgx.Tx, idemKey string) (*CsrMatch, bool, error) {
-	sql := fmt.Sprintf(`SELECT %s FROM cf_csr_matches WHERE idempotency_key = $1`, matchSelect)
-	m, err := scanMatch(tx.QueryRow(ctx, sql, idemKey).Scan)
+// findByIdemKey returns the caller's own prior match under this key — scoped
+// to THIS sponsor. A key another sponsor already used returns (nil,false,nil)
+// and is caught by the unique constraint on insert → ErrIdempotencyKeyConflict;
+// an unscoped lookup would replay a stranger's match on a guessed key.
+func (s *Service) findByIdemKey(ctx context.Context, tx pgx.Tx, sponsorID, idemKey string) (*CsrMatch, bool, error) {
+	sql := fmt.Sprintf(`SELECT %s FROM cf_csr_matches WHERE idempotency_key = $1 AND sponsor_id = $2`, matchSelect)
+	m, err := scanMatch(tx.QueryRow(ctx, sql, idemKey, sponsorID).Scan)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -530,6 +553,12 @@ func (h *Handler) SetupMatch(c *gin.Context) {
 	}
 	m, err := h.svc.SetupMatch(c.Request.Context(), sponsorID, in, idemKey)
 	if err != nil {
+		if errors.Is(err, ErrIdempotencyKeyConflict) {
+			// 409 + stable code for a cross-sponsor Idempotency-Key reuse
+			// (the same contract as finance/transfers' idempotency_key_conflict).
+			c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), "code": "idempotency_key_conflict"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{keyError: httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}

@@ -581,10 +581,18 @@ jobs:
         include:
           - service: backend
             path: backend
+            root_flag: --path-as-root
+          # The staging frontend services carry a Railway `rootDirectory` of
+          # their own folder, so they must be uploaded from the repo root:
+          # `--path-as-root` on the folder makes Railway look for
+          # `frontend-*/` inside an archive that already IS that folder and
+          # fail with "Root directory ... was not found in the deployed source".
           - service: frontend-web
-            path: frontend-web
+            path: .
+            root_flag: ''
           - service: frontend-admin
-            path: frontend-admin
+            path: .
+            root_flag: ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v7
@@ -606,7 +614,7 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
         run: |
-          railway up ${{ matrix.path }} --path-as-root --no-gitignore \
+          railway up ${{ matrix.path }} ${{ matrix.root_flag }} --no-gitignore \
             --service ${{ matrix.service }} \
             --environment staging \
             --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
