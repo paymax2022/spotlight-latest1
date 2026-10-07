@@ -281,18 +281,69 @@ func (h *Handler) GetVerification(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": rec})
 }
 
+// kycDocTypes mirrors IdDocType in mobile src/features/fx/types/fx.types.ts.
+var kycDocTypes = map[string]bool{
+	"nin": true, "passport": true, "drivers_license": true, "voters_card": true,
+}
+
 // SubmitCustomer (POST /customers) — records a KYC submission and routes the status
 // (individuals → pending, businesses → manual review). Persists the full payload
 // when a store is attached; echoes the routed status otherwise.
+//
+// The body is validated BEFORE any state change: this is a persistent write, so
+// an empty or malformed payload must not mint a "pending" verification record.
+// Required fields mirror KycSubmission in the mobile client (accountType,
+// consents, identity{docType,idNumber,dateOfBirth}).
 func (h *Handler) SubmitCustomer(c *gin.Context) {
-	raw, _ := c.GetRawData()
+	raw, err := c.GetRawData()
+	if err != nil {
+		writeErr(c, NewError(ErrInvalidRequest, "invalid_request", "invalid request body"))
+		return
+	}
 	var req struct {
 		AccountType string `json:"accountType"`
+		Consents    *struct {
+			Terms        bool `json:"terms"`
+			Privacy      bool `json:"privacy"`
+			FxDisclosure bool `json:"fxDisclosure"`
+		} `json:"consents"`
+		Identity *struct {
+			DocType     string `json:"docType"`
+			IDNumber    string `json:"idNumber"`
+			DateOfBirth string `json:"dateOfBirth"`
+		} `json:"identity"`
 	}
-	_ = json.Unmarshal(raw, &req)
+	if err := json.Unmarshal(raw, &req); err != nil {
+		writeErr(c, NewError(ErrInvalidRequest, "invalid_request", "invalid JSON body"))
+		return
+	}
+	bad := func(param, msg string) *APIError {
+		return NewError(ErrInvalidRequest, "invalid_request", msg).WithParam(param)
+	}
 	acct := strings.ToLower(strings.TrimSpace(req.AccountType))
-	if acct != "business" {
-		acct = "individual"
+	if acct != "individual" && acct != "business" {
+		writeErr(c, bad("accountType", "accountType must be individual or business"))
+		return
+	}
+	if req.Consents == nil {
+		writeErr(c, bad("consents", "consents is required"))
+		return
+	}
+	if req.Identity == nil {
+		writeErr(c, bad("identity", "identity is required"))
+		return
+	}
+	if !kycDocTypes[strings.ToLower(strings.TrimSpace(req.Identity.DocType))] {
+		writeErr(c, bad("identity.docType", "unsupported docType"))
+		return
+	}
+	if strings.TrimSpace(req.Identity.IDNumber) == "" {
+		writeErr(c, bad("identity.idNumber", "identity.idNumber is required"))
+		return
+	}
+	if strings.TrimSpace(req.Identity.DateOfBirth) == "" {
+		writeErr(c, bad("identity.dateOfBirth", "identity.dateOfBirth is required"))
+		return
 	}
 	if h.verif == nil {
 		status := "pending"
