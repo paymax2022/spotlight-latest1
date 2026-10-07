@@ -70,28 +70,26 @@ export async function POST(request: Request) {
     return errorResponse('Wallet voting is not enabled', 403);
   }
 
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return errorResponse('Invalid JSON body', 400);
-  }
-
-  const { contestId, contestantId, voteCount, costKobo, idempotencyKey } = body;
-  if (!contestId || !contestantId || !voteCount || !idempotencyKey) {
-    return errorResponse('contestId, contestantId, voteCount, and idempotencyKey are required', 400);
-  }
-  // Non-UUID ids can never satisfy the contestants/contests equality checks
-  // downstream — reject before the KYC gate and pricing queries hit Postgres.
-  if (typeof contestId !== 'string' || !UUID_RE.test(contestId)) {
-    return errorResponse('Invalid contestId', 400);
-  }
-  if (typeof contestantId !== 'string' || !UUID_RE.test(contestantId)) {
-    return errorResponse('Invalid contestantId', 400);
-  }
-
   try {
     const user = await requireRequestUser(request);
+
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    if (!body) {
+      return errorResponse('Invalid JSON body', 400);
+    }
+
+    const { contestId, contestantId, voteCount, costKobo, idempotencyKey } = body;
+    if (!contestId || !contestantId || !voteCount || !idempotencyKey) {
+      return errorResponse('contestId, contestantId, voteCount, and idempotencyKey are required', 400);
+    }
+    // Non-UUID ids can never satisfy the contestants/contests equality checks
+    // downstream — reject before the KYC gate and pricing queries hit Postgres.
+    if (typeof contestId !== 'string' || !UUID_RE.test(contestId)) {
+      return errorResponse('Invalid contestId', 400);
+    }
+    if (typeof contestantId !== 'string' || !UUID_RE.test(contestantId)) {
+      return errorResponse('Invalid contestantId', 400);
+    }
 
     // Wallet-debit money path — per-user throttle (AUD-SEC-001). The same
     // bucket name is used by the v1 wallet route so both share one allowance.

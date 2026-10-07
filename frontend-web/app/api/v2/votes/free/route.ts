@@ -22,19 +22,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const idempotencyKey = request.headers.get('X-Idempotency-Key');
-    if (!idempotencyKey) {
-      return NextResponse.json(
-        { error: 'X-Idempotency-Key header is required' },
-        { status: 400 }
-      );
-    }
-
     const { user, error: authError } = await validateRequest(request);
     if (authError) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
+      );
+    }
+
+    const idempotencyKey = request.headers.get('X-Idempotency-Key');
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'X-Idempotency-Key header is required' },
+        { status: 400 }
       );
     }
 

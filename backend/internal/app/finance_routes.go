@@ -318,10 +318,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		fxHandler = fx.NewHandler(fxSvc)
 	}
 
-	// Webhook handler (needs paymentProvider for signature verification).
+	// Webhook handler. Signature verification must use the PAYSTACK client — not
+	// paymentProvider, which Maplerad overrides above (its HMAC secret is the
+	// Maplerad key, so every Paystack delivery would 401 and its fulfilments
+	// (DVA credits, transfer settle, dues/fees/food orders) would never land).
 	var webhookHandler *webhooks.PaystackHandler
-	if paymentProvider != nil {
-		webhookHandler = webhooks.NewPaystackHandler(paymentProvider, vaSvc, xferSvc, walletSvc)
+	if paystackClient != nil {
+		webhookHandler = webhooks.NewPaystackHandler(paystackClient, vaSvc, xferSvc, walletSvc)
 	}
 
 	walletHandler := wallet.NewHandler(walletSvc)

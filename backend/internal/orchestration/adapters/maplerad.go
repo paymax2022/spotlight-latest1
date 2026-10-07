@@ -93,8 +93,13 @@ func (m *MapleradFX) CreateCollection(ctx context.Context, currency, accountType
 	return &orch.CollectionResult{ProviderRef: "mpl_col_" + uuid.New().String()[:8], Details: details}, nil
 }
 
+// VerifyWebhookSignature always fails closed: this deterministic adapter has no
+// signing secret, so it cannot authenticate a webhook and must not treat a
+// non-empty signature as proof. A verified-looking collection event reaches
+// applyCollectionEvent and credits real balances — fail-open here is a
+// money-forgery primitive.
 func (m *MapleradFX) VerifyWebhookSignature(payload []byte, signature string) bool {
-	return signature != ""
+	return false
 }
 
 // MapleradLive is the production Maplerad adapter: it calls the real Maplerad

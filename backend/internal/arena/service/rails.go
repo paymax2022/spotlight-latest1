@@ -511,6 +511,9 @@ func (s *CompetitionService) List(ctx context.Context, limit, offset int) ([]Com
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
+	if offset < 0 {
+		offset = 0
+	}
 	return s.repo.List(ctx, limit, offset)
 }
 

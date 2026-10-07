@@ -7,11 +7,10 @@ export async function POST(request: Request) {
   const unavailable = utilityUnavailableResponse();
   if (unavailable) return unavailable;
 
-  const idempotencyKey = request.headers.get('Idempotency-Key');
-  if (!idempotencyKey) return errorResponse('Idempotency-Key header is required for Paystack utility payments.', 400);
-
   try {
     const user = await requireUtilityUser(request);
+    const idempotencyKey = request.headers.get('Idempotency-Key');
+    if (!idempotencyKey) return errorResponse('Idempotency-Key header is required for Paystack utility payments.', 400);
     const limited = utilityRateLimit(request, 'paystack-initiate', user.id, 10, 60_000);
     if (limited) return limited;
 

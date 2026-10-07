@@ -102,9 +102,12 @@ func (e *Eversend) CreateCollection(ctx context.Context, currency, accountType, 
 	return &orch.CollectionResult{ProviderRef: "evs_col_" + uuid.New().String()[:8], Details: details}, nil
 }
 
+// VerifyWebhookSignature always fails closed: this deterministic adapter has no
+// signing secret, so it cannot authenticate a webhook and must not treat a
+// non-empty signature as proof. A verified-looking credit event would post real
+// balance mutations — fail-open here is a money-forgery primitive.
 func (e *Eversend) VerifyWebhookSignature(payload []byte, signature string) bool {
-	// Production: HMAC verify against the Eversend signing secret.
-	return signature != ""
+	return false
 }
 
 func railsForCurrency(currency string) []string {

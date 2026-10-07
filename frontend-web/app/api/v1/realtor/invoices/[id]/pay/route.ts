@@ -14,10 +14,10 @@ import { payInvoice } from '@/src/server/realtor/invoices';
 // lease/escrow rows are ever touched.
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;
-  const idempotencyKey = request.headers.get('Idempotency-Key');
-  if (!idempotencyKey) return errorResponse('Idempotency-Key header is required for realtor invoice payments.', 400);
   try {
     const user = await requireRequestUser(request);
+    const idempotencyKey = request.headers.get('Idempotency-Key');
+    if (!idempotencyKey) return errorResponse('Idempotency-Key header is required for realtor invoice payments.', 400);
     const body = await request.json().catch(() => ({}));
     const channel = body?.channel === 'PAYSTACK' ? 'PAYSTACK' : 'WALLET';
     const result = await payInvoice({ userId: user.id, invoiceId: params.id, channel, idempotencyKey });

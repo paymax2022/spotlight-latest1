@@ -29,11 +29,11 @@ function reference() {
 
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;
-  const idempotencyKey = request.headers.get('Idempotency-Key');
-  if (!idempotencyKey) return errorResponse('Idempotency-Key header is required for registration payments.', 400);
-
   try {
     const { user } = await requireUser(request);
+
+    const idempotencyKey = request.headers.get('Idempotency-Key');
+    if (!idempotencyKey) return errorResponse('Idempotency-Key header is required for registration payments.', 400);
 
     const limited = checkRateLimit(`registration:payment-initiate:${user.id}`, 10, 60_000);
     if (!limited.allowed) return errorResponse('Too many payment attempts. Please slow down.', 429);
