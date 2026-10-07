@@ -240,6 +240,58 @@ func TestLiveDB_SocialContributePool_CrossUserCollision_Refused(t *testing.T) {
 	}
 }
 
+// Same-user cross-pool key reuse (F-525-1): the journal key is pool-scoped so
+// pool P2's "social:pool:P2:K" debit would post for real while the global
+// uq_pool_contributions_idem insert silently no-ops on K — escrowed money with
+// no contribution row. The pre-debit key lookup must refuse it BEFORE the
+// wallet is touched; a retry of the SAME pool+amount stays a clean replay.
+func TestLiveDB_SocialContributePool_CrossPoolSameKey_Refused(t *testing.T) {
+	pool := socialTestPool(t)
+	ctx := context.Background()
+	led := ledger.NewService(ledger.NewRepository(pool), nil)
+	svc := socialService(pool)
+
+	organiser := socialTestUser(t, pool)
+	setKycTier(t, pool, organiser, 1)
+	alice := fundedContributor(t, ctx, pool, led, 10_000_00)
+
+	p1, err := svc.CreatePool(ctx, organiser, "pool-one", nil)
+	if err != nil {
+		t.Fatalf("create pool1: %v", err)
+	}
+	p2, err := svc.CreatePool(ctx, organiser, "pool-two", nil)
+	if err != nil {
+		t.Fatalf("create pool2: %v", err)
+	}
+
+	key := "reuse-" + shortTag()
+	if _, err := svc.ContributePool(ctx, alice, p1.ID, 100_00, key); err != nil {
+		t.Fatalf("alice contribute p1: %v", err)
+	}
+	if _, err := svc.ContributePool(ctx, alice, p2.ID, 100_00, key); err == nil {
+		t.Fatal("cross-pool key reuse succeeded — must be refused before the debit posts")
+	}
+	if bal, _ := led.GetBalance(ctx, alice); bal != 9_900_00 {
+		t.Fatalf("alice balance = %d, want 990000 — refused cross-pool reuse must never debit", bal)
+	}
+	var p2Rows int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM pool_contributions WHERE pool_id=$1 AND amount_kobo>0`,
+		p2.ID).Scan(&p2Rows); err != nil {
+		t.Fatalf("count p2 contributions: %v", err)
+	}
+	if p2Rows != 0 {
+		t.Fatalf("pool2 recorded %d phantom contribution(s)", p2Rows)
+	}
+	// Same pool + same key + same amount remains an idempotent replay.
+	if _, err := svc.ContributePool(ctx, alice, p1.ID, 100_00, key); err != nil {
+		t.Fatalf("same-pool same-key retry err = %v, want nil", err)
+	}
+	if bal, _ := led.GetBalance(ctx, alice); bal != 9_900_00 {
+		t.Fatalf("alice balance after replay = %d, want 990000 (exactly one debit)", bal)
+	}
+}
+
 // Every money mutation must emit an audit event (iron rule): a real
 // contribution + payout produces the module-scoped events.
 func TestLiveDB_SocialMoneyPath_EmitsAuditEvents(t *testing.T) {

@@ -629,6 +629,21 @@ func (s *Service) ContributePool(ctx context.Context, userID, poolID string, amo
 	if err != nil {
 		return 0, err
 	}
+	// Key-replay BEFORE any money moves or gates: pool_contributions keys
+	// idempotency GLOBALLY (uq_pool_contributions_idem) and the insert below
+	// is ON CONFLICT DO NOTHING, so a reused key must settle here — the
+	// pool-scoped journal key would otherwise post a real debit the row
+	// insert silently drops (escrowed funds with no contribution row).
+	existing, err := s.contributionByKey(ctx, idemKey)
+	if err != nil {
+		return 0, fmt.Errorf("social: pool contribute replay lookup: %w", err)
+	}
+	if existing != nil {
+		if existing.UserID == userID && existing.PoolID == poolID && existing.AmountKobo == amountKobo {
+			return s.PoolBalance(ctx, poolID)
+		}
+		return 0, errors.New("social: contribution replayed under a colliding idempotency key — use a fresh Idempotency-Key")
+	}
 	if p.State != PoolOpen {
 		return 0, errors.New("social: pool not open")
 	}
@@ -672,8 +687,22 @@ func (s *Service) ContributePool(ctx context.Context, userID, poolID string, amo
 	}
 	const ins = `INSERT INTO pool_contributions (id, pool_id, user_id, amount_kobo, idempotency_key)
 	             VALUES ($1,$2,$3,$4,$5) ON CONFLICT (idempotency_key) DO NOTHING`
-	if _, err := s.db.Exec(ctx, ins, uuid.New().String(), poolID, userID, amountKobo, idemKey); err != nil {
+	ct, err := s.db.Exec(ctx, ins, uuid.New().String(), poolID, userID, amountKobo, idemKey)
+	if err != nil {
 		return 0, fmt.Errorf("social: pool contribute record: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		// Lost a same-key race between the replay check and this insert; the
+		// winner's row decides — identical replay returns the balance, anything
+		// else refuses so the wedged debit is LOUD, not silent.
+		winner, err := s.contributionByKey(ctx, idemKey)
+		if err != nil {
+			return 0, fmt.Errorf("social: pool contribute conflict lookup: %w", err)
+		}
+		if winner != nil && winner.UserID == userID && winner.PoolID == poolID && winner.AmountKobo == amountKobo {
+			return s.PoolBalance(ctx, poolID)
+		}
+		return 0, errors.New("social: contribution replayed under a colliding idempotency key — use a fresh Idempotency-Key")
 	}
 	s.log(userID, "", "social.pool.contribute", "group_pool", poolID, nil, map[string]any{"amount_kobo": amountKobo})
 	return s.PoolBalance(ctx, poolID)
@@ -758,6 +787,7 @@ func (s *Service) PayoutPool(ctx context.Context, organiserID, poolID, idemKey s
 		if _, err := s.db.Exec(ctx, drainIns, uuid.New().String(), poolID, beneficiary, -paid, "payout:"+poolID); err != nil {
 			return fmt.Errorf("social: pool drain record: %w", err)
 		}
+		s.log(organiserID, beneficiary, "social.pool.payout.heal", "group_pool", poolID, nil, map[string]any{"amount_kobo": paid})
 		return nil
 	}
 	if !canPool(p.State, PoolPaidOut) {
@@ -825,6 +855,22 @@ func (s *Service) paymentByIdem(ctx context.Context, senderID, idemKey string) (
 		return nil, err
 	}
 	return &p, nil
+}
+
+// contributionByKey returns the contribution row a caller key already owns.
+// The idempotency_key is globally UNIQUE (it also keys payout drain rows), so
+// callers MUST compare user_id/pool_id/amount_kobo before treating a hit as a
+// replay — a foreign hit means the key collided, not that this op ran.
+func (s *Service) contributionByKey(ctx context.Context, idemKey string) (*PoolContribution, error) {
+	const q = `SELECT id, pool_id, user_id, amount_kobo, created_at FROM pool_contributions WHERE idempotency_key=$1`
+	var c PoolContribution
+	if err := s.db.QueryRow(ctx, q, idemKey).Scan(&c.ID, &c.PoolID, &c.UserID, &c.AmountKobo, &c.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &c, nil
 }
 
 func (s *Service) getRequest(ctx context.Context, requestID string) (*Request, error) {
