@@ -10,6 +10,8 @@ import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import CheckRow from '@/features/fx/components/CheckRow';
+import { CONSENT_VERSION } from '@/features/kycverify/constants';
 import { formatKobo } from '@/features/connect/constants/format';
 import { useSubmitTier1 } from '@/features/connect/wallet/hooks';
 
@@ -18,13 +20,14 @@ export default function Tier1BvnNin() {
   const submit = useSubmitTier1();
   const [type, setType] = useState<'bvn' | 'nin'>('bvn');
   const [value, setValue] = useState('');
+  const [consent, setConsent] = useState(false);
 
   const valid = /^\d{11}$/.test(value);
 
   const onSubmit = () => {
-    if (!valid) return;
+    if (!valid || !consent) return;
     submit.mutate(
-      { identifier: value, identifierType: type },
+      { identifier: value, identifierType: type, consentVersion: CONSENT_VERSION },
       {
         onSuccess: (r) => {
           if (r.reviewState === 'pending') router.replace('/connect/wallet/tier/pending');
@@ -62,6 +65,14 @@ export default function Tier1BvnNin() {
           inputMode="numeric"
         />
 
+        <View style={styles.consentCard}>
+          <CheckRow
+            checked={consent}
+            onToggle={() => setConsent((v) => !v)}
+            label={`I consent to Paymax and its verification partners processing my ${type.toUpperCase()} to confirm my identity, in line with the Nigeria Data Protection Act (NDPA) and CBN KYC rules.`}
+          />
+        </View>
+
         <View style={styles.privacy}>
           <Lock size={14} color={Colors.onSurfaceVariant} />
           <Text style={styles.privacyText}>
@@ -72,7 +83,7 @@ export default function Tier1BvnNin() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <PrimaryButton label="Verify & continue" onPress={onSubmit} disabled={!valid} loading={submit.isPending} />
+        <PrimaryButton label="Verify & continue" onPress={onSubmit} disabled={!valid || !consent} loading={submit.isPending} />
       </View>
     </SafeAreaView>
   );
@@ -90,6 +101,10 @@ const styles = StyleSheet.create({
   segItemActive: { backgroundColor: Colors.primary },
   segText: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   segTextActive: { color: Colors.onPrimary },
+  consentCard: {
+    backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg,
+    borderWidth: 1, borderColor: Colors.surfaceContainerHigh, paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs,
+  },
   privacy: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'flex-start' },
   privacyText: { ...Typography.labelSm, color: Colors.onSurfaceVariant, flex: 1, lineHeight: 18 },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.md, borderTopWidth: 1, borderTopColor: Colors.surfaceContainerHigh },

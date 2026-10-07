@@ -7,6 +7,7 @@
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
+import { toTier1Result, type Tier1ServerResponse } from './tier1Result';
 import { USE_MOCK, CONNECT_API_BASE, TIER_BENEFITS } from '../constants/connect.constants';
 import type { ConnectTier, TierStatus } from '../types/connect.types';
 import type {
@@ -378,7 +379,7 @@ export async function submitTier1(input: Tier1Input): Promise<UpgradeResult> {
     return { ok: true, reviewState: 'passed', targetTier: 1, message: `${input.identifierType.toUpperCase()} linked. Tier 1 active.` };
   }
   const res = await api.post(`${CONNECT_API_BASE}/kyc/tier1`, input, idemConfig());
-  return unwrap<UpgradeResult>(res);
+  return toTier1Result(unwrap<Tier1ServerResponse>(res));
 }
 
 export async function submitTier2(input: Tier2Input): Promise<UpgradeResult> {

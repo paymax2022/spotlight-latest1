@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"spotlight/backend/go-common/cryptox"
 	"spotlight/backend/internal/provider"
@@ -206,8 +207,8 @@ func (c *Client) do(req *http.Request, dst any) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dojah: read response: %w", err)
 	}
-	if resp.StatusCode >= 500 {
-		return b, fmt.Errorf("dojah: server error %d: %s", resp.StatusCode, string(b))
+	if err := classifyStatus(req, resp.StatusCode, b); err != nil {
+		return b, err
 	}
 	if dst != nil {
 		if err := json.Unmarshal(b, dst); err != nil {
@@ -215,4 +216,27 @@ func (c *Client) do(req *http.Request, dst any) ([]byte, error) {
 		}
 	}
 	return b, nil
+}
+
+// classifyStatus separates "Dojah answered about this identity" from "Dojah could
+// not be asked". 2xx and 400/404/422 are verdicts on the ID (found / unknown /
+// malformed) and flow on to the mappers. Everything else — 401/403 (credentials
+// rejected, or a sandbox key used against live and vice versa), 402 (out of
+// credit), 429, 5xx — says nothing about the person, so it must surface as an
+// error: the gateway then trips its breaker and fails over, instead of recording
+// a terminal "no matching record" that tells the user their own BVN is wrong.
+func classifyStatus(req *http.Request, code int, body []byte) error {
+	switch {
+	case code >= 200 && code < 300, code == 400, code == 404, code == 422:
+		return nil
+	}
+	if code == http.StatusUnauthorized || code == http.StatusForbidden || code == http.StatusPaymentRequired {
+		// Log the path only: the query string carries the BVN/NIN.
+		log.Printf("dojah: HTTP %d on %s — provider rejected our credentials or account; check DOJAH_APP_ID / DOJAH_SECRET_KEY and that DOJAH_PROD matches the key's environment (sandbox keys only work with DOJAH_PROD=false)", code, req.URL.Path)
+	}
+	snippet := string(body)
+	if len(snippet) > 200 {
+		snippet = snippet[:200]
+	}
+	return fmt.Errorf("dojah: unexpected status %d: %s", code, snippet)
 }
