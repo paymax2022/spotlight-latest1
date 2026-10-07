@@ -19,7 +19,7 @@
 // a Cloudinary public ID (see src/features/media/banners), and the actual
 // pixels are always fetched from the CDN at render time — a redesigned
 // banner ships by pointing the backend at a new public ID, no app release.
-import React from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, Pressable, type StyleProp, type ImageStyle } from 'react-native';
 import { Image } from 'expo-image';
 import { Radius } from '@/constants/tokens';
@@ -41,6 +41,8 @@ interface Props {
   aspectRatio?: number;
   alt?: string;
   onPress?: () => void;
+  /** Fired when the artwork cannot be loaded; the banner then renders nothing. */
+  onError?: () => void;
   style?: StyleProp<ImageStyle>;
 }
 
@@ -50,11 +52,17 @@ export default function SpotlightBanner({
   aspectRatio = 8 / 3,
   alt,
   onPress,
+  onError,
   style,
 }: Props) {
+  const [failed, setFailed] = useState(false);
   const width = useBannerWidth();
   const uri = cloudinaryBannerUrl(publicId, width);
   const placeholderUri = cloudinaryBannerPlaceholderUrl(publicId);
+
+  // A banner is decoration: when the image can't load, collapse instead of
+  // leaving an empty tinted frame that looks like a broken screen.
+  if (failed) return null;
 
   const body = (
     <Image
@@ -66,6 +74,10 @@ export default function SpotlightBanner({
       contentFit="cover"
       cachePolicy="disk"
       priority={priority ? 'high' : 'low'}
+      onError={() => {
+        setFailed(true);
+        onError?.();
+      }}
       accessible
       accessibilityRole="image"
       accessibilityLabel={alt}
