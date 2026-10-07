@@ -16,6 +16,7 @@
     "test:payment-routes": "node scripts/smoke-payment-routes.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "test:property-roles": "node --experimental-strip-types --test \"src/features/property/roles/__tests__/*.test.ts\"",
     "test:merchant": "node --experimental-strip-types --test \"src/features/merchant/lib/__tests__/*.test.ts\"",
     "test:mobility": "node --experimental-strip-types --test \"src/features/mobility/utils/__tests__/*.test.ts\"",
     "test:insurance": "node --experimental-strip-types --test \"src/features/insurance/__tests__/*.test.ts\"",
