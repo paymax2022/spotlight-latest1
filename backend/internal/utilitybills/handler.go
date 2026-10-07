@@ -102,6 +102,10 @@ func writeErr(c *gin.Context, err error) {
 		// the adapter's pre-flight auth guards).
 		errors.Is(err, provider.ErrProviderRefused):
 		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: httperr.Msg(c, http.StatusServiceUnavailable, err)})
+	case errors.Is(err, ErrIdempotencyKeyConflict):
+		// 409 + stable code for a cross-member Idempotency-Key reuse (the same
+		// contract as finance/transfers' idempotency_key_conflict).
+		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), keyCode: "idempotency_key_conflict"})
 	case errors.Is(err, ErrBindInFlight):
 		c.JSON(http.StatusConflict, gin.H{keyError: httperr.Msg(c, http.StatusConflict, err), keyCode: "purchase_in_flight"})
 	case errors.Is(err, ErrBindOutcomeUnknown):

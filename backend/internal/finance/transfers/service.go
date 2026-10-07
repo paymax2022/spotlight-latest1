@@ -271,19 +271,34 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 		return nil, fmt.Errorf("transfers: advisory lock: %w", err)
 	}
 
-	senderBalance, err := s.ledger.GetBalance(ctx, senderID)
-	if err != nil {
-		return nil, err
-	}
-	total := req.AmountKobo + fee
-	if senderBalance < total {
-		return nil, ledger.ErrInsufficientFunds
-	}
-
 	senderAcc, err := s.ledger.GetOrCreateUserWallet(ctx, senderID)
 	if err != nil {
 		return nil, err
 	}
+	// Cross-plane serialisation (audit finding: pooled GetBalance read raced
+	// the SQL-RPC wallet plane). transfer_wallet_atomic /
+	// reserve_for_bank_transfer lock pg_advisory_xact_lock(hashtext(
+	// sender_account_id)) — a DIFFERENT key from the Go-plane "wallet:"+uid
+	// lock above. Holding BOTH makes the in-tx balance projection below
+	// authoritative against either writer. Lock order is fixed (user key
+	// first, account key second) and the RPC plane takes only the account
+	// key, so no lock cycle is possible.
+	if _, err := tx.Exec(ctx, lock, senderAcc.ID); err != nil {
+		return nil, fmt.Errorf("transfers: account advisory lock: %w", err)
+	}
+
+	// Sufficiency check inside the tx (balanceTx), not the pool: a pooled
+	// read cannot observe entries a lock-honouring peer is about to commit,
+	// and re-checking here is what closes the double-spend race.
+	total := req.AmountKobo + fee
+	senderBalance, err := balanceTx(ctx, tx, senderAcc.ID)
+	if err != nil {
+		return nil, err
+	}
+	if senderBalance < total {
+		return nil, ledger.ErrInsufficientFunds
+	}
+
 	recipientAcc, err := s.ledger.GetOrCreateUserWallet(ctx, recipient.UserID)
 	if err != nil {
 		return nil, err
@@ -422,7 +437,21 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 		return nil, fmt.Errorf("bank_transfer: advisory lock: %w", err)
 	}
 
-	balance, err := s.ledger.GetBalance(ctx, userID)
+	userAcc, err := s.ledger.GetOrCreateUserWallet(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	// Cross-plane serialisation — same reasoning as InitiateWalletToWallet:
+	// the SQL-RPC wallet plane locks hashtext(account_id), the Go plane locks
+	// hashtext("wallet:"+uid). Holding both keys, in this order, makes the
+	// in-tx balance projection below authoritative against either writer
+	// with no lock cycle (the RPC plane takes the account key alone).
+	if _, err := tx.Exec(ctx, lock, userAcc.ID); err != nil {
+		return nil, fmt.Errorf("bank_transfer: account advisory lock: %w", err)
+	}
+
+	// Sufficiency check inside the tx — see InitiateWalletToWallet.
+	balance, err := balanceTx(ctx, tx, userAcc.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -430,10 +459,6 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 		return nil, ledger.ErrInsufficientFunds
 	}
 
-	userAcc, err := s.ledger.GetOrCreateUserWallet(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
 	suspenseAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountFailedTransferSusp)
 	if err != nil {
 		return nil, err
@@ -497,15 +522,75 @@ func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req B
 
 	// On any provider error we DO NOT roll back the reserve — funds stay parked in
 	// suspense (status funds_reserved) for retry/reconciliation. Never double-spend.
-	s.initiatePayoutLeg(ctx, bt, req.SaveBeneficiary, req.Provider, req.Narration)
+	// A lost leg-lock claim (ErrPayoutLegInFlight) just means the leg is already
+	// running elsewhere — the reserve stands either way, so the error is logged
+	// and the initiated transfer is still returned.
+	if err := s.initiatePayoutLeg(ctx, bt, req.SaveBeneficiary, req.Provider, req.Narration, nil); err != nil {
+		log.Printf("[transfers] payout leg claim transfer=%s: %v", bt.ID, err)
+	}
 	return bt, nil
 }
 
-// initiatePayoutLeg resolves a recipient (reusing cached codes), creates one with
-// the provider when missing, calls the registry payout with failover, and on
-// success persists the provider routing fields + advances to provider_initiated.
+// initiatePayoutLeg runs the provider payout leg under a per-transfer advisory
+// lock (claim-then-act, audit finding: concurrent admin retries could
+// double-call InitiatePayoutFailover relying only on provider-side dedup of
+// bt.Reference). Every path that can fire a payout — initiate, the funding
+// webhook's auto-leg, and admin retry — funnels through here, so at most ONE
+// caller ever holds the leg at a time; a loser gets ErrPayoutLegInFlight and
+// must not fire the provider itself.
+//
+// guard (optional) runs under the lock on a FRESHLY re-read row — the row the
+// caller loaded may be stale by the time the claim lands (a webhook could have
+// settled it). AdminRetry uses it to re-validate the status gate; initiate and
+// markFunded pass nil (their state was just committed).
+func (s *Service) initiatePayoutLeg(ctx context.Context, bt *BankTransfer, saveBeneficiary bool, preferred, narration string, guard func(*BankTransfer) error) error {
+	if s.registry == nil {
+		return nil
+	}
+	// Session-scoped advisory lock on a PINNED pooled conn — held across the
+	// provider call and released before the conn returns to the pool. A
+	// transaction-scoped lock can't be used here: the leg spans provider HTTP
+	// calls and must not hold a tx open.
+	conn, err := s.db.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("transfers: payout leg acquire conn: %w", err)
+	}
+	defer conn.Release()
+	var claimed bool
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtext($1))`, payoutLegLockKey(bt.ID)).Scan(&claimed); err != nil {
+		return fmt.Errorf("transfers: payout leg lock: %w", err)
+	}
+	if !claimed {
+		return ErrPayoutLegInFlight
+	}
+	// WithoutCancel: the request ctx may already be dead after provider
+	// timeouts — a leaked session lock would pin this conn's other users.
+	defer func() {
+		if _, err := conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock(hashtext($1))`, payoutLegLockKey(bt.ID)); err != nil {
+			log.Printf("[transfers] payout leg unlock transfer=%s failed: %v", bt.ID, err)
+		}
+	}()
+
+	// Re-read under the lock: the caller's bt may predate a concurrent status
+	// move; the leg and the guard must act on the freshest row.
+	if fresh, err := s.getBankTransfer(ctx, bt.ID); err == nil && fresh != nil {
+		*bt = *fresh
+	}
+	if guard != nil {
+		if err := guard(bt); err != nil {
+			return err
+		}
+	}
+	s.runPayoutLeg(ctx, bt, saveBeneficiary, preferred, narration)
+	return nil
+}
+
+// runPayoutLeg is the lock-free inner leg — call ONLY via initiatePayoutLeg.
+// It resolves a recipient (reusing cached codes), creates one with the provider
+// when missing, calls the registry payout with failover, and on success
+// persists the provider routing fields + advances to provider_initiated.
 // On error the transfer is left in its reserved/funded hold state.
-func (s *Service) initiatePayoutLeg(ctx context.Context, bt *BankTransfer, saveBeneficiary bool, preferred, narration string) {
+func (s *Service) runPayoutLeg(ctx context.Context, bt *BankTransfer, saveBeneficiary bool, preferred, narration string) {
 	if s.registry == nil {
 		return
 	}
@@ -526,17 +611,25 @@ func (s *Service) initiatePayoutLeg(ctx context.Context, bt *BankTransfer, saveB
 		return
 	}
 
+	// Terminal-guarded status write: a settle webhook that landed while the
+	// provider call was in flight must never be overwritten back to
+	// provider_initiated — a terminal outcome is authoritative.
 	const up = `
 		UPDATE bank_transfers
 		SET status='provider_initiated', provider=$2, provider_recipient_code=$3,
 		    provider_transfer_ref=$4, provider_transfer_code=$4, failover_from=$5,
 		    account_name=COALESCE(NULLIF($6,''), account_name)
-		WHERE id=$1`
+		WHERE id=$1 AND status NOT IN ('successful','failed','reversed')`
 	var failoverFrom *string
 	if result.FailoverFrom != "" {
 		failoverFrom = &result.FailoverFrom
 	}
-	_, _ = s.db.Exec(ctx, up, bt.ID, result.Provider, result.RecipientCode, result.Response.ProviderRef, failoverFrom, accName)
+	tag, _ := s.db.Exec(ctx, up, bt.ID, result.Provider, result.RecipientCode, result.Response.ProviderRef, failoverFrom, accName)
+	if tag.RowsAffected() == 0 {
+		// Settled (or removed) while the payout was in flight — leave the
+		// terminal status and the in-memory view untouched.
+		return
+	}
 	bt.Status = BankTransferProviderInitiated
 	bt.Provider = result.Provider
 	bt.ProviderRecipientCode = &result.RecipientCode
@@ -650,6 +743,14 @@ func (s *Service) InitiateBankToBank(ctx context.Context, userID string, req Ban
 // markFunded handles a funding (collection) webhook for a bank→bank transfer:
 // posts DR provider_clearing(amount+fee) → CR suspense, advances to funded, then
 // auto-initiates the payout leg from suspense (same as wallet→bank). Idempotent.
+//
+// ATOMICITY: the funding journal and the status UPDATE share ONE transaction.
+// The previous shape posted the journal in its own tx and flipped the status in
+// a separate pooled exec — a crash between the two left the row at
+// 'awaiting_funding' with the ledger already moved (self-healing on replay, but
+// a real window). Now either both land or neither does. Replays still no-op:
+// the leg inserts carry ON CONFLICT DO NOTHING and the UPDATE stays guarded by
+// status='awaiting_funding'.
 func (s *Service) markFunded(ctx context.Context, bt *BankTransfer, curStatus BankTransferStatus) error {
 	if !CanAdvanceBankToBank(curStatus, BankTransferFunded) {
 		return nil // illegal/duplicate transition — no-op
@@ -663,24 +764,37 @@ func (s *Service) markFunded(ctx context.Context, bt *BankTransfer, curStatus Ba
 		return fmt.Errorf("bank_to_bank funded: suspense acct: %w", err)
 	}
 	total := bt.AmountKobo + bt.FeeKobo
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("bank_to_bank funded: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	// DR provider_clearing → CR suspense (the collected money is parked for payout).
-	if err := s.ledger.PostJournal(ctx, ledger.JournalEntry{
-		Reference:       bt.Reference,
-		IdempotencyKey:  LegKey(bt.IdempotencyKey, LegFund),
-		AmountKobo:      total,
-		DebitAccountID:  clearingAcc.ID,
-		CreditAccountID: suspenseAcc.ID,
-	}); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+	if err := insertJournalLegTx(ctx, tx, bt.Reference, LegKey(bt.IdempotencyKey, LegFund), total, clearingAcc.ID, suspenseAcc.ID); err != nil {
 		return fmt.Errorf("bank_to_bank funded: post journal: %w", err)
 	}
 	const up = `UPDATE bank_transfers SET status='funded', funding_status='successful' WHERE id=$1 AND status='awaiting_funding'`
-	if _, err := s.db.Exec(ctx, up, bt.ID); err != nil {
+	tag, err := tx.Exec(ctx, up, bt.ID)
+	if err != nil {
 		return fmt.Errorf("bank_to_bank funded: update: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// A racing markFunded already committed (or the row moved on) — the
+		// deferred rollback drops our duplicate leg inserts with it.
+		return nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("bank_to_bank funded: commit: %w", err)
 	}
 	bt.Status = BankTransferFunded
 	s.audit(ctx, bt.UserID, "transfer.bank_to_bank.funded", bt.ID, bt.Reference)
 	// Auto-initiate the payout leg (mirrors wallet→bank disburse from suspense).
-	s.initiatePayoutLeg(ctx, bt, false, bt.Provider, "")
+	// A lost leg-lock claim means the leg is already running elsewhere.
+	if err := s.initiatePayoutLeg(ctx, bt, false, bt.Provider, "", nil); err != nil {
+		log.Printf("[transfers] funded payout leg claim transfer=%s: %v", bt.ID, err)
+	}
 	return nil
 }
 
@@ -807,7 +921,15 @@ func (s *Service) HandleProviderWebhook(ctx context.Context, ev *provider.Webhoo
 //   - failed/reversed: reverse the hold back to the source — REVERSAL_DEBIT to the
 //     user wallet (wallet-src) or to provider_clearing (bank-src refund).
 //
-// All legs use per-leg idempotency keys, so a duplicate webhook is a no-op.
+// ATOMICITY: every journal leg and the status flip commit in ONE transaction.
+// The previous shape committed each journal in its own tx and then ran the
+// status UPDATE on the pool — a crash between them left 'funds_reserved' with
+// the ledger already moved, and two racing opposite webhooks (success + failed)
+// could each post their legs before the last status write won. Now the CAS
+// UPDATE (`status NOT IN terminal`) is the arbiter inside the same tx: a racing
+// settle sees 0 rows and its duplicate leg inserts roll back with it.
+// All legs keep per-leg idempotency keys (ON CONFLICT DO NOTHING inside the
+// tx), so a duplicate webhook or a self-healing replay is still a no-op.
 func (s *Service) settleTransfer(ctx context.Context, bt *BankTransfer, next BankTransferStatus) error {
 	if bt.Status == next {
 		return nil // duplicate — already applied
@@ -816,49 +938,31 @@ func (s *Service) settleTransfer(ctx context.Context, bt *BankTransfer, next Ban
 	if bt.Status == BankTransferSuccessful || bt.Status == BankTransferFailed || bt.Status == BankTransferReversed {
 		return nil
 	}
+	if next != BankTransferSuccessful && next != BankTransferFailed && next != BankTransferReversed {
+		return nil
+	}
 
 	suspenseAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountFailedTransferSusp)
 	if err != nil {
 		return fmt.Errorf("settle: suspense acct: %w", err)
 	}
 
+	// Resolve the remaining accounts up front (idempotent get-or-create reads)
+	// so the tx below does inserts + the CAS update only.
+	var settlementAcc, revenueAcc, restoreAcc *ledger.Account
 	switch next {
 	case BankTransferSuccessful:
-		settlementAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
+		settlementAcc, err = s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
 		if err != nil {
 			return fmt.Errorf("settle: settlement acct: %w", err)
 		}
-		// Sweep the amount: DR suspense → CR settlement (money has left the building).
-		if err := s.ledger.PostJournal(ctx, ledger.JournalEntry{
-			Reference:       bt.Reference,
-			IdempotencyKey:  LegKey(bt.IdempotencyKey, LegSettle),
-			AmountKobo:      bt.AmountKobo,
-			DebitAccountID:  suspenseAcc.ID,
-			CreditAccountID: settlementAcc.ID,
-		}); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
-			return fmt.Errorf("settle: sweep amount: %w", err)
-		}
-		// Recognize the fee: DR suspense(fee) → CR paymax_revenue.
 		if bt.FeeKobo > 0 {
-			revenueAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+			revenueAcc, err = s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
 			if err != nil {
 				return fmt.Errorf("settle: revenue acct: %w", err)
 			}
-			if err := s.ledger.PostJournal(ctx, ledger.JournalEntry{
-				Reference:       bt.Reference,
-				IdempotencyKey:  LegKey(bt.IdempotencyKey, LegFeeRev),
-				AmountKobo:      bt.FeeKobo,
-				DebitAccountID:  suspenseAcc.ID,
-				CreditAccountID: revenueAcc.ID,
-			}); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
-				return fmt.Errorf("settle: recognize fee: %w", err)
-			}
 		}
-
 	case BankTransferFailed, BankTransferReversed:
-		// Reverse the hold back to the source: REVERSAL_DEBIT to the restore account,
-		// REVERSAL_CREDIT draining suspense.
-		var restoreAcc *ledger.Account
 		if SourceType(bt.SourceType) == SourceBank {
 			// bank→bank: refund to provider_clearing (the money came from a collection).
 			restoreAcc, err = s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
@@ -869,21 +973,47 @@ func (s *Service) settleTransfer(ctx context.Context, bt *BankTransfer, next Ban
 		if err != nil {
 			return fmt.Errorf("settle: restore acct: %w", err)
 		}
-		rev := BuildReversalEntry(bt.Reference, restoreAcc.ID, suspenseAcc.ID, bt.AmountKobo+bt.FeeKobo, bt.IdempotencyKey, next)
-		if err := s.ledger.PostReversal(ctx, rev.UserAccountID, rev.SuspenseAccountID, rev.AmountKobo, rev.Reference, rev.IdempotencyKey); err != nil {
-			if errors.Is(err, ledger.ErrDuplicate) {
-				// fall through to the status update (idempotent)
-			} else {
-				return fmt.Errorf("settle: post reversal: %w", err)
-			}
-		}
-	default:
-		return nil
 	}
 
-	const upQ = `UPDATE bank_transfers SET status=$1 WHERE id=$2`
-	if _, err := s.db.Exec(ctx, upQ, string(next), bt.ID); err != nil {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("settle: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	switch next {
+	case BankTransferSuccessful:
+		// Sweep the amount: DR suspense → CR settlement (money has left the building).
+		if err := insertJournalLegTx(ctx, tx, bt.Reference, LegKey(bt.IdempotencyKey, LegSettle), bt.AmountKobo, suspenseAcc.ID, settlementAcc.ID); err != nil {
+			return fmt.Errorf("settle: sweep amount: %w", err)
+		}
+		// Recognize the fee: DR suspense(fee) → CR paymax_revenue.
+		if bt.FeeKobo > 0 {
+			if err := insertJournalLegTx(ctx, tx, bt.Reference, LegKey(bt.IdempotencyKey, LegFeeRev), bt.FeeKobo, suspenseAcc.ID, revenueAcc.ID); err != nil {
+				return fmt.Errorf("settle: recognize fee: %w", err)
+			}
+		}
+	case BankTransferFailed, BankTransferReversed:
+		// Reverse the hold back to the source: REVERSAL_DEBIT to the restore account,
+		// REVERSAL_CREDIT draining suspense.
+		rev := BuildReversalEntry(bt.Reference, restoreAcc.ID, suspenseAcc.ID, bt.AmountKobo+bt.FeeKobo, bt.IdempotencyKey, next)
+		if err := insertReversalLegTx(ctx, tx, rev.Reference, rev.IdempotencyKey, rev.AmountKobo, rev.UserAccountID, rev.SuspenseAccountID); err != nil {
+			return fmt.Errorf("settle: post reversal: %w", err)
+		}
+	}
+
+	// CAS terminal claim: a concurrent settle that already committed leaves 0
+	// rows here and our duplicate leg inserts roll back via the defer.
+	const upQ = `UPDATE bank_transfers SET status=$1 WHERE id=$2 AND status NOT IN ('successful','failed','reversed')`
+	tag, err := tx.Exec(ctx, upQ, string(next), bt.ID)
+	if err != nil {
 		return fmt.Errorf("settle: update status: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil // racing settle won — nothing to commit
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("settle: commit: %w", err)
 	}
 	bt.Status = next
 	s.audit(ctx, bt.UserID, "transfer.bank.settle."+string(next), bt.ID, bt.Reference)

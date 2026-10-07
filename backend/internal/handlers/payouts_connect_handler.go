@@ -103,6 +103,14 @@ func (h *PayoutsConnectHandler) RequestPayout(c *gin.Context) {
 
 	reference := "PAYOUT-" + generateShortID()
 
+	// Scope the client-supplied Idempotency-Key per (rail, caller) before it
+	// enters the global ledger keyspace: a raw key is unique per journal, so
+	// the same key arriving from another rail (or another user) would collide
+	// on ledger_entries.idempotency_key and the debit would silently no-op —
+	// recording a payout with no money parked in settlement. The derived key
+	// keeps a genuine retry a conflict instead of a phantom no-op.
+	ledgerKey := "connect:wallet-payout:" + userID + ":" + idemKey
+
 	// Payout funds leave the user wallet into the settlement account, which the
 	// disbursement job draws against. Balanced journal, tier-gated, TOCTOU-safe.
 	settlement, err := h.ledgerSvc.GetOrCreateStandingAccount(c.Request.Context(), ledger.AccountSettlement)
@@ -110,12 +118,12 @@ func (h *PayoutsConnectHandler) RequestPayout(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "settlement account unavailable"})
 		return
 	}
-	if err := h.walletSvc.Debit(c.Request.Context(), userID, reference, idemKey, settlement.ID, body.AmountKobo); err != nil {
+	if err := h.walletSvc.Debit(c.Request.Context(), userID, reference, ledgerKey, settlement.ID, body.AmountKobo); err != nil {
 		writeMoneyError(c, err)
 		return
 	}
 
-	payout, err := h.store.RequestPayout(c.Request.Context(), userID, body.AmountKobo, "", "", "", reference, idemKey)
+	payout, err := h.store.RequestPayout(c.Request.Context(), userID, body.AmountKobo, "", "", "", reference, ledgerKey)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to request payout"})
 		return

@@ -4,6 +4,10 @@
 
 export type ContextType = 'estate' | 'property' | 'agency' | 'org';
 
+/** Context entity types the server may return. 'role' entities are read-only:
+ *  the server refuses to switch into them, so SwitchContextInput excludes it. */
+export type ContextEntityType = ContextType | 'role';
+
 export type PropertyRole =
   | 'tenant'
   | 'landlord'
@@ -15,11 +19,17 @@ export type PropertyRole =
   | 'vendor'
   | 'resident';
 
+/** Registrable marketplace roles carried by read-only 'role' context entities. */
+export type ProfessionalContextRole = 'estate_manager' | 'developer' | 'agent';
+
+/** Any role slug a context entity may carry. */
+export type ContextRole = PropertyRole | ProfessionalContextRole;
+
 export interface PropertyContext {
-  type:  ContextType;
+  type:  ContextEntityType;
   id:    string;
   name:  string;
-  roles: PropertyRole[];
+  roles: ContextRole[];
 }
 
 export interface ActiveContextRef {
