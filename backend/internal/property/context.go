@@ -25,7 +25,16 @@ import (
 // Service is the Property Management suite aggregation service. All reads are
 // scoped to the authenticated user id passed by the handler.
 type Service struct {
-	db *pgxpool.Pool
+	db    *pgxpool.Pool
+	roles bool
+}
+
+// WithRoles enables read-only role-profile entities in GetContext. When false
+// (the default) the property_role_profiles table is never queried, so the suite
+// keeps working on a database where that migration has not been applied.
+func (s *Service) WithRoles(enabled bool) *Service {
+	s.roles = enabled
+	return s
 }
 
 func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
@@ -172,6 +181,31 @@ func (s *Service) GetContext(ctx context.Context, userID string) (*ContextRespon
 		return nil, err
 	}
 
+	// Registered role profiles (read-only; flag-gated). Only status='active'
+	// rows of the caller are surfaced. "role" is deliberately NOT a switchable
+	// context type: nothing about roles is persisted to property_active_context.
+	if s.roles {
+		rows, err = s.db.Query(ctx, `
+			SELECT id::TEXT, display_name, role
+			FROM property_role_profiles
+			WHERE user_id = $1 AND status = 'active'`, userID)
+		if err != nil {
+			return nil, fmt.Errorf("property: role profiles: %w", err)
+		}
+		for rows.Next() {
+			var pid, name, role string
+			if err := rows.Scan(&pid, &name, &role); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			add("role", pid, name, role)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+
 	out := &ContextResponse{Contexts: make([]ContextEntity, 0, len(idx))}
 	for _, e := range idx {
 		out.Contexts = append(out.Contexts, *e)
@@ -200,6 +234,9 @@ var validContextTypes = map[string]bool{"estate": true, "property": true, "agenc
 // caller actually holds a role in the target entity (fail-closed: a user cannot
 // switch into a context they are not a member of). Returns the new active context.
 func (s *Service) SwitchContext(ctx context.Context, userID, contextType, contextID string) (*ContextRef, error) {
+	if contextType == "role" {
+		return nil, fmt.Errorf("property: role profiles are not a switchable context")
+	}
 	if !validContextTypes[contextType] {
 		return nil, fmt.Errorf("property: invalid context_type %q", contextType)
 	}

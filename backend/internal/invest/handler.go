@@ -326,7 +326,7 @@ func (h *Handler) Withdraw(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	w, err := h.svc.Withdraw(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req.AmountKobo, req.Destination)
+	w, err := h.svc.Withdraw(c.Request.Context(), ginutil.UserID(c), ginutil.IdempotencyKey(c), req.AmountKobo, req.Destination, req.PIN)
 	if err != nil {
 		httpErr(c, err)
 		return

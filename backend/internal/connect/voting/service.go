@@ -321,8 +321,15 @@ func (s *Service) PaidVote(ctx context.Context, contestID, voterID, idemKey stri
 		return nil, err
 	}
 	ref := "connect:paidvote:" + contestID
+	// The client-supplied Idempotency-Key is scoped per (rail, caller) before it
+	// touches the global ledger keyspace: a raw key is unique per journal, so
+	// the same key arriving from another rail (or another voter) would collide
+	// on ledger_entries.idempotency_key and the debit would silently no-op —
+	// leaving a paid-vote row with no money behind it. The derived key keeps a
+	// genuine retry a no-op while a foreign claim surfaces as a conflict.
+	ledgerKey := "connect:paidvote:" + voterID + ":" + idemKey
 	// Money mutation — tier-checked, balanced double-entry, idempotent.
-	if err := s.wallet.Debit(ctx, voterID, ref, idemKey, revAcc, totalKobo); err != nil {
+	if err := s.wallet.Debit(ctx, voterID, ref, ledgerKey, revAcc, totalKobo); err != nil {
 		return nil, err
 	}
 
@@ -333,7 +340,7 @@ func (s *Service) PaidVote(ctx context.Context, contestID, voterID, idemKey stri
 		Paid:           true,
 		Quantity:       qty,
 		AmountKobo:     totalKobo,
-		IdempotencyKey: &idemKey,
+		IdempotencyKey: &ledgerKey,
 		LedgerRef:      &ref,
 	})
 	if err != nil {

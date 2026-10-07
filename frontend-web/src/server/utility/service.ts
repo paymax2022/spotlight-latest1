@@ -155,7 +155,7 @@ async function claimUtilityForSettlement(
     .update({ status: 'failed', failure_reason: reason, updated_at: new Date().toISOString() })
     .eq('id', transaction.id)
     .eq('updated_at', transaction.updated_at)
-    .in('status', ['initiated', 'wallet_debited', 'provider_pending'])
+    .in('status', ['initiated', 'wallet_debited', 'provider_pending', 'disputed'])
     .select('*');
   return ((claimed ?? [])[0] ?? null) as UtilityTransactionRow | null;
 }
@@ -1576,8 +1576,16 @@ export async function adminGetUtilityTransaction(transactionId: string) {
   return data as UtilityTransactionRow;
 }
 
-export async function adminResolveUtilityDispute(transactionId: string, status: 'resolved' | 'rejected', resolutionNote: string) {
+export async function adminResolveUtilityDispute(transactionId: string, status: 'resolved' | 'rejected' | 'refunded', resolutionNote: string) {
   const supabase = createAdminClient();
+  // 'refunded' is the customer-favourable outcome: the vend reported success but
+  // delivery failed, so the debit is returned through the shared reversal path
+  // (claim + money-leg probe + reversal/credit legs). If it throws, the dispute
+  // row stays open rather than recording a refund that never posted.
+  if (status === 'refunded') {
+    const transaction = await adminGetUtilityTransaction(transactionId);
+    await reverseUtilityTransaction(transaction, `Dispute refund: ${resolutionNote}`);
+  }
   const { data, error } = await supabase
     .from('utility_disputes')
     .update({ status, resolution_note: resolutionNote, updated_at: new Date().toISOString() })

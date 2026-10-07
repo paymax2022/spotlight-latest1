@@ -10,13 +10,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     const identity = await requireUtilitySupport(request);
     const body = await request.json().catch(() => null) as Record<string, unknown>;
     if (!body) return errorResponse('Invalid JSON body', 400);
-    const status = body.status === 'rejected' ? 'rejected' : body.status === 'resolved' ? 'resolved' : null;
+    const status = body.status === 'rejected' ? 'rejected'
+      : body.status === 'resolved' ? 'resolved'
+      : body.status === 'refunded' ? 'refunded' : null;
     const resolutionNote = typeof body.resolution_note === 'string'
       ? body.resolution_note.trim()
       : typeof body.resolutionNote === 'string'
         ? body.resolutionNote.trim()
         : '';
-    if (!status) return errorResponse('status must be resolved or rejected.', 400);
+    if (!status) return errorResponse('status must be resolved, rejected, or refunded.', 400);
     if (!resolutionNote) return errorResponse('resolution_note is required.', 400);
     const dispute = await adminResolveUtilityDispute(params.id, status, resolutionNote);
     auditUtilityAdminAction(request, identity, {

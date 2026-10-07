@@ -142,8 +142,15 @@ func (s *Service) Send(ctx context.Context, senderID, idemKey string, req SendGi
 	}
 
 	ref := "connect:gift:" + senderID + "->" + req.RecipientID
+	// Scope the client-supplied Idempotency-Key per (rail, caller) before it
+	// enters the global ledger keyspace: a raw key is unique per journal, so
+	// the same key arriving from another rail (or another sender) would
+	// collide on ledger_entries.idempotency_key — a foreign claim must fail
+	// closed, not be absorbed as a no-op that leaves a gift row with no money
+	// behind it. The derived key keeps a genuine retry a no-op.
+	ledgerKey := "connect:gift:" + senderID + ":" + idemKey
 	// Money mutation — single balanced double-entry, idempotent, ledger-only.
-	if err := s.transfer.Transfer(ctx, senderID, req.RecipientID, ref, idemKey, amountKobo); err != nil {
+	if err := s.transfer.Transfer(ctx, senderID, req.RecipientID, ref, ledgerKey, amountKobo); err != nil {
 		return nil, err // ErrInsufficientFunds / ErrDuplicate bubble up
 	}
 
@@ -158,7 +165,7 @@ func (s *Service) Send(ctx context.Context, senderID, idemKey string, req SendGi
 		GiftCode:       giftCode,
 		AmountKobo:     amountKobo,
 		Message:        msg,
-		IdempotencyKey: idemKey,
+		IdempotencyKey: ledgerKey,
 		LedgerRef:      ref,
 	})
 	if err != nil {
