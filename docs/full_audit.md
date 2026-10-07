@@ -1508,3 +1508,124 @@ E2E-MOB-047 (mobile bypasses Go — arch call), PSP sandbox keys, seeded
 scoped roles, health-reminder job handlers (health-team TODO), invest
 `failure_reason` stored-text sanitization (design call), and the commit/PR
 partitioning of the ~95-file worktree.
+
+## Wave 6 — 20-agent endpoint/security sweep (branch fix/prod6-unauth-sweep)
+
+### Fixed in PR #503 (committed)
+
+- **AUD-AUTH-006** — `/api/admin/stem/{applications,contests,contests/[id]}` auth
+  bypass: `assertStemReadAdmin()` promise never awaited → unauthenticated 200s.
+  Awaited; regression spec `tests/unit/admin/stem-auth-gate.spec.ts`.
+- **AUD-AUTH-007** — `GET /api/stem/school-join-requests` public PII list
+  (names/emails/phones/uploads) → admin gate.
+- **AUD-AUTH-008** — `POST /api/open-mic/submissions/[id]/submit` no auth/owner
+  check → `requireRequestUser` + ownership.
+- **AUD-API-0xx** — mobility public track share links 401'd through authed
+  catch-all → public proxy route.
+- **AUD-API-0xx** — doctor bank-accounts/verify cookie-only + wrong env target
+  → `proxyToGoBackend`.
+- **AUD-BE-0xx** — arena routes 500 on non-UUID params → `UUIDParams` gate.
+- **AUD-API-0xx** — `GET /api/v1/events` 405 → wired to `/api/finance/events`.
+- **AUD-SEC-0xx** — idempotency check preceded auth on 4 money routes →
+  401-first ordering.
+
+### Fixed in wave-6 batch (same PR, pending commit)
+
+- **AUD-SEC-0xx** — deterministic FX adapters (`MapleradFX`, `EversendFX`)
+  `VerifyWebhookSignature` accepted any non-empty signature → fail closed
+  (return false; they hold no signing secret — forged collection events
+  could credit real balances).
+- **AUD-SEC-0xx** — Paystack webhook handler constructed from
+  `paymentProvider`, which Maplerad overrides → every Paystack delivery would
+  fail signature verification. Now uses the dedicated `paystackClient`.
+- **AUD-SEC-0xx** — `POST /api/open-mic/votes` accepted caller-asserted
+  `source:'paid'/'bundle'/'bonus'` minting votes + a successful payment event
+  with no payment → hard-rejects non-`free` sources.
+- **AUD-SEC-0xx** — same route never clamped `body.votes` against the daily
+  free allowance → one request could mint 10,000 free votes. Now bounded by
+  `freeVotesPerDay - usedToday`; `freeVotesPerDay<=0` disables free votes.
+- **AUD-BILL-0xx** — `GET /api/v2/votes/paid/verify` performed
+  verify+credit unauthenticated and unthrottled → read-only + rate-limited
+  resolver redirecting to the POST flow.
+- **AUD-BILL-0xx** — non-terminal Paystack verify results
+  (`pending`/`processing`/outage) permanently set `payment_status='failed'`,
+  bricking charges that later settled (verify+webhook both bail on 'failed').
+  `PaystackVerificationResult.gatewayStatus` added (protected file — minimal
+  additive change, flagged); bridge flips to failed only on terminal
+  statuses. NOTE: `paid-vote.service.ts` legacy path unchanged (protected);
+  flag-off fallback retains old behaviour — set `VOTES_BRIDGE_ENABLED=true`.
+- **AUD-SEC-0xx** — all five frontend HMAC-SHA512 webhook compares used
+  `!==` (prefix-timing oracle) → `verifyHmacSha512Hex` constant-time helper
+  (`src/lib/crypto/hmac.ts`); applied to paystack vote verify, wallet,
+  virtual-accounts, bank-transfer, utility webhook handlers.
+- **AUD-SEC-0xx** — `POST /api/v1/estate/vendors/jobs/[id]/status` let any
+  resident set `status='paid'` with no ledger credit → 'paid' removed from
+  the set; payout only via Go vendor-payout route.
+- **AUD-SEC-0xx** — public `GET /api/stem/schools` serialized adminContact
+  PII + verification docs + review notes → public-field projection.
+- **AUD-SEC-0xx** — public open-mic contest leaderboard serialized
+  realName/email/phone/artistUserId/songObjectKey → public projection.
+- **AUD-API-0xx** — negative `offset` → public 500s: `pageParams` clamp
+  (marketplace) + arena `List` clamp.
+- Auth-before-validation reordering across money routes (wallet topup,
+  v2 wallet votes, v1 wallet votes, utility pay/initiate, realtor invoice
+  pay, registration payment initiate, admin adjustments).
+
+### Fixed in PR #503 — wave-3 follow-on (committed after agent sweep)
+
+- **AUD-SEC-0xx** — Health Rx lifecycle authorization (`backend/internal/health/rx`):
+  `WithPrescriberAuthorizer` is now wired on the human-path instance
+  (`prescriberGateAdapter` — MDCN-approved doctor check, mirrors telemedicine's
+  `assertDoctorApproved`); `WithPharmacyOwnerGate` wired to
+  `providerGateAdapter` (`health_providers` APPROVED owner check); new
+  `authorizeActor` runs inside the FOR UPDATE transition — send is
+  prescriber-or-patient only, verify/reject/dispense/fulfill require ownership
+  of the pinned pharmacy (fail-closed on unpinned Rx or lookup error);
+  `DispenseRefill` got the same owner check; `IssueChecked` binds a referenced
+  `consult_id` to its patient + provider owner. Vet/pharmacy instances keep nil
+  gates (their own upstream gates apply). Unit test `TestAuthorizeActorGate`.
+- **AUD-DB-0xx** — voting RLS: migration
+  `supabase/migrations/20271007150000_tighten_voting_rls.sql` drops the
+  `USING (true)` public-read policies on `vote_totals`,
+  `leaderboard_snapshots`, `contestant_share_links`,
+  `competition_entry_votes` (additive `DROP POLICY IF EXISTS` only; all reads
+  are service-role so API behavior is unchanged).
+- **AUD-SEC-0xx** — legacy `/api/votes/stream` (protected file) retired via a
+  308 redirect to the visibility-gated `/api/v2/votes/stream` in
+  `next.config.mjs` — no protected code touched.
+- **AUD-SEC-0xx** — `/api/open-mic/votes/stream` now re-reads contest
+  visibility per snapshot; non-public contests stream entry IDs without
+  vote counts/leaderboard scores.
+- **AUD-SEC-0xx** — `/api/v1/contests/[id]/leaderboard` honors
+  `vis.showRank`: rank/contestantRank/isTopContestant/rankChange are null or
+  false when rank display is disabled.
+- **AUD-REL-0xx** — `bridge_idempotency_keys` wedged `{}` claims: after the
+  result wait, claims older than 5 min are deleted + reclaimed; recent
+  unresolved claims still 409. Fail-open on store errors kept (atomic vote
+  ops remain the boundary).
+- `/api/v2/votes/paid/verify` POST `authError` is intentional: anonymous
+  voters legitimately verify via the callback page; crediting is bound to
+  the transaction row, not the caller. No change.
+- **AUD-BILL-0xx** — `markVotePurchaseReversed` now reverses the credited
+  quantity out of `vote_totals` via `increment_vote_totals`
+  (`reversed_votes` subtracts from `total_confirmed_votes`) before deleting
+  the votes row — refunded purchases no longer leave ghost votes on the
+  leaderboard.
+- **AUD-INFRA-0xx** — `/api/v2/votes/wallet` read `GO_API_BASE_URL` which is
+  NOT SET on prod Railway → would fall back to `localhost:8080` (dead).
+  Now falls back to the canonical `GO_BACKEND_URL`. `GO_BACKEND_WS_URL` is
+  intentionally unset (`ws-ticket.ts` derives wss:// from `GO_BACKEND_URL`).
+
+### Confirmed, deferred to next bounded PRs
+
+- **Voting**: legacy `verifyAndCreditPaidVote` race — second
+  caller's `votes` insert error swallowed while `incrementVoteTotals` still
+  runs (flag-off path only).
+- **Flag drift**: `FEATURE_ASSOCIATION_ENABLED` (web) vs
+  `FEATURE_ASSOCIATIONS_ENABLED` (Go); `FEATURE_KYC_ENABLED` vs
+  `FEATURE_KYC_VERIFY_ENABLED`; `FEATURE_UTILITY_PAYMENTS_ENABLED` vs
+  `FEATURE_UTILITY_BILLS_ENABLED`; frontend `tierLimits` default false vs
+  backend default true.
+- **Prod env**: `VOTES_BRIDGE_ENABLED` must be `true` or v2 routes silently
+  use raced legacy paths — verify in Railway. `FEATURE_MODULE_GATE_ENFORCE`
+  stays off until coverage verified.

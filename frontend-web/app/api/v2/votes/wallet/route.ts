@@ -8,6 +8,7 @@ import { priceWalletVote } from '@/src/server/voting-bridge/wallet-pricing';
 import { creditWalletVotes, markVotePurchaseReversed } from '@/src/server/voting-bridge/wallet-credit';
 import { checkRateLimit } from '@/src/lib/voting/rate-limit';
 import { getRequestIp } from '@/src/lib/rate-limit/client-ip';
+import { GO_BACKEND_URL } from '@/src/lib/go-backend';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -21,7 +22,7 @@ async function goVoteDebit(
   costKobo: number,
   idempotencyKey: string,
 ): Promise<void> {
-  const goApiBase = process.env.GO_API_BASE_URL ?? 'http://localhost:8080';
+  const goApiBase = process.env.GO_API_BASE_URL ?? GO_BACKEND_URL;
   const res = await fetch(`${goApiBase}/api/finance/vote-bridge/debit`, {
     method: 'POST',
     headers: {
@@ -49,7 +50,7 @@ async function goVoteReverse(
   contestantId: string,
   idempotencyKey: string,
 ): Promise<void> {
-  const goApiBase = process.env.GO_API_BASE_URL ?? 'http://localhost:8080';
+  const goApiBase = process.env.GO_API_BASE_URL ?? GO_BACKEND_URL;
   const res = await fetch(`${goApiBase}/api/finance/vote-bridge/reverse`, {
     method: 'POST',
     headers: {
@@ -70,28 +71,26 @@ export async function POST(request: Request) {
     return errorResponse('Wallet voting is not enabled', 403);
   }
 
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return errorResponse('Invalid JSON body', 400);
-  }
-
-  const { contestId, contestantId, voteCount, costKobo, idempotencyKey } = body;
-  if (!contestId || !contestantId || !voteCount || !idempotencyKey) {
-    return errorResponse('contestId, contestantId, voteCount, and idempotencyKey are required', 400);
-  }
-  // Non-UUID ids can never satisfy the contestants/contests equality checks
-  // downstream — reject before the KYC gate and pricing queries hit Postgres.
-  if (typeof contestId !== 'string' || !UUID_RE.test(contestId)) {
-    return errorResponse('Invalid contestId', 400);
-  }
-  if (typeof contestantId !== 'string' || !UUID_RE.test(contestantId)) {
-    return errorResponse('Invalid contestantId', 400);
-  }
-
   try {
     const user = await requireRequestUser(request);
+
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    if (!body) {
+      return errorResponse('Invalid JSON body', 400);
+    }
+
+    const { contestId, contestantId, voteCount, costKobo, idempotencyKey } = body;
+    if (!contestId || !contestantId || !voteCount || !idempotencyKey) {
+      return errorResponse('contestId, contestantId, voteCount, and idempotencyKey are required', 400);
+    }
+    // Non-UUID ids can never satisfy the contestants/contests equality checks
+    // downstream — reject before the KYC gate and pricing queries hit Postgres.
+    if (typeof contestId !== 'string' || !UUID_RE.test(contestId)) {
+      return errorResponse('Invalid contestId', 400);
+    }
+    if (typeof contestantId !== 'string' || !UUID_RE.test(contestantId)) {
+      return errorResponse('Invalid contestantId', 400);
+    }
 
     // Wallet-debit money path — per-user throttle (AUD-SEC-001). The same
     // bucket name is used by the v1 wallet route so both share one allowance.

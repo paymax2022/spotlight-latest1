@@ -129,6 +129,9 @@ func fail(c *gin.Context, err error) {
 func pageParams(c *gin.Context) (limit, offset int) {
 	limit, _ = strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset, _ = strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if offset < 0 {
+		offset = 0
+	}
 	return
 }
 

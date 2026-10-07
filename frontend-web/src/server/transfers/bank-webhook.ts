@@ -19,12 +19,12 @@
  * Signature: verified independently from the main webhook fan-out.
  */
 
-import crypto from 'node:crypto';
 import { createAdminClient } from '@/lib/supabase/server';
 import {
   applyBankTransferOutcome,
   isTerminalBankTransferStatus,
 } from '@/src/server/transfers/bank-settle';
+import { verifyHmacSha512Hex } from '@/src/lib/crypto/hmac';
 
 interface BankWebhookResult {
   processed: boolean;
@@ -55,8 +55,8 @@ export async function handleBankTransferWebhook(
   if (!secretKey) return { processed: false, duplicate: false, error: 'Paystack not configured' };
 
   // Re-verify signature independently
-  const expected = crypto.createHmac('sha512', secretKey).update(rawBody).digest('hex');
-  if (expected !== signature) {
+  // Constant-time compare — `expected !== signature` leaks prefix-match timing.
+  if (!verifyHmacSha512Hex(rawBody, signature, secretKey)) {
     return { processed: false, duplicate: false, error: 'Invalid signature' };
   }
 

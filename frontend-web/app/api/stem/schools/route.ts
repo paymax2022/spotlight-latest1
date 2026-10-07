@@ -7,7 +7,25 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const status = (searchParams.get('status') as StemSchool['status']) || undefined;
     const schools = await listSchools(status);
-    return successResponse({ success: true, schools });
+    // Public directory view: adminContact, verification documents, and review
+    // metadata are staff PII — never serialize them on the unauthenticated list.
+    const publicSchools = schools.map((s) => ({
+      id: s.id,
+      schoolName: s.schoolName,
+      schoolType: s.schoolType,
+      ownershipType: s.ownershipType,
+      schoolCategory: s.schoolCategory,
+      website: s.website,
+      country: s.country,
+      state: s.state,
+      lga: s.lga,
+      city: s.city,
+      schoolLogo: s.schoolLogo,
+      schoolDescription: s.schoolDescription,
+      status: s.status,
+      createdAt: s.createdAt,
+    }));
+    return successResponse({ success: true, schools: publicSchools });
   } catch (error) {
     return handleApiError(error, 'Failed to list STEM schools');
   }

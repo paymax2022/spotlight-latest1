@@ -9,7 +9,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 
 const COLS = 'id, estate_id, vendor_id, repair_request_id, status, amount_kobo, created_at';
-const STATUSES = ['available', 'accepted', 'rejected', 'en_route', 'in_progress', 'completed', 'paid'];
+// 'paid' is intentionally absent: payout must go through the Go vendor-payout
+// route, which requires status='completed', posts the ledger credit inside a
+// transaction, and records payout_ref + idempotency key. Writing 'paid' here
+// would mark a job settled with no money moved.
+const STATUSES = ['available', 'accepted', 'rejected', 'en_route', 'in_progress', 'completed'];
 
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;

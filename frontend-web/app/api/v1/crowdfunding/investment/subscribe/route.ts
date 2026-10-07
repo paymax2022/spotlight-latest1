@@ -13,11 +13,11 @@ const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 export async function POST(request: Request) {
   if (!featureFlags.crowdfunding()) return errorResponse('Crowdfunding is not available.', 503);
 
-  const idempotencyKey = (request.headers.get('Idempotency-Key') ?? '').trim();
-  if (!idempotencyKey) return errorResponse('Idempotency-Key header is required for investment subscriptions.', 400);
-
   try {
     await requireRequestUser(request);
+
+    const idempotencyKey = (request.headers.get('Idempotency-Key') ?? '').trim();
+    if (!idempotencyKey) return errorResponse('Idempotency-Key header is required for investment subscriptions.', 400);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

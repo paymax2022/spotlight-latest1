@@ -26,6 +26,16 @@ export async function GET(request: Request) {
   async function snapshot() {
     try {
       const supabase = createAdminClient();
+      // Visibility gate: a non-'public' contest (hidden/private/regional)
+      // streams entry ids only — counts stay redacted, same contract as the
+      // gated /api/v2/votes/stream (hidden fields absent, not nulled).
+      const { data: contest } = await supabase
+        .from('competitions')
+        .select('visibility')
+        .eq('id', contestId!)
+        .maybeSingle();
+      const countsVisible = (contest as any)?.visibility === 'public';
+
       const { data } = await supabase
         .from('competition_entries')
         .select('id, public_vote_count, leaderboard_score')
@@ -37,8 +47,12 @@ export async function GET(request: Request) {
         type: 'snapshot',
         entries: (data ?? []).map((r: any) => ({
           id: r.id,
-          voteCount: Number(r.public_vote_count) || 0,
-          leaderboardScore: Number(r.leaderboard_score) || 0,
+          ...(countsVisible
+            ? {
+                voteCount: Number(r.public_vote_count) || 0,
+                leaderboardScore: Number(r.leaderboard_score) || 0,
+              }
+            : {}),
         })),
         ts: Date.now(),
       });

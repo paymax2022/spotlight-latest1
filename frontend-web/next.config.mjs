@@ -68,6 +68,16 @@ const nextConfig = {
         destination: '/',
         permanent: true,
       },
+      // Legacy vote stream: the route file is protected-legacy and cannot be
+      // visibility-gated in place — it streamed live counts/rank for hidden
+      // contests. Its sole client (vote page) already moved to the gated
+      // /api/v2/votes/stream, which takes identical query params, so a
+      // permanent redirect retires the leak without touching the file.
+      {
+        source: '/api/votes/stream',
+        destination: '/api/v2/votes/stream',
+        permanent: true,
+      },
       // Canonical host: www.spotlightng.com. The apex 301s to it so users, SEO and
       // cookies see a single origin (SPOTLIGHT_DOMAIN_ROUTING §4).
       //

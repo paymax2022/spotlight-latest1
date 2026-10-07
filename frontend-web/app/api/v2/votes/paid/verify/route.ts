@@ -110,10 +110,28 @@ export async function POST(request: NextRequest) {
 
 /**
  * GET /api/v2/votes/paid/verify?transactionId=...&paymentReference=...
- * Query-string variant for webhook calls (Paystack, etc.)
+ *
+ * READ-ONLY resolver. This GET previously verified + credited votes — an
+ * unauthenticated, unthrottled state-changing GET that could (a) permanently
+ * mark a still-pending transaction 'failed' if hit before Paystack settled
+ * (the webhook's own verify then bails on the failed status — paid money, no
+ * votes), and (b) amplify calls to api.paystack.co. No live caller needs the
+ * side effect: Paystack redirects land on /vote-callback, which POSTs here.
+ * The GET now only reads the stored transaction state and redirects; actual
+ * verify+credit happens exclusively through POST (rate-limited) or the
+ * HMAC-verified /api/webhooks/paystack receiver.
  */
 export async function GET(request: NextRequest) {
   try {
+    const ip = getRequestIp(request);
+    const rl = checkRateLimit(`vote:paid:verify:${ip}`, 30, 60_000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests. Please slow down.' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.resetInMs / 1000)) } }
+      );
+    }
+
     const searchParams = request.nextUrl.searchParams;
     const transactionId = searchParams.get('transactionId');
     const paymentReference = searchParams.get('paymentReference');
@@ -125,37 +143,33 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const ipAddress = request.headers.get('x-forwarded-for') ||
-                     request.headers.get('x-real-ip') ||
-                     'unknown';
-    const userAgent = request.headers.get('user-agent') || 'unknown';
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
+    const supabase = createAdminClient();
+    const { data: tx } = await supabase
+      .from('vote_transactions')
+      .select('id, vote_credit_status, payment_status')
+      .eq('id', transactionId)
+      .eq('payment_reference', paymentReference)
+      .maybeSingle();
 
-    // Verify and credit the vote via bridge
-    const result = await bridgedVerifyPaidVote(
-      {
-        transactionId,
-        paymentReference,
-      },
-      'webhook',
-      {
-        ipAddress,
-        userAgent,
-      }
-    );
-
-    if (!result.success) {
-      return NextResponse.json(
-        { error: result.error || 'Failed to verify vote' },
-        { status: result.statusCode ?? 400 }
+    if (!tx) {
+      return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
+    }
+    if (tx.vote_credit_status === 'credited') {
+      return NextResponse.redirect(
+        new URL(`/voting/success?transactionId=${transactionId}`, siteUrl)
       );
     }
-
-    // Redirect to success page (for webhook or browser callback). The redirect
-    // target is a public URL — build it on the public site origin, not
-    // request.url (http://0.0.0.0:PORT on Railway/cPanel).
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
+    if (tx.payment_status === 'failed' || tx.payment_status === 'abandoned') {
+      return NextResponse.redirect(new URL('/voting/error', siteUrl));
+    }
+    // Still pending → hand the browser to the callback page, which runs the
+    // real (POST) verify. Never credit from a GET.
     return NextResponse.redirect(
-      new URL(`/voting/success?transactionId=${transactionId}`, siteUrl)
+      new URL(
+        `/vote-callback?reference=${encodeURIComponent(paymentReference)}&transactionId=${encodeURIComponent(transactionId)}`,
+        siteUrl,
+      )
     );
   } catch (error) {
     console.error('[API] /api/v2/votes/paid/verify GET error:', error);

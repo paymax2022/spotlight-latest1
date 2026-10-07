@@ -99,18 +99,21 @@ export async function GET(
       const previousRank = snapshotPreviousRank ?? storedRank;
 
       return {
-        rank: currentRank,
+        // showRank=false means ranks are hidden — emit null rather than the
+        // derived position (and suppress rankChange, which leaks movement).
+        // Mirrors /api/leaderboard/[contestId], which deletes rank entirely.
+        rank: vis.showRank ? currentRank : null,
         contestant: {
           id: e.contestantId,
           name: e.contestantName ?? 'Contestant',
           category: null,
           photoUrl: (e as any).photoUrl ?? null,
-          rank: currentRank,
+          rank: vis.showRank ? currentRank : null,
           voteCount: vis.showVoteCount ? e.totalConfirmedVotes : null,
           votePercent: 0, // not needed for leaderboard display
-          isTopContestant: currentRank <= 3,
+          isTopContestant: vis.showRank ? currentRank <= 3 : false,
         },
-        rankChange: computeRankChange(currentRank, previousRank),
+        rankChange: vis.showRank ? computeRankChange(currentRank, previousRank) : null,
       };
     });
 

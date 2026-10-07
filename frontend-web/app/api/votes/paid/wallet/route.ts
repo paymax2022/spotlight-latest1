@@ -42,13 +42,13 @@ export async function POST(request: Request) {
     return errorResponse('Wallet feature is not available.', 503);
   }
 
-  const idempotencyKey = request.headers.get('Idempotency-Key');
-  if (!idempotencyKey) {
-    return errorResponse('Idempotency-Key header is required for wallet mutations.', 400);
-  }
-
   try {
     const user = await requireRequestUser(request);
+
+    const idempotencyKey = request.headers.get('Idempotency-Key');
+    if (!idempotencyKey) {
+      return errorResponse('Idempotency-Key header is required for wallet mutations.', 400);
+    }
 
     // Wallet-debit money path — per-user throttle (AUD-SEC-001). Shares the
     // bucket key with the v2 wallet route so both draw one allowance.

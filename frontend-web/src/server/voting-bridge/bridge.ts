@@ -314,10 +314,18 @@ export async function bridgedVerifyPaidVote(
     const verification = await verifyVotePayment(tx.payment_reference);
 
     if (!verification.success) {
-      await supabase
-        .from('vote_transactions')
-        .update({ payment_status: 'failed', updated_at: new Date().toISOString() })
-        .eq('id', tx.id);
+      // Only a TERMINAL gateway status may flip the row to 'failed'. A
+      // 'pending'/'processing' result (or a Paystack outage) is retriable —
+      // writing 'failed' here would brick a charge that later settles, since
+      // both the verify and webhook paths bail on payment_status='failed'
+      // before re-verifying (paid money, no votes, no recovery).
+      const gatewayStatus = verification.raw?.gatewayStatus;
+      if (gatewayStatus === 'failed' || gatewayStatus === 'abandoned' || gatewayStatus === 'reversed') {
+        await supabase
+          .from('vote_transactions')
+          .update({ payment_status: 'failed', updated_at: new Date().toISOString() })
+          .eq('id', tx.id);
+      }
       return { success: false, error: 'Payment verification failed. No votes were added.', statusCode: 400 };
     }
 
