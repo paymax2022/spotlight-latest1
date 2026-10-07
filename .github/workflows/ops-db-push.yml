@@ -133,7 +133,7 @@ jobs:
 
       - name: Apply migrations (db push)
         if: ${{ inputs.mode == 'push' }}
-        run: supabase db push --linked
+        run: supabase db push --linked --include-all
 
       - name: Repair migration history
         if: ${{ inputs.mode == 'repair' }}
