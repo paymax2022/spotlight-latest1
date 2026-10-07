@@ -72,7 +72,7 @@ Drafting needs only `display_name`. `details` accepts only the keys listed above
 ## Lifecycle
 
 1. **Register:** `POST` creates a profile in `draft` / `unverified`. Idempotent per `(user, role)`; a second register call returns the existing row.
-2. **Edit:** the owner can update `display_name` and `details` while the profile is not `suspended`. Changing an identity-bearing field (agent licence number, developer CAC number, estate-manager organisation) on a `verified` or `pending` profile resets it to `unverified` and logs `reset_to_unverified`, so a verified badge cannot be kept after swapping the number it was verified against. Changing `display_name` or optional fields does not reset.
+2. **Edit:** the owner can update `display_name` and `details` while the profile is not `suspended`. Changing an identity-bearing field (agent licence number, developer CAC number and company name, estate-manager organisation) on a `verified` or `pending` profile resets it to `unverified` and logs `reset_to_unverified`, so a verified badge cannot be kept after swapping the number it was verified against. Changing `display_name` or optional fields does not reset.
 3. **Submit for verification:** requires the role's required fields and at least one document. Moves `unverified` or `rejected` to `pending`. Rejected users can resubmit.
 4. **Review (admin):** an admin approves (`verified`, `status` becomes `active`, `verified_at/by` set) or rejects with a reason (`rejected`). Every transition writes an audit event.
 5. **Suspend (admin):** sets `status = suspended`. A suspended profile fails `IsVerified`.
@@ -91,7 +91,8 @@ Member endpoints, mounted under the existing finance group next to the property 
 
 Admin endpoints (new RBAC permission `property.roles.review`):
 - `GET /api/property/admin/roles?status=pending`
-- `POST /api/property/admin/roles/:id/approve`
+- `GET /api/property/admin/roles/:id/documents/:docId/url` (presigned view link, 5 min, same permission)
+- `POST /api/property/admin/roles/:id/approve` (body `{updatedAt}`: the version the admin saw; 409 if the profile changed since)
 - `POST /api/property/admin/roles/:id/reject` (reason required)
 - `POST /api/property/admin/roles/:id/suspend`
 
