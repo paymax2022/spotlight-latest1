@@ -248,10 +248,18 @@ func TestLiveDB_SettleForeignLegKeyRefused(t *testing.T) {
 		t.Fatalf("other account: %v", err)
 	}
 	foreignKey := LegKey(bt.IdempotencyKey, LegSettle) + ":debit"
+	// ledger_entries is append-only — the immutability trigger rejects DELETE,
+	// so a lone fixture leg can never be cleaned up and would permanently poison
+	// the global ledger-conservation invariant (tests/ledger snapshots the whole
+	// table from a concurrent package). Seed the offsetting CREDIT in the same
+	// statement under its own key: the foreign claim stays single-sided under
+	// foreignKey (what the settle must refuse), while the table stays balanced.
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
-		 VALUES ($1,'DEBIT',1,$2,$3)`, otherAcc.ID, bt.Reference, foreignKey); err != nil {
-		t.Fatalf("insert foreign leg: %v", err)
+		 VALUES ($1,'DEBIT',1,$2,$3), ($1,'CREDIT',1,$4,$5)`,
+		otherAcc.ID, bt.Reference, foreignKey,
+		"contra:"+bt.Reference, foreignKey+":contra"); err != nil {
+		t.Fatalf("insert foreign leg + contra: %v", err)
 	}
 
 	if err := svc.settleTransfer(ctx, bt, BankTransferSuccessful); err == nil {
