@@ -106,20 +106,34 @@ func (s *Service) AdminGetTransfer(ctx context.Context, id string) (*AdminTransf
 // AdminRetry re-attempts a stuck transfer's payout leg (allowing provider
 // failover). Only valid from a held state (funds_reserved / funded /
 // provider_initiated) — never from a terminal state, so no double-spend.
+//
+// The retry is claim-then-act: initiatePayoutLeg takes a per-transfer advisory
+// lock before touching the provider, so two concurrent retries (or a retry vs
+// a funding webhook's auto-leg) can no longer both fire InitiatePayoutFailover
+// on the same reference — the loser gets ErrPayoutLegInFlight (409). The
+// status gate is ALSO re-checked under the lock on a fresh read, closing the
+// gap where a webhook settles the transfer between our read and the claim.
 func (s *Service) AdminRetry(ctx context.Context, id, actorID string) (*BankTransfer, error) {
 	bt, err := s.getBankTransfer(ctx, id)
 	if err != nil {
 		return nil, ErrRecipientNotFound
 	}
-	switch bt.Status {
-	case BankTransferFundsReserved, BankTransferFunded, BankTransferProviderInitiated:
-		// allowed
-	default:
-		return nil, fmt.Errorf("transfers admin: cannot retry from status %q", bt.Status)
+	retryable := func(fresh *BankTransfer) error {
+		switch fresh.Status {
+		case BankTransferFundsReserved, BankTransferFunded, BankTransferProviderInitiated:
+			return nil
+		default:
+			return fmt.Errorf("transfers admin: cannot retry from status %q", fresh.Status)
+		}
+	}
+	if err := retryable(bt); err != nil {
+		return nil, err
 	}
 	s.audit(ctx, actorID, "transfer.admin.retry", bt.ID, string(bt.Status))
 	// Re-run the disburse leg; failover allowed (preferred="" → registry default chain).
-	s.initiatePayoutLeg(ctx, bt, false, "", "")
+	if err := s.initiatePayoutLeg(ctx, bt, false, "", "", retryable); err != nil {
+		return nil, err
+	}
 	return s.getBankTransfer(ctx, id)
 }
 

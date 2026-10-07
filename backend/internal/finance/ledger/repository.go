@@ -226,9 +226,12 @@ func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey st
 	}
 
 	// Balanced pair on the SAME tx. ON CONFLICT makes a retry idempotent — but
-	// only when the replayed amount matches: a different amount under a REUSED
-	// key is a tampered retry (a key pre-claimed cheaply here could otherwise
-	// absorb a pricier replay as a no-op), so verifyReplayAmount fails closed.
+	// only when the replay is the SAME journal: amount, debit/credit account and
+	// reference must all match the row already holding the key. A reused key for
+	// a different journal is a tampered or foreign retry (a key pre-claimed
+	// cheaply here could otherwise absorb another user's or another rail's
+	// posting as a silent no-op — the phantom-paid-row bug), so the check
+	// fails closed.
 	const insertEntry = `
 		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
 		VALUES ($1, $2, $3, $4, $5)
@@ -238,7 +241,7 @@ func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey st
 	if err != nil {
 		return fmt.Errorf("ledger: insert debit entry: %w", err)
 	}
-	if err := verifyReplayAmount(ctx, tx, j.IdempotencyKey+":debit", amountKobo, tag); err != nil {
+	if err := verifyReplay(ctx, tx, j.IdempotencyKey+":debit", j.DebitAccountID, j.Reference, amountKobo, tag); err != nil {
 		return err
 	}
 	tag, err = tx.Exec(ctx, insertEntry,
@@ -246,30 +249,39 @@ func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey st
 	if err != nil {
 		return fmt.Errorf("ledger: insert credit entry: %w", err)
 	}
-	if err := verifyReplayAmount(ctx, tx, j.IdempotencyKey+":credit", amountKobo, tag); err != nil {
+	if err := verifyReplay(ctx, tx, j.IdempotencyKey+":credit", j.CreditAccountID, j.Reference, amountKobo, tag); err != nil {
 		return err
 	}
 
 	return tx.Commit(ctx)
 }
 
-// verifyReplayAmount runs when an idempotent insert hit an existing row
-// (RowsAffected==0). A same-amount replay is a true duplicate and stays a
-// no-op; a different amount fails closed as ErrDuplicate so the caller can
-// reject rather than silently absorb a cheaper journal under a recycled key.
-func verifyReplayAmount(ctx context.Context, tx pgx.Tx, idempotencyKey string, amountKobo int64, tag pgconn.CommandTag) error {
+// verifyReplay runs when an idempotent insert hit an existing row
+// (RowsAffected==0). A replay is a true duplicate ONLY when the existing row
+// is the same journal leg: same account, same reference AND same amount — a
+// no-op. Anything else under the same key is a foreign or tampered claim
+// (cross-user/cross-rail key reuse, or a key pre-claimed with a cheaper
+// amount absorbing a pricier replay): fail closed as ErrDuplicate so the
+// caller rejects instead of silently absorbing somebody else's posting —
+// which is how a silent no-op used to mint a paid vote/gift/payout row with
+// no money behind it.
+func verifyReplay(ctx context.Context, tx pgx.Tx, idempotencyKey, accountID, reference string, amountKobo int64, tag pgconn.CommandTag) error {
 	if tag.RowsAffected() > 0 {
 		return nil
 	}
-	var existing int64
+	var existingAccountID, existingRef string
+	var existingAmount int64
 	if err := tx.QueryRow(ctx,
-		`SELECT amount_kobo FROM ledger_entries WHERE idempotency_key=$1`,
-		idempotencyKey).Scan(&existing); err != nil {
+		`SELECT account_id::text, reference, amount_kobo FROM ledger_entries WHERE idempotency_key=$1`,
+		idempotencyKey).Scan(&existingAccountID, &existingRef, &existingAmount); err != nil {
 		return fmt.Errorf("ledger: verify replay for %s: %w", idempotencyKey, err)
 	}
-	if existing != amountKobo {
-		return fmt.Errorf("%w: key %s replayed with different amount (posted %d, requested %d)",
-			ErrDuplicate, idempotencyKey, existing, amountKobo)
+	if existingAccountID != accountID || existingRef != reference || existingAmount != amountKobo {
+		return fmt.Errorf("%w: key %s replayed for a different journal "+
+			"(posted account=%s ref=%q amount=%d, requested account=%s ref=%q amount=%d)",
+			ErrDuplicate, idempotencyKey,
+			existingAccountID, existingRef, existingAmount,
+			accountID, reference, amountKobo)
 	}
 	return nil
 }

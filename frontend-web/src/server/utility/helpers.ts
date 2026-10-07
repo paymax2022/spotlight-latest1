@@ -25,7 +25,9 @@ export function canRequeryUtilityStatus(status: UtilityTransactionStatus) {
 }
 
 export function canReverseUtilityTransaction(status: UtilityTransactionStatus) {
-  return status === 'failed' || status === 'provider_pending' || status === 'wallet_debited';
+  // 'disputed' is reversible: the dispute gate already required 'successful'
+  // (a delivered vend with a proven debit), so the reversal is a real refund.
+  return status === 'failed' || status === 'provider_pending' || status === 'wallet_debited' || status === 'disputed';
 }
 
 export function nextStatusFromProvider(providerStatus: 'successful' | 'pending' | 'failed'): UtilityTransactionStatus {

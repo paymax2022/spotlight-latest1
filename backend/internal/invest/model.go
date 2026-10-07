@@ -419,6 +419,7 @@ type DepositRequest struct {
 type WithdrawRequest struct {
 	AmountKobo  int64  `json:"amount_kobo" binding:"required"`
 	Destination string `json:"destination"` // paymax_wallet (default)
+	PIN         string `json:"pin"`         // transaction PIN — same gate as Buy/Sell
 }
 
 // SuitabilitySubmitRequest carries questionnaire answers keyed by question id.
