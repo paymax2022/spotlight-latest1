@@ -818,7 +818,7 @@ func (r *Repository) ClaimForSettlement(ctx context.Context, id string, seenUpda
 		UPDATE public.utility_transactions
 		SET status = 'failed', failure_reason = $3, updated_at = now()
 		WHERE id = $1 AND updated_at = $2
-		  AND (status IN ('initiated','wallet_debited','provider_pending')
+		  AND (status IN ('initiated','wallet_debited','provider_pending','disputed')
 		       OR (status = 'failed' AND updated_at <= now() - $4::interval))
 		RETURNING `+transactionCols,
 		id, seenUpdatedAt, reason, fmt.Sprintf("%d seconds", int64(adminSettleWindow.Seconds()))))
