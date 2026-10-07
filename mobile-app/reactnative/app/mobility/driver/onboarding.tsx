@@ -16,6 +16,7 @@ import TextInputField from '@/components/TextInputField';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { errKind } from '@/features/mobility/utils/errKind';
+import { useAuthStore } from '@/store/authStore';
 import { useDriverMe, useDriverOnboarding } from '@/features/mobility/hooks/useMobility';
 import { pickFileForField } from '@/features/registration/utils/filePicker';
 import { SERVICE_TYPES, REQUIRED_DOCUMENTS } from '@/features/mobility/constants/mobility.constants';
@@ -35,8 +36,15 @@ export default function DriverOnboardingScreen() {
   const [step, setStep] = useState<Step>('details');
 
   // Details
-  const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
+  // Phone and email are captured at sign-up — never ask for them again. The
+  // inputs below only render if the account is genuinely missing one of them.
+  const accountUser = useAuthStore((st) => st.user);
+  const accountPhone = accountUser?.phone?.trim() ?? '';
+  const accountEmail = accountUser?.email?.trim() ?? '';
+  const [phoneInput, setPhoneInput] = useState('');
+  const [emailInput, setEmailInput] = useState('');
+  const phone = accountPhone || phoneInput;
+  const email = accountEmail || emailInput;
   const [categories, setCategories] = useState<ServiceType[]>(['economy']);
   const [detailsError, setDetailsError] = useState<string | null>(null);
 
@@ -82,7 +90,14 @@ export default function DriverOnboardingScreen() {
     if (!picked) return;
     uploadDocFile.mutate(
       { docType, file: { uri: picked.uri, name: picked.name, mimeType: picked.mimeType } },
-      { onError: () => Alert.alert('Upload failed', 'Could not upload that document. Please try again.') },
+      {
+        onError: (e) => {
+          const err = e as { response?: { status?: number; data?: { error?: string } }; message?: string };
+          const reason = err.response?.data?.error ?? err.message;
+          const status = err.response?.status;
+          Alert.alert('Upload failed', `${reason ? `${reason}${status ? ` (${status})` : ''}` : 'Could not upload that document.'} Please try again.`);
+        },
+      },
     );
   };
 
@@ -136,8 +151,12 @@ export default function DriverOnboardingScreen() {
                 <Text style={styles.towBannerText}>Register your tow truck and documents to start receiving tow & roadside jobs on Paymax.</Text>
               </View>
             )}
-            <PhoneNumberInput label="Phone number" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
-            <TextInputField label="Email" placeholder="you@email.com" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+            {!accountPhone && (
+              <PhoneNumberInput label="Phone number" value={phoneInput} onChange={({ e164, nsn }) => setPhoneInput(e164 || nsn)} />
+            )}
+            {!accountEmail && (
+              <TextInputField label="Email" placeholder="you@email.com" value={emailInput} onChangeText={setEmailInput} keyboardType="email-address" autoCapitalize="none" />
+            )}
             <Text style={styles.fieldLabel}>Service categories</Text>
             <View style={styles.chips}>
               {SERVICE_TYPES.map((meta) => {
