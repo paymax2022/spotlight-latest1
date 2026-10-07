@@ -174,6 +174,147 @@ func TestLiveDB_PayDues_RejectsTier0ThenFundedMemberSucceeds(t *testing.T) {
 	}
 }
 
+// TestLiveDB_PayDues_CrossMemberKeyCollision_Refused pins the S2 phantom-pay
+// wedge: member A paid dues under key K; member B reusing K at the same plan
+// amount must be REFUSED. The ledger's replay check only compares amount
+// under the key — without the account+key+amount verify, B's debit would
+// silently no-op on A's legs while group_payments recorded B as 'paid'.
+func TestLiveDB_PayDues_CrossMemberKeyCollision_Refused(t *testing.T) {
+	pool := duesPool(t)
+	t.Cleanup(pool.Close)
+	ctx := context.Background()
+	led := ledger.NewService(ledger.NewRepository(pool), nil)
+	tiersSvc := tiers.NewService(pool)
+	svc := NewService(pool, led).WithTiers(tiersSvc)
+
+	creator := uuid.New().String()
+	groupID, planID := setupDuesGroup(t, ctx, pool, svc, creator)
+
+	alice := uuid.New().String()
+	addGroupMember(t, ctx, pool, groupID, alice)
+	seedGroupKYCTier(t, ctx, pool, alice, 3)
+	bob := uuid.New().String()
+	addGroupMember(t, ctx, pool, groupID, bob)
+	seedGroupKYCTier(t, ctx, pool, bob, 3)
+
+	revAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		t.Fatalf("standing acct: %v", err)
+	}
+	for _, u := range []string{alice, bob} {
+		if err := led.Credit(ctx, u, "seed-fund", "duesfund-"+u, revAcc.ID, 1_000_000); err != nil {
+			t.Fatalf("fund %s: %v", u, err)
+		}
+	}
+
+	key := "dues-shared-" + uuid.New().String()
+	if _, err := svc.PayDues(ctx, groupID, alice, PayDuesRequest{PlanID: planID, IdempotencyKey: key}); err != nil {
+		t.Fatalf("alice dues: %v", err)
+	}
+	if _, err := svc.PayDues(ctx, groupID, bob, PayDuesRequest{PlanID: planID, IdempotencyKey: key}); err == nil {
+		t.Fatal("bob's colliding dues succeeded — a same-amount key collision on another member's account must be refused, not phantom-paid")
+	}
+	if bal, _ := led.GetBalance(ctx, bob); bal != 1_000_000 {
+		t.Fatalf("bob balance = %d, want 1000000 — a refused dues attempt must never debit", bal)
+	}
+	var bobRows int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM group_payments WHERE member_id=$1`, bob).Scan(&bobRows); err != nil {
+		t.Fatalf("count bob payments: %v", err)
+	}
+	if bobRows != 0 {
+		t.Fatalf("bob recorded %d payment row(s) without paying — phantom 'paid' row", bobRows)
+	}
+}
+
+// TestLiveDB_PayDues_CrossRailJournal_NoAbsorption proves the namespaced
+// journal key ("groups:dues:") works the other direction too: a same-amount
+// journal another rail posted under the SAME raw key can no longer absorb
+// the dues debit — the member is really debited and really paid.
+func TestLiveDB_PayDues_CrossRailJournal_NoAbsorption(t *testing.T) {
+	pool := duesPool(t)
+	t.Cleanup(pool.Close)
+	ctx := context.Background()
+	led := ledger.NewService(ledger.NewRepository(pool), nil)
+	tiersSvc := tiers.NewService(pool)
+	svc := NewService(pool, led).WithTiers(tiersSvc)
+
+	creator := uuid.New().String()
+	groupID, planID := setupDuesGroup(t, ctx, pool, svc, creator)
+
+	member := uuid.New().String()
+	addGroupMember(t, ctx, pool, groupID, member)
+	seedGroupKYCTier(t, ctx, pool, member, 3)
+
+	revAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		t.Fatalf("standing acct: %v", err)
+	}
+	if err := led.Credit(ctx, member, "seed-fund", "duesfund-"+member, revAcc.ID, 1_000_000); err != nil {
+		t.Fatalf("fund member: %v", err)
+	}
+
+	// A foreign rail posts a journal under the raw caller key at the same
+	// amount — under the old raw-key wiring this is what silently absorbed
+	// the dues debit (the phantom-pay path).
+	key := "dues-" + uuid.New().String()
+	if err := led.Debit(ctx, member, "xfer:foreign", key, revAcc.ID, 200_000); err != nil {
+		t.Fatalf("foreign journal: %v", err)
+	}
+
+	payment, err := svc.PayDues(ctx, groupID, member, PayDuesRequest{PlanID: planID, IdempotencyKey: key})
+	if err != nil {
+		t.Fatalf("dues after foreign journal err = %v, want nil (namespaced key must not be absorbed)", err)
+	}
+	if payment.Status != "paid" {
+		t.Fatalf("status = %q, want paid", payment.Status)
+	}
+	if bal, _ := led.GetBalance(ctx, member); bal != 600_000 {
+		t.Fatalf("member balance = %d, want 600000 — the dues debit must have really posted, not been absorbed by the foreign journal", bal)
+	}
+}
+
+// TestLiveDB_PayDues_SameMemberReplay_ReturnsRecordedPayment: a retry of the
+// same member's key returns the recorded payment — no second debit, no error.
+func TestLiveDB_PayDues_SameMemberReplay_ReturnsRecordedPayment(t *testing.T) {
+	pool := duesPool(t)
+	t.Cleanup(pool.Close)
+	ctx := context.Background()
+	led := ledger.NewService(ledger.NewRepository(pool), nil)
+	tiersSvc := tiers.NewService(pool)
+	svc := NewService(pool, led).WithTiers(tiersSvc)
+
+	creator := uuid.New().String()
+	groupID, planID := setupDuesGroup(t, ctx, pool, svc, creator)
+
+	member := uuid.New().String()
+	addGroupMember(t, ctx, pool, groupID, member)
+	seedGroupKYCTier(t, ctx, pool, member, 3)
+	revAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		t.Fatalf("standing acct: %v", err)
+	}
+	if err := led.Credit(ctx, member, "seed-fund", "duesfund-"+member, revAcc.ID, 1_000_000); err != nil {
+		t.Fatalf("fund member: %v", err)
+	}
+
+	key := "dues-" + uuid.New().String()
+	first, err := svc.PayDues(ctx, groupID, member, PayDuesRequest{PlanID: planID, IdempotencyKey: key})
+	if err != nil {
+		t.Fatalf("first dues: %v", err)
+	}
+	second, err := svc.PayDues(ctx, groupID, member, PayDuesRequest{PlanID: planID, IdempotencyKey: key})
+	if err != nil {
+		t.Fatalf("replay dues err = %v, want nil (same member, same key)", err)
+	}
+	if first.ID != second.ID {
+		t.Fatalf("replay returned payment %s, want recorded payment %s", second.ID, first.ID)
+	}
+	if bal, _ := led.GetBalance(ctx, member); bal != 800_000 {
+		t.Fatalf("member balance = %d, want 800000 (exactly one dues debit)", bal)
+	}
+}
+
 // TestLiveDB_PayDues_NilTierGateRefusesRatherThanDebitingUngated pins the
 // fail-closed convention itself: a Service with no tier gate wired must
 // refuse every dues payment, not silently debit with no limit.

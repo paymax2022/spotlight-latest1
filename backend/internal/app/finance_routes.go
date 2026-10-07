@@ -580,7 +580,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// segment itself — passing finance.Group("/savings") double-mounts the
 		// routes at /api/finance/savings/savings/*. Same for RegisterSocialPay
 		// (E2E-FIN-043).
-		RegisterSavings(finance, adminGroupTop5(r, "/api/savings/admin", mapsAuth()), cfg, pool, rbac)
+		RegisterSavings(finance, adminGroupTop5(r, "/api/savings/admin", mapsAuth()), cfg, pool, rbac, auditSink)
 	}
 	// AI-trading fund (Module-KYC + fund wallet). Mounted at the paths the module
 	// documents and the clients call:
@@ -608,19 +608,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// "/social" itself, so the canonical /api/finance/social/* now works.
 		// RegisterSocialPay additionally re-mounts /api/finance/social/social/*
 		// as a backward-compatible alias for already-deployed callers.
-		RegisterSocialPay(finance, adminGroupTop5(r, "/api/social/admin", mapsAuth()), pool, rbac)
+		RegisterSocialPay(finance, adminGroupTop5(r, "/api/social/admin", mapsAuth()), pool, rbac, auditSink)
 	}
 	if cfg.FeatureEventsEnabled && pool != nil {
 		// adminGroupTop5 applies authMW BEFORE requireUserID — RequireAuthContext
 		// populates ginutil.UserID(c); without it every admin route 401s.
-		RegisterEvents(finance.Group("/events"), adminGroupTop5(r, "/api/events/admin", mapsAuth()), cfg, pool, rbac, rtHub)
+		RegisterEvents(finance.Group("/events"), adminGroupTop5(r, "/api/events/admin", mapsAuth()), cfg, pool, rbac, rtHub, auditSink)
 	}
 	if cfg.FeatureLoyaltyEnabled && pool != nil {
-		RegisterLoyalty(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin", mapsAuth()), pool, rbac)
-		RegisterLoyaltyBlack(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin/black", mapsAuth()), pool, rbac)
+		RegisterLoyalty(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin", mapsAuth()), pool, rbac, auditSink)
+		RegisterLoyaltyBlack(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin/black", mapsAuth()), pool, rbac, auditSink)
 	}
 	if cfg.FeatureCreatorsEnabled && pool != nil {
-		RegisterCreators(finance.Group("/creators"), adminGroupTop5(r, "/api/creators/admin", mapsAuth()), pool, rbac, cfg)
+		RegisterCreators(finance.Group("/creators"), adminGroupTop5(r, "/api/creators/admin", mapsAuth()), pool, rbac, cfg, auditSink)
 	}
 	if cfg.FeatureP2PMarketEnabled && pool != nil {
 		RegisterP2PMarket(finance, adminGroupTop5(r, "/api/p2p/admin", mapsAuth()), pool, rbac, auditSink)
