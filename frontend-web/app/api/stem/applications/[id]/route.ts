@@ -5,11 +5,12 @@ import { requireUser } from '@/src/lib/auth/server';
 
 export async function GET(
   request: Request,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const { user } = await requireUser(request);
-    const application = await getApplication(context.params.id);
+    const { id } = await context.params;
+    const application = await getApplication(id);
     if (!application) return errorResponse('Application not found', 404);
     if (application.applicantUserId !== user.id) return errorResponse('Forbidden', 403);
     return successResponse({ success: true, application });
@@ -20,11 +21,12 @@ export async function GET(
 
 export async function PATCH(
   request: Request,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const { user } = await requireUser(request);
-    const current = await getApplication(context.params.id);
+    const { id } = await context.params;
+    const current = await getApplication(id);
     if (!current) return errorResponse('Application not found', 404);
     if (current.applicantUserId !== user.id) return errorResponse('Forbidden', 403);
 
@@ -38,7 +40,7 @@ export async function PATCH(
     };
     if (!body) return errorResponse('Invalid JSON body', 400);
 
-    const application = await saveApplicationDraft(context.params.id, {
+    const application = await saveApplicationDraft(id, {
       status: body.status,
       categoryId: body.categoryId,
       priceCategoryId: body.priceCategoryId,

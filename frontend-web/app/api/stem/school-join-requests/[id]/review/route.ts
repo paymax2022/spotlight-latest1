@@ -4,10 +4,11 @@ import { reviewSchoolJoinRequest } from '@/src/server/stem/persistence';
 
 export async function POST(
   request: Request,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const { actorId } = await assertStemAdmin(request);
+    const { id } = await context.params;
     const body = (await request.json().catch(() => null)) as {
       status?: 'approved' | 'rejected';
       note?: string;
@@ -16,7 +17,7 @@ export async function POST(
 
     if (!body.status) return errorResponse('status is required', 400);
 
-    const row = await reviewSchoolJoinRequest(context.params.id, body.status, body.note, actorId);
+    const row = await reviewSchoolJoinRequest(id, body.status, body.note, actorId);
     return successResponse({ success: true, request: row });
   } catch (error) {
     return handleApiError(error, 'Failed to review school join request');
