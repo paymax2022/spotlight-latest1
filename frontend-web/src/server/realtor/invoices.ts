@@ -94,6 +94,11 @@ export async function payInvoice(input: PayInvoiceInput): Promise<PayInvoiceResu
     throw new ApiError('Failed to check prior payment', 500);
   }
   if (priorPayment) {
+    // The key resolves globally — a payment recorded under another tenant's
+    // key is a collision (amount, escrow, invoice are theirs), not a replay.
+    if ((priorPayment as any).user_id !== userId) {
+      throw new ApiError('Idempotency-Key conflicts with an existing payment.', 409);
+    }
     const { data: invoiceRow } = await supabase
       .from('realtor_invoices')
       .select(INVOICE_COLS)

@@ -122,6 +122,9 @@ func (f *fakeIntents) PutIntent(_ context.Context, in intentRecord) (*intentReco
 	defer f.mu.Unlock()
 	if ref, ok := f.byKey[in.IdempotencyKey]; ok {
 		existing := f.byRef[ref]
+		if existing.PayerID != in.PayerID {
+			return nil, false, errors.New("estate dues checkout: idempotency key is already used by another payer")
+		}
 		cp := *existing
 		return &cp, false, nil
 	}
@@ -301,5 +304,34 @@ func TestOwnerCustomerID_ResolvesTheStartingResident(t *testing.T) {
 	}
 	if owner != "resident-owner" {
 		t.Errorf("owner = %s, want resident-owner", owner)
+	}
+}
+
+// TestInitiateCheckout_ForeignIdempotencyKeyIsRejected pins the caller-scoped
+// replay contract end to end at the service layer: a second payer reusing a
+// key that already belongs to someone else gets an error, NOT the owner's
+// intent (reference, invoice, amount) — and no gateway call is made.
+func TestInitiateCheckout_ForeignIdempotencyKeyIsRejected(t *testing.T) {
+	gw := &fakeGateway{initResp: &provider.InitializePaymentResponse{AuthorizationURL: "https://pay.example/x"}}
+	intents := newFakeIntents()
+	svc := NewService(gw, &fakeDues{quoteAmount: 150_000}, intents)
+
+	owner, err := svc.InitiateCheckout(context.Background(), "estate-1", "resident-A", "invoice-1", "idem-shared", "a@b.com", "")
+	if err != nil {
+		t.Fatalf("owner initiate: %v", err)
+	}
+
+	_, err = svc.InitiateCheckout(context.Background(), "estate-1", "resident-B", "invoice-9", "idem-shared", "b@b.com", "")
+	if err == nil {
+		t.Fatal("foreign payer reusing the key was not rejected — it replayed the owner's intent")
+	}
+
+	// The owner's own replay still returns their original reference.
+	replay, err := svc.InitiateCheckout(context.Background(), "estate-1", "resident-A", "invoice-1", "idem-shared", "a@b.com", "")
+	if err != nil {
+		t.Fatalf("owner replay: %v", err)
+	}
+	if replay.Reference != owner.Reference {
+		t.Fatalf("owner replay reference = %q, want original %q", replay.Reference, owner.Reference)
 	}
 }

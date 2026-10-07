@@ -41,8 +41,14 @@ func (s *IntentRepository) PutIntent(ctx context.Context, in intentRecord) (*int
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, err
 	}
-	const sel = `SELECT ` + intentCols + ` FROM public.estate_dues_paystack_intents WHERE idempotency_key = $1`
-	existing, err := scanIntent(s.db.QueryRow(ctx, sel, in.IdempotencyKey))
+	// Replay select scoped to the payer: an unscoped resolve would hand a caller
+	// another customer's checkout intent (reference, invoice, amount) for any
+	// key they guess. A foreign key is a collision, not a replay.
+	const sel = `SELECT ` + intentCols + ` FROM public.estate_dues_paystack_intents WHERE idempotency_key = $1 AND payer_id = $2`
+	existing, err := scanIntent(s.db.QueryRow(ctx, sel, in.IdempotencyKey, in.PayerID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, errors.New("estate dues checkout: idempotency key is already used by another payer")
+	}
 	if err != nil {
 		return nil, false, err
 	}
