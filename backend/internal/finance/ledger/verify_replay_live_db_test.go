@@ -102,6 +102,32 @@ func TestLiveDB_DebitReplay_VerifiesAccountAndReference(t *testing.T) {
 		t.Fatalf("different-amount replay must return ErrDuplicate, got %v", err)
 	}
 
+	// ENTRY-TYPE mismatch: a REVERSAL_DEBIT row sitting under <key>:debit with the
+	// SAME account, reference and amount must still be refused — a reversal row is
+	// not proof the caller's debit posted (and a reversed journal must never be
+	// mistaken for the original charge on replay).
+	typeKey := "zzvr-type-" + uuid.NewString()
+	userWallet, err := svc.GetOrCreateUserWallet(ctx, user)
+	if err != nil {
+		t.Fatalf("user wallet: %v", err)
+	}
+	// The seeded reversal reads +balance on the wallet; offset it with the mirror
+	// leg so the balance assertion below still isolates the real debit alone.
+	for _, leg := range []struct{ typ, suffix string }{
+		{"REVERSAL_DEBIT", ":debit"},   // occupies the debit leg key with a wrong type
+		{"REVERSAL_CREDIT", ":offset"}, // balance-neutral counterpart
+	} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
+			 VALUES ($1, $2, 10_000, $3, $4)`,
+			userWallet.ID, leg.typ, ref, typeKey+leg.suffix); err != nil {
+			t.Fatalf("seed %s row: %v", leg.typ, err)
+		}
+	}
+	if err := svc.Debit(ctx, user, ref, typeKey, revenue.ID, 10_000); !errors.Is(err, ledger.ErrDuplicate) {
+		t.Fatalf("entry-type-mismatched replay must return ErrDuplicate, got %v", err)
+	}
+
 	// Only the first debit ever posted: the wallet is down exactly once.
 	bal1, err := svc.GetBalance(ctx, user)
 	if err != nil {

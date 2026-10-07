@@ -297,9 +297,11 @@ func Register(
 	loyalty LoyaltyAwarder,
 	audit Auditor,
 	commission CommissionRecorder,
+	confirmer LedgerConfirmer,
 ) {
 	svc := NewService(NewRepository(pool), wallet, ledger, accounts, loyalty, audit)
 	svc.SetCommissionRecorder(commission) // nil-safe: no-op when commission is disabled
+	svc.SetLedgerConfirmer(confirmer)     // nil-safe: unconfirmed duplicates never fulfil
 	h := NewHandler(svc)
 
 	g := member.Group("/networking")

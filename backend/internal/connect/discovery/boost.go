@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -35,6 +36,15 @@ type BoostAuditor interface {
 // error never blocks a charged boost). Optional (may be nil).
 type BoostFlagger interface {
 	FlagBoost(ctx context.Context, userID string, amountKobo int64, ref string) error
+}
+
+// DebitConfirmer proves — from the ledger of record, never Redis — that the
+// balanced journal under a namespaced idempotency key carries the exact identity
+// this path intended (DR caller wallet → CR paymax_revenue, this ref + amount).
+// A duplicate-key rejection is NOT proof the caller's journal landed: a stale
+// Redis lock or a foreign claim under the same key both produce ErrDuplicate.
+type DebitConfirmer interface {
+	ConfirmDebit(ctx context.Context, userID, reference, idempotencyKey string, amountKobo int64) (bool, error)
 }
 
 // Boost statuses — MUST match the connect_boosts.status CHECK constraint.
@@ -92,13 +102,14 @@ type BoostStore interface {
 // from the client — the client may only request a duration variant, and even that
 // is validated against config.
 type BoostService struct {
-	store   BoostStore
-	wallet  WalletDebiter
-	revenue RevenueAccountResolver
-	tiers   TierGuard
-	audit   BoostAuditor
-	flagger BoostFlagger
-	cfg     *configReader
+	store     BoostStore
+	wallet    WalletDebiter
+	revenue   RevenueAccountResolver
+	tiers     TierGuard
+	audit     BoostAuditor
+	flagger   BoostFlagger
+	cfg       *configReader
+	confirmer DebitConfirmer // optional; set via SetDebitConfirmer
 }
 
 // TierGuard enforces the caller's KYC tier daily-debit limit, fail-closed, BEFORE
@@ -111,6 +122,25 @@ type TierGuard interface {
 // NewBoostService builds the boost service. flagger may be nil.
 func NewBoostService(store BoostStore, wallet WalletDebiter, revenue RevenueAccountResolver, tiers TierGuard, audit BoostAuditor, flagger BoostFlagger, cfg *configReader) *BoostService {
 	return &BoostService{store: store, wallet: wallet, revenue: revenue, tiers: tiers, audit: audit, flagger: flagger, cfg: cfg}
+}
+
+// SetDebitConfirmer wires the durable-ledger replay confirmer used when a debit
+// attempt reports a DUPLICATE. Nil ⇒ unconfirmed duplicates are never treated
+// as success (the caller retries instead of fulfilling on phantom money).
+func (s *BoostService) SetDebitConfirmer(c DebitConfirmer) { s.confirmer = c }
+
+// boostLedgerKey namespaces the client-supplied key per (rail, purpose, caller)
+// before it enters the GLOBAL ledger keyspace: a raw key is unique per journal,
+// so the same key arriving from another rail or user would cross-claim.
+func boostLedgerKey(userID, idemKey string) string {
+	return "connect:discovery:boost:" + userID + ":" + idemKey
+}
+
+// isDuplicateErr matches the ledger's duplicate-idempotency-key sentinel by
+// substring so this package need not import the ledger (mirrors the
+// monetization package's approach).
+func isDuplicateErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "duplicate idempotency key")
 }
 
 // Info returns the current active boost (if any) plus backend-owned price/duration.
@@ -173,10 +203,41 @@ func (s *BoostService) Purchase(ctx context.Context, userID, idemKey string, req
 	}
 
 	ref := "connect:boost:" + userID
-	// Money mutation — tier-checked, balanced double-entry, idempotent. The
-	// Idempotency-Key dedups the CHARGE: a replayed key never double-debits.
-	if err := s.wallet.Debit(ctx, userID, ref, idemKey, revAcc, priceKobo); err != nil {
-		return nil, err // ErrInsufficientFunds / ErrDuplicate / tier-limit bubble up
+	ledgerKey := boostLedgerKey(userID, idemKey)
+	// Deploy-mid-flight convergence: a purchase that committed under the
+	// pre-namespace code posted its journal under the RAW client key. If that
+	// exact journal is durably posted, the charge already happened — record the
+	// boost under the same key instead of debiting again.
+	chargeKey := ledgerKey
+	if s.confirmer != nil {
+		ok, cerr := s.confirmer.ConfirmDebit(ctx, userID, ref, idemKey, priceKobo)
+		if cerr != nil {
+			return nil, fmt.Errorf("connect: confirm legacy boost debit: %w", cerr)
+		}
+		if ok {
+			chargeKey = idemKey
+		}
+	}
+	if chargeKey == ledgerKey {
+		// Money mutation — tier-checked, balanced double-entry, idempotent. The
+		// namespaced key dedups the CHARGE: a replayed key never double-debits.
+		if derr := s.wallet.Debit(ctx, userID, ref, ledgerKey, revAcc, priceKobo); derr != nil {
+			if !isDuplicateErr(derr) {
+				return nil, derr // ErrInsufficientFunds / tier-limit bubble up
+			}
+			// Claimed key — not proof of our journal. Charge confirmed only when
+			// the ledger of record carries this exact journal.
+			if s.confirmer == nil {
+				return nil, derr
+			}
+			ok, cerr := s.confirmer.ConfirmDebit(ctx, userID, ref, ledgerKey, priceKobo)
+			if cerr != nil {
+				return nil, fmt.Errorf("connect: confirm boost debit: %w", cerr)
+			}
+			if !ok {
+				return nil, derr
+			}
+		}
 	}
 
 	now := time.Now().UTC()
@@ -188,18 +249,25 @@ func (s *BoostService) Purchase(ctx context.Context, userID, idemKey string, req
 		StartedAt:       now,
 		ExpiresAt:       now.Add(time.Duration(duration) * time.Minute),
 		LedgerRef:       ref,
-		IdempotencyKey:  idemKey,
+		IdempotencyKey:  chargeKey,
 	})
 	if err != nil {
 		// Debit succeeded but projection failed: surface loudly so reconciliation
 		// can detect a posted ledger entry with no boost row.
 		return nil, err
 	}
+	// The INSERT returns the PRE-EXISTING row on an idempotency_key conflict —
+	// converge on it only when it is THIS purchase (the ledger charge was
+	// confirmed for priceKobo above; a row that disagrees is a foreign or stale
+	// claim and must fail closed, never be adopted as our boost).
+	if b.UserID != userID || b.PriceKobo != priceKobo || b.DurationMinutes != duration || b.LedgerRef != ref {
+		return nil, errors.New("connect: duplicate boost idempotency key held by a different purchase")
+	}
 
 	// Immutable audit event (ids + amount + ref only — never raw PII).
 	_ = s.audit.WriteAudit(ctx, "connect.discovery.boost", userID, "connect_boost", b.ID, map[string]any{
 		"price_kobo": priceKobo, "duration_minutes": duration,
-		"idempotency_key": idemKey, "ledger_ref": ref,
+		"idempotency_key": chargeKey, "ledger_ref": ref,
 	})
 	if s.flagger != nil {
 		_ = s.flagger.FlagBoost(ctx, userID, priceKobo, ref)
