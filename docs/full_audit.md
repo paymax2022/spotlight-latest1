@@ -1606,13 +1606,21 @@ partitioning of the ~95-file worktree.
 - `/api/v2/votes/paid/verify` POST `authError` is intentional: anonymous
   voters legitimately verify via the callback page; crediting is bound to
   the transaction row, not the caller. No change.
+- **AUD-BILL-0xx** — `markVotePurchaseReversed` now reverses the credited
+  quantity out of `vote_totals` via `increment_vote_totals`
+  (`reversed_votes` subtracts from `total_confirmed_votes`) before deleting
+  the votes row — refunded purchases no longer leave ghost votes on the
+  leaderboard.
+- **AUD-INFRA-0xx** — `/api/v2/votes/wallet` read `GO_API_BASE_URL` which is
+  NOT SET on prod Railway → would fall back to `localhost:8080` (dead).
+  Now falls back to the canonical `GO_BACKEND_URL`. `GO_BACKEND_WS_URL` is
+  intentionally unset (`ws-ticket.ts` derives wss:// from `GO_BACKEND_URL`).
 
 ### Confirmed, deferred to next bounded PRs
 
 - **Voting**: legacy `verifyAndCreditPaidVote` race — second
   caller's `votes` insert error swallowed while `incrementVoteTotals` still
-  runs (flag-off path only); `/api/v2/votes/paid/verify` POST ignores authError;
-  `markVotePurchaseReversed` never decrements vote_totals.
+  runs (flag-off path only).
 - **Flag drift**: `FEATURE_ASSOCIATION_ENABLED` (web) vs
   `FEATURE_ASSOCIATIONS_ENABLED` (Go); `FEATURE_KYC_ENABLED` vs
   `FEATURE_KYC_VERIFY_ENABLED`; `FEATURE_UTILITY_PAYMENTS_ENABLED` vs
