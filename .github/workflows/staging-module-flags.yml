@@ -601,29 +601,43 @@ jobs:
       # matching ARG. Setting the variable alone changes nothing already built,
       # so the service MUST be rebuilt from source for the value to reach the
       # bundle - this is the trap that shipped a localhost fallback twice.
-      - name: Check out the staging branch
-        uses: actions/checkout@v4
-        with:
-          ref: staging
+      #
+      # Rebuild from the service's CONNECTED GitHub source, not by uploading a
+      # tree. frontend-admin now has a GitHub source with Root Directory
+      # `frontend-admin`; `railway up frontend-admin --path-as-root` uploads that
+      # directory as the snapshot root, Railway then looks for `frontend-admin`
+      # inside it, and the build fails in ~30s with "snapshot-target-unpack/
+      # frontend-admin: no such file or directory" (run 37693243985). Variables
+      # are read at build time, so --from-source bakes the new value in.
+      # Remember the newest deployment id BEFORE triggering, so the wait below can
+      # tell the new build from the previous SUCCESS that is still the newest row
+      # for a moment after the trigger returns.
+      - name: Record the current deployment
+        run: |
+          set -euo pipefail
+          railway deployment list --service frontend-admin --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --limit 1 --json \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{const r=JSON.parse(d);console.log((r[0]&&r[0].id)||"")})' > before.id
+          echo "  newest deployment before trigger: $(cat before.id)"
 
       - name: Rebuild frontend-admin so the value is baked in
         run: |
           set -euo pipefail
-          railway up frontend-admin --path-as-root --no-gitignore \
-            --service frontend-admin --environment "$ENVIRONMENT" \
-            --project "$PROJECT" --detach --message "$(git rev-parse HEAD)"
+          railway redeploy --service frontend-admin --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --from-source --yes
 
-      - name: Wait for the build to reach SUCCESS
+      - name: Wait for the new build to reach SUCCESS
         run: |
           set -uo pipefail
+          before="$(cat before.id)"
           for i in $(seq 1 40); do
-            st=$(railway deployment list --service frontend-admin --environment "$ENVIRONMENT" \
+            row=$(railway deployment list --service frontend-admin --environment "$ENVIRONMENT" \
                   --project "$PROJECT" --limit 5 --json 2>/dev/null \
-                  | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{const r=JSON.parse(d);console.log((r[0]&&r[0].status)||"")}catch{console.log("")}})')
-            echo "  attempt $i: ${st:-unknown}"
-            case "$st" in
+                  | BEFORE="$before" node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{const r=JSON.parse(d);const n=r[0];console.log(n&&n.id!==process.env.BEFORE?n.status:"PENDING")}catch{console.log("")}})')
+            echo "  attempt $i: ${row:-unknown}"
+            case "$row" in
               SUCCESS) echo "  admin rebuilt with the baked-in web base URL"; exit 0 ;;
-              FAILED|CRASHED|REMOVED) echo "  build ended $st"; exit 1 ;;
+              FAILED|CRASHED|REMOVED) echo "  build ended $row"; exit 1 ;;
             esac
             sleep 15
           done
