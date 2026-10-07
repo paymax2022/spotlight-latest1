@@ -192,7 +192,7 @@ func (h *Handler) GetMilestones(c *gin.Context) {
 
 // GetRewardBackers — GET /rewards/backers.
 func (h *Handler) GetRewardBackers(c *gin.Context) {
-	items, err := h.svc.GetRewardBackers(c.Request.Context(), c.Query("status"))
+	items, err := h.svc.GetRewardBackers(c.Request.Context(), ginutil.UserID(c), c.Query("status"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
@@ -207,7 +207,7 @@ func (h *Handler) UpdateRewardStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 		return
 	}
-	if err := h.svc.UpdateRewardStatus(c.Request.Context(), c.Param("id"), in.Status); err != nil {
+	if err := h.svc.UpdateRewardStatus(c.Request.Context(), ginutil.UserID(c), c.Param("id"), in.Status); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "reward backer not found"})
 			return

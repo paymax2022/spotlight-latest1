@@ -142,6 +142,14 @@ func (s *Service) HandleBrokerFill(ctx context.Context, providerRef string, exec
 		}
 		o.LockedCashKobo = 0
 	} else {
+		// Bound the provider-reported fill to the shares we actually locked — the
+		// buy side caps cost at LockedCashKobo, but the sell side previously took
+		// filledQty on trust, so a forged/misconfigured payload could claim more
+		// shares than were escrowed and mint withdrawable settlement cash.
+		if filledQty > o.LockedQuantity {
+			filledQty = o.LockedQuantity
+			o.FilledQuantity = filledQty
+		}
 		gross := int64(filledQty * float64(execPriceKobo))
 		feeFinal := fees.FeeFor(gross)
 		o.FeesKobo = feeFinal
@@ -168,20 +176,22 @@ func (s *Service) HandleBrokerSettled(ctx context.Context, providerRef string) e
 	if o.Status != StatusPendingSettlement {
 		return errAlreadyHandled
 	}
-	if o.Side == SideBuy {
-		if err := s.repo.AddToPosition(ctx, o.UserID, o.StockAssetID, o.Symbol, o.FilledQuantity, o.ExecutedPriceKobo); err != nil {
-			return err
-		}
-	} else {
+	if o.Side == SideSell {
+		// Keyed release: a retry after the settle-claim tx below fails replays as
+		// a no-op, so cash is released at most once.
 		if err := s.il.ReleaseSettlement(ctx, o.UserID, "settle:"+o.ID, "release:"+o.IdempotencyKey, o.TotalAmountKobo); err != nil {
-			return err
-		}
-		if err := s.repo.ReducePosition(ctx, o.UserID, o.StockAssetID, o.FilledQuantity, o.TotalAmountKobo); err != nil {
 			return err
 		}
 	}
 	o.SettledAt = ptr.Of(s.now())
-	return s.transition(ctx, o, StatusSettled, "settled (webhook)")
+	o.Status = StatusSettled
+	if err := s.repo.SettleOrder(ctx, o, "settled (webhook)"); err != nil {
+		if errors.Is(err, ErrSettlementClaimed) {
+			return errAlreadyHandled
+		}
+		return err
+	}
+	return nil
 }
 
 // HandleBrokerReject releases locks and marks the order failed.

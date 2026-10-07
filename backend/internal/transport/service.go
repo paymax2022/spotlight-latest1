@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/go-common/dbutil"
@@ -381,16 +382,24 @@ func (s *Service) transitionPhase(ctx context.Context, tx pgx.Tx, tripID, actorI
 		return codedErr(http.StatusConflict, CodeInvalidState,
 			fmt.Sprintf("illegal trip transition %s → %s", from, to))
 	}
+	var tag pgconn.CommandTag
+	var err error
 	if coarse != "" {
-		_, err := tx.Exec(ctx, `UPDATE trips SET phase=$1, status=$2, updated_at=NOW() WHERE id=$3 AND phase=$4`, string(to), coarse, tripID, string(from))
-		if err != nil {
-			return err
-		}
+		tag, err = tx.Exec(ctx, `UPDATE trips SET phase=$1, status=$2, updated_at=NOW() WHERE id=$3 AND phase=$4`, string(to), coarse, tripID, string(from))
 	} else {
-		_, err := tx.Exec(ctx, `UPDATE trips SET phase=$1, updated_at=NOW() WHERE id=$2 AND phase=$3`, string(to), tripID, string(from))
-		if err != nil {
-			return err
-		}
+		tag, err = tx.Exec(ctx, `UPDATE trips SET phase=$1, updated_at=NOW() WHERE id=$2 AND phase=$3`, string(to), tripID, string(from))
+	}
+	if err != nil {
+		return err
+	}
+	// A stale `from` phase yields a 0-row UPDATE — e.g. the rider's cancel
+	// committed between the caller's loadTrip and this write. Committing
+	// anyway would post the settlement leg anyway (the escrow is still
+	// 'escrowed' until Refund flips it) AND record a phantom event; fail the
+	// tx so the caller rolls back instead.
+	if tag.RowsAffected() == 0 {
+		return codedErr(http.StatusConflict, CodeInvalidState,
+			fmt.Sprintf("trip %s no longer in phase %s", tripID, from))
 	}
 	return s.recordEventTx(ctx, tx, tripID, string(to), actorID, from, to, meta)
 }
@@ -729,6 +738,19 @@ const shareBaseURL = "https://spotlight.app/track"
 func (s *Service) CreateIncident(ctx context.Context, userID string, incType string, tripID *string, lat, lng *float64, description, severity string) (*SafetyIncident, error) {
 	if severity == "" {
 		severity = "high"
+	}
+	// An SOS tied to a trip requires the caller to be a trip participant —
+	// unrestricted, it let ANY signed-in user write incidents against and
+	// force ANY trip into safety_hold, and safety_hold → cancelled refunds
+	// the escrow, so it doubled as a payment-evasion / trip-griefing vector.
+	if tripID != nil && incType == "sos" {
+		riderID, driverUserID, err := s.tripParties(ctx, *tripID)
+		if err != nil {
+			return nil, err
+		}
+		if userID != riderID && (driverUserID == "" || userID != driverUserID) {
+			return nil, codedErr(http.StatusForbidden, CodeForbidden, "not a participant of this trip")
+		}
 	}
 	inc := &SafetyIncident{
 		ID:       uuid.New().String(),

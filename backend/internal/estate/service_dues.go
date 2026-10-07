@@ -249,21 +249,48 @@ func (s *Service) payDues(ctx context.Context, estateID, payerID string, req Pay
 		}
 	}
 
-	// 5. Estate collection account = settlement standing account (estate operator
+	// 5. Claim the invoice under a row lock, THEN move money, THEN write the
+	//    receipt — all inside one transaction. Two concurrent payDues for the
+	//    same invoice with DIFFERENT idempotency keys previously both passed the
+	//    unpaid check and both debited the wallet (only the receipt insert was
+	//    deduped). The FOR UPDATE serializes them: the loser blocks until the
+	//    winner commits status='paid', then takes the already-paid branch below.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("estate: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var invStatus string
+	if err := tx.QueryRow(ctx,
+		`SELECT status FROM estate_dues_invoices WHERE id=$1 AND estate_id=$2 FOR UPDATE`,
+		req.InvoiceID, estateID).Scan(&invStatus); err != nil {
+		return nil, errors.New("estate: invoice not found in this estate")
+	}
+	if invStatus == "paid" {
+		return s.existingReceipt(ctx, estateID, req.InvoiceID)
+	}
+	if invStatus == "waived" {
+		return nil, errors.New("estate: invoice has been waived")
+	}
+
+	// 6. Estate collection account = settlement standing account (estate operator
 	//    settles out-of-band; the estate_id is recorded on the receipt + ref).
 	settle, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
 	if err != nil {
 		return nil, fmt.Errorf("estate: settlement account: %w", err)
 	}
 
-	// 6. Balanced double-entry. Wallet-funded: DEBIT payer wallet, CREDIT
+	// 7. Balanced double-entry. Wallet-funded: DEBIT payer wallet, CREDIT
 	//    settlement. Externally-funded: DR provider-clearing, CR settlement —
 	//    the money already left the payer via an already-verified Paystack
 	//    charge, so there is no wallet leg to post here (mirrors
 	//    settlement.Service.EscrowExternal's DR-clearing/CR-escrow shape,
 	//    adapted to dues' immediate-settle model — there is no hold/release
 	//    step for dues to mirror). Both branches are idempotent on
-	//    req.IdempotencyKey (ledger unique constraint + redis lock).
+	//    req.IdempotencyKey (ledger unique constraint + redis lock) — a retry
+	//    after a later failure here replays the money leg as a no-op before
+	//    re-acquiring the invoice lock.
 	ref := "estate_dues:" + estateID + ":" + req.InvoiceID
 	if external {
 		clearingAcc, cerr := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
@@ -285,13 +312,7 @@ func (s *Service) payDues(ctx context.Context, estateID, payerID string, req Pay
 		return nil, fmt.Errorf("estate: dues debit: %w", err)
 	}
 
-	// 7. Immutable receipt + mark invoice paid + lift restriction + audit, one tx.
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("estate: begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
+	// 8. Immutable receipt + mark invoice paid + lift restriction + audit.
 	pay := &DuesPayment{
 		ID: uuid.New().String(), EstateID: estateID, InvoiceID: &req.InvoiceID,
 		PayerID: payerID, AmountKobo: amount, Method: method, Status: "successful",

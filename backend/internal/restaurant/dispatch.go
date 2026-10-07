@@ -166,7 +166,13 @@ func (s *Service) ConfirmPickup(ctx context.Context, orderID, riderID, code stri
 	if _, err := s.db.Exec(ctx, `UPDATE orders SET picked_up_at=COALESCE(picked_up_at, now()) WHERE id=$1`, orderID); err != nil {
 		return err
 	}
-	return s.UpdateStatus(ctx, orderID, riderID, OrderPickedUp)
+	// The pickup-code POD has been verified above, so advance via the internal
+	// transition — the public UpdateStatus forbids `picked_up` to close the
+	// same bypass `delivered` had (a bare status write skipping the code).
+	if err := s.transitionInternal(ctx, orderID, riderID, OrderPickedUp); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ConfirmHandoff completes the delivery: the rider enters the customer's

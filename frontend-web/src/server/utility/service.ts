@@ -1111,6 +1111,18 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
         attempt_number: index + 1,
         raw_error: error instanceof Error ? error.message : String(error),
       });
+      // An ambiguous thrown error can mean the provider ACCEPTED the vend but
+      // the response was lost (connection reset after send, or a post-vend
+      // bookkeeping write that threw). Continuing the walk would send a
+      // second vend on one debit — mirror the Go plane: hold pending, let
+      // requery/recovery resolve it.
+      providerResult = {
+        status: 'pending',
+        message: lastProviderError,
+        raw: { ambiguous_attempt_error: true },
+      };
+      fulfilledRoute = candidate;
+      break;
     }
   }
 

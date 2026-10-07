@@ -918,25 +918,19 @@ func (s *Service) ProcessDueSettlements(ctx context.Context, batch int) (int, er
 	count := 0
 	for i := range due {
 		o := &due[i]
-		if o.Side == SideBuy {
-			cost := int64(o.FilledQuantity * float64(o.ExecutedPriceKobo))
-			if err := s.repo.AddToPosition(ctx, o.UserID, o.StockAssetID, o.Symbol, o.FilledQuantity, o.ExecutedPriceKobo); err != nil {
-				continue
-			}
-			_ = cost
-		} else {
-			net := o.TotalAmountKobo
-			if err := s.il.ReleaseSettlement(ctx, o.UserID, "settle:"+o.ID, "release:"+o.IdempotencyKey, net); err != nil {
-				continue
-			}
-			if err := s.repo.ReducePosition(ctx, o.UserID, o.StockAssetID, o.FilledQuantity, net); err != nil {
+		if o.Side == SideSell {
+			// Keyed release: a retry after the settle-claim tx fails replays as a
+			// no-op, so pending-settlement cash is released at most once.
+			if err := s.il.ReleaseSettlement(ctx, o.UserID, "settle:"+o.ID, "release:"+o.IdempotencyKey, o.TotalAmountKobo); err != nil {
 				continue
 			}
 		}
 		o.SettledAt = ptr.Of(s.now())
-		from := o.Status
 		o.Status = StatusSettled
-		if err := s.repo.UpdateOrder(ctx, o, from, "settled (T+N reached)"); err != nil {
+		// Atomic claim+position mutation: a broker webhook settling the same order
+		// concurrently loses the claim (ErrSettlementClaimed) instead of
+		// double-crediting shares or double-reducing the position.
+		if err := s.repo.SettleOrder(ctx, o, "settled (T+N reached)"); err != nil {
 			continue
 		}
 		count++

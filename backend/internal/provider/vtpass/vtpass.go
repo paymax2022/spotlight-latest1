@@ -46,6 +46,8 @@ import (
 	"bytes"
 	"context"
 	crand "crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -255,17 +257,21 @@ func randomBase36(n int) string {
 }
 
 // vtpassRequestID builds VTpass's required request_id: an Africa/Lagos
-// YYYYMMDDHHmm prefix plus the idempotency key stripped of non-alphanumeric
-// characters and truncated to its LAST 20 characters (or a random base36
-// string if that strip leaves nothing), matching the TS source's
-// vtpassRequestId(idempotencyKey, date) exactly.
+// YYYYMMDDHHmm prefix plus a 20-char suffix. The suffix is a SHA-256
+// fingerprint of the WHOLE idempotency key — the previous scheme took the
+// literal last-20 alphanumeric chars of the attempt key
+// ("<key>:provider:<uuid>:attempt:<n>"), which is just the provider-uuid tail
+// + attempt number, so every DIFFERENT transaction against the same provider
+// in the same minute produced the same request_id. VTpass dedupes on
+// request_id, so transaction B could be answered with transaction A's result
+// (or rejected as a duplicate after we already debited).
 func vtpassRequestID(idempotencyKey string, date time.Time) string {
-	suffix := alnumOnly(idempotencyKey)
-	if len(suffix) > 20 {
-		suffix = suffix[len(suffix)-20:]
-	}
-	if suffix == "" {
+	var suffix string
+	if idempotencyKey == "" {
 		suffix = randomBase36(13)
+	} else {
+		sum := sha256.Sum256([]byte(idempotencyKey))
+		suffix = strings.ToUpper(hex.EncodeToString(sum[:])[:20])
 	}
 	return lagosRequestPrefix(date) + suffix
 }
@@ -360,14 +366,28 @@ func normalizeProviderStatus(payload vtpassResponse) string {
 	if code == "000" && transactionStatus == "" && strings.Contains(description, "successful") {
 		return StatusSuccess
 	}
-	if strings.Contains(transactionStatus, "pending") ||
-		strings.Contains(transactionStatus, "processing") ||
-		strings.Contains(description, "pending") ||
-		strings.Contains(description, "processing") ||
-		strings.Contains(description, "timeout") {
-		return StatusPending
+	// A synthesized HTTP 4xx envelope (do() on non-2xx) means VTpass rejected
+	// the request outright — no vend was attempted, so a definitive failure is
+	// safe. 5xx is ambiguous: the vend may still complete → pending below.
+	if httpStatus, err := strconv.Atoi(code); err == nil && httpStatus >= 400 && httpStatus < 500 {
+		return StatusFailed
 	}
-	return StatusFailed
+	if strings.Contains(transactionStatus, "fail") ||
+		strings.Contains(transactionStatus, "cancel") ||
+		strings.Contains(transactionStatus, "reverse") ||
+		strings.Contains(description, "fail") ||
+		strings.Contains(description, "insufficient") ||
+		strings.Contains(description, "invalid") ||
+		strings.Contains(description, "does not exist") ||
+		strings.Contains(description, "not exist") ||
+		strings.Contains(description, "error") {
+		return StatusFailed
+	}
+	// Anything else — 'initiated', 'pending', 'processing', a 5xx, or an
+	// unrecognised verdict — is ambiguous, NOT a proven refusal. Failing here
+	// would auto-reverse the debit and fail over to the next provider while
+	// the vend may still complete (double-deliver / debit+deliver).
+	return StatusPending
 }
 
 // tokenFrom extracts the vended token/purchased-code, matching the TS source's
@@ -591,6 +611,19 @@ func (c *Client) PurchaseBill(ctx context.Context, req provider.BillRequest) (*p
 		idemKey = req.Ref
 	}
 	requestID := vtpassRequestID(idemKey, time.Now())
+
+	// VTpass bills whole naira only — asNaira() would otherwise round a
+	// sub-naira amount UP to a full-naira vend while we collected less. This
+	// is a deterministic validation failure, not a provider refusal: the
+	// request is never sent, so StatusFailed is safe (no vend can complete).
+	if req.AmountKobo <= 0 || req.AmountKobo%100 != 0 {
+		return &provider.Bill{
+			Status:      StatusFailed,
+			ProviderRef: requestID,
+			Message:     "Amount must be in whole naira.",
+			Raw:         json.RawMessage(`{"validation":"whole_naira_required"}`),
+		}, nil
+	}
 
 	if c.environment == EnvironmentSandbox {
 		return c.sandboxPurchase(req, requestID), nil

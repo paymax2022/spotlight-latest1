@@ -56,9 +56,10 @@ func TestLiveDB_OrderStatusAuthz(t *testing.T) {
 	if err := svc.UpdateStatus(ctx, orderID, owner, restaurant.OrderDelivered); !errors.Is(err, restaurant.ErrDeliveredViaHandoff) {
 		t.Fatalf("owner→delivered: want ErrDeliveredViaHandoff, got %v", err)
 	}
-	// A non-assigned user cannot mark picked_up.
-	if err := svc.UpdateStatus(ctx, orderID, stranger, restaurant.OrderPickedUp); !errors.Is(err, restaurant.ErrForbidden) {
-		t.Fatalf("stranger→picked_up: want ErrForbidden, got %v", err)
+	// picked_up is blocked for everyone via the generic endpoint (POP gate fires
+	// before role authz — same semantics as delivered above).
+	if err := svc.UpdateStatus(ctx, orderID, stranger, restaurant.OrderPickedUp); !errors.Is(err, restaurant.ErrPickedUpViaPickupCode) {
+		t.Fatalf("stranger→picked_up: want ErrPickedUpViaPickupCode, got %v", err)
 	}
 	// The restaurant owner MAY advance the kitchen-side lifecycle.
 	if err := svc.UpdateStatus(ctx, orderID, owner, restaurant.OrderConfirmed); err != nil {

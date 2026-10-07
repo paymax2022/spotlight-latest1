@@ -96,7 +96,7 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 
 // GetOrder returns a single order with items, scoped to its three participants.
 func (s *Service) GetOrder(ctx context.Context, orderID, userID string) (*Order, error) {
-	ok, _, err := s.isParticipant(ctx, orderID, userID)
+	ok, role, err := s.isParticipant(ctx, orderID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +120,7 @@ func (s *Service) GetOrder(ctx context.Context, orderID, userID string) (*Order,
 		return nil, err
 	}
 	o.Items = items
+	maskPODCodes(&o, role)
 	return &o, nil
 }
 
@@ -226,6 +227,7 @@ func (s *Service) ListOrders(ctx context.Context, userID, role string) ([]Order,
 			&o.DeliveryAddress, &o.DispatchStatus, &o.DeliveryCode, &o.PickupCode, &o.PromoID, &o.PromoFunder, &o.CreatedAt); err != nil {
 			return nil, err
 		}
+		maskPODCodes(&o, role)
 		out = append(out, o)
 	}
 	return out, rows.Err()
@@ -585,6 +587,18 @@ func (s *Service) AssignRider(ctx context.Context, orderID, actorID, candidateID
 	if candidateID == "" {
 		return errors.New("restaurant: rider id required")
 	}
+	// The candidate must be a VERIFIED driver — assigning any arbitrary account
+	// let an owner nominate a colluding/unverified user who could then accept
+	// and (pre-maskPODCodes) self-drive the order to a payout.
+	var isDriver bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM drivers WHERE user_id=$1 AND verification_status='approved')`,
+		candidateID).Scan(&isDriver); err != nil {
+		return fmt.Errorf("restaurant: check driver pool: %w", err)
+	}
+	if !isDriver {
+		return errors.New("restaurant: candidate is not an approved rider")
+	}
 	if _, err := s.db.Exec(ctx, `UPDATE orders SET rider_candidate_id=$1 WHERE id=$2`, candidateID, orderID); err != nil {
 		return err
 	}
@@ -624,6 +638,18 @@ func (s *Service) AcceptDelivery(ctx context.Context, orderID, riderID string) e
 	}
 	if !offered && (candidate == nil || *candidate != riderID) {
 		return errors.New("restaurant: you are not an offered rider for this order")
+	}
+	// The multi-offer path only ever offers to verified online drivers, but the
+	// legacy single-candidate path admits whoever was nominated — require the
+	// acceptor to be an approved driver too.
+	var approved bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM drivers WHERE user_id=$1 AND verification_status='approved')`,
+		riderID).Scan(&approved); err != nil {
+		return fmt.Errorf("restaurant: check driver pool: %w", err)
+	}
+	if !approved {
+		return errors.New("restaurant: only an approved rider may accept a delivery")
 	}
 
 	if _, err := tx.Exec(ctx, `UPDATE orders SET rider_id=$1, dispatch_status='assigned', assigned_at=COALESCE(assigned_at, now()) WHERE id=$2`, riderID, orderID); err != nil {
@@ -701,9 +727,11 @@ func (s *Service) RiderOffers(ctx context.Context, riderID string) ([]Order, err
 	}
 	// PII minimization (SEC-009): an OFFERED rider hasn't committed yet, so they see only
 	// the approximate area — the full delivery address is revealed once they accept (via
-	// RiderActive / GetOrder as the assigned rider).
+	// RiderActive / GetOrder as the assigned rider). POD codes are never visible to
+	// a rider — see maskPODCodes.
 	for i := range orders {
 		orders[i].DeliveryAddress = maskDeliveryAddress(orders[i].DeliveryAddress)
+		maskPODCodes(&orders[i], "rider")
 	}
 	return orders, nil
 }
@@ -715,7 +743,14 @@ func (s *Service) RiderActive(ctx context.Context, riderID string) ([]Order, err
 	                  COALESCE(dispatch_status,'none'), delivery_code, pickup_code, promo_id::text, promo_funder, created_at
 	           FROM orders WHERE rider_id=$1 AND status NOT IN ('delivered','cancelled')
 	           ORDER BY created_at DESC`
-	return s.queryOrders(ctx, q, riderID)
+	orders, err := s.queryOrders(ctx, q, riderID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range orders {
+		maskPODCodes(&orders[i], "rider")
+	}
+	return orders, nil
 }
 
 func (s *Service) queryOrders(ctx context.Context, q string, arg string) ([]Order, error) {

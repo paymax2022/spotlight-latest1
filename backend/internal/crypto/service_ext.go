@@ -358,9 +358,11 @@ func (s *Service) Withdraw(ctx context.Context, userID, assetID, addressID strin
 	if units <= 0 || idemKey == "" {
 		return nil, ErrBadRequest
 	}
-	if feeKobo < 0 {
-		return nil, ErrBadRequest
-	}
+	// The fiat processing fee is platform policy, not client input — a request
+	// could otherwise pass fee_kobo=0 and skip the paymax_revenue leg entirely.
+	// The parameter stays for signature compatibility but is overridden with the
+	// same constant QuoteWithdrawal advertises.
+	feeKobo = DefaultWithdrawFeeKobo
 	a, err := s.repo.GetAsset(ctx, assetID)
 	if err != nil {
 		return nil, err

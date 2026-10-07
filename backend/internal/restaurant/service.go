@@ -1138,6 +1138,24 @@ func (s *Service) isParticipant(ctx context.Context, orderID, userID string) (bo
 	return false, "", nil
 }
 
+// maskPODCodes strips the handoff codes the viewer does NOT own. delivery_code
+// belongs to the customer (the rider types it at the door); pickup_code belongs
+// to the restaurant (the rider types it at the counter). Serializing either to
+// a rider — or to merely-offered riders — lets them read the code and confirm
+// their own handoff, self-driving the order to `delivered` and releasing
+// escrow without any real pickup or delivery.
+func maskPODCodes(o *Order, viewerRole string) {
+	switch viewerRole {
+	case "customer":
+		o.PickupCode = nil
+	case "restaurant":
+		o.DeliveryCode = nil
+	default: // rider, offered rider, anyone else
+		o.DeliveryCode = nil
+		o.PickupCode = nil
+	}
+}
+
 // UpdateStatus advances an order's status. Restaurant owner confirms/prepares;
 // rider marks picked_up/delivered; last step triggers settlement.
 // UpdateStatus is the authorized public entry for owner/rider-driven status changes.
@@ -1726,6 +1744,11 @@ var (
 	// endpoint; the assigned rider must use ConfirmHandoff, which enforces the
 	// delivery-code proof-of-delivery. This closes the POD-bypass hole.
 	ErrDeliveredViaHandoff = errors.New("restaurant: delivered can only be set via rider handoff (proof of delivery)")
+	// ErrPickedUpViaPickupCode — `picked_up` cannot be set through the generic
+	// status endpoint; the assigned rider must use ConfirmPickup, which enforces
+	// the restaurant's pickup code. Closes the same class of POD bypass as
+	// ErrDeliveredViaHandoff on the pickup leg.
+	ErrPickedUpViaPickupCode = errors.New("restaurant: picked_up can only be set via rider pickup confirm (proof of pickup)")
 )
 
 type orderActorRole int
@@ -1770,14 +1793,16 @@ func authorizeStatusChange(actorID, customer, owner, rider string, to OrderStatu
 	if to == OrderDelivered {
 		return ErrDeliveredViaHandoff
 	}
+	if to == OrderPickedUp {
+		// Same POD bypass as delivered — ready→picked_up must go through
+		// ConfirmPickup (the restaurant's pickup code proves the food actually
+		// left the counter), not a bare status write by the rider.
+		return ErrPickedUpViaPickupCode
+	}
 	role := classifyOrderActor(actorID, customer, owner, rider)
 	switch to {
 	case OrderConfirmed, OrderPreparing, OrderReady:
 		if role == roleOwner {
-			return nil
-		}
-	case OrderPickedUp:
-		if role == roleRider {
 			return nil
 		}
 	case OrderCancelled:

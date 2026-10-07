@@ -239,6 +239,21 @@ func (r *Repository) SumUserBalance(ctx context.Context, userID string) (int64, 
 	return bal, err
 }
 
+// SumUserBalanceTx is the tx-bound variant used by RedeemPoints so the balance
+// check and the redemption entry commit atomically — without it two concurrent
+// redeems both pass the check and overspend the balance.
+func (r *Repository) SumUserBalanceTx(ctx context.Context, tx pgx.Tx, userID string) (int64, error) {
+	const q = `
+		SELECT COALESCE(SUM(
+			CASE WHEN type = 'credit' THEN amount_minor ELSE -amount_minor END
+		),0)
+		FROM public.academy_reward_ledger_entries
+		WHERE user_id = $1`
+	var bal int64
+	err := tx.QueryRow(ctx, q, userID).Scan(&bal)
+	return bal, err
+}
+
 // ListUserEntries returns the user's reward ledger history (read path).
 func (r *Repository) ListUserEntries(ctx context.Context, userID string, limit int) ([]LedgerEntry, error) {
 	if limit <= 0 || limit > 500 {
@@ -402,6 +417,24 @@ func (r *Repository) InsertRedemption(ctx context.Context, rd Redemption) (*Rede
 		VALUES ($1,$2,$3,$4,$5,$6)
 		RETURNING ` + redemptionCols
 	out, err := scanRedemption(r.db.QueryRow(ctx, q, rd.UserID, rd.SKU, rd.PointsSpent, rd.ValueMinor, state, rd.IdempotencyKey))
+	if err != nil && dbutil.IsUniqueViolation(err) {
+		return nil, ErrDuplicate
+	}
+	return out, err
+}
+
+// InsertRedemptionTx is the tx-bound variant so the balance check, redemption
+// row, and decrementing ledger entry commit atomically.
+func (r *Repository) InsertRedemptionTx(ctx context.Context, tx pgx.Tx, rd Redemption) (*Redemption, error) {
+	state := rd.State
+	if state == "" {
+		state = "requested"
+	}
+	const q = `
+		INSERT INTO public.academy_redemptions (user_id, sku, points_spent, value_minor, state, idempotency_key)
+		VALUES ($1,$2,$3,$4,$5,$6)
+		RETURNING ` + redemptionCols
+	out, err := scanRedemption(tx.QueryRow(ctx, q, rd.UserID, rd.SKU, rd.PointsSpent, rd.ValueMinor, state, rd.IdempotencyKey))
 	if err != nil && dbutil.IsUniqueViolation(err) {
 		return nil, ErrDuplicate
 	}

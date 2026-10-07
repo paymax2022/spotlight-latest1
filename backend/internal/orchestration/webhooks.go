@@ -155,7 +155,15 @@ func (s *Service) HandleProviderEvent(ctx context.Context, providerName string, 
 	isTransfer := strings.HasPrefix(ref, "PMX-TR") || ev.Data.Type == "transfer"
 	if isTransfer {
 		canon := canonTransferStatus(raw)
-		_ = s.store.UpdateTransferStatus(ctx, ref, canon)
+		if canon == string(TransferFailed) || canon == string(TransferReversed) {
+			// Terminal non-success: unwind the source debit — status flip, wallet
+			// credit, and reversal legs commit atomically inside RefundTransfer.
+			if _, err := s.store.RefundTransfer(ctx, ref, canon); err != nil {
+				return err // transient store errors surface so the provider redelivers
+			}
+		} else {
+			_ = s.store.UpdateTransferStatus(ctx, ref, canon)
+		}
 		s.emit(ctx, "transfer."+canon, map[string]any{"reference": ref, "status": canon, "provider": providerName})
 	} else {
 		canon := canonConversionStatus(raw)

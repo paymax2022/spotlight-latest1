@@ -75,38 +75,57 @@ export async function applyBankTransferOutcome(
     .eq('type', WALLET_ACCOUNT_TYPE)
     .maybeSingle();
 
+  if (!accountRow) {
+    // Marking the row terminal without posting the refund legs would strand the
+    // sender's reserved amount+fee with no automated recovery. Throwing keeps
+    // the status non-terminal so the next webhook / verify-on-read retries.
+    throw new Error(`bank transfer ${transfer.id}: no wallet ledger account for user ${transfer.user_id}`);
+  }
+
   let reversalEntryId: string | null = null;
 
-  if (accountRow) {
-    const counterAccountId = await getOrCreateStandingAccount('provider_clearing');
-    const metadata = {
-      bank_transfer_id: transfer.id,
-      original_entry_id: transfer.sender_entry_id,
-      reason: reason ?? 'Transfer failed',
-    };
+  const counterAccountId = await getOrCreateStandingAccount('provider_clearing');
+  const metadata = {
+    bank_transfer_id: transfer.id,
+    original_entry_id: transfer.sender_entry_id,
+    reason: reason ?? 'Transfer failed',
+  };
 
-    const legs = buildJournalLegs({
-      primaryAccountId: (accountRow as { id: string }).id,
-      counterAccountId,
-      primarySide: 'REVERSAL_DEBIT',
-      amountKobo: refundKobo,
-      reference: refundRef,
-      idempotencyKey: refundKey,
-      description: `Refund for failed bank transfer ${transfer.id}`,
-      metadata,
-    });
+  const legs = buildJournalLegs({
+    primaryAccountId: (accountRow as { id: string }).id,
+    counterAccountId,
+    primarySide: 'REVERSAL_DEBIT',
+    amountKobo: refundKobo,
+    reference: refundRef,
+    idempotencyKey: refundKey,
+    description: `Refund for failed bank transfer ${transfer.id}`,
+    metadata,
+  });
 
-    const { data: entryRows, error: entryError } = await supabase
-      .from('ledger_entries')
-      .insert(legs)
-      .select('id, idempotency_key');
+  const { data: entryRows, error: entryError } = await supabase
+    .from('ledger_entries')
+    .insert(legs)
+    .select('id, idempotency_key');
 
-    if (!entryError && entryRows) {
-      // The wallet leg is the one carrying the un-suffixed key.
-      const walletRow = (entryRows as { id: string; idempotency_key: string }[])
-        .find((r) => r.idempotency_key === refundKey);
-      reversalEntryId = walletRow?.id ?? null;
+  if (entryError) {
+    if ((entryError as { code?: string }).code !== '23505') {
+      // The refund did NOT post — do not mark the row terminal or the money is
+      // stranded. Throw and let the next delivery/verify-on-read retry.
+      throw entryError;
     }
+    // A previous attempt already posted these exact legs — recover its id so
+    // reversal_entry_id still points at the real entry.
+    const { data: existing } = await supabase
+      .from('ledger_entries')
+      .select('id')
+      .eq('idempotency_key', refundKey)
+      .maybeSingle();
+    reversalEntryId = (existing as { id: string } | null)?.id ?? null;
+  } else if (entryRows) {
+    // The wallet leg is the one carrying the un-suffixed key.
+    const walletRow = (entryRows as { id: string; idempotency_key: string }[])
+      .find((r) => r.idempotency_key === refundKey);
+    reversalEntryId = walletRow?.id ?? null;
   }
 
   await supabase

@@ -206,7 +206,7 @@ export interface WalletTransferResult {
 export async function initiateWalletToWallet(
   input: WalletToWalletInput,
 ): Promise<WalletTransferResult> {
-  if (!Number.isInteger(input.amountKobo) || input.amountKobo < 100) {
+  if (!Number.isSafeInteger(input.amountKobo) || input.amountKobo < 100) {
     throw new ApiError('Minimum transfer amount is 100 kobo (₦1)', 400);
   }
 
@@ -216,7 +216,7 @@ export async function initiateWalletToWallet(
   const supabase = createAdminClient();
   const { data: existing } = await supabase
     .from('wallet_transfers')
-    .select('id, reference, amount_kobo, fee_kobo, sender_entry_id, receiver_entry_id, created_at, receiver_id')
+    .select('id, reference, amount_kobo, fee_kobo, sender_entry_id, receiver_entry_id, created_at, receiver_id, sender_id')
     .eq('idempotency_key', input.idempotencyKey)
     .maybeSingle();
 
@@ -224,8 +224,14 @@ export async function initiateWalletToWallet(
     const row = existing as {
       id: string; reference: string; amount_kobo: number; fee_kobo: number;
       sender_entry_id: string; receiver_entry_id: string;
-      created_at: string; receiver_id: string;
+      created_at: string; receiver_id: string; sender_id: string;
     };
+    // The key exists but belongs to a DIFFERENT sender — returning that row
+    // would leak another user's transfer (recipient, amount, refs). Mirror the
+    // Go rail: foreign key collisions are a 409, not a replay.
+    if (row.sender_id !== input.senderId) {
+      throw new ApiError('Idempotency-Key conflicts with an existing transaction.', 409);
+    }
     const { data: receiverProfile } = await supabase
       .from('user_profiles')
       .select('full_name')

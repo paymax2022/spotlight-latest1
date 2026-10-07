@@ -112,7 +112,11 @@ func (s *Service) Initiate(ctx context.Context, userID string, req InitiateReque
 		    bvn_hash      = COALESCE($5, bvn_hash),
 		    nin_hash      = COALESCE($6, nin_hash),
 		    updated_at    = NOW()
-		WHERE id = $1 AND kyc_status NOT IN ('submitted', 'pending')
+		-- 'verified' and 'suspended' must also block re-initiation: without them a
+		-- suspended-for-fraud user could self-reset to pending (undoing the
+		-- suspension) and a verified user could regress to pending while swapping
+		-- which BVN/NIN their account is bound to via the COALESCEs above.
+		WHERE id = $1 AND kyc_status NOT IN ('submitted', 'pending', 'verified', 'suspended')
 		RETURNING id`
 
 	var returnedID string
@@ -158,6 +162,15 @@ func (s *Service) Approve(ctx context.Context, userID string, newTier int, actor
 		return nil, fmt.Errorf("kyc: lookup user=%s: %w", userID, err)
 	}
 
+	// A late-arriving webhook for an old session must not resurrect or
+	// downgrade: suspended stays suspended (admin action is authoritative),
+	// and a stale lower-tier session must never pull kyc_tier down.
+	if oldStatus == "suspended" {
+		return nil, fmt.Errorf("kyc: cannot approve suspended user=%s", userID)
+	}
+	if newTier < oldTier {
+		return nil, fmt.Errorf("kyc: cannot downgrade user=%s tier %d -> %d", userID, oldTier, newTier)
+	}
 	const update = `
 		UPDATE user_profiles
 		SET kyc_tier = $2, kyc_status = 'verified', kyc_verified_at = NOW(), updated_at = NOW()

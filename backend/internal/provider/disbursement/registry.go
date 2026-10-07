@@ -259,11 +259,12 @@ func (w *liveWrap) ListBanks(ctx context.Context) ([]provider.Bank, error) {
 }
 
 func (w *liveWrap) ResolveAccount(ctx context.Context, bankCode, accountNumber string) (*provider.AccountResolution, error) {
-	res, err := w.real.ResolveAccount(ctx, bankCode, accountNumber)
-	if err != nil || res == nil {
-		return w.mock.ResolveAccount(ctx, bankCode, accountNumber)
-	}
-	return res, nil
+	// Never degrade name resolution to the mock: a fabricated account name
+	// silently defeats the "resolve proves the holder" control during provider
+	// outages and lets payouts proceed to mistyped accounts while showing the
+	// user a made-up name. (The pure-mock dev path is unaffected — NewLive
+	// returns NewMock directly when no real client is configured.)
+	return w.real.ResolveAccount(ctx, bankCode, accountNumber)
 }
 
 func (w *liveWrap) CreateTransferRecipient(ctx context.Context, req provider.RecipientRequest) (*provider.Recipient, error) {
@@ -355,8 +356,11 @@ func (m *mockProvider) GetTransferStatus(ctx context.Context, providerRef string
 }
 
 func (m *mockProvider) VerifyWebhookSignature(payload []byte, signature string) bool {
-	// The mock accepts the dev signature "mock" so a local webhook can settle.
-	return signature == "mock"
+	// A mock must NEVER verify a webhook — if one is ever reachable behind a
+	// webhook route (e.g. mounted because creds are unset), a forged delivery
+	// could fund/settle real payouts. Tests that need webhook semantics must
+	// stub the port directly.
+	return false
 }
 
 func (m *mockProvider) ParseWebhook(payload []byte) (*provider.WebhookEvent, error) {

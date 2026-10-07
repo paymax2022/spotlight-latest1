@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminSession } from '../../_lib/require-admin-session';
 
 let _supabase: SupabaseClient | null = null;
 function supabase(): SupabaseClient {
@@ -14,6 +15,9 @@ function supabase(): SupabaseClient {
 
 export async function GET(req: NextRequest) {
   try {
+    if (!(await requireAdminSession(req))) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     const { searchParams } = new URL(req.url);
     const contestantId = searchParams.get('contestantId');
     const competitionId = searchParams.get('competitionId');

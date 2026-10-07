@@ -68,6 +68,13 @@ func (s *Service) NearbyDrivers(ctx context.Context, lat, lng float64, radiusM f
 // instead. A driver who can't afford that must not be able to see (or,
 // via DriverAccept, accept) the ride until they top up.
 func (s *Service) OpenRequests(ctx context.Context, driverUserID string) ([]map[string]any, error) {
+	// Only approved drivers may see the open feed — every sibling feed
+	// (parcels, towing, movers, deliveries) gates the same way. Unrestricted,
+	// any signed-in account could enumerate every open trip's pickup/dest
+	// addresses, coordinates, and ids.
+	if _, err := s.driverGate(ctx, driverUserID); err != nil {
+		return nil, err
+	}
 	const q = `
 		SELECT id, pickup_address, dest_address, pickup_lat, pickup_lng, dest_lat, dest_lng,
 		       fare_kobo, fare_estimate_kobo, pricing_mode, payment_method, phase, distance_m, duration_s, created_at

@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import type {
   UtilityProviderAdapter,
   UtilityPurchaseRequest,
@@ -175,7 +176,16 @@ function lagosRequestPrefix(date = new Date()) {
 }
 
 export function vtpassRequestId(idempotencyKey: string, date = new Date()) {
-  const suffix = idempotencyKey.replace(/[^a-zA-Z0-9]/g, '').slice(-20) || Math.random().toString(36).slice(2);
+  // VTPass dedupes on request_id, so the suffix MUST carry entropy from the
+  // whole attempt key. The previous scheme took the literal last-20
+  // alphanumeric chars of "<key>:provider:<uuid>:attempt:<n>" — i.e. only the
+  // provider-uuid tail + attempt number — so every DIFFERENT transaction
+  // against the same provider in the same minute produced the same
+  // request_id: transaction B could be answered with transaction A's result
+  // (or rejected as a duplicate after we already debited).
+  const suffix = idempotencyKey
+    ? createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 20).toUpperCase()
+    : Math.random().toString(36).slice(2);
   return `${lagosRequestPrefix(date)}${suffix}`;
 }
 
@@ -185,10 +195,14 @@ function endpoint(path: string, credentials = readCredentials()) {
 
 async function vtpassFetch(path: string, method: VtpassHttpMethod, body?: Record<string, unknown>): Promise<VtpassResponse> {
   const credentials = readCredentials();
+  // A hanging VTPass request previously held the purchase open indefinitely —
+  // bound it so the caller sees an AbortError (which the service layer maps to
+  // an AMBIGUOUS/pending outcome, never a failover).
   const response = await fetch(endpoint(path, credentials), {
     method,
     headers: authHeaders(method, credentials),
     body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+    signal: AbortSignal.timeout(15_000),
   });
 
   const payload = await response.json().catch(() => ({}));
@@ -232,15 +246,28 @@ function normalizeProviderStatus(payload: VtpassResponse): UtilityPurchaseResult
 
   if (code === '000' && ['delivered', 'successful', 'success'].includes(transactionStatus)) return 'successful';
   if (code === '000' && !transactionStatus && description.includes('successful')) return 'successful';
+  // A synthesized HTTP 4xx envelope (vtpassFetch on non-2xx) means VTPass
+  // rejected the request outright — no vend was attempted, so a definitive
+  // failure is safe. 5xx is ambiguous: the vend may still complete → pending.
+  const httpStatus = Number(payload.code);
+  if (Number.isInteger(httpStatus) && httpStatus >= 400 && httpStatus < 500) return 'failed';
   if (
-    transactionStatus.includes('pending')
-    || transactionStatus.includes('processing')
-    || description.includes('pending')
-    || description.includes('processing')
-    || description.includes('timeout')
-  ) return 'pending';
+    transactionStatus.includes('fail')
+    || transactionStatus.includes('cancel')
+    || transactionStatus.includes('reverse')
+    || description.includes('fail')
+    || description.includes('insufficient')
+    || description.includes('invalid')
+    || description.includes('does not exist')
+    || description.includes('not exist')
+    || description.includes('error')
+  ) return 'failed';
 
-  return 'failed';
+  // Anything else — 'initiated', 'pending', 'processing', a 5xx, or an
+  // unrecognised verdict — is ambiguous, NOT a proven refusal. Failing here
+  // would auto-reverse the debit and fail over to the next provider while
+  // the vend may still complete (double-deliver / debit+deliver).
+  return 'pending';
 }
 
 function tokenFrom(payload: VtpassResponse) {
@@ -390,6 +417,19 @@ export const vtpassUtilityAdapter: UtilityProviderAdapter = {
 
   async purchase(request: UtilityPurchaseRequest) {
     const requestId = vtpassRequestId(request.idempotencyKey);
+
+    // VTPass bills whole naira only — asNaira() would otherwise round a
+    // sub-naira amount UP to a full-naira vend while we collected less.
+    // This is a deterministic validation failure, not a provider refusal: the
+    // request is never sent, so 'failed' is safe (no vend can complete).
+    if (request.pricing.amountKobo <= 0 || request.pricing.amountKobo % 100 !== 0) {
+      return {
+        status: 'failed' as const,
+        providerReference: requestId,
+        message: 'Amount must be in whole naira.',
+        raw: { validation: 'whole_naira_required' },
+      };
+    }
 
     // end-to-end testing (debit → token) works without live credentials.
     if (isSandboxEnv()) {
