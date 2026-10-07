@@ -145,9 +145,20 @@ func (s *Service) Refund(ctx context.Context, escrowID string) error {
 	return s.resolve(ctx, escrowID, StateRefunded, "", "escrow.refund")
 }
 
-// resolve performs the guarded transition + the matching ledger credit atomically
-// at the domain layer: the row state flips FOR UPDATE first (rejecting illegal /
-// repeated transitions) then the ledger credit posts with a per-state idem key.
+// resolve performs the guarded transition + the matching ledger credit. The row
+// state flips FOR UPDATE first (rejecting illegal / repeated transitions), then —
+// after the commit — the ledger credit posts under a per-state idempotency key.
+//
+// The ledger API opens its own transaction (no pgx.Tx posting seam), so the two
+// writes cannot share one DB tx. What makes the gap safe is that the idempotent
+// early-return does NOT skip the money leg: a replay on an already-terminal hold
+// runs ensureResolutionCredit, which verifies the credit against the ledger of
+// record (ledger.Posted) and posts it if it is missing — so a process that dies
+// between the state commit and the credit leaves the beneficiary unpaid only
+// until the next resolve call, which heals it (never a permanently unpaid
+// RELEASED/REFUNDED state, and never a double-pay: the per-leg key dedups a
+// racing poster, and a committed terminal state means the OPPOSITE leg can no
+// longer be attempted — the FSM rejects it before any money moves).
 func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeID, action string) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -157,10 +168,10 @@ func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeI
 
 	var h Hold
 	var state string
-	const sel = `SELECT id, reference, payer_id, amount_kobo, state, idempotency_key
+	const sel = `SELECT id, reference, payer_id, payee_id, amount_kobo, state, idempotency_key
 	             FROM escrow_holds WHERE id=$1 FOR UPDATE`
 	if err := tx.QueryRow(ctx, sel, escrowID).Scan(
-		&h.ID, &h.Reference, &h.PayerID, &h.AmountKobo, &state, &h.IdempotencyKey,
+		&h.ID, &h.Reference, &h.PayerID, &h.PayeeID, &h.AmountKobo, &state, &h.IdempotencyKey,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errors.New("escrow: hold not found")
@@ -169,7 +180,12 @@ func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeI
 	}
 	from := State(state)
 	if from == to {
-		return nil // idempotent re-resolve: already in target terminal state
+		// Idempotent re-resolve: already in the target terminal state — but the
+		// credit posts AFTER the commit, so a crashed prior attempt may have left
+		// the beneficiary unpaid. Verify (and heal) the money leg before
+		// reporting success; the beneficiary is taken from the STORED row, never
+		// the replay's payee argument, so a re-resolve cannot redirect funds.
+		return s.ensureResolutionCredit(ctx, &h, to)
 	}
 	if !canTransition(from, to) {
 		return fmt.Errorf("escrow: illegal transition %s -> %s", from, to)
@@ -182,6 +198,7 @@ func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeI
 			return errors.New("escrow: payee required to release")
 		}
 		payeeArg = payeeID
+		h.PayeeID = &payeeID
 	}
 	if _, err := tx.Exec(ctx, upd, escrowID, string(to), payeeArg); err != nil {
 		return fmt.Errorf("escrow: update state: %w", err)
@@ -191,26 +208,51 @@ func (s *Service) resolve(ctx context.Context, escrowID string, to State, payeeI
 	}
 
 	// Money leg: credit escrow -> payee (release) or escrow -> payer (refund).
-	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
-	if err != nil {
+	if err := s.ensureResolutionCredit(ctx, &h, to); err != nil {
 		return err
-	}
-	beneficiary := h.PayerID
-	leg := "refund"
-	if to == StateReleased {
-		beneficiary = payeeID
-		leg = "release"
-	}
-	if err := s.led.Credit(ctx, beneficiary, leg+":"+h.Reference, h.IdempotencyKey+":"+leg, escrowAcc.ID, h.AmountKobo); err != nil {
-		return fmt.Errorf("escrow: %s credit: %w", leg, err)
 	}
 
 	hh := h
 	hh.State = to
-	if to == StateReleased {
-		hh.PayeeID = &payeeID
-	}
 	s.logTransition(string(from), &hh, to, action)
+	return nil
+}
+
+// ensureResolutionCredit makes the beneficiary's credit leg for a resolved hold
+// durable: if the balanced entry for this hold's per-state key is not posted, it
+// posts it. Called both on the fresh path (right after the state commit) and on
+// the from==to replay path (to heal a hold that committed its terminal state but
+// died before the credit). Idempotent via the "<hold idemKey>:release|refund"
+// key — a retry or a racing poster dedups to ledger.ErrDuplicate, which is
+// treated as durably applied.
+func (s *Service) ensureResolutionCredit(ctx context.Context, h *Hold, to State) error {
+	leg := "refund"
+	beneficiary := h.PayerID
+	if to == StateReleased {
+		leg = "release"
+		if h.PayeeID == nil || *h.PayeeID == "" {
+			return errors.New("escrow: released hold has no recorded payee — refusing to guess the beneficiary")
+		}
+		beneficiary = *h.PayeeID
+	}
+	key := h.IdempotencyKey + ":" + leg
+	posted, err := s.led.Posted(ctx, key)
+	if err != nil {
+		return fmt.Errorf("escrow: verify %s credit: %w", leg, err)
+	}
+	if posted {
+		return nil
+	}
+	escrowAcc, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		return err
+	}
+	if err := s.led.Credit(ctx, beneficiary, leg+":"+h.Reference, key, escrowAcc.ID, h.AmountKobo); err != nil {
+		if errors.Is(err, ledger.ErrDuplicate) {
+			return nil // a racing retry posted the same key — durable either way
+		}
+		return fmt.Errorf("escrow: %s credit: %w", leg, err)
+	}
 	return nil
 }
 
