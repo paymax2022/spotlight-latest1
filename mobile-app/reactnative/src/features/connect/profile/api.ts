@@ -1,14 +1,17 @@
 // Paymax Connect — Unified Profile API (PRD §10.4 PR-*).
 // Mock-first (USE_MOCK). Live path hits `${CONNECT_API_BASE}/profile/...` on the
 // Go backend.
-// SAFETY: date (romantic) and network (professional) profiles are SEPARATE.
-// Their bios/headlines/intents/photos are never merged — every mutation is
-// scoped to a single `mode`. Location precision defaults to 'approximate' (§3).
+// The backend stores ONE profile per member (details + photos) plus per-mode
+// visibility; the Date/Network views are built from that record, with each mode
+// keeping its own visibility wall and "intent". Location precision defaults to
+// 'approximate' (§3).
 
 import { api } from '@/api/client';
 import { USE_MOCK, CONNECT_API_BASE } from '../constants/connect.constants';
+import { uploadProfilePhoto } from './upload';
 import type {
   UnifiedProfile,
+  ProfilePhoto,
   ModeProfile,
   ConnectMode,
   PrivacySettings,
@@ -24,23 +27,94 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
 
 const PHOTO = (seed: string) => `https://images.unsplash.com/${seed}?auto=format&fit=crop&w=800&q=60`;
 
+// ─── Live mapping ────────────────────────────────────────────────────────────
+// GET /connect/profile/me returns ONE profile (details + modes + photos). The UI
+// still presents a Date and a Network view, so both are built from that single
+// record: bio, headline, interests and photos are shared; each mode contributes
+// its own visibility and "intent" (stored in profile preferences).
+const MODE_SLUG: Record<ConnectMode, string> = { date: 'dating', network: 'professional' };
+
+type ServerPhoto = { id: string; url: string; moderation_status?: string };
+type ServerMode = { mode: string; visible?: boolean; intent_tags?: string[] };
+type ServerProfile = {
+  id: string;
+  display_name?: string;
+  age?: number;
+  gender?: string;
+  headline?: string;
+  bio?: string;
+  city?: string;
+  interests?: string[];
+  preferences?: Record<string, unknown>;
+  verified_badge?: boolean;
+  modes?: ServerMode[];
+  photos?: ServerPhoto[];
+};
+
+function mapPhoto(p: ServerPhoto): ProfilePhoto {
+  const st = p.moderation_status;
+  return { id: p.id, url: p.url, status: st === 'approved' || st === 'rejected' ? st : 'pending' };
+}
+
+function mapProfile(d: ServerProfile): UnifiedProfile {
+  const photoItems = (d.photos ?? []).map(mapPhoto);
+  const prefs = d.preferences ?? {};
+  const build = (mode: ConnectMode): ModeProfile => {
+    const m = (d.modes ?? []).find((x) => x.mode === MODE_SLUG[mode]);
+    const saved = prefs[`intent_${mode}`];
+    return {
+      mode,
+      visible: m?.visible ?? false,
+      intent: typeof saved === 'string' ? saved : '',
+      headline: d.headline ?? '',
+      bio: d.bio ?? '',
+      photos: photoItems.map((p) => p.url),
+      interests: d.interests ?? [],
+    };
+  };
+  return {
+    id: d.id,
+    displayName: d.display_name ?? '',
+    age: d.age ?? 0,
+    gender: d.gender ?? '',
+    city: d.city ?? '',
+    photoItems,
+    preferences: prefs,
+    dateProfile: build('date'),
+    networkProfile: build('network'),
+    verification: { selfie: !!d.verified_badge, identity: false, photo: false },
+  };
+}
+
+async function fetchLiveProfile(): Promise<UnifiedProfile> {
+  const res = await api.get(`${CONNECT_API_BASE}/profile/me`);
+  return mapProfile(unwrap<ServerProfile>(res));
+}
+
+// ─── Mock store ──────────────────────────────────────────────────────────────
 // A single in-memory profile so edits/reorders/removes persist across calls
 // within a session (mock-first). The live backend owns the real store.
+const MOCK_PHOTOS: ProfilePhoto[] = [
+  { id: 'p1', url: PHOTO('photo-1488426862026-3ee34a7d66df'), status: 'approved' },
+  { id: 'p2', url: PHOTO('photo-1524504388940-b1c1722653e1'), status: 'approved' },
+  { id: 'p3', url: PHOTO('photo-1517841905240-472988babdf9'), status: 'pending' },
+];
+
 const MOCK_PROFILE: UnifiedProfile = {
   id: 'me',
   displayName: 'Ada',
   age: 28,
+  gender: 'Female',
+  city: 'Lagos',
+  photoItems: MOCK_PHOTOS,
+  preferences: {},
   dateProfile: {
     mode: 'date',
     visible: true,
     intent: 'Long-term',
     headline: 'Design lead who loves live music',
     bio: 'Lagos-born product designer. Sunday markets, Afrobeats gigs and long beach walks at Tarkwa Bay. Looking for someone warm, curious and kind.',
-    photos: [
-      PHOTO('photo-1488426862026-3ee34a7d66df'),
-      PHOTO('photo-1524504388940-b1c1722653e1'),
-      PHOTO('photo-1517841905240-472988babdf9'),
-    ],
+    photos: MOCK_PHOTOS.map((p) => p.url),
     interests: ['Design', 'Music', 'Travel', 'Food'],
   },
   networkProfile: {
@@ -49,10 +123,7 @@ const MOCK_PROFILE: UnifiedProfile = {
     intent: 'Mentoring',
     headline: 'Product Design Lead · fintech',
     bio: 'Leading design at a Lagos fintech. Happy to mentor junior designers and trade notes on design systems, research and African payments UX.',
-    photos: [
-      PHOTO('photo-1573497019940-1c28c88b4f3e'),
-      PHOTO('photo-1580489944761-15a19d654956'),
-    ],
+    photos: MOCK_PHOTOS.map((p) => p.url),
     interests: ['Design', 'Startups', 'Tech', 'Wellness'],
   },
   verification: {
@@ -76,33 +147,63 @@ function modeRef(mode: ConnectMode): ModeProfile {
   return mode === 'date' ? MOCK_PROFILE.dateProfile : MOCK_PROFILE.networkProfile;
 }
 
+function syncMockPhotos() {
+  const urls = MOCK_PHOTOS.map((p) => p.url);
+  MOCK_PROFILE.dateProfile.photos = [...urls];
+  MOCK_PROFILE.networkProfile.photos = [...urls];
+}
+
+function cloneMock(): UnifiedProfile {
+  return {
+    ...MOCK_PROFILE,
+    photoItems: MOCK_PHOTOS.map((p) => ({ ...p })),
+    preferences: { ...MOCK_PROFILE.preferences },
+    dateProfile: { ...MOCK_PROFILE.dateProfile, photos: [...MOCK_PROFILE.dateProfile.photos], interests: [...MOCK_PROFILE.dateProfile.interests] },
+    networkProfile: { ...MOCK_PROFILE.networkProfile, photos: [...MOCK_PROFILE.networkProfile.photos], interests: [...MOCK_PROFILE.networkProfile.interests] },
+    verification: { ...MOCK_PROFILE.verification },
+  };
+}
+
+// ─── Profile ─────────────────────────────────────────────────────────────────
+
 export async function getUnifiedProfile(): Promise<UnifiedProfile> {
   if (USE_MOCK) {
     await delay();
-    // deep-ish copy so callers can't mutate the store
-    return {
-      ...MOCK_PROFILE,
-      dateProfile: { ...MOCK_PROFILE.dateProfile, photos: [...MOCK_PROFILE.dateProfile.photos], interests: [...MOCK_PROFILE.dateProfile.interests] },
-      networkProfile: { ...MOCK_PROFILE.networkProfile, photos: [...MOCK_PROFILE.networkProfile.photos], interests: [...MOCK_PROFILE.networkProfile.interests] },
-      verification: { ...MOCK_PROFILE.verification },
-    };
+    return cloneMock();
   }
-  const res = await api.get(`${CONNECT_API_BASE}/profile`);
-  return unwrap<UnifiedProfile>(res);
+  return fetchLiveProfile();
 }
 
 export async function updateModeProfile(input: EditProfileInput): Promise<ModeProfile> {
   if (USE_MOCK) {
     await delay(360);
-    const target = modeRef(input.mode);
-    target.headline = input.headline;
-    target.bio = input.bio;
-    target.intent = input.intent;
-    target.interests = [...input.interests];
-    return { ...target, photos: [...target.photos], interests: [...target.interests] };
+    // bio/headline/interests/identity fields are shared; intent is per-mode.
+    for (const t of [MOCK_PROFILE.dateProfile, MOCK_PROFILE.networkProfile]) {
+      t.headline = input.headline;
+      t.bio = input.bio;
+      t.interests = [...input.interests];
+    }
+    if (input.displayName !== undefined) MOCK_PROFILE.displayName = input.displayName;
+    if (input.city !== undefined) MOCK_PROFILE.city = input.city;
+    if (input.gender !== undefined) MOCK_PROFILE.gender = input.gender;
+    modeRef(input.mode).intent = input.intent;
+    const t = modeRef(input.mode);
+    return { ...t, photos: [...t.photos], interests: [...t.interests] };
   }
-  const res = await api.post(`${CONNECT_API_BASE}/profile/${input.mode}`, input);
-  return unwrap<ModeProfile>(res);
+  // preferences REPLACES server-side, so merge into what is already saved.
+  const current = await fetchLiveProfile();
+  const body: Record<string, unknown> = {
+    headline: input.headline,
+    bio: input.bio,
+    interests: input.interests,
+    preferences: { ...current.preferences, [`intent_${input.mode}`]: input.intent },
+  };
+  if (input.displayName !== undefined) body.display_name = input.displayName;
+  if (input.city !== undefined) body.city = input.city;
+  if (input.gender !== undefined) body.gender = input.gender;
+  await api.patch(`${CONNECT_API_BASE}/profile`, body);
+  const fresh = await fetchLiveProfile();
+  return input.mode === 'date' ? fresh.dateProfile : fresh.networkProfile;
 }
 
 export async function setModeVisibility(
@@ -117,8 +218,8 @@ export async function setModeVisibility(
     else MOCK_PRIVACY.networkVisible = visible;
     return { ok: true, mode, visible };
   }
-  const res = await api.post(`${CONNECT_API_BASE}/profile/${mode}/visibility`, { visible });
-  return unwrap<{ ok: true; mode: ConnectMode; visible: boolean }>(res);
+  await api.patch(`${CONNECT_API_BASE}/profile/modes/${MODE_SLUG[mode]}`, { visible });
+  return { ok: true, mode, visible };
 }
 
 export async function getPrivacy(): Promise<PrivacySettings> {
@@ -143,69 +244,84 @@ export async function updatePrivacy(p: PrivacySettings): Promise<PrivacySettings
   return unwrap<PrivacySettings>(res);
 }
 
-export async function getPhotos(mode: ConnectMode): Promise<string[]> {
+// ─── Photos ──────────────────────────────────────────────────────────────────
+// Photos belong to the member's single profile (not to a mode); index 0 is the
+// primary. Live: presign → PUT to R2 → register; reorder/delete by photo id.
+
+export async function getPhotos(): Promise<ProfilePhoto[]> {
   if (USE_MOCK) {
     await delay(200);
-    return [...modeRef(mode).photos];
+    return MOCK_PHOTOS.map((p) => ({ ...p }));
   }
-  const res = await api.get(`${CONNECT_API_BASE}/profile/${mode}/photos`);
-  return unwrap<string[]>(res);
+  return (await fetchLiveProfile()).photoItems;
 }
 
-export async function reorderPhotos(mode: ConnectMode, photos: string[]): Promise<string[]> {
+/** Uploads a picked image and attaches it to the profile. Returns the new list. */
+export async function addPhoto(uri: string, mimeHint?: string | null): Promise<ProfilePhoto[]> {
   if (USE_MOCK) {
-    await delay(220);
-    modeRef(mode).photos = [...photos];
-    return [...modeRef(mode).photos];
+    await delay(300);
+    MOCK_PHOTOS.push({ id: `p${Date.now()}`, url: uri, status: 'pending' });
+    syncMockPhotos();
+    return MOCK_PHOTOS.map((p) => ({ ...p }));
   }
-  const res = await api.post(`${CONNECT_API_BASE}/profile/${mode}/photos/reorder`, { photos });
-  return unwrap<string[]>(res);
+  await uploadProfilePhoto(uri, mimeHint);
+  return (await fetchLiveProfile()).photoItems;
 }
 
-export async function removePhoto(mode: ConnectMode, uri: string): Promise<string[]> {
+export async function reorderPhotos(ids: string[]): Promise<ProfilePhoto[]> {
   if (USE_MOCK) {
     await delay(220);
-    const target = modeRef(mode);
-    target.photos = target.photos.filter((p) => p !== uri);
-    return [...target.photos];
+    const byId = new Map(MOCK_PHOTOS.map((p) => [p.id, p]));
+    const next = ids.map((id) => byId.get(id)).filter((p): p is ProfilePhoto => !!p);
+    MOCK_PHOTOS.splice(0, MOCK_PHOTOS.length, ...next);
+    syncMockPhotos();
+    return MOCK_PHOTOS.map((p) => ({ ...p }));
   }
-  const res = await api.post(`${CONNECT_API_BASE}/profile/${mode}/photos/remove`, { uri });
-  return unwrap<string[]>(res);
+  await api.put(`${CONNECT_API_BASE}/profile/media/order`, { ids });
+  return (await fetchLiveProfile()).photoItems;
+}
+
+export async function removePhoto(id: string): Promise<ProfilePhoto[]> {
+  if (USE_MOCK) {
+    await delay(220);
+    const i = MOCK_PHOTOS.findIndex((p) => p.id === id);
+    if (i >= 0) MOCK_PHOTOS.splice(i, 1);
+    syncMockPhotos();
+    return MOCK_PHOTOS.map((p) => ({ ...p }));
+  }
+  await api.delete(`${CONNECT_API_BASE}/profile/media/${id}`);
+  return (await fetchLiveProfile()).photoItems;
 }
 
 export async function getBadges(): Promise<VerificationBadge[]> {
   if (USE_MOCK) {
     await delay(200);
     const v = MOCK_PROFILE.verification;
-    return [
-      {
-        kind: 'selfie',
-        label: 'Selfie verification',
-        state: v.selfie ? 'verified' : 'unverified',
-        description: 'A live selfie check confirms you match your photos. This is the badge other people trust most.',
-      },
-      {
-        kind: 'identity',
-        label: 'Identity verification',
-        state: v.identity ? 'verified' : 'unverified',
-        description: 'Your BVN or NIN is linked. Unlocks higher tiers, gifting and withdrawals.',
-      },
-      {
-        kind: 'photo',
-        label: 'Photo verification',
-        state: v.photo ? 'verified' : 'unverified',
-        description: 'Adds a verified badge to your photos so people know they are recent and really you.',
-      },
-    ];
+    return badgeList(v);
   }
-  const res = await api.get(`${CONNECT_API_BASE}/profile/badges`);
-  return unwrap<VerificationBadge[]>(res);
+  const p = await fetchLiveProfile();
+  return badgeList(p.verification);
 }
 
-// New unsplash placeholder for the "add photo" tile (mock only).
-export const PLACEHOLDER_PHOTOS = [
-  PHOTO('photo-1506794778202-cad84cf45f1d'),
-  PHOTO('photo-1534528741775-53994a69daeb'),
-  PHOTO('photo-1519085360753-af0119f7cbe7'),
-  PHOTO('photo-1500648767791-00dcc994a43e'),
-];
+function badgeList(v: UnifiedProfile['verification']): VerificationBadge[] {
+  return [
+    {
+      kind: 'selfie',
+      label: 'Selfie verification',
+      state: v.selfie ? 'verified' : 'unverified',
+      description: 'A live selfie check confirms you match your photos. This is the badge other people trust most.',
+    },
+    {
+      kind: 'identity',
+      label: 'Identity verification',
+      state: v.identity ? 'verified' : 'unverified',
+      description: 'Your BVN or NIN is linked. Unlocks higher tiers, gifting and withdrawals.',
+    },
+    {
+      kind: 'photo',
+      label: 'Photo verification',
+      state: v.photo ? 'verified' : 'unverified',
+      description: 'Adds a verified badge to your photos so people know they are recent and really you.',
+    },
+  ];
+}

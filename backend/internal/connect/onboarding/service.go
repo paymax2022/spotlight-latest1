@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"spotlight/backend/go-common/ginutil"
@@ -58,6 +59,14 @@ func (s *Service) AgeGate(ctx context.Context, userID, dobStr, ip string) (AgeGa
 	// Persist the passed gate into the onboarding state (best-effort; the gate
 	// decision itself is already final and is returned regardless).
 	_ = s.markAgeVerified(ctx, userID)
+	// Keep the validated DOB on the profile so the member's own profile can show
+	// an age. First value wins — once the gate has accepted a DOB it is not editable.
+	if _, err := s.db.Exec(ctx,
+		`INSERT INTO connect_profiles (user_id, dob) VALUES ($1, $2)
+		 ON CONFLICT (user_id) DO UPDATE SET dob = COALESCE(connect_profiles.dob, EXCLUDED.dob)`,
+		userID, dob); err != nil {
+		log.Printf("[connect-onboarding] persist dob: %v", err)
+	}
 	_ = s.audit(ctx, userID, "connect.agegate.passed", ip, map[string]any{"age": age})
 	return AgeGateResult{Allowed: true, Age: age}, nil
 }
