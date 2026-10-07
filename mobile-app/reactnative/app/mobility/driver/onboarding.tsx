@@ -26,6 +26,15 @@ type Step = 'details' | 'documents' | 'vehicle' | 'status';
 const STEP_ORDER: Step[] = ['details', 'documents', 'vehicle', 'status'];
 const STEP_TITLE: Record<Step, string> = { details: 'Your details', documents: 'Upload documents', vehicle: 'Add your vehicle', status: 'Application status' };
 
+// A failed submit used to leave the button spinning back to idle with nothing
+// shown, so Continue looked dead. Say what the server (or the network) said.
+function submitErrorMessage(e: unknown, fallback: string): string {
+  const err = e as { response?: { status?: number; data?: { error?: string; message?: string } } };
+  if (!err?.response) return 'No connection. Check your internet and try again.';
+  const detail = err.response.data?.error ?? err.response.data?.message;
+  return detail ? `${fallback} (${detail})` : `${fallback} (error ${err.response.status ?? 'unknown'}).`;
+}
+
 export default function DriverOnboardingScreen() {
   const me = useDriverMe();
   const { submit, uploadDocFile, addVehicle } = useDriverOnboarding();
@@ -77,7 +86,10 @@ export default function DriverOnboardingScreen() {
     if (categories.length === 0) { setDetailsError('Pick at least one service category.'); return; }
     submit.mutate(
       { phone: phone.trim(), email: email.trim(), serviceCategories: categories },
-      { onSuccess: () => setStep('documents') },
+      {
+        onSuccess: () => setStep('documents'),
+        onError: (e) => setDetailsError(submitErrorMessage(e, 'Could not save your details')),
+      },
     );
   };
 
@@ -108,7 +120,10 @@ export default function DriverOnboardingScreen() {
     if (!yr || yr < 2000 || yr > new Date().getFullYear() + 1) { setVehError('Enter a valid year.'); return; }
     addVehicle.mutate(
       { plateNumber: plate.trim().toUpperCase(), make: make.trim(), model: model.trim(), year: yr, color: color.trim() || 'Black', category: categories[0] ?? 'economy', capacity: SERVICE_TYPES.find((s) => s.value === (categories[0] ?? 'economy'))?.seats ?? 4 },
-      { onSuccess: () => setStep('status') },
+      {
+        onSuccess: () => setStep('status'),
+        onError: (e) => setVehError(submitErrorMessage(e, 'Could not add your vehicle')),
+      },
     );
   };
 
