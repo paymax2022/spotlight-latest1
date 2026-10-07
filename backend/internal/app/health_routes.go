@@ -84,7 +84,9 @@ func RegisterHealth(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpo
 	providersSvc := healthproviders.NewService(pool, newCapabilityGranter(rbac), provAudit).
 		WithPresigner(providersPresigner, cfg.R2Bucket)
 	schedulingSvc := healthscheduling.NewService(pool, sched, schedAudit)
-	rxSvc := healthrx.NewService(pool, rxAudit)
+	rxSvc := healthrx.NewService(pool, rxAudit).
+		WithPrescriberAuthorizer(&prescriberGateAdapter{db: pool}).
+		WithPharmacyOwnerGate(&providerGateAdapter{db: pool})
 	consultSvc := healthconsult.NewService(pool, avKey, consultAudit)
 	intakeSvc := healthintake.NewService(pool, intakeAudit)
 
@@ -533,6 +535,28 @@ type symptomReviewOpener struct{ svc *symptomsearch.Service }
 func (a symptomReviewOpener) OpenReviewCaseForOrder(ctx context.Context, actorID, orderID, pharmacyProviderID string, searchEventID *string, rxRequired bool) error {
 	_, err := a.svc.CreateReviewCaseForOrderFromContext(ctx, actorID, orderID, pharmacyProviderID, searchEventID, rxRequired)
 	return err
+}
+
+// prescriberGateAdapter enforces CR-004 for the human-path e-prescription route:
+// only an MDCN-approved doctor may issue (mirrors telemedicine's
+// assertDoctorApproved — either verification signal counts; absence fails
+// closed). The vet path uses its own rx instance gated by vetProviderGateAdapter.
+type prescriberGateAdapter struct{ db *pgxpool.Pool }
+
+func (a *prescriberGateAdapter) IsAuthorizedPrescriber(ctx context.Context, prescriberID string) (bool, error) {
+	var ok bool
+	const q = `
+		SELECT EXISTS (
+			SELECT 1 FROM doctor_verifications
+			WHERE user_id = $1 AND status = 'approved'
+		) OR EXISTS (
+			SELECT 1 FROM doctor_profiles
+			WHERE user_id = $1 AND verification = 'approved'
+		)`
+	if err := a.db.QueryRow(ctx, q, prescriberID).Scan(&ok); err != nil {
+		return false, err
+	}
+	return ok, nil
 }
 
 // envInt reads a positive integer env var with a default (mirrors config's

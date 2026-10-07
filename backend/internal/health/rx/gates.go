@@ -116,6 +116,52 @@ func authorizePrescriber(ctx context.Context, a PrescriberAuthorizer, prescriber
 	return nil
 }
 
+// PharmacyOwnerGate reports whether userID owns the APPROVED pharmacy the
+// prescription is pinned to — the HL-3 pharmacist-side gate. Implemented by the
+// health_providers owner check in the wiring layer.
+type PharmacyOwnerGate interface {
+	VerifiedPharmacyOwner(ctx context.Context, userID, providerID string) (bool, error)
+}
+
+// WithPharmacyOwnerGate wires the HL-3 pharmacist gate. Returns the service for
+// chaining.
+func (s *Service) WithPharmacyOwnerGate(g PharmacyOwnerGate) *Service {
+	s.pharmacyGate = g
+	return s
+}
+
+// authorizeActor enforces object-level authorization on a locked transition:
+//   - →SENT_TO_PHARMACY: only the prescriber or the patient may send.
+//   - pharmacist-side edges (VERIFYING/VERIFIED/REJECTED/DISPENSED/FULFILLED):
+//     when a gate is wired, the actor must own the APPROVED pharmacy the
+//     prescription is pinned to. Fail-closed: no pinned pharmacy or a lookup
+//     error denies.
+//
+// A nil gate leaves pharmacist-side edges to route RBAC (legacy behaviour).
+func (s *Service) authorizeActor(ctx context.Context, actorID string, p *prescriptionRow, to State) error {
+	switch to {
+	case StateSent:
+		if actorID != p.PrescriberID && actorID != p.PatientID {
+			return errors.New("rx: only the prescriber or patient may send to pharmacy")
+		}
+	case StateVerifying, StateVerified, StateRejected, StateDispensed, StateFulfilled:
+		if s.pharmacyGate == nil {
+			return nil
+		}
+		if p.PharmacyProviderID == nil || *p.PharmacyProviderID == "" {
+			return errors.New("rx: prescription is not pinned to a pharmacy")
+		}
+		ok, err := s.pharmacyGate.VerifiedPharmacyOwner(ctx, actorID, *p.PharmacyProviderID)
+		if err != nil {
+			return fmt.Errorf("rx: could not verify pharmacy ownership: %w", err)
+		}
+		if !ok {
+			return errors.New("rx: actor is not an owner of the pinned pharmacy (HL-3)")
+		}
+	}
+	return nil
+}
+
 // DP-004 — prescription refills.
 // A prescriber may authorize a number of refills on a prescription; the medication
 // may then be dispensed that many additional times beyond the initial fill, and no
@@ -210,16 +256,29 @@ func (s *Service) DispenseRefill(ctx context.Context, pharmacistID, rxID string)
 
 	var state string
 	var verifiedBy *string
+	var pharmacyProviderID *string
 	var refillsUsed, refillsAuthorized int
 	var hasPOM bool
-	const q = `SELECT state, verified_by, refills_used, refills_authorized,
+	const q = `SELECT state, verified_by, pharmacy_provider_id, refills_used, refills_authorized,
 	                  EXISTS (SELECT 1 FROM health_prescription_items i WHERE i.prescription_id=health_prescriptions.id AND i.is_pom)
 	           FROM health_prescriptions WHERE id=$1 FOR UPDATE`
-	if err := tx.QueryRow(ctx, q, rxID).Scan(&state, &verifiedBy, &refillsUsed, &refillsAuthorized, &hasPOM); err != nil {
+	if err := tx.QueryRow(ctx, q, rxID).Scan(&state, &verifiedBy, &pharmacyProviderID, &refillsUsed, &refillsAuthorized, &hasPOM); err != nil {
 		return nil, errors.New("rx: not found")
 	}
 	if st := State(state); st != StateDispensed && st != StateFulfilled {
 		return nil, ErrNotYetDispensed
+	}
+	if s.pharmacyGate != nil {
+		if pharmacyProviderID == nil || *pharmacyProviderID == "" {
+			return nil, errors.New("rx: prescription is not pinned to a pharmacy")
+		}
+		ok, oerr := s.pharmacyGate.VerifiedPharmacyOwner(ctx, pharmacistID, *pharmacyProviderID)
+		if oerr != nil {
+			return nil, fmt.Errorf("rx: could not verify pharmacy ownership: %w", oerr)
+		}
+		if !ok {
+			return nil, errors.New("rx: actor is not an owner of the pinned pharmacy (HL-3)")
+		}
 	}
 	if hasPOM && verifiedBy == nil {
 		return nil, errors.New("rx: POM items require pharmacist verification before dispense (HL-3)")

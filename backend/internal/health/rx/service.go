@@ -97,6 +97,7 @@ type Service struct {
 	audit          Auditor
 	clinical       ClinicalContextProvider // optional; supplies allergies/meds for the pre-issue safety screen
 	prescriberAuth PrescriberAuthorizer    // optional; scope-of-practice gate at the prescribe boundary (CR-004)
+	pharmacyGate   PharmacyOwnerGate       // optional; pharmacist-side transitions act only on the pinned pharmacy (HL-3)
 }
 
 func NewService(db *pgxpool.Pool, audit Auditor) *Service {
@@ -163,6 +164,26 @@ func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID stri
 		return nil, fmt.Errorf("rx: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Consult binding: when a consult is referenced, the prescription may only be
+	// issued by the consult's provider owner to the consult's patient — a
+	// prescriber cannot attach a victim's patient_id or another doctor's consult.
+	if consultID != nil && *consultID != "" {
+		var consultPatient, consultOwner string
+		const qc = `SELECT c.patient_id, COALESCE(p.owner_user_id::text,'')
+		            FROM health_consults c
+		            LEFT JOIN health_providers p ON p.id = c.provider_id
+		            WHERE c.id = $1`
+		if err := tx.QueryRow(ctx, qc, *consultID).Scan(&consultPatient, &consultOwner); err != nil {
+			return nil, errors.New("rx: consult not found")
+		}
+		if consultPatient != patientID {
+			return nil, errors.New("rx: patient_id does not match the consult's patient")
+		}
+		if consultOwner != "" && consultOwner != prescriberID {
+			return nil, errors.New("rx: only the consult's provider may issue for it")
+		}
+	}
 
 	p := &Prescription{
 		ID:           uuid.New().String(),
@@ -327,6 +348,9 @@ func (s *Service) transition(ctx context.Context, actorID, rxID string, to State
 	}
 	if !canTransition(p.State, to) {
 		return nil, fmt.Errorf("rx: illegal transition %s -> %s", p.State, to)
+	}
+	if err := s.authorizeActor(ctx, actorID, p, to); err != nil {
+		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE health_prescriptions SET state=$2, updated_at=now() WHERE id=$1`, rxID, string(to)); err != nil {
 		// HL-3 backstop: a second DISPENSE collides with the partial UNIQUE index.
