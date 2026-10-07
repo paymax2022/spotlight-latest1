@@ -1413,7 +1413,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// mirrors the user id into c.Set("user_id", ...), and leaves the authUser set so
 	// RequirePermission can read the caller for the screening lookup.
 	if cfg.FeaturePropertySuiteEnabled {
-		propertySvc := property.NewService(pool)
+		propertySvc := property.NewService(pool).WithRoles(cfg.FeaturePropertyRolesEnabled)
 		propertyHandler := property.NewHandler(propertySvc)
 		propGroup := finance.Group("/property")
 		propGroup.Use(mapsAuth())
