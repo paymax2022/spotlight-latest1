@@ -26,4 +26,12 @@ if (fs.existsSync(nodeModules) && fs.lstatSync(nodeModules).isSymbolicLink()) {
   config.watchFolders = [...(config.watchFolders || []), realProject];
 }
 
+// Watchman roots at the repo's .git, so a release bundle waits on a crawl of the
+// whole monorepo (incl. ~1M files of agent worktrees under .claude/) — 7+ min.
+// One-shot `export:embed` (Gradle/Xcode release bundling) doesn't need a watcher;
+// Metro's node crawler only walks this project.
+if (process.argv.includes('export:embed')) {
+  config.resolver.useWatchman = false;
+}
+
 module.exports = config;
