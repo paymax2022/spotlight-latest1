@@ -110,6 +110,26 @@ BEGIN
       GET DIAGNOSTICS n = ROW_COUNT;
       RAISE NOTICE 'group_payments on probe groups deleted: %', n;
     END IF;
+    -- ledger_accounts.group_id has no cascade. Probe-group ledger accounts are
+    -- empty (all debits refused at tier/balance gates) — but only delete ones
+    -- with zero ledger_entries so the immutable-entry invariant can never be
+    -- violated even if an id collides with a real group.
+    IF to_regclass('public.ledger_accounts') IS NOT NULL THEN
+      DELETE FROM public.ledger_accounts
+       WHERE group_id IN (
+         SELECT id FROM public.groups
+          WHERE (id = 'a60d5b61-5ce7-45fc-9430-f8b323aa4fb0'
+                 AND created_by = '00367732-a1f0-4bb0-b711-235facd82685')
+             OR (id = '4e345a66-3594-4bf6-ace2-3551a283f25c'
+                 AND (name ILIKE '%delete%' OR name ILIKE '%probe%' OR name ILIKE '%e2e%'))
+             OR (id::text LIKE '1f790405%'
+                 AND created_by = '648e1080-d66e-4e55-b8d8-72bc51acc3af'))
+         AND (to_regclass('public.ledger_entries') IS NULL
+              OR NOT EXISTS (SELECT 1 FROM public.ledger_entries e
+                              WHERE e.account_id = ledger_accounts.id));
+      GET DIAGNOSTICS n = ROW_COUNT;
+      RAISE NOTICE 'ledger_accounts on probe groups deleted: %', n;
+    END IF;
     DELETE FROM public.groups
      WHERE (id = 'a60d5b61-5ce7-45fc-9430-f8b323aa4fb0'
             AND created_by = '00367732-a1f0-4bb0-b711-235facd82685')
