@@ -105,6 +105,28 @@ func (s *Service) AdminDecideWithdrawal(ctx context.Context, actorID, id, decisi
 	return out, nil
 }
 
+// AdminRetryBroadcast re-dispatches a withdrawal parked in `approved` after an
+// ambiguous provider outcome (timeout/reset — the provider may or may not have
+// accepted). The provider idem key is derived from the withdrawal id, so a
+// provider that DID accept the first attempt dedupes; the guarded
+// approved→broadcast transition makes the retry idempotent. Only `approved`
+// rows are retriable — broadcast/confirmed are in flight or done.
+func (s *Service) AdminRetryBroadcast(ctx context.Context, actorID, id string) (*AdminWithdrawal, error) {
+	cur, err := s.repo.AdminGetWithdrawal(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if cur.Status != WithdrawalApproved {
+		return nil, ErrInvalidTransition
+	}
+	if err := s.audit.log(ctx, actorID, "crypto.admin.withdraw.retry_broadcast",
+		"crypto_withdrawal", id, "retry broadcast after parked approved state", nil,
+		map[string]any{"units": cur.Units}); err != nil {
+		return nil, err
+	}
+	return s.broadcastApprovedWithdrawal(ctx, cur)
+}
+
 // AdminListSwaps returns recent swaps across all users. The frontend derives
 // rate/volume/anomaly display from the returned rows.
 func (s *Service) AdminListSwaps(ctx context.Context, limit, offset int) ([]SwapOrder, error) {
@@ -268,6 +290,19 @@ func (h *Handler) AdminDecideWithdrawal(c *gin.Context) {
 		return
 	}
 	w, err := h.svc.AdminDecideWithdrawal(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req.Decision, req.Note)
+	if err != nil {
+		errMap.WriteOK(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "withdrawal": w})
+}
+
+// AdminRetryBroadcast POST /admin/crypto/withdrawals/:id/retry-broadcast.
+// Re-fires the provider broadcast for a withdrawal parked in `approved` after an
+// ambiguous provider error. No body — the provider idem key is derived from the
+// withdrawal id, so an already-accepted send dedupes upstream.
+func (h *Handler) AdminRetryBroadcast(c *gin.Context) {
+	w, err := h.svc.AdminRetryBroadcast(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
 	if err != nil {
 		errMap.WriteOK(c, err)
 		return

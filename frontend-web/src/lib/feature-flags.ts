@@ -39,8 +39,10 @@ export const featureFlags = {
   /** EPIC 1 & 3 — Wallet, ledger, topup, virtual accounts */
   wallet: () => envFlag('FEATURE_WALLET_ENABLED'),
 
-  /** EPIC 2 — KYC tiers and document verification */
-  kyc: () => envFlag('FEATURE_KYC_ENABLED'),
+  /** EPIC 2 — KYC tiers and document verification.
+   *  Reads FEATURE_KYC_VERIFY_ENABLED too — the Go gateway's canonical name —
+   *  so either var opens this BFF gate (Go still enforces its own flag). */
+  kyc: () => envFlag('FEATURE_KYC_ENABLED') || envFlag('FEATURE_KYC_VERIFY_ENABLED'),
 
   /** EPIC 3 — Paystack Dedicated Virtual Account auto-provisioning */
   virtualAccounts: () => envFlag('FEATURE_VIRTUAL_ACCOUNTS_ENABLED'),
@@ -203,8 +205,10 @@ export const featureFlags = {
   /** Post-transaction ratings for doctors, riders, restaurants, etc. */
   ratings: () => envFlag('FEATURE_RATINGS_ENABLED'),
 
-  /** Group / Association membership — dues, directory, meetings, chat, AI notes */
-  association: () => envFlag('FEATURE_ASSOCIATION_ENABLED'),
+  /** Group / Association membership — dues, directory, meetings, chat, AI notes.
+   *  The Go backend reads the PLURAL FEATURE_ASSOCIATIONS_ENABLED; this gate
+   *  accepts either name so a single Railway var enables the module end-to-end. */
+  association: () => envFlag('FEATURE_ASSOCIATIONS_ENABLED') || envFlag('FEATURE_ASSOCIATION_ENABLED'),
 
   /**
    * Server-issued OTP codes by email — MIRRORS the Go backend's

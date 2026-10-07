@@ -293,6 +293,7 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		// paths; decisions drive the EXISTING state machines (no new money movement).
 		admin.GET("/withdrawals", rp(PermAdmin), h.AdminListWithdrawals)
 		admin.POST("/withdrawals/:id/decision", rp(PermAdmin), h.AdminDecideWithdrawal)
+		admin.POST("/withdrawals/:id/retry-broadcast", rp(PermAdmin), h.AdminRetryBroadcast)
 		admin.GET("/swaps", rp(PermAdmin), h.AdminListSwaps)
 		admin.GET("/addresses", rp(PermAdmin), h.AdminListAddresses)
 		admin.POST("/addresses/:id/decision", rp(PermAdmin), h.AdminDecideAddress)
