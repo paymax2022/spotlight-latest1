@@ -45,7 +45,7 @@ import (
 // sub-balance ledger; withdrawals/payouts reverse — Paymax never lends (NL-1),
 // never pays yield (NL-2), and Ajo is peer-rotation only (NL-7). Every money leg
 // is idempotent (NL-9). Auditing is nil-safe (the orchestrator may inject a sink).
-func RegisterSavings(member *gin.RouterGroup, adminGroup *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterSavings(member *gin.RouterGroup, adminGroup *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService) {
 	if pool == nil {
 		log.Println("[savings] nil pool — skipping savings routes")
 		return
@@ -55,7 +55,7 @@ func RegisterSavings(member *gin.RouterGroup, adminGroup *gin.RouterGroup, cfg c
 	ledgerSvc := financeledger.NewService(financeledger.NewRepository(pool), nil)
 	sched := scheduler.NewService(pool)
 
-	var auditor savings.Auditor = nil // optional immutable-audit sink (NL-12)
+	var auditor savings.Auditor = audit // real immutable-audit sink (NL-12)
 
 	vaultSvc := savings.NewVaultService(pool, ledgerSvc, sched, auditor)
 
@@ -116,7 +116,7 @@ func RegisterSavings(member *gin.RouterGroup, adminGroup *gin.RouterGroup, cfg c
 // doubled path keep working. The second Register call is safe: member routes on
 // the doubled prefix are distinct paths (no gin duplicate-route panic) and admin
 // routes are skipped (nil group) so social.admin.* is registered exactly once.
-func RegisterSocialPay(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterSocialPay(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService) {
 	if pool == nil {
 		log.Println("[social] nil pool — skipping social routes")
 		return
@@ -126,7 +126,8 @@ func RegisterSocialPay(member *gin.RouterGroup, adminGroup *gin.RouterGroup, poo
 	tags := cashtag.NewService(pool)
 	aml := social.NewAML(pool, social.DefaultAMLConfig())
 
-	var auditor social.Auditor = nil
+	// Real immutable-audit sink (NL-12 / S5): social money paths emit events.
+	var auditor social.Auditor = audit
 
 	// Escrow core (shared spine) — built here so social can park funds-holds for
 	// P2P escrow in P3; the funds-hold state machine is ledger-backed + audited.
@@ -185,7 +186,7 @@ func adminGroupTop5(r *gin.Engine, basePath string, authMW gin.HandlerFunc) *gin
 // MAIN wallet on close (NL-3); points/event-wallet never cash out (NL-4); vendor
 // payouts are KYC-gated (NL-10) and run net of fees through the ledger. Auditing is
 // nil-safe (the orchestrator may inject a sink).
-func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService, rtHub *realtime.Hub) {
+func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService, rtHub *realtime.Hub, audit services.AuditService) {
 	if pool == nil {
 		log.Println("[top5events] nil pool — skipping events routes")
 		return
@@ -198,12 +199,12 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 	settlementSvc := settlement.NewService(pool, ledgerSvc)
 
 	// Shared primitives (built internally).
-	var credAudit credential.Auditor = nil
+	var credAudit credential.Auditor = audit
 	credSvc := credential.NewService(pool, credAudit) // rotating-QR / NFC, single-use + replay-reject
 	tags := cashtag.NewService(pool)                  // ticket gift/transfer addressing
 	_ = escrow.NewService(pool, ledgerSvc, nil)       // shared funds-hold core (residual-refund spine)
 
-	var auditor top5events.Auditor = nil
+	var auditor top5events.Auditor = audit
 	svc := top5events.NewService(pool, ledgerSvc, walletSvc, settlementSvc, tiersSvc, credSvc, tags, auditor)
 
 	// Live check-in push (organiser dashboard). Shared hub built once at the
@@ -254,16 +255,16 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 // only to airtime/bills/discount/perks). The loyalty service binds module triggers
 // (payments / savings / tickets / referral §7A) to versioned earn rules, awards
 // idempotently (NL-9), and re-evaluates membership tiers on earn. Auditing nil-safe.
-func RegisterLoyalty(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterLoyalty(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService) {
 	if pool == nil {
 		log.Println("[loyalty] nil pool — skipping loyalty routes")
 		return
 	}
 
-	var ptsAudit points.Auditor = nil
+	var ptsAudit points.Auditor = audit
 	ptsSvc := points.NewService(pool, ptsAudit) // append-only points ledger (NL-4)
 
-	var loyAudit loyalty.Auditor = nil
+	var loyAudit loyalty.Auditor = audit
 	loySvc := loyalty.NewService(pool, ptsSvc, loyAudit)
 
 	g := func(permission string) gin.HandlerFunc {
@@ -302,7 +303,7 @@ func guardFor(rbac services.RBACService) func(string) gin.HandlerFunc {
 // income is payment-for-content, never a return. Called under FeatureCreatorsEnabled.
 //   - member: /api/finance/creators/*
 //   - admin : /api/creators/admin/*  (RBAC creators.*)
-func RegisterCreators(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config) {
+func RegisterCreators(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config, audit services.AuditService) {
 	if pool == nil {
 		log.Println("[creators] nil pool — skipping creators routes")
 		return
@@ -319,7 +320,7 @@ func RegisterCreators(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 	// only construct the service + register the creators job handler (in NewService).
 	sched := scheduler.NewService(pool)
 
-	var auditor creators.Auditor = nil
+	var auditor creators.Auditor = audit
 	var age creators.AgeProvider = nil // nil ⇒ age gate fails CLOSED for rated content (NL-11)
 	svc := creators.NewService(pool, ledgerSvc, walletSvc, tags, sched, kycSvc, age, auditor)
 
@@ -396,19 +397,19 @@ func RegisterP2PMarket(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 // FeatureLoyaltyEnabled.
 //   - member: /api/finance/loyalty/black/*
 //   - admin : /api/loyalty/admin/black/*  (RBAC loyalty.black.*)
-func RegisterLoyaltyBlack(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterLoyaltyBlack(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService) {
 	if pool == nil {
 		log.Println("[loyalty-black] nil pool — skipping black routes")
 		return
 	}
 
-	var ptsAudit points.Auditor = nil
+	var ptsAudit points.Auditor = audit
 	ptsSvc := points.NewService(pool, ptsAudit)
-	var loyAudit loyalty.Auditor = nil
+	var loyAudit loyalty.Auditor = audit
 	baseLoyalty := loyalty.NewService(pool, ptsSvc, loyAudit)
 
 	// Credential primitive backs single-use perk redemption at event gates.
-	var credAudit credential.Auditor = nil
+	var credAudit credential.Auditor = audit
 	credSvc := credential.NewService(pool, credAudit)
 
 	blackSvc := loyalty.NewBlackService(baseLoyalty, credSvc)
