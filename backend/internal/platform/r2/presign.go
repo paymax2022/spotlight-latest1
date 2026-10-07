@@ -53,6 +53,9 @@ type Config struct {
 type Presigner struct {
 	cfg  Config
 	host string // host portion of AccountEndpoint (for the Host header in canonical request)
+
+	health healthState      // opt-in write probe, see probe.go
+	now    func() time.Time // injectable clock for the probe cache; nil = time.Now
 }
 
 // New builds a Presigner. It validates the endpoint but does not dial anything.
@@ -60,6 +63,7 @@ type Presigner struct {
 // false (and every Presign* call returns ErrNotConfigured) rather than an error,
 // so wiring code can degrade gracefully when R2 env is absent.
 func New(cfg Config) *Presigner {
+	cfg = normalise(cfg)
 	if cfg.Region == "" {
 		cfg.Region = "auto"
 	}
@@ -68,6 +72,28 @@ func New(cfg Config) *Presigner {
 		p.host = u.Host
 	}
 	return p
+}
+
+// normalise cleans values that arrive by copy-paste into an environment-variable
+// UI. Every one of these passes Configured() and then produces a signature or a
+// path R2 rejects at PUT time, so they are fixed here rather than discovered by
+// a user:
+//   - surrounding whitespace/newlines on any value
+//   - an endpoint pasted with the bucket path or a trailing slash (the URL is
+//     built as endpoint + "/<bucket>/<key>", so a path doubles the bucket)
+//   - a bucket pasted with leading/trailing slashes
+func normalise(cfg Config) Config {
+	cfg.AccountEndpoint = strings.TrimSpace(cfg.AccountEndpoint)
+	if u, err := url.Parse(cfg.AccountEndpoint); err == nil && u.Scheme != "" && u.Host != "" {
+		cfg.AccountEndpoint = u.Scheme + "://" + u.Host
+	} else {
+		cfg.AccountEndpoint = strings.TrimRight(cfg.AccountEndpoint, "/")
+	}
+	cfg.Bucket = strings.Trim(strings.TrimSpace(cfg.Bucket), "/")
+	cfg.AccessKeyID = strings.TrimSpace(cfg.AccessKeyID)
+	cfg.SecretAccessKey = strings.TrimSpace(cfg.SecretAccessKey)
+	cfg.Region = strings.TrimSpace(cfg.Region)
+	return cfg
 }
 
 // Configured reports whether all required fields are present.
