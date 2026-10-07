@@ -120,10 +120,10 @@ func seedBankTransfer(t *testing.T, ctx context.Context, pool *pgxpool.Pool, svc
 	var id string
 	err := pool.QueryRow(ctx, `
 		INSERT INTO bank_transfers
-			(user_id, amount_kobo, fee_kobo, bank_code, bank_name, account_number_last4,
+			(user_id, amount_kobo, fee_kobo, bank_code, bank_name, account_number_last4, account_number,
 			 account_name, paystack_recipient_code, reference, status, idempotency_key,
 			 source_type, provider, funding_reference, funding_status)
-		VALUES ($1,$2,$3,'044','Test Bank','6789','SEED TESTER','pending',$4,$5,$6,$7,'paystack',$8,$9)
+		VALUES ($1,$2,$3,'044','Test Bank','6789','0123456789','SEED TESTER','pending',$4,$5,$6,$7,'paystack',$8,$9)
 		RETURNING id`,
 		userID, amountKobo, feeKobo, reference, status, idem, sourceType, fr, fundingStatus).Scan(&id)
 	if err != nil {
