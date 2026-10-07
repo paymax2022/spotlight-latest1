@@ -245,16 +245,20 @@ func (s *Service) Redeem(ctx context.Context, userID, sku, idemKey string) (*Red
 	const ins = `
 		INSERT INTO loyalty_redemptions (id, user_id, sku, kind, cost_points, fulfil_status, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,'PENDING',NULLIF($6,''))
-		ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
+		ON CONFLICT (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
 	if _, err := s.db.Exec(ctx, ins, red.ID, red.UserID, red.SKU, red.Kind, red.CostPoints, idemKey); err != nil {
 		return nil, fmt.Errorf("loyalty: insert redemption: %w", err)
 	}
 	if idemKey != "" {
 		// Read back what stands under the key — either the row just written or,
-		// on a lost same-key race, the winner's row.
-		if stored, err := s.redemptionByIdem(ctx, userID, idemKey); err == nil {
-			red = stored
+		// on a lost same-key race, the winner's row. A miss after the insert
+		// conflict would mean the points debit has no persisted redemption:
+		// fail loudly rather than return an untracked success.
+		stored, err := s.redemptionByIdem(ctx, userID, idemKey)
+		if err != nil {
+			return nil, fmt.Errorf("loyalty: redeem conflict read-back: %w", err)
 		}
+		red = stored
 	}
 	// Fulfilment is a non-cash dispatch handled by the owning module (airtime / bill
 	// / ticket-discount). It is intentionally decoupled and marked PENDING here.

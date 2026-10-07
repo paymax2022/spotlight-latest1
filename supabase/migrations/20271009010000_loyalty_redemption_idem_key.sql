@@ -10,8 +10,11 @@ BEGIN;
 ALTER TABLE public.loyalty_redemptions
   ADD COLUMN IF NOT EXISTS idempotency_key text;
 
+-- Scoped per user: a globally-unique key column would let one caller's key
+-- shadow another user's redemption insert (phantom debit, row absorbed by the
+-- foreign key) — the same wedge class as F-525-1.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_loyalty_redemptions_idem
-  ON public.loyalty_redemptions (idempotency_key)
+  ON public.loyalty_redemptions (user_id, idempotency_key)
   WHERE idempotency_key IS NOT NULL;
 
 COMMIT;
